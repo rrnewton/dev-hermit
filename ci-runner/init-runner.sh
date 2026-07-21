@@ -11,10 +11,11 @@ set -euo pipefail
 # populated .env (copy .env.example -> .env first).
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
 
-if [ -f "${SCRIPT_DIR}/.env" ]; then
+if [ -f "${CONFIG_DIR}/.env" ]; then
   # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/.env"
+  source "${CONFIG_DIR}/.env"
 fi
 
 OWNER="${OWNER:?Set OWNER in .env (see .env.example)}"
@@ -29,8 +30,8 @@ RUNNER_MEMORY="${RUNNER_MEMORY:-16g}"
 RUNNER_NAME="${RUNNER_NAME:-${REPO_NAME}-ci-$(hostname)}"
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,x64,${REPO_NAME}}"
 CONTAINER_NAME="${CONTAINER_NAME:-${REPO_NAME}-ci-runner}"
-ENV_FILE="${SCRIPT_DIR}/.runner-registration.env"
-STATE_DIR="${SCRIPT_DIR}/state"
+ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
+STATE_DIR="${CONFIG_DIR}/state"
 
 FORCE_RECONFIGURE="false"
 if [ "${1:-}" = "--force-reconfigure" ]; then
@@ -86,18 +87,13 @@ chmod 0600 "${ENV_FILE}"
   --memory "${RUNNER_MEMORY}" \
   --volume "${STATE_DIR}:/runner-state:Z" \
   --workdir /runner-state \
-  --env REPO_URL="${REPO_URL}" \
-  --env RUNNER_NAME="${RUNNER_NAME}" \
-  --env RUNNER_LABELS="${RUNNER_LABELS}" \
-  --env RUNNER_TOKEN="${RUNNER_TOKEN}" \
-  --env RUNNER_FORCE_RECONFIGURE="${FORCE_RECONFIGURE}" \
   "${IMAGE}" \
   bash -c '
     set -euo pipefail
     if [ ! -x ./config.sh ]; then
       cp -a /opt/actions-runner/. /runner-state/
     fi
-    if [ "${RUNNER_FORCE_RECONFIGURE}" = "true" ]; then
+    if [ "$5" = "true" ]; then
       rm -f .runner .credentials*
     fi
     if [ -f .runner ]; then
@@ -105,14 +101,15 @@ chmod 0600 "${ENV_FILE}"
       exit 0
     fi
     ./config.sh \
-      --url "${REPO_URL}" \
-      --token "${RUNNER_TOKEN}" \
-      --name "${RUNNER_NAME}" \
-      --labels "${RUNNER_LABELS}" \
+      --url "$1" \
+      --token "$4" \
+      --name "$2" \
+      --labels "$3" \
       --work _work \
       --unattended \
       --replace
-  '
+  ' bash "${REPO_URL}" "${RUNNER_NAME}" "${RUNNER_LABELS}" \
+    "${RUNNER_TOKEN}" "${FORCE_RECONFIGURE}"
 
 echo "Configured ${RUNNER_NAME} for ${REPO_URL} with labels ${RUNNER_LABELS}."
 echo "Token expires at ${RUNNER_TOKEN_EXPIRES_AT}; ${ENV_FILE} holds it and must stay gitignored."

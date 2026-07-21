@@ -7,10 +7,12 @@ SHELL := /usr/bin/env bash
 # the original multi-runner setup this setup was distilled from; see README.md
 # "Scaling beyond one runner" if you outgrow one runner later.
 
-ifeq (,$(wildcard .env))
-$(error .env is missing — copy .env.example to .env and fill in OWNER/REPO_NAME first)
+CONFIG_DIR ?= .
+CONFIG_ENV := $(CONFIG_DIR)/.env
+ifeq (,$(wildcard $(CONFIG_ENV)))
+$(error $(CONFIG_ENV) is missing — copy .env.example there and fill in OWNER/REPO_NAME first)
 endif
-include .env
+include $(CONFIG_ENV)
 export
 
 CONTAINER_ENGINE ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
@@ -18,13 +20,14 @@ RUNNER_CPUS ?= 4
 RUNNER_MEMORY ?= 16g
 IMAGE_TAG ?= hermit-ci-runner:$(RUNNER_VERSION)
 CONTAINER_NAME ?= hermit-ci-runner
-ENV_FILE := .runner-registration.env
-STATE_DIR := state
+ENV_FILE := $(CONFIG_DIR)/.runner-registration.env
+STATE_DIR := $(CONFIG_DIR)/state
 IMAGE_STAMP := .runner-image-$(RUNNER_VERSION).stamp
 # Never inherit a stray shell START_ARGS; one-job mode is opt-in per-invocation.
 START_ARGS :=
 
 export CONTAINER_ENGINE RUNNER_CPUS RUNNER_MEMORY IMAGE_TAG CONTAINER_NAME ENV_FILE STATE_DIR
+export RUNNER_CONFIG_DIR := $(abspath $(CONFIG_DIR))
 
 .PHONY: help build init start verify stop drain status
 
@@ -44,7 +47,7 @@ help:
 	  '  make start START_ARGS=--detach' \
 	  '  make start START_ARGS=--once   # exit after one job, no restart policy' \
 	  '' \
-	  'Config lives in .env — see .env.example and README.md.'
+	  'Config lives in CONFIG_DIR/.env — see .env.example and README.md.'
 
 build: $(IMAGE_STAMP)
 

@@ -102,6 +102,28 @@ REPO_NAME=hermit
 (leave the rest at their defaults for a first run — see `.env.example` for
 what each setting does).
 
+## Named runner instances
+
+The root `.env` and `state/` remain the default Hermit instance. Additional
+repositories use a named configuration directory so registrations and
+containers stay independent while sharing this image and these scripts:
+
+```sh
+cp instances/reverie/.env.example instances/reverie/.env
+make CONFIG_DIR=instances/reverie init
+make CONFIG_DIR=instances/reverie start START_ARGS=--detach
+make CONFIG_DIR=instances/reverie status
+make CONFIG_DIR=instances/reverie verify
+make CONFIG_DIR=instances/reverie drain
+make CONFIG_DIR=instances/reverie stop
+```
+
+`init` registers once and persists credentials under the instance's ignored
+`state/`. `start` reuses that registration, verifies resource limits, launches
+the listener, and enables its Podman user service for reboot persistence.
+`drain` finishes the current job and stops polling without deregistering;
+`stop` stops and deregisters the runner.
+
 Make sure you have a `gh` CLI session logged in with **admin rights** on
 `rrnewton/hermit` (your own fork, so this is just your normal login):
 

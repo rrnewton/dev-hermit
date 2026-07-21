@@ -8,7 +8,8 @@ set -euo pipefail
 # registration back later, or ./stop-runner.sh stops and deregisters it.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.runner-registration.env"
+CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
+ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
 TAIL_LINES="${TAIL_LINES:-200}"
 FOLLOW_LOGS="true"
 

@@ -39,7 +39,8 @@ set -euo pipefail
 # --------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.runner-registration.env"
+CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
+ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
 MODE="attach"
 TAIL_LINES="${TAIL_LINES:-200}"
 RUN_ONCE="false"
@@ -88,11 +89,11 @@ REQUESTED_RUNNER_MEMORY="${RUNNER_MEMORY:-}"
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
-if [ -f "${SCRIPT_DIR}/.env" ]; then
+if [ -f "${CONFIG_DIR}/.env" ]; then
   # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/.env"
+  source "${CONFIG_DIR}/.env"
 fi
-STATE_DIR="${STATE_DIR:-${SCRIPT_DIR}/state}"
+STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
 RUNNER_CPUS="${REQUESTED_RUNNER_CPUS:-${RUNNER_CPUS:-4}}"
 RUNNER_MEMORY="${REQUESTED_RUNNER_MEMORY:-${RUNNER_MEMORY:-16g}}"
 # See the HERMIT CAVEAT comment above; set this in .env, e.g.:
