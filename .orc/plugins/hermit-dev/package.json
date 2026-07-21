@@ -1,0 +1,6 @@
+{
+  "name": "hermit-dev",
+  "version": "0.0.1",
+  "main": "./index.ts",
+  "description": "Canonical dev-hermit coordinator policies"
+}
