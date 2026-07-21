@@ -3,4 +3,4 @@
 	url = git@github.com:rrnewton/hermit.git
 [submodule "reverie"]
 	path = reverie
-	url = git@github.com:facebookexperimental/reverie.git
+	url = git@github.com:rrnewton/reverie.git
