@@ -23,7 +23,7 @@ set -euo pipefail
 #     --privileged
 #
 #   More surgical (try this first if you want to avoid full --privileged):
-#     --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+#     --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL
 #
 # hermit's PMU-based instruction counting (perf_event_open, used to bound how
 # long a thread runs before a deterministic context switch) may additionally
@@ -96,7 +96,7 @@ STATE_DIR="${STATE_DIR:-${SCRIPT_DIR}/state}"
 RUNNER_CPUS="${REQUESTED_RUNNER_CPUS:-${RUNNER_CPUS:-4}}"
 RUNNER_MEMORY="${REQUESTED_RUNNER_MEMORY:-${RUNNER_MEMORY:-16g}}"
 # See the HERMIT CAVEAT comment above; set this in .env, e.g.:
-#   CONTAINER_EXTRA_ARGS=--cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+#   CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL"
 read -r -a EXTRA_RUN_ARGS <<< "${CONTAINER_EXTRA_ARGS:-}"
 
 audit_container_limits() {

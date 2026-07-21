@@ -211,15 +211,15 @@ ptrace library). A container engine's *default* seccomp profile blocks the
 `CAP_SYS_PTRACE` — so hermit's own test suite (and anything that runs `hermit
 run <prog>`) will fail inside this runner container unless you relax that.
 
-Set exactly one of these in `.env` as `CONTAINER_EXTRA_ARGS` (passed straight
-through to `podman run`/`docker run`):
+Set the engine-specific value in `.env` as `CONTAINER_EXTRA_ARGS` (passed
+straight through to `podman run`/`docker run`):
 
 ```sh
-# More surgical — try this first:
-CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined"
+# Podman: allow ptrace/seccomp plus the nested mount namespaces used by tests.
+CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL"
 
-# Simplest, broadest — fall back to this if the above still isn't enough:
-CONTAINER_EXTRA_ARGS="--privileged"
+# Docker equivalent:
+CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt systempaths=unconfined"
 ```
 
 One further wrinkle: hermit's deterministic thread scheduler uses the CPU's
