@@ -41,20 +41,25 @@ for this harness: use `devbig-lead` unless the task explicitly says otherwise.
   on `devbig-lead`, and is used for integration, pinning, and cache donation.
 - **Submodule**: a repository recorded by the parent as an exact gitlink SHA.
   The parent records a commit, not a branch and not uncommitted contents.
-- **Slot**: one permanent paired workspace at
-  `~/work/dev-hermit/worktrees/slot01/` through `slot04/`.
-- **Product worktree**: one child checkout inside a slot, registered with the
-  corresponding primary repository, for example `slot02/hermit`.
+- **Slot**: one opaque paired workspace named `slotNN` under
+  `~/work/dev-hermit/worktrees/`.
+- **Active worktree**: a slot assigned to live work and recorded in
+  `worktrees/ACTIVE.md`. At most twelve may be active.
+- **Parked slot**: a clean, detached slot retained for cache reuse and omitted
+  from `ACTIVE.md`. At most five may be parked.
+- **Legacy slot**: a pre-policy, non-canonical worktree listed in `ACTIVE.md`.
+  It may finish its current task but must be removed instead of reused.
+- **Product worktree**: one nested submodule checkout inside a parent slot,
+  for example `slot02/hermit`.
 - **Feature branch**: a task-specific branch checked out in one product
   worktree. Slot names are deliberately unrelated to branch names.
 - **Team branch**: `devbig-lead`, the continuously integrated branch in the
   parent and each actively developed submodule.
 - **Stable branch**: `main`, advanced only to a reviewed, validated
   `devbig-lead` commit by fast-forward.
-- **Active slot**: a slot assigned to exactly one task/owner and recorded in
-  `worktrees/ACTIVE.md` before the first edit.
-- **Parked slot**: a clean, detached slot pair retained in place for reuse and
-  omitted from `ACTIVE.md`.
+- **Shared slot**: an active slot used by research-only agents or by mutating
+  agents with explicitly disjoint file ownership. Record every owner and path
+  in `ACTIVE.md`; never allow concurrent edits to the same file or branch.
 - **Handoff SHA**: the exact commit tested and offered for integration. Branch
   names alone are not sufficient evidence.
 
@@ -80,18 +85,17 @@ The intended parent layout is:
 |   |-- slot03/
 |   |   |-- hermit/
 |   |   `-- reverie/
-|   `-- slot04/
-|       |-- hermit/
-|       `-- reverie/
+|   `-- slotNN/                    # up to 12 active, plus 5 parked
 |-- ai_docs/                        # durable textual research and handoffs
 |-- experiments/                    # durable reproducible evidence
 `-- scratch/                        # ignored transient material
 ```
 
-Each slot is one ownership unit even when a task changes only one product. A
-Hermit-only task leaves the slot's Reverie worktree clean and detached, but
-that worktree remains reserved for the same owner until the slot is parked.
-Never assign the two children of one slot to different agents.
+A slot is normally one ownership unit. It may be shared by research-only
+agents or by agents with explicitly disjoint file ownership when the registry
+names every agent, task, branch, and owned path. A Hermit-only task leaves the
+slot's Reverie worktree clean and detached unless coordinated Reverie work is
+explicitly assigned. Never allow concurrent edits to the same file or branch.
 
 Physical worktrees and their build output are machine-local and must be
 ignored by the parent repository. `ACTIVE.md` and `ARCHIVED.md` are durable
@@ -100,8 +104,10 @@ coordination records; the checkout directories are not.
 ## Hard Invariants
 
 1. Never do feature development in a primary checkout.
-2. Never let two agents mutate the same slot, checkout, or branch.
-3. Register a slot in `worktrees/ACTIVE.md` before its first edit or commit.
+2. Never let two agents mutate the same file or branch. Shared slots require
+   explicit disjoint path ownership in `worktrees/ACTIVE.md`.
+3. Register every active slot, owner, task, branch, and owned path in
+   `worktrees/ACTIVE.md` before the first edit or commit.
 4. Require clean state before assignment, integration, parking, or pinning.
 5. Treat unexpected changes as owned by somebody else. Do not reset, clean,
    overwrite, stash, or absorb them.
@@ -113,6 +119,9 @@ coordination records; the checkout directories are not.
 10. Never force-push `devbig-lead` or `main`.
 11. Never commit binaries or generated build artifacts to any repository.
 12. A handoff is incomplete without exact SHAs and validation results.
+13. Never exceed twelve active worktrees, five parked slots, or fifteen agents;
+    never create a non-`slotNN` worktree path.
+14. Never remove a dirty slot until its state has a documented recovery SHA.
 
 ## Clean Start And Checkout Ownership
 
@@ -173,77 +182,78 @@ Before dispatch, compare the registry with both Git worktree registries and
 the filesystem:
 
 ```bash
+git worktree list --porcelain
 git -C hermit worktree list --porcelain
 git -C reverie worktree list --porcelain
-find worktrees -mindepth 2 -maxdepth 2 -type d \
-  \( -name hermit -o -name reverie \) -print | sort
+find worktrees -mindepth 1 -maxdepth 3 -name .git -print | sort
 ```
+
+The parent worktree list owns canonical nested slots. The product worktree
+lists expose old direct Hermit/Reverie worktrees and must normally contain only
+the primary checkout; any legacy exception must have a live registry row.
+Never exceed twelve active rows or five parked canonical slots.
 
 Resolve all of these before assigning a slot:
 
-- a physical child checkout not registered by its primary repository,
+- a physical checkout not registered by its owning repository,
 - a registered worktree whose directory is missing,
 - a live slot absent from `ACTIVE.md`,
 - an `ACTIVE.md` row for a parked or missing slot,
 - duplicate rows for one slot,
-- a branch checked out by more than one task.
+- a branch checked out by more than one task,
+- shared-slot ownership without explicit disjoint paths,
+- any new path outside `worktrees/slot01` through `worktrees/slot12`.
 
 Never silently delete a stale path. Record what owns it and preserve any
 uncommitted work before the coordinator decides its disposition.
 
-## Permanent Slot Pool
+## Strict Slot Pool
 
-There are exactly four permanent paired slots: `slot01`, `slot02`, `slot03`,
-and `slot04`. Reuse them. Do not turn `slot05` or later into another permanent
-slot.
+All new work uses a top-level canonical name from `slot01` through `slot12`.
+Branch names, task names, and agent names never appear in worktree paths. At
+most twelve worktrees may be active, at most five additional clean slots may
+be parked for cache reuse, and at most fifteen agents may be dispatched.
 
-A permanent slot is either:
+A canonical slot is either:
 
-- **Active**: both child worktrees are reserved to one task; at least one may
-  be on a feature branch.
-- **Parked**: both children are clean and detached in place; their caches and
-  Git registrations remain available for the next task.
+- **Active**: listed in `ACTIVE.md` and reserved to its recorded task owners.
+- **Parked**: clean, detached, omitted from `ACTIVE.md`, and retained only for
+  cache reuse.
 
-Do not move a permanent slot directory. Each child `.git` file points into a
-different submodule's common Git directory, and moving the outer slot can
-invalidate both registrations. Do not use `git worktree move` on the slot
-container. Do not remove permanent worktrees merely to make the registry look
-tidy.
+A slot may be shared by research-only agents or by mutating agents with
+explicitly disjoint path ownership recorded in `ACTIVE.md`. Never share a
+branch, file, or writable build directory between concurrent agents.
 
-Temporary over-provisioning requires explicit coordinator approval. A
-temporary `slot05+` pair must be registered while active and removed after its
-committed work is integrated or archived; it never joins the cached pool.
+Parking is optional cache retention, not permanence. Reclaim the least useful
+parked slot before the parked pool would exceed five, and reclaim idle slots
+earlier when disk pressure warrants it. Active slots are never evicted merely
+to satisfy the parked-cache cap. A dirty or blocked slot remains active until
+its owner hands off or its state is preserved with an exact recovery procedure.
+
+Do not move or rename a slot directory. Nested submodule metadata records its
+path, and moving the outer worktree can invalidate the children. Pre-policy
+non-canonical worktrees are temporary exceptions only while their current work
+remains active in `ACTIVE.md`. At closeout, archive and remove them; do not
+park, rename, or reassign them.
 
 ### Provisioning A Missing Slot
 
 Provisioning is a coordinator operation. Initialize both primary submodules
-first. If `reverie` is configured with `update = none`, override that setting
-only for the explicit initialization:
+first, then use the tracked helper. The helper enforces canonical names,
+requires owner/task metadata, serializes allocation, and refuses a thirteenth
+active slot or allocation while more than five parked slots exist:
 
 ```bash
 cd ~/work/dev-hermit
 git submodule update --init --checkout -- hermit
 git -c submodule.reverie.update=checkout \
   submodule update --init --checkout -- reverie
+
+./slot-init.sh slot01 --owner <agent> --task <task-id> \
+  --purpose "<one-line purpose>"
 ```
 
-Create the paired worktrees with absolute paths or paths relative to each
-primary. From the parent root:
-
-```bash
-slot=slot01
-mkdir -p "worktrees/$slot"
-git -C hermit fetch origin
-git -C reverie fetch origin
-git -C hermit worktree add --detach \
-  "../worktrees/$slot/hermit" devbig-lead
-git -C reverie worktree add --detach \
-  "../worktrees/$slot/reverie" devbig-lead
-```
-
-Do not run `git worktree add` from the parent repository for these children.
-The Hermit child must be registered by `hermit`; the Reverie child must be
-registered by `reverie`.
+Do not invoke `git worktree add` directly for agent work.
 
 Build caches may be seeded with copy-on-write copies when useful:
 
@@ -257,15 +267,18 @@ writable cache between checkouts. Correctness must not depend on cached output.
 
 ### Starting Work In A Slot
 
-The coordinator assigns one parked slot to one task. Before editing:
+The coordinator assigns a parked or new slot to one or more compatible tasks.
+Before editing:
 
-1. Confirm both child worktrees are registered and clean.
+1. Confirm the parent slot and both nested submodules are registered and clean.
 2. Fetch the relevant remotes without changing checked-out files.
 3. Confirm local `devbig-lead` in each changed repository matches the intended
    integration base.
 4. Create a descriptive feature branch in each repository that will change.
 5. Leave an unchanged child detached at a recorded base SHA.
-6. Add one `ACTIVE.md` row and post the slot/branch assignment to the task.
+6. Add or update one `ACTIVE.md` row with every owner, task, branch, and
+   disjoint owned path before the first edit, then post the assignment to each
+   task.
 
 Example Hermit-only assignment:
 
@@ -285,9 +298,10 @@ Run all edits, formatting, builds, tests, and commits from the assigned child
 worktrees. Always set the command working directory explicitly; similar paths
 under the primary and slots make accidental edits easy.
 
-### Parking And Reusing A Slot
+### Closing, Parking, And Reclaiming A Slot
 
-Park only after intended work is committed and handed off. For each child:
+Close a slot only after all assigned work is committed and handed off. First
+capture both child states:
 
 ```bash
 git -C worktrees/slot0X/hermit status --short
@@ -297,33 +311,39 @@ git -C worktrees/slot0X/reverie rev-parse HEAD
 ```
 
 Both status commands must produce no output. Record feature branches, exact
-SHAs, validation, and integration disposition in `ARCHIVED.md`, then detach:
+SHAs, validation, and integration disposition in `ARCHIVED.md`. Detach each
+child at the exact gitlink pinned by its parent slot so the parent becomes
+clean:
 
 ```bash
-git -C worktrees/slot0X/hermit switch --detach HEAD
-git -C worktrees/slot0X/reverie switch --detach HEAD
+slot=worktrees/slot0X
+git -C "$slot/hermit" switch --detach "$(git -C "$slot" rev-parse HEAD:hermit)"
+git -C "$slot/reverie" switch --detach "$(git -C "$slot" rev-parse HEAD:reverie)"
+git -C "$slot" status --short
 ```
 
-Remove the slot's single row from `ACTIVE.md`. Keep the feature branches until
-their commits are reachable from `devbig-lead` or the coordinator explicitly
-archives them. A non-clean slot remains active even if its agent is idle.
+The final status command must produce no output. Remove the slot's registry row.
+Keep feature branches until their commits are reachable from the landing branch
+or the coordinator explicitly archives them. A non-clean slot remains active
+even if its agent is idle.
 
-To reuse a parked slot, repeat the clean-start audit and create new branches
-from the current `devbig-lead`. Do not reset a parked child to make it current;
-switch or create the new branch explicitly so its previous SHA remains
-auditable.
-
-For an approved temporary slot only, remove each child through the repository
-that owns it, then remove the empty container:
+Keep the clean slot parked only when its cache justifies the disk and no more
+than five slots are already parked. Otherwise reclaim it through the parent:
 
 ```bash
-git -C hermit worktree remove --force ../worktrees/slot0X/hermit
-git -C reverie worktree remove --force ../worktrees/slot0X/reverie
-rmdir worktrees/slot0X
+git worktree remove --force worktrees/slot0X
+git worktree prune
 ```
 
-Move its registry entry to `ARCHIVED.md` before removal. `--force` does not
-authorize discarding changes; the preceding clean-state check is mandatory.
+`--force` is required because the parent worktree contains initialized
+submodules; it does not authorize discarding changes. For a registered legacy
+Hermit-only exception, use `git -C hermit worktree remove <path>` after the
+same archive and clean-state gates. Use the owning Reverie repository for a
+Reverie-only exception.
+
+To reuse a parked canonical slot, repeat the clean-start audit and create new
+task branches from the current intended base. Never reset a parked child to
+make it current; explicit branch creation keeps its previous SHA auditable.
 
 ## Branch And Merge Strategy
 
@@ -660,7 +680,7 @@ Before dispatch:
 
 1. Reconcile `ACTIVE.md`, both Git worktree lists, and physical slot children.
 2. Check parent, primaries, and candidate slot for unexpected changes.
-3. Confirm one owner and one task for the entire slot pair.
+3. Confirm every owner/task and any shared slot's disjoint path boundaries.
 4. Confirm the intended `devbig-lead` base SHA in each relevant repository.
 5. Register the slot before work begins.
 
@@ -684,6 +704,7 @@ Before closeout:
 
 1. Ensure each changed repository has a clean committed feature branch.
 2. Record exact SHAs and validation in the task and `ARCHIVED.md`.
-3. Detach both permanent slot children in place.
+3. Detach both canonical slot children at their parent-pinned gitlinks.
 4. Remove the slot's single `ACTIVE.md` row.
-5. Leave unrelated concurrent work exactly as found.
+5. Reclaim legacy slots and keep no more than five clean parked slots.
+6. Leave unrelated concurrent work exactly as found.
