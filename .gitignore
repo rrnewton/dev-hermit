@@ -14,7 +14,9 @@
 
 # Physical worktrees and disposable work areas are machine-local.
 /worktree/
-/worktrees/
+/worktrees/*
+!/worktrees/ACTIVE.md
+!/worktrees/ARCHIVED.md
 /scratch/
 /targets/
 
