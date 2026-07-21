@@ -17,13 +17,8 @@ set -euo pipefail
 # hermit's README, "How it works"). Both of those actions are blocked by a
 # container engine's DEFAULT seccomp profile and unprivileged capability set.
 # If hermit's own test suite (`cargo test`) runs on this runner, the
-# container needs one of:
-#
-#   Simplest (works, broadest):
-#     --privileged
-#
-#   More surgical (try this first if you want to avoid full --privileged):
-#     --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL
+# container runs rootfully with --privileged. Rootless Podman cannot mount the
+# fresh sysfs required by Hermit/Reverie, even with SYS_ADMIN and unmask=ALL.
 #
 # hermit's PMU-based instruction counting (perf_event_open, used to bound how
 # long a thread runs before a deterministic context switch) may additionally
@@ -96,8 +91,8 @@ fi
 STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
 RUNNER_CPUS="${REQUESTED_RUNNER_CPUS:-${RUNNER_CPUS:-4}}"
 RUNNER_MEMORY="${REQUESTED_RUNNER_MEMORY:-${RUNNER_MEMORY:-16g}}"
-# See the HERMIT CAVEAT comment above; set this in .env, e.g.:
-#   CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL"
+# See the HERMIT CAVEAT comment above; the trusted runner configuration uses:
+#   CONTAINER_EXTRA_ARGS="--dns=1.1.1.1 --privileged"
 read -r -a EXTRA_RUN_ARGS <<< "${CONTAINER_EXTRA_ARGS:-}"
 
 audit_container_limits() {
