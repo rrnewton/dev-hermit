@@ -1,0 +1,103 @@
+# Generic self-hosted GitHub Actions runner image for a Rust project.
+#
+# Written against facebookexperimental/hermit (or a fork such as
+# rrnewton/hermit), but there is nothing hermit-specific here except the
+# clearly-marked section near the bottom — swap that section out for any
+# other project's build dependencies and the rest of this file is reusable.
+#
+# Build with (RUNNER_VERSION/RUNNER_ARCH are also settable via the Makefile):
+#   podman build --build-arg RUNNER_VERSION=2.335.1 --build-arg RUNNER_ARCH=x64 \
+#     -t hermit-ci-runner:2.335.1 -f Containerfile .
+
+FROM ubuntu:24.04
+
+ARG RUNNER_VERSION=2.335.1
+ARG RUNNER_ARCH=x64
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+# The official actions/runner package refuses to run as root unless this is
+# set. Running as root keeps the bind-mounted runner-state volume simple
+# across Podman/Docker on a single workstation; see README.md "What runs as
+# root" for the tradeoff.
+ENV RUNNER_ALLOW_RUNASROOT=1
+ENV PATH=/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# --- Base OS packages + the GitHub CLI ------------------------------------
+# Kept deliberately minimal: git, build tools, and what the runner and its
+# lifecycle scripts need (jq for JSON, gh for the registration-token API
+# call, python3 for the cgroup-limit audit script).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gnupg \
+      jq \
+      lsb-release \
+      build-essential \
+      pkg-config \
+      python3 \
+      sudo \
+      unzip \
+      xz-utils \
+      zstd \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- GitHub Actions runner package -----------------------------------------
+RUN mkdir -p /opt/actions-runner \
+    && curl -fsSL \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz" \
+      -o /tmp/actions-runner.tar.gz \
+    && tar -xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner \
+    && rm /tmp/actions-runner.tar.gz \
+    && /opt/actions-runner/bin/installdependencies.sh
+
+WORKDIR /root
+
+# --- Rust toolchain ---------------------------------------------------------
+# stable, with rustfmt + clippy, is the generic baseline every Rust CI needs.
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+    && rustup component add clippy rustfmt --toolchain stable \
+    && rustc --version \
+    && cargo --version \
+    && gh --version
+
+# ============================================================================
+# PROJECT-SPECIFIC SECTION — hermit build/test dependencies.
+#
+# hermit (https://github.com/facebookexperimental/hermit) pins a `nightly`
+# Rust toolchain via its checked-in rust-toolchain.toml, so rustup will fetch
+# and use nightly automatically the first time `cargo build`/`cargo test`
+# runs inside a hermit checkout — no need to preinstall it here, though doing
+# so once (below) avoids paying that download on every job.
+#
+# hermit's own CI (.github/workflows/ci.yml) installs two extra apt packages
+# before `cargo build`: libunwind-dev and liblzma-dev. Confirmed on
+# 2026-07-21; re-check that workflow file if it has since grown more steps.
+# ============================================================================
+RUN rustup toolchain install nightly --component clippy --component rustfmt \
+    && rustc +nightly --version
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      liblzma-dev \
+      libunwind-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# If hermit's test suite needs more system libraries than this (check
+# CONTRIBUTING.md and .github/workflows/*.yml in the exact commit you are
+# building against), add them to the apt-get install list above rather than
+# introducing a second RUN layer, to keep the image DRY.
+# ============================================================================
+
+WORKDIR /runner-state
+CMD ["./run.sh"]

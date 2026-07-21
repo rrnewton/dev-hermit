@@ -1,0 +1,8 @@
+.env
+.runner-registration.env
+.runner-image-*.stamp
+state/
+work/
+*.log
+__pycache__/
+*.pyc
