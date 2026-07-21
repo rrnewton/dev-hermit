@@ -1,0 +1,43 @@
+# Agent and local runtime state
+/.agents/
+/.agent-locked
+/.runtime/
+/CLAUDE.local.md
+
+# Secrets and machine-specific configuration
+/.api_keys.env
+/.gh.env
+/.oauth.env
+/.ops-driver.env
+/.ops-state.json
+/.ops-state.yaml
+
+# Physical worktrees and disposable work areas are machine-local.
+/worktree/
+/worktrees/
+/scratch/
+
+# Transient tooling output
+**/__pycache__/
+/debug/
+*.perf.data
+
+# ai_docs contains durable text, not binary or archive attachments.
+/ai_docs/**/*.a
+/ai_docs/**/*.bin
+/ai_docs/**/*.bmp
+/ai_docs/**/*.dll
+/ai_docs/**/*.dylib
+/ai_docs/**/*.exe
+/ai_docs/**/*.gif
+/ai_docs/**/*.gz
+/ai_docs/**/*.jpeg
+/ai_docs/**/*.jpg
+/ai_docs/**/*.o
+/ai_docs/**/*.pdf
+/ai_docs/**/*.png
+/ai_docs/**/*.so
+/ai_docs/**/*.tar
+/ai_docs/**/*.tgz
+/ai_docs/**/*.webp
+/ai_docs/**/*.zip
