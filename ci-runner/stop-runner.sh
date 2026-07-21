@@ -8,7 +8,8 @@ set -euo pipefail
 # stop without losing the GitHub registration.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.runner-registration.env"
+CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
+ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "Missing ${ENV_FILE}; nothing to stop."
@@ -17,7 +18,7 @@ fi
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
-STATE_DIR="${STATE_DIR:-${SCRIPT_DIR}/state}"
+STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
 
 CONTAINER_ENGINE="${CONTAINER_ENGINE}" CONTAINER_NAME="${CONTAINER_NAME}" \
   "${SCRIPT_DIR}/ensure-runner-autostart.sh" --disable

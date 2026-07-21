@@ -6,3 +6,6 @@ work/
 *.log
 __pycache__/
 *.pyc
+instances/*/.env
+instances/*/.runner-registration.env
+instances/*/state/
