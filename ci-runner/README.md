@@ -124,6 +124,25 @@ the listener, and enables its Podman user service for reboot persistence.
 `drain` finishes the current job and stops polling without deregistering;
 `stop` stops and deregisters the runner.
 
+## Rootful privileged runners
+
+Hermit and Reverie create nested user, mount, and network namespaces and mount
+a fresh sysfs. The kernel rejects that sysfs mount under rootless Podman even
+with `SYS_ADMIN`; these trusted-repository runners therefore use rootful Podman
+with `--privileged`.
+
+On a fresh host, or when migrating the old rootless containers, run from a
+normal interactive host terminal so sudo can authenticate:
+
+```sh
+cd ci-runner
+./migrate-rootful.sh
+```
+
+The script preserves each GitHub registration under its ignored instance state,
+builds the image in rootful Podman's separate image store, starts both runners,
+installs system-level boot units, and verifies nested sysfs mounts.
+
 Make sure you have a `gh` CLI session logged in with **admin rights** on
 `rrnewton/hermit` (your own fork, so this is just your normal login):
 
@@ -233,15 +252,11 @@ ptrace library). A container engine's *default* seccomp profile blocks the
 `CAP_SYS_PTRACE` — so hermit's own test suite (and anything that runs `hermit
 run <prog>`) will fail inside this runner container unless you relax that.
 
-Set the engine-specific value in `.env` as `CONTAINER_EXTRA_ARGS` (passed
-straight through to `podman run`/`docker run`):
+The trusted runners use rootful Podman because the nested sysfs mount is
+impossible under rootless Podman. `.env` passes this directly to `podman run`:
 
 ```sh
-# Podman: allow ptrace/seccomp plus the nested mount namespaces used by tests.
-CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt unmask=ALL"
-
-# Docker equivalent:
-CONTAINER_EXTRA_ARGS="--cap-add=SYS_PTRACE --security-opt seccomp=unconfined --security-opt systempaths=unconfined"
+CONTAINER_EXTRA_ARGS="--dns=1.1.1.1 --privileged"
 ```
 
 One further wrinkle: hermit's deterministic thread scheduler uses the CPU's

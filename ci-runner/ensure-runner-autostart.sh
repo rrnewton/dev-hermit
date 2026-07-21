@@ -6,11 +6,8 @@ set -euo pipefail
 #   1. Container restart policy ("always") - the process-death safety net.
 #      Handled by start-runner.sh at container-create time; this script only
 #      verifies/repairs it.
-#   2. A per-container systemd --user unit (Podman only) - the
-#      machine-reboot safety net. `systemctl --user enable` makes the
-#      container start again after the host reboots and the user logs in
-#      (with `loginctl enable-linger` so it starts even without an active
-#      login session).
+#   2. A per-container systemd unit (Podman only) - the machine-reboot safety
+#      net. Rootful Podman uses a system unit; rootless Podman uses a user unit.
 #
 # Docker has no equivalent to `podman generate systemd`; on Docker, only the
 # restart policy applies, and you are responsible for your own reboot
@@ -91,6 +88,32 @@ if ! command -v systemctl >/dev/null 2>&1 || ! command -v loginctl >/dev/null 2>
 fi
 
 unit_name="container-${CONTAINER_NAME}.service"
+rootful="false"
+if [[ "${engine_name}" == podman-root* ]]; then
+  rootful="true"
+fi
+
+if [ "${rootful}" = "true" ]; then
+  unit_path="/etc/systemd/system/${unit_name}"
+  if [ "${MODE}" = "disable" ]; then
+    sudo systemctl disable "${unit_name}" >/dev/null 2>&1 || true
+    sudo rm -f "${unit_path}"
+    sudo systemctl daemon-reload
+    echo "Disabled system boot auto-start for ${CONTAINER_NAME}."
+    exit 0
+  fi
+
+  temporary_unit="$(mktemp)"
+  trap 'rm -f "${temporary_unit}"' EXIT
+  "${CONTAINER_ENGINE}" generate systemd --name --restart-policy on-failure \
+    "${CONTAINER_NAME}" > "${temporary_unit}"
+  sudo install -m 0644 "${temporary_unit}" "${unit_path}"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "${unit_name}" >/dev/null
+  echo "Enabled ${unit_name}; ${CONTAINER_NAME} will start at system boot."
+  exit 0
+fi
+
 config_root="${XDG_CONFIG_HOME:-${HOME}/.config}"
 unit_dir="${config_root}/systemd/user"
 unit_path="${unit_dir}/${unit_name}"
