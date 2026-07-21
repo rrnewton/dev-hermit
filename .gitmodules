@@ -1,6 +1,6 @@
 [submodule "hermit"]
 	path = hermit
-	url = git@github.com:facebookexperimental/hermit
+	url = git@github.com:rrnewton/hermit.git
 [submodule "reverie"]
 	path = reverie
 	url = git@github.com:facebookexperimental/reverie.git
