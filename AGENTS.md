@@ -366,25 +366,37 @@ branch to a pull request against current `rrnewton/hermit:main`.
 
 ### Feature Branch Rules
 
-Agents ALWAYS commit on feature branches. End every implementation turn with a
-COMMIT. Agents may open draft PRs without asking. NEVER stash work. PRs are the
-review mechanism.
+#### **ALWAYS COMMIT ON FEATURE BRANCHES**
+
+**Every mutating agent must finish its task with all intended work committed on
+its task feature branch. Never stash work. Never leave intended work
+uncommitted. An uncommitted or stashed handoff is incomplete.**
 
 - Fetch through the required proxy and branch from current `origin/main`, not
   an old slot HEAD, stale local branch, or parent gitlink by accident.
+- Create or use the task's dedicated feature branch before the first source or
+  policy edit. Never commit task work directly on `main` or a shared integration
+  branch.
 - Keep one coherent task on one branch. Coordinated Hermit/Reverie branches
   together form one logical change but remain separate Git histories.
-- Commit all intended changes before handoff. The coordinator does not
-  integrate uncommitted slot state.
-- Push only when the task or coordinator requests it. Never force-push a
-  shared branch.
+- Commit all intended task-owned changes before reporting completion, even when
+  the task does not repeat the commit instruction. If the task is blocked,
+  commit every coherent completed change and record the remaining blocker.
+- Push the committed feature branch and open a draft pull request without
+  asking for separate permission. An explicit task instruction not to publish
+  is the only exception.
+- Always push with an explicit refspec:
+  `git push origin HEAD:refs/heads/<branch>`. The global
+  `push.default=current` setting is a convenience, not permission to omit the
+  destination.
+- Never force-push a shared branch or `main`.
 - Rebase only a private feature branch and only when the task authorizes it.
   After rebasing, rerun affected validation and provide the new SHA.
 
 ### Publishing And Review
 
-When a task authorizes repository-side publication, push the feature branch
-and open a pull request against `rrnewton/hermit:main`. Before opening the PR:
+Unless a task explicitly prohibits publication, push the feature branch and
+open a draft pull request against `rrnewton/hermit:main`. Before opening the PR:
 
 1. Confirm the feature branch is based on the intended current `origin/main`
    and does not contain unrelated commits.
@@ -398,7 +410,8 @@ and open a pull request against `rrnewton/hermit:main`. Before opening the PR:
 
 ```bash
 HTTPS_PROXY=http://fwdproxy:8080 git fetch origin main
-HTTPS_PROXY=http://fwdproxy:8080 git push origin <feature-branch>
+HTTPS_PROXY=http://fwdproxy:8080 \
+  git push origin HEAD:refs/heads/<feature-branch>
 HTTPS_PROXY=http://fwdproxy:8080 gh pr create -R rrnewton/hermit --base main
 ```
 
