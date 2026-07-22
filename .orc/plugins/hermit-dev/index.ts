@@ -3,6 +3,9 @@ const SKILL_NAME = "hermit-dev";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
 const POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
 const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
+const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
+const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
+const PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
 
 const SKILL_DESCRIPTION = "Project-specific coordination, fork-only issue, " +
   "Git/PR, Reverie API, and product-vision policies for dev-hermit.";
@@ -51,8 +54,20 @@ async function activateHermitDevPolicies(): Promise<string> {
   return "hermit-dev policies activated from " + POLICY_PATH;
 }
 
-// Top-level plugin evaluation is declaration-only. Startup replaces these
-// placeholder instructions with the current canonical AGENTS.md contents.
+export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
+  await wf.loop(async () => {
+    await wf.sleep(PR_HEALTH_INTERVAL_MS);
+    await orc.sendWakeup(
+      [],
+      "PR health heartbeat",
+      "Run " + PR_STATUS_COMMAND + ". Review human-review blockers, CI failures, " +
+        "and the free-to-land backlog before opening more PRs.",
+    );
+  });
+}
+
+// Top-level plugin evaluation registers the placeholder skill and durable
+// PR-health heartbeat. Startup replaces the placeholder with current policy.
 registerHermitDevSkill(
   "The canonical dev-hermit policies are loaded from AGENTS.md during startup.",
 );
@@ -82,6 +97,8 @@ orc.exposeFunction(
       hermitUpstream: "facebookexperimental/hermit",
       reverieIssueRepo: "rrnewton/reverie",
       issueCreateWrapper: ISSUE_CREATE_WRAPPER,
+      prStatusCommand: PR_STATUS_COMMAND,
+      prHealthIntervalMinutes: PR_HEALTH_INTERVAL_MS / 60000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,
       maxAgents: 15,
@@ -91,6 +108,15 @@ orc.exposeFunction(
     description: "Report hermit-dev plugin registration and policy source state",
     params: [],
     sig: "orc.hermit-dev.status()",
+  },
+);
+
+orc.workflow(
+  prHealthHeartbeat,
+  "Wake the coordinator every 30 minutes to inspect Hermit and Reverie PR health",
+  {
+    name: PR_HEALTH_WORKFLOW_NAME,
+    restartable: {} as any,
   },
 );
 
