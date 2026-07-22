@@ -256,7 +256,7 @@ The trusted runners use rootful Podman because the nested sysfs mount is
 impossible under rootless Podman. `.env` passes this directly to `podman run`:
 
 ```sh
-CONTAINER_EXTRA_ARGS="--dns=1.1.1.1 --privileged"
+CONTAINER_EXTRA_ARGS="--network=host --privileged"
 ```
 
 One further wrinkle: hermit's deterministic thread scheduler uses the CPU's
