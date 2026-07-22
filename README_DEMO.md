@@ -27,8 +27,8 @@ Use an x86-64 Linux host with Rust nightly (selected by the submodule's
 `rust-toolchain.toml`), libunwind and LZMA development libraries, Linux
 user/PID namespaces, and parent-child ptrace and seccomp support. GDB is needed
 for the record/replay section, and the Python demo uses `/usr/bin/python3`. The
-final schedule-bisection demo also needs user-accessible CPU performance
-counters (PMU).
+`--verify` step in demo 1 and the schedule-bisection demo (demo 4) both need
+user-accessible CPU performance counters (PMU).
 
 The demos use private temporary and ignored build-artifact directories and
 require no external network access.
@@ -47,12 +47,16 @@ demos/
 ```
 
 Each script sources `demos/common.sh`, which locates the `hermit/` submodule,
-builds the release and debug binaries, and defines the shared `run_hermit` and
-`chaos_run` wrappers. The wrappers deliberately disable CPUID virtualization and
-PMU timer preemption so the short examples also run on hosts without those
-features; CPUID is therefore a host input in those commands, and CPU-bound
-guests receive fewer preemption opportunities. Demo 4 is the exception and does
-require the PMU.
+builds the release and debug binaries, and defines the shared `run_hermit`,
+`verify_hermit`, and `chaos_run` wrappers. `run_hermit` and `chaos_run`
+deliberately disable CPUID virtualization and PMU timer preemption so the short
+examples also run on hosts without those features; CPUID is therefore a host
+input in those commands, and CPU-bound guests receive fewer preemption
+opportunities. `verify_hermit` is different: it keeps PMU-based preemption on
+(the racy verify guest is only reliably determinized with real preemption) and
+raises the log level to `info` (at `--log=error` the execution log that
+`--verify` compares is empty). Demo 4 and the demo-1 `--verify` step are the
+exceptions that require the PMU.
 
 ## Quick Start
 
@@ -85,10 +89,12 @@ Set `DEMO_SKIP_BUILD=1` to reuse an existing `hermit/target` build, or export
 
 Hermit preserves the guest exit status and output while making random bytes,
 wall-clock time, Python hash seeding, and heap address layout stable across
-runs. `run_hermit --verify` re-runs the guest and compares status, output, and
-Hermit's deterministic execution log. The guest must be idempotent: a first run
-that changes a file, database, cache, or external service can legitimately
-change the second run.
+runs. It then determinizes `examples/race.sh` -- two shells whose output
+interleaves differently on every native run -- and `verify_hermit` runs it twice
+under Hermit, comparing exit status, output, and thousands of DETLOG/scheduler
+messages in the deterministic execution log. The guest must be idempotent: a
+first run that changes a file, database, cache, or external service can
+legitimately change the second run.
 
 ### 2. Record And Replay
 
