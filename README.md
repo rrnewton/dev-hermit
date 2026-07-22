@@ -9,8 +9,15 @@ Product development happens in:
 - <https://github.com/rrnewton/hermit>
 - <https://github.com/rrnewton/reverie>
 
-The historical upstream repositories remain useful references, but day-to-day
-Hermit changes flow through `rrnewton/hermit:main`.
+The `rrnewton/` forks are where rapid, deliberately noisy day-to-day
+development happens. Day-to-day Hermit changes flow through
+`rrnewton/hermit:main`. The upstream `facebookexperimental/` repositories are
+not abandoned references: they are the release target. Tested work is promoted
+upstream as periodic, clean release pull requests, and `facebookexperimental/`
+in turn imports into Meta's internal `fbsource` monorepo via DiffTrain.
+
+Running fork CI directly on `facebookexperimental/` is currently blocked on
+administrator access to configure a self-hosted CI runner there.
 
 ## Clone the workspace
 
