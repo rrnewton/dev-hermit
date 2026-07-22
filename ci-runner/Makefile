@@ -19,6 +19,7 @@ CONTAINER_ENGINE ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || 
 RUNNER_CPUS ?= 4
 RUNNER_MEMORY ?= 16g
 IMAGE_TAG ?= hermit-ci-runner:$(RUNNER_VERSION)
+BUILD_EXTRA_ARGS ?= --dns=1.1.1.1
 CONTAINER_NAME ?= hermit-ci-runner
 ENV_FILE := $(CONFIG_DIR)/.runner-registration.env
 STATE_DIR := $(CONFIG_DIR)/state
@@ -53,6 +54,7 @@ build: $(IMAGE_STAMP)
 
 $(IMAGE_STAMP): Containerfile
 	"$(CONTAINER_ENGINE)" build \
+	  $(BUILD_EXTRA_ARGS) \
 	  --build-arg RUNNER_VERSION="$(RUNNER_VERSION)" \
 	  --build-arg RUNNER_ARCH="$(RUNNER_ARCH)" \
 	  -t "$(IMAGE_TAG)" -f Containerfile .
