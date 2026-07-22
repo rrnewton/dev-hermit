@@ -92,7 +92,7 @@ STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
 RUNNER_CPUS="${REQUESTED_RUNNER_CPUS:-${RUNNER_CPUS:-4}}"
 RUNNER_MEMORY="${REQUESTED_RUNNER_MEMORY:-${RUNNER_MEMORY:-16g}}"
 # See the HERMIT CAVEAT comment above; the trusted runner configuration uses:
-#   CONTAINER_EXTRA_ARGS="--dns=1.1.1.1 --privileged"
+#   CONTAINER_EXTRA_ARGS="--network=host --privileged"
 read -r -a EXTRA_RUN_ARGS <<< "${CONTAINER_EXTRA_ARGS:-}"
 
 audit_container_limits() {
