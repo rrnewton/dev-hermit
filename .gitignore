@@ -15,6 +15,7 @@
 # Physical worktrees and disposable work areas are machine-local.
 /worktree/
 /worktrees/
+/main/
 /scratch/
 /targets/
 
