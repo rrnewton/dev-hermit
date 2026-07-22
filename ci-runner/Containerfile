@@ -89,6 +89,7 @@ RUN rustup toolchain install nightly --component clippy --component rustfmt \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+      iputils-ping \
       liblzma-dev \
       libunwind-dev \
     && rm -rf /var/lib/apt/lists/*
