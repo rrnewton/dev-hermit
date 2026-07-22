@@ -6,6 +6,21 @@
 # nondeterministic inputs (random bytes, wall-clock time, address layout, and
 # Python hash seeding) with virtual, reproducible values.
 
+set -euo pipefail
+
+# shellcheck disable=SC2034  # consumed by common.sh demo_success/demo_failure
+DEMO_LABEL="Demo 1: Deterministic Run"
+cat <<'DESC'
+=== Demo 1: Deterministic Run ===
+
+Hermit preserves the guest exit status and output while making random bytes,
+wall-clock time, Python hash seeding, and heap address layout stable across
+runs. run_hermit --verify re-runs the guest and compares status, output, and
+Hermit's deterministic execution log. The guest must be idempotent: a first run
+that changes a file, database, cache, or external service can legitimately
+change the second run.
+DESC
+
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 demo_banner "Basic execution"
@@ -43,6 +58,4 @@ cmp "$DEMO_TMP/heap-hermit-1.txt" "$DEMO_TMP/heap-hermit-2.txt"
 demo_banner "Built-in --verify re-runs and compares status, output, and log"
 run_hermit --verify -- /bin/echo reproducible
 
-echo
-echo "Demo 1 complete. The guest must be idempotent: a first run that changes a"
-echo "file, database, cache, or external service can legitimately change the second."
+demo_success
