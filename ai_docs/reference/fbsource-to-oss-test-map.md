@@ -1,3 +1,18 @@
+> ⚠️ **STALE / PARTIALLY INCORRECT (as of 2026-07-22).** A flag-for-flag
+> re-verification found this document materially wrong on two rows and out of date
+> on the rr suite. See `fbsource-oss-flag-verification-2026-07-22.md` for the
+> authoritative comparison. Key corrections:
+> - **rr tests are NOT an unported gap.** They are ported in `hermit-cli/tests/rr_suite.rs`
+>   (~213 programs via the `third-party/rr` submodule), but **without `--verify`**,
+>   so OSS checks exit codes, not determinism. Row 16's "❌ none" is outdated.
+> - **Row 18 is wrong:** there is no `run_stable_matrix(Strict)` / `RunMode::Strict`.
+>   `strict_mode_matrix` is only a fail-closed unsupported-syscall check, not a
+>   strict workload matrix. fbsource's 51 `hermit_run_strict__` targets have no OSS
+>   equivalent.
+> - fbsource strict/chaos/tracereplay/chaosreplay run through the `hermit-verify`
+>   binary (record→replay determinism check); the OSS matrix largely does not.
+> The "strict superset" claim is **false**; four strictness gaps remain.
+
 # fbsource `hermetic_infra/hermit` buck tests → OSS cargo tests
 
 **Source of truth:** `buck2 uquery "kind('.*test.*', //hermetic_infra/hermit/...)"` → **745 test targets**.
