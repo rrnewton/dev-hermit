@@ -20,7 +20,7 @@ make CONFIG_DIR=instances/reverie start START_ARGS=--detach
 
 for name in hermit-ci-runner reverie-ci-runner; do
   ./podman-root.sh exec "${name}" \
-    unshare --user --map-root-user --pid --fork --uts --mount \
+    unshare --user --map-root-user --pid --fork --uts --mount --net \
     sh -c 'mkdir -p /tmp/sysfs-smoke && mount -t sysfs sysfs /tmp/sysfs-smoke && umount /tmp/sysfs-smoke'
 done
 
