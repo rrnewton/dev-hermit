@@ -620,6 +620,24 @@ The coordinator validates the combined `devbig-lead` state after landing.
 Worker validation of isolated feature branches is necessary but does not prove
 that the combined team branch is green.
 
+## Communication Precision
+
+Reports, notes, and summaries must be specific enough that another agent can
+act on them without re-deriving the context. Vague summaries are unacceptable.
+
+- **Name the tool.** Never write "the Tool" or "a tool" when you mean a
+  specific one. Say which: `StraceTool`, `Detcore`, `CounterTool`, etc.
+- **Give the exact command and arguments.** Never say "the program passes."
+  State the full command line, e.g.
+  `hermit run --strict --verify -- bash -c 'echo hi | gzip | gunzip'`.
+- **Say where.** Always specify the location of a claim: `main`, `PR #N`, or
+  the exact feature branch / SHA. A result with no location is unverifiable.
+- **Qualify the result.** Always report the determinism level (`L0` / `L1` /
+  `L2`), the pass count (e.g. `18/20`, `5/5`), and the exact programs or
+  test names the result covers. "It works" is not a result.
+- **Bind evidence to commits, not branch names**, per the evidence block
+  above. A mutable branch name is not a witness.
+
 ## Failure, Recovery, And Concurrent Work
 
 Other agents may update the parent, primary checkouts, registries, or branches
