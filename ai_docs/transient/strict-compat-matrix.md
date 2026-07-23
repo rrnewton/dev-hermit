@@ -1,9 +1,9 @@
 # Strict and verify compatibility matrix
 
 This is the consolidated result of the 2026-07-23 compatibility expansion
-batches 1 through 39. It reports the commands recorded in TaskGraph by
+batches 1 through 42. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and
-`impl-strict-compat-batch2` through `impl-strict-compat-batch39`.
+`impl-strict-compat-batch2` through `impl-strict-compat-batch42`.
 The results are historical measurements, not claims about an untested branch tip.
 
 ## Run context
@@ -24,6 +24,8 @@ The results are historical measurements, not claims about an untested branch tip
   Batches 28, 31, and 35 ran at `fbf1d395`; batch 36 built its fixtures in a
   slot but used the primary release Hermit binary. Batches 37 and 38 ran at
   `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batch 39 recorded only the
+  primary release-binary path. Batch 40 ran at `46836669`; batch 41 ran at
+  `0b241392473aff32cf96bb1fcad330bbd0e2fed3`; and batch 42 recorded only the
   primary release-binary path, so this report does not invent its SHA.
 - Command column: commands omit the common
   `target/release/hermit run --strict --verify --` prefix unless a Hermit
@@ -76,7 +78,10 @@ The results are historical measurements, not claims about an untested branch tip
 | 37 | Larger real applications | 5 | 2 | 0 |
 | 38 | Database and data processing | 7 | 2 | 0 |
 | 39 | System information | 6 | 3 | 0 |
-| **Total** | | **302** | **62** | **5** |
+| 40 | Signal handling | 9 | 0 | 0 |
+| 41 | Inter-process communication | 5 | 2 | 0 |
+| 42 | Math and science | 7 | 2 | 0 |
+| **Total** | | **323** | **66** | **5** |
 
 ## Core utilities
 
@@ -622,6 +627,36 @@ valid target because that package has no library target.
 | 368 | uname | `uname -a` | PASS L2 | 39 | |
 | 369 | getconf | `getconf PAGESIZE` | PASS L2 | 39 | |
 
+## Signals, IPC, and math/science
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 370 | SIGTERM trap | `bash -c 'trap "echo caught" SIGTERM; kill -TERM $$; echo after'` | PASS L2 | 40 | Output is `caught`, then `after`. |
+| 371 | SIGALRM trap | `bash -c 'trap "echo alarm" SIGALRM; kill -ALRM $$'` | PASS L2 | 40 | Output is `alarm`. |
+| 372 | ignored SIGINT | `bash -c 'trap "" SIGINT; echo immune'` | PASS L2 | 40 | |
+| 373 | signal existence probe | `bash -c 'kill -0 $$; echo alive=$?'` | PASS L2 | 40 | Output is `alive=0`. |
+| 374 | set -e recovery | `bash -c 'set -e; false &#124;&#124; echo recovered'` | PASS L2 | 40 | |
+| 375 | subshell exit status | `bash -c '(exit 42); echo parent=$?'` | PASS L2 | 40 | Output is `parent=42`. |
+| 376 | timeout status | `bash -c 'timeout 1 sleep 10; echo timeout=$?'` | PASS L2 | 40 | Output is `timeout=124`; L2 took 2.20 seconds wall time. |
+| 377 | EXIT trap | `bash -c 'trap "echo EXIT" EXIT; echo main'` | PASS L2 | 40 | Output is `main`, then `EXIT`. |
+| 378 | fd 3 redirection | `bash -c 'exec 3>&1; echo redirected >&3'` | PASS L2 | 40 | |
+| 379 | simple pipe | `bash -c 'echo hello &#124; cat'` | PASS L2 | 41 | 1633/1633 DETLOG and scheduler COMMIT messages. |
+| 380 | named FIFO rendezvous | `bash -c 'mkfifo /tmp/fifo41; echo test > /tmp/fifo41 & cat /tmp/fifo41; wait; rm /tmp/fifo41'` | FAIL | 41 | Run 1 hangs: the writer blocks opening the FIFO while the reader is not scheduled. |
+| 381 | System V IPC listing | `ipcs` | PASS L2 | 41 | |
+| 382 | Bash coprocess | Bash `coproc` round trip through `cat` | PASS L2 | 41 | 1965/1965 DETLOG and scheduler COMMIT messages. |
+| 383 | process substitution | `bash -c 'read -r line < <(echo subprocess); echo $line'` | FAIL | 41 | Run 1 hangs: the parent blocks reading while the child writer cannot run. |
+| 384 | short sleep | `bash -c 'echo start; sleep 0.001; echo end'` | PASS L2 | 41 | |
+| 385 | read/write fd | `bash -c 'exec 3<>/tmp/ipc41; echo hello >&3; cat <&3; rm /tmp/ipc41'` | PASS L2 | 41 | |
+| 386 | bc pi | `sh -c "echo 'scale=20; 4*a(1)' &#124; bc -l"` | PASS L2 | 42 | |
+| 387 | dc pi | `dc -e '10 k 355 113 / p'` | PASS L2 | 42 | |
+| 388 | Meta Python math | `python3 -c 'import math; print(math.pi, math.e, math.factorial(20))'` | PASS L2 | 42 | |
+| 389 | Meta Python sum | `python3 -c 'print(sum(range(1000)))'` | FAIL | 42 | Helper-thread startup diverges after clone3: parent futex progress and child RNG initialization occur in different orders. |
+| 390 | awk sum | `awk 'BEGIN{for(i=1;i<=100;i++) s+=i; print s}'` | PASS L2 | 42 | Output is 5050. |
+| 391 | Perl POSIX math | `perl -e 'use POSIX; print POSIX::ceil(3.14), " ", POSIX::floor(3.14), "\n"'` | PASS L2 | 42 | |
+| 392 | seq and awk sum | `sh -c "seq 1 1000 &#124; awk '{s+=$1} END{print s}'"` | PASS L2 | 42 | |
+| 393 | bc integer power | `sh -c "echo '2^64' &#124; bc"` | PASS L2 | 42 | |
+| 394 | Meta Python seeded RNG | `python3 -c 'import random; random.seed(42); print([random.randint(0,100) for _ in range(10)])'` | FAIL | 42 | Explicit application seeding does not remove the Meta runtime's helper-thread startup scheduling divergence. |
+
 ## Record/replay results
 
 Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
@@ -638,6 +673,12 @@ assurance dimension from strict L2 and are excluded from the strict summary.
 | Focused validation after envp fix | 4 | 0 | At PR #238 head, `/bin/echo` matched 3/3 and `java -version` matched 1/1 on a host with `/usr/local/fbcode`. A separate validation also matched `getent hosts localhost`. |
 | Post-envp general retest on main | 16 | 4 | Echo, cat, wc, getent, cal, arch, nproc, Perl, awk, Lua, dc, sqlite3, direct gzip/gunzip, factor, and printf match. `hostname -f` hits the recorder NULL-optval panic; date and two gcc cases diverge in replay fd ordering. |
 | Post-envp scripting retest on main | 11 | 1 | Lua, Ruby, Perl, awk, bc, dc, factor, sqlite3, jq, Java, and OpenSSL match. Node recording still panics on unsupported ioctl request 35142 and never reaches replay. |
+| Post-envp compilation and multi-process retest | 4 | 6 | Make, a Bash builtin loop, `sh` cat/echo, and `wc` match. gcc and g++ replay diverge before executing their generated binaries; rustc recording does not complete; three shell pipelines diverge through stdout routing, fd allocation, or SIGCHLD ordering. |
+| Post-envp Hermit fixtures and shell-form retest | 4 | 4 | All four repository fixtures match. The four prescribed shell forms fail through duplicated pipeline output, process-substitution fd ordering, or process-substitution liveness. Six direct-utility isolation controls also match but are excluded from this prescribed-case count. |
+| Post-envp data-processing retest | 6 | 4 | Direct sed, tr, nl, wc, tee, and rev match. Pipelines using cut, sort, uniq, or xargs expose duplicated intermediate output, fd allocation, or SIGCHLD ordering failures. |
+| Post-envp system-information retest | 12 | 0 | uname, arch, nproc, getconf, uptime, df, mount, lsblk, id, whoami, logname, and printenv all match. |
+| Post-envp signal and Bash retest | 7 | 3 | Signal traps, status handling, timeout, and a builtin loop match. Command substitution and two pipelines fail through intermediate-output leakage or replay fd allocation. Two direct isolation controls match and are excluded from this prescribed-case count. |
+| **Post-envp batches 1-7 subtotal** | **60** | **22** | Counts the 82 prescribed cases in the seven numbered post-fix matrices; supplemental controls are described but not double-counted. |
 
 PR [#238](https://github.com/rrnewton/hermit/pull/238) merged to `main` as
 `46836669bd6c2f7151fbe65c55f4ea5bd1440897`. It pre-creates the fbcode bind
@@ -647,7 +688,8 @@ therefore fixed on current main. The historical 49 pre-fix outcomes remain
 reported as measured; overlapping post-fix successes are recorded in the new
 retest rows rather than retroactively relabeling those runs. `hostname -f`'s
 recorder netlink panic, Node's unsupported ioctl, javac recording performance,
-`tail`, and concurrent pipeline liveness remain distinct observations.
+`tail`, concurrent pipeline liveness, intermediate-output leakage, and replay
+fd allocation remain distinct observations.
 
 PR [#239](https://github.com/rrnewton/hermit/pull/239) remains open at
 `929ba884d907f86463d27ebbd3d3287df6aa49c3`. It passed compiler-focused L2
@@ -691,10 +733,13 @@ parent/child/peer ordering races, so it was not landed.
 | Batch 34 external web access | The host has no usable route to example.com; curl/wget exit nonzero before run 2. | External network success is outside Hermit's contract; local refused-connect paths pass L2. |
 | Batch 35 named FIFO | The writer blocks in `openat(O_WRONLY)` while strict serialization prevents the reader from reaching its matching open. | Requires scheduler awareness of cross-process FIFO rendezvous, the same structural class as batches 13 and 18. |
 | Batch 39 live system data | `lscpu`, `free`, and `ps` expose changing host CPU-frequency or memory values. | Virtualize or suppress those live fields; deterministic static topology, mount, disk, kernel, and page-size probes pass. |
+| Batch 41 FIFO and process substitution | A blocking FIFO open or pipe read holds the serialized turn while the peer process that would satisfy it cannot run. | Requires scheduler awareness of cross-process rendezvous; simple pipes, coprocesses, IPC listing, sleeps, and regular-file fd operations pass. |
+| Batch 42 Meta Python | Helper-thread startup orders parent futex progress and child RNG initialization differently; explicit application-level RNG seeding does not control that runtime startup. | Stock Python remains the established control for this failure class; the non-Python math tools pass. |
+| Post-envp R/R pipelines | Replay can expose intermediate pipe payloads on stdout, allocate different fds for process substitution, or order pipe close and SIGCHLD differently. | Direct utility controls pass; console-fd tracking, replay fd allocation, and multi-process scheduling remain separate follow-ups. |
 
 ## Interpretation
 
-- Across 369 recorded command outcomes, 302 reach L2 (81.8%), 62 do not
+- Across 394 recorded command outcomes, 323 reach L2 (82.0%), 66 do not
   reach L2, and 5 were not run. Repeated stress attempts are summarized in one
   row per scenario rather than inflating the command count.
 - The strongest coverage is deterministic local computation, sequential
@@ -719,5 +764,6 @@ parent/child/peer ordering races, so it was not landed.
 - Record/replay is tracked separately: the initial debug-binary matrix passed
   18/20, while 49 later pre-fix release-binary probes were dominated by one
   program-independent replay envp failure. PR #238 fixed that failure on main.
-  Post-fix main retests pass 16/20 general cases and 11/12 scripting cases;
-  remaining failures are distinct recorder ioctl/NULL-pointer and replay-fd bugs.
+  Across the seven numbered post-fix matrices, 60/82 prescribed cases match
+  recording. Remaining failures are distinct recorder ioctl/NULL-pointer,
+  replay-fd, intermediate-output routing, and multi-process scheduling bugs.
