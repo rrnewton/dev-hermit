@@ -1,9 +1,9 @@
 # Strict and verify compatibility matrix
 
 This is the consolidated result of the 2026-07-23 compatibility expansion
-batches 1 through 49. It reports the commands recorded in TaskGraph by
+batches 1 through 59. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and
-`impl-strict-compat-batch2` through `impl-strict-compat-batch49`.
+`impl-strict-compat-batch2` through `impl-strict-compat-batch59`.
 The results are historical measurements, not claims about an untested branch tip.
 
 ## Run context
@@ -29,7 +29,11 @@ The results are historical measurements, not claims about an untested branch tip
   primary release-binary path. Batches 43, 44, and 46 through 48 ran at
   `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batch 45 ran at
   `0b241392473aff32cf96bb1fcad330bbd0e2fed3`; and batch 49 recorded only
-  the primary release-binary path, so this report does not invent its SHA.
+  the primary release-binary path. Batches 50 and 55 ran at
+  `0b241392473aff32cf96bb1fcad330bbd0e2fed3`; batches 51, 52, 54, 56, 57,
+  and 59 ran at `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batches 53 and 58
+  recorded only the primary release-binary path, so this report does not
+  invent their SHAs.
 - Command column: commands omit the common
   `target/release/hermit run --strict --verify --` prefix unless a Hermit
   option such as `--verify-allow both` matters.
@@ -91,7 +95,17 @@ The results are historical measurements, not claims about an untested branch tip
 | 47 | Encoding and binary tools | 9 | 0 | 0 |
 | 48 | String and text utilities | 9 | 0 | 0 |
 | 49 | Archive round trips | 8 | 0 | 0 |
-| **Total** | | **383** | **68** | **5** |
+| 50 | Concurrent and multi-threaded applications | 7 | 0 | 0 |
+| 51 | Shell builtins | 8 | 1 | 0 |
+| 52 | Larger application workloads | 9 | 0 | 0 |
+| 53 | User environment | 9 | 0 | 0 |
+| 54 | Regex and pattern matching | 9 | 0 | 0 |
+| 55 | Advanced multi-threading | 6 | 0 | 0 |
+| 56 | Real-world scripts | 7 | 0 | 0 |
+| 57 | Disk and filesystem operations | 9 | 0 | 0 |
+| 58 | Error handling | 8 | 1 | 0 |
+| 59 | Compiled algorithms | 7 | 0 | 0 |
+| **Total** | | **462** | **70** | **5** |
 
 ## Core utilities
 
@@ -734,6 +748,92 @@ valid target because that package has no library target.
 | 455 | dd, xxd, and head | `bash -c 'dd if=/dev/zero bs=64 count=1 2>/dev/null &#124; xxd &#124; head -2'` | PASS L2 | 49 | |
 | 456 | tee, wc, and cat | `bash -c 'echo data &#124; tee /tmp/tee49 &#124; wc -c; cat /tmp/tee49; rm /tmp/tee49'` | PASS L2 | 49 | |
 
+## Concurrency, shell, environment, and compiled workloads
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 457 | pthread TID fixture | `/home/newton/impl-strict-compat-batch50/pthread_tid` | PASS L2 | 50 | Four pthreads with deterministic aggregate output. |
+| 458 | pthread mutex counter | `/home/newton/impl-strict-compat-batch50/pthread_counter` | PASS L2 | 50 | Four threads perform 10,000 increments each. |
+| 459 | Rayon sum | `/home/newton/impl-strict-compat-batch50/rayon_sum` | PASS L2 | 50 | |
+| 460 | Bash background jobs | `bash -c 'for i in $(seq 1 5); do echo $i & done; wait'` | PASS L2 | 50 | |
+| 461 | parallel xargs | `bash -c 'seq 1 100 &#124; xargs -P4 -I{} echo {}'` | PASS L2 | 50 | |
+| 462 | parallel make | `make -f /home/newton/impl-strict-compat-batch50/Makefile -j4` | PASS L2 | 50 | Four independent targets. |
+| 463 | concurrent file writes | `bash -c 'echo a > /tmp/f1 & echo b > /tmp/f2 & wait; cat /tmp/f1 /tmp/f2; rm /tmp/f1 /tmp/f2'` | PASS L2 | 50 | |
+| 464 | pushd and popd | `bash -c 'pushd /tmp >/dev/null; pwd; popd >/dev/null; pwd'` | PASS L2 | 51 | |
+| 465 | single-line alias | `bash -c 'alias hi="echo hello"; hi'` | FAIL | 51 | Noninteractive Bash parses the alias use before expansion and exits 127 natively; a valid multiline control passes L2. |
+| 466 | positional parameters | `bash -c 'set -- a b c; echo $1 $2 $3'` | PASS L2 | 51 | |
+| 467 | integer declaration | `bash -c 'declare -i x=5+3; echo $x'` | PASS L2 | 51 | |
+| 468 | associative array | `bash -c 'declare -A map; map[key]=val; echo ${map[key]}'` | PASS L2 | 51 | |
+| 469 | getopts | `bash -c 'while getopts "ab:" opt; do echo $opt; done' -- -a -b val` | PASS L2 | 51 | |
+| 470 | brace expansion | `bash -c 'echo {1..5}'` | PASS L2 | 51 | |
+| 471 | shell arithmetic | `bash -c 'echo $((2**10))'` | PASS L2 | 51 | |
+| 472 | Bash version | `bash -c 'printf "%s\n" "${BASH_VERSION}"'` | PASS L2 | 51 | |
+| 473 | sqlite complex query | Create and query three scored rows in `:memory:` | PASS L2 | 52 | Ordered rows, average 91.6333, and count 2. |
+| 474 | jq user sorting | `jq -n '{users:[{name:"alice",age:30},{name:"bob",age:25}]} &#124; .users &#124; sort_by(.age) &#124; .[0].name'` | PASS L2 | 52 | Output is `"bob"`. |
+| 475 | jq squares | `jq -n '[range(10)] &#124; map(. * .) &#124; add'` | PASS L2 | 52 | Output is 285. |
+| 476 | Perl loop | `perl -e 'for(1..20){print "$_ "}; print "\n"'` | PASS L2 | 52 | |
+| 477 | Perl hash | `perl -e 'my %h=(a=>1,b=>2,c=>3); print join(",", sort keys %h), "\n"'` | PASS L2 | 52 | |
+| 478 | awk square sum | `awk 'BEGIN{for(i=1;i<=20;i++){s+=i*i}; print s}'` | PASS L2 | 52 | Output is 2870. |
+| 479 | Lua squares | `lua -e 'local t={}; for i=1,10 do t[i]=i*i end; for _,v in ipairs(t) do io.write(v.." ") end; print()'` | PASS L2 | 52 | |
+| 480 | Ruby squares | `ruby --disable-gems -e '(1..10).each{&#124;i&#124; print "#{i*i} "}; puts'` | PASS L2 | 52 | |
+| 481 | Node sum | `node -e 'console.log(Array.from({length:10},(_,i)=>(i+1)**2).reduce((a,b)=>a+b))'` | PASS L2 | 52 | Output is 385. |
+| 482 | locale | `locale` | PASS L2 | 53 | |
+| 483 | locale list | `bash -c 'locale -a &#124; head -5'` | PASS L2 | 53 | |
+| 484 | sorted environment | `bash -c 'env &#124; sort &#124; head -10'` | PASS L2 | 53 | |
+| 485 | exported variable | `bash -c 'export FOO=bar; echo $FOO'` | PASS L2 | 53 | |
+| 486 | unset variable fallback | `bash -c 'unset HOME; echo ${HOME:-unset}'` | PASS L2 | 53 | |
+| 487 | clean environment | `bash -c 'env -i PATH=/usr/bin echo hello'` | PASS L2 | 53 | |
+| 488 | Bash RANDOM | `bash -c 'echo $RANDOM $RANDOM $RANDOM'` | PASS L2 | 53 | Virtualized random values match. |
+| 489 | Bash PID | `bash -c 'echo $$'` | PASS L2 | 53 | Virtual PID is stable. |
+| 490 | Bash PPID | `bash -c 'echo $PPID'` | PASS L2 | 53 | Virtual parent PID is stable. |
+| 491 | PCRE digits | `grep -P '\d+' /etc/passwd &#124; head -3` | PASS L2 | 54 | |
+| 492 | PCRE words | `grep -oP '\b\w+\b' /etc/hostname` | PASS L2 | 54 | |
+| 493 | extended sed | `sed -E 's/([a-z]+)/[\1]/g' /etc/hostname` | PASS L2 | 54 | |
+| 494 | awk root pattern | `awk '/root/{print NR, $0}' /etc/passwd` | PASS L2 | 54 | |
+| 495 | awk uid filter | `awk 'BEGIN{FS=":"} $3>=1000{print $1}' /etc/passwd` | PASS L2 | 54 | |
+| 496 | Perl alternation | `perl -ne 'print if /^(root&#124;nobody)/' /etc/passwd` | PASS L2 | 54 | |
+| 497 | Perl title case | `perl -pe 's/\b(\w)/uc($1)/ge' /etc/hostname` | PASS L2 | 54 | |
+| 498 | Bash regex | `bash -c '[[ "hello123" =~ ([0-9]+) ]] && echo ${BASH_REMATCH[1]}'` | PASS L2 | 54 | |
+| 499 | Bash case | `bash -c 'case hello in h*) echo match;; esac'` | PASS L2 | 54 | |
+| 500 | producer-consumer | `/home/newton/impl-strict-compat-batch55/producer_consumer` | PASS L2 | 55 | Mutex and condvar queue; consumes 100 items with sum 5050. |
+| 501 | pthread barrier | `/home/newton/impl-strict-compat-batch55/barrier` | PASS L2 | 55 | Four threads print in explicit ID order. |
+| 502 | reader-writer lock | `/home/newton/impl-strict-compat-batch55/rwlock` | PASS L2 | 55 | Three readers and one writer. |
+| 503 | thread pool | `/home/newton/impl-strict-compat-batch55/thread_pool` | PASS L2 | 55 | Four workers process 20 tasks. |
+| 504 | Crossbeam channel | `/home/newton/impl-strict-compat-batch55/crossbeam_channel` | PASS L2 | 55 | Sends 100 items. |
+| 505 | Arc Mutex counter | `/home/newton/impl-strict-compat-batch55/arc_mutex` | PASS L2 | 55 | Eight threads produce counter 8000. |
+| 506 | multi-file line counts | Bash loop running `wc -l` on passwd, hostname, and resolv.conf | PASS L2 | 56 | |
+| 507 | header count pipeline | `find /usr/include -name "*.h" -type f &#124; head -10 &#124; xargs wc -l &#124; tail -1` | PASS L2 | 56 | Output is `1697 total`. |
+| 508 | passwd CSV | `awk -F: 'BEGIN{OFS=","} {print $1,$3,$6}' /etc/passwd &#124; head -5` | PASS L2 | 56 | |
+| 509 | associative word counts | Bash associative-array count loop with sorted output | PASS L2 | 56 | Outputs a:1, an:1, and the:3. |
+| 510 | Perl numeric sort | `perl -e 'my @data=(3,1,4,1,5,9,2,6); @s=sort{$a<=>$b}@data; print join(",",@s),"\n"'` | PASS L2 | 56 | |
+| 511 | awk average | `bash -c 'seq 1 100 &#124; awk "{s+=\$1} END{print s/NR}"'` | PASS L2 | 56 | Output is 50.5. |
+| 512 | Lua sum and average | `lua -e 'local s=0; for i=1,100 do s=s+i end; print("sum="..s.." avg="..s/100)'` | PASS L2 | 56 | |
+| 513 | du human size | `du -sh /etc/hostname` | PASS L2 | 57 | |
+| 514 | du bytes | `du -b /etc/passwd` | PASS L2 | 57 | |
+| 515 | truncate | `bash -c 'truncate -s 100 /tmp/trunc57; stat -c %s /tmp/trunc57; rm /tmp/trunc57'` | PASS L2 | 57 | |
+| 516 | fallocate | `bash -c 'fallocate -l 4096 /tmp/falloc57; stat -c %s /tmp/falloc57; rm /tmp/falloc57'` | PASS L2 | 57 | |
+| 517 | fixed timestamp | `bash -c 'touch -d "2024-01-01" /tmp/touch57; stat -c %Y /tmp/touch57; rm /tmp/touch57'` | PASS L2 | 57 | |
+| 518 | mktemp cleanup | `bash -c 'mktemp /tmp/hermit57.XXXXXX &#124; xargs rm'` | PASS L2 | 57 | |
+| 519 | urandom and xxd | `bash -c 'dd if=/dev/urandom bs=32 count=1 2>/dev/null &#124; xxd'` | PASS L2 | 57 | |
+| 520 | symlink and readlink | `bash -c 'ln -s /etc/hostname /tmp/link57; readlink /tmp/link57; rm /tmp/link57'` | PASS L2 | 57 | |
+| 521 | copy and diff | `bash -c 'cp /etc/hostname /tmp/cp57; diff /etc/hostname /tmp/cp57; echo $?; rm /tmp/cp57'` | PASS L2 | 57 | |
+| 522 | top-level exit 42 | `bash -c 'exit 42'` | FAIL | 58 | Verify rejects the nonzero first run before run 2; a status-capturing wrapper passes L2. |
+| 523 | pipefail status | `bash -c 'set -o pipefail; false &#124; true; echo $?'` | PASS L2 | 58 | |
+| 524 | ERR trap | `bash -c 'trap "echo ERR caught" ERR; false; echo after'` | PASS L2 | 58 | |
+| 525 | set -e success | `bash -c 'set -e; true && echo ok'` | PASS L2 | 58 | |
+| 526 | conditional status | `bash -c '(exit 0) && echo zero &#124;&#124; echo nonzero'` | PASS L2 | 58 | |
+| 527 | stderr merge | `bash -c 'cat /nonexistent 2>&1; echo $?'` | PASS L2 | 58 | |
+| 528 | stderr suppression | `bash -c 'ls /nonexistent 2>/dev/null; echo $?'` | PASS L2 | 58 | |
+| 529 | command lookup | `bash -c 'command -v ls; echo $?'` | PASS L2 | 58 | |
+| 530 | Bash hash | `bash -c 'hash ls 2>/dev/null; echo $?'` | PASS L2 | 58 | |
+| 531 | C Fibonacci | compiled iterative first-30-terms fixture | PASS L2 | 59 | Ends at 514229. |
+| 532 | C quicksort | compiled seeded 1000-integer fixture | PASS L2 | 59 | `sorted=1`, checksum 50028532. |
+| 533 | C matrix multiply | compiled deterministic 50x50 fixture | PASS L2 | 59 | Checksum 8992476. |
+| 534 | C hash table | compiled 1000-item insert and 100-lookup fixture | PASS L2 | 59 | 84 hits. |
+| 535 | C binary search tree | compiled 500-node traversal fixture | PASS L2 | 59 | `nodes=500 sorted=1`. |
+| 536 | Rust sieve | compiled Sieve of Eratosthenes to 10000 | PASS L2 | 59 | Finds 1229 primes. |
+| 537 | Rust Mandelbrot | compiled 40x20 ASCII fixture | PASS L2 | 59 | 170 points inside; stable output hash. |
+
 ## Record/replay results
 
 Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
@@ -759,7 +859,11 @@ assurance dimension from strict L2 and are excluded from the strict summary.
 | Post-envp file and encoding retest | 6 | 6 | Six direct file operations match. Six encoding, checksum, fold, and iconv pipelines have matching Detcore logs but replay prepends the upstream payload; all six static-file controls match. |
 | Post-envp process and signal retest | 9 | 1 | Nine process, shell, signal, file-test, and find cases match. The nohup command also matches replay but exits 1 natively because non-TTY stdout means no `nohup.out` is created. |
 | Post-envp direct-program retest | 13 | 2 | Thirteen direct commands match. `tail -3` and `date +%Y` diverge in replay fd allocation or close/write ordering. |
-| **Post-envp batches 1-11 subtotal** | **95** | **34** | Counts the 129 prescribed cases in the eleven numbered post-fix matrices; supplemental controls are described but not double-counted. |
+| Post-envp compiler-mode retest | 7 | 3 | gcc assembly/preprocess, assembler, linker, cpp, cc1, and make version modes match. Rust metadata replay exhausts its event stream; a file pipeline leaks stdout; a directory workflow diverges around replay locale/fd state. |
+| Post-envp networking and system retest | 7 | 5 | Hostname, nice, exec, type, kill, printf, and fmt match. Three netlink tools diverge after bind; strings/head and yes/head fail through pipe-output or SIGPIPE replay. |
+| Post-envp archive and encoding retest | 4 | 6 | Direct sqlite3, jq, Lua, and Ruby match. Gzip/tar filesystem workflows desynchronize; three checksum/encoding pipelines leak producer payloads; dd/xxd/head diverges in fd allocation. |
+| Post-envp larger-application retest | 8 | 2 | SQLite, jq, Perl, awk, Lua, Ruby, factor, and cal match. Node recording panics on SIOCETHTOOL; Bash command substitution leaks the seq payload during replay. |
+| **Post-envp batches 1-15 subtotal** | **121** | **50** | Counts the 171 prescribed cases in the fifteen numbered post-fix matrices; supplemental controls are described but not double-counted. |
 
 PR [#238](https://github.com/rrnewton/hermit/pull/238) merged to `main` as
 `46836669bd6c2f7151fbe65c55f4ea5bd1440897`. It pre-creates the fbcode bind
@@ -820,11 +924,14 @@ single-commit PR head, so it was not landed.
 | Batch 42 Meta Python | Helper-thread startup orders parent futex progress and child RNG initialization differently; explicit application-level RNG seeding does not control that runtime startup. | Stock Python remains the established control for this failure class; the non-Python math tools pass. |
 | Batch 43 Perl uppercase | The prescribed `\U$1/e` replacement is invalid Perl and exits 255 identically on the host. | The valid `uc($1)/e` equivalent passes L2; this is a command error, not a Hermit defect. |
 | Batch 45 long listing | Owner/group name lookup enters live nscd AF_UNIX polling, whose readiness differs between runs. | Numeric-owner `ls -lan` avoids NSS and passes L2. |
+| Batch 51 single-line alias | Noninteractive Bash parses the alias definition and use together, so `hi` is not expanded and the exact command exits 127 natively. | A valid multiline `expand_aliases` control passes L2; this is a command-shape error, not a Hermit defect. |
+| Batch 58 top-level exit 42 | Default verify accepts only a successful first guest run and stops before run 2 on exit 42. | A wrapper that captures the inner status while exiting 0 passes L2; `--verify-allow both` is the policy alternative. |
 | Post-envp R/R pipelines | Replay can expose intermediate pipe payloads on stdout, allocate different fds for process substitution, or order pipe close and SIGCHLD differently. | Direct utility controls pass; console-fd tracking, replay fd allocation, and multi-process scheduling remain separate follow-ups. |
+| Post-envp R/R system state | Netlink replay calls `dup(2)` where recording used `getsockname`; archive workflows desynchronize on filesystem/fd events; Node recording rejects SIOCETHTOOL. | Direct controls isolate these from the already-known pipeline-output leak; netlink, filesystem state, and ioctl decoding require separate fixes. |
 
 ## Interpretation
 
-- Across 456 recorded command outcomes, 383 reach L2 (84.0%), 68 do not
+- Across 537 recorded command outcomes, 462 reach L2 (86.0%), 70 do not
   reach L2, and 5 were not run. Repeated stress attempts are summarized in one
   row per scenario rather than inflating the command count.
 - The strongest coverage is deterministic local computation, sequential
@@ -849,6 +956,6 @@ single-commit PR head, so it was not landed.
 - Record/replay is tracked separately: the initial debug-binary matrix passed
   18/20, while 49 later pre-fix release-binary probes were dominated by one
   program-independent replay envp failure. PR #238 fixed that failure on main.
-  Across the eleven numbered post-fix matrices, 95/129 prescribed cases match
+  Across the fifteen numbered post-fix matrices, 121/171 prescribed cases match
   recording. Remaining failures are distinct recorder ioctl/NULL-pointer,
   replay-fd, intermediate-output routing, and multi-process scheduling bugs.
