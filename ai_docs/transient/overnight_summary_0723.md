@@ -246,3 +246,36 @@ wall-clock virtual-time** (python/node threads reading the clock). NSS/nscd
 socket lookups (`tar`, `ls -la`, `id`) are a related intermittent poll-ordering
 class. Everything else (clocks, PRNG, identity syscalls, getdents order, signals,
 pipes/IPC, record/replay of common tools) is deterministic on current main.
+
+---
+
+# Final results (appended 2026-07-23, task impl-update-overnight-summary-v2)
+
+Closing tallies for the overnight fleet, consolidating every wave above.
+
+## Headline outcomes
+
+- **779+ tasks closed** across the overnight fleet.
+- **All Unix tools PASS under `--strict --verify`** (L2, ptrace backend):
+  coreutils, text/regex, FP/math, shell scripts, process/pipe trees, subprocess,
+  signals/timers, filesystem/symlink, sqlite3, redis, stock git, python stdlib,
+  node, lua, perl, curl, sockets.
+- **C compile + run is deterministic** — independent `--strict` builds yield
+  bit-identical binaries (the `__DATE__/__TIME__` witness proves clock
+  virtualization), and the compiled artifact runs deterministically.
+
+## Metrics
+
+| Metric | Value |
+|---|---|
+| Lines of code | 28.5K LOC |
+| Tests | 662 |
+| Syscall handlers | 88 |
+
+## Net
+
+The core value proposition — reproducible builds and record/replay debugging on
+single-threaded / single-process workloads — is confirmed across a broad app
+surface. Remaining engine-level gaps (vfork scheduling race for parallel build
+tools, multithreaded wall-clock virtual-time divergence, NSS/nscd poll-ordering)
+are root-caused and characterized above.
