@@ -1,9 +1,9 @@
 # Strict and verify compatibility matrix
 
 This is the consolidated result of the 2026-07-23 compatibility expansion
-batches 1 through 24. It reports the commands recorded in TaskGraph by
+batches 1 through 37. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and
-`impl-strict-compat-batch2` through `impl-strict-compat-batch24`.
+`impl-strict-compat-batch2` through `impl-strict-compat-batch37`.
 The results are historical measurements, not claims about an untested branch tip.
 
 ## Run context
@@ -21,12 +21,16 @@ The results are historical measurements, not claims about an untested branch tip
   and 20 used `9a492fe49845e0e72f66117f0a1c6a8894f3b7bf`; and batch 23 used
   `fbf1d395c4c5012e4247d9ccfa4f304e1a4ab9a4`. Other task notes recorded
   only a release-binary path or timestamp, so this report does not invent SHAs.
+  Batches 28, 31, and 35 ran at `fbf1d395`; batch 36 built its fixtures in a
+  slot but used the primary release Hermit binary. Batch 37 ran at
+  `46836669bd6c2f7151fbe65c55f4ea5bd1440897`.
 - Command column: commands omit the common
   `target/release/hermit run --strict --verify --` prefix unless a Hermit
   option such as `--verify-allow both` matters.
-- Scope: counts below are command outcomes, including recorded controls and
-  workarounds. FAIL means the command did not reach L2, whether because of
-  nondeterminism, a hang, a guest error, host state, or harness policy.
+- Scope: strict-matrix counts below are command outcomes, including recorded
+  controls and workarounds. FAIL means the command did not reach L2, whether
+  because of nondeterminism, a hang, a guest error, host state, or harness policy.
+  Record/replay results are reported separately and are not mixed into these totals.
 
 ## Summary
 
@@ -56,7 +60,20 @@ The results are historical measurements, not claims about an untested branch tip
 | 22 | JVM | 5 | 1 | 0 |
 | 23 | Structured data processing | 6 | 3 | 0 |
 | 24 | Archive and packaging | 7 | 0 | 0 |
-| **Total** | | **190** | **42** | **3** |
+| 25 | System administration and binary inspection | 9 | 1 | 1 |
+| 26 | Editors and text output | 10 | 0 | 0 |
+| 27 | Math and numeric tools | 7 | 3 | 0 |
+| 28 | Filesystem tools | 10 | 1 | 0 |
+| 29 | Network clients | 10 | 1 | 0 |
+| 30 | Identity and permissions | 9 | 2 | 0 |
+| 31 | Time and date | 8 | 0 | 1 |
+| 32 | Process control | 8 | 1 | 0 |
+| 33 | C++ programs | 5 | 0 | 0 |
+| 34 | Web operations | 3 | 3 | 0 |
+| 35 | Parallel execution | 7 | 1 | 0 |
+| 36 | Hermit test fixtures | 8 | 0 | 0 |
+| 37 | Larger real applications | 5 | 2 | 0 |
+| **Total** | | **289** | **57** | **5** |
 
 ## Core utilities
 
@@ -413,6 +430,201 @@ The results are historical measurements, not claims about an untested branch tip
 | 234 | ar | ar rcs /tmp/out.a and ar t | PASS L2 | 24 | |
 | 235 | tar | tar cf /tmp/out.tar and tar tf | PASS L2 | 24 | Also passed repeated, multi-file extraction, and tar+gzip controls. |
 
+## System administration and binary inspection
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 236 | strace | `strace -c /bin/true` | FAIL | 25 | Nested `PTRACE_TRACEME` is denied under Hermit's ptrace backend; run 1 exits 1. |
+| 237 | ltrace | `ltrace --version` | NOT RUN | 25 | Utility was not installed. |
+| 238 | ldd | `ldd /bin/ls` | PASS L2 | 25 | |
+| 239 | file | `file /bin/ls` | PASS L2 | 25 | |
+| 240 | readelf | `readelf -h /bin/ls` | PASS L2 | 25 | |
+| 241 | objdump | `objdump -f /bin/ls` | PASS L2 | 25 | |
+| 242 | nm | `nm target/release/hermit 2>/dev/null &#124; head -20` | PASS L2 | 25 | The requested `libc.a` was absent; the readable Hermit binary was the recorded substitute. |
+| 243 | strings | `strings /bin/ls &#124; head -20` | PASS L2 | 25 | |
+| 244 | size | `size /bin/ls` | PASS L2 | 25 | |
+| 245 | hexdump | `hexdump -C /bin/ls &#124; head -10` | PASS L2 | 25 | |
+| 246 | od | `od -A x -t x1z /bin/ls &#124; head -10` | PASS L2 | 25 | |
+
+## Editors and text output
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 247 | ed | `ed -s` with scripted append, print, and quit input | PASS L2 | 26 | |
+| 248 | ex | `ex -s +%p +q! /etc/hostname` | PASS L2 | 26 | |
+| 249 | fmt | `fmt -w 40 /etc/passwd &#124; head -5` | PASS L2 | 26 | |
+| 250 | fold | `fold -w 40 /etc/passwd &#124; head -5` | PASS L2 | 26 | |
+| 251 | column | `column -t /etc/passwd -s: &#124; head -5` | PASS L2 | 26 | |
+| 252 | pr | `pr -l 20 /etc/hostname` | PASS L2 | 26 | |
+| 253 | expand | `expand /etc/hostname` | PASS L2 | 26 | |
+| 254 | unexpand | `unexpand /etc/hostname` | PASS L2 | 26 | |
+| 255 | rev | `rev /etc/hostname` | PASS L2 | 26 | |
+| 256 | tac | `tac /etc/hostname` | PASS L2 | 26 | |
+
+## Additional math and numeric tools
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 257 | dc | `dc -e '2 3 + p'` | PASS L2 | 27 | |
+| 258 | factor | `factor 12345` | PASS L2 | 27 | |
+| 259 | numfmt | `numfmt --to=iec 1048576` | PASS L2 | 27 | |
+| 260 | printf hexadecimal | `printf '%x\n' 255` | PASS L2 | 27 | |
+| 261 | printf floating point | `printf '%.10f\n' 3.14159265358979` | PASS L2 | 27 | |
+| 262 | expr | `expr 7 '*' 8` | PASS L2 | 27 | |
+| 263 | seq | `seq -f '%.3f' 0 0.1 1.0` | PASS L2 | 27 | |
+| 264 | Meta Python factorial | `python3 -c 'import math; print(math.factorial(20))'` | FAIL | 27 | Both runs finish, but threaded startup RNG-seed and scheduling order diverge before the calculation. |
+| 265 | Meta Python hashlib | `python3 -c 'import hashlib; print(hashlib.sha256(b"hello").hexdigest())'` | FAIL | 27 | Same Meta Python startup divergence. |
+| 266 | OpenSSL speed | `openssl speed -elapsed -seconds 1 sha256 2>&1 &#124; tail -3` | FAIL | 27 | Scheduler logs match, but measured throughput differs between the two runs; the full verify takes about 147 seconds. |
+
+## Filesystem, identity, and permissions
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 267 | stat | `stat /etc/hostname` | FAIL | 28 | Flaky at L2: 1/3 passed; two runs diverged when external nscd poll readiness selected different NSS paths. |
+| 268 | stat filesystem | `stat -f /etc/hostname` | PASS L2 | 28 | |
+| 269 | touch and stat | `bash -c 'touch /tmp/hermit-test-file && stat /tmp/hermit-test-file'` | PASS L2 | 28 | Guest-private `/tmp` gives each run fresh state. |
+| 270 | df | `df /tmp` | PASS L2 | 28 | |
+| 271 | du | `du -sh /etc/hostname` | PASS L2 | 28 | |
+| 272 | find | `find /etc -maxdepth 1 -name 'host*' -type f` | PASS L2 | 28 | |
+| 273 | ls file | `ls -la /etc/hostname` | PASS L2 | 28 | |
+| 274 | recursive ls | create a fixed `/tmp/hermit-test` tree, then `ls -laR` | PASS L2 | 28 | Fixture is created inside each isolated guest run. |
+| 275 | realpath | `realpath /etc/hostname` | PASS L2 | 28 | |
+| 276 | basename | `basename /etc/hostname` | PASS L2 | 28 | |
+| 277 | dirname | `dirname /etc/hostname` | PASS L2 | 28 | |
+| 278 | id | `id` | FAIL | 30 | Stateful AF_UNIX NSS/nscd traffic differs between runs. |
+| 279 | whoami | `whoami` | PASS L2 | 30 | |
+| 280 | groups | `groups` | FAIL | 30 | Run 1 exits nonzero because GID 65534 has no resolvable group name. |
+| 281 | logname | `logname` | PASS L2 | 30 | |
+| 282 | printenv | `printenv HOME` | PASS L2 | 30 | |
+| 283 | env | `env &#124; sort &#124; head -10` | PASS L2 | 30 | |
+| 284 | umask | `bash -c 'umask'` | PASS L2 | 30 | |
+| 285 | chmod | `touch /tmp/hermit-perms; chmod 755; stat -c %a` | PASS L2 | 30 | |
+| 286 | install | `install -m 644 /etc/hostname /tmp/hermit-install-test` | PASS L2 | 30 | |
+| 287 | mkfifo | `bash -c 'mkfifo /tmp/hermit-fifo-test && echo ok'` | PASS L2 | 30 | Creates a FIFO without opening both ends. |
+| 288 | file test | `bash -c 'test -f /etc/hostname && echo exists'` | PASS L2 | 30 | |
+
+## Network clients and web operations
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 289 | curl version | `curl --version` | PASS L2 | 29 | |
+| 290 | wget version | `wget --version` | PASS L2 | 29 | |
+| 291 | curl localhost | curl `localhost:1` with status capture | PASS L2 | 29 | Deterministic refused-connect path. |
+| 292 | wget localhost | wget spider `localhost:1` with status capture | PASS L2 | 29 | Deterministic refused-connect path. |
+| 293 | ping loopback | `ping -c 1 -w 1 127.0.0.1` | PASS L2 | 29 | |
+| 294 | dig localhost | `dig +short localhost @127.0.0.1` with status capture | PASS L2 | 29 | |
+| 295 | host localhost | `host localhost` with status capture | PASS L2 | 29 | |
+| 296 | whois fallback | `whois --version 2>/dev/null || echo 'not installed'` | PASS L2 | 29 | `whois` was absent; this verifies only the fallback shell path. |
+| 297 | ftp/lftp fallback | `ftp --version || lftp --version; echo $?` | PASS L2 | 29 | Both clients were absent; this verifies only the fallback/status path. |
+| 298 | rsync version | `rsync --version` | PASS L2 | 29 | |
+| 299 | scp invalid version option | `scp -V` | FAIL | 29 | This OpenSSH scp rejects `-V` and exits 1 before run 2; a status-capturing control is deterministic. |
+| 300 | curl external GET | curl status for `https://example.com` | FAIL | 34 | Run 1 exits 7 after an IPv6 connect returns `ENETUNREACH`; external network success is outside scope. |
+| 301 | wget external GET | `wget -q -O /tmp/example.html https://example.com` | FAIL | 34 | Run 1 exits 4 after `ENETUNREACH`; external network success is outside scope. |
+| 302 | OpenSSL external TLS | `openssl s_client -connect example.com:443 &#124; head -5` | PASS L2 | 34 | Deterministic DNS failure path; pipeline exits 0 because `head` succeeds, not because TLS connected. |
+| 303 | curl localhost POST | curl POST to `localhost:1` with status capture | PASS L2 | 34 | Deterministic refused-connect exit 7. |
+| 304 | Meta Python urllib | urllib request to `localhost:1` with status capture | FAIL | 34 | Both runs finish, but Meta Python startup scheduling and RNG seed order diverge. |
+| 305 | wget localhost headers | wget `localhost:1` with status capture | PASS L2 | 34 | Deterministic refused-connect exit 4. |
+
+## Time and process control
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 306 | date current | `date +%Y-%m-%d` | PASS L2 | 31 | Virtual date is 2021-12-31. |
+| 307 | date epoch | `date -d @0 +%Y-%m-%d` | PASS L2 | 31 | Local timezone produced 1969-12-31. |
+| 308 | date to epoch | `date -d '2024-01-01' +%s` | PASS L2 | 31 | |
+| 309 | cal January | `cal 1 2024` | PASS L2 | 31 | |
+| 310 | cal December | `cal 12 2025` | PASS L2 | 31 | |
+| 311 | ncal | `ncal 2024` | NOT RUN | 31 | Utility was not installed. |
+| 312 | Bash SECONDS | `bash -c 'SECONDS=0; sleep 0; echo $SECONDS'` | PASS L2 | 31 | Output 0. |
+| 313 | timeout status | `timeout 1 sleep 10; echo $?` in a guest shell | PASS L2 | 31 | Deterministic captured status 124. |
+| 314 | Bash time | `bash -c 'time echo hello' 2>&1` | PASS L2 | 31 | Deterministic virtual timing output. |
+| 315 | nice | `nice -n 5 echo hello` | PASS L2 | 32 | |
+| 316 | background wait | `bash -c 'sleep 0.01 & wait $! && echo waited'` | PASS L2 | 32 | |
+| 317 | nohup | `bash -c 'nohup echo hello 2>/dev/null && echo ok'` | PASS L2 | 32 | |
+| 318 | short timeout | `timeout 2 sleep 0.01 && echo 'timeout ok'` | FAIL | 32 | Under Hermit the child is still loading when virtual timeout expires, so it exits 124; native exits 0. A status-capturing control passes L2. |
+| 319 | minimal environment | `env -i HOME=/tmp PATH=/usr/bin echo hello` | PASS L2 | 32 | |
+| 320 | signal probe | Bash trap plus `kill -0 $$` | PASS L2 | 32 | |
+| 321 | yes pipeline | `yes &#124; head -100 &#124; wc -l` | PASS L2 | 32 | Output 100. |
+| 322 | xargs | `xargs echo < /etc/hostname` | PASS L2 | 32 | |
+| 323 | Bash coprocess | `coproc cat` round trip | PASS L2 | 32 | |
+
+## C++ programs
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 324 | C++ hello | `g++ -O2`, then run `cpp_hello` | PASS L2 | 33 | Used `--tmp=/tmp` to expose the host-built binary; no determinism relaxation. |
+| 325 | C++ STL | vector, map, set, and unordered_map fixture | PASS L2 | 33 | |
+| 326 | C++ templates | compile-time Fibonacci fixture | PASS L2 | 33 | |
+| 327 | C++ exceptions | throw/catch and RTTI fixture | PASS L2 | 33 | |
+| 328 | C++ threads | two threads, mutex, and condition variable | PASS L2 | 33 | |
+
+## Parallel execution and Hermit fixtures
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 329 | sequential xargs | `seq 1 10 &#124; xargs -n1 echo` | PASS L2 | 35 | |
+| 330 | xargs one worker | `seq 1 5 &#124; xargs -P1 -I{} echo 'item {}'` | PASS L2 | 35 | |
+| 331 | xargs two workers | `seq 1 5 &#124; xargs -P2 -I{} echo 'item {}'` | PASS L2 | 35 | |
+| 332 | Bash background jobs | three background `echo` jobs and `wait` | PASS L2 | 35 | |
+| 333 | Bash arithmetic | sum 1 through 100 | PASS L2 | 35 | Output 5050. |
+| 334 | named FIFO rendezvous | `mkfifo; echo hello > pipe & cat pipe; wait` | FAIL | 35 | Run 1 hangs: writer blocks in `openat(O_WRONLY)` while serialization prevents the reader from reaching its matching open. |
+| 335 | Bash `/dev/tcp` | connect to `localhost:1` with failure capture | PASS L2 | 35 | Deterministic connection-refused path. |
+| 336 | Bash timed read | `read -t 0.001` from `/dev/null` | PASS L2 | 35 | Captured status output is deterministic. |
+| 337 | clock_gettime fixture | `rustbin_clock_gettime` | PASS L2 | 36 | Repository standalone fixture. |
+| 338 | exit_group fixture | `exit_group` | PASS L2 | 36 | Repository standalone fixture. |
+| 339 | pipe_basics fixture | `pipe_basics` | PASS L2 | 36 | Repository standalone fixture. |
+| 340 | poll fixture | `poll` | PASS L2 | 36 | Repository standalone fixture. |
+| 341 | socketpair fixture | `socketpair` | PASS L2 | 36 | Repository standalone fixture. |
+| 342 | futex fixture | `futex_and_print` | PASS L2 | 36 | Repository standalone fixture. |
+| 343 | stack pointer fixture | `stack_ptr` | PASS L2 | 36 | Repository standalone fixture. |
+| 344 | thread random fixture | `thread_random` | PASS L2 | 36 | Repository standalone fixture. |
+
+Batch 36 infrastructure checks are not counted as strict program outcomes:
+`cargo test -p detcore-model --lib` passed 17 tests; `cargo test -p hermit-verify`
+passed 25 tests. The requested `cargo test -p hermit-verify --lib` is not a
+valid target because that package has no library target.
+
+## Larger real applications
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 345 | sqlite3 larger query | create, insert, select, count, and sum in `:memory:` | PASS L2 | 37 | Output rows 1 through 3, count 3, and sum 6. |
+| 346 | Meta Python JSON | build and pretty-print nested user JSON | FAIL | 37 | L1 output is correct, but the two L2 runs schedule launcher children differently at COMMIT turn 29; stock Python 3.9 control passes. |
+| 347 | Meta Python CSV | write a two-row CSV in memory | FAIL | 37 | Same Meta launcher/runtime scheduling divergence; stock Python 3.9 control passes. |
+| 348 | Node.js JSON | print `{a:1,b:[2,3]}` as JSON | PASS L2 | 37 | |
+| 349 | Node.js array | print squares from 0 through 9 | PASS L2 | 37 | Output 0 through 81. |
+| 350 | Lua loop | print integers 1 through 10 | PASS L2 | 37 | |
+| 351 | Perl Digest::MD5 | print MD5 of `hello` | PASS L2 | 37 | Output `5d41402abc4b2a76b9719d911017c592`. |
+
+## Record/replay results
+
+Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
+backend with default logging and no relaxations. These outcomes are a separate
+assurance dimension from strict L2 and are excluded from the strict summary.
+
+| Evidence set | PASS | FAIL | Result and limitation |
+|---|---:|---:|---|
+| Initial 20-program single-process matrix, debug binary | 18 | 2 | `echo`, `cat`, `wc`, `sort`, `head`, `uniq`, `tr`, `cut`, `paste`, `seq`, `date`, `hostname`, `arch`, `nproc`, `getconf`, `bc`, `awk`, and `perl` matched recording. `tail` failed during recording/event replay, and `yes &#124; head` timed out during recording. |
+| Expansion batch 2, pre-fix release binary | 0 | 22 | 21 programs recorded successfully but replay's initial `execve` received corrupt envp and returned `EFAULT`; `hostname -f` separately panicked during recorder netlink handling. |
+| Expansion batch 3, pre-fix release binary | 0 | 8 | Every compiler/computation recording completed; every replay failed its first `execve` with the same corrupt envp. |
+| Expansion batch 4, pre-fix release binary | 0 | 9 | All C/C++/Rust guests recorded and exited 0; all replays failed initial `execve` with corrupt envp. |
+| Expansion batch 5, pre-fix release binary | 0 | 10 | Eight replays failed initial `execve`; Node recording hit an unsupported ioctl and javac recording did not complete. |
+| Focused validation after envp fix | 4 | 0 | At PR #238 head, `/bin/echo` matched 3/3 and `java -version` matched 1/1 on a host with `/usr/local/fbcode`. A separate validation also matched `getent hosts localhost`. |
+
+PR [#238](https://github.com/rrnewton/hermit/pull/238) merged to `main` as
+`46836669bd6c2f7151fbe65c55f4ea5bd1440897`. It pre-creates the fbcode bind
+mount target in the parent and removes the replay child's stack-overflowing
+`touch_target()` path. The program-independent replay `execve`/envp failure is
+therefore fixed on current main, but the 49-program expansion has not been
+rerun there and is not retroactively counted as passing. `hostname -f`'s
+recorder netlink panic, Node's unsupported ioctl, javac recording performance,
+`tail`, and concurrent pipeline liveness remain distinct observations.
+
+PR [#239](https://github.com/rrnewton/hermit/pull/239) remains open at
+`929ba884d907f86463d27ebbd3d3287df6aa49c3`. It passed compiler-focused L2
+checks, but adversarial review found failed-vfork deadlock and remaining
+parent/child/peer ordering races, so it was not landed.
+
 ## Failure root causes and fix status
 
 | Failure | Root cause | Fix or workaround recorded |
@@ -428,13 +640,13 @@ The results are historical measurements, not claims about an untested branch tip
 | Batch 10 groups | Virtual gid 65534 has no host NSS name; the first guest exits 1. | Host/NSS data fix or a numeric-output probe is required. |
 | Batch 10 df | Disconnected host `/mnt/xarfuse` endpoints; native `df` also fails. | Repair or exclude the host mount; not a Hermit determinism defect. |
 | Batch 10 lsof | Run 1 was killed with exit 137; no OOM or journal evidence established why. | Unknown; no fix can be claimed. |
-| Batch 10 strace | Nested ptrace is unsupported under Hermit's ptrace backend. | No ptrace-backend fix recorded; use a non-nested tracing approach. |
+| Batches 10 and 25 strace | Nested ptrace is unsupported under Hermit's ptrace backend. | No ptrace-backend fix recorded; use a non-nested tracing approach. |
 | Batch 10 timeout | Host SIGALRM uses wall time while guest sleep advances on virtual time. | No fix recorded in the batch. |
 | Batch 11 Git | Git startup spins in `sched_yield` under strict sequentialization, generates multi-gigabyte logs, and never completes run 1. | No fix validated by batch 11. |
 | Batch 13 named FIFO | Blocking FIFO open/read waits for a peer process that strict serialization does not schedule. | No fix recorded; requires scheduler awareness of cross-process FIFO rendezvous. |
 | Batch 13 Meta Python pipeline | The Meta Python runtime diverges during threaded startup even without a pipe. | Stock CPython is the established control; the pipeline itself is not the failure. |
 | Batch 14 nslookup and nc | Both commands deterministically exit nonzero under network isolation, so default verify does not start run 2. | Use an expected-exit verification policy when the nonzero result is the intended contract. |
-| Batches 15, 17, and 23 Meta Python | Clone/futex and RNG-seed ordering diverges in the multithreaded Meta runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
+| Batches 15, 17, 23, 27, 34, and 37 Meta Python | Clone/futex and RNG-seed ordering diverges in the multithreaded Meta runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
 | Batches 16 and 22 compiler outputs | Verify runs share persistent visible filesystem state; run 2 observes artifacts created by run 1. | Put outputs in guest-isolated /tmp, pre-stage identical outputs, or copy the project into per-run /tmp. |
 | Batch 17 Go tests | Go test stalls around clone/vfork, futex, and nanosleep before producing an L1 result. | No fix recorded; single-P and warm-cache controls still stalled. |
 | Batch 18 parallel make | GNU make jobserver pipe rendezvous deadlocks under serialized scheduling. | Use -j1; scheduler support for cross-process blocking pipes is required for -jN. |
@@ -443,11 +655,17 @@ The results are historical measurements, not claims about an untested branch tip
 | Batch 20 GPG | GPG creates ~/.gnupg/random_seed during run 1, changing run 2 input state. | A fresh per-run GNUPGHOME passes L2. |
 | Batch 21 Ruby | The host Ruby installation cannot load RbConfig and fails identically outside Hermit. | --disable-gems passes L2; this is host packaging, not a Hermit defect. |
 | Batch 23 paste | paste blocks reading one process-substitution pipe while the other producer remains pending. | Requires scheduler support for the same cross-process pipe rendezvous class as FIFO/jobserver failures. |
+| Batch 27 OpenSSL speed | The throughput benchmark reports host-performance-dependent work rates even though Detcore logs match. | Do not use a speed benchmark as deterministic-output coverage; test fixed-input cryptographic operations instead. |
+| Batches 28 and 30 NSS identity | External nscd AF_UNIX readiness and cache state select different lookup paths; GID 65534 also lacks a host name. | Prefer numeric IDs or isolate/disable the external NSS daemon. |
+| Batch 29 scp | This scp implementation has no `-V` option and exits 1 before verification run 2. | Capture the expected status or use a valid version probe; this is not nondeterminism. |
+| Batch 32 short timeout | Virtual timeout expires while the dynamically linked child is still starting under instrumentation; native finishes before two wall-clock seconds. | Increase the timeout or test a prestarted/static child; the captured exit 124 is deterministic. |
+| Batch 34 external web access | The host has no usable route to example.com; curl/wget exit nonzero before run 2. | External network success is outside Hermit's contract; local refused-connect paths pass L2. |
+| Batch 35 named FIFO | The writer blocks in `openat(O_WRONLY)` while strict serialization prevents the reader from reaching its matching open. | Requires scheduler awareness of cross-process FIFO rendezvous, the same structural class as batches 13 and 18. |
 
 ## Interpretation
 
-- Across 235 recorded command outcomes, 190 reach L2 (80.9%), 42 do not
-  reach L2, and 3 were not run. Repeated stress attempts are summarized in one
+- Across 351 recorded command outcomes, 289 reach L2 (82.3%), 57 do not
+  reach L2, and 5 were not run. Repeated stress attempts are summarized in one
   row per scenario rather than inflating the command count.
 - The strongest coverage is deterministic local computation, sequential
   compilation pipelines, normal multi-thread synchronization, text processing,
@@ -468,3 +686,7 @@ The results are historical measurements, not claims about an untested branch tip
   safely use the guest-private `/tmp`.
 - External networking is not covered. Hermit does not make a changing external
   network deterministic, and the batch host had no direct external route.
+- Record/replay is tracked separately: the initial debug-binary matrix passed
+  18/20, while 49 later pre-fix release-binary probes were dominated by one
+  program-independent replay envp failure. PR #238 fixed that failure on main,
+  but only focused echo, getent, and Java checks have been rerun after the fix.
