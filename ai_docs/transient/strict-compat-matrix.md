@@ -1,9 +1,9 @@
 # Strict and verify compatibility matrix
 
 This is the consolidated result of the 2026-07-23 compatibility expansion
-batches 1 through 42. It reports the commands recorded in TaskGraph by
+batches 1 through 49. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and
-`impl-strict-compat-batch2` through `impl-strict-compat-batch42`.
+`impl-strict-compat-batch2` through `impl-strict-compat-batch49`.
 The results are historical measurements, not claims about an untested branch tip.
 
 ## Run context
@@ -26,7 +26,10 @@ The results are historical measurements, not claims about an untested branch tip
   `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batch 39 recorded only the
   primary release-binary path. Batch 40 ran at `46836669`; batch 41 ran at
   `0b241392473aff32cf96bb1fcad330bbd0e2fed3`; and batch 42 recorded only the
-  primary release-binary path, so this report does not invent its SHA.
+  primary release-binary path. Batches 43, 44, and 46 through 48 ran at
+  `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batch 45 ran at
+  `0b241392473aff32cf96bb1fcad330bbd0e2fed3`; and batch 49 recorded only
+  the primary release-binary path, so this report does not invent its SHA.
 - Command column: commands omit the common
   `target/release/hermit run --strict --verify --` prefix unless a Hermit
   option such as `--verify-allow both` matters.
@@ -81,7 +84,14 @@ The results are historical measurements, not claims about an untested branch tip
 | 40 | Signal handling | 9 | 0 | 0 |
 | 41 | Inter-process communication | 5 | 2 | 0 |
 | 42 | Math and science | 7 | 2 | 0 |
-| **Total** | | **323** | **66** | **5** |
+| 43 | Complex text processing | 8 | 1 | 0 |
+| 44 | Process management | 9 | 0 | 0 |
+| 45 | File operations | 8 | 1 | 0 |
+| 46 | Networking | 9 | 0 | 0 |
+| 47 | Encoding and binary tools | 9 | 0 | 0 |
+| 48 | String and text utilities | 9 | 0 | 0 |
+| 49 | Archive round trips | 8 | 0 | 0 |
+| **Total** | | **383** | **68** | **5** |
 
 ## Core utilities
 
@@ -657,6 +667,73 @@ valid target because that package has no library target.
 | 393 | bc integer power | `sh -c "echo '2^64' &#124; bc"` | PASS L2 | 42 | |
 | 394 | Meta Python seeded RNG | `python3 -c 'import random; random.seed(42); print([random.randint(0,100) for _ in range(10)])'` | FAIL | 42 | Explicit application seeding does not remove the Meta runtime's helper-thread startup scheduling divergence. |
 
+## Extended text, process, filesystem, networking, and archives
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 395 | grep count | `grep -c root /etc/passwd` | PASS L2 | 43 | Output is 2. |
+| 396 | grep regex | `grep -E '^[a-z]+:' /etc/passwd &#124; head -5` | PASS L2 | 43 | |
+| 397 | sed replacement | `sed 's/root/ROOT/g' /etc/passwd &#124; head -3` | PASS L2 | 43 | |
+| 398 | awk fields | `awk -F: '{print NR, $1, $NF}' /etc/passwd &#124; head -5` | PASS L2 | 43 | |
+| 399 | awk length sum | `awk '{sum+=length} END{print sum, NR}' /etc/passwd` | PASS L2 | 43 | Output is `3074 61`. |
+| 400 | Perl root regex | `perl -ne 'print if /^root/' /etc/passwd` | PASS L2 | 43 | |
+| 401 | Perl uppercase | `perl -pe 's/(\w+)/\U$1/e' /etc/hostname` | FAIL | 43 | Invalid Perl: exits 255 natively because `\U` is not an expression under `/e`; the valid `uc($1)` control passes L2. |
+| 402 | diff process substitutions | `bash -c 'diff <(echo hello) <(echo world) &#124;&#124; true'` | PASS L2 | 43 | |
+| 403 | comm process substitutions | `bash -c 'comm -3 <(echo -e "a\nb\nc") <(echo -e "b\nc\nd")'` | PASS L2 | 43 | |
+| 404 | nice | `nice -n 10 echo hello` | PASS L2 | 44 | |
+| 405 | nohup | `bash -c 'nohup echo hello 2>/dev/null; cat nohup.out; rm -f nohup.out'` | PASS L2 | 44 | Deterministic command and cleanup. |
+| 406 | background wait | `bash -c 'sleep 0.001 & wait $!; echo waited=$?'` | PASS L2 | 44 | |
+| 407 | jobs | `bash -c 'jobs -l 2>/dev/null; echo $?'` | PASS L2 | 44 | |
+| 408 | shell PID | `bash -c 'bg_pid=$$; echo pid=$bg_pid'` | PASS L2 | 44 | Virtual PID output is stable. |
+| 409 | open-file limit | `bash -c 'ulimit -n'` | PASS L2 | 44 | |
+| 410 | stack limit | `bash -c 'ulimit -s'` | PASS L2 | 44 | |
+| 411 | shell exec | `bash -c 'exec echo hello from exec'` | PASS L2 | 44 | |
+| 412 | shell type | `bash -c 'type ls'` | PASS L2 | 44 | |
+| 413 | find file | `find /etc/hostname -type f -print` | PASS L2 | 45 | |
+| 414 | readlink | `readlink -f /etc/hostname` | PASS L2 | 45 | |
+| 415 | realpath | `realpath /etc/hostname` | PASS L2 | 45 | |
+| 416 | stat fields | `stat -c '%s %Y %a' /etc/hostname` | PASS L2 | 45 | |
+| 417 | file type | `file /etc/hostname` | PASS L2 | 45 | |
+| 418 | basename | `basename /etc/hostname` | PASS L2 | 45 | |
+| 419 | dirname | `dirname /etc/hostname` | PASS L2 | 45 | |
+| 420 | shell file test | `bash -c 'test -f /etc/hostname && echo exists &#124;&#124; echo missing'` | PASS L2 | 45 | |
+| 421 | long listing | `bash -c 'ls -la /etc/hostname'` | FAIL | 45 | External nscd poll readiness differs; numeric-owner `ls -lan` control passes L2. |
+| 422 | loopback addresses | `ip addr show lo` | PASS L2 | 46 | Isolated namespace exposes 127.0.0.1 and ::1. |
+| 423 | routes | `ip route show` | PASS L2 | 46 | Isolated namespace has no routes. |
+| 424 | listening sockets with ss | `bash -c 'ss -tlnp 2>/dev/null &#124;&#124; echo $?'` | PASS L2 | 46 | |
+| 425 | listening sockets with netstat | `bash -c 'netstat -tlnp 2>/dev/null &#124;&#124; echo $?'` | PASS L2 | 46 | |
+| 426 | hostname | `hostname` | PASS L2 | 46 | Output is `hermetic-container.local`. |
+| 427 | hostname addresses | `bash -c 'hostname -I 2>/dev/null &#124;&#124; echo $?'` | PASS L2 | 46 | Empty address output is deterministic. |
+| 428 | Ncat refused connect | `bash -c 'echo quit &#124; nc -w1 localhost 1 2>/dev/null; echo $?'` | PASS L2 | 46 | Captured status is 1. |
+| 429 | Bash /dev/tcp refused connect | `bash -c 'exec 3<>/dev/tcp/localhost/1 2>/dev/null; echo conn=$?; exec 3>&-'` | PASS L2 | 46 | Captured status is `conn=1`. |
+| 430 | localhost lookup | `getent hosts localhost` | PASS L2 | 46 | Resolves to ::1 with local aliases. |
+| 431 | base64 encode | `bash -c 'echo hello &#124; base64'` | PASS L2 | 47 | |
+| 432 | base64 decode | `bash -c 'echo aGVsbG8= &#124; base64 -d'` | PASS L2 | 47 | |
+| 433 | xxd | `bash -c 'echo hello &#124; xxd &#124; head -1'` | PASS L2 | 47 | |
+| 434 | od hexadecimal | `bash -c 'echo hello &#124; od -A x -t x1z &#124; head -1'` | PASS L2 | 47 | |
+| 435 | od characters | `bash -c 'printf "\x48\x65\x6c\x6c\x6f" &#124; od -c'` | PASS L2 | 47 | |
+| 436 | md5sum | `bash -c 'echo hello &#124; md5sum'` | PASS L2 | 47 | |
+| 437 | sha256sum | `bash -c 'echo hello &#124; sha256sum'` | PASS L2 | 47 | |
+| 438 | iconv | `bash -c 'echo hello &#124; iconv -f UTF-8 -t ASCII'` | PASS L2 | 47 | |
+| 439 | fold | `bash -c 'printf "hello world" &#124; fold -w 5'` | PASS L2 | 47 | |
+| 440 | fmt | `bash -c 'echo "the quick brown fox jumps over the lazy dog" &#124; fmt -w 20'` | PASS L2 | 48 | |
+| 441 | pr columns | `bash -c 'seq 1 20 &#124; pr -3 -t'` | PASS L2 | 48 | |
+| 442 | column | `bash -c 'echo -e "a b c\n1 2 3" &#124; column -t'` | PASS L2 | 48 | |
+| 443 | strings | `bash -c 'strings /usr/bin/echo &#124; head -5'` | PASS L2 | 48 | |
+| 444 | bounded yes | `bash -c 'yes hello &#124; head -5'` | PASS L2 | 48 | |
+| 445 | zero-padded printf | `printf '%010d\n' 42` | PASS L2 | 48 | |
+| 446 | rev | `bash -c 'echo hello &#124; rev'` | PASS L2 | 48 | |
+| 447 | lowercase tr | `bash -c 'echo "Hello World" &#124; tr "[:upper:]" "[:lower:]"'` | PASS L2 | 48 | |
+| 448 | squeeze tr | `bash -c 'echo abcabc &#124; tr -s abc'` | PASS L2 | 48 | |
+| 449 | tar stream | `bash -c 'echo hello > /tmp/ar49; tar cf - /tmp/ar49 &#124; tar tf -; rm /tmp/ar49'` | PASS L2 | 49 | |
+| 450 | gzip round trip | `bash -c 'echo hello &#124; gzip &#124; gunzip'` | PASS L2 | 49 | |
+| 451 | bzip2 round trip | `bash -c 'echo hello &#124; bzip2 &#124; bunzip2'` | PASS L2 | 49 | |
+| 452 | xz round trip | `bash -c 'echo hello &#124; xz &#124; xz -d'` | PASS L2 | 49 | |
+| 453 | zstd round trip | `bash -c 'echo hello &#124; zstd &#124; zstd -d'` | PASS L2 | 49 | |
+| 454 | cpio stream | `bash -c 'echo test > /tmp/cpio49; echo /tmp/cpio49 &#124; cpio -o 2>/dev/null &#124; cpio -it 2>/dev/null; rm /tmp/cpio49'` | PASS L2 | 49 | |
+| 455 | dd, xxd, and head | `bash -c 'dd if=/dev/zero bs=64 count=1 2>/dev/null &#124; xxd &#124; head -2'` | PASS L2 | 49 | |
+| 456 | tee, wc, and cat | `bash -c 'echo data &#124; tee /tmp/tee49 &#124; wc -c; cat /tmp/tee49; rm /tmp/tee49'` | PASS L2 | 49 | |
+
 ## Record/replay results
 
 Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
@@ -678,7 +755,11 @@ assurance dimension from strict L2 and are excluded from the strict summary.
 | Post-envp data-processing retest | 6 | 4 | Direct sed, tr, nl, wc, tee, and rev match. Pipelines using cut, sort, uniq, or xargs expose duplicated intermediate output, fd allocation, or SIGCHLD ordering failures. |
 | Post-envp system-information retest | 12 | 0 | uname, arch, nproc, getconf, uptime, df, mount, lsblk, id, whoami, logname, and printenv all match. |
 | Post-envp signal and Bash retest | 7 | 3 | Signal traps, status handling, timeout, and a builtin loop match. Command substitution and two pipelines fail through intermediate-output leakage or replay fd allocation. Two direct isolation controls match and are excluded from this prescribed-case count. |
-| **Post-envp batches 1-7 subtotal** | **60** | **22** | Counts the 82 prescribed cases in the seven numbered post-fix matrices; supplemental controls are described but not double-counted. |
+| Post-envp math and text retest | 7 | 3 | Direct bc, dc, awk, Perl, grep, and two additional arithmetic commands match. Three pipelines expose the known intermediate-pipe-payload leak before the correct downstream output. |
+| Post-envp file and encoding retest | 6 | 6 | Six direct file operations match. Six encoding, checksum, fold, and iconv pipelines have matching Detcore logs but replay prepends the upstream payload; all six static-file controls match. |
+| Post-envp process and signal retest | 9 | 1 | Nine process, shell, signal, file-test, and find cases match. The nohup command also matches replay but exits 1 natively because non-TTY stdout means no `nohup.out` is created. |
+| Post-envp direct-program retest | 13 | 2 | Thirteen direct commands match. `tail -3` and `date +%Y` diverge in replay fd allocation or close/write ordering. |
+| **Post-envp batches 1-11 subtotal** | **95** | **34** | Counts the 129 prescribed cases in the eleven numbered post-fix matrices; supplemental controls are described but not double-counted. |
 
 PR [#238](https://github.com/rrnewton/hermit/pull/238) merged to `main` as
 `46836669bd6c2f7151fbe65c55f4ea5bd1440897`. It pre-creates the fbcode bind
@@ -692,9 +773,11 @@ recorder netlink panic, Node's unsupported ioctl, javac recording performance,
 fd allocation remain distinct observations.
 
 PR [#239](https://github.com/rrnewton/hermit/pull/239) remains open at
-`929ba884d907f86463d27ebbd3d3287df6aa49c3`. It passed compiler-focused L2
-checks, but adversarial review found failed-vfork deadlock and remaining
-parent/child/peer ordering races, so it was not landed.
+`929ba884d907f86463d27ebbd3d3287df6aa49c3`. It is non-draft, mergeable,
+and labeled `human-review`. GitHub-hosted regular tests passed; the
+self-hosted host-dependent job remains queued, so GitHub reports the merge
+state as `UNSTABLE`. The reviewed follow-up fixes are not present in the
+single-commit PR head, so it was not landed.
 
 ## Failure root causes and fix status
 
@@ -735,11 +818,13 @@ parent/child/peer ordering races, so it was not landed.
 | Batch 39 live system data | `lscpu`, `free`, and `ps` expose changing host CPU-frequency or memory values. | Virtualize or suppress those live fields; deterministic static topology, mount, disk, kernel, and page-size probes pass. |
 | Batch 41 FIFO and process substitution | A blocking FIFO open or pipe read holds the serialized turn while the peer process that would satisfy it cannot run. | Requires scheduler awareness of cross-process rendezvous; simple pipes, coprocesses, IPC listing, sleeps, and regular-file fd operations pass. |
 | Batch 42 Meta Python | Helper-thread startup orders parent futex progress and child RNG initialization differently; explicit application-level RNG seeding does not control that runtime startup. | Stock Python remains the established control for this failure class; the non-Python math tools pass. |
+| Batch 43 Perl uppercase | The prescribed `\U$1/e` replacement is invalid Perl and exits 255 identically on the host. | The valid `uc($1)/e` equivalent passes L2; this is a command error, not a Hermit defect. |
+| Batch 45 long listing | Owner/group name lookup enters live nscd AF_UNIX polling, whose readiness differs between runs. | Numeric-owner `ls -lan` avoids NSS and passes L2. |
 | Post-envp R/R pipelines | Replay can expose intermediate pipe payloads on stdout, allocate different fds for process substitution, or order pipe close and SIGCHLD differently. | Direct utility controls pass; console-fd tracking, replay fd allocation, and multi-process scheduling remain separate follow-ups. |
 
 ## Interpretation
 
-- Across 394 recorded command outcomes, 323 reach L2 (82.0%), 66 do not
+- Across 456 recorded command outcomes, 383 reach L2 (84.0%), 68 do not
   reach L2, and 5 were not run. Repeated stress attempts are summarized in one
   row per scenario rather than inflating the command count.
 - The strongest coverage is deterministic local computation, sequential
@@ -764,6 +849,6 @@ parent/child/peer ordering races, so it was not landed.
 - Record/replay is tracked separately: the initial debug-binary matrix passed
   18/20, while 49 later pre-fix release-binary probes were dominated by one
   program-independent replay envp failure. PR #238 fixed that failure on main.
-  Across the seven numbered post-fix matrices, 60/82 prescribed cases match
+  Across the eleven numbered post-fix matrices, 95/129 prescribed cases match
   recording. Remaining failures are distinct recorder ioctl/NULL-pointer,
   replay-fd, intermediate-output routing, and multi-process scheduling bugs.
