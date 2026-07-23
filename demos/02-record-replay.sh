@@ -7,6 +7,21 @@
 # directory, executable, inputs, and Hermit revision unchanged between recording
 # and replay.
 
+set -euo pipefail
+
+# shellcheck disable=SC2034  # consumed by common.sh demo_success/demo_failure
+DEMO_LABEL="Demo 2: Record And Replay"
+cat <<'DESC'
+=== Demo 2: Record And Replay ===
+
+Hermit records an execution into an isolated data directory, lists the recording
+in text and JSON, and replays it to completion with --autopilot. It can also
+record and immediately verify a replay. Without --autopilot, hermit replay
+starts a replay gdbserver and GDB client; the demo drives a noninteractive GDB
+session that continues the guest to completion. Keep the recording directory,
+executable, inputs, and Hermit revision unchanged between recording and replay.
+DESC
+
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 export DEMO_DATA_DIR="$DEMO_TMP/recordings"
@@ -26,8 +41,8 @@ demo_banner "Record and immediately verify a replay (temp recording auto-deleted
 demo_banner "Replay under GDB (noninteractive: continue to completion)"
 # Without --autopilot, replay starts a replay gdbserver and GDB client. This
 # noninteractive session connects, continues the guest, and quits after
-# /bin/echo completes. The trailing --gdbex=quit is required: once the guest
-# exits, GDB has no more -ex commands to run and would otherwise drop to its
+# /bin/echo completes. The trailing `--gdbex=quit` is required: once the guest
+# exits, GDB has no more `-ex` commands to run and would otherwise drop to its
 # interactive prompt and block on stdin, so `hermit replay` (which waits on the
 # GDB client) would hang until the external timeout killed it. For interactive
 # debugging, omit the --gdbex options and the external timeout.
@@ -38,5 +53,4 @@ timeout 90 "$HERMIT" --log=error replay \
   --gdbex=continue \
   --gdbex=quit
 
-echo
-echo "Demo 2 complete."
+demo_success
