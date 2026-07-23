@@ -33,7 +33,7 @@ Every mode must catch up to the one before it:
 3. **Agent exhaustion:** When agents hit 100% context, spawn fresh ones immediately at `~/work/dev-hermit/hermit`. Don't let all agents exhaust simultaneously.
 4. **Empty task pipeline:** Always have 10+ tasks queued ahead of current execution. Pre-generate work.
 5. **Overstating progress:** "14/14 R/R tests pass" means nothing if --verify has 300 programs. Measure gaps, not victories.
-6. **Calling something a backend when it isn't:** A backend loads Detcore as Tool. Shell-outs, prototypes, and stubs are NOT backends.
+6. **Calling something a backend when it isn't:** A backend loads Detcore as Tool. One shared copy of the code. Prototypes and stubs are NOT backends.
 7. **Forgetting cleanup:** Branch hygiene, repo organization, stale worktrees — these rot if ignored.
 8. **Waiting for user review:** Do own review iterations. Don't block on human review. Use adversarial agent review.
 9. **Single-threaded thinking:** Debugging is parallelizable. Burst agents for root-causing. Implementation can parallelize across subsystems.
