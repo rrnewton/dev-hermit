@@ -8,12 +8,13 @@ random data, CPUID results, address layout, and selected file metadata.
 
 The demo materials live entirely in this parent repository. The pinned
 `hermit/` submodule is unmodified: the outer workspace only adds to it. The
-walkthrough covers four working workflows:
+walkthrough covers five working workflows:
 
 1. repeat an execution with stable guest-visible inputs;
 2. record an execution and replay it, with or without GDB;
 3. search seeded thread schedules for a concurrency failure; and
-4. bisect two schedules to identify the events that change the outcome.
+4. bisect two schedules to identify the events that change the outcome; and
+5. boot Linux in QEMU under Hermit's relaxed virtual-time profile.
 
 > [!WARNING]
 >
@@ -31,7 +32,10 @@ for the record/replay section, and the Python demo uses `/usr/bin/python3`. The
 user-accessible CPU performance counters (PMU).
 
 The demos use private temporary and ignored build-artifact directories and
-require no external network access.
+require no external network access. Demo 5 additionally needs
+`qemu-system-x86_64` and readable `ignored/qemu-linux/bzImage` and
+`ignored/qemu-linux/initramfs.cpio.gz` images in the parent workspace (or a
+`QEMU_ASSETS` override pointing to them).
 
 ## Layout
 
@@ -43,7 +47,8 @@ demos/
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
   04-schedule-bisection.sh  # hermit analyze (requires PMU)
-  run-all.sh                # runs demos 1-3 (add --with-analyze for demo 4)
+  05-qemu-boot.sh           # relaxed QEMU/Linux boot (requires staged images)
+  run-all.sh                # demos 1-3; demos 4 and 5 are opt-in
 ```
 
 Each script sources `demos/common.sh`, which locates the `hermit/` submodule,
@@ -72,6 +77,14 @@ Include the slow PMU-based analysis at the end with:
 
 ```bash
 ./demos/run-all.sh --with-analyze
+```
+
+Include the QEMU boot with `--with-qemu`, or use `--all` for both optional
+demos:
+
+```bash
+./demos/run-all.sh --with-qemu
+./demos/run-all.sh --all
 ```
 
 Run an individual step directly, for example:
@@ -127,6 +140,21 @@ both stacks to the intentional racy access in `flaky-tests/hello_race.rs`. Event
 numbers can vary with the binary and Hermit revision; the source-level diagnosis
 is the durable result.
 
+### 5. QEMU Linux Boot
+
+Hermit runs `qemu-system-x86_64`, which boots a real x86-64 Linux kernel under
+TCG, reaches the initramfs serial shell, and powers off cleanly. The guest RTC
+is checked against Hermit's fixed 2022 virtual-time epoch rather than host wall
+time. QEMU 10.1 requires `-monitor none` alongside the requested
+`-nographic -serial stdio` combination; otherwise the monitor and serial device
+both claim stdio and QEMU exits immediately.
+
+This is a compatibility profile, not L2. `--no-sequentialize-threads` is needed
+so QEMU's vCPU and helper threads can make progress, and the large
+`--preemption-timeout` avoids interrupting the vCPU during boot. Those QEMU
+host-thread interleavings remain uncontrolled even though `-icount
+shift=0,sleep=off` gives the nested Linux guest an instruction-derived clock.
+
 ## Scope And Next Steps
 
 - Keep file contents and mount layouts fixed, prefer a minimal environment, and
@@ -137,6 +165,8 @@ is the durable result.
   program works.
 - Benchmark the real workload; ptrace overhead varies with syscall frequency,
   thread count, scheduling, and logging.
+- Treat demo 5's 2022 RTC as virtual-time compatibility evidence, not a
+  repeat-identical strict/verify claim.
 
 For full option and troubleshooting coverage, see the Hermit product
 documentation under `hermit/docs/`. Hermit is BSD-licensed; see
