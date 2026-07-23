@@ -43,3 +43,4 @@
 /ai_docs/**/*.tgz
 /ai_docs/**/*.webp
 /ai_docs/**/*.zip
+ignored/
