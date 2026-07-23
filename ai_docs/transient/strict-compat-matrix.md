@@ -834,6 +834,39 @@ valid target because that package has no library target.
 | 536 | Rust sieve | compiled Sieve of Eratosthenes to 10000 | PASS L2 | 59 | Finds 1229 primes. |
 | 537 | Rust Mandelbrot | compiled 40x20 ASCII fixture | PASS L2 | 59 | 170 points inside; stable output hash. |
 
+## QEMU and nested Linux status
+
+QEMU is tracked separately from the numbered strict matrix because the working
+boot intentionally relaxes Hermit's host-thread scheduler. It is a demonstrated
+virtual-time compatibility result, not an L1/L2 determinism result.
+
+| Evidence | Hermit and QEMU mode | Result | Assurance and limitation |
+|---|---|---|---|
+| Self-contained polished demo | ptrace; `--no-sequentialize-threads`; `--preemption-timeout 10000000000`; QEMU 10.1.0 TCG single-thread, `-smp 1 -icount shift=0,sleep=off` | PASS 4/4: three release-Hermit runs and one debug-Hermit run, rc 0, boot-to-poweroff in 18-21 seconds | Compatibility only. QEMU host-thread interleavings are uncontrolled. |
+| Nested guest payload | Linux 6.17.13 with a generated BusyBox initramfs | Reached `HERMIT-QEMU-DEMO-BOOT-OK`, ran uname, proc/version, id, date, and proc probes, reached `HERMIT-QEMU-DEMO-DONE`, then powered off | Guest date was byte-identical across all four runs: `Sat Jan 1 00:01:56 UTC 2022`. |
+| Consolidated parent harness | virtual time; no sequentialization; preemption disabled; QEMU `-icount` | Prior six-mode sweep reached the freestanding init marker and clean exit in 13.25 seconds only in the fixed-icount compatibility profile | Tracked scripts are under `experiments/qemu-linux/`; regenerated binary artifacts remain ignored under `ignored/qemu-linux/`. |
+| Default strict baseline | ptrace; thread sequentialization; normal preemption; no relaxations | Prior bounded run timed out after 20 seconds before serial output | QEMU's CPU-bound vCPU prevents helper/main-loop threads from servicing timers and I/O. |
+| Sequentialized no-preemption control | ptrace; thread sequentialization; preemption disabled; fixed QEMU icount | Prior 30-second run ended by SIGKILL before serial output | Disabling preemption does not solve helper-thread starvation. |
+| Relaxed without fixed icount | no sequentialization; preemption disabled; no QEMU icount | Reached kernel console but Linux reported no usable current clocksource | Hermit's synthetic RDTSC and virtualized device-clock domains are inconsistent; fixed icount is required for the working profile. |
+| Current strict `-smp 1` reproduction | current release; ptrace; literal `--strict`; fixed QEMU icount | Timed out after 45 seconds with exit 124; console was 0 bytes and showed no SeaBIOS, Linux, or boot marker | Current evidence; no L1 completion. Single guest CPU does not remove QEMU's host helper threads. |
+| Remaining deadline experiments | `impl-qemu-strict-progress` plus relaxed-`--verify` and minimum-relaxation runs in `impl-qemu-parallel-approaches` | In progress | No additional assurance claim until a task records a boot marker and exit status. |
+
+The `sched_yield` fairness experiment removed one persistent vfork-child
+priority inversion, but the target still timed out and ended with no runnable
+threads while four threads waited on private futexes. That change is not a
+validated QEMU strict fix. The demonstrated next milestone is controlled
+concurrency for QEMU's vCPU and helper threads while retaining deterministic
+ordering; simply disabling sequentialization is the compatibility workaround.
+
+Repository checks for this status: the parent harness and Hermit demo files are
+tracked and unmodified; `bash -n` passed for both harness scripts and the demo;
+the freestanding init passed `gcc -fsyntax-only -Wall -Wextra -Werror`; and the
+current parent ignored artifact set includes the kernel and initramfs images.
+The Hermit demo is self-contained and does not depend on those parent artifacts.
+The same demo tree is reachable from Hermit `origin/main` via `da214e2`,
+but the parent gitlink remains `4a52eeb` and does not yet contain that
+submodule directory. The independently tracked parent harness remains usable.
+
 ## Record/replay results
 
 Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
