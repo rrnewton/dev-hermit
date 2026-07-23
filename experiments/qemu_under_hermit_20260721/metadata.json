@@ -1,0 +1,13 @@
+{
+  "date": "2026-07-21",
+  "host_os": "CentOS Stream 9",
+  "architecture": "x86_64",
+  "hermit_commit": "8ec63a557af6425cbe8965316b4d5e8e662546b9",
+  "qemu_version": "10.1.0",
+  "qemu_package": "qemu-kvm-10.1.0-21.el9",
+  "virtme_ng_version": "1.41",
+  "kernel": "6.13.2-0_fbk13_hardened_0_g02230262e956",
+  "accelerator": "tcg",
+  "memory_mib": 256,
+  "expected_terminal_state": "kernel panic: unable to mount root fs"
+}

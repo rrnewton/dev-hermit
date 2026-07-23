@@ -1,0 +1,10 @@
+schema_version=1
+started_at_utc=2026-07-22T01:11:46Z
+repository_commit=96261f618dda654fb87ffacd0e178c4bf743faaf
+hermit=./target/debug/hermit
+hermit_log=error
+hermit_sha256=35abfc7f734de87966c04c2beae2c633fab9289611c784192988f6ab7a3a66ce
+program=/bin/echo
+program_sha256=3e435b4ffe3558f649f0e24abed5adbdabed7631eca6666fa2339976b17189f4
+runs=25
+command=/bin/echo speculative-determinism

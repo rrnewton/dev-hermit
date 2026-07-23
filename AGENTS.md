@@ -220,9 +220,9 @@ worktree from the owning primary:
 
 ```bash
 cd ~/work/dev-hermit
-./slot-init.sh slot0X            # Hermit + Reverie worktrees
-./slot-init.sh slot0X hermit     # Hermit worktree only
-./slot-init.sh slot0X reverie    # Reverie worktree only
+./scripts/slot-init.sh slot0X            # Hermit + Reverie worktrees
+./scripts/slot-init.sh slot0X hermit     # Hermit worktree only
+./scripts/slot-init.sh slot0X reverie    # Reverie worktree only
 ```
 
 The equivalent explicit commands, run from the parent root, add each worktree
@@ -563,7 +563,7 @@ Use the explicit Reverie override only when initialization is intended and
 `.gitmodules` marks it `update = none`. Do not recursively initialize optional
 or heavy nested submodules without a task that needs them. Feature slots are
 direct worktrees of the `hermit` and `reverie` primaries created via
-`slot-init.sh`, not nested submodule checkouts; add and remove them through the
+`scripts/slot-init.sh`, not nested submodule checkouts; add and remove them through the
 owning primary repository.
 
 ## Binary And Large-File Policy

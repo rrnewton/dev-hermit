@@ -1,0 +1,10 @@
+schema_version=1
+started_at_utc=2026-07-22T01:15:34Z
+repository_commit=96261f618dda654fb87ffacd0e178c4bf743faaf
+hermit=./target/debug/hermit
+hermit_log=error
+hermit_sha256=35abfc7f734de87966c04c2beae2c633fab9289611c784192988f6ab7a3a66ce
+program=./target/stress-guests/just_spin
+program_sha256=3285ad868885fa39426952bb7906894efd1f50c2a732999fd0d0c57b1dc78f3e
+runs=10
+command=./target/stress-guests/just_spin

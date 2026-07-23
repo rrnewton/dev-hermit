@@ -1,0 +1,16 @@
+case,timeout_seconds,exit_status,last_progress,classification
+direct_tcg_baseline,45,0,expected_rootfs_panic,success
+hermit_namespace_only,45,0,expected_rootfs_panic,success
+hermit_default_implicit_tcg,90,124,qemu_warnings,timeout
+hermit_default_explicit_tcg,60,124,partial_seabios,timeout
+hermit_strace_only,45,124,booting_from_rom,timeout
+hermit_strace_no_preemption,60,0,expected_rootfs_panic,success
+hermit_full_no_preemption,120,124,qemu_warnings,timeout
+hermit_real_time_sequentialized,90,130,partial_seabios,forced_interrupt
+hermit_concurrent_virtual_time,75,124,apic_clock_calibration_warning,timeout
+hermit_concurrent_real_time,60,0,expected_rootfs_panic,success
+hermit_panic_unsupported,30,0,no_unsupported_syscall,success
+hermit_record_default,120,124,qemu_warnings,timeout
+hermit_vng_auto_kernel,180,1,virtual_kernel_5.2.0_not_found,failure
+hermit_vng_explicit_kernel,180,124,clone_vfork_unsupported,timeout
+hermit_vng_force_9p,180,255,virtio_9p_device_missing,host_qemu_limitation

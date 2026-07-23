@@ -1,0 +1,10 @@
+schema_version=1
+started_at_utc=2026-07-22T01:15:52Z
+repository_commit=96261f618dda654fb87ffacd0e178c4bf743faaf
+hermit=./target/debug/hermit
+hermit_log=error
+hermit_sha256=35abfc7f734de87966c04c2beae2c633fab9289611c784192988f6ab7a3a66ce
+program=./target/stress-guests/nanosleep_par
+program_sha256=7f30721ea19346f8215cf2a69d991fdf3fe94b065687b685c9814eeaaeb91e1c
+runs=10
+command=./target/stress-guests/nanosleep_par

@@ -1,0 +1,13 @@
+#!/bin/busybox sh
+/bin/busybox mount -t proc none /proc
+/bin/busybox mount -t sysfs none /sys
+echo "==================================================="
+echo "HERMIT-QEMU-LINUX-BOOT: userspace init reached!"
+echo "uname: $(/bin/busybox uname -a)"
+echo "date:  $(/bin/busybox date)"
+echo "uptime:$(/bin/busybox cat /proc/uptime)"
+echo "HERMIT-QEMU-LINUX-BOOT: running a program inside the VM..."
+/bin/busybox echo "  hello from inside the deterministic VM"
+/bin/busybox head -n 3 /proc/cpuinfo
+echo "HERMIT-QEMU-LINUX-BOOT: init complete, powering off"
+/bin/busybox poweroff -f

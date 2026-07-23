@@ -1,0 +1,23 @@
+2026-07-22T01:14:23.312951Z  WARN reverie_ptrace::task: Unable to intercept CPUID: Underlying hardware does not support CPUID faulting
+2026-07-22T01:14:23.314916Z  WARN reverie_ptrace::task: Unable to intercept CPUID: Underlying hardware does not support CPUID faulting
+2026-07-22T01:14:23.337322Z  WARN reverie_ptrace::task: Unable to intercept CPUID: Underlying hardware does not support CPUID faulting
+c[?7l[2J[0mSeaBIOS (version 1.16.3-5.el9)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+0EFCCB30+0EF0CB30 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from ROM...
+PPrroobbiinngg  EEDDDD  ((eedddd==ooffff  ttoo  ddiissaabbllee))......  ook
+c[?7l[2J[0mkNo EFI environment detected.
+early console in extract_kernel
+input_data: 0x0000000004ad32cc
+input_len: 0x0000000000b94848
+output: 0x0000000001000000
+output_len: 0x0000000004601078
+kernel_total_size: 0x0000000003c26000
+needed_size: 0x0000000004800000
+trampoline_32bit: 0x0000000000000000
+
+Decompressing Linux... No EFI environment detected.

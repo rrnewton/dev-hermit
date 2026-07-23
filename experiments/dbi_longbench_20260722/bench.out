@@ -1,0 +1,17 @@
+### START load=120.02 109.54 106.94 118/80160 2292149
+== loop3s ==
+  native:                     3.05 3.11 3.09
+  bareDR(cnt=off):            3.05 3.14
+  dbi(cnt=on):                62.04 61.79
+  ptrace:                     CRASH
+== loop10s ==
+  native:                     10.22 10.24 10.16
+  bareDR(cnt=off):            10.17 10.72
+  dbi(cnt=on):                206.08 207.30
+  ptrace:                     >400TO
+== mixed ==
+  native:                     3.14 3.12 3.18
+  bareDR(cnt=off):            3.13 3.14
+  dbi(cnt=on):                64.80 64.17
+  ptrace:                     CRASH
+### DONE load=147.22 112.34 104.17 74/81830 3634583

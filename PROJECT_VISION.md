@@ -4,21 +4,25 @@
 
 ## Mission
 
-Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM) that all produce identical behavior.
+Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM) that all produce identical behavior, plus record/replay and chaos concurrency testing that is equally broadly compatible with arbitrary guest programs.
 
-## Priorities (ordered)
+## Priorities
 
-1. **Rock-solid hermit run** — expand --strict --verify compatibility envelope
-2. **DBI backend** — real Detcore-over-DbiGuest integration (NOT shell-out)
+We expand compatibility across a set of tracked programs, most of which are part of the CI suite (but we can do periodic testing outside of it).
+Hermit has a series of modes:
+
+0. **Smoke test** -- running through hermit at all, with enforcement less than --strict, is a good first step on a new application but is not something we track regularly in CI.
+1. **Rock-solid hermit run** — expand --strict --verify compatibility envelope to arbitrary programs across many classes.
+2. **DBI backend** — real Detcore-over-DbiGuest integration (NOT a partial prototype or code duplication)
 3. **KVM backend** — gvisor-model syscall interception through KvmGuest
-4. **Record/replay** — fix pipe deadlock, expand R/R to match --verify coverage
-5. **Land PRs, keep main green, zero warnings**
-6. **Clean repo state** — minimal open PRs, branches cleaned after merge
+4. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks)
+5. **Land PRs, keep main green, zero compile warnings**
+6. **Clean repo state** — minimal open PRs, branches deleted after merge, `git status` clean in both parent and hermit/reverie checkouts
 
 ## Mode Expansion Mandate
 
 Every mode must catch up to the one before it:
-- 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM
+- Example: 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM
 - There is NO stopping while trailing modes are weaker
 - Always add NEW programs to coverage even as trailing modes catch up
 

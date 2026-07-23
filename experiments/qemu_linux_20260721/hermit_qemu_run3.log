@@ -1,0 +1,208 @@
+
+thread 'main' (1) panicked at detcore/src/lib.rs:1126:21:
+unsupported syscall: Pread64(Pread64 { raw: SyscallArgs { arg0: 3, arg1: 140737488330400, arg2: 784, arg3: 64, arg4: 140737488330400, arg5: 140737352358368 } })
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/panicking.rs:80:14
+   2: <detcore::tool_local::Detcore as reverie::tool::Tool>::handle_syscall_event::<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::{closure#0}
+             at /home/newton/work/dev-hermit/hermit/detcore/src/lib.rs:1126:21
+   3: <core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<i64, reverie::error::Error>> + core::marker::Send>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+   4: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:1091:18
+   5: <futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/fuse.rs:85:30
+   6: <core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+   7: <core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>> as futures_util::future::future::FutureExt>::poll_unpin
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/mod.rs:556:24
+   8: reverie_ptrace::task::cancellable::<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>::{closure#0}::{closure#0}::{closure#1}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:325:13
+   9: <&mut dyn for<'a, 'b> core::ops::function::FnMut<(&'a mut core::task::wake::Context<'b>,), Output = core::option::Option<core::task::poll::Poll<reverie_ptrace::task::cancellable::{closure#0}::__PrivResult<(), core::result::Result<i64, reverie::error::Error>>>>> as core::ops::function::FnMut<(&mut core::task::wake::Context,)>>::call_mut
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/ops/function.rs:298:21
+  10: reverie_ptrace::task::cancellable::<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>::{closure#0}::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:325:13
+  11: <futures_util::future::poll_fn::PollFn<reverie_ptrace::task::cancellable<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>::{closure#0}::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/poll_fn.rs:56:9
+  12: reverie_ptrace::task::cancellable::<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}::{closure#0}>::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:556:5
+  13: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_seccomp::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:1093:10
+  14: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_stop_event::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:892:60
+  15: <futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_stop_event::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/fuse.rs:85:30
+  16: <core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_stop_event::{closure#0}>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  17: <core::pin::Pin<&mut core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_stop_event::{closure#0}>>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  18: <core::pin::Pin<&mut core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::handle_stop_event::{closure#0}>>> as futures_util::future::future::FutureExt>::poll_unpin
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/mod.rs:556:24
+  19: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop_internal::{closure#0}::{closure#1}::{closure#1}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:335:13
+  20: <&mut dyn for<'a, 'b> core::ops::function::FnMut<(&'a mut core::task::wake::Context<'b>,), Output = core::option::Option<core::task::poll::Poll<<reverie_ptrace::task::TracedTask<_>>::run_loop_internal::{closure#0}::__PrivResult<core::option::Option<core::result::Result<safeptrace::Wait, safeptrace::Error>>, core::result::Result<safeptrace::Wait, reverie_ptrace::error::Error>>>>> as core::ops::function::FnMut<(&mut core::task::wake::Context,)>>::call_mut
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/ops/function.rs:298:21
+  21: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop_internal::{closure#0}::{closure#1}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:335:13
+  22: <futures_util::future::poll_fn::PollFn<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop_internal::{closure#0}::{closure#1}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/poll_fn.rs:56:9
+  23: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop_internal::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:1449:34
+  24: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:1393:44
+  25: <futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/fuse.rs:85:30
+  26: <core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop::{closure#0}>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  27: <core::pin::Pin<&mut core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop::{closure#0}>>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  28: <core::pin::Pin<&mut core::pin::Pin<&mut futures_util::future::future::fuse::Fuse<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run_loop::{closure#0}>>> as futures_util::future::future::FutureExt>::poll_unpin
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/future/mod.rs:556:24
+  29: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}::{closure#0}::{closure#1}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:335:13
+  30: <&mut dyn for<'a, 'b> core::ops::function::FnMut<(&'a mut core::task::wake::Context<'b>,), Output = core::option::Option<core::task::poll::Poll<<reverie_ptrace::task::TracedTask<_>>::run::{closure#0}::__PrivResult<safeptrace::Stopped, core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>>>> as core::ops::function::FnMut<(&mut core::task::wake::Context,)>>::call_mut
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/ops/function.rs:298:21
+  31: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/async_await/select_mod.rs:335:13
+  32: <futures_util::future::poll_fn::PollFn<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/poll_fn.rs:56:9
+  33: <reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/task.rs:1477:13
+  34: <futures_util::future::maybe_done::MaybeDone<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/maybe_done.rs:96:60
+  35: <futures_util::future::join::Join<<reverie_ptrace::task::TracedTask<detcore::tool_local::Detcore>>::run::{closure#0}, reverie_ptrace::tracer::run_orphaned::{closure#0}> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.33/src/future/join.rs:55:55
+  36: reverie_ptrace::tracer::run_task_tree::<detcore::tool_local::Detcore>::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/tracer.rs:289:6
+  37: <core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  38: <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/local.rs:1073:44
+  39: <tokio::task::local::LocalSet>::with::<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>, <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll::{closure#0}>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/local.rs:824:13
+  40: <std::thread::local::LocalKey<tokio::task::local::LocalData>>::try_with::<<tokio::task::local::LocalSet>::with<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>, <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll::{closure#0}>::{closure#0}, core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>>
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/thread/local.rs:463:12
+  41: <std::thread::local::LocalKey<tokio::task::local::LocalData>>::with::<<tokio::task::local::LocalSet>::with<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>, <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll::{closure#0}>::{closure#0}, core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>>
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/thread/local.rs:427:20
+  42: <tokio::task::local::LocalSet>::with::<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>>, <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/local.rs:822:17
+  43: <tokio::task::local::RunUntil<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>> as core::future::future::Future>::poll
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/local.rs:1063:22
+  44: <tokio::task::local::LocalSet>::run_until::<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<reverie_process::exit_status::ExitStatus, reverie::error::Error>> + core::marker::Send>>>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/local.rs:720:19
+  45: <reverie_ptrace::tracer::Tracer<detcore::tool_global::GlobalState>>::wait::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-ptrace/src/tracer.rs:138:60
+  46: hermit::run::{closure#0}
+             at /home/newton/work/dev-hermit/hermit/hermit-cli/src/lib.rs:85:69
+  47: <core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  48: <core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>> as core::future::future::Future>::poll
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/future/future.rs:133:9
+  49: <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on::<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}::{closure#0}::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:830:70
+  50: tokio::task::coop::with_budget::<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>, <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}::{closure#0}::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/coop/mod.rs:167:5
+  51: tokio::task::coop::budget::<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>, <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}::{closure#0}::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/task/coop/mod.rs:133:5
+  52: <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on::<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:830:25
+  53: <tokio::runtime::scheduler::current_thread::Context>::enter::<core::task::poll::Poll<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>, <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:488:19
+  54: <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on::<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:829:44
+  55: <tokio::runtime::scheduler::current_thread::CoreGuard>::enter::<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:906:68
+  56: <tokio::runtime::context::scoped::Scoped<tokio::runtime::scheduler::Context>>::set::<<tokio::runtime::scheduler::current_thread::CoreGuard>::enter<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}, (alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>)>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context/scoped.rs:40:9
+  57: tokio::runtime::context::set_scheduler::<(alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>), <tokio::runtime::scheduler::current_thread::CoreGuard>::enter<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context.rs:187:38
+  58: <std::thread::local::LocalKey<tokio::runtime::context::Context>>::try_with::<tokio::runtime::context::set_scheduler<(alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>), <tokio::runtime::scheduler::current_thread::CoreGuard>::enter<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}>::{closure#0}, (alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>)>
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/thread/local.rs:463:12
+  59: <std::thread::local::LocalKey<tokio::runtime::context::Context>>::with::<tokio::runtime::context::set_scheduler<(alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>), <tokio::runtime::scheduler::current_thread::CoreGuard>::enter<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}>::{closure#0}, (alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>)>
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/thread/local.rs:427:20
+  60: tokio::runtime::context::set_scheduler::<(alloc::boxed::Box<tokio::runtime::scheduler::current_thread::Core>, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>), <tokio::runtime::scheduler::current_thread::CoreGuard>::enter<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context.rs:187:17
+  61: <tokio::runtime::scheduler::current_thread::CoreGuard>::enter::<<tokio::runtime::scheduler::current_thread::CoreGuard>::block_on<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>::{closure#0}, core::option::Option<core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:906:27
+  62: <tokio::runtime::scheduler::current_thread::CoreGuard>::block_on::<core::pin::Pin<&mut core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:817:24
+  63: <tokio::runtime::scheduler::current_thread::CurrentThread>::block_on::<core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>::{closure#0}
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:218:33
+  64: tokio::runtime::context::runtime::enter_runtime::<<tokio::runtime::scheduler::current_thread::CurrentThread>::block_on<core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>::{closure#0}, core::result::Result<reverie_process::exit_status::ExitStatus, anyhow::Error>>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context/runtime.rs:65:16
+  65: <tokio::runtime::scheduler::current_thread::CurrentThread>::block_on::<core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs:206:9
+  66: <tokio::runtime::runtime::Runtime>::block_on_inner::<core::pin::Pin<alloc::boxed::Box<hermit::run::{closure#0}>>>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/runtime.rs:374:52
+  67: <tokio::runtime::runtime::Runtime>::block_on::<hermit::run::{closure#0}>
+             at /home/newton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/runtime.rs:341:18
+  68: hermit::run
+             at /home/newton/work/dev-hermit/hermit/hermit-cli/src/lib.rs:89:7
+  69: <hermit::run::RunOpts>::run_in_container
+             at /home/newton/work/dev-hermit/hermit/hermit-cli/src/bin/hermit/run.rs:1235:26
+  70: <hermit::run::RunOpts>::run::{closure#1}
+             at /home/newton/work/dev-hermit/hermit/hermit-cli/src/bin/hermit/run.rs:1018:18
+  71: hermit::container::with_container::<<hermit::run::RunOpts>::run::{closure#1}, (reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>)>::{closure#0}
+             at /home/newton/work/dev-hermit/hermit/hermit-cli/src/bin/hermit/container.rs:45:17
+  72: <reverie_process::container::Container>::run::<hermit::container::with_container<<hermit::run::RunOpts>::run::{closure#1}, (reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>)>::{closure#0}, core::result::Result<(reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>), hermit::error::SerializableError>>::{closure#0}::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-process/src/container.rs:786:68
+  73: <core::result::Result<(), reverie_process::error::Error>>::map::<core::result::Result<(reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>), hermit::error::SerializableError>, <reverie_process::container::Container>::run<hermit::container::with_container<<hermit::run::RunOpts>::run::{closure#1}, (reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>)>::{closure#0}, core::result::Result<(reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>), hermit::error::SerializableError>>::{closure#0}::{closure#0}>
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/result.rs:836:25
+  74: <reverie_process::container::Container>::run::<hermit::container::with_container<<hermit::run::RunOpts>::run::{closure#1}, (reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>)>::{closure#0}, core::result::Result<(reverie_process::exit_status::ExitStatus, core::option::Option<reverie_process::child::Output>), hermit::error::SerializableError>>::{closure#0}
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-process/src/container.rs:786:59
+  75: <alloc::boxed::Box<dyn core::ops::function::FnMut<(), Output = i32>> as core::ops::function::FnMut<()>>::call_mut
+             at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/alloc/src/boxed.rs:2328:9
+  76: reverie_process::clone::clone_with_stack::callback
+             at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-process/src/clone.rs:29:9
+  77: __clone
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+thread 'main' (1) panicked at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:     0x56162eab8aa1 - std[9dee65175fc15e8a]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:     0x56162eab8aa1 - std[9dee65175fc15e8a]::backtrace_rs::backtrace::trace_unsynchronized::<std[9dee65175fc15e8a]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:     0x56162eab8aa1 - std[9dee65175fc15e8a]::sys::backtrace::_print_fmt
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/sys/backtrace.rs:74:9
+   3:     0x56162eab8aa1 - <<std[9dee65175fc15e8a]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[f7c17f95b9e87ecb]::fmt::Display>::fmt
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/sys/backtrace.rs:44:26
+   4:     0x56162ead30ba - <core[f7c17f95b9e87ecb]::fmt::rt::Argument>::fmt
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/fmt/rt.rs:152:76
+   5:     0x56162ead30ba - core[f7c17f95b9e87ecb]::fmt::write
+   6:     0x56162eabfbcc - core[f7c17f95b9e87ecb]::io::write::default_write_fmt::<std[9dee65175fc15e8a]::sys::stdio::unix::Stderr>
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/io/write.rs:402:11
+   7:     0x56162eabfbcc - <std[9dee65175fc15e8a]::sys::stdio::unix::Stderr as core[f7c17f95b9e87ecb]::io::write::Write>::write_fmt
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/io/write.rs:335:13
+   8:     0x56162ea93746 - <std[9dee65175fc15e8a]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/sys/backtrace.rs:47:9
+   9:     0x56162ea93746 - std[9dee65175fc15e8a]::panicking::default_hook::{closure#0}
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:292:27
+  10:     0x56162eaadd51 - std[9dee65175fc15e8a]::panicking::default_hook
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:319:9
+  11:     0x56162eaae07b - std[9dee65175fc15e8a]::panicking::panic_with_hook
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:815:13
+  12:     0x56162ea93824 - std[9dee65175fc15e8a]::panicking::panic_handler::{closure#0}
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:681:13
+  13:     0x56162ea87ef9 - std[9dee65175fc15e8a]::sys::backtrace::__rust_end_short_backtrace::<std[9dee65175fc15e8a]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/sys/backtrace.rs:182:18
+  14:     0x56162ea948cd - __rustc[68377fe7e23c34a7]::rust_begin_unwind
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/std/src/panicking.rs:679:5
+  15:     0x56162ead375d - core[f7c17f95b9e87ecb]::panicking::panic_nounwind_fmt::runtime
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/panicking.rs:122:22
+  16:     0x56162ead375d - core[f7c17f95b9e87ecb]::panicking::panic_nounwind_fmt
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/intrinsics/mod.rs:2579:9
+  17:     0x56162ead36db - core[f7c17f95b9e87ecb]::panicking::panic_nounwind
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/panicking.rs:225:5
+  18:     0x56162ead3867 - core[f7c17f95b9e87ecb]::panicking::panic_cannot_unwind
+                               at /rustc/be8e82435eb04fbe75ed5286b52735366e160bed/library/core/src/panicking.rs:350:5
+  19:     0x56162e5f24c1 - reverie_process[91e6c96092fdc645]::clone::clone_with_stack::callback
+                               at /home/newton/.cargo/git/checkouts/reverie-c5138b988509cfc8/9669339/reverie-process/src/clone.rs:27:5
+  20:     0x7fd7aef0f7f4 - __clone
+  21:                0x0 - <unknown>
+thread caused non-unwinding panic. aborting.
+Error: Sandbox container exited unexpectedly
+     > Process exited with code: Signaled(SIGSEGV, true)

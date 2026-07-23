@@ -1,6 +1,8 @@
 # Agent and local runtime state
 /.agents/
 /.agent-locked
+/.agent-continuations/
+/.orc/
 /.runtime/
 /CLAUDE.local.md
 
@@ -15,9 +17,19 @@
 # Physical worktrees and disposable work areas are machine-local.
 /worktree/
 /worktrees/
+/worktrees_reverie/
 /main/
 /scratch/
 /targets/
+
+# Retained machine-local archives from the 2026-07-23 parent cleanup.
+/experiments/hermit-verify-keeplogs_20260723/
+/experiments/hermit-wave7-safe_20260723/
+/experiments/landing-nonreview_20260723/
+/experiments/reverie-pr18-fix_20260723/
+/experiments/scratch_20260723/
+/experiments/target-nondet-test-framework_20260723/
+/experiments/targets_20260723/
 
 # Transient tooling output
 **/__pycache__/
