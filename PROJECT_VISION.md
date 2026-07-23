@@ -56,7 +56,7 @@ hermit-cli → Detcore<DbiGuest> → DynamoRIO
   NOT: hermit-cli → shell-out to drrun
 ```
 
-### KVM Backend  
+### KVM Backend
 ```
 hermit-cli → Detcore<KvmGuest> → KVM (gvisor model)
   Go program as kernel, trap all syscalls in userspace
