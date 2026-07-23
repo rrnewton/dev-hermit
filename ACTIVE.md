@@ -1,15 +1,19 @@
 # Active Coordinator Checkouts
 
-The coordinator keeps fixed checkouts for the reconstituted frontier and the
-monotonic main branches. These are shared integration surfaces, not feature
-development slots.
+This registry records the shared coordinator-owned integration checkouts. These
+are not feature-development slots. Their observed state must match the checkout
+before integration or parent gitlink pinning; a dirty, missing, or feature-branch
+state blocks those operations until its owner resolves it.
 
-| Path | Repository | Branch | Purpose |
-| --- | --- | --- | --- |
-| `hermit/` | Hermit | `frontier` | Frontier integration, execution, and validation |
-| `reverie/` | Reverie | `frontier` | Frontier dependency integration and validation |
-| `main/hermit/` | Hermit | `main` | Monotonic main updates and rebase base |
-| `main/reverie/` | Reverie | `main` | Monotonic main updates and rebase base |
+## Observed 2026-07-23
 
-Physical worktrees under `main/` are machine-local and ignored by the parent
-repository. Feature work remains isolated in assigned slots under `worktrees/`.
+| Path | Repository | Branch / SHA | State | Purpose / required action |
+| --- | --- | --- | --- | --- |
+| `hermit/` | Hermit | `impl-qemu-demo-script` / `0b241392473a` (remote branch deleted) | DIRTY, occupied | Preserve current agent work; restore a clean coordinator branch only after attribution |
+| `reverie/` | Reverie | `main` / `e4ff635f1661` | DIRTY, occupied | Preserve untracked nested worktree; integration blocked pending attribution |
+| `main/hermit/` | Hermit | missing | MISSING | Re-provision a clean `main` rebase-base checkout before use |
+| `main/reverie/` | Reverie | missing | MISSING | Re-provision a clean `main` rebase-base checkout before use |
+
+Feature worktree ownership is machine-local in `worktrees/ACTIVE.md` and
+`worktrees_reverie/ACTIVE.md`. Those registries are intentionally ignored by
+the parent repository.
