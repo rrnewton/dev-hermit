@@ -33,9 +33,9 @@ user-accessible CPU performance counters (PMU).
 
 The demos use private temporary and ignored build-artifact directories and
 require no external network access. Demo 5 additionally needs
-`qemu-system-x86_64` and readable `ignored/qemu-linux/bzImage` and
-`ignored/qemu-linux/initramfs.cpio.gz` images in the parent workspace (or a
-`QEMU_ASSETS` override pointing to them).
+`qemu-system-x86_64`, a readable host kernel under `/boot` (or a
+`KERNEL_IMAGE` override), static BusyBox, `cpio`, and `gzip`. It provisions and
+caches its kernel and initramfs under `ignored/qemu-linux` on first use.
 
 ## Layout
 
@@ -47,7 +47,8 @@ demos/
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
   04-schedule-bisection.sh  # hermit analyze (requires PMU)
-  05-qemu-boot.sh           # relaxed QEMU/Linux boot (requires staged images)
+  05-qemu-assets.sh         # first-run kernel/initramfs provisioning
+  05-qemu-boot.sh           # relaxed QEMU/Linux boot
   run-all.sh                # demos 1-3; demos 4 and 5 are opt-in
 ```
 
@@ -148,6 +149,12 @@ is checked against Hermit's fixed 2022 virtual-time epoch rather than host wall
 time. QEMU 10.1 requires `-monitor none` alongside the requested
 `-nographic -serial stdio` combination; otherwise the monitor and serial device
 both claim stdio and QEMU exits immediately.
+
+On first use, `05-qemu-assets.sh` copies the host's bootable kernel and builds a
+small static BusyBox initramfs, then caches both in the parent checkout's
+ignored artifact directory, matching `experiments/qemu-linux/setup.sh`. Set
+`KERNEL_IMAGE`, `BUSYBOX`, or `QEMU_ASSETS` when the host defaults are
+unsuitable. Later runs reuse the cached images.
 
 This is a compatibility profile, not L2. `--no-sequentialize-threads` is needed
 so QEMU's vCPU and helper threads can make progress, and the large

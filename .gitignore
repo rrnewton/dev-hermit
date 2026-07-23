@@ -19,6 +19,7 @@
 !/worktrees/ARCHIVED.md
 /scratch/
 /targets/
+/ignored/
 
 # Transient tooling output
 **/__pycache__/
