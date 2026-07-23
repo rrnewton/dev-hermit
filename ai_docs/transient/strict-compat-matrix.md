@@ -1,9 +1,9 @@
 # Strict and verify compatibility matrix
 
 This is the consolidated result of the 2026-07-23 compatibility expansion
-batches 1 through 37. It reports the commands recorded in TaskGraph by
+batches 1 through 39. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and
-`impl-strict-compat-batch2` through `impl-strict-compat-batch37`.
+`impl-strict-compat-batch2` through `impl-strict-compat-batch39`.
 The results are historical measurements, not claims about an untested branch tip.
 
 ## Run context
@@ -22,8 +22,9 @@ The results are historical measurements, not claims about an untested branch tip
   `fbf1d395c4c5012e4247d9ccfa4f304e1a4ab9a4`. Other task notes recorded
   only a release-binary path or timestamp, so this report does not invent SHAs.
   Batches 28, 31, and 35 ran at `fbf1d395`; batch 36 built its fixtures in a
-  slot but used the primary release Hermit binary. Batch 37 ran at
-  `46836669bd6c2f7151fbe65c55f4ea5bd1440897`.
+  slot but used the primary release Hermit binary. Batches 37 and 38 ran at
+  `46836669bd6c2f7151fbe65c55f4ea5bd1440897`; batch 39 recorded only the
+  primary release-binary path, so this report does not invent its SHA.
 - Command column: commands omit the common
   `target/release/hermit run --strict --verify --` prefix unless a Hermit
   option such as `--verify-allow both` matters.
@@ -73,7 +74,9 @@ The results are historical measurements, not claims about an untested branch tip
 | 35 | Parallel execution | 7 | 1 | 0 |
 | 36 | Hermit test fixtures | 8 | 0 | 0 |
 | 37 | Larger real applications | 5 | 2 | 0 |
-| **Total** | | **289** | **57** | **5** |
+| 38 | Database and data processing | 7 | 2 | 0 |
+| 39 | System information | 6 | 3 | 0 |
+| **Total** | | **302** | **62** | **5** |
 
 ## Core utilities
 
@@ -596,6 +599,29 @@ valid target because that package has no library target.
 | 350 | Lua loop | print integers 1 through 10 | PASS L2 | 37 | |
 | 351 | Perl Digest::MD5 | print MD5 of `hello` | PASS L2 | 37 | Output `5d41402abc4b2a76b9719d911017c592`. |
 
+## Additional data processing and system information
+
+| # | Program | Command | Result | Batch | Notes |
+|---:|---|---|---|---:|---|
+| 352 | sqlite3 sums | create two three-column rows and select `a+b+c` | PASS L2 | 38 | Outputs 6 and 15. |
+| 353 | Meta Python hashlib | SHA-256 of `hermit` | FAIL | 38 | Logical commit time differs by 20ns after startup RNG/gettimeofday ordering swaps; stock Python 3.9 control passes L2. |
+| 354 | Perl POSIX date | POSIX `strftime` of local epoch time | PASS L2 | 38 | Output 1969-12-31 in the local timezone. |
+| 355 | awk users | `awk -F: '{print $1}' /etc/passwd &#124; head -5` | PASS L2 | 38 | |
+| 356 | sed lines | `sed -n '1,5p' /etc/passwd` | PASS L2 | 38 | |
+| 357 | cut and sort | `cut -d: -f1 /etc/passwd &#124; sort &#124; head -5` | PASS L2 | 38 | |
+| 358 | tr hostname | `tr 'a-z' 'A-Z' < /etc/hostname` | PASS L2 | 38 | |
+| 359 | paste process substitutions | `paste -d, <(seq 1 3) <(seq 4 6)` | FAIL | 38 | Run 1 hangs after one writer completes while the second writer and paste reader remain blocked. |
+| 360 | nl hostname | `nl /etc/hostname` | PASS L2 | 38 | |
+| 361 | lscpu | `lscpu` | FAIL | 39 | CPU scaling MHz changes from 74% to 72% between runs. |
+| 362 | free | `free -m` | FAIL | 39 | Used, free, and available host memory change by 31 MiB. |
+| 363 | df | `df -h` | PASS L2 | 39 | |
+| 364 | mount | `mount` | PASS L2 | 39 | |
+| 365 | lsblk | `lsblk` | PASS L2 | 39 | |
+| 366 | ps | `ps aux` | FAIL | 39 | Hermit VSZ and RSS values differ between runs. |
+| 367 | uptime | `uptime` | PASS L2 | 39 | |
+| 368 | uname | `uname -a` | PASS L2 | 39 | |
+| 369 | getconf | `getconf PAGESIZE` | PASS L2 | 39 | |
+
 ## Record/replay results
 
 Record/replay uses `hermit record start --verify -- PROGRAM` on the ptrace
@@ -610,13 +636,16 @@ assurance dimension from strict L2 and are excluded from the strict summary.
 | Expansion batch 4, pre-fix release binary | 0 | 9 | All C/C++/Rust guests recorded and exited 0; all replays failed initial `execve` with corrupt envp. |
 | Expansion batch 5, pre-fix release binary | 0 | 10 | Eight replays failed initial `execve`; Node recording hit an unsupported ioctl and javac recording did not complete. |
 | Focused validation after envp fix | 4 | 0 | At PR #238 head, `/bin/echo` matched 3/3 and `java -version` matched 1/1 on a host with `/usr/local/fbcode`. A separate validation also matched `getent hosts localhost`. |
+| Post-envp general retest on main | 16 | 4 | Echo, cat, wc, getent, cal, arch, nproc, Perl, awk, Lua, dc, sqlite3, direct gzip/gunzip, factor, and printf match. `hostname -f` hits the recorder NULL-optval panic; date and two gcc cases diverge in replay fd ordering. |
+| Post-envp scripting retest on main | 11 | 1 | Lua, Ruby, Perl, awk, bc, dc, factor, sqlite3, jq, Java, and OpenSSL match. Node recording still panics on unsupported ioctl request 35142 and never reaches replay. |
 
 PR [#238](https://github.com/rrnewton/hermit/pull/238) merged to `main` as
 `46836669bd6c2f7151fbe65c55f4ea5bd1440897`. It pre-creates the fbcode bind
 mount target in the parent and removes the replay child's stack-overflowing
 `touch_target()` path. The program-independent replay `execve`/envp failure is
-therefore fixed on current main, but the 49-program expansion has not been
-rerun there and is not retroactively counted as passing. `hostname -f`'s
+therefore fixed on current main. The historical 49 pre-fix outcomes remain
+reported as measured; overlapping post-fix successes are recorded in the new
+retest rows rather than retroactively relabeling those runs. `hostname -f`'s
 recorder netlink panic, Node's unsupported ioctl, javac recording performance,
 `tail`, and concurrent pipeline liveness remain distinct observations.
 
@@ -646,7 +675,7 @@ parent/child/peer ordering races, so it was not landed.
 | Batch 13 named FIFO | Blocking FIFO open/read waits for a peer process that strict serialization does not schedule. | No fix recorded; requires scheduler awareness of cross-process FIFO rendezvous. |
 | Batch 13 Meta Python pipeline | The Meta Python runtime diverges during threaded startup even without a pipe. | Stock CPython is the established control; the pipeline itself is not the failure. |
 | Batch 14 nslookup and nc | Both commands deterministically exit nonzero under network isolation, so default verify does not start run 2. | Use an expected-exit verification policy when the nonzero result is the intended contract. |
-| Batches 15, 17, 23, 27, 34, and 37 Meta Python | Clone/futex and RNG-seed ordering diverges in the multithreaded Meta runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
+| Batches 15, 17, 23, 27, 34, 37, and 38 Meta Python | Clone/futex and RNG-seed ordering diverges in the multithreaded Meta runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
 | Batches 16 and 22 compiler outputs | Verify runs share persistent visible filesystem state; run 2 observes artifacts created by run 1. | Put outputs in guest-isolated /tmp, pre-stage identical outputs, or copy the project into per-run /tmp. |
 | Batch 17 Go tests | Go test stalls around clone/vfork, futex, and nanosleep before producing an L1 result. | No fix recorded; single-P and warm-cache controls still stalled. |
 | Batch 18 parallel make | GNU make jobserver pipe rendezvous deadlocks under serialized scheduling. | Use -j1; scheduler support for cross-process blocking pipes is required for -jN. |
@@ -654,17 +683,18 @@ parent/child/peer ordering races, so it was not landed.
 | Batch 19 capsh | The number of NSCD AF_UNIX exchanges differs between runs. | Isolate or disable the external NSS daemon path. |
 | Batch 20 GPG | GPG creates ~/.gnupg/random_seed during run 1, changing run 2 input state. | A fresh per-run GNUPGHOME passes L2. |
 | Batch 21 Ruby | The host Ruby installation cannot load RbConfig and fails identically outside Hermit. | --disable-gems passes L2; this is host packaging, not a Hermit defect. |
-| Batch 23 paste | paste blocks reading one process-substitution pipe while the other producer remains pending. | Requires scheduler support for the same cross-process pipe rendezvous class as FIFO/jobserver failures. |
+| Batches 23 and 38 paste | paste blocks reading one process-substitution pipe while the other producer remains pending. | Requires scheduler support for the same cross-process pipe rendezvous class as FIFO/jobserver failures. |
 | Batch 27 OpenSSL speed | The throughput benchmark reports host-performance-dependent work rates even though Detcore logs match. | Do not use a speed benchmark as deterministic-output coverage; test fixed-input cryptographic operations instead. |
 | Batches 28 and 30 NSS identity | External nscd AF_UNIX readiness and cache state select different lookup paths; GID 65534 also lacks a host name. | Prefer numeric IDs or isolate/disable the external NSS daemon. |
 | Batch 29 scp | This scp implementation has no `-V` option and exits 1 before verification run 2. | Capture the expected status or use a valid version probe; this is not nondeterminism. |
 | Batch 32 short timeout | Virtual timeout expires while the dynamically linked child is still starting under instrumentation; native finishes before two wall-clock seconds. | Increase the timeout or test a prestarted/static child; the captured exit 124 is deterministic. |
 | Batch 34 external web access | The host has no usable route to example.com; curl/wget exit nonzero before run 2. | External network success is outside Hermit's contract; local refused-connect paths pass L2. |
 | Batch 35 named FIFO | The writer blocks in `openat(O_WRONLY)` while strict serialization prevents the reader from reaching its matching open. | Requires scheduler awareness of cross-process FIFO rendezvous, the same structural class as batches 13 and 18. |
+| Batch 39 live system data | `lscpu`, `free`, and `ps` expose changing host CPU-frequency or memory values. | Virtualize or suppress those live fields; deterministic static topology, mount, disk, kernel, and page-size probes pass. |
 
 ## Interpretation
 
-- Across 351 recorded command outcomes, 289 reach L2 (82.3%), 57 do not
+- Across 369 recorded command outcomes, 302 reach L2 (81.8%), 62 do not
   reach L2, and 5 were not run. Repeated stress attempts are summarized in one
   row per scenario rather than inflating the command count.
 - The strongest coverage is deterministic local computation, sequential
@@ -688,5 +718,6 @@ parent/child/peer ordering races, so it was not landed.
   network deterministic, and the batch host had no direct external route.
 - Record/replay is tracked separately: the initial debug-binary matrix passed
   18/20, while 49 later pre-fix release-binary probes were dominated by one
-  program-independent replay envp failure. PR #238 fixed that failure on main,
-  but only focused echo, getent, and Java checks have been rerun after the fix.
+  program-independent replay envp failure. PR #238 fixed that failure on main.
+  Post-fix main retests pass 16/20 general cases and 11/12 scripting cases;
+  remaining failures are distinct recorder ioctl/NULL-pointer and replay-fd bugs.
