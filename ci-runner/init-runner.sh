@@ -38,6 +38,7 @@ RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,x64,${REPO_NAME}}"
 CONTAINER_NAME="${CONTAINER_NAME:-${REPO_NAME}-ci-runner}${SLOT_SUFFIX}"
 ENV_FILE="${CONFIG_DIR}/.runner-registration${SLOT_SUFFIX}.env"
 STATE_DIR="${CONFIG_DIR}/state${SLOT_SUFFIX}"
+read -r -a EXTRA_RUN_ARGS <<< "${CONTAINER_EXTRA_ARGS:-}"
 
 FORCE_RECONFIGURE="false"
 if [ "${1:-}" = "--force-reconfigure" ]; then
@@ -91,6 +92,7 @@ chmod 0600 "${ENV_FILE}"
 "${CONTAINER_ENGINE}" run --rm \
   --cpus "${RUNNER_CPUS}" \
   --memory "${RUNNER_MEMORY}" \
+  "${EXTRA_RUN_ARGS[@]}" \
   --volume "${STATE_DIR}:/runner-state:Z" \
   --workdir /runner-state \
   "${IMAGE}" \

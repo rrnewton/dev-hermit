@@ -34,7 +34,7 @@ export CONTAINER_ENGINE RUNNER_CPUS RUNNER_MEMORY IMAGE_TAG CONTAINER_NAME ENV_F
 export RUNNER_CONFIG_DIR := $(abspath $(CONFIG_DIR))
 export RUNNER_SLOT
 
-.PHONY: help build init start verify stop drain status
+.PHONY: help build init start start-hermit start-reverie verify stop drain status
 
 help:
 	@printf '%s\n' \
@@ -42,6 +42,8 @@ help:
 	  '  make build     Build the runner image when Containerfile changed' \
 	  '  make init      Mint a registration token and configure the runner' \
 	  '  make start     Build/init as needed, then run and attach to logs' \
+	  '  make start-hermit  Explicit alias for make start' \
+	  '  make start-reverie Start the matching Reverie runner slot' \
 	  '  make verify    Audit a running container'"'"'s cgroup limits without changing it' \
 	  '  make drain     Ask a running container to finish its current job and exit' \
 	  '  make stop      Stop and deregister this runner' \
@@ -75,6 +77,11 @@ init: build
 
 start: init
 	@./start-runner.sh $(START_ARGS)
+
+start-hermit: start
+
+start-reverie:
+	@$(MAKE) CONFIG_DIR=instances/reverie start
 
 verify:
 	@./start-runner.sh --verify-only

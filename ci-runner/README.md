@@ -77,6 +77,17 @@ label, and merge on GitHub-hosted (Docs) green. Merged PRs should carry
    pull_request event types).
 4. **Formally accept `locally-validated`** as the gate (current de-facto practice).
 
+### Starting additional runner slots
+
+```sh
+# Hermit slots 2 and 3
+make start-hermit SLOT=2 START_ARGS=--detach
+make start-hermit SLOT=3 START_ARGS=--detach
+
+# Reverie slot 2
+make start-reverie SLOT=2 START_ARGS=--detach
+```
+
 ## Files
 
 - `ci-status.py` — self-contained, non-mutating status reporter (Python 3, stdlib
