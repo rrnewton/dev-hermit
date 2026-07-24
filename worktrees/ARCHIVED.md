@@ -24,3 +24,27 @@ state recovered during stale-slot cleanup.
 | `worktrees/slot-bug-74` | Hermit | `codex/fix-bug-74` | `7cd4621` | 2026-07-21 | Closed task checkout reclaimed after green CI; branch retained and published in PR 4. |
 | `worktrees/hermit-legacy/slot04` | Hermit | `impl-runner-namespaces-slot04` | `ba8153c` | 2026-07-21 | Completed dirty checkout removed after saving stash `1b7e762db0fdc457de4e162edd15423e57c88714`. |
 | `worktrees/slot03` | parent / Hermit | `impl-expand-selfhosted-ci` / `impl-expand-selfhosted-ci-slot03` | `7b1a5ea` / `fbb6771` | 2026-07-21 | Completed 17 GB slot reclaimed; Hermit commit is published on `origin/main`. |
+
+## Archived remote branches (rrnewton/dev-hermit)
+
+Cleanup of accumulated agent branches on the parent fork
+`rrnewton/dev-hermit`, converging the remote to the intended set
+`{main, devbig-lead, fedora-desktop, demo}` (`fedora-desktop` and `demo` did
+not yet exist; nothing was created). Each non-kept branch was analyzed against
+current `origin/main` (`262d813`) before deletion. Content that was genuinely
+net-new was cherry-picked onto `main` first (see task
+`impl-cleanup-parent-branches`, 2026-07-22).
+
+| Branch | Tip SHA | Closed | Disposition |
+| --- | --- | --- | --- |
+| `codex/hermit-dev-plugin` | `fed8844` | 2026-07-22 | Deleted. Content (coordinator plugin, `reverie` pin `075d1ef`, `ai_docs/test-coverage-status.md`, AGENTS/CLAUDE restructure) already on `main` via PR #1 (`726f0d2`); `main` is strictly ahead. Nothing net-new. |
+| `impl-docs-update-session` | `236c25e` | 2026-07-22 | Deleted. Patch-identical to `main` via PR #2 (`16e05eb`); `git cherry` reports it already present. Nothing net-new. |
+| `impl-update-agents-md-slot04` | `f3e5440` | 2026-07-22 | Deleted. Tree identical to `main` via PR #3 (`262d813`, "Require committed feature-branch handoffs"). Nothing net-new. |
+| `impl-profile-hermit-overhead` | `659c585` | 2026-07-22 | Deleted. Its only net-new file `ai_docs/performance-profile.md` is byte-identical to the copy carried by `impl-commit-new-research`, which was merged to `main`. |
+| `codex/pr-status-health` | `16365ac` | 2026-07-22 | Merged then deleted. Cherry-picked to `main` as `2ace563` (`scripts/pr_status.py`, `scripts/test_pr_status.py`, `.orc/plugins/hermit-dev/index.ts` +30). |
+| `impl-commit-new-research` | `09c0b71` | 2026-07-22 | Merged then deleted. Cherry-picked to `main` as `0d7684e` (`ai_docs/` research set + `experiments/qemu_under_hermit_20260721/`, 3054 insertions). |
+
+`main` advanced `262d813` -> `0d7684e` (fast-forward) carrying the two merged
+commits above. `devbig-lead` retained. Local branches and worktrees for these
+remote branches were left untouched (owned by concurrent agents); only the
+remote refs on `rrnewton/dev-hermit` were removed.

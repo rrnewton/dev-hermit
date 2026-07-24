@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly DEFAULT_HTTPS_PROXY="http://fwdproxy:8080"
+readonly GH_COMMAND="${GH_BIN:-gh}"
+
+repo="${GH_REPO:-}"
+declare -a forwarded=()
+
+while (($# > 0)); do
+  case "$1" in
+    -R|--repo)
+      if (($# < 2)); then
+        echo "error: $1 requires a repository" >&2
+        exit 2
+      fi
+      repo="$2"
+      shift 2
+      ;;
+    -R?*)
+      repo="${1#-R}"
+      shift
+      ;;
+    --repo=*)
+      repo="${1#*=}"
+      shift
+      ;;
+    --)
+      forwarded+=("$1")
+      shift
+      forwarded+=("$@")
+      break
+      ;;
+    -a|--assignee|-b|--body|-F|--body-file|-l|--label|-m|--milestone|-p|--project|--recover|-T|--template|-t|--title)
+      if (($# < 2)); then
+        echo "error: $1 requires a value" >&2
+        exit 2
+      fi
+      forwarded+=("$1" "$2")
+      shift 2
+      ;;
+    *)
+      forwarded+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$repo" ]]; then
+  remote="$(git config --get remote.origin.url 2>/dev/null || true)"
+  if [[ "$remote" =~ github\.com[:/]([^/]+)/([^/]+)$ ]]; then
+    repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  else
+    echo "error: pass --repo rrnewton/hermit or --repo rrnewton/reverie" >&2
+    exit 2
+  fi
+fi
+
+repo="${repo#https://github.com/}"
+repo="${repo#http://github.com/}"
+repo="${repo#git@github.com:}"
+repo="${repo#github.com/}"
+repo="${repo%.git}"
+
+case "$repo" in
+  facebookexperimental/hermit)
+    target="rrnewton/hermit"
+    echo "warning: redirecting issue from $repo to $target" >&2
+    ;;
+  facebookexperimental/reverie)
+    target="rrnewton/reverie"
+    echo "warning: redirecting issue from $repo to $target" >&2
+    ;;
+  rrnewton/hermit|rrnewton/reverie)
+    target="$repo"
+    ;;
+  *)
+    echo "error: bot-created issues are restricted to rrnewton/hermit or rrnewton/reverie (got: $repo)" >&2
+    exit 2
+    ;;
+esac
+
+export HTTPS_PROXY="${HTTPS_PROXY:-$DEFAULT_HTTPS_PROXY}"
+unset GH_REPO
+exec "$GH_COMMAND" issue create --repo "$target" "${forwarded[@]}"

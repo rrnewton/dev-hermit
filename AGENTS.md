@@ -1,10 +1,15 @@
 # dev-hermit Parent Workspace Guide
 
-This file governs the `dev-hermit` parent repository and every agent launched
-from it. It defines workspace ownership, branch flow, submodule coordination,
-and evidence requirements. The more specific `AGENTS.md` files inside
-`hermit/` and `reverie/` also apply when working in those repositories; use
-them for product architecture, build, test, and style rules.
+This is the single canonical policy source for the `dev-hermit` parent
+repository and every agent launched from it. `CLAUDE.md` is a symlink to this
+file so all agent entry points receive the same rules. The `hermit-dev` ORC
+plugin also reads this file at activation time rather than duplicating it.
+
+The more specific `AGENTS.md` files inside `hermit/` and `reverie/` also apply
+when working in those repositories; use them for product architecture, build,
+test, and style rules. The stricter rule wins. The Hermit pull request workflow
+in this file supersedes legacy guidance that routed ordinary Hermit changes
+through a local `devbig-lead` branch.
 
 ## Project Overview
 
@@ -21,24 +26,26 @@ experiments, AI research notes, and exact submodule pins. Product source,
 product tests, build definitions, and product documentation stay in the
 appropriate submodule.
 
-The shared development branch is `devbig-lead`. The stable branch is `main`.
-For work dispatched from this parent, the branch flow is:
+Hermit product work uses the fork's pull request workflow:
 
 ```text
-feature branch -> devbig-lead -> main
+feature branch -> pull request -> rrnewton/hermit:main
 ```
 
-All landings and promotions are fast-forward only. If a submodule-local guide
-still names `integration` as the coordinator branch, that is legacy guidance
-for this harness: use `devbig-lead` unless the task explicitly says otherwise.
+The parent harness uses its task-specified branch; parent-only policy work may
+be committed directly to `main` only when a task explicitly names the parent
+files and authorizes the commit. Confirm the intended destination before
+publishing Reverie work. A task may explicitly name a different base, but
+stale references to `integration` or `devbig-lead` do not override the Hermit
+workflow below.
 
 ## Vocabulary
 
 - **Parent**: `~/work/dev-hermit/`, the harness repository containing the
   submodule gitlinks and workspace state.
 - **Primary checkout**: `~/work/dev-hermit/hermit/` or
-  `~/work/dev-hermit/reverie/`. A primary checkout is coordinator-owned, stays
-  on `devbig-lead`, and is used for integration, pinning, and cache donation.
+  `~/work/dev-hermit/reverie/`. A primary checkout is coordinator-owned and is
+  used for integration, pinning, inspection, and cache donation.
 - **Submodule**: a repository recorded by the parent as an exact gitlink SHA.
   The parent records a commit, not a branch and not uncommitted contents.
 - **Slot**: one opaque paired workspace named `slotNN` under
@@ -53,13 +60,13 @@ for this harness: use `devbig-lead` unless the task explicitly says otherwise.
   for example `slot02/hermit`.
 - **Feature branch**: a task-specific branch checked out in one product
   worktree. Slot names are deliberately unrelated to branch names.
-- **Team branch**: `devbig-lead`, the continuously integrated branch in the
-  parent and each actively developed submodule.
-- **Stable branch**: `main`, advanced only to a reviewed, validated
-  `devbig-lead` commit by fast-forward.
-- **Shared slot**: an active slot used by research-only agents or by mutating
-  agents with explicitly disjoint file ownership. Record every owner and path
-  in `ACTIVE.md`; never allow concurrent edits to the same file or branch.
+- **Hermit base**: current `rrnewton/hermit:main`, unless a task explicitly
+  names another reviewed base.
+- **Hermit upstream**: `facebookexperimental/hermit`, used as the public source
+  reference rather than this workspace's default landing target.
+- **Shared slot**: an active slot used by multiple research-only agents or by
+  mutating agents with explicitly disjoint file ownership. Shared access must
+  be recorded in `ACTIVE.md`; no two agents may edit the same file concurrently.
 - **Handoff SHA**: the exact commit tested and offered for integration. Branch
   names alone are not sufficient evidence.
 
@@ -70,9 +77,11 @@ The intended parent layout is:
 ```text
 ~/work/dev-hermit/
 |-- AGENTS.md
+|-- CLAUDE.md -> AGENTS.md
+|-- .orc/plugins/hermit-dev/       # project coordinator policy plugin
 |-- .gitmodules
-|-- hermit/                         # primary; devbig-lead; coordinator only
-|-- reverie/                        # primary; devbig-lead; coordinator only
+|-- hermit/                         # primary; coordinator only
+|-- reverie/                        # primary; coordinator only
 |-- worktrees/
 |   |-- ACTIVE.md                   # exactly one row per active slot pair
 |   |-- ARCHIVED.md                 # append-only completed-slot history
@@ -105,8 +114,8 @@ coordination records; the checkout directories are not.
 
 1. Never do feature development in a primary checkout.
 2. Never let two agents mutate the same file or branch. Shared slots require
-   explicit disjoint path ownership in `worktrees/ACTIVE.md`.
-3. Register every active slot, owner, task, branch, and owned path in
+   explicit disjoint path ownership in `ACTIVE.md`.
+3. Register every active slot, agent, task, branch, and owned path in
    `worktrees/ACTIVE.md` before the first edit or commit.
 4. Require clean state before assignment, integration, parking, or pinning.
 5. Treat unexpected changes as owned by somebody else. Do not reset, clean,
@@ -114,9 +123,9 @@ coordination records; the checkout directories are not.
 6. Do not run `git clean` anywhere in the parent, submodules, or slots.
 7. Do not use a branch name as a worktree directory name.
 8. Do not share writable build directories between worktrees.
-9. Integrate and promote with `git merge --ff-only`; do not create
-   convenience merge commits.
-10. Never force-push `devbig-lead` or `main`.
+9. Publish Hermit product work through a feature PR to `rrnewton/hermit:main`;
+   do not land it by mutating the primary checkout.
+10. Never force-push shared branches or `main`.
 11. Never commit binaries or generated build artifacts to any repository.
 12. A handoff is incomplete without exact SHAs and validation results.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents;
@@ -155,8 +164,9 @@ agents may read them and may use their build caches as copy sources.
 
 Use `.agent-locked` files when the harness provides them. A mutating agent
 owns the lock at its slot root and at each checkout it will modify. Integration
-owns the parent and relevant primary locks. Missing lock tooling does not
-relax the one-owner rule; record ownership in `ACTIVE.md` and task notes.
+owns the parent and relevant primary locks. In a shared slot, explicit path
+ownership supplements the checkout lock. Missing lock tooling does not relax
+the no-overlap rule; record ownership in `ACTIVE.md` and task notes.
 
 Parent-only policy or harness work is exceptional because product slots do not
 isolate the parent repository. Modify the parent root only when the task names
@@ -169,14 +179,15 @@ unrelated product task.
 exactly one live row per active slot pair, with at least:
 
 ```text
-slot | owner/task | Hermit branch | Reverie branch | started | purpose
+slot | agents/tasks | owned paths | Hermit branch | Reverie branch | started | purpose
 ```
 
 Use `-` or `detached:<short-sha>` for an unchanged child; do not create
-duplicate rows as a task changes phase. Update the existing row. A row marked
-DONE, HELD, or ABANDONED does not belong in `ACTIVE.md`: either keep it active
-with an accurate current purpose or park it and append the final state to
-`ARCHIVED.md`.
+duplicate rows as a task changes phase. List every agent and task sharing a
+slot and make mutating path ownership unambiguous; research-only agents may be
+marked `read-only`. Update the existing row. A row marked DONE, HELD, or
+ABANDONED does not belong in `ACTIVE.md`: either keep it active with an accurate
+current purpose or park it and append the final state to `ARCHIVED.md`.
 
 Before dispatch, compare the registry with both Git worktree registries and
 the filesystem:
@@ -189,9 +200,11 @@ find worktrees -mindepth 1 -maxdepth 3 -name .git -print | sort
 ```
 
 The parent worktree list owns canonical nested slots. The product worktree
-lists expose old direct Hermit/Reverie worktrees and must normally contain only
-the primary checkout; any legacy exception must have a live registry row.
-Never exceed twelve active rows or five parked canonical slots.
+lists expose old direct Hermit/Reverie worktrees and must normally contain
+only the primary checkout; any legacy exception must have a live registry row.
+The workspace may have at most twelve active worktrees, five parked slots, and
+fifteen agents. Count each category separately; active work does not consume
+the parked-slot allowance.
 
 Resolve all of these before assigning a slot:
 
@@ -200,48 +213,47 @@ Resolve all of these before assigning a slot:
 - a live slot absent from `ACTIVE.md`,
 - an `ACTIVE.md` row for a parked or missing slot,
 - duplicate rows for one slot,
-- a branch checked out by more than one task,
-- shared-slot ownership without explicit disjoint paths,
-- any new path outside `worktrees/slot01` through `worktrees/slot12`.
+- a branch checked out by more than one physical worktree,
+- any new worktree path that does not use the `worktrees/slotNN` form.
 
 Never silently delete a stale path. Record what owns it and preserve any
 uncommitted work before the coordinator decides its disposition.
 
 ## Strict Slot Pool
 
-All new work uses a top-level canonical name from `slot01` through `slot12`.
-Branch names, task names, and agent names never appear in worktree paths. At
-most twelve worktrees may be active, at most five additional clean slots may
-be parked for cache reuse, and at most fifteen agents may be dispatched.
+All new work uses a top-level canonical `slotNN` name. At most twelve
+worktrees may be active and at most five clean slots may be parked. Up to
+fifteen agents may work concurrently, including agents explicitly sharing a
+slot for research-only or disjoint-file work. Branch names, task names, and
+agent names never appear in worktree paths.
 
 A canonical slot is either:
 
-- **Active**: listed in `ACTIVE.md` and reserved to its recorded task owners.
-- **Parked**: clean, detached, omitted from `ACTIVE.md`, and retained only for
-  cache reuse.
-
-A slot may be shared by research-only agents or by mutating agents with
-explicitly disjoint path ownership recorded in `ACTIVE.md`. Never share a
-branch, file, or writable build directory between concurrent agents.
+- **Active**: the slot is registered to one or more listed agents and tasks; at
+  least one child may be on a feature branch. Shared mutating work requires
+  disjoint paths, and shared research access remains read-only.
+- **Parked**: both children are clean and detached in place; their caches and
+  Git registrations remain available for the next task.
 
 Parking is optional cache retention, not permanence. Reclaim the least useful
-parked slot before the parked pool would exceed five, and reclaim idle slots
-earlier when disk pressure warrants it. Active slots are never evicted merely
-to satisfy the parked-cache cap. A dirty or blocked slot remains active until
-its owner hands off or its state is preserved with an exact recovery procedure.
+parked slot before creating another slot when the pool is at five, and reclaim
+idle slots earlier when disk pressure warrants it. The five-slot cap applies
+only to parked slots; active worktrees have their separate twelve-worktree cap.
+Active slots are never evicted to satisfy the parked cap. A dirty or blocked
+slot remains active until its work is handed off or its state is recoverable.
 
 Do not move or rename a slot directory. Nested submodule metadata records its
 path, and moving the outer worktree can invalidate the children. Pre-policy
-non-canonical worktrees are temporary exceptions only while their current work
-remains active in `ACTIVE.md`. At closeout, archive and remove them; do not
-park, rename, or reassign them.
+non-canonical worktrees are temporary exceptions only while their current
+task remains active in `ACTIVE.md`. At closeout, archive and remove them; do
+not park, rename, or assign them to another task.
 
 ### Provisioning A Missing Slot
 
 Provisioning is a coordinator operation. Initialize both primary submodules
-first, then use the tracked helper. The helper enforces canonical names,
-requires owner/task metadata, serializes allocation, and refuses a thirteenth
-active slot or allocation while more than five parked slots exist:
+first, then use the tracked helper. The helper enforces the canonical name,
+requires agent/task metadata, enforces active and parked capacity separately,
+initializes the nested submodules, and appends the registry row:
 
 ```bash
 cd ~/work/dev-hermit
@@ -267,27 +279,27 @@ writable cache between checkouts. Correctness must not depend on cached output.
 
 ### Starting Work In A Slot
 
-The coordinator assigns a parked or new slot to one or more compatible tasks.
-Before editing:
+The coordinator may assign a parked slot, provision an active slot within the
+twelve-worktree limit, or authorize sharing with research-only or disjoint-path
+ownership. Before editing:
 
 1. Confirm the parent slot and both nested submodules are registered and clean.
 2. Fetch the relevant remotes without changing checked-out files.
-3. Confirm local `devbig-lead` in each changed repository matches the intended
-   integration base.
+3. For Hermit, branch from current `origin/main`; for Reverie, confirm the
+   task's intended base and publication target.
 4. Create a descriptive feature branch in each repository that will change.
 5. Leave an unchanged child detached at a recorded base SHA.
-6. Add or update one `ACTIVE.md` row with every owner, task, branch, and
-   disjoint owned path before the first edit, then post the assignment to each
-   task.
+6. Add or update one `ACTIVE.md` row before the first edit, including every
+   sharing agent/task and owned path, and post the assignment to each task.
 
 Example Hermit-only assignment:
 
 ```bash
-slot=slot01
-git -C "worktrees/$slot/hermit" fetch origin
-git -C "worktrees/$slot/hermit" switch \
-  -c codex/<task-name> devbig-lead
-git -C "worktrees/$slot/reverie" switch --detach devbig-lead
+slot=worktrees/slot01
+HTTPS_PROXY=http://fwdproxy:8080 git -C "$slot/hermit" fetch origin main
+git -C "$slot/hermit" switch -c codex/<task-name> origin/main
+git -C "$slot/reverie" switch --detach \
+  "$(git -C "$slot" rev-parse HEAD:reverie)"
 ```
 
 For a coordinated change, create task branches in both children. They may use
@@ -300,7 +312,7 @@ under the primary and slots make accidental edits easy.
 
 ### Closing, Parking, And Reclaiming A Slot
 
-Close a slot only after all assigned work is committed and handed off. First
+Close a slot only after intended work is committed and handed off. First
 capture both child states:
 
 ```bash
@@ -322,13 +334,13 @@ git -C "$slot/reverie" switch --detach "$(git -C "$slot" rev-parse HEAD:reverie)
 git -C "$slot" status --short
 ```
 
-The final status command must produce no output. Remove the slot's registry row.
-Keep feature branches until their commits are reachable from the landing branch
-or the coordinator explicitly archives them. A non-clean slot remains active
-even if its agent is idle.
+The final status command must produce no output. Remove the slot's single row
+from `ACTIVE.md`. Keep feature branches until their commits are reachable
+from a pushed branch or merged target, or the coordinator explicitly archives
+them. A non-clean slot remains active even if its agents are idle.
 
-Keep the clean slot parked only when its cache justifies the disk and no more
-than five slots are already parked. Otherwise reclaim it through the parent:
+Keep the clean slot parked only when its cache justifies the disk and fewer
+than five slots are parked. Otherwise reclaim it through the parent repository:
 
 ```bash
 git worktree remove --force worktrees/slot0X
@@ -342,75 +354,88 @@ same archive and clean-state gates. Use the owning Reverie repository for a
 Reverie-only exception.
 
 To reuse a parked canonical slot, repeat the clean-start audit and create new
-task branches from the current intended base. Never reset a parked child to
-make it current; explicit branch creation keeps its previous SHA auditable.
+branches from the current intended base. Never reset a parked child to make it
+current; explicit branch creation keeps its previous SHA auditable.
 
-## Branch And Merge Strategy
+## Hermit Git And Pull Request Workflow
 
-The same linear flow applies independently to Hermit and Reverie:
-
-```text
-task feature -> devbig-lead -> main
-```
+The primary Hermit repository is `rrnewton/hermit`. The public
+`facebookexperimental/hermit` project is the upstream reference, not this
+workspace's default landing target. Ordinary Hermit work flows from a feature
+branch to a pull request against current `rrnewton/hermit:main`.
 
 ### Feature Branch Rules
 
-- Branch from the current intended `devbig-lead`, not from `main`, an old slot
-  HEAD, or the parent gitlink by accident.
+#### **ALWAYS COMMIT ON FEATURE BRANCHES**
+
+**Every mutating agent must finish its task with all intended work committed on
+its task feature branch. Never stash work. Never leave intended work
+uncommitted. An uncommitted or stashed handoff is incomplete.**
+
+- Fetch through the required proxy and branch from current `origin/main`, not
+  an old slot HEAD, stale local branch, or parent gitlink by accident.
+- Create or use the task's dedicated feature branch before the first source or
+  policy edit. Never commit task work directly on `main` or a shared integration
+  branch.
 - Keep one coherent task on one branch. Coordinated Hermit/Reverie branches
   together form one logical change but remain separate Git histories.
-- Commit all intended changes before handoff. The coordinator does not
-  integrate uncommitted slot state.
-- Push only when the task or coordinator requests it. Never force-push a
-  shared branch.
-- Rebase only a private feature branch and only when integration requests it.
+- Commit all intended task-owned changes before reporting completion, even when
+  the task does not repeat the commit instruction. If the task is blocked,
+  commit every coherent completed change and record the remaining blocker.
+- Push the committed feature branch and open a draft pull request without
+  asking for separate permission. An explicit task instruction not to publish
+  is the only exception.
+- Always push with an explicit refspec:
+  `git push origin HEAD:refs/heads/<branch>`. The global
+  `push.default=current` setting is a convenience, not permission to omit the
+  destination.
+- Never force-push a shared branch or `main`.
+- Rebase only a private feature branch and only when the task authorizes it.
   After rebasing, rerun affected validation and provide the new SHA.
 
-### Landing On devbig-lead
+### Publishing And Review
 
-Only the integration coordinator mutates primary checkouts. Before landing:
+Unless a task explicitly prohibits publication, push the feature branch and
+open a draft pull request against `rrnewton/hermit:main`. Before opening the PR:
 
-1. Acquire the relevant primary and parent locks.
-2. Confirm the parent and relevant primary are clean apart from explicitly
-   expected gitlink movement.
-3. Review the complete feature diff and validation evidence.
-4. Confirm the handed-off SHA is the feature branch tip.
-5. Fetch refs without changing the worktree.
-6. Fast-forward only.
-
-```bash
-git -C hermit status --short --branch
-git -C hermit switch devbig-lead
-git -C hermit merge --ff-only <hermit-feature-branch>
-```
-
-Use the equivalent commands for Reverie. If `--ff-only` fails, stop. Do not
-make a merge commit. Return the feature branch to its owner to update against
-the new `devbig-lead`, resolve conflicts with task context, rerun validation,
-and hand off a new exact SHA.
-
-Keep `devbig-lead` green. A combined regression is priority work; do not stack
-more unrelated landings on a known-red team branch.
-
-### Promoting To main
-
-Promote only a reviewed, green `devbig-lead` commit. Promotion is a stable
-pointer movement, not a place for new edits:
+1. Confirm the feature branch is based on the intended current `origin/main`
+   and does not contain unrelated commits.
+2. Review the complete feature diff and validation evidence.
+3. Run focused tests and the repository-level validation required by the task.
+4. Inspect status, the complete diff, and the staged/committed paths.
+5. Confirm the tested SHA is the feature branch tip.
+6. Build a PR description with exact tests, failures, hardware limitations,
+   and cross-repository dependency SHAs.
+7. Re-read concurrent remote state before pushing.
 
 ```bash
-git -C hermit switch main
-git -C hermit merge --ff-only devbig-lead
+HTTPS_PROXY=http://fwdproxy:8080 git fetch origin main
+HTTPS_PROXY=http://fwdproxy:8080 \
+  git push origin HEAD:refs/heads/<feature-branch>
+HTTPS_PROXY=http://fwdproxy:8080 gh pr create -R rrnewton/hermit --base main
 ```
 
-Run the repository's promotion-level validation at the exact promoted SHA and
-push only as authorized. Then return the primary to `devbig-lead` for normal
-integration work. Never land a feature branch directly on `main`, and never
-force `main` to match a divergent history.
+Require both GitHub Actions jobs to be green at the exact PR head:
+**Regular tests (GitHub-hosted)** and **Host-dependent tests (self-hosted)**.
+A skipped, missing, queued, stale, or cancelled check is not green. Do not
+merge with unresolved review findings or merely because local tests pass.
+Report infrastructure failures explicitly rather than weakening
+hardware-sensitive assertions. Use `HTTPS_PROXY=http://fwdproxy:8080` for all
+networked `git` and `gh` operations, and never use `gh auth switch` because
+authentication is shared machine state.
 
-The parent repository also keeps `main` stable and uses `devbig-lead` for the
-team's current harness and gitlink state. Durable parent changes and validated
-pin advances flow to `main`; live slot state stays on `devbig-lead` and must
-not replace another team's `ACTIVE.md`. If `.gitattributes` assigns
+### Landing Authorization
+
+Merge only when the task explicitly authorizes landing, review is resolved,
+and both required checks are green at the current head SHA. After landing,
+verify the resulting `main` workflow when the task requires it. Never push
+directly to Hermit `main`, force-push shared branches, or use a local primary
+checkout to bypass the pull request controls.
+
+Parent-only policy and gitlink changes follow the task's explicit branch and
+commit instructions; this task may name `main` directly. Never replace another
+team's live `ACTIVE.md` state while committing durable parent changes. If
+`.gitattributes` assigns
 `worktrees/ACTIVE.md merge=ours`, every clone must also configure:
 
 ```bash
@@ -418,6 +443,31 @@ git config merge.ours.driver true
 ```
 
 The attribute alone is not enough.
+
+## Bot-Created GitHub Issue Policy
+
+Bot-created issues go on the `rrnewton` forks **ONLY**. **NEVER create an
+issue on `facebookexperimental/hermit` or `facebookexperimental/reverie`.**
+Those upstream repositories sync into Meta's internal task tracker, so an
+agent-created issue there creates unwanted internal tasks.
+
+- Create Hermit issues on `rrnewton/hermit`.
+- Create Reverie issues on `rrnewton/reverie`.
+- Reading upstream issues and pull requests is allowed. Editing, commenting
+  on, or closing an upstream issue requires a task that explicitly authorizes
+  that upstream maintenance action.
+- Use the registered wrapper for every agent-created issue; do not invoke raw
+  `gh issue create`:
+
+```bash
+./.orc/plugins/hermit-dev/gh-issue-create \
+  --repo rrnewton/hermit --title "..." --body "..."
+```
+
+The wrapper also rewrites an accidental `facebookexperimental/hermit` or
+`facebookexperimental/reverie` destination to its `rrnewton` fork and rejects
+unrelated repositories. It supplies the required GitHub proxy when the caller
+has not already set one.
 
 ## What Goes Where
 
@@ -473,6 +523,25 @@ product documentation belong in `reverie`. Follow its local guide. Reference
 or exploratory use of Reverie does not justify modifying it; create a Reverie
 feature branch only when the task owns a real Reverie change.
 
+## Reverie API Policy
+
+Additive Reverie extensions are allowed when existing consumers remain
+compatible: narrowly scoped helpers, hooks, events, adapters, or optional
+capabilities whose defaults preserve current behavior.
+
+Discuss the design with the user before implementation when a proposal changes
+a core Reverie abstraction or contract: the tool/event model or ordering,
+public trait requirements, syscall interception/injection semantics, guest
+register or memory contracts, lifecycle ownership, or container responsibilities.
+
+Do not smuggle an abstraction change in as cleanup. Prefer an additive API or
+compatibility layer when technically sound. When Hermit and Reverie change
+together, use coordinated branches in the same slot, make the lower-level
+Reverie commit available first when possible, validate Hermit against its exact
+SHA, and report both SHAs and their dependency. Confirm the intended Reverie
+PR destination before publishing; do not assume authorization to mutate
+`facebookexperimental/reverie`.
+
 ### Cross-Repository Changes
 
 Keep each repository's commit independently coherent. Document the dependency
@@ -500,7 +569,7 @@ Agents deliver reviewable commits, not anonymous working directories.
 - Do not hide failures or skipped hardware-dependent validation in prose;
   report the exact limitation.
 - Amend or rewrite only private task commits when authorized. Never rewrite
-  `devbig-lead`, `main`, or a commit another task depends on.
+  `main`, a shared or published branch, or a commit another task depends on.
 - Do not mix parent gitlink updates into a submodule source commit; they are
   commits in different repositories.
 
@@ -525,7 +594,7 @@ Every handoff includes:
 - task identifier, slot, and owner,
 - repository and feature branch,
 - exact commit SHA for Hermit and/or Reverie,
-- base SHA or current `devbig-lead` relationship,
+- base SHA and relationship to the intended target branch,
 - concise change summary,
 - exact validation commands and results,
 - known failures, skipped checks, or environment limitations,
@@ -547,8 +616,8 @@ The parent records exact submodule commits for reproducibility. Do not add a
 Update a parent gitlink only when:
 
 - the target commit is intentional and reviewed,
-- the submodule commit is reachable from the appropriate `devbig-lead` or
-  promoted `main` history,
+- the submodule commit is reachable from its reviewed feature branch or target
+  `main` history,
 - required repository-local validation passed at that exact SHA,
 - cross-repository compatibility was checked when relevant,
 - the parent commit message names the reason for the pin movement.
@@ -649,10 +718,27 @@ Hardware-dependent Hermit tests may be impossible on some hosts. Report that
 fact and the observed failure; do not weaken, delete, or falsely bless a test
 to make the local environment green.
 
-The coordinator validates the combined `devbig-lead` state after landing.
-Worker validation of isolated feature branches is necessary but does not prove
-that the combined team branch is green.
+The coordinator verifies both required CI jobs at the exact Hermit PR head and
+the resulting target commit when landing is authorized. Local feature-branch
+validation does not prove that hosted and self-hosted CI are green.
 
+
+## Product Vision
+
+`goal-hermit-v2` is the long-term end state: a robust deterministic execution
+engine whose `run` and `record` modes support arbitrary real-world binaries,
+whose chaos mode exposes concurrency races, whose schedule search localizes
+races to events and stack traces, whose production backend avoids ptrace
+overhead, and whose non-communicating processes can execute in parallel.
+
+`goal-qemu-linux-under-hermit` is the QEMU milestone: run a complete Linux VM
+as a userspace QEMU process under Hermit so deterministic execution,
+record/replay, chaos scheduling, and schedule search can expose and localize
+kernel races across the full kernel and userspace stack.
+
+Prioritize correctness, faithful replay, race discovery/localization, lower
+overhead, backend maturity, and QEMU/Linux viability. Do not close either
+long-range goal without its required human verification.
 ## Failure, Recovery, And Concurrent Work
 
 Other agents may update the parent, primary checkouts, registries, or branches
@@ -680,17 +766,18 @@ Before dispatch:
 
 1. Reconcile `ACTIVE.md`, both Git worktree lists, and physical slot children.
 2. Check parent, primaries, and candidate slot for unexpected changes.
-3. Confirm every owner/task and any shared slot's disjoint path boundaries.
-4. Confirm the intended `devbig-lead` base SHA in each relevant repository.
-5. Register the slot before work begins.
+3. Confirm no more than twelve worktrees are active or fifteen agents assigned.
+4. Confirm exclusive ownership or record every sharing agent and disjoint path.
+5. Confirm the intended base SHA and publication target for each repository.
+6. Register the slot before work begins.
 
-Before integration:
+Before Hermit publication or landing:
 
-1. Acquire parent/primary ownership and re-read concurrent state.
+1. Re-read concurrent local state, remote `main`, and the exact PR head.
 2. Verify the handoff SHA, diff, test evidence, and repository cleanliness.
-3. Land with `--ff-only` or return the branch for update.
-4. Validate the combined team branch at its new exact SHA.
-5. Push only as authorized and record the landed SHA.
+3. Push/open the feature PR only when the task authorizes publication.
+4. Require both hosted and self-hosted checks green at the exact head SHA.
+5. Merge only when authorized and record the resulting `main` SHA and CI.
 
 Before parent pinning or promotion:
 
@@ -698,13 +785,13 @@ Before parent pinning or promotion:
 2. Inspect `git diff --submodule=log` before staging.
 3. Stage only intended gitlinks and parent-owned files.
 4. Validate a coordinated Hermit/Reverie pair when both pointers move.
-5. Promote `devbig-lead` to `main` by fast-forward only.
+5. Commit parent changes to `main` only when the task explicitly authorizes it.
 
 Before closeout:
 
 1. Ensure each changed repository has a clean committed feature branch.
 2. Record exact SHAs and validation in the task and `ARCHIVED.md`.
 3. Detach both canonical slot children at their parent-pinned gitlinks.
-4. Remove the slot's single `ACTIVE.md` row.
-5. Reclaim legacy slots and keep no more than five clean parked slots.
+4. Remove the slot row, or update it if other sharing agents remain active.
+5. Reclaim legacy slots and any parked slot needed to keep at most five parked.
 6. Leave unrelated concurrent work exactly as found.
