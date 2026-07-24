@@ -17,7 +17,6 @@
 # Physical worktrees and disposable work areas are machine-local.
 /worktree/
 /worktrees/*
-!/worktrees/ACTIVE.md
 !/worktrees/ARCHIVED.md
 /worktrees_reverie/
 /main/
