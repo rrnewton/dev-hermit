@@ -4,7 +4,9 @@
 
 ## Mission
 
-Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM) that all produce identical behavior, plus record/replay and chaos concurrency testing that is equally broadly compatible with arbitrary guest programs.
+Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM, experimental patching backends, etc) that all produce identical behavior, plus record/replay and chaos concurrency testing that is equally broadly-compatible with arbitrary guest programs.
+
+Don't forget your general princples around CLEAR and SPECIFIC communication (which programs ran what under what mode and which branch/version was experimented with?) and presenting EVIDENCE for claims, including wherever possible reproducer commands.
 
 ## Priorities
 
@@ -15,16 +17,21 @@ Hermit has a series of modes:
 1. **Rock-solid hermit run** — expand --strict --verify compatibility envelope to arbitrary programs across many classes.
 2. **DBI backend** — real Detcore-over-DbiGuest integration (NOT a partial prototype or code duplication)
 3. **KVM backend** — gvisor-model syscall interception through KvmGuest
-4. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks)
-5. **Land PRs, keep main green, zero compile warnings**
-6. **Clean repo state** — minimal open PRs, branches deleted after merge, `git status` clean in both parent and hermit/reverie checkouts
-
+4. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks), perodically compare against mature "rr"
 ## Mode Expansion Mandate
 
 Every mode must catch up to the one before it:
 - Example: 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM
 - There is NO stopping while trailing modes are weaker
 - Always add NEW programs to coverage even as trailing modes catch up
+
+## Operations and Regulation
+
+1. **Land PRs, keep main green, zero compile warnings**
+2. **Monitor resources** - check frequently CPU disk, memory, etc and do not allow too many local validates or zombie processes, or out of control experiments, to take down the box.
+3. **Keep agent fleet busy** s You are driving autonomously at FULL SPEED, with 10-15 agents busy on this big dev box. You have multiple lines of P0 work and massive open-ended backlogs. Pre-generate parallel work in the task graph
+4. **Check CI health and ci-runner queue depth**, make sure we are not overwhelming CI and that it is healthy. Cancellation policy should not have too many jobs outstanding and we can always supplement CI with local validate.sh / locally-validated PR label protocol.
+5. **Clean repo state** — minimal open PRs, branches deleted after merge, `git status` clean in both parent and hermit/reverie checkouts
 
 ## Failure Modes to Avoid
 
@@ -50,17 +57,27 @@ Every mode must catch up to the one before it:
 
 ## Architecture North Stars
 
+### Hermit run
+
+Runs essentially arbitrary user space Linux programs under --strict --verify with perfect deterministic execution.
+Allows advanced chaos mode which perturbs program schedule orders and is compatible with all programs that normal --strict --verify runs on.
+
+### Hermit record / replay
+
+Works for everything rr does. Eventually is configurable from an rr-like mode to a `hermit run` mode that ONLY records external communication at the container boundary (and optionally file system boundary).
+
 ### DBI Backend
 ```
 hermit-cli → Detcore<DbiGuest> → DynamoRIO
-  NOT: hermit-cli → shell-out to drrun
+  NO hacks or temporary proof-of-concepts. Fully runs all hermit --strict --verify that ptrace can.
 ```
 
 ### KVM Backend
 ```
 hermit-cli → Detcore<KvmGuest> → KVM (gvisor model)
-  Go program as kernel, trap all syscalls in userspace
+  Similar to gvisor (Go program as kernel, trap all syscalls in userspace) but with Detcore tool as the "operating system".
+  NO hacks or temporary proof-of-concepts. Fully runs all hermit --strict --verify that ptrace can.
 ```
 
 ### Done = Identical
-A backend is done when ALL programs produce bitwise-identical output across ptrace/DBI/KVM. Same memory hashes, same guest output, same exit codes.
+A backend is done when ALL programs produce bitwise-identical output across all hermit reverie backends (ptrace/DBI/KVM). Same memory hashes, same guest output, same exit codes.
