@@ -25,6 +25,8 @@ state recovered during stale-slot cleanup.
 | `worktrees/hermit-legacy/slot04` | Hermit | `impl-runner-namespaces-slot04` | `ba8153c` | 2026-07-21 | Completed dirty checkout removed after saving stash `1b7e762db0fdc457de4e162edd15423e57c88714`. |
 | `worktrees/slot03` | parent / Hermit | `impl-expand-selfhosted-ci` / `impl-expand-selfhosted-ci-slot03` | `7b1a5ea` / `fbb6771` | 2026-07-21 | Completed 17 GB slot reclaimed; Hermit commit is published on `origin/main`. |
 
+| `worktrees/slot86` | Hermit | `impl-ensure-agents-md-tags` | `0671dfdbc4669d957197cfb1669d38cf51c2bd9c` | 2026-07-23 | Fast-forwarded to rrnewton/hermit main; AGENTS.md-only diff; exact tag grep and git diff --check passed. |
+
 ## Archived remote branches (rrnewton/dev-hermit)
 
 Cleanup of accumulated agent branches on the parent fork
