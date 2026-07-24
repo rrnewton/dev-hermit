@@ -124,6 +124,21 @@ the listener, and enables its Podman user service for reboot persistence.
 `drain` finishes the current job and stops polling without deregistering;
 `stop` stops and deregisters the runner.
 
+Each repository instance can run additional slots without another config file:
+
+```sh
+# Hermit slots 2 and 3
+make start SLOT=2 START_ARGS=--detach
+make start SLOT=3 START_ARGS=--detach
+
+# Reverie slot 2
+make CONFIG_DIR=instances/reverie start SLOT=2 START_ARGS=--detach
+```
+
+Slots append `-N` to the GitHub runner and container names and use independent
+`.runner-registration-N.env` and `state-N/` paths. All slots share the image
+and the repository instance's `.env` settings.
+
 ## Rootful privileged runners
 
 Hermit and Reverie create nested user, mount, and network namespaces and mount

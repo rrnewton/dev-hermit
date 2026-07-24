@@ -9,7 +9,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
-ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
+RUNNER_SLOT="${RUNNER_SLOT:-}"
+if [[ ! "${RUNNER_SLOT}" =~ ^[A-Za-z0-9_.-]*$ ]]; then
+  echo "RUNNER_SLOT may only contain letters, digits, underscore, dot, and dash." >&2
+  exit 2
+fi
+SLOT_SUFFIX="${RUNNER_SLOT:+-${RUNNER_SLOT}}"
+ENV_FILE="${CONFIG_DIR}/.runner-registration${SLOT_SUFFIX}.env"
 TAIL_LINES="${TAIL_LINES:-200}"
 FOLLOW_LOGS="true"
 

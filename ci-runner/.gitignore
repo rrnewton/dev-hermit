@@ -1,11 +1,15 @@
 .env
 .runner-registration.env
+.runner-registration-*.env
 .runner-image-*.stamp
 state/
+state-*/
 work/
 *.log
 __pycache__/
 *.pyc
 instances/*/.env
 instances/*/.runner-registration.env
+instances/*/.runner-registration-*.env
 instances/*/state/
+instances/*/state-*/

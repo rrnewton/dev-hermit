@@ -35,7 +35,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
-ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
+RUNNER_SLOT="${RUNNER_SLOT:-}"
+if [[ ! "${RUNNER_SLOT}" =~ ^[A-Za-z0-9_.-]*$ ]]; then
+  echo "RUNNER_SLOT may only contain letters, digits, underscore, dot, and dash." >&2
+  exit 2
+fi
+SLOT_SUFFIX="${RUNNER_SLOT:+-${RUNNER_SLOT}}"
+ENV_FILE="${CONFIG_DIR}/.runner-registration${SLOT_SUFFIX}.env"
 MODE="attach"
 TAIL_LINES="${TAIL_LINES:-200}"
 RUN_ONCE="false"
@@ -82,13 +88,14 @@ fi
 REQUESTED_RUNNER_CPUS="${RUNNER_CPUS:-}"
 REQUESTED_RUNNER_MEMORY="${RUNNER_MEMORY:-}"
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
 if [ -f "${CONFIG_DIR}/.env" ]; then
   # shellcheck disable=SC1091
   source "${CONFIG_DIR}/.env"
 fi
-STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
+# Registration state is authoritative for slot-specific names and paths.
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state${SLOT_SUFFIX}}"
 RUNNER_CPUS="${REQUESTED_RUNNER_CPUS:-${RUNNER_CPUS:-4}}"
 RUNNER_MEMORY="${REQUESTED_RUNNER_MEMORY:-${RUNNER_MEMORY:-16g}}"
 # See the HERMIT CAVEAT comment above; the trusted runner configuration uses:

@@ -9,7 +9,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
-ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
+RUNNER_SLOT="${RUNNER_SLOT:-}"
+if [[ ! "${RUNNER_SLOT}" =~ ^[A-Za-z0-9_.-]*$ ]]; then
+  echo "RUNNER_SLOT may only contain letters, digits, underscore, dot, and dash." >&2
+  exit 2
+fi
+SLOT_SUFFIX="${RUNNER_SLOT:+-${RUNNER_SLOT}}"
+ENV_FILE="${CONFIG_DIR}/.runner-registration${SLOT_SUFFIX}.env"
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "Missing ${ENV_FILE}; nothing to stop."
@@ -18,7 +24,7 @@ fi
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
-STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state}"
+STATE_DIR="${STATE_DIR:-${CONFIG_DIR}/state${SLOT_SUFFIX}}"
 
 CONTAINER_ENGINE="${CONTAINER_ENGINE}" CONTAINER_NAME="${CONTAINER_NAME}" \
   "${SCRIPT_DIR}/ensure-runner-autostart.sh" --disable

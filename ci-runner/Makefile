@@ -8,6 +8,9 @@ SHELL := /usr/bin/env bash
 # "Scaling beyond one runner" if you outgrow one runner later.
 
 CONFIG_DIR ?= .
+SLOT ?=
+RUNNER_SLOT ?= $(SLOT)
+SLOT_SUFFIX := $(if $(RUNNER_SLOT),-$(RUNNER_SLOT),)
 CONFIG_ENV := $(CONFIG_DIR)/.env
 ifeq (,$(wildcard $(CONFIG_ENV)))
 $(error $(CONFIG_ENV) is missing — copy .env.example there and fill in OWNER/REPO_NAME first)
@@ -21,14 +24,15 @@ RUNNER_MEMORY ?= 16g
 IMAGE_TAG ?= hermit-ci-runner:$(RUNNER_VERSION)
 BUILD_EXTRA_ARGS ?= --network=host
 CONTAINER_NAME ?= hermit-ci-runner
-ENV_FILE := $(CONFIG_DIR)/.runner-registration.env
-STATE_DIR := $(CONFIG_DIR)/state
+ENV_FILE := $(CONFIG_DIR)/.runner-registration$(SLOT_SUFFIX).env
+STATE_DIR := $(CONFIG_DIR)/state$(SLOT_SUFFIX)
 IMAGE_STAMP := .runner-image-$(RUNNER_VERSION).stamp
 # Never inherit a stray shell START_ARGS; one-job mode is opt-in per-invocation.
 START_ARGS :=
 
 export CONTAINER_ENGINE RUNNER_CPUS RUNNER_MEMORY IMAGE_TAG CONTAINER_NAME ENV_FILE STATE_DIR
 export RUNNER_CONFIG_DIR := $(abspath $(CONFIG_DIR))
+export RUNNER_SLOT
 
 .PHONY: help build init start verify stop drain status
 
@@ -44,6 +48,7 @@ help:
 	  '  make status    Show whether the container is running' \
 	  '' \
 	  'Useful overrides:' \
+	  '  make start SLOT=2 START_ARGS=--detach' \
 	  '  make start RUNNER_CPUS=8 RUNNER_MEMORY=32g' \
 	  '  make start START_ARGS=--detach' \
 	  '  make start START_ARGS=--once   # exit after one job, no restart policy' \
@@ -82,7 +87,8 @@ stop:
 
 status:
 	@if [ -f "$(ENV_FILE)" ]; then \
-	  "$(CONTAINER_ENGINE)" ps --filter "name=$(CONTAINER_NAME)" --format 'table {{.Names}}\t{{.Status}}'; \
+	  . "$(ENV_FILE)"; \
+	  "$${CONTAINER_ENGINE}" ps --filter "name=$${CONTAINER_NAME}" --format 'table {{.Names}}\t{{.Status}}'; \
 	else \
-	  echo "Not initialized — run 'make init' first."; \
+	  echo "Runner slot '$(if $(RUNNER_SLOT),$(RUNNER_SLOT),default)' is not initialized."; \
 	fi

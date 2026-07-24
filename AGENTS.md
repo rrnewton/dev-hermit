@@ -32,12 +32,12 @@ Hermit product work uses the fork's pull request workflow:
 feature branch -> pull request -> rrnewton/hermit:main
 ```
 
-The parent harness uses its task-specified branch; parent-only policy work may
-be committed directly to `main` only when a task explicitly names the parent
-files and authorizes the commit. Confirm the intended destination before
-publishing Reverie work. A task may explicitly name a different base, but
-stale references to `integration` or `devbig-lead` do not override the Hermit
-workflow below.
+The parent harness works directly on shared `main`. Parent-only policy work may
+be committed there when a task explicitly names the parent files and authorizes
+the commit. `worktrees/ACTIVE.md` is ignored machine-local coordination state;
+do not commit or merge it. Confirm the intended destination before publishing
+Reverie work. Stale references to `integration`, `devbig-lead`, or per-machine
+parent branches do not override this model or the Hermit workflow below.
 
 ## Vocabulary
 
@@ -106,9 +106,8 @@ names every agent, task, branch, and owned path. A Hermit-only task leaves the
 slot's Reverie worktree clean and detached unless coordinated Reverie work is
 explicitly assigned. Never allow concurrent edits to the same file or branch.
 
-Physical worktrees and their build output are machine-local and must be
-ignored by the parent repository. `ACTIVE.md` and `ARCHIVED.md` are durable
-coordination records; the checkout directories are not.
+Physical worktrees, their build output, and `ACTIVE.md` are machine-local and
+ignored by the parent repository. `ARCHIVED.md` remains the durable history.
 
 ## Hard Invariants
 
@@ -432,17 +431,9 @@ verify the resulting `main` workflow when the task requires it. Never push
 directly to Hermit `main`, force-push shared branches, or use a local primary
 checkout to bypass the pull request controls.
 
-Parent-only policy and gitlink changes follow the task's explicit branch and
-commit instructions; this task may name `main` directly. Never replace another
-team's live `ACTIVE.md` state while committing durable parent changes. If
-`.gitattributes` assigns
-`worktrees/ACTIVE.md merge=ours`, every clone must also configure:
-
-```bash
-git config merge.ours.driver true
-```
-
-The attribute alone is not enough.
+Parent-only policy and gitlink changes are committed to shared `main` when the
+task explicitly authorizes them. `worktrees/ACTIVE.md` is ignored local state
+and never participates in commits or merges.
 
 ## Bot-Created GitHub Issue Policy
 
@@ -479,7 +470,7 @@ Track in the parent:
 
 - workspace policy such as this guide,
 - `.gitmodules`, exact submodule gitlinks, and parent ignore rules,
-- `worktrees/ACTIVE.md` and `worktrees/ARCHIVED.md`,
+- `worktrees/ARCHIVED.md` (ACTIVE.md remains machine-local),
 - generic workspace scripts and coordination tooling,
 - durable textual AI research, design comparisons, and handoffs under
   `ai_docs/`,

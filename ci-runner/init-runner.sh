@@ -12,6 +12,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$(cd -- "${RUNNER_CONFIG_DIR:-${SCRIPT_DIR}}" && pwd)"
+RUNNER_SLOT="${RUNNER_SLOT:-}"
+if [[ ! "${RUNNER_SLOT}" =~ ^[A-Za-z0-9_.-]*$ ]]; then
+  echo "RUNNER_SLOT may only contain letters, digits, underscore, dot, and dash." >&2
+  exit 2
+fi
+SLOT_SUFFIX="${RUNNER_SLOT:+-${RUNNER_SLOT}}"
 
 if [ -f "${CONFIG_DIR}/.env" ]; then
   # shellcheck disable=SC1091
@@ -27,11 +33,11 @@ IMAGE="${IMAGE_TAG:-hermit-ci-runner:2.335.1}"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-}"
 RUNNER_CPUS="${RUNNER_CPUS:-4}"
 RUNNER_MEMORY="${RUNNER_MEMORY:-16g}"
-RUNNER_NAME="${RUNNER_NAME:-${REPO_NAME}-ci-$(hostname)}"
+RUNNER_NAME="${RUNNER_NAME:-${REPO_NAME}-ci-$(hostname)}${SLOT_SUFFIX}"
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,x64,${REPO_NAME}}"
-CONTAINER_NAME="${CONTAINER_NAME:-${REPO_NAME}-ci-runner}"
-ENV_FILE="${CONFIG_DIR}/.runner-registration.env"
-STATE_DIR="${CONFIG_DIR}/state"
+CONTAINER_NAME="${CONTAINER_NAME:-${REPO_NAME}-ci-runner}${SLOT_SUFFIX}"
+ENV_FILE="${CONFIG_DIR}/.runner-registration${SLOT_SUFFIX}.env"
+STATE_DIR="${CONFIG_DIR}/state${SLOT_SUFFIX}"
 
 FORCE_RECONFIGURE="false"
 if [ "${1:-}" = "--force-reconfigure" ]; then
