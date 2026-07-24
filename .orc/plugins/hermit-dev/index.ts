@@ -1,7 +1,8 @@
 const PLUGIN_NAME = "hermit-dev";
 const SKILL_NAME = "hermit-dev";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
-const POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
+const WORKSPACE_SUBPATH = "work/dev-hermit";
+const RELATIVE_POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
 const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
 const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
 const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
@@ -23,6 +24,41 @@ const SKILL_TRIGGERS = [
   "\\bReverie\\b",
 ];
 
+let resolvedPolicyPath: string = RELATIVE_POLICY_PATH;
+
+async function readPolicyIfPresent(path: string): Promise<string | null> {
+  try {
+    const text = String(await orc.readFile(path));
+    return text.trim().length > 0 ? text : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function resolvePolicy(): Promise<{ path: string; instructions: string }> {
+  const candidates: string[] = [RELATIVE_POLICY_PATH];
+  try {
+    const info = await orc.userInfo();
+    if (info && info.homeDir) {
+      candidates.push(info.homeDir + "/" + WORKSPACE_SUBPATH + "/AGENTS.md");
+    }
+  } catch (_err) {
+    // userInfo may be unavailable in constrained plugin tests.
+  }
+
+  for (const path of candidates) {
+    const instructions = await readPolicyIfPresent(path);
+    if (instructions !== null) {
+      resolvedPolicyPath = path;
+      return { path, instructions };
+    }
+  }
+
+  throw new Error(
+    "hermit-dev policy file not found or empty. Tried: " + candidates.join(", "),
+  );
+}
+
 function registerHermitDevSkill(instructions: string): void {
   orc.registerSkill(SKILL_NAME, {
     description: SKILL_DESCRIPTION,
@@ -33,16 +69,13 @@ function registerHermitDevSkill(instructions: string): void {
 }
 
 async function activateHermitDevPolicies(): Promise<string> {
-  const instructions = String(await orc.readFile(POLICY_PATH));
-  if (instructions.trim().length === 0) {
-    throw new Error("hermit-dev policy file is empty: " + POLICY_PATH);
-  }
+  const { path, instructions } = await resolvePolicy();
 
   // Re-registering replaces the placeholder or previous policy atomically.
   registerHermitDevSkill(instructions);
 
   if (orc.kvGet(POLICY_CACHE_KEY) === instructions) {
-    return "hermit-dev policies already activated from " + POLICY_PATH;
+    return "hermit-dev policies already activated from " + path;
   }
 
   const result = String(await orc.activateSkill(SKILL_NAME));
@@ -51,7 +84,7 @@ async function activateHermitDevPolicies(): Promise<string> {
   }
 
   orc.kvSet(POLICY_CACHE_KEY, instructions);
-  return "hermit-dev policies activated from " + POLICY_PATH;
+  return "hermit-dev policies activated from " + path;
 }
 
 export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
@@ -89,7 +122,7 @@ orc.exposeFunction(
     return {
       plugin: PLUGIN_NAME,
       skill: SKILL_NAME,
-      policyPath: POLICY_PATH,
+      policyPath: resolvedPolicyPath,
       policyLoaded: typeof cachedPolicy === "string",
       policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
       workspace: "~/work/dev-hermit",

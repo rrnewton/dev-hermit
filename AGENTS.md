@@ -11,6 +11,23 @@ test, and style rules. The stricter rule wins. The Hermit pull request workflow
 in this file supersedes legacy guidance that routed ordinary Hermit changes
 through a local `devbig-lead` branch.
 
+## Role Boundary
+
+This parent guide is for the **coordinator role**: task dispatch, slot and
+checkout ownership, cross-repository dependency order, PR landing, parent
+gitlinks, and evidence-based status rollups. It must not grow into a second
+Hermit or Reverie implementation manual.
+
+Product implementation agents follow the repository-root `hermit/AGENTS.md`
+or `reverie/AGENTS.md` for architecture, source conventions, test selection,
+and per-run evidence. `.llms/skills/` contains task skills; it is not a second
+`AGENTS.md` policy location. Do not duplicate product guides there.
+
+When both scopes apply, this guide owns workspace coordination and publication;
+the product guide owns implementation and product validation. A coordinator
+must preserve exact implementation evidence when aggregating it, not replace
+product-specific requirements with a summary.
+
 ## Project Overview
 
 `~/work/dev-hermit/` is a multi-agent development harness. It is **not** the
@@ -732,8 +749,30 @@ overhead, backend maturity, and QEMU/Linux viability. Do not close either
 long-range goal without its required human verification.
 ## Communication Precision
 
-Reports, notes, and summaries must be specific enough that another agent can
-act on them without re-deriving the context. Vague summaries are unacceptable.
+This section governs coordinator headlines, cross-task aggregation, and
+user-facing progress reports. Product guides govern the exact commands and
+per-run evidence that implementation agents must supply. Coordinator reports
+must be specific enough that another engineer can act without re-deriving the
+scope; vague summaries are unacceptable.
+
+- **Never headline a bare pass ratio.** `10/10 pass` is not a headline. Name
+  the program category, the exact programs (or link an immediately adjacent
+  table containing them), the Hermit mode and backend, and why that batch was
+  selected. Example: `System utilities, ptrace L2: id, whoami, groups, uptime,
+  free, df, ps, time, timeout, and nice pass 10/10; this batch probes process
+  metadata after the envp fix.`
+- **Separate new results from baseline.** Every rollup labels results as
+  `New this run`, `Baseline reconfirmed`, `Regression`, or `Not rerun`. State
+  the commit or PR that changed between the compared runs. Never present a
+  repeated baseline result as newly achieved coverage.
+- **Classify programs before totaling them.** Use explicit categories such as
+  system utilities, text-processing utilities, interpreters/runtimes,
+  compilers/build tools, databases, network programs, interactive
+  applications, and virtualization/emulators. Mixed batches require category
+  subtotals; one aggregate ratio may not hide which class improved or failed.
+- **Name execution context.** Distinguish native baseline, ptrace, DBI, and KVM,
+  and distinguish strict run, strict verify, record/replay, and relaxed modes.
+  State why the chosen mode/backend answers the batch question.
 
 - **Name the tool.** Never write "the Tool" or "a tool" when you mean a
   specific one. Say which: `StraceTool`, `Detcore`, `CounterTool`, etc.
