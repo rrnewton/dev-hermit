@@ -3,16 +3,19 @@
 ## Scope and evidence
 
 This report covers TaskGraph work closed from **2026-07-23 18:00 UTC** through
-the live snapshot at **2026-07-24 04:48 UTC**. The query returned **299 closed
-tasks**. Counts below are measurements from task notes, checked-in matrices, and
-live GitHub state; they are not estimates. Historical scenario totals and fresh
-focused matrices are kept separate because they use different command sets.
+the initial accounting snapshot at **2026-07-24 04:48 UTC**, then adds final
+QEMU and landing results through **2026-07-24 06:40 UTC**. The initial query
+returned **299 closed tasks**; that mutually exclusive area accounting is
+retained rather than silently recomputed. Final achievements are called out
+separately. Counts are measurements from task notes, checked-in matrices, and
+live GitHub state; they are not estimates.
 
 Snapshot revisions before this report commit:
 
-- dev-hermit parent `main`: `9015c2939f5c403676c4c94db81b8ef58ab0ac65`
-- Hermit `main`: `8592f55aa9e33aceece9ab1906b028bf343bea41`
-- Reverie `main`: `07d7ad64e49b75f297581438b213bdd3289d74f1`
+- dev-hermit parent `main`: `ac79b3bdaab35683dc37366b0090574152491fc1`
+- Hermit `main`: `3f073e11654cd12f43e97e212e18b1fcb854d580`
+- Reverie `main`: `c93d31f3ebd4b1af5487a2004bdcfeb5903a16f5`
+- QEMU L2 tested Hermit commit: `be0ad74cc590f457aa11fd98467c732dbb5f2447`
 
 Assurance terminology:
 
@@ -28,28 +31,33 @@ SHA or source task where material.
 ## Executive summary
 
 - Ptrace remains the broadest mode: the consolidated 611-case strict matrix has
-  **520 pass, 80 fail, and 11 unresolved/not run**. The current landed validation
-  envelope adds a stable 16-command L2 gate.
+  **520 pass, 80 fail, and 11 unresolved/not run**. The landed validation gate
+  now covers **38/38 commands at L2**.
 - Post-envp record/replay coverage totals **166 pass and 53 fail across 219
   prescribed cases**. A fresh 17-program current-main-ancestor matrix passed
   14/17; the failures are `yes | head` and Rustup-proxy `cargo`/`rustc` replay.
 - KVM is functional for local single-process programs and interpreters. Its
-  latest exact matrix is **10 pass, 4 fail, 1 unavailable**; missing legacy
-  `pipe` and `getgroups` behavior are the real backend gaps.
-- DBI's current-main matrix matches **14/19 ptrace-L2 rows** and passes 15/21
-  overall. The mmap-result root fix makes Lua, Perl, SQLite, and sort pass, but
-  that fix remains in open Hermit/Reverie/DynamoRIO PRs.
-- QEMU now has a genuine **strict L1 boot**: Linux 6.17.13 booted and powered off
-  in 166.486 seconds with no scheduler relaxation. No strict L2 result exists.
-  The 18-21 second compatibility profile still disables thread sequencing and
-  is correctly rejected by `--verify` as nondeterministic.
+  latest pre-fix matrix is **10 pass, 4 fail, 1 unavailable**. Reverie PR #54
+  landed legacy `pipe`/`pipe2` and `getgroups` support; Hermit PR #544 is
+  the still-draft consumer pin and integration coverage.
+- DBI's measured matrix matches **14/19 ptrace-L2 rows** and passes 15/21
+  overall. The mmap-result root fix that makes Lua, Perl, SQLite, and sort pass
+  is now on Reverie `main` through PR #53 and on Hermit `main` through pin
+  PR #543.
+- QEMU reached a genuine **strict L2 boot milestone**. At Hermit `be0ad74c`,
+  `--strict --verify` completed two Linux 6.17.13 boots in 425.82 seconds on
+  ptrace/INFO with no relaxations and verified 848,391/848,391 messages with no
+  substantive differences.
 - Syscall dispatch is explicit for all **373/373** pinned x86_64 syscalls.
-  Current classification is **107 determinized, 39 reviewed pass-through, 227
-  fail-closed unclassified**.
-- The full validator is not completely green: **14/15 gates** pass; the only
-  failure is `record_replay_matrix::c_ioctl_siocethtool` (issue #540). The
-  self-hosted CI lane also cannot configure DynamoRIO because zlib development
-  files are missing (issue #538).
+  The last exhaustive recount before the final handler landings was **107
+  determinized, 39 reviewed pass-through, and 227 fail-closed unclassified**;
+  current head additionally includes landed `getrandom`, affinity, and
+  `writev` work.
+- The focused strict compatibility gate is **38/38 L2**. The full validator is
+  still not completely green: inherited
+  `record_replay_matrix::c_ioctl_siocethtool` issue #540 and host-sensitive
+  PMU/timing failures remain. PR #541 fixed the missing-zlib setup blocker, so
+  self-hosted CI now advances beyond DynamoRIO configuration.
 
 ## Completed-task accounting
 
@@ -85,12 +93,12 @@ suite and must not be compared as if all modes ran the same 611 scenarios.
 | Mode and evidence set | Pass | Fail | Other | Result |
 |---|---:|---:|---:|---|
 | Ptrace strict batches 1-69 | 520 | 80 | 11 | 86.7% pass among cases with a verdict; historical multi-SHA scenario matrix. |
-| Ptrace landed validation gate | 16 | 0 | 0 | L2, default ptrace backend, no relaxations, on the current-main validation lineage. |
+| Ptrace landed validation gate | 38 | 0 | 0 | L2, default ptrace backend, no relaxations, exact landed validation at PR #542. |
 | Post-envp R/R batches 1-21 | 166 | 53 | 0 | 75.8% of 219 prescribed cases. |
 | Fresh R/R core/interpreter envelope | 14 | 3 | 0 | Tested at Hermit `0a14d47`; all pass rows had byte-identical record/replay stdout. |
 | DBI fresh compatibility matrix | 15 | 6 | 0 | Overall verifier result at `39250cd`; 14/19 ptrace-L2 baselines matched. |
 | KVM fresh compatibility matrix | 10 | 4 | 1 | Exact prescribed set at `0ad5ad52`; pass rows reached L2 and native stdout parity. |
-| QEMU strict boot | 1 | 0 | L2 not run | One full L1 boot at `dd60278`; not a repeatability claim. |
+| QEMU strict boot | 1 | 0 | 0 | Full L2 at `be0ad74c`: two strict boots compared successfully, ptrace/INFO, no relaxations. |
 
 ### Ptrace
 
@@ -107,10 +115,10 @@ coverage. The dominant unresolved classes are:
 - multi-process compiler/runtime scheduling, including the still-open vfork
   work in PR #239.
 
-A full `validate.sh` run at `39250cd` and the PR #539 exact head reported strict
-compatibility **16/16 L2** and the true/echo/date working envelope **3/3** at L1,
-L2, L3, L4 (20 repetitions), and R/R. The current Hermit `main` is the squash
-of that validated PR head.
+PR #542 expanded the strict compatibility gate. Exact landed validation reported
+**38/38 L2** on the default ptrace backend, default logging, and no relaxations.
+The true/echo/date working envelope remains **3/3** at L1, L2, L3, L4 (20
+repetitions), and R/R on its measured lineage.
 
 ### Record/replay
 
@@ -141,15 +149,18 @@ At Hermit `39250cd` with Reverie `07d7ad64`, the 21-row matrix produced:
 - DBI verifier overall: 15/21;
 - gaps: `yes | head` timeout and raw SIGSEGV for Lua, Perl, SQLite, and sort.
 
-The SIGSEGV family has a validated but unlanded root fix. DynamoRIO's
+The SIGSEGV family root fix is now in the active fork lineage. DynamoRIO's
 `dr_invoke_syscall_as_app` called post-syscall processing before storing the raw
 kernel result, so mmap bookkeeping treated syscall number 9 as the mapping
-address. With the fix, Lua, Perl, SQLite, sort, md5sum, and wc all pass DBI's
-two-run verifier with expected output. The dependency stack remains open:
-
-- DynamoRIO [#8024](https://github.com/DynamoRIO/dynamorio/pull/8024)
-- Reverie [#53](https://github.com/rrnewton/reverie/pull/53)
-- Hermit [#278](https://github.com/rrnewton/hermit/pull/278)
+address. With the fix, Lua, Perl, SQLite, sort, md5sum, and wc pass DBI's
+two-run verifier with expected output. Reverie PR
+[#53](https://github.com/rrnewton/reverie/pull/53) landed as `35dc0af`, pinning
+the application-syscall result fix, and Hermit PR
+[#543](https://github.com/rrnewton/hermit/pull/543) landed as `a372294`, pinning
+that Reverie revision. Upstream DynamoRIO
+[#8024](https://github.com/DynamoRIO/dynamorio/pull/8024) and draft Hermit PR
+[#278](https://github.com/rrnewton/hermit/pull/278) remain follow-up/reconciliation
+work; they are no longer evidence that the fork fix is absent from `main`.
 
 ### KVM
 
@@ -165,8 +176,12 @@ The corrected exact matrix at `0ad5ad52` is:
 - **1 unavailable exact binary**: `lua5.3`; installed Lua 5.4.4 passes L2.
 
 Landed Hermit PR #277 and Reverie PR #52 fixed KVM `F_GETFL` and confirmed that
-stdin forwarding already works at L1. Remaining pipe and supplementary-group
-work belongs in the Reverie KVM executor.
+stdin forwarding already works at L1. Reverie PR
+[#54](https://github.com/rrnewton/reverie/pull/54) then landed deterministic
+`pipe`/`pipe2` and supplementary-group handling as `c93d31f`. Draft Hermit
+PR [#544](https://github.com/rrnewton/hermit/pull/544) is the consumer pin and
+integration gate; until it lands, the 10/4/1 matrix remains the last Hermit-main
+measurement rather than a post-fix result.
 
 ## Performance
 
@@ -215,28 +230,41 @@ not be mistaken for current status.
    off in **166.486 seconds**. Evidence: 311 console lines, 21,626 bytes,
    `SHARED_FUTEX_QEMU_KERNEL_OK`, 987 reported turns, 165.226 seconds virtual
    time, and 167,521 completed syscalls. No Hermit ERROR, panic, or unsupported
-   syscall appeared. This is **L1 only**.
-4. A later 60-second DEBUG trace at `0a14d47` emitted no console before the
-   guard, but proved time and scheduler progress: 398 turns, 52.667 seconds
-   virtual time, 68 monotonic clock samples with zero regressions, and all six
-   ppoll calls returned. The remaining issue is throughput, not a stuck ppoll
-   or clock deadline.
-5. The compatibility profile using `--no-sequentialize-threads` plus an
+   syscall appeared. This established L1.
+4. At `be0ad74c`, the exact prior-L1 profile passed **L2** on ptrace/INFO with
+   no relaxations. `target/release/hermit --log info run --strict --verify`
+   completed two QEMU 10.1.0 Linux boots and exited 0 in **425.82 seconds**.
+   Hermit compared **848,391/848,391 total**, **679,376/679,376
+   detcore-specific**, **337,797/337,797 INFO**, and **673,803/673,803 DETLOG
+   plus scheduler-COMMIT messages**, reporting no substantive differences and
+   `Success: deterministic. Determinism verified.` Kernel SHA-256:
+   `e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2`;
+   initramfs SHA-256:
+   `f88ddaba3fa86a44078d550f92e13f0d23e5a1f0a983aadb24e678e2ef5523cc`.
+5. A 60-second DEBUG trace at `0a14d47` emitted no console before the guard,
+   but proved time and scheduler progress: 398 turns, 52.667 seconds virtual
+   time, 68 monotonic clock samples with zero regressions, and all six ppoll
+   calls returned.
+6. The compatibility profile using `--no-sequentialize-threads` plus an
    effectively disabled preemption timeout boots in 18-21 seconds and passed
    4/4 demo runs. It is **not strict**. A relaxed `--verify` run completed both
    boots but found divergent post-`clone3` host-thread order.
 
-Draft Hermit PR [#329](https://github.com/rrnewton/hermit/pull/329) contains the
-strict-boot evidence and syscall analysis. The next assurance milestone is a
-repeatable L2 boot; the next performance milestone is deterministic controlled
-concurrency for QEMU's vCPU and helper threads.
+Hermit PR [#329](https://github.com/rrnewton/hermit/pull/329), now merged,
+contains the L1 strict-boot evidence and syscall analysis. The next assurance
+work is to enshrine the L2 profile in CI and attempt record/replay/L3; the
+performance milestone remains deterministic controlled concurrency for QEMU's
+vCPU and helper threads.
 
 ## Syscall classification
 
 PR #275 removed the wildcard passthrough and classified all 373 pinned x86_64
 syscalls. PR #503 promoted 24 measured, reviewed calls from unclassified to
 pass-through. PRs #534 and #539 then determinized `prlimit64` and `arch_prctl`.
-Current counts on the Hermit `main` lineage are:
+The table is the last exhaustive recount before final handler landings; PRs
+#545, #546, and #547 subsequently added or hardened deterministic `getrandom`,
+scheduler-affinity, and `writev` policy, so these category counts are a pinned
+snapshot rather than an assertion about current head:
 
 | Classification | Count |
 |---|---:|
@@ -248,8 +276,8 @@ Current counts on the Hermit `main` lineage are:
 The 50-call local frequency study classified 24 as conditional pass-through and
 26 as needing handlers. The highest-priority remaining policies include
 `prctl`, `madvise`, socket options/names, PID/group translation, signal target
-translation, logical timers, `openat2`/pidfd bookkeeping, vectored I/O, and
-path-aware procfs normalization.
+translation, logical timers, `openat2`/pidfd bookkeeping, and path-aware procfs
+normalization. Vectored output moved out of this list with landed PR #547.
 
 ## PR activity
 
@@ -287,15 +315,31 @@ path-aware procfs normalization.
 | Reverie | [#51](https://github.com/rrnewton/reverie/pull/51) | Merge queue setup |
 | Reverie | [#52](https://github.com/rrnewton/reverie/pull/52) | KVM `F_GETFL` support |
 
-Totals: **22 Hermit PRs and 7 Reverie PRs merged** in the window.
+Initial snapshot subtotal: **22 Hermit PRs and 7 Reverie PRs merged**.
 
-### Open work created in the window
+### Additional final landings
+
+| Repository | PR | Change |
+|---|---:|---|
+| Hermit | [#537](https://github.com/rrnewton/hermit/pull/537) | Expand strict compatibility application matrix |
+| Hermit | [#541](https://github.com/rrnewton/hermit/pull/541) | Install zlib headers in self-hosted CI |
+| Hermit | [#542](https://github.com/rrnewton/hermit/pull/542) | Expand strict command compatibility gate to 38 L2 probes |
+| Hermit | [#543](https://github.com/rrnewton/hermit/pull/543) | Pin merged Reverie DBI application-syscall fix |
+| Hermit | [#545](https://github.com/rrnewton/hermit/pull/545) | Deterministic `getrandom` handling |
+| Hermit | [#546](https://github.com/rrnewton/hermit/pull/546) | Deterministic scheduler-affinity masks |
+| Hermit | [#547](https://github.com/rrnewton/hermit/pull/547) | Deterministic `writev` handling |
+| Hermit | [#329](https://github.com/rrnewton/hermit/pull/329) | Strict QEMU boot evidence and syscall analysis |
+| Reverie | [#53](https://github.com/rrnewton/reverie/pull/53) | Pin DynamoRIO application-syscall result fix |
+| Reverie | [#54](https://github.com/rrnewton/reverie/pull/54) | KVM pipes and supplementary groups |
+
+Final window total: **30 Hermit PRs and 9 Reverie PRs merged**.
+
+### Final open work
 
 | Repository | PRs | Status at snapshot |
 |---|---|---|
-| Hermit | [#537](https://github.com/rrnewton/hermit/pull/537) | Draft strict application-envelope expansion |
-| Hermit | [#329](https://github.com/rrnewton/hermit/pull/329) | Draft QEMU strict-boot evidence |
-| Hermit | [#278](https://github.com/rrnewton/hermit/pull/278) | Draft DBI dynamic-mmap fix; depends on Reverie #53 and DynamoRIO #8024 |
+| Hermit | [#544](https://github.com/rrnewton/hermit/pull/544) | Draft Hermit pin and integration coverage for merged Reverie KVM PR #54; CI in progress at final snapshot |
+| Hermit | [#278](https://github.com/rrnewton/hermit/pull/278) | Draft DBI dynamic-mmap follow-up; Reverie #53 and Hermit pin #543 are now merged |
 | Hermit | [#270](https://github.com/rrnewton/hermit/pull/270), [#268](https://github.com/rrnewton/hermit/pull/268) | Draft `rt_sigsuspend` and select/pselect6 determinization |
 | Hermit | [#267](https://github.com/rrnewton/hermit/pull/267) | Draft SaBRe M1/M2 integration |
 | Hermit | [#264](https://github.com/rrnewton/hermit/pull/264) | Draft chaos and R/R coverage expansion |
@@ -306,8 +350,8 @@ Totals: **22 Hermit PRs and 7 Reverie PRs merged** in the window.
 | Hermit | [#249](https://github.com/rrnewton/hermit/pull/249), [#247](https://github.com/rrnewton/hermit/pull/247), [#246](https://github.com/rrnewton/hermit/pull/246), [#245](https://github.com/rrnewton/hermit/pull/245) | Robust-futex and timer regression probes |
 | Hermit | [#242](https://github.com/rrnewton/hermit/pull/242), [#241](https://github.com/rrnewton/hermit/pull/241) | Virtual-time table and `sched_yield` livelock work |
 | Hermit | [#240](https://github.com/rrnewton/hermit/pull/240) | Draft replay kernel-fd close ordering fix |
-| Reverie | [#53](https://github.com/rrnewton/reverie/pull/53) | Draft DynamoRIO application-syscall result pin |
-| DynamoRIO | [#8024](https://github.com/DynamoRIO/dynamorio/pull/8024) | Draft raw syscall-result propagation fix |
+| Reverie | [#35](https://github.com/rrnewton/reverie/pull/35), [#1](https://github.com/rrnewton/reverie/pull/1) | Both draft and `human-review`; DBI multiprocess and SaBRe runtime work |
+| DynamoRIO | [#8024](https://github.com/DynamoRIO/dynamorio/pull/8024) | Draft upstream raw syscall-result propagation fix |
 | liteinst2 | [#1](https://github.com/rrnewton/liteinst2/pull/1) | M1-M5 stack; 46 release tests pass, 3 intentional stress/bench ignores |
 
 Hermit PRs #532, #271, #265, #248, and #243 plus Reverie PR #46 were closed
@@ -318,39 +362,43 @@ Upstream facebookexperimental/hermit
 [#85](https://github.com/facebookexperimental/hermit/pull/85) is also still
 open; no landing is claimed.
 
+Final GitHub state at 06:40 UTC: **21 Hermit PRs open** (19 drafts; non-draft
+#251 has required GitHub-hosted CI red, and non-draft #239 is `human-review`)
+and **2 Reverie PRs open** (both draft and `human-review`). The final landing
+sweep found no remaining eligible PR.
+
 ## CI and validation health
 
-- Current Hermit `main` Docs CI at `8592f55a` is green. The Rust workflow was
-  still in progress at the snapshot.
-- Recent GitHub-hosted Regular jobs used to land PRs #533, #534, and #539 were
-  green, as were their merge gates.
-- The combined Rust workflow is degraded because the self-hosted runner cannot
-  configure `reverie-dbi`: CMake reports `Could NOT find ZLIB`. Open issue
-  [#538](https://github.com/rrnewton/hermit/issues/538) tracks installing
-  `zlib1g-dev`/`zlib-devel` on the runner.
-- Full local validation at `39250cd`, repeated on the PR #539 head, passed
-  **14/15 gates**. Nextest ran **320 tests: 319 passed, 1 failed, 254 skipped**.
-  The sole failure is
-  `record_replay_matrix::c_ioctl_siocethtool`: the workload expects the old
-  `Request::Other(0x8946)` policy, while pinned Reverie now decodes typed
-  `Request::SIOCETHTOOL`. Issue
-  [#540](https://github.com/rrnewton/hermit/issues/540) tracks it.
+- GitHub-hosted Regular tests and merge gates passed for every final autonomous
+  landing: Hermit #537, #541, #542, #543, #545, #546, #547, and #329, plus
+  Reverie #53 and #54.
+- PR #541 installed `zlib1g-dev`/`zlib-devel`; its self-hosted run confirmed
+  successful installation and advanced past DynamoRIO configuration. Later
+  self-hosted failures were separate: missing `target/debug/libhermit.so` on
+  some branches or issue #540 in the record/replay matrix.
+- Exact landed PR #542 validation passed **38/38 strict compatibility probes at
+  L2** on ptrace with no relaxations. Full PR #547 validation reported **13/15
+  gates**; its inherited failures were issue #540 and host-dependent PMU skid.
+- Issue [#540](https://github.com/rrnewton/hermit/issues/540) remains the primary
+  reproducible validator blocker: `c_ioctl_siocethtool` exits 1 even though
+  comparison reports `Success: replay matched recording.`
 - The optional Meta rr syscall suite remains unavailable because the OSS tree
   has no `third-party/rr` submodule/target.
 
 ## Morning priorities
 
-1. Land the DynamoRIO #8024 -> Reverie #53 -> Hermit #278 dependency chain after
-   upstream/review gates; it converts four confirmed DBI SIGSEGV cases to passes.
-2. Fix issue #540 so `validate.sh` is 15/15, and install zlib development files
-   on the self-hosted runner per issue #538.
-3. Implement KVM legacy pipe and supplementary-group support in Reverie.
-4. Address R/R issue #535 (`SIGPIPE`/EPIPE) and #536 (Rustup proxy exec/epoll),
+1. Enshrine the exact QEMU L2 profile in CI, then attempt QEMU record/replay/L3
+   and work on deterministic controlled concurrency for throughput.
+2. Fix issue #540 so the full validator and self-hosted record/replay matrix are
+   green; keep the newly landed zlib dependency setup.
+3. Rebase, validate, and land Hermit PR #544 so current Hermit consumes merged
+   Reverie PR #54, then rerun the KVM 10/4/1 compatibility matrix.
+4. Reconcile draft Hermit PR #278 and upstream DynamoRIO #8024 with the already
+   landed Reverie #53/Hermit #543 fork pin.
+5. Address R/R issue #535 (`SIGPIPE`/EPIPE) and #536 (Rustup proxy exec/epoll),
    then rerun the 17-program and real-app matrices.
-5. Repeat the successful QEMU strict boot and attempt L2; use PR #329's syscall
-   analysis to separate throughput work from correctness work.
-6. Continue the 227 fail-closed syscall classifications, prioritizing `prctl`,
-   `madvise`, PID/signal translation, socket policies, and fd-creating calls.
+6. Continue fail-closed syscall work, prioritizing `prctl`, `madvise`,
+   PID/signal translation, socket policies, and fd-creating calls.
 
 ## Evidence sources
 
@@ -359,7 +407,10 @@ open; no landing is claimed.
 - TaskGraph notes for all 299 closed tasks in the stated window, especially
   `impl-expand-rr-envelope`, `impl-dbi-compat-matrix-report`,
   `impl-kvm-compat-expansion`, `impl-qemu-boot-debug-overnight`,
-  `impl-qemu-timer-loop-debug`, `impl-targeted-perf-benchmarks`,
-  `impl-exhaustive-syscall-match`, `impl-promote-24-passthru-syscalls`,
-  `impl-validate-sh-green-check`, and `impl-ci-status-audit`
+  `impl-qemu-strict-l2-attempt`, `impl-qemu-timer-loop-debug`,
+  `impl-targeted-perf-benchmarks`, `impl-expand-validate-sh-programs`,
+  `impl-land-reverie-pr53`, `impl-land-getrandom-pr545`,
+  `impl-final-pr-sweep`, `impl-exhaustive-syscall-match`,
+  `impl-promote-24-passthru-syscalls`, `impl-validate-sh-green-check`, and
+  `impl-ci-status-audit`
 - Live GitHub PR, issue, Actions, and branch-head queries at the snapshot time
