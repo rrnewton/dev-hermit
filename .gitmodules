@@ -4,3 +4,6 @@
 [submodule "reverie"]
 	path = reverie
 	url = git@github.com:rrnewton/reverie.git
+[submodule "liteinst2"]
+	path = liteinst2
+	url = https://github.com/rrnewton/liteinst2
