@@ -1,6 +1,8 @@
 # Agent and local runtime state
 /.agents/
 /.agent-locked
+/.agent-continuations/
+/.orc/
 /.runtime/
 /CLAUDE.local.md
 
@@ -17,8 +19,20 @@
 /worktrees/*
 !/worktrees/ACTIVE.md
 !/worktrees/ARCHIVED.md
+/worktrees_reverie/
+/main/
 /scratch/
 /targets/
+
+# Retained machine-local archives from the 2026-07-23 parent cleanup.
+/experiments/hermit-verify-keeplogs_20260723/
+/experiments/hermit-wave7-safe_20260723/
+/experiments/landing-nonreview_20260723/
+/experiments/reverie-pr18-fix_20260723/
+/experiments/scratch_20260723/
+/experiments/target-nondet-test-framework_20260723/
+/experiments/targets_20260723/
+/experiments/recording-noseq_20260723/
 
 # Transient tooling output
 **/__pycache__/
@@ -44,3 +58,4 @@
 /ai_docs/**/*.tgz
 /ai_docs/**/*.webp
 /ai_docs/**/*.zip
+ignored/

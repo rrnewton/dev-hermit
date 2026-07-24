@@ -1,0 +1,576 @@
+From 8b45e486ec9660285577b9c5bccacddd887f81e2 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Wed, 22 Jul 2026 09:45:59 -0700
+Subject: [PATCH 1/2] Fail-closed batch 3: ioctl/tgkill/mkdir/setitimer/etc (76
+ tests enabled)
+
+---
+ detcore/src/lib.rs                            |  25 ++++
+ detcore/src/scheduler.rs                      |  21 ++--
+ detcore/src/syscalls/signal.rs                | 110 +++++++++++++++++-
+ detcore/src/tool_global.rs                    |  19 ++-
+ docs/FAIL_CLOSED_STATUS.md                    |  28 ++---
+ .../tests/fail_closed_known_failures.tsv      |  33 +++---
+ 6 files changed, 180 insertions(+), 56 deletions(-)
+
+diff --git a/detcore/src/lib.rs b/detcore/src/lib.rs
+index 7bd5368..a2fd7b2 100644
+--- a/detcore/src/lib.rs
++++ b/detcore/src/lib.rs
+@@ -74,6 +74,7 @@ use reverie::syscalls::MemoryAccess;
+ use reverie::syscalls::Syscall;
+ use reverie::syscalls::SyscallInfo;
+ use reverie::syscalls::Sysno;
++use reverie::syscalls::ioctl::Request as IoctlRequest;
+ pub use scheduler::Priority;
+ pub use scheduler::runqueue::DEFAULT_PRIORITY;
+ pub use scheduler::runqueue::FIRST_PRIORITY;
+@@ -477,6 +478,8 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+                 Sysno::pread64,
+                 Sysno::lseek,
+                 Sysno::fadvise64,
++                Sysno::ioctl,
++                Sysno::mkdir,
+                 Sysno::mmap,
+                 Sysno::munmap,
+                 Sysno::mremap,
+@@ -503,6 +506,7 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+                 Sysno::futimesat,
+                 Sysno::socket,
+                 Sysno::socketpair,
++                Sysno::setsockopt,
+                 Sysno::eventfd,
+                 Sysno::eventfd2,
+                 Sysno::sched_getaffinity,
+@@ -512,6 +516,7 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+                 Sysno::timerfd_create,
+                 Sysno::timerfd_settime,
+                 Sysno::timerfd_gettime,
++                Sysno::setitimer,
+                 Sysno::inotify_init,
+                 Sysno::inotify_init1,
+                 Sysno::inotify_add_watch,
+@@ -533,15 +538,19 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+                 Sysno::epoll_ctl_old,
+                 Sysno::recvfrom,
+                 Sysno::rt_sigtimedwait,
++                Sysno::kill,
++                Sysno::tgkill,
+                 Sysno::execve,
+                 Sysno::execveat,
+                 Sysno::rseq,
++                Sysno::clock_settime,
+                 Sysno::getpid,
+                 Sysno::gettid,
+                 Sysno::getcpu,
+                 Sysno::rt_sigprocmask,
+                 Sysno::rt_sigaction,
+                 Sysno::getrusage,
++                Sysno::getrlimit,
+                 Sysno::sysinfo,
+                 // TODO(T137258824): add proper Select / PSelect6
+                 // Sysno::pselect6,
+@@ -1019,6 +1028,16 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+             Syscall::Lseek(_) => self.passthrough(guest, call).await,
+             // This syscall is advisory; fixed success preserves its API contract.
+             Syscall::Fadvise64(_) => Ok(0),
++            Syscall::Ioctl(s) => match s.request() {
++                IoctlRequest::TCGETS(_) | IoctlRequest::TIOCGWINSZ(_) => {
++                    Err(Error::Errno(Errno::ENOTTY))
++                }
++                IoctlRequest::FIOCLEX | IoctlRequest::FIONCLEX => {
++                    self.passthrough(guest, call).await
++                }
++                _ => Err(Error::Errno(Errno::ENOSYS)),
++            },
++            Syscall::Mkdir(_) => self.passthrough(guest, call).await,
+             Syscall::Mmap(s) => self.handle_mmap(guest, s).await,
+             Syscall::Munmap(s) => self.handle_munmap(guest, s).await,
+             Syscall::Mremap(s) => self.handle_mremap(guest, s).await,
+@@ -1046,6 +1065,8 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+                 self.handle_clock_gettime(guest, s).await
+             }
+             Syscall::ClockGetres(s) if virtualize_time => self.handle_clock_getres(guest, s).await,
++            Syscall::ClockSettime(_) => Err(Error::Errno(Errno::EPERM)),
++            Syscall::Setitimer(s) => self.handle_setitimer(guest, s).await,
+             Syscall::Uname(s) => self.handle_uname(guest, s).await,
+             Syscall::ExitGroup(s) => self.handle_exit_group(guest, s).await,
+             Syscall::Exit(s) => self.handle_exit(guest, s).await,
+@@ -1065,6 +1086,7 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+             Syscall::Futimesat(_s) => Err(Error::Errno(Errno::ENOSYS)),
+             Syscall::Socket(s) => self.handle_socket(guest, s).await,
+             Syscall::Socketpair(s) => self.handle_socketpair(guest, s).await,
++            Syscall::Setsockopt(_) => self.passthrough(guest, call).await,
+             Syscall::Connect(s) => self.handle_connect(guest, s).await,
+             Syscall::Bind(s) => self.handle_bind(guest, s).await,
+             Syscall::Eventfd(s) => self.handle_eventfd2(guest, s.into()).await,
+@@ -1125,6 +1147,8 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+             // TODO: handle timeout behavior:
+             // Syscall::Recvmmsg(_) => self.handle_recvmmsg(guest, call).await,
+             Syscall::RtSigtimedwait(s) => self.handle_rt_sigtimedwait(guest, s).await,
++            Syscall::Kill(_) => self.passthrough(guest, call).await,
++            Syscall::Tgkill(_) => self.passthrough(guest, call).await,
+ 
+             Syscall::Execve(s) => self.handle_execveat(guest, s.into()).await,
+             Syscall::Execveat(s) => self.handle_execveat(guest, s).await,
+@@ -1153,6 +1177,7 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+             Syscall::SetRobustList(_) => self.passthrough(guest, call).await,
+             Syscall::Prlimit64(_) => self.passthrough(guest, call).await,
+             Syscall::Getrusage(s) => self.handle_getrusage(guest, s).await,
++            Syscall::Getrlimit(_) => self.passthrough(guest, call).await,
+             Syscall::Readlinkat(_) => self.passthrough(guest, call).await,
+             Syscall::Madvise(_) => self.passthrough(guest, call).await,
+             Syscall::Prctl(_) => self.passthrough(guest, call).await,
+diff --git a/detcore/src/scheduler.rs b/detcore/src/scheduler.rs
+index 5419501..6e61355 100644
+--- a/detcore/src/scheduler.rs
++++ b/detcore/src/scheduler.rs
+@@ -76,9 +76,6 @@ use crate::util::truncated;
+ /// Unique identifier for an action.
+ pub type ActionID = u64;
+ 
+-/// A non-negative integer number of seconds.
+-pub type Seconds = u32;
+-
+ /// A representation of side effects that are happening, or could be happening, right now
+ /// in the background.
+ #[derive(Debug, Clone)]
+@@ -2242,29 +2239,31 @@ impl Scheduler {
+         print_stack
+     }
+ 
+-    // Returns the number of seconds until any previously scheduled alarm, if any (zero otherwise).
++    // Returns the logical duration until any previously scheduled alarm, if any (zero otherwise).
+     pub fn register_alarm(
+         &mut self,
+         detpid: DetPid,
+         dettid: DetTid,
+-        seconds: Seconds,
++        duration: LogicalTime,
+         sig: Signal,
+-    ) -> Seconds {
+-        let old = if seconds == 0 {
++    ) -> LogicalTime {
++        let old = if duration == LogicalTime::ZERO {
+             // Alarm of 0 cancels any pending signal.
+             self.blocked.timed_waiters.remove_alarm(detpid)
+         } else {
+-            let target_time = self.committed_time + Duration::from_secs(seconds as u64);
++            let target_time = self.committed_time + duration;
+             self.blocked
+                 .timed_waiters
+                 .insert_alarm(target_time, detpid, dettid, sig)
+         };
+         if let Some(old_target_time) = old {
+-            let remain_ns: u64 = old_target_time.as_nanos() - self.committed_time.as_nanos();
+-            (remain_ns / 1_000_000_000) as u32
++            let remain_ns: u64 = old_target_time
++                .as_nanos()
++                .saturating_sub(self.committed_time.as_nanos());
++            LogicalTime::from_nanos(remain_ns)
+         } else {
+             // Return 0 if no previous alarm, as per https://man7.org/linux/man-pages/man2/alarm.2.html
+-            0
++            LogicalTime::ZERO
+         }
+     }
+ }
+diff --git a/detcore/src/syscalls/signal.rs b/detcore/src/syscalls/signal.rs
+index a0b807d..64a3ad6 100644
+--- a/detcore/src/syscalls/signal.rs
++++ b/detcore/src/syscalls/signal.rs
+@@ -38,6 +38,26 @@ use crate::types::LogicalTime;
+ // https://elixir.bootlin.com/linux/latest/source/include/uapi/asm-generic/signal.h#L75
+ const SA_MASK_OFFET: usize = 3 * std::mem::size_of::<u64>();
+ 
++fn timeval_to_logical_time(value: libc::timeval) -> Result<LogicalTime, Errno> {
++    let seconds = u64::try_from(value.tv_sec).map_err(|_| Errno::EINVAL)?;
++    let micros = u64::try_from(value.tv_usec).map_err(|_| Errno::EINVAL)?;
++    if micros >= 1_000_000 {
++        return Err(Errno::EINVAL);
++    }
++    let nanos = seconds
++        .checked_mul(1_000_000_000)
++        .and_then(|nanos| nanos.checked_add(micros * 1_000))
++        .ok_or(Errno::EINVAL)?;
++    Ok(LogicalTime::from_nanos(nanos))
++}
++
++fn logical_time_to_timeval(value: LogicalTime) -> libc::timeval {
++    libc::timeval {
++        tv_sec: value.as_secs() as libc::time_t,
++        tv_usec: value.subsec_micros() as libc::suseconds_t,
++    }
++}
++
+ impl<T: RecordOrReplay> Detcore<T> {
+     /// We send the alarms to the global scheduler to handle.
+     pub async fn handle_alarm<G: Guest<Self>>(
+@@ -46,8 +66,13 @@ impl<T: RecordOrReplay> Detcore<T> {
+         call: syscalls::Alarm,
+     ) -> Result<i64, Error> {
+         if guest.config().sequentialize_threads {
+-            let remaining = register_alarm(guest, call.seconds(), Signal::SIGALRM).await;
+-            Ok(remaining as i64)
++            let remaining = register_alarm(
++                guest,
++                LogicalTime::from_secs(call.seconds() as u64),
++                Signal::SIGALRM,
++            )
++            .await;
++            Ok(remaining.as_secs() as i64)
+         } else {
+             info!(
+                 "[dtid {}] Running without scheduler, so letting alarm call through...",
+@@ -57,6 +82,41 @@ impl<T: RecordOrReplay> Detcore<T> {
+         }
+     }
+ 
++    /// Schedule a one-shot real-time interval timer on Detcore logical time.
++    pub async fn handle_setitimer<G: Guest<Self>>(
++        &self,
++        guest: &mut G,
++        call: syscalls::Setitimer,
++    ) -> Result<i64, Error> {
++        if !guest.config().sequentialize_threads {
++            info!(
++                "[dtid {}] Running without scheduler, so letting setitimer call through...",
++                guest.thread_state().dettid
++            );
++            return Ok(guest.inject(call).await?);
++        }
++        if call.which() != libc::ITIMER_REAL {
++            return Err(Error::Errno(Errno::ENOSYS));
++        }
++
++        let value = call.value().ok_or(Errno::EFAULT)?;
++        let timer: libc::itimerval = guest.memory().read_value(value)?;
++        if timeval_to_logical_time(timer.it_interval)? != LogicalTime::ZERO {
++            return Err(Error::Errno(Errno::ENOSYS));
++        }
++
++        let duration = timeval_to_logical_time(timer.it_value)?;
++        let remaining = register_alarm(guest, duration, Signal::SIGALRM).await;
++        if let Some(old_value) = call.ovalue() {
++            let old_timer = libc::itimerval {
++                it_interval: logical_time_to_timeval(LogicalTime::ZERO),
++                it_value: logical_time_to_timeval(remaining),
++            };
++            guest.memory().write_value(old_value, &old_timer)?;
++        }
++        Ok(0)
++    }
++
+     /// A pause is really just an unbounded sleep.
+     pub async fn handle_pause<G: Guest<Self>>(
+         &self,
+@@ -163,3 +223,49 @@ impl<T: RecordOrReplay> Detcore<T> {
+         retry_nonblocking_syscall_with_timeout(guest, call, rsrc, maybe_timeout).await
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn timeval(seconds: libc::time_t, micros: libc::suseconds_t) -> libc::timeval {
++        libc::timeval {
++            tv_sec: seconds,
++            tv_usec: micros,
++        }
++    }
++
++    #[test]
++    fn timeval_conversion_preserves_subsecond_precision() {
++        let logical_time =
++            timeval_to_logical_time(timeval(2, 345_678)).expect("valid timeval should convert");
++        assert_eq!(
++            logical_time,
++            LogicalTime::from_nanos(2_345_678_000),
++            "timeval conversion should preserve microsecond precision"
++        );
++
++        let round_trip = logical_time_to_timeval(logical_time);
++        assert_eq!(round_trip.tv_sec, 2, "round trip should preserve seconds");
++        assert_eq!(
++            round_trip.tv_usec, 345_678,
++            "round trip should preserve microseconds"
++        );
++    }
++
++    #[test]
++    fn timeval_conversion_rejects_invalid_values() {
++        for invalid in [
++            timeval(-1, 0),
++            timeval(0, -1),
++            timeval(0, 1_000_000),
++            timeval(libc::time_t::MAX, 0),
++        ] {
++            assert_eq!(
++                timeval_to_logical_time(invalid),
++                Err(Errno::EINVAL),
++                "invalid timeval should return EINVAL"
++            );
++        }
++    }
++}
+diff --git a/detcore/src/tool_global.rs b/detcore/src/tool_global.rs
+index 7001cc1..9910a27 100644
+--- a/detcore/src/tool_global.rs
++++ b/detcore/src/tool_global.rs
+@@ -63,7 +63,6 @@ use crate::scheduler::Priority;
+ use crate::scheduler::SchedResponse;
+ use crate::scheduler::SchedValue;
+ use crate::scheduler::Scheduler;
+-use crate::scheduler::Seconds;
+ use crate::scheduler::ThreadNextTurn;
+ use crate::scheduler::entropy_to_priority;
+ use crate::scheduler::runqueue::REPLAY_DEFERRED_PRIORITY;
+@@ -1032,13 +1031,13 @@ impl GlobalState {
+         &self,
+         detpid: DetPid,
+         dettid: DetTid,
+-        seconds: Seconds,
++        duration: LogicalTime,
+         sig: SigWrapper,
+-    ) -> Seconds {
++    ) -> LogicalTime {
+         self.sched
+             .lock()
+             .unwrap()
+-            .register_alarm(detpid, dettid, seconds, sig.0)
++            .register_alarm(detpid, dettid, duration, sig.0)
+     }
+ }
+ 
+@@ -1091,8 +1090,8 @@ pub enum GlobalRequest {
+     /// Record scheduling event in a total order.
+     TraceSchedEvent(SchedEvent, DetPid),
+ 
+-    /// Basically performs an alarm syscall, takes seconds.
+-    RegisterAlarm(DetPid, DetTid, Seconds, SigWrapper),
++    /// Basically performs an alarm syscall, takes a logical duration.
++    RegisterAlarm(DetPid, DetTid, LogicalTime, SigWrapper),
+ 
+     /// The container is shutting down.  Exit the scheduler "thread".
+     UnrecoverableShutdown,
+@@ -1125,7 +1124,7 @@ pub enum GlobalResponse {
+     TouchFile(()),
+     GlobalTimeLowerBound(LogicalTime),
+     TraceSchedEvent(TraceSchedEventResponse),
+-    RegisterAlarm(Seconds),
++    RegisterAlarm(LogicalTime),
+     // TODO: use void_send_rpc, and remove this bogus response:
+     UnrecoverableShutdown(()),
+ 
+@@ -1535,8 +1534,8 @@ where
+ }
+ 
+ /// Register an alarm (delayed signal delivery) with the global scheduler.
+-/// Returns the number of seconds remaining until any previously scheduled alarm.
+-pub async fn register_alarm<G, T>(guest: &mut G, seconds: Seconds, sig: Signal) -> Seconds
++/// Returns the logical duration remaining until any previously scheduled alarm.
++pub async fn register_alarm<G, T>(guest: &mut G, duration: LogicalTime, sig: Signal) -> LogicalTime
+ where
+     G: Guest<Detcore<T>>,
+     T: RecordOrReplay,
+@@ -1545,7 +1544,7 @@ where
+     let detpid = guest.thread_state().detpid.expect("detpid unset");
+     let resp = send_and_update_time(
+         guest,
+-        GlobalRequest::RegisterAlarm(detpid, dettid, seconds, SigWrapper(sig)),
++        GlobalRequest::RegisterAlarm(detpid, dettid, duration, SigWrapper(sig)),
+     )
+     .await;
+     match resp.1 {
+diff --git a/docs/FAIL_CLOSED_STATUS.md b/docs/FAIL_CLOSED_STATUS.md
+index 3fc10a2..50af2c0 100644
+--- a/docs/FAIL_CLOSED_STATUS.md
++++ b/docs/FAIL_CLOSED_STATUS.md
+@@ -1,6 +1,6 @@
+ # Fail-Closed Test Status
+ 
+-Status: fail-closed batches through PID and file-offset handling complete, 2026-07-22
++Status: fail-closed batches through terminal, signal, and timer handling complete, 2026-07-22
+ 
+ Hermit's fail-closed diagnostic converts an unsupported syscall that reaches
+ Detcore into a panic instead of silently passing it through. The integration
+@@ -21,32 +21,33 @@ the mode is not applicable.
+ Detcore now handles `pread64` deterministically and disables `rseq` by
+ returning `ENOSYS`. Batch two adds resource-ordered `lseek` passthrough, fixed
+ success for advisory `fadvise64`, and PID-namespace `getpid`/`gettid` results.
+-Of the 44 tests blocked on those four calls, 33 now pass and 11 reach later
+-unsupported syscalls. The measured applicable pass count is 69/89. Remaining
+-blockers are `ioctl` (7 tests), `tgkill` (4), `mkdir` (3), `setitimer` (2),
+-`clock_settime` (1), `getrlimit` (1), `kill` (1), and `setsockopt` (1).
++Batch three adds explicit handling for `ioctl`, `tgkill`, `mkdir`, `setitimer`,
++`clock_settime`, `getrlimit`, `kill`, and `setsockopt`. Of the 20 tests blocked
++on batch three, 7 now pass and 13 reach later unsupported syscalls. The measured
++applicable pass count is 76/89. Remaining blockers are `getuid` (6 tests),
++`listen` (3), `rt_sigpending` (2), `setrlimit` (1), and `unlinkat` (1).
+ 
+ | Test target or category | Fail-closed pass | Known failure | Ignored | Mode N/A |
+ | --- | ---: | ---: | ---: | ---: |
+ | `arbitrary_binaries` | 0 | 1 | 0 | 1 |
+ | `cli` | 0 | 0 | 0 | 10 |
+ | `clock_determinism` | 1 | 0 | 0 | 0 |
+-| `epoll_determinism` | 4 | 1 | 0 | 0 |
+-| `hermit_modes` | 49 | 14 | 8 | 0 |
++| `epoll_determinism` | 5 | 0 | 0 | 0 |
++| `hermit_modes` | 53 | 10 | 8 | 0 |
+ | `ipc_determinism` | 1 | 0 | 0 | 0 |
+ | `mmap_determinism` | 5 | 0 | 0 | 0 |
+ | `procfs_determinism` | 6 | 0 | 0 | 0 |
+ | `random_determinism` | 1 | 0 | 0 | 0 |
+ | `record_replay` | 0 | 0 | 0 | 17 |
+-| `signal_determinism` | 1 | 4 | 0 | 0 |
++| `signal_determinism` | 3 | 2 | 0 | 0 |
+ | `stress_suite` | 0 | 0 | 3 | 0 |
+ | `thread_sync_determinism` | 1 | 0 | 0 | 0 |
+ | Hermit library and binary unit tests | 0 | 0 | 0 | 33 |
+-| **Total** | **69** | **20** | **11** | **61** |
++| **Total** | **76** | **13** | **11** | **61** |
+ 
+-The ratchet now enables 69 fail-closed integration tests. The exact enabled set
++The ratchet now enables 76 fail-closed integration tests. The exact enabled set
+ is the applicable inventory not present in either exception manifest; a full
+-serial ratchet run verifies all 69.
++serial ratchet run verifies all 76.
+ 
+ The complete test-level matrix is represented by the table plus these
+ machine-readable exception lists:
+@@ -54,7 +55,8 @@ machine-readable exception lists:
+ - [`fail_closed_known_failures.tsv`](../hermit-cli/tests/fail_closed_known_failures.tsv)
+   records every failing target/test pair and its first observed blocker. The
+   `pread64` and `rseq` batches raised coverage from 3 to 36 tests. Batch two
+-  adds 33 more passes and reclassifies 11 tests at their later blockers.
++  adds 33 more passes and reclassifies 11 tests at their later blockers. Batch
++  three adds 7 more passes and reclassifies 13 tests at later blockers.
+ - [`fail_closed_allowed_ignores.tsv`](../hermit-cli/tests/fail_closed_allowed_ignores.tsv)
+   records the eight PMU-dependent mode tests and three explicit stress tiers.
+ - Unit tests, `cli`, and `record_replay` do not execute Detcore's `hermit run`
+@@ -108,5 +110,5 @@ missing release entries; see
+ 
+ A future true fail-closed mode must subscribe to all syscalls (or install an
+ equivalent deny policy). Until then, the ratchet prevents regressions in the
+-calls that Detcore does observe and provides a visible path from 69/89 to full
++calls that Detcore does observe and provides a visible path from 76/89 to full
+ coverage of the currently applicable integration inventory.
+diff --git a/hermit-cli/tests/fail_closed_known_failures.tsv b/hermit-cli/tests/fail_closed_known_failures.tsv
+index a5891af..ee78704 100644
+--- a/hermit-cli/tests/fail_closed_known_failures.tsv
++++ b/hermit-cli/tests/fail_closed_known_failures.tsv
+@@ -1,23 +1,16 @@
+ # Known fail-closed debt. Keep rows sorted by integration target and test name.
+ # Columns: target<TAB>test<TAB>class<TAB>first observed blocker
+ # Removing a row enables that test in the ratchet; adding a row requires debt review.
+-arbitrary_binaries	run_arbitrary_binary_matrix	unsupported-syscall	Ioctl
+-epoll_determinism	mixed_fd_readiness_is_deterministic	unsupported-syscall	Kill
+-hermit_modes	default_bind_mounts	unsupported-syscall	Ioctl
+-hermit_modes	default_cargo_bind_connect_race	unsupported-syscall	Mkdir
+-hermit_modes	default_cargo_clock_gettime	unsupported-syscall	ClockSettime
+-hermit_modes	default_cargo_interrogate_tty	unsupported-syscall	Ioctl
+-hermit_modes	default_cargo_network_hello_world	unsupported-syscall	Mkdir
+-hermit_modes	default_cargo_poll	unsupported-syscall	Mkdir
+-hermit_modes	default_exit_codes	unsupported-syscall	Ioctl
+-hermit_modes	default_hello_signals	unsupported-syscall	Tgkill
+-hermit_modes	default_lit_rt_sigaction	unsupported-syscall	Setitimer
+-hermit_modes	default_network_bind	unsupported-syscall	Setsockopt
+-hermit_modes	default_shell_parallel_work	unsupported-syscall	Ioctl
+-hermit_modes	default_shell_taskset	unsupported-syscall	Ioctl
+-hermit_modes	resource_syscalls_are_deterministic_across_five_runs	unsupported-syscall	Getrlimit
+-hermit_modes	verify_honors_tmp_and_environment	unsupported-syscall	Ioctl
+-signal_determinism	alternate_signal_stack_is_preserved	unsupported-syscall	Tgkill
+-signal_determinism	pending_signal_and_mask_survive_exec	unsupported-syscall	Tgkill
+-signal_determinism	sigalrm_itimer_delivery_is_deterministic	unsupported-syscall	Setitimer
+-signal_determinism	signal_handler_reentrance_is_deterministic	unsupported-syscall	Tgkill
++arbitrary_binaries	run_arbitrary_binary_matrix	unsupported-syscall	Getuid
++hermit_modes	default_bind_mounts	unsupported-syscall	Getuid
++hermit_modes	default_cargo_bind_connect_race	unsupported-syscall	Listen
++hermit_modes	default_cargo_network_hello_world	unsupported-syscall	Listen
++hermit_modes	default_cargo_poll	unsupported-syscall	Unlinkat
++hermit_modes	default_exit_codes	unsupported-syscall	Getuid
++hermit_modes	default_network_bind	unsupported-syscall	Listen
++hermit_modes	default_shell_parallel_work	unsupported-syscall	Getuid
++hermit_modes	default_shell_taskset	unsupported-syscall	Getuid
++hermit_modes	resource_syscalls_are_deterministic_across_five_runs	unsupported-syscall	Setrlimit
++hermit_modes	verify_honors_tmp_and_environment	unsupported-syscall	Getuid
++signal_determinism	pending_signal_and_mask_survive_exec	unsupported-syscall	RtSigpending
++signal_determinism	sigalrm_itimer_delivery_is_deterministic	unsupported-syscall	RtSigpending
+-- 
+2.53.0-Meta
+
+
+From 974e7544a5e0c52012c7ff12b96de99d1bedf38f Mon Sep 17 00:00:00 2001
+From: Ryan Newton <hermit-agent@meta.com>
+Date: Wed, 22 Jul 2026 13:33:53 -0700
+Subject: [PATCH 2/2] Refresh fail-closed inventory counts
+
+---
+ docs/FAIL_CLOSED_STATUS.md | 22 ++++++++++++----------
+ 1 file changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/docs/FAIL_CLOSED_STATUS.md b/docs/FAIL_CLOSED_STATUS.md
+index 50af2c0..813ae75 100644
+--- a/docs/FAIL_CLOSED_STATUS.md
++++ b/docs/FAIL_CLOSED_STATUS.md
+@@ -23,17 +23,20 @@ returning `ENOSYS`. Batch two adds resource-ordered `lseek` passthrough, fixed
+ success for advisory `fadvise64`, and PID-namespace `getpid`/`gettid` results.
+ Batch three adds explicit handling for `ioctl`, `tgkill`, `mkdir`, `setitimer`,
+ `clock_settime`, `getrlimit`, `kill`, and `setsockopt`. Of the 20 tests blocked
+-on batch three, 7 now pass and 13 reach later unsupported syscalls. The measured
+-applicable pass count is 76/89. Remaining blockers are `getuid` (6 tests),
++on batch three, 7 now pass and 13 reach later unsupported syscalls. With
++three additional applicable tests added since the original snapshot, the
++measured pass count is 79/92. Remaining blockers are `getuid` (6 tests),
+ `listen` (3), `rt_sigpending` (2), `setrlimit` (1), and `unlinkat` (1).
+ 
+ | Test target or category | Fail-closed pass | Known failure | Ignored | Mode N/A |
+ | --- | ---: | ---: | ---: | ---: |
+-| `arbitrary_binaries` | 0 | 1 | 0 | 1 |
++| `analyze` | 0 | 0 | 3 | 0 |
++| `arbitrary_binaries` | 2 | 1 | 0 | 1 |
+ | `cli` | 0 | 0 | 0 | 10 |
+ | `clock_determinism` | 1 | 0 | 0 | 0 |
+ | `epoll_determinism` | 5 | 0 | 0 | 0 |
+-| `hermit_modes` | 53 | 10 | 8 | 0 |
++| `fp_reduction_determinism` | 2 | 0 | 0 | 0 |
++| `hermit_modes` | 51 | 10 | 10 | 0 |
+ | `ipc_determinism` | 1 | 0 | 0 | 0 |
+ | `mmap_determinism` | 5 | 0 | 0 | 0 |
+ | `procfs_determinism` | 6 | 0 | 0 | 0 |
+@@ -42,12 +45,11 @@ applicable pass count is 76/89. Remaining blockers are `getuid` (6 tests),
+ | `signal_determinism` | 3 | 2 | 0 | 0 |
+ | `stress_suite` | 0 | 0 | 3 | 0 |
+ | `thread_sync_determinism` | 1 | 0 | 0 | 0 |
+-| Hermit library and binary unit tests | 0 | 0 | 0 | 33 |
+-| **Total** | **76** | **13** | **11** | **61** |
++| **Total** | **79** | **13** | **16** | **28** |
+ 
+-The ratchet now enables 76 fail-closed integration tests. The exact enabled set
++The ratchet now enables 79 fail-closed integration tests. The exact enabled set
+ is the applicable inventory not present in either exception manifest; a full
+-serial ratchet run verifies all 76.
++serial ratchet run verifies all 79.
+ 
+ The complete test-level matrix is represented by the table plus these
+ machine-readable exception lists:
+@@ -58,7 +60,7 @@ machine-readable exception lists:
+   adds 33 more passes and reclassifies 11 tests at their later blockers. Batch
+   three adds 7 more passes and reclassifies 13 tests at later blockers.
+ - [`fail_closed_allowed_ignores.tsv`](../hermit-cli/tests/fail_closed_allowed_ignores.tsv)
+-  records the eight PMU-dependent mode tests and three explicit stress tiers.
++  records three analyzer scenarios, ten mode tests, and three stress tiers.
+ - Unit tests, `cli`, and `record_replay` do not execute Detcore's `hermit run`
+   syscall policy. The record/replay case in `arbitrary_binaries` is also mode
+   N/A. They remain covered by regular CI instead of inflating the fail-closed
+@@ -110,5 +112,5 @@ missing release entries; see
+ 
+ A future true fail-closed mode must subscribe to all syscalls (or install an
+ equivalent deny policy). Until then, the ratchet prevents regressions in the
+-calls that Detcore does observe and provides a visible path from 76/89 to full
++calls that Detcore does observe and provides a visible path from 79/92 to full
+ coverage of the currently applicable integration inventory.
+-- 
+2.53.0-Meta
+

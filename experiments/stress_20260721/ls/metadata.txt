@@ -1,0 +1,10 @@
+schema_version=1
+started_at_utc=2026-07-22T01:11:58Z
+repository_commit=96261f618dda654fb87ffacd0e178c4bf743faaf
+hermit=./target/debug/hermit
+hermit_log=error
+hermit_sha256=35abfc7f734de87966c04c2beae2c633fab9289611c784192988f6ab7a3a66ce
+program=/bin/ls
+program_sha256=970c6b3c0e28bff1e3d9c9039e2a366285da659e59083fdc04463974b1bf0078
+runs=25
+command=/bin/ls -1 tests/c

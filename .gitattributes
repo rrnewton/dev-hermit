@@ -1,0 +1,3 @@
+experiments/**/*.log -whitespace
+experiments/**/*.patch -whitespace
+experiments/**/stdout -whitespace
