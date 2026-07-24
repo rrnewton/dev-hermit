@@ -1,3 +1,14 @@
+## PR Comment Convention
+
+ALL PR descriptions and comments MUST start with a role tag:
+
+- `[impl agent, MODEL]` - for implementation agents
+- `[adversarial-reviewer agent, MODEL]` - for review agents
+- `[coordinator, MODEL]` - for coordinator agents
+- `[Human]` - for the human owner
+
+Examples: `[impl agent, gpt-5.6-sol]`, `[adversarial-reviewer agent, opus-4.8]`
+
 # dev-hermit Parent Workspace Guide
 
 This is the single canonical policy source for the `dev-hermit` parent
