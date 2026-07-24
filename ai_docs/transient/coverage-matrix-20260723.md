@@ -1,5 +1,11 @@
 # Coverage matrix: 2026-07-23
 
+> This is a dated historical program matrix. The final 2026-07-24 backend
+> snapshot is
+> [`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md):
+> ptrace 118/118 L2, DBI 20/38, KVM 31/57 L2, and record/replay 36/57 on the
+> complete baseline or 50/57 after PR #560's targeted repair.
+
 This report consolidates measured program coverage from the 2026-07-23
 TaskGraph notes. It is a program-level view; the scenario-level source remains
 `ai_docs/transient/strict-compat-matrix.md`.

@@ -1,5 +1,13 @@
 # Strict and verify compatibility matrix
 
+> Final gate update, 2026-07-24: Hermit `main`
+> `a2926507aafb9c922cbe230490f1cee5ebcea586` contains 118 nonblocking strict
+> probes. The exact PR #562 tree passed 118/118 at L2 on ptrace with default
+> logging and no relaxations. This document's 537-row table remains the
+> historical scenario matrix. See
+> [`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md)
+> for the final ptrace, DBI, KVM, and record/replay comparison.
+
 This is the consolidated result of the 2026-07-23 compatibility expansion
 batches 1 through 59. It reports the commands recorded in TaskGraph by
 `impl-strict-compat-expansion` (batch 1) and

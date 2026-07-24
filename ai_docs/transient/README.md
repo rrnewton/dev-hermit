@@ -7,6 +7,12 @@ stale quickly. Keep them here so the durable `reference/` set stays clean.
 Truly disposable output (logs, binaries, cores, coverage dumps) still belongs
 in ignored `scratch/` or external artifact storage, not here.
 
+Current consolidated snapshot:
+
+- [`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md)
+  is the final overnight ptrace, DBI, KVM, and record/replay matrix, including
+  evidence SHAs, PRs, blockers, and ordered next steps.
+
 Recommended homes for existing top-level `ai_docs/` files (moves deferred:
 `ai_docs/*` research files are owned in-flight by `slot11` / `hermit-docs`; do
 not relocate them until that task is idle):

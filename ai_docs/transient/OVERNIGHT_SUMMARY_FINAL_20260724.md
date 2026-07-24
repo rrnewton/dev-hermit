@@ -1,5 +1,24 @@
 # Final Overnight Summary - 2026-07-24
 
+## Post-cutoff compatibility update
+
+The evidence cutoff below predates the final compatibility landings. The
+canonical final matrix is
+[`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md).
+Current Hermit `main` is `a2926507aafb9c922cbe230490f1cee5ebcea586`.
+The final cross-mode accounting, retaining each mode's explicit evidence SHA,
+is:
+
+| Mode | Final accounted result | Qualification |
+|---|---:|---|
+| Ptrace strict gate | 118/118 | L2, default log, no relaxations; PR #562. |
+| DBI | 20/38 | Historical 38-row two-run verifier; 17 lifecycle timeouts plus one non-ELF wrapper. |
+| KVM | 31/57 | L2, default log, no relaxations; complete same-SHA matrix. |
+| Record/replay | 50/57 | 36/57 complete baseline plus PR #560's targeted 14/14 repair; no full merged-tip rerun. |
+
+The older counts below remain unchanged because they describe their stated
+08:16 UTC cutoff rather than the final post-cutoff state.
+
 ## Scope and evidence cutoff
 
 This is the final morning handoff for work completed from **2026-07-23
