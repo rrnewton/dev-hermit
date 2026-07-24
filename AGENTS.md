@@ -9,6 +9,17 @@ ALL PR descriptions and comments MUST start with a role tag:
 
 Examples: `[impl agent, gpt-5.6-sol]`, `[adversarial-reviewer agent, opus-4.8]`
 
+## Primary Checkout Invariant
+
+**~/work/dev-hermit/hermit and ~/work/dev-hermit/reverie must ALWAYS be on the latest main branch.**
+
+- NEVER detach HEAD on the primary checkout
+- NEVER checkout feature branches on the primary checkout
+- All PR validation, testing, and feature work happens in worktree slots only
+- After ANY operation that touches the primary checkout, verify: `git branch --show-current` returns `main`
+- If you need to validate a PR, use a worktree slot - never the primary checkout
+- After finishing any work involving the primary checkout, immediately return it to latest main: `git checkout main && with-proxy git pull origin main`
+
 # dev-hermit Parent Workspace Guide
 
 This is the single canonical policy source for the `dev-hermit` parent
