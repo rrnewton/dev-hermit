@@ -1,0 +1,217 @@
+#!/bin/bash
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+
+set -euo pipefail
+
+readonly MEMORY_PERCENT=80
+readonly CPU_PERCENT=90
+readonly SLICE_UNIT=3pai_sandbox.slice
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly SCRIPT_DIR
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+readonly SCRIPT_PATH
+
+function usage {
+    cat <<'EOF'
+safe-dev-limits prevents the shared 3pai slice for tmux, orc, agents, and
+other descendants from consuming more than 80% of RAM or 90% of total CPU.
+
+Usage:
+  ./safe-dev-limits [--] COMMAND [ARGUMENT ...]
+  ./safe-dev-limits
+  ./safe-dev-limits --help
+
+Limits:
+  MemoryMax     80% of physical RAM
+  MemorySwapMax 0, preventing additional swap growth
+  CPUQuota      90% of all machine CPUs
+  OOM behavior  Hard aggregate ceiling; grouped launcher scope
+  Nesting       Delegated launcher scopes for inner cgroup levels
+
+With no command, the script starts an interactive login shell. Start the tmux
+server and orc from that shell so their processes and tmux pane scopes remain
+inside the outer box. All 3pai agent scopes share this aggregate budget.
+An already-running tmux server is not moved; restart it from inside this box.
+Inner runners must use 3pai_sandbox.slice or one of its child slices.
+
+Examples:
+  ./safe-dev-limits
+  ./safe-dev-limits tmux -L safe-dev new -A -s dev
+  ./safe-dev-limits -- orc
+EOF
+}
+
+function fail {
+    echo "safe-dev-limits: $*" >&2
+    exit 1
+}
+
+function current_cgroup {
+    awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup
+}
+
+function outer_cgroup {
+    local path
+    path=$(current_cgroup)
+    if [[ $path =~ ^(.*\/3pai_sandbox\.slice)(/.*)?$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+    fi
+}
+
+function verify_outer_cgroup {
+    local expected_memory=$1
+    local expected_cpu_percent=$2
+    local cgroup_path=$3
+    local directory="/sys/fs/cgroup$cgroup_path"
+    local page_size actual_memory quota period expected_quota controllers
+
+    [[ -d $directory ]] || fail "outer slice cgroup is missing: $cgroup_path"
+    [[ -r $directory/memory.max && -r $directory/cpu.max ]] || \
+        fail "CPU or memory controller is unavailable in $cgroup_path"
+
+    page_size=$(getconf PAGESIZE)
+    actual_memory=$(<"$directory/memory.max")
+    [[ $actual_memory =~ ^[0-9]+$ ]] || fail "MemoryMax was not applied"
+    if ((actual_memory != expected_memory / page_size * page_size)); then
+        fail "MemoryMax verification failed: expected at most $expected_memory, got $actual_memory"
+    fi
+
+    read -r quota period <"$directory/cpu.max"
+    [[ $quota =~ ^[0-9]+$ && $period =~ ^[0-9]+$ ]] || \
+        fail "CPUQuota was not applied"
+    expected_quota=$((expected_cpu_percent * period / 100))
+    ((quota == expected_quota)) || \
+        fail "CPUQuota verification failed: expected $expected_quota/$period, got $quota/$period"
+
+    controllers=$(<"$directory/cgroup.controllers")
+    [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
+        fail "delegated CPU and memory controllers are unavailable"
+    [[ -w $directory/cgroup.subtree_control ]] || \
+        fail "outer slice cannot host inner cgroup levels"
+    [[ $(<"$directory/memory.swap.max") == 0 ]] || \
+        fail "MemorySwapMax was not set to zero"
+}
+
+function verify_launcher_scope {
+    local outer_path=$1
+    local scope_path directory controllers
+
+    scope_path=$(current_cgroup)
+    [[ $scope_path == "$outer_path/"* ]] || \
+        fail "launcher scope escaped the outer slice"
+    directory="/sys/fs/cgroup$scope_path"
+    [[ $(<"$directory/memory.oom.group") == 1 ]] || \
+        fail "launcher scope group OOM handling was not enabled"
+    controllers=$(<"$directory/cgroup.controllers")
+    [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
+        fail "launcher scope lacks delegated CPU and memory controllers"
+    [[ -w $directory/cgroup.subtree_control ]] || \
+        fail "launcher scope is not delegated for inner levels"
+}
+
+# Internal entry point: systemd creates the scope, then this branch verifies it
+# before allowing the requested command to start.
+if [[ ${1:-} == "--verify-and-exec" ]]; then
+    (($# >= 4)) || fail "invalid internal invocation"
+    readonly EXPECTED_MEMORY=$2
+    readonly EXPECTED_CPU_PERCENT=$3
+    shift 3
+    [[ ${1:-} == "--" ]] || fail "invalid internal command separator"
+    shift
+    (($# > 0)) || fail "internal invocation has no command"
+
+    OUTER_CGROUP="$(outer_cgroup)"
+    readonly OUTER_CGROUP
+    [[ -n $OUTER_CGROUP ]] || fail "systemd did not place the command in the outer slice"
+    verify_outer_cgroup "$EXPECTED_MEMORY" "$EXPECTED_CPU_PERCENT" "$OUTER_CGROUP"
+    verify_launcher_scope "$OUTER_CGROUP"
+    export SAFE_DEV_LIMITS_ACTIVE=1
+    export SAFE_DEV_LIMITS_SLICE=$SLICE_UNIT
+    export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$EXPECTED_MEMORY
+    export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$EXPECTED_CPU_PERCENT
+    exec -- "$@"
+fi
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+if [[ ${1:-} == "--" ]]; then
+    shift
+fi
+
+if (($# == 0)); then
+    readonly LOGIN_SHELL=${SHELL:-/bin/bash}
+    [[ -x $LOGIN_SHELL ]] || fail "login shell is not executable: $LOGIN_SHELL"
+    set -- "$LOGIN_SHELL" -l
+fi
+
+command -v systemd-run >/dev/null || fail "systemd-run is required"
+command -v systemctl >/dev/null || fail "systemctl is required"
+command -v flock >/dev/null || fail "flock is required"
+[[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || fail "cgroup v2 is required"
+
+MEM_TOTAL_KIB="$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)"
+readonly MEM_TOTAL_KIB
+[[ $MEM_TOTAL_KIB =~ ^[0-9]+$ && $MEM_TOTAL_KIB -gt 0 ]] || \
+    fail "could not determine physical memory"
+readonly MEMORY_MAX_BYTES=$((MEM_TOTAL_KIB * 1024 * MEMORY_PERCENT / 100))
+
+AVAILABLE_CPUS="$(nproc --all)"
+readonly AVAILABLE_CPUS
+[[ $AVAILABLE_CPUS =~ ^[0-9]+$ && $AVAILABLE_CPUS -gt 0 ]] || \
+    fail "could not determine available CPUs"
+readonly CPU_QUOTA_PERCENT=$((AVAILABLE_CPUS * CPU_PERCENT))
+
+readonly GIB=$((1024 * 1024 * 1024))
+readonly MEMORY_GIB_WHOLE=$((MEMORY_MAX_BYTES / GIB))
+readonly MEMORY_GIB_TENTH=$((MEMORY_MAX_BYTES % GIB * 10 / GIB))
+readonly CPU_EQUIVALENT_WHOLE=$((CPU_QUOTA_PERCENT / 100))
+readonly CPU_EQUIVALENT_TENTH=$((CPU_QUOTA_PERCENT % 100 / 10))
+
+EXISTING_OUTER="$(outer_cgroup)"
+readonly EXISTING_OUTER
+if [[ ${SAFE_DEV_LIMITS_ACTIVE:-} == 1 && -n $EXISTING_OUTER ]]; then
+    verify_outer_cgroup "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$EXISTING_OUTER"
+    echo "safe-dev-limits: already inside a verified outer box; preserving the current inner cgroup." >&2
+    exec -- "$@"
+fi
+
+printf 'safe-dev-limits: capping shared 3pai slice: RAM <= %d%% (%d.%d GiB), CPU <= %d%% of %d CPUs (%d.%d CPUs).\n' \
+    "$MEMORY_PERCENT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
+    "$CPU_PERCENT" "$AVAILABLE_CPUS" "$CPU_EQUIVALENT_WHOLE" "$CPU_EQUIVALENT_TENTH" >&2
+echo "safe-dev-limits: new swap growth is disabled; tmux and agent scopes share the hard aggregate ceiling." >&2
+
+readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+[[ -d $RUNTIME_DIR ]] || fail "user runtime directory is missing: $RUNTIME_DIR"
+exec 9>"$RUNTIME_DIR/safe-dev-limits.lock"
+flock 9
+
+systemctl --user set-property --runtime "$SLICE_UNIT" \
+    "MemoryMax=$MEMORY_MAX_BYTES" \
+    MemorySwapMax=0 \
+    "CPUQuota=$CPU_QUOTA_PERCENT%"
+systemctl --user start "$SLICE_UNIT"
+OUTER_CONTROL_GROUP="$(systemctl --user show "$SLICE_UNIT" --property=ControlGroup --value)"
+readonly OUTER_CONTROL_GROUP
+[[ -n $OUTER_CONTROL_GROUP ]] || fail "systemd did not create $SLICE_UNIT"
+verify_outer_cgroup "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CONTROL_GROUP"
+exec 9>&-
+
+UNIT_NAME="safe-dev-limits-launch-$(id -u)-$$"
+readonly UNIT_NAME
+exec systemd-run \
+    --user \
+    --scope \
+    --collect \
+    --quiet \
+    --same-dir \
+    --slice="$SLICE_UNIT" \
+    --unit="$UNIT_NAME" \
+    --description="Outermost dev-hermit resource safety box" \
+    --property=Delegate=yes \
+    --property=OOMPolicy=kill \
+    --expand-environment=no \
+    -- "$SCRIPT_PATH" --verify-and-exec "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" -- "$@"
