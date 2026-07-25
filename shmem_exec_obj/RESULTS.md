@@ -3,7 +3,8 @@
 ## Test Point
 
 The results below were collected on 2026-07-25. The final reviewed
-implementation commit is recorded after the last exact-commit validation.
+implementation was validated at commit
+`d9bd9e27730b8e9e0754ddaa4fadc21e152f9356`.
 
 ```text
 Host:       devbig030.atn3.facebook.com
@@ -18,6 +19,12 @@ Hermit:     16c47870f6b1a349f2e0f8a656eb2074bea36d02 (main)
 ```
 
 Both product repositories were inspected read-only and remained on `main`.
+
+At that exact implementation commit, the default stable-toolchain harness
+passed with 13 independently exec'd processes per mode and 260,000 exact
+updates per counter. The full workspace clippy run with warnings denied also
+passed. A separate project-nightly run passed both artifact counterexamples
+and all three modes with 3 processes and 2 threads per process.
 
 ## Claims And Evidence
 
