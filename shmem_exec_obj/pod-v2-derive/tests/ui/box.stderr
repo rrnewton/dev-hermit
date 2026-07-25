@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `Box<u64>: PodValue` is not satisfied
+ --> tests/ui/box.rs:1:10
+  |
+1 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ the trait `PodValue` is not implemented for `Box<u64>`
+  |
+  = help: the following other types implement trait `PodValue`:
+            ()
+            Atomic<bool>
+            Atomic<i16>
+            Atomic<i32>
+            Atomic<i64>
+            Atomic<i8>
+            Atomic<isize>
+            Atomic<u16>
+          and $N others
+  = note: this error originates in the derive macro `pod_v2_derive::PodValue` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: ContainsBox cannot implement a pod value capability because it needs drop
+ --> tests/ui/box.rs:1:10
+  |
+1 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

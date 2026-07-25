@@ -18,17 +18,24 @@ pub const STATE_VERSION: u32 = 2;
 pub const STATE_STATUS_EMPTY: u32 = 0;
 pub const STATE_STATUS_INITIALIZING: u32 = 1;
 pub const STATE_STATUS_READY: u32 = 2;
+pub const STATE_STATUS_POISONED: u32 = 3;
 
 pub const ENVELOPE_MAGIC_OFFSET: usize = 0;
 pub const ENVELOPE_VERSION_OFFSET: usize = 8;
 pub const ENVELOPE_STATUS_OFFSET: usize = 16;
 pub const ENVELOPE_READY_COUNT_OFFSET: usize = 20;
 pub const ENVELOPE_START_FLAG_OFFSET: usize = 24;
+pub const ENVELOPE_FAILURE_OFFSET: usize = 28;
 pub const ENVELOPE_CODE_HASH_OFFSET: usize = 32;
 pub const ENVELOPE_LAYOUT_HASH_OFFSET: usize = 64;
 pub const ENVELOPE_LAYOUT_SIZE_OFFSET: usize = 72;
 pub const ENVELOPE_LAYOUT_ALIGN_OFFSET: usize = 80;
 pub const ENVELOPE_PAYLOAD_LEN_OFFSET: usize = 88;
+pub const ENVELOPE_GENERATION_OFFSET: usize = 96;
+pub const ENVELOPE_OWNER_PID_OFFSET: usize = 104;
+pub const ENVELOPE_ARTIFACT_HASH_OFFSET: usize = 112;
+pub const ENVELOPE_FLAGS_OFFSET: usize = 144;
+pub const ENVELOPE_REQUIRED_ADDRESS_OFFSET: usize = 152;
 
 pub const METHOD_LAYOUT_SIZE: usize = 0;
 pub const METHOD_LAYOUT_ALIGN: usize = 1;

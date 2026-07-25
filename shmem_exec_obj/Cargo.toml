@@ -11,6 +11,10 @@ members = [
     "pod-v2-api",
     "pod-v2-code",
     "pod-v2-compiler",
+    "pod-v2-runtime",
+    "pod-v2-host",
+    "pod-v2-types",
+    "pod-v2-derive",
 ]
 
 [workspace.package]
@@ -24,6 +28,7 @@ pod-api = { path = "pod-api" }
 pod-loader = { path = "pod-loader" }
 pod-v2-api = { path = "pod-v2-api" }
 pod-v2-runtime = { path = "pod-v2-runtime" }
+pod-v2-types = { path = "pod-v2-types" }
 sha2 = "0.10.9"
 
 [profile.release]

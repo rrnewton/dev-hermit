@@ -1,0 +1,10 @@
+[package]
+name = "pod-v2-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pod-v2-api.workspace = true
+pod-v2-runtime.workspace = true

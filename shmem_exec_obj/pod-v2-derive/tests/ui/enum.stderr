@@ -1,0 +1,8 @@
+error: pod capability derives support structs only; encode enums as a checked integer tag
+ --> tests/ui/enum.rs:2:1
+  |
+2 | / enum Unsupported {
+3 | |     First,
+4 | |     Second,
+5 | | }
+  | |_^

@@ -1,0 +1,12 @@
+error[E0277]: the trait bound `&'static Target: PodValue` is not satisfied
+ --> tests/ui/reference.rs:4:10
+  |
+4 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ the trait `PodValue` is not implemented for `&'static Target`
+  |
+help: the trait `PodValue` is implemented for `Target`
+ --> tests/ui/reference.rs:1:10
+  |
+1 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: this error originates in the derive macro `pod_v2_derive::PodValue` (in Nightly builds, run with -Z macro-backtrace for more info)

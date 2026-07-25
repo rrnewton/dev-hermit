@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: NeedsDrop cannot implement a pod value capability because it needs drop
+ --> tests/ui/drop_type.rs:1:10
+  |
+1 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

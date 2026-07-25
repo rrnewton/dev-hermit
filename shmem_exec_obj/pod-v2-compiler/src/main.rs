@@ -233,14 +233,15 @@ fn audit_linked_elf<'a>(
             let alloc = sh_flags & object::elf::SHF_ALLOC as u64 != 0;
             let writable = sh_flags & object::elf::SHF_WRITE as u64 != 0;
             let executable = sh_flags & object::elf::SHF_EXECINSTR as u64 != 0;
-            if alloc && section.size() != 0 {
-                if section.index() != pod_index || writable || !executable {
-                    return Err(format!(
-                        "forbidden allocated section {:?}: write={writable} exec={executable}",
-                        section.name().unwrap_or("<unnamed>")
-                    )
-                    .into());
-                }
+            if alloc
+                && section.size() != 0
+                && (section.index() != pod_index || writable || !executable)
+            {
+                return Err(format!(
+                    "forbidden allocated section {:?}: write={writable} exec={executable}",
+                    section.name().unwrap_or("<unnamed>")
+                )
+                .into());
             }
         }
     }

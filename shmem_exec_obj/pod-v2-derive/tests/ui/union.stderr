@@ -1,0 +1,8 @@
+error: pod capability derives do not support unions
+ --> tests/ui/union.rs:2:1
+  |
+2 | / union Unsupported {
+3 | |     integer: u64,
+4 | |     float: f64,
+5 | | }
+  | |_^

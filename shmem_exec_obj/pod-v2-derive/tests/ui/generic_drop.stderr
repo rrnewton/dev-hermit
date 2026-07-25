@@ -1,0 +1,11 @@
+error[E0080]: evaluation panicked: pod values must not need drop
+ --> tests/ui/generic_drop.rs:3:10
+  |
+3 | #[derive(pod_v2_derive::PodValue)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<GenericDrop<u64> as pod_v2_types::FixedAddressPodValue>::FINGERPRINT` failed here
+
+note: erroneous constant encountered
+  --> tests/ui/generic_drop.rs:12:17
+   |
+12 | const _: u128 = <GenericDrop<u64> as FixedAddressPodValue>::FINGERPRINT;
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

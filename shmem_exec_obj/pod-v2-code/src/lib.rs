@@ -239,21 +239,42 @@ unsafe fn grow_vector(base: *mut u8, state: *mut State) -> bool {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the opaque state size for this exact code image.
+///
+/// # Safety
+///
+/// This entry has no memory preconditions; the caller must use the declared C ABI.
 pub unsafe extern "C" fn pod_v2_layout_size() -> u64 {
     size_of::<State>() as u64
 }
 
 #[unsafe(no_mangle)]
+/// Returns the opaque state alignment for this exact code image.
+///
+/// # Safety
+///
+/// This entry has no memory preconditions; the caller must use the declared C ABI.
 pub unsafe extern "C" fn pod_v2_layout_align() -> u64 {
     align_of::<State>() as u64
 }
 
 #[unsafe(no_mangle)]
+/// Returns the opaque state layout fingerprint for this exact code image.
+///
+/// # Safety
+///
+/// This entry has no memory preconditions; the caller must use the declared C ABI.
 pub unsafe extern "C" fn pod_v2_layout_hash() -> u64 {
     layout_hash_impl()
 }
 
 #[unsafe(no_mangle)]
+/// Initializes an opaque state region in place.
+///
+/// # Safety
+///
+/// `state` must identify an exclusively owned, writable `region_len`-byte mapping that remains
+/// valid for the pod lifetime. The address must meet the returned layout alignment.
 pub unsafe extern "C" fn pod_v2_init(state: *mut u8, region_len: u64) -> i32 {
     if state.is_null() || (state as usize) & (align_of::<State>() - 1) != 0 {
         return STATUS_NULL;
@@ -268,6 +289,12 @@ pub unsafe extern "C" fn pod_v2_init(state: *mut u8, region_len: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+/// Validates an initialized opaque state region while holding its shared lock.
+///
+/// # Safety
+///
+/// `state` must identify a writable region previously initialized by this exact code image and
+/// kept alive for the call. `region_len` must be its complete accessible length.
 pub unsafe extern "C" fn pod_v2_validate(state: *mut u8, region_len: u64) -> i32 {
     let state = match unsafe { checked_state(state) } {
         Ok(state) => state,
@@ -281,6 +308,12 @@ pub unsafe extern "C" fn pod_v2_validate(state: *mut u8, region_len: u64) -> i32
 }
 
 #[unsafe(no_mangle)]
+/// Adds `delta` to `key`, inserting the key when necessary.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image. All access to the
+/// region must follow this pod's synchronization protocol.
 pub unsafe extern "C" fn pod_v2_upsert(state: *mut u8, key: u64, delta: u64) -> i32 {
     let base = state;
     let state = match unsafe { checked_state(state) } {
@@ -334,6 +367,12 @@ pub unsafe extern "C" fn pod_v2_upsert(state: *mut u8, key: u64, delta: u64) -> 
 }
 
 #[unsafe(no_mangle)]
+/// Reads the value associated with `key`.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image. `output` must be
+/// nonnull, aligned, writable, and valid for one `u64` for the duration of the call.
 pub unsafe extern "C" fn pod_v2_get(state: *mut u8, key: u64, output: *mut u64) -> i32 {
     if output.is_null() {
         return STATUS_BAD_ARGUMENT;
@@ -391,16 +430,31 @@ unsafe fn read_stat(state: *mut u8, which: u32) -> u64 {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the number of table entries.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image.
 pub unsafe extern "C" fn pod_v2_len(state: *mut u8) -> u64 {
     unsafe { read_stat(state, 0) }
 }
 
 #[unsafe(no_mangle)]
+/// Returns the bump arena's current high-water offset.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image.
 pub unsafe extern "C" fn pod_v2_allocated(state: *mut u8) -> u64 {
     unsafe { read_stat(state, 1) }
 }
 
 #[unsafe(no_mangle)]
+/// Returns the current table capacity.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image.
 pub unsafe extern "C" fn pod_v2_capacity(state: *mut u8) -> u64 {
     unsafe { read_stat(state, 2) }
 }
