@@ -51,6 +51,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    assert_rx_mapping_rejects_writes(&probe)?;
     let bounds_error = probe
         .add(options.mode, COUNTER_COUNT as u32, 1)
         .expect_err("out-of-bounds pod call unexpectedly succeeded");
@@ -162,6 +163,37 @@ fn verify_state(
             pids.len(),
             code_bases.len(),
             state_bases.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn assert_rx_mapping_rejects_writes(pod: &MappedPod) -> Result<(), Box<dyn Error>> {
+    let child = unsafe { libc::fork() };
+    if child < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if child == 0 {
+        let limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        unsafe {
+            libc::setrlimit(libc::RLIMIT_CORE, &limit);
+            (pod.code_base() as *mut u8).write_volatile(0xcc);
+            libc::_exit(0);
+        }
+    }
+
+    let mut status = 0;
+    if unsafe { libc::waitpid(child, &mut status, 0) } != child {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if !libc::WIFSIGNALED(status) || !matches!(libc::WTERMSIG(status), libc::SIGSEGV | libc::SIGBUS)
+    {
+        return Err(format!(
+            "writing the RX code mapping did not fault as expected (wait status=0x{status:x})"
         )
         .into());
     }

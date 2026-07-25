@@ -6,5 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+libc.workspace = true
 pod-api.workspace = true
 pod-loader.workspace = true

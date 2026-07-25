@@ -93,6 +93,7 @@ dependencies = [
 name = "pod-host"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "pod-api",
  "pod-loader",
 ]

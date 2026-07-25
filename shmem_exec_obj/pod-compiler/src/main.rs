@@ -129,7 +129,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("rustc -vV failed after compilation".into());
     }
     let manifest = format!(
-        "format=reverie-pod-v1\nsource={}\nobject={}\nimage={}\nimage_len={}\nstate_offset={}\nstate_len={}\n{}\nrustc:\n{}",
+        "format=reverie-pod-v1\nsource={}\nobject={}\nimage={}\nimage_len={}\nstate_offset={}\nstate_len={}\nrustflags=-Copt-level=3 -Cpanic=abort -Crelocation-model=pic -Ccode-model=small -Ccodegen-units=1 -Coverflow-checks=no -Cdebug-assertions=no -Cforce-unwind-tables=no -Ctarget-cpu=x86-64 -Cembed-bitcode=no\n{}\nrustc:\n{}",
         options.source.display(),
         options.object.display(),
         options.output.display(),

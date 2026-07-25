@@ -339,6 +339,19 @@ fn validate_header_fields(header: &PodImageHeader) -> Result<()> {
             )));
         }
     }
+    for left in 0..header.methods.len() {
+        let left_start = header.methods[left].offset;
+        let left_end = left_start + header.methods[left].size as u64;
+        for right in (left + 1)..header.methods.len() {
+            let right_start = header.methods[right].offset;
+            let right_end = right_start + header.methods[right].size as u64;
+            if left_start < right_end && right_start < left_end {
+                return Err(PodError::InvalidImage(format!(
+                    "methods {left} and {right} overlap"
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -433,4 +446,43 @@ fn permissions_for_address(address: usize) -> io::Result<String> {
         io::ErrorKind::NotFound,
         format!("address 0x{address:x} is absent from /proc/self/maps"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_header() -> PodImageHeader {
+        let mut header = PodImageHeader::empty();
+        header.image_len = 256;
+        header.state_offset = 4096;
+        header.state_len = 36_864;
+        for (index, method) in header.methods.iter_mut().enumerate() {
+            method.offset = (128 + index * 16) as u64;
+            method.size = 8;
+        }
+        header
+    }
+
+    #[test]
+    fn rejects_wrong_abi_version() {
+        let mut header = valid_header();
+        header.abi_version += 1;
+        let error = validate_header_fields(&header).unwrap_err();
+        assert!(error.to_string().contains("ABI version"));
+    }
+
+    #[test]
+    fn rejects_overlapping_methods() {
+        let mut header = valid_header();
+        header.methods[1].offset = header.methods[0].offset + 1;
+        let error = validate_header_fields(&header).unwrap_err();
+        assert!(error.to_string().contains("overlap"));
+    }
+
+    #[test]
+    fn rejects_truncated_header() {
+        let error = parse_header_bytes(&[0_u8; 16]).unwrap_err();
+        assert!(error.to_string().contains("truncated"));
+    }
 }

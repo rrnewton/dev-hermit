@@ -4,12 +4,31 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 
+cargo test --workspace
 cargo build --release --workspace
-target/release/pod-compiler \
-  --source pod-code/src/lib.rs \
-  --output target/pod/pod.bin \
-  --object target/pod/pod.o \
+
+compiler_args=(
+  --source pod-code/src/lib.rs
+  --output target/pod/pod.bin
+  --object target/pod/pod.o
   --manifest target/pod/pod.manifest
+)
+if [[ -n ${POD_RUSTC:-} ]]; then
+  compiler_args+=(--rustc "$POD_RUSTC")
+fi
+target/release/pod-compiler "${compiler_args[@]}"
+
+if target/release/pod-compiler \
+  --source fixtures/relocating-pod.rs \
+  --output target/pod/forbidden.bin \
+  --object target/pod/forbidden.o \
+  --manifest target/pod/forbidden.manifest \
+  >target/pod/forbidden.stdout 2>target/pod/forbidden.stderr; then
+  echo "relocation gate accepted a forbidden external call" >&2
+  exit 1
+fi
+grep -q "is not self-contained: relocation" target/pod/forbidden.stderr
+echo "PASS compiler rejected a method containing an external relocation"
 
 for mode in coarse fine atomic; do
   target/release/pod-host \
