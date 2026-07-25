@@ -52,8 +52,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .into());
     }
     assert_rx_mapping_rejects_writes(&probe)?;
-    let bounds_error = probe
-        .add(options.mode, COUNTER_COUNT as u32, 1)
+    // `create_instance` copied the reviewed built-in image immediately above.
+    let bounds_error = unsafe { probe.add(options.mode, COUNTER_COUNT as u32, 1) }
         .expect_err("out-of-bounds pod call unexpectedly succeeded");
     if bounds_error.status() != Some(STATUS_BAD_INDEX) {
         return Err(format!("unexpected bounds status: {bounds_error}").into());

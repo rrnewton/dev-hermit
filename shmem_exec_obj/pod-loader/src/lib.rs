@@ -1,6 +1,7 @@
 use pod_api::{
     ABI_VERSION, IMAGE_MAGIC, METHOD_ATOMIC_ADD, METHOD_COARSE_ADD, METHOD_COUNT, METHOD_FINE_ADD,
-    METHOD_REGISTER, PodImageHeader, PodMode, PodState, STATUS_OK, TARGET_ARCH_X86_64,
+    METHOD_REGISTER, PodAddFn, PodImageHeader, PodMode, PodRegisterFn, PodState, STATUS_OK,
+    TARGET_ARCH_X86_64,
 };
 use std::error::Error;
 use std::fmt;
@@ -10,9 +11,6 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::Path;
 use std::ptr::NonNull;
-
-type RegisterFn = unsafe extern "C" fn(*mut PodState, u64, u64, u64, u32) -> i32;
-type AddFn = unsafe extern "C" fn(*mut PodState, u32, u64) -> i32;
 
 #[derive(Debug)]
 pub enum PodError {
@@ -126,7 +124,7 @@ pub struct MappedPod {
     state_len: usize,
 }
 
-// The executable bytes are immutable and all mutable state is protected by the pod ABI.
+// Moving or sharing the mappings is valid. Executing their untrusted bytes remains unsafe.
 unsafe impl Send for MappedPod {}
 unsafe impl Sync for MappedPod {}
 
@@ -202,8 +200,14 @@ impl MappedPod {
         self.state.as_ptr() as usize
     }
 
-    pub fn register(&self, pid: u64, mode: PodMode) -> Result<()> {
-        let function: RegisterFn = unsafe { std::mem::transmute(self.entry(METHOD_REGISTER)) };
+    /// Invokes the process-registration entry in the mapped image.
+    ///
+    /// # Safety
+    ///
+    /// The mapped bytes must be a trusted artifact implementing the exact
+    /// `PodRegisterFn` ABI and respecting all `PodState` memory invariants.
+    pub unsafe fn register(&self, pid: u64, mode: PodMode) -> Result<()> {
+        let function: PodRegisterFn = unsafe { std::mem::transmute(self.entry(METHOD_REGISTER)) };
         let status = unsafe {
             function(
                 self.state.as_ptr(),
@@ -216,13 +220,19 @@ impl MappedPod {
         check_status("register", status)
     }
 
-    pub fn add(&self, mode: PodMode, index: u32, delta: u64) -> Result<()> {
+    /// Invokes one counter entry in the mapped image.
+    ///
+    /// # Safety
+    ///
+    /// The mapped bytes must be a trusted artifact implementing the exact
+    /// `PodAddFn` ABI and respecting all `PodState` memory invariants.
+    pub unsafe fn add(&self, mode: PodMode, index: u32, delta: u64) -> Result<()> {
         let (method, name) = match mode {
             PodMode::Coarse => (METHOD_COARSE_ADD, "coarse_add"),
             PodMode::Fine => (METHOD_FINE_ADD, "fine_add"),
             PodMode::Atomic => (METHOD_ATOMIC_ADD, "atomic_add"),
         };
-        let function: AddFn = unsafe { std::mem::transmute(self.entry(method)) };
+        let function: PodAddFn = unsafe { std::mem::transmute(self.entry(method)) };
         let status = unsafe { function(self.state.as_ptr(), index, delta) };
         check_status(name, status)
     }
@@ -389,6 +399,14 @@ fn map_region(
                 )
             };
             if mapping != libc::MAP_FAILED {
+                if mapping != address {
+                    unsafe {
+                        libc::munmap(mapping, len);
+                    }
+                    return Err(PodError::InvalidImage(
+                        "kernel ignored the requested fixed mapping address".into(),
+                    ));
+                }
                 return NonNull::new(mapping)
                     .ok_or_else(|| PodError::InvalidImage("mmap returned null".into()));
             }

@@ -216,6 +216,9 @@ pub struct PodState {
     pub connections: [ConnectionRecord; MAX_CONNECTIONS],
 }
 
+pub type PodRegisterFn = unsafe extern "C" fn(*mut PodState, u64, u64, u64, u32) -> i32;
+pub type PodAddFn = unsafe extern "C" fn(*mut PodState, u32, u64) -> i32;
+
 impl PodState {
     pub fn new() -> Self {
         Self {

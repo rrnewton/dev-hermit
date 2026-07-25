@@ -18,17 +18,34 @@ if [[ -n ${POD_RUSTC:-} ]]; then
 fi
 target/release/pod-compiler "${compiler_args[@]}"
 
-if target/release/pod-compiler \
-  --source fixtures/relocating-pod.rs \
-  --output target/pod/forbidden.bin \
-  --object target/pod/forbidden.o \
-  --manifest target/pod/forbidden.manifest \
+forbidden_args=(
+  --source fixtures/relocating-pod.rs
+  --output target/pod/forbidden.bin
+  --object target/pod/forbidden.o
+  --manifest target/pod/forbidden.manifest
+)
+if [[ -n ${POD_RUSTC:-} ]]; then
+  forbidden_args+=(--rustc "$POD_RUSTC")
+fi
+if target/release/pod-compiler "${forbidden_args[@]}" \
   >target/pod/forbidden.stdout 2>target/pod/forbidden.stderr; then
   echo "relocation gate accepted a forbidden external call" >&2
   exit 1
 fi
-grep -q "is not self-contained: relocation" target/pod/forbidden.stderr
+grep -q "contains a relocation" target/pod/forbidden.stderr
 echo "PASS compiler rejected a method containing an external relocation"
+
+unsafe_args=(
+  --source fixtures/unsafe-absolute-pod.rs
+  --output target/pod/unsafe-absolute.bin
+  --object target/pod/unsafe-absolute.o
+  --manifest target/pod/unsafe-absolute.manifest
+)
+if [[ -n ${POD_RUSTC:-} ]]; then
+  unsafe_args+=(--rustc "$POD_RUSTC")
+fi
+target/release/pod-compiler "${unsafe_args[@]}" >/dev/null
+echo "PASS relocation gate demonstrated it is not a code-safety verifier"
 
 for mode in coarse fine atomic; do
   target/release/pod-host \

@@ -42,6 +42,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    if object.format() != object::BinaryFormat::Elf
+        || object.kind() != object::ObjectKind::Relocatable
+    {
+        return Err(format!(
+            "expected a relocatable ELF object, got {:?} {:?}",
+            object.format(),
+            object.kind()
+        )
+        .into());
+    }
 
     let mut image = vec![0_u8; core::mem::size_of::<PodImageHeader>()];
     let mut methods = [PodMethod::default(); pod_api::METHOD_COUNT];
@@ -52,8 +62,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             .symbols()
             .find(|symbol| symbol.name().ok() == Some(*symbol_name))
             .ok_or_else(|| format!("required symbol {symbol_name:?} is absent"))?;
-        if symbol.kind() != SymbolKind::Text || symbol.size() == 0 {
-            return Err(format!("symbol {symbol_name:?} is not a non-empty text symbol").into());
+        if symbol.kind() != SymbolKind::Text || !symbol.is_global() || symbol.size() == 0 {
+            return Err(
+                format!("symbol {symbol_name:?} is not a non-empty global text symbol").into(),
+            );
         }
 
         let section_index = symbol
@@ -80,12 +92,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         if symbol_end > section_data.len() {
             return Err(format!("symbol {symbol_name:?} extends beyond its section").into());
         }
+        if symbol_start != 0 || symbol_end != section_data.len() {
+            return Err(format!(
+                "symbol {symbol_name:?} does not occupy its complete dedicated section"
+            )
+            .into());
+        }
 
         for (offset, relocation) in section.relocations() {
             let offset = offset as usize;
             if (symbol_start..symbol_end).contains(&offset) {
                 return Err(format!(
-                    "symbol {symbol_name:?} is not self-contained: relocation at +0x{:x} targets {:?}",
+                    "symbol {symbol_name:?} contains a relocation at +0x{:x} targeting {:?}",
                     offset - symbol_start,
                     relocation.target()
                 )
@@ -96,9 +114,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         let image_offset = align_up(image.len(), 16);
         image.resize(image_offset, 0x90);
         image.extend_from_slice(&section_data[symbol_start..symbol_end]);
+        let method_size = u32::try_from(symbol.size())
+            .map_err(|_| format!("symbol {symbol_name:?} is too large for the image ABI"))?;
         methods[method_index] = PodMethod {
             offset: image_offset as u64,
-            size: symbol.size() as u32,
+            size: method_size,
             reserved: 0,
         };
         manifest_lines.push(format!(

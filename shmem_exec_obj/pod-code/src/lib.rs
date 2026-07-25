@@ -58,6 +58,12 @@ fn unlock(word: &AtomicU32) {
 }
 
 #[unsafe(no_mangle)]
+/// Registers one process and publishes its local mapping addresses.
+///
+/// # Safety
+///
+/// `state` must point to an aligned, initialized, writable `PodState` mapping
+/// that remains live for the complete call. Other writers must follow this ABI.
 pub unsafe extern "C" fn pod_register(
     state: *mut PodState,
     pid: u64,
@@ -96,6 +102,12 @@ pub unsafe extern "C" fn pod_register(
 }
 
 #[unsafe(no_mangle)]
+/// Adds to a counter while holding the one global spinlock.
+///
+/// # Safety
+///
+/// `state` must point to an aligned, initialized, writable `PodState` mapping
+/// that remains live for the complete call. Other writers must follow this ABI.
 pub unsafe extern "C" fn pod_coarse_add(state: *mut PodState, index: u32, delta: u64) -> i32 {
     let state = match unsafe { checked_state(state) } {
         Ok(state) => state,
@@ -119,6 +131,12 @@ pub unsafe extern "C" fn pod_coarse_add(state: *mut PodState, index: u32, delta:
 }
 
 #[unsafe(no_mangle)]
+/// Adds to a counter while holding that counter's spinlock.
+///
+/// # Safety
+///
+/// `state` must point to an aligned, initialized, writable `PodState` mapping
+/// that remains live for the complete call. Other writers must follow this ABI.
 pub unsafe extern "C" fn pod_fine_add(state: *mut PodState, index: u32, delta: u64) -> i32 {
     let state = match unsafe { checked_state(state) } {
         Ok(state) => state,
@@ -144,6 +162,12 @@ pub unsafe extern "C" fn pod_fine_add(state: *mut PodState, index: u32, delta: u
 }
 
 #[unsafe(no_mangle)]
+/// Atomically adds to one counter.
+///
+/// # Safety
+///
+/// `state` must point to an aligned, initialized, writable `PodState` mapping
+/// that remains live for the complete call. Other writers must follow this ABI.
 pub unsafe extern "C" fn pod_atomic_add(state: *mut PodState, index: u32, delta: u64) -> i32 {
     let state = match unsafe { checked_state(state) } {
         Ok(state) => state,
@@ -163,3 +187,8 @@ pub unsafe extern "C" fn pod_atomic_add(state: *mut PodState, index: u32, delta:
     }
     STATUS_OK
 }
+
+const _: pod_api::PodRegisterFn = pod_register;
+const _: pod_api::PodAddFn = pod_coarse_add;
+const _: pod_api::PodAddFn = pod_fine_add;
+const _: pod_api::PodAddFn = pod_atomic_add;

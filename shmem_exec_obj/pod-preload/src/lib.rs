@@ -10,6 +10,7 @@ struct Client {
     pod: MappedPod,
     mode: PodMode,
     expected_processes: u64,
+    pid: u64,
 }
 
 static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
@@ -30,20 +31,26 @@ fn load_client() -> Result<Client, String> {
         ));
     }
 
-    let pid = unsafe { libc::syscall(libc::SYS_getpid) as u64 };
+    let pid = current_pid();
     let pod = MappedPod::open_with_address_tag(Path::new(&path), Some(pid))
         .map_err(|error| error.to_string())?;
-    pod.register(pid, mode).map_err(|error| error.to_string())?;
+    // The host creates this image from the reviewed built-in pod source. The
+    // relocation gate alone would not make an arbitrary image safe to execute.
+    unsafe { pod.register(pid, mode) }.map_err(|error| error.to_string())?;
     Ok(Client {
         pod,
         mode,
         expected_processes,
+        pid,
     })
 }
 
 fn client() -> Option<&'static Client> {
     if let Some(result) = CLIENT.get() {
-        return result.as_ref().ok();
+        return result
+            .as_ref()
+            .ok()
+            .filter(|client| client.pid == current_pid());
     }
     if INITIALIZING
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -54,7 +61,14 @@ fn client() -> Option<&'static Client> {
     let result = load_client();
     let _ = CLIENT.set(result);
     INITIALIZING.store(false, Ordering::Release);
-    CLIENT.get().and_then(|result| result.as_ref().ok())
+    CLIENT
+        .get()
+        .and_then(|result| result.as_ref().ok())
+        .filter(|client| client.pid == current_pid())
+}
+
+fn current_pid() -> u64 {
+    unsafe { libc::syscall(libc::SYS_getpid) as u64 }
 }
 
 fn record_hook(index: u32) {
@@ -71,7 +85,8 @@ fn record_hook(index: u32) {
     {
         return;
     }
-    if client.pod.add(client.mode, index, 1).is_err() {
+    // See load_client: only the built-in, reviewed pod image is trusted here.
+    if unsafe { client.pod.add(client.mode, index, 1) }.is_err() {
         client
             .pod
             .state()
@@ -129,21 +144,41 @@ unsafe fn raw_credential_call(system_call: libc::c_long, index: u32) -> libc::c_
 }
 
 #[unsafe(no_mangle)]
+/// Interposes libc `getuid`.
+///
+/// # Safety
+///
+/// This function has the same calling contract as libc `getuid`.
 pub unsafe extern "C" fn getuid() -> libc::uid_t {
     unsafe { raw_credential_call(libc::SYS_getuid, 0) as libc::uid_t }
 }
 
 #[unsafe(no_mangle)]
+/// Interposes libc `geteuid`.
+///
+/// # Safety
+///
+/// This function has the same calling contract as libc `geteuid`.
 pub unsafe extern "C" fn geteuid() -> libc::uid_t {
     unsafe { raw_credential_call(libc::SYS_geteuid, 1) as libc::uid_t }
 }
 
 #[unsafe(no_mangle)]
+/// Interposes libc `getgid`.
+///
+/// # Safety
+///
+/// This function has the same calling contract as libc `getgid`.
 pub unsafe extern "C" fn getgid() -> libc::gid_t {
     unsafe { raw_credential_call(libc::SYS_getgid, 2) as libc::gid_t }
 }
 
 #[unsafe(no_mangle)]
+/// Interposes libc `getegid`.
+///
+/// # Safety
+///
+/// This function has the same calling contract as libc `getegid`.
 pub unsafe extern "C" fn getegid() -> libc::gid_t {
     unsafe { raw_credential_call(libc::SYS_getegid, 3) as libc::gid_t }
 }
