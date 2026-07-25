@@ -6,7 +6,11 @@ set -euo pipefail
 
 readonly MEMORY_PERCENT=80
 readonly CPU_PERCENT=90
-readonly SLICE_UNIT=3pai_sandbox.slice
+USER_ID=$(id -u)
+readonly USER_ID
+readonly OUTER_SLICE_UNIT="user-$USER_ID.slice"
+readonly CONTROL_SLICE_UNIT=devhermit_control.slice
+readonly AGENT_SLICE_UNIT=3pai_sandbox.slice
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
@@ -14,8 +18,8 @@ readonly SCRIPT_PATH
 
 function usage {
     cat <<'EOF'
-safe-dev-limits prevents the shared 3pai slice for tmux, orc, agents, and
-other descendants from consuming more than 80% of RAM or 90% of total CPU.
+safe-dev-limits caps the common systemd user slice, keeping every tmux, orc,
+agent, Buck2 daemon, and child scope below one 80% RAM / 90% CPU envelope.
 
 Usage:
   ./safe-dev-limits [--] COMMAND [ARGUMENT ...]
@@ -23,22 +27,31 @@ Usage:
   ./safe-dev-limits --help
 
 Limits:
-  MemoryMax     80% of physical RAM
+  MemoryMax     80% of physical RAM across the complete user slice
   MemorySwapMax 0, preventing additional swap growth
-  CPUQuota      90% of all machine CPUs
-  OOM behavior  Hard aggregate ceiling; grouped launcher scope
-  Nesting       Delegated launcher scopes for inner cgroup levels
+  CPUQuota      90% of all machine CPUs across the complete user slice
+  Nesting       Neutral delegated control scope for inner cgroup levels
 
-With no command, the script starts an interactive login shell. Start the tmux
-server and orc from that shell so their processes and tmux pane scopes remain
-inside the outer box. All 3pai agent scopes share this aggregate budget.
-An already-running tmux server is not moved; restart it from inside this box.
-Inner runners must use 3pai_sandbox.slice or one of its child slices.
+The script uses passwordless sudo only to set runtime properties on the
+system-owned user-$(id -u).slice. With no command it starts a login shell in
+devhermit_control.slice, outside the 3pai BPFJailer boundary. Start a new tmux
+server and orc there. Official launchers continue placing native agent payloads
+in 3pai_sandbox.slice; both slices inherit the same outer cap.
+
+The runtime outer cap remains active after the wrapped command exits and is
+cleared by reboot or an explicit systemd property reset.
+
+Do not reuse a shell or tmux server created by an older safe-dev-limits. Exit
+that shell and use the versioned socket below from a normal SSH or tmux shell.
 
 Examples:
   ./safe-dev-limits
-  ./safe-dev-limits tmux -L safe-dev new -A -s dev
+  ./safe-dev-limits tmux -L safe-dev-v2 new -A -s dev
   ./safe-dev-limits -- orc
+
+Check the effective kernel limits:
+  cg=$(systemctl show "user-$(id -u).slice" -p ControlGroup --value)
+  cat "/sys/fs/cgroup$cg"/{memory.max,memory.swap.max,cpu.max}
 EOF
 }
 
@@ -51,55 +64,109 @@ function current_cgroup {
     awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup
 }
 
-function outer_cgroup {
-    local path
-    path=$(current_cgroup)
-    if [[ $path =~ ^(.*\/3pai_sandbox\.slice)(/.*)?$ ]]; then
-        printf '%s' "${BASH_REMATCH[1]}"
-    fi
+function path_is_within {
+    local path=$1
+    local ancestor=$2
+    [[ $path == "$ancestor" || $path == "$ancestor/"* ]]
 }
 
-function verify_outer_cgroup {
+function verify_outer_limits {
     local expected_memory=$1
     local expected_cpu_percent=$2
     local cgroup_path=$3
+    local expected_path="/user.slice/user-$USER_ID.slice"
     local directory="/sys/fs/cgroup$cgroup_path"
     local page_size actual_memory quota period expected_quota controllers
 
-    [[ -d $directory ]] || fail "outer slice cgroup is missing: $cgroup_path"
-    [[ -r $directory/memory.max && -r $directory/cpu.max ]] || \
-        fail "CPU or memory controller is unavailable in $cgroup_path"
+    [[ $cgroup_path == "$expected_path" ]] || \
+        fail "unexpected outer cgroup path: $cgroup_path"
+    [[ -d $directory ]] || fail "outer cgroup is missing: $cgroup_path"
+    [[ -r $directory/memory.max && -r $directory/memory.swap.max && \
+        -r $directory/cpu.max ]] || \
+        fail "CPU, memory, or swap controller is unavailable in the outer cgroup"
 
     page_size=$(getconf PAGESIZE)
     actual_memory=$(<"$directory/memory.max")
-    [[ $actual_memory =~ ^[0-9]+$ ]] || fail "MemoryMax was not applied"
+    [[ $actual_memory =~ ^[0-9]+$ ]] || fail "outer MemoryMax was not applied"
     if ((actual_memory != expected_memory / page_size * page_size)); then
-        fail "MemoryMax verification failed: expected at most $expected_memory, got $actual_memory"
+        fail "outer MemoryMax verification failed: expected at most $expected_memory, got $actual_memory"
     fi
 
     read -r quota period <"$directory/cpu.max"
     [[ $quota =~ ^[0-9]+$ && $period =~ ^[0-9]+$ ]] || \
-        fail "CPUQuota was not applied"
+        fail "outer CPUQuota was not applied"
     expected_quota=$((expected_cpu_percent * period / 100))
     ((quota == expected_quota)) || \
-        fail "CPUQuota verification failed: expected $expected_quota/$period, got $quota/$period"
+        fail "outer CPUQuota verification failed: expected $expected_quota/$period, got $quota/$period"
 
+    [[ $(<"$directory/memory.swap.max") == 0 ]] || \
+        fail "outer MemorySwapMax was not set to zero"
     controllers=$(<"$directory/cgroup.controllers")
     [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
-        fail "delegated CPU and memory controllers are unavailable"
-    [[ -w $directory/cgroup.subtree_control ]] || \
-        fail "outer slice cannot host inner cgroup levels"
-    [[ $(<"$directory/memory.swap.max") == 0 ]] || \
-        fail "MemorySwapMax was not set to zero"
+        fail "outer cgroup cannot govern CPU and memory descendants"
 }
 
-function verify_launcher_scope {
+function verify_child_slice {
+    local cgroup_path=$1
+    local label=$2
+    local outer_path=$3
+    local directory="/sys/fs/cgroup$cgroup_path"
+    local memory swap quota period
+
+    [[ -d $directory ]] || fail "$label cgroup is missing: $cgroup_path"
+    path_is_within "$cgroup_path" "$outer_path" || \
+        fail "$label escaped the outer user slice"
+    memory=$(<"$directory/memory.max")
+    swap=$(<"$directory/memory.swap.max")
+    read -r quota period <"$directory/cpu.max"
+    [[ $memory == max || $memory =~ ^[0-9]+$ ]] || \
+        fail "$label has an invalid MemoryMax"
+    [[ $swap == max || $swap =~ ^[0-9]+$ ]] || \
+        fail "$label has an invalid MemorySwapMax"
+    [[ $quota == max || $quota =~ ^[0-9]+$ ]] || \
+        fail "$label has an invalid CPUQuota"
+    [[ $period =~ ^[0-9]+$ ]] || fail "$label has an invalid CPUQuota period"
+}
+
+function matches_legacy_limits {
+    local cgroup_path=$1
+    local expected_memory=$2
+    local expected_cpu_percent=$3
+    local directory="/sys/fs/cgroup$cgroup_path"
+    local page_size memory swap quota period expected_quota
+
+    page_size=$(getconf PAGESIZE)
+    memory=$(<"$directory/memory.max")
+    swap=$(<"$directory/memory.swap.max")
+    read -r quota period <"$directory/cpu.max"
+    [[ $memory =~ ^[0-9]+$ && $swap == 0 && $quota =~ ^[0-9]+$ && \
+        $period =~ ^[0-9]+$ ]] || return 1
+    expected_quota=$((expected_cpu_percent * period / 100))
+    ((memory == expected_memory / page_size * page_size && quota == expected_quota))
+}
+
+function reset_child_slice_limits {
+    local unit=$1
+
+    systemctl --user set-property --runtime "$unit" \
+        MemoryMax=infinity \
+        MemorySwapMax=infinity \
+        'CPUQuota='
+}
+
+function verify_control_scope {
     local outer_path=$1
+    local control_path=$2
     local scope_path directory controllers
 
+    [[ $control_path != *"/$AGENT_SLICE_UNIT"* ]] || \
+        fail "control slice is incorrectly nested inside the BPFJailer boundary"
+    path_is_within "$control_path" "$outer_path" || \
+        fail "control slice escaped the outer user slice"
+
     scope_path=$(current_cgroup)
-    [[ $scope_path == "$outer_path/"* ]] || \
-        fail "launcher scope escaped the outer slice"
+    path_is_within "$scope_path" "$control_path" || \
+        fail "launcher scope escaped the neutral control slice"
     directory="/sys/fs/cgroup$scope_path"
     [[ $(<"$directory/memory.oom.group") == 1 ]] || \
         fail "launcher scope group OOM handling was not enabled"
@@ -110,26 +177,57 @@ function verify_launcher_scope {
         fail "launcher scope is not delegated for inner levels"
 }
 
-# Internal entry point: systemd creates the scope, then this branch verifies it
-# before allowing the requested command to start.
+function export_limit_metadata {
+    export SAFE_DEV_LIMITS_ACTIVE=1
+    export SAFE_DEV_LIMITS_SLICE=$OUTER_SLICE_UNIT
+    export SAFE_DEV_LIMITS_OUTER_SLICE=$OUTER_SLICE_UNIT
+    export SAFE_DEV_LIMITS_CONTROL_SLICE=$CONTROL_SLICE_UNIT
+    export SAFE_DEV_LIMITS_AGENT_SLICE=$AGENT_SLICE_UNIT
+    export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$MEMORY_MAX_BYTES
+    export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$CPU_QUOTA_PERCENT
+}
+
+# Internal entry point: systemd creates a neutral delegated scope, then this
+# branch verifies the privileged outer cap before starting the command.
 if [[ ${1:-} == "--verify-and-exec" ]]; then
-    (($# >= 4)) || fail "invalid internal invocation"
-    readonly EXPECTED_MEMORY=$2
-    readonly EXPECTED_CPU_PERCENT=$3
-    shift 3
+    (($# >= 7)) || fail "invalid internal invocation"
+    readonly MEMORY_MAX_BYTES=$2
+    readonly CPU_QUOTA_PERCENT=$3
+    readonly OUTER_CGROUP=$4
+    readonly CONTROL_CGROUP=$5
+    shift 5
     [[ ${1:-} == "--" ]] || fail "invalid internal command separator"
     shift
     (($# > 0)) || fail "internal invocation has no command"
 
-    OUTER_CGROUP="$(outer_cgroup)"
-    readonly OUTER_CGROUP
-    [[ -n $OUTER_CGROUP ]] || fail "systemd did not place the command in the outer slice"
-    verify_outer_cgroup "$EXPECTED_MEMORY" "$EXPECTED_CPU_PERCENT" "$OUTER_CGROUP"
-    verify_launcher_scope "$OUTER_CGROUP"
-    export SAFE_DEV_LIMITS_ACTIVE=1
-    export SAFE_DEV_LIMITS_SLICE=$SLICE_UNIT
-    export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$EXPECTED_MEMORY
-    export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$EXPECTED_CPU_PERCENT
+    [[ $MEMORY_MAX_BYTES =~ ^[0-9]+$ ]] || fail "invalid internal memory limit"
+    [[ $CPU_QUOTA_PERCENT =~ ^[0-9]+$ ]] || fail "invalid internal CPU limit"
+    ((MEMORY_MAX_BYTES > 0 && CPU_QUOTA_PERCENT > 0)) || \
+        fail "invalid internal limit value"
+
+    MEM_TOTAL_KIB=$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)
+    AVAILABLE_CPUS=$(nproc --all)
+    [[ $MEM_TOTAL_KIB =~ ^[0-9]+$ && $AVAILABLE_CPUS =~ ^[0-9]+$ ]] || \
+        fail "could not recompute host capacity"
+    ((MEMORY_MAX_BYTES == MEM_TOTAL_KIB * 1024 * MEMORY_PERCENT / 100)) || \
+        fail "internal memory limit does not equal $MEMORY_PERCENT% of physical RAM"
+    ((CPU_QUOTA_PERCENT == AVAILABLE_CPUS * CPU_PERCENT)) || \
+        fail "internal CPU limit does not equal $CPU_PERCENT% of machine CPUs"
+
+    [[ $OUTER_CGROUP == \
+        "$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)" ]] || \
+        fail "outer cgroup path changed during launch"
+    [[ $CONTROL_CGROUP == \
+        "$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value)" ]] || \
+        fail "control cgroup path changed during launch"
+
+    AGENT_CGROUP=$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value)
+    [[ -n $AGENT_CGROUP ]] || fail "agent cgroup path is unavailable"
+    verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CGROUP"
+    verify_child_slice "$CONTROL_CGROUP" "control slice" "$OUTER_CGROUP"
+    verify_child_slice "$AGENT_CGROUP" "agent slice" "$OUTER_CGROUP"
+    verify_control_scope "$OUTER_CGROUP" "$CONTROL_CGROUP"
+    export_limit_metadata
     exec -- "$@"
 fi
 
@@ -150,6 +248,7 @@ fi
 
 command -v systemd-run >/dev/null || fail "systemd-run is required"
 command -v systemctl >/dev/null || fail "systemctl is required"
+command -v sudo >/dev/null || fail "sudo is required to cap the system user slice"
 command -v flock >/dev/null || fail "flock is required"
 [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || fail "cgroup v2 is required"
 
@@ -168,39 +267,83 @@ readonly CPU_QUOTA_PERCENT=$((AVAILABLE_CPUS * CPU_PERCENT))
 readonly GIB=$((1024 * 1024 * 1024))
 readonly MEMORY_GIB_WHOLE=$((MEMORY_MAX_BYTES / GIB))
 readonly MEMORY_GIB_TENTH=$((MEMORY_MAX_BYTES % GIB * 10 / GIB))
-readonly CPU_EQUIVALENT_WHOLE=$((CPU_QUOTA_PERCENT / 100))
-readonly CPU_EQUIVALENT_TENTH=$((CPU_QUOTA_PERCENT % 100 / 10))
+readonly CPU_WHOLE=$((CPU_QUOTA_PERCENT / 100))
+readonly CPU_TENTH=$((CPU_QUOTA_PERCENT % 100 / 10))
 
-EXISTING_OUTER="$(outer_cgroup)"
-readonly EXISTING_OUTER
-if [[ ${SAFE_DEV_LIMITS_ACTIVE:-} == 1 && -n $EXISTING_OUTER ]]; then
-    verify_outer_cgroup "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$EXISTING_OUTER"
-    echo "safe-dev-limits: already inside a verified outer box; preserving the current inner cgroup." >&2
-    exec -- "$@"
-fi
+printf 'safe-dev-limits: capping %s: RAM <= %d.%d GiB, CPU <= %d.%d of %d CPUs; no new swap.\n' \
+    "$OUTER_SLICE_UNIT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
+    "$CPU_WHOLE" "$CPU_TENTH" "$AVAILABLE_CPUS" >&2
+echo "safe-dev-limits: tmux, orc, agents, Buck2, and sibling scopes share this hard aggregate ceiling." >&2
 
-printf 'safe-dev-limits: capping shared 3pai slice: RAM <= %d%% (%d.%d GiB), CPU <= %d%% of %d CPUs (%d.%d CPUs).\n' \
-    "$MEMORY_PERCENT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
-    "$CPU_PERCENT" "$AVAILABLE_CPUS" "$CPU_EQUIVALENT_WHOLE" "$CPU_EQUIVALENT_TENTH" >&2
-echo "safe-dev-limits: new swap growth is disabled; tmux and agent scopes share the hard aggregate ceiling." >&2
-
-readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$USER_ID}
 [[ -d $RUNTIME_DIR ]] || fail "user runtime directory is missing: $RUNTIME_DIR"
 exec 9>"$RUNTIME_DIR/safe-dev-limits.lock"
 flock 9
 
-systemctl --user set-property --runtime "$SLICE_UNIT" \
+if ! sudo -n /usr/bin/systemctl set-property --runtime "$OUTER_SLICE_UNIT" \
     "MemoryMax=$MEMORY_MAX_BYTES" \
     MemorySwapMax=0 \
-    "CPUQuota=$CPU_QUOTA_PERCENT%"
-systemctl --user start "$SLICE_UNIT"
-OUTER_CONTROL_GROUP="$(systemctl --user show "$SLICE_UNIT" --property=ControlGroup --value)"
+    "CPUQuota=$CPU_QUOTA_PERCENT%"; then
+    fail "passwordless sudo could not apply limits to $OUTER_SLICE_UNIT"
+fi
+
+OUTER_CONTROL_GROUP="$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)"
 readonly OUTER_CONTROL_GROUP
-[[ -n $OUTER_CONTROL_GROUP ]] || fail "systemd did not create $SLICE_UNIT"
-verify_outer_cgroup "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CONTROL_GROUP"
+[[ -n $OUTER_CONTROL_GROUP ]] || fail "systemd did not expose $OUTER_SLICE_UNIT"
+verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CONTROL_GROUP"
+
+systemctl --user start "$CONTROL_SLICE_UNIT" "$AGENT_SLICE_UNIT"
+
+CONTROL_CONTROL_GROUP="$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value)"
+readonly CONTROL_CONTROL_GROUP
+AGENT_CONTROL_GROUP="$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value)"
+readonly AGENT_CONTROL_GROUP
+[[ -n $CONTROL_CONTROL_GROUP && -n $AGENT_CONTROL_GROUP ]] || \
+    fail "systemd did not create the control and agent slices"
+
+# Migrate only the exact runtime limits written by earlier safe-dev-limits
+# versions. The marker prevents later operator-defined child caps from being
+# cleared on subsequent invocations.
+readonly MIGRATION_MARKER="$RUNTIME_DIR/safe-dev-limits-parent-slice-v1.migrated"
+if [[ ! -e $MIGRATION_MARKER ]]; then
+    readonly LEGACY_CONTROL_MEMORY=$((MEM_TOTAL_KIB * 1024 * 5 / 100))
+    readonly LEGACY_CONTROL_CPU=$((AVAILABLE_CPUS * 5))
+    readonly LEGACY_AGENT_MEMORY=$((MEM_TOTAL_KIB * 1024 * 75 / 100))
+    readonly LEGACY_AGENT_CPU=$((AVAILABLE_CPUS * 85))
+
+    if matches_legacy_limits "$CONTROL_CONTROL_GROUP" \
+        "$LEGACY_CONTROL_MEMORY" "$LEGACY_CONTROL_CPU"; then
+        reset_child_slice_limits "$CONTROL_SLICE_UNIT"
+    fi
+    if matches_legacy_limits "$AGENT_CONTROL_GROUP" \
+        "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" || \
+        matches_legacy_limits "$AGENT_CONTROL_GROUP" \
+            "$LEGACY_AGENT_MEMORY" "$LEGACY_AGENT_CPU"; then
+        reset_child_slice_limits "$AGENT_SLICE_UNIT"
+    fi
+    : >"$MIGRATION_MARKER"
+fi
+
+verify_child_slice "$CONTROL_CONTROL_GROUP" "control slice" "$OUTER_CONTROL_GROUP"
+verify_child_slice "$AGENT_CONTROL_GROUP" "agent slice" "$OUTER_CONTROL_GROUP"
 exec 9>&-
 
-UNIT_NAME="safe-dev-limits-launch-$(id -u)-$$"
+CURRENT_CGROUP="$(current_cgroup)"
+readonly CURRENT_CGROUP
+path_is_within "$CURRENT_CGROUP" "$OUTER_CONTROL_GROUP" || \
+    fail "current process is outside the capped user slice"
+
+if path_is_within "$CURRENT_CGROUP" "$AGENT_CONTROL_GROUP"; then
+    fail "already inside the 3pai agent jail; rerun safe-dev-limits from a normal SSH or unjailed tmux shell"
+fi
+
+if path_is_within "$CURRENT_CGROUP" "$CONTROL_CONTROL_GROUP"; then
+    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
+    export_limit_metadata
+    exec -- "$@"
+fi
+
+UNIT_NAME="safe-dev-limits-control-$USER_ID-$$"
 readonly UNIT_NAME
 exec systemd-run \
     --user \
@@ -208,10 +351,12 @@ exec systemd-run \
     --collect \
     --quiet \
     --same-dir \
-    --slice="$SLICE_UNIT" \
+    --slice="$CONTROL_SLICE_UNIT" \
     --unit="$UNIT_NAME" \
-    --description="Outermost dev-hermit resource safety box" \
+    --description="Outermost dev-hermit control scope" \
     --property=Delegate=yes \
     --property=OOMPolicy=kill \
     --expand-environment=no \
-    -- "$SCRIPT_PATH" --verify-and-exec "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" -- "$@"
+    -- "$SCRIPT_PATH" --verify-and-exec \
+    "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" \
+    "$OUTER_CONTROL_GROUP" "$CONTROL_CONTROL_GROUP" -- "$@"
