@@ -8,6 +8,9 @@ members = [
     "pod-preload",
     "pod-guest",
     "pod-host",
+    "pod-v2-api",
+    "pod-v2-code",
+    "pod-v2-compiler",
 ]
 
 [workspace.package]
@@ -19,6 +22,9 @@ rust-version = "1.85"
 libc = "0.2.174"
 pod-api = { path = "pod-api" }
 pod-loader = { path = "pod-loader" }
+pod-v2-api = { path = "pod-v2-api" }
+pod-v2-runtime = { path = "pod-v2-runtime" }
+sha2 = "0.10.9"
 
 [profile.release]
 codegen-units = 1

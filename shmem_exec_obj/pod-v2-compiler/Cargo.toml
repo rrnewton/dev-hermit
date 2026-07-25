@@ -1,0 +1,11 @@
+[package]
+name = "pod-v2-compiler"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+object = "0.36.7"
+pod-v2-api.workspace = true
+sha2.workspace = true
