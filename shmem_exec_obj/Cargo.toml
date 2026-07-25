@@ -4,6 +4,10 @@ members = [
     "pod-api",
     "pod-code",
     "pod-compiler",
+    "pod-loader",
+    "pod-preload",
+    "pod-guest",
+    "pod-host",
 ]
 
 [workspace.package]
