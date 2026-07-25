@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "pod-api",
+    "pod-code",
+    "pod-compiler",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+libc = "0.2.174"
+pod-api = { path = "pod-api" }
+pod-loader = { path = "pod-loader" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"

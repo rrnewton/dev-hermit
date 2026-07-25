@@ -1,0 +1,10 @@
+[package]
+name = "pod-compiler"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+object = "0.36.7"
+pod-api.workspace = true
