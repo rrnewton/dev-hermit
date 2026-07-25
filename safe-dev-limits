@@ -11,6 +11,11 @@ readonly USER_ID
 readonly OUTER_SLICE_UNIT="user-$USER_ID.slice"
 readonly CONTROL_SLICE_UNIT=devhermit_control.slice
 readonly AGENT_SLICE_UNIT=3pai_sandbox.slice
+# Expanded by the interactive child shell after its startup files set PS1.
+# Re-export the scalar hook because Bash arrays do not survive into nested
+# shells or a tmux server started from this shell.
+# shellcheck disable=SC2016
+readonly SAFE_DEV_PROMPT_HOOK='PS1=${PS1//"[safe-dev] "/}; PS1="[safe-dev] ${PS1}"; unset _FB_SHELL_RC_PROMPT_COMMANDS; _FB_SHELL_RC_PROMPT_COMMANDS=${SAFE_DEV_LIMITS_PROMPT_HOOK-}; export _FB_SHELL_RC_PROMPT_COMMANDS'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
@@ -34,20 +39,28 @@ Limits:
 
 The script uses passwordless sudo only to set runtime properties on the
 system-owned user-$(id -u).slice. With no command it starts a login shell in
-devhermit_control.slice, outside the 3pai BPFJailer boundary. Start a new tmux
-server and orc there. Official launchers continue placing native agent payloads
-in 3pai_sandbox.slice; both slices inherit the same outer cap.
+devhermit_control.slice with [safe-dev] prepended to its Bash prompt, outside
+the 3pai BPFJailer boundary. Calling the script again from that shell reports
+the live limits without nesting another shell. Start a new tmux server and orc
+there. Official launchers continue placing native agent payloads in
+3pai_sandbox.slice; both slices inherit the same outer cap.
 
 The runtime outer cap remains active after the wrapped command exits and is
 cleared by reboot or an explicit systemd property reset.
 
 Do not reuse a shell or tmux server created by an older safe-dev-limits. Exit
 that shell and use the versioned socket below from a normal SSH or tmux shell.
+Clear inherited TMUX variables as shown so the command cannot select the old
+server.
 
 Examples:
   ./safe-dev-limits
-  ./safe-dev-limits tmux -L safe-dev-v2 new -A -s dev
-  ./safe-dev-limits -- orc
+  ./safe-dev-limits -- env -u TMUX -u TMUX_PANE \
+    tmux -L safe-dev-v2 new -A -s dev
+  socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/orc-tmux-safe-dev-v2"
+  mkdir -p "$socket"
+  ./safe-dev-limits -- env -u TMUX -u TMUX_PANE orc \
+    --tmux-socket-dir "$socket"
 
 Check the effective kernel limits:
   cg=$(systemctl show "user-$(id -u).slice" -p ControlGroup --value)
@@ -177,6 +190,45 @@ function verify_control_scope {
         fail "launcher scope is not delegated for inner levels"
 }
 
+function human_bytes {
+    local bytes=$1
+
+    awk -v bytes="$bytes" 'BEGIN {
+        if (bytes >= 1073741824) printf "%.1f GiB", bytes / 1073741824;
+        else if (bytes >= 1048576) printf "%.0f MiB", bytes / 1048576;
+        else if (bytes >= 1024) printf "%.0f KiB", bytes / 1024;
+        else printf "%.0f B", bytes;
+    }'
+}
+
+function print_human_limits {
+    local cgroup_path=$1
+    local directory="/sys/fs/cgroup$cgroup_path"
+    local memory_current memory_max memory_headroom swap_current
+    local quota period cpu_cores cpu_percent
+
+    memory_current=$(<"$directory/memory.current")
+    memory_max=$(<"$directory/memory.max")
+    swap_current=$(<"$directory/memory.swap.current")
+    read -r quota period <"$directory/cpu.max"
+    ((memory_current < memory_max)) && \
+        memory_headroom=$((memory_max - memory_current)) || memory_headroom=0
+    cpu_cores=$(awk -v quota="$quota" -v period="$period" \
+        'BEGIN { printf "%.1f", quota / period }')
+    cpu_percent=$(awk -v quota="$quota" -v period="$period" -v cpus="$AVAILABLE_CPUS" \
+        'BEGIN { printf "%.0f", 100 * quota / period / cpus }')
+
+    echo "safe-dev-limits: already inside [safe-dev]."
+    printf '  Memory: %s used / %s max (%s headroom)\n' \
+        "$(human_bytes "$memory_current")" "$(human_bytes "$memory_max")" \
+        "$(human_bytes "$memory_headroom")"
+    printf '  Swap:   %s used; additional growth disabled\n' \
+        "$(human_bytes "$swap_current")"
+    printf '  CPU:    %s of %d CPUs max (%s%%)\n' \
+        "$cpu_cores" "$AVAILABLE_CPUS" "$cpu_percent"
+    printf '  Cgroup: %s (%s)\n' "$OUTER_SLICE_UNIT" "$cgroup_path"
+}
+
 function export_limit_metadata {
     export SAFE_DEV_LIMITS_ACTIVE=1
     export SAFE_DEV_LIMITS_SLICE=$OUTER_SLICE_UNIT
@@ -185,6 +237,13 @@ function export_limit_metadata {
     export SAFE_DEV_LIMITS_AGENT_SLICE=$AGENT_SLICE_UNIT
     export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$MEMORY_MAX_BYTES
     export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$CPU_QUOTA_PERCENT
+    export SAFE_DEV_LIMITS_PROMPT_HOOK=$SAFE_DEV_PROMPT_HOOK
+    if [[ ${_FB_SHELL_RC_PROMPT_COMMANDS-} != *"$SAFE_DEV_PROMPT_HOOK"* ]]; then
+        export _FB_SHELL_RC_PROMPT_COMMANDS="${_FB_SHELL_RC_PROMPT_COMMANDS:+${_FB_SHELL_RC_PROMPT_COMMANDS}; }$SAFE_DEV_PROMPT_HOOK"
+    fi
+    if [[ ${PROMPT_COMMAND-} != *"$SAFE_DEV_PROMPT_HOOK"* ]]; then
+        export PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }$SAFE_DEV_PROMPT_HOOK"
+    fi
 }
 
 # Internal entry point: systemd creates a neutral delegated scope, then this
@@ -240,16 +299,16 @@ if [[ ${1:-} == "--" ]]; then
     shift
 fi
 
+START_LOGIN_SHELL=0
+LOGIN_SHELL=
 if (($# == 0)); then
-    readonly LOGIN_SHELL=${SHELL:-/bin/bash}
-    [[ -x $LOGIN_SHELL ]] || fail "login shell is not executable: $LOGIN_SHELL"
+    START_LOGIN_SHELL=1
+    LOGIN_SHELL=${SHELL:-/bin/bash}
     set -- "$LOGIN_SHELL" -l
 fi
+readonly START_LOGIN_SHELL LOGIN_SHELL
 
-command -v systemd-run >/dev/null || fail "systemd-run is required"
 command -v systemctl >/dev/null || fail "systemctl is required"
-command -v sudo >/dev/null || fail "sudo is required to cap the system user slice"
-command -v flock >/dev/null || fail "flock is required"
 [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || fail "cgroup v2 is required"
 
 MEM_TOTAL_KIB="$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)"
@@ -270,10 +329,40 @@ readonly MEMORY_GIB_TENTH=$((MEMORY_MAX_BYTES % GIB * 10 / GIB))
 readonly CPU_WHOLE=$((CPU_QUOTA_PERCENT / 100))
 readonly CPU_TENTH=$((CPU_QUOTA_PERCENT % 100 / 10))
 
-printf 'safe-dev-limits: capping %s: RAM <= %d.%d GiB, CPU <= %d.%d of %d CPUs; no new swap.\n' \
-    "$OUTER_SLICE_UNIT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
-    "$CPU_WHOLE" "$CPU_TENTH" "$AVAILABLE_CPUS" >&2
-echo "safe-dev-limits: tmux, orc, agents, Buck2, and sibling scopes share this hard aggregate ceiling." >&2
+INITIAL_CGROUP="$(current_cgroup)"
+readonly INITIAL_CGROUP
+EXISTING_OUTER_CGROUP="$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
+readonly EXISTING_OUTER_CGROUP
+EXISTING_CONTROL_CGROUP="$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
+readonly EXISTING_CONTROL_CGROUP
+EXISTING_AGENT_CGROUP="$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
+readonly EXISTING_AGENT_CGROUP
+
+if [[ -n $EXISTING_AGENT_CGROUP ]] && \
+    path_is_within "$INITIAL_CGROUP" "$EXISTING_AGENT_CGROUP"; then
+    fail "already inside the 3pai agent jail; rerun safe-dev-limits from a normal SSH or unjailed tmux shell"
+fi
+
+if [[ -n $EXISTING_OUTER_CGROUP && -n $EXISTING_CONTROL_CGROUP ]] && \
+    path_is_within "$INITIAL_CGROUP" "$EXISTING_CONTROL_CGROUP"; then
+    verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$EXISTING_OUTER_CGROUP"
+    verify_child_slice "$EXISTING_CONTROL_CGROUP" "control slice" "$EXISTING_OUTER_CGROUP"
+    export_limit_metadata
+    if ((START_LOGIN_SHELL)); then
+        print_human_limits "$EXISTING_OUTER_CGROUP"
+        exit 0
+    fi
+    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
+    exec -- "$@"
+fi
+
+if ((START_LOGIN_SHELL)); then
+    [[ -x $LOGIN_SHELL ]] || fail "login shell is not executable: $LOGIN_SHELL"
+fi
+
+command -v systemd-run >/dev/null || fail "systemd-run is required"
+command -v sudo >/dev/null || fail "sudo is required to cap the system user slice"
+command -v flock >/dev/null || fail "flock is required"
 
 readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$USER_ID}
 [[ -d $RUNTIME_DIR ]] || fail "user runtime directory is missing: $RUNTIME_DIR"
@@ -338,10 +427,19 @@ if path_is_within "$CURRENT_CGROUP" "$AGENT_CONTROL_GROUP"; then
 fi
 
 if path_is_within "$CURRENT_CGROUP" "$CONTROL_CONTROL_GROUP"; then
-    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
     export_limit_metadata
+    if ((START_LOGIN_SHELL)); then
+        print_human_limits "$OUTER_CONTROL_GROUP"
+        exit 0
+    fi
+    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
     exec -- "$@"
 fi
+
+printf 'safe-dev-limits: capping %s: RAM <= %d.%d GiB, CPU <= %d.%d of %d CPUs; no new swap.\n' \
+    "$OUTER_SLICE_UNIT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
+    "$CPU_WHOLE" "$CPU_TENTH" "$AVAILABLE_CPUS" >&2
+echo "safe-dev-limits: tmux, orc, agents, Buck2, and sibling scopes share this hard aggregate ceiling." >&2
 
 UNIT_NAME="safe-dev-limits-control-$USER_ID-$$"
 readonly UNIT_NAME
