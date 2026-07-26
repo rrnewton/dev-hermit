@@ -91,12 +91,16 @@ class ReportTests(unittest.TestCase):
             pull_request(repo="rrnewton/reverie", number=1, ci_status="pending"),
         ]
         report = pr_status.render_report(prs, warn_threshold=10)
-        self.assertIn("Human review (1)", report)
+        self.assertIn("Ready to land - needs post-facto review (1)", report)
+        self.assertIn(
+            "ACTION: add post-facto-review label, merge immediately if CI green",
+            report,
+        )
         self.assertIn("Free to land: no human-review label (2)", report)
-        self.assertIn("total open:    3", report)
-        self.assertIn("human-blocked: 1", report)
-        self.assertIn("free-to-land:  2", report)
-        self.assertIn("CI-failing:    1", report)
+        self.assertIn("total open:        3", report)
+        self.assertIn("post-facto-land:   1", report)
+        self.assertIn("free-to-land:      2", report)
+        self.assertIn("CI-failing:        1", report)
         self.assertIn("ci=red", report)
         self.assertIn("draft=yes", report)
         self.assertNotIn("WARNING:", report)
