@@ -161,9 +161,15 @@ def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
     lines = [
         "Open PR health: rrnewton/hermit + rrnewton/reverie",
         "",
-        f"Human review ({len(human_review)})",
+        f"Ready to land - needs post-facto review ({len(human_review)})",
+        "  NOT BLOCKED. The 'human-review' label is a POST-LANDING review tag,",
+        "  not a pre-landing gate. Land these as soon as CI is green.",
     ]
-    lines.extend(_format_pr(pr) for pr in human_review)
+    for pr in human_review:
+        lines.append(_format_pr(pr))
+        lines.append(
+            "    ACTION: add post-facto-review label, merge immediately if CI green"
+        )
     if not human_review:
         lines.append("  (none)")
 
@@ -176,10 +182,10 @@ def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
         (
             "",
             "Summary",
-            f"  total open:    {len(prs)}",
-            f"  human-blocked: {len(human_review)}",
-            f"  free-to-land:  {len(free_to_land)}",
-            f"  CI-failing:    {ci_failing}",
+            f"  total open:        {len(prs)}",
+            f"  post-facto-land:   {len(human_review)}",
+            f"  free-to-land:      {len(free_to_land)}",
+            f"  CI-failing:        {ci_failing}",
         )
     )
 
