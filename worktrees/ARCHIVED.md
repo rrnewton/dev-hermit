@@ -390,3 +390,31 @@ Kept 14 (live/active/new): slot129,160,220,225,227,229,234,237,241,250,261,270,2
   SUCCESS at head 7b90d88.
 - Slot detached clean at origin/main 5a95b34; dynamorio submodule activated in
   the worktree (kept as warm cache).
+
+## impl-dbi-ratchet-7 — DBI ratchet round 7: port chrome_trace (LANDED 2026-07-26)
+
+- Agent hermit-dbi, slot worktrees/dbi/reverie, branch dbi-ratchet7-chrome-trace.
+- LANDED: rrnewton/reverie main 767f7d1 via PR #165 (rebase-merge). Commits:
+  97643ab (chrome_trace port) + 651613a (audit-marker PR-165 fix) + 767f7d1
+  (rustfmt tests). Base origin/main 5a95b34; rebased cleanly over intervening
+  #160/#162 (both touch ZERO reverie-dbi files = disjoint/inert).
+- Deliverable: ported the reverie `chrome_trace` example tool to the DBI Tool
+  host (env HERMIT_DBI_CHROME_TRACE). ChromeTraceTool accumulates a per-thread
+  syscall timeline in ChromeTraceGlobal (process-global keyed by tid) and emits
+  a Chrome trace JSON array at exit via the re-entrancy-safe diagnostic emitter.
+  Records at entry via tail_inject (NOT inject) to avoid the
+  dr_invoke_syscall_as_app blocking hazard -> documented L0 fidelity limits
+  (durations = inter-entry approx; pretty = inputs only). Adds serde_json dep.
+  This was the last feasible observation-style example tool (chaos needs
+  RCB/scheduler control TODO-STUB(#31); debug is interactive gdbserver).
+- Validation (backend=DBI, log=default, relaxations=none, assurance L0):
+  cargo build/clippy clean; cargo test -p reverie-dbi --lib -> 32 passed (2 new
+  chrome_trace unit tests); PROFILE=release reverie-dbi/scripts/test-example-tools.sh
+  -> 19/19 PASS incl chrome_trace (179-event valid trace on bash guest, guest
+  stdout intact). CI on #165: Regular tests SUCCESS + Host-dependent tests
+  SUCCESS at PR head; post-merge main Rust run 30213329726 SUCCESS at 767f7d1.
+- ratchet-6 (impl-dbi-ratchet-6) closed same day as a consolidated duplicate:
+  identical generic description, no distinct blocker; next increment folded
+  into ratchet-7 to avoid double-landing.
+- Slot detached clean at origin/main 767f7d1 (dynamorio submodule kept as warm
+  cache). Parent gitlink NOT bumped (coordinator owns reverie pinning).
