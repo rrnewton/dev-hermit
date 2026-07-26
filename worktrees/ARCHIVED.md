@@ -360,3 +360,33 @@ Kept 14 (live/active/new): slot129,160,220,225,227,229,234,237,241,250,261,270,2
 | `worktrees/slot324` | Hermit + Reverie | `impl-sabre-ci-and-compat` / PRs 138 and 745 | Hermit `8ab282e9dea3817c2adc1626156caaaef767c58e`; Reverie `cb423228db1cf35cdfbf4e406a0f7d5bfb9ebffe` | 2026-07-26 | Verified PRs 738/739 already landed green; landed dependency PR 138 then merged-main-pinned PR 745; validated merged-main SaBRe L2 echo/true/cat/procfs, expanded direct compatibility, and documented exec/thread-lifecycle gaps. Both nested worktrees clean and detached at landed main. |
 | `worktrees/slot343` | Hermit / Reverie | `impl-repo-cleanliness-skill-slot343` (both repos) | `ff100b81f7f4b6032d3fd2bb619ed39a9e583b0b` / `ca932bd67d0c95f3639a6e760ef4aae45ba27326` | 2026-07-26 | Repo-cleanliness skill + AGENTS.md Pre-Commit Cleanliness Protocol in both repos. Hermit PR #754 squash-landed as `2fc392eec04a85dfb9433c5231fd0fae6795e6df` (main tip confirmed); Reverie PR #147 squash-landed as `acdb7f13701341bcb19049651313bcefda01757c`. Both diffs docs-only (Regular tests SUCCESS; no Portable check fires on docs-only path filter). Slot manually provisioned (non-canonical name). Children detached and worktrees removed; merged feature branches deletable. |
 | `worktrees/lander` (standing, non-slotNN) | Hermit | `impl-agent-skills-fixed` @ `bac54c48` -> PR #759 | Landed as main `746d354fae2e096779d0c6426ab4c3d7ae7b7948` | 2026-07-26 | 8 purpose-fixed agent role skills (hermit-{kvm,dbi,sabre,liteinst,ci,coord,lander,opt}.md under hermit/.claude/skills/). Docs-only; authoritative `Regular tests (GitHub-hosted)` SUCCESS; merged post-facto via --admin (merge-gate FAILURE = known non-authoritative re-fire placeholder; PMU/QEMU SKIPPED by docs-only path filter). Post-landing, lander worktree RESTRUCTURED nested->FLAT: worktrees/lander is now a hermit worktree on branch `lander` @ 746d354f for hermit-lander exclusive landing/integration use. |
+
+## slot212 — impl-debug-batch-32 (hermit-212) — DONE 2026-07-26
+- Product: hermit-only. Branch debug-batch32-slot212 (base main 27229991698a85fff43ff6aa5a7b017efc78c238). No commits (diagnosis-only task).
+- Debugged 3 failing programs under --strict --verify --log debug (ptrace backend):
+  - flock: Unclassified flock(2) LOCK_EX -> fail-closed shutdown (syscall_classification.rs:487).
+  - lsof:  Unclassified close_range(2) -> fail-closed shutdown (syscall_classification.rs:484).
+  - free:  /proc/meminfo passthrough (Path R), live host mem counters leak to stdout; DETLOG clean. Matches in-flight PR #761.
+  - NEGATIVE: 'timeout' rt_sigsuspend hang did NOT reproduce (4 invocations pass L2); stat/ls -la/python3 also passed this run.
+- Slot released clean via scripts/release-worktree.rs.
+
+## impl-dbi-ratchet-5 — DBI ratchet round 5 (chunky_print), LANDED (2026-07-26)
+- Agent hermit-dbi, slot worktrees/dbi/reverie, branch dbi-ratchet5.
+- Ported the chunky_print example tool to the DBI (DynamoRIO) observation-tool
+  host, unblocking the last sibling-backend example (LiteInst #152). Added a
+  native re-entrancy-safe stdout emitter (reverie_dbi_emit_stdout =
+  dr_write_file(STDOUT)) delivered to Rust at init via a new
+  runtime_callbacks_t.emit_stdout field (did NOT touch the per-syscall PR-154
+  ABI); ChunkyPrintGlobal/ChunkyPrintTool suppress Write(1|2), buffer, and flush
+  at exit routing stdout->new emitter / stderr->existing. Env HERMIT_DBI_CHUNKY_PRINT.
+- PR #164 (base main), rebase-merged. Superseded and closed #161 (round-4),
+  whose commit landed here too.
+- LANDED SHAs on origin/main: round-5 = 5a95b34f59fbca1fa3778bba202754c4fb401011,
+  round-4 = d479039 (rebased from dd58c83). Prior main da8ba9a.
+- Validation (backend=DBI, log=default, relaxations=none, assurance L0):
+  PROFILE=release reverie-dbi/scripts/test-example-tools.sh -> 18/18 PASS incl
+  chunky_print; cargo test -p reverie-dbi --lib -> 30 passed; clippy/fmt clean.
+  CI on #164: Regular tests SUCCESS + Host-dependent tests SUCCESS + merge-gate
+  SUCCESS at head 7b90d88.
+- Slot detached clean at origin/main 5a95b34; dynamorio submodule activated in
+  the worktree (kept as warm cache).
