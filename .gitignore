@@ -33,6 +33,39 @@
 /experiments/targets_20260723/
 /experiments/recording-noseq_20260723/
 
+# Vendored upstream checkouts do not belong in the parent history. Experiments
+# must record source URLs + commit SHAs for reproducibility, not embed a full
+# clone (a nested .git would otherwise be at risk of accidental staging).
+/experiments/gvisor/
+
+# Per-experiment scratch space (experiments/ignored/ is also covered by the
+# global `ignored/` rule below; listed explicitly for discoverability).
+/experiments/ignored/
+**/ignored/
+
+# Protective guards against accidentally committing large/binary experiment
+# artifacts. Durable evidence stays as text (README/CSV/JSON/TSV); heavy
+# outputs live under an ignored/ scratch dir or an external artifact store.
+/experiments/**/*.img
+/experiments/**/*.qcow2
+/experiments/**/*.raw
+/experiments/**/*.iso
+/experiments/**/*.bin
+/experiments/**/*.a
+/experiments/**/*.o
+/experiments/**/*.so
+/experiments/**/*.tar
+/experiments/**/*.tar.*
+/experiments/**/*.tgz
+/experiments/**/*.gz
+/experiments/**/*.zip
+/experiments/**/*.zst
+/experiments/**/*.core
+/experiments/**/core.[0-9]*
+/experiments/**/bzImage
+/experiments/**/vmlinux
+/experiments/**/initramfs*.cpio*
+
 # Transient tooling output
 **/__pycache__/
 /debug/
