@@ -507,6 +507,87 @@ Parent-only policy and gitlink changes are committed to shared `main` when the
 task explicitly authorizes them. `worktrees/ACTIVE.md` is ignored local state
 and never participates in commits or merges.
 
+## Task Lifecycle And Closure
+
+Phantom closures — a task marked done while its work never actually landed on
+`main` — are a recurring failure mode. To prevent them, task completion is
+split into an implementation step the working agent performs and a closure step
+only the coordinator performs, with an adversarial review gate between them.
+
+### Status Model
+
+`tg` has only three non-terminal statuses — `open`, `backlog`, `in_progress` —
+and one terminal status, `closed`. **`resolved` is NOT a distinct state: `tg`
+accepts it only as an alias that immediately maps to `closed`** (the `--help`
+text groups them as `RESOLVED/CLOSED`, and `tg update --status resolved` prints
+`Closed:`). There is therefore no built-in "implemented but not landed" status,
+so IMPLEMENTED is represented explicitly with a tag while status stays
+`in_progress`:
+
+```text
+open/backlog -> in_progress -> in_progress + `implemented` tag (IMPLEMENTED)
+             -> closed (LANDED, coordinator only, after landing on main)
+```
+
+- **`in_progress`**: an agent is actively working the task.
+- **`in_progress` + `implemented` tag**: IMPLEMENTED — implementation complete
+  and published (PR link and handoff SHA recorded in a note), deliberately kept
+  out of the terminal `closed` bucket until it lands.
+- **`closed`**: LANDED — the coordinator confirmed the PR merged to `main`.
+
+### Rules
+
+1. **A working agent NEVER moves a task to a terminal status.** Do not run
+   `tg update --status closed`, and do not run `--status resolved` (it aliases
+   to `closed`). When implementation is complete, the agent adds the
+   `implemented` tag — preserving any existing tags, since `--tags` replaces the
+   set — leaves the status at `in_progress`, and posts the PR link plus exact
+   handoff SHA as a task note:
+
+   ```bash
+   tg note <task-id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"
+   tg update <task-id> --tags <existing-tags>,implemented   # status stays in_progress
+   ```
+
+   A completion report without a PR link (or, for a research-only task, the
+   durable artifact path) is incomplete. State the level, backend, and any
+   relaxations per the evidence rules, bound to the SHA, not a branch name.
+
+2. **An adversarial review agent confirms the work exists in the PR** before the
+   task is eligible for closure. The reviewer verifies the PR contains the
+   claimed change, the diff matches the report, and the cited validation is real
+   at the handoff SHA — not merely that a branch or note exists. An `implemented`
+   task whose PR is empty, superseded, or already merged elsewhere is a phantom;
+   strip the tag and keep it `in_progress`, do not close it.
+
+3. **The task stays IMPLEMENTED (`in_progress` + `implemented` tag) until the PR
+   lands on `main`.** A green PR that has not merged is still IMPLEMENTED, not
+   LANDED. Do not close on local validation, a green check, or an approval alone.
+
+4. **Only the coordinator closes tasks, and only after landing confirmation.**
+   Closure requires the merge commit reachable from `origin/main` (Hermit or
+   Reverie) or, for parent-only policy, the committed parent `main` SHA. Record
+   the landed SHA in the task and `ARCHIVED.md`, then close:
+
+   ```bash
+   tg note <task-id> "LANDED: main <40-hex> | merged <PR url> | closed by coordinator"
+   tg update <task-id> --status closed
+   ```
+
+### Exceptions
+
+- **Research-only tasks** produce no PR. The agent tags the task `implemented`
+  (status `in_progress`) with the durable artifact path (`ai_docs/…`,
+  `experiments/…`, or a memory slug) as the handoff link; the coordinator closes
+  after confirming the artifact exists and answers the question. Never close a
+  research task from a chat assertion alone.
+- **Blocked tasks** stay `in_progress` (or move back to `open`) with the exact
+  blocker and any partial committed SHA recorded; never tag `implemented` or
+  close a blocked task to signal progress.
+- **Stale-premise tasks** (the requested change already landed, or the target no
+  longer exists) are tagged `implemented` with a note explaining the stale
+  premise and the evidence SHA; the coordinator closes after verifying it.
+
 ## Bot-Created GitHub Issue Policy
 
 Bot-created issues go on the `rrnewton` forks **ONLY**. **NEVER create an
@@ -898,3 +979,13 @@ Before closeout:
 4. Remove the slot row, or update it if other sharing agents remain active.
 5. Reclaim legacy slots and any parked slot needed to keep at most five parked.
 6. Leave unrelated concurrent work exactly as found.
+
+Before closing a task (coordinator only, per Task Lifecycle And Closure):
+
+1. Confirm the task is `in_progress` with the `implemented` tag (IMPLEMENTED)
+   and carries a PR link or artifact path.
+2. Confirm the adversarial reviewer verified the work exists in that PR.
+3. Confirm the PR merged to `main` — merge commit reachable from `origin/main`
+   (or the committed parent `main` SHA for parent-only policy).
+4. Record the landed SHA, then `tg update <task-id> --status closed`. Never let
+   a working agent close its own task, and treat `--status resolved` as a close.

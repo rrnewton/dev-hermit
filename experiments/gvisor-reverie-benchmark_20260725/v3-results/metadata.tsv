@@ -1,0 +1,29 @@
+field	value
+timestamp_utc	2026-07-26T14:24:16Z
+hostname	devbig030.atn3.facebook.com
+kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
+cpu_model	AMD EPYC 9D85 158-Core Processor
+logical_cpus	316
+benchmark_cpu	18
+smt_siblings	18,176
+sample_size	20
+warmup_seconds	2
+measurement_seconds	5
+bootstrap_resamples	50000
+confidence_level	0.95
+idle_gate_seconds	10
+minimum_cpu_idle_percent	95
+maximum_load_per_logical_cpu	0.25
+order_seed	20260726
+parent_head	667fa56c0ac21f050f27bf2a41bfcdc9cfc58d4f
+parent_commit_depth	103
+harness_source_sha256	f103ff2a4af6fe5308e60354f1901953b76b8e74e5f840d216db6de960369937
+helper_source_sha256	c83ae1cfcaa264809fac5e66c4d7e037b3047c0ab372142fea3c3aa53be5a77f
+reverie_head	88fb2656059c4f41d5b9c9f6da016cef941bc317
+reverie_commit_depth	565
+reverie_diff_sha256	32413809406d68ee461fab98a54b243eb5077d8708d8ab1c0293e45e4faf1eff
+gvisor_head	8eb8f9e0df89e0352305057c2c08a993fe92bc03
+gvisor_commit_depth	11495
+gvisor_diff_sha256	8eb60b43d52056b8add9a32cf978daff691f8f456b43b67949a43db2fb263d92
+rustc	rustc 1.96.0 (ac68faa20 2026-05-25)
+cargo	cargo 1.96.0 (30a34c682 2026-05-25)

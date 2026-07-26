@@ -1,0 +1,141 @@
+run_syscall	field	value
+getpid	timestamp_utc	2026-07-26T15:12:10Z
+getpid	run_start_utc	2026-07-26T15:10:02Z
+getpid	run_start_load1_load5_load15	51.98 91.27 86.63
+getpid	metadata_load1_load5_load15	44.46 73.16 80.45
+getpid	hostname	devbig030.atn3.facebook.com
+getpid	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
+getpid	cpu_model	AMD EPYC 9D85 158-Core Processor
+getpid	logical_cpus	316
+getpid	benchmark_cpu	148
+getpid	smt_siblings	148,306
+getpid	scaling_governor	performance 
+getpid	scaling_driver	amd-pstate-epp 
+getpid	cpufreq_boost	1 
+getpid	amd_pstate_status	active 
+getpid	sample_size	20
+getpid	warmup_seconds	2
+getpid	measurement_seconds	5
+getpid	bootstrap_resamples	50000
+getpid	confidence_level	0.95
+getpid	idle_gate_seconds	10
+getpid	minimum_cpu_idle_percent	95
+getpid	maximum_load_per_logical_cpu	0.25
+getpid	order_seed	20260726
+getpid	parent_head	667fa56c0ac21f050f27bf2a41bfcdc9cfc58d4f
+getpid	parent_commit_depth	103
+getpid	harness_source_sha256	cd2ba8feb2df82969d9db5c23835dad1f399ed84f84574558754f9f03c21091f
+getpid	helper_source_sha256	c83ae1cfcaa264809fac5e66c4d7e037b3047c0ab372142fea3c3aa53be5a77f
+getpid	reverie_head	88fb2656059c4f41d5b9c9f6da016cef941bc317
+getpid	reverie_commit_depth	565
+getpid	reverie_diff_sha256	8a7f2b84a8ab9724de231906e5a4e4622a1f24b8d736aff35ef985befbf7ed20
+getpid	gvisor_head	8eb8f9e0df89e0352305057c2c08a993fe92bc03
+getpid	gvisor_commit_depth	11495
+getpid	gvisor_diff_sha256	e87f1970bd534a37ecbabd38e6f2eb7e2e17bb472c1c3a9e5ae94097e3474aa4
+getpid	rustc	rustc 1.96.0 (ac68faa20 2026-05-25)
+getpid	cargo	cargo 1.96.0 (30a34c682 2026-05-25)
+read-devnull	timestamp_utc	2026-07-26T15:14:25Z
+read-devnull	run_start_utc	2026-07-26T15:13:02Z
+read-devnull	run_start_load1_load5_load15	54.96 73.39 80.26
+read-devnull	metadata_load1_load5_load15	52.97 66.81 77.24
+read-devnull	hostname	devbig030.atn3.facebook.com
+read-devnull	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
+read-devnull	cpu_model	AMD EPYC 9D85 158-Core Processor
+read-devnull	logical_cpus	316
+read-devnull	benchmark_cpu	148
+read-devnull	smt_siblings	148,306
+read-devnull	scaling_governor	performance 
+read-devnull	scaling_driver	amd-pstate-epp 
+read-devnull	cpufreq_boost	1 
+read-devnull	amd_pstate_status	active 
+read-devnull	sample_size	20
+read-devnull	warmup_seconds	2
+read-devnull	measurement_seconds	5
+read-devnull	bootstrap_resamples	50000
+read-devnull	confidence_level	0.95
+read-devnull	idle_gate_seconds	10
+read-devnull	minimum_cpu_idle_percent	95
+read-devnull	maximum_load_per_logical_cpu	0.25
+read-devnull	order_seed	20260726
+read-devnull	parent_head	667fa56c0ac21f050f27bf2a41bfcdc9cfc58d4f
+read-devnull	parent_commit_depth	103
+read-devnull	harness_source_sha256	cd2ba8feb2df82969d9db5c23835dad1f399ed84f84574558754f9f03c21091f
+read-devnull	helper_source_sha256	c83ae1cfcaa264809fac5e66c4d7e037b3047c0ab372142fea3c3aa53be5a77f
+read-devnull	reverie_head	88fb2656059c4f41d5b9c9f6da016cef941bc317
+read-devnull	reverie_commit_depth	565
+read-devnull	reverie_diff_sha256	8a7f2b84a8ab9724de231906e5a4e4622a1f24b8d736aff35ef985befbf7ed20
+read-devnull	gvisor_head	8eb8f9e0df89e0352305057c2c08a993fe92bc03
+read-devnull	gvisor_commit_depth	11495
+read-devnull	gvisor_diff_sha256	e87f1970bd534a37ecbabd38e6f2eb7e2e17bb472c1c3a9e5ae94097e3474aa4
+read-devnull	rustc	rustc 1.96.0 (ac68faa20 2026-05-25)
+read-devnull	cargo	cargo 1.96.0 (30a34c682 2026-05-25)
+write-devnull	timestamp_utc	2026-07-26T15:18:56Z
+write-devnull	run_start_utc	2026-07-26T15:17:26Z
+write-devnull	run_start_load1_load5_load15	57.63 64.62 74.75
+write-devnull	metadata_load1_load5_load15	49.37 59.51 71.97
+write-devnull	hostname	devbig030.atn3.facebook.com
+write-devnull	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
+write-devnull	cpu_model	AMD EPYC 9D85 158-Core Processor
+write-devnull	logical_cpus	316
+write-devnull	benchmark_cpu	115
+write-devnull	smt_siblings	115,273
+write-devnull	scaling_governor	performance 
+write-devnull	scaling_driver	amd-pstate-epp 
+write-devnull	cpufreq_boost	1 
+write-devnull	amd_pstate_status	active 
+write-devnull	sample_size	20
+write-devnull	warmup_seconds	2
+write-devnull	measurement_seconds	5
+write-devnull	bootstrap_resamples	50000
+write-devnull	confidence_level	0.95
+write-devnull	idle_gate_seconds	10
+write-devnull	minimum_cpu_idle_percent	95
+write-devnull	maximum_load_per_logical_cpu	0.25
+write-devnull	order_seed	20260726
+write-devnull	parent_head	667fa56c0ac21f050f27bf2a41bfcdc9cfc58d4f
+write-devnull	parent_commit_depth	103
+write-devnull	harness_source_sha256	cd2ba8feb2df82969d9db5c23835dad1f399ed84f84574558754f9f03c21091f
+write-devnull	helper_source_sha256	c83ae1cfcaa264809fac5e66c4d7e037b3047c0ab372142fea3c3aa53be5a77f
+write-devnull	reverie_head	88fb2656059c4f41d5b9c9f6da016cef941bc317
+write-devnull	reverie_commit_depth	565
+write-devnull	reverie_diff_sha256	8a7f2b84a8ab9724de231906e5a4e4622a1f24b8d736aff35ef985befbf7ed20
+write-devnull	gvisor_head	8eb8f9e0df89e0352305057c2c08a993fe92bc03
+write-devnull	gvisor_commit_depth	11495
+write-devnull	gvisor_diff_sha256	e87f1970bd534a37ecbabd38e6f2eb7e2e17bb472c1c3a9e5ae94097e3474aa4
+write-devnull	rustc	rustc 1.96.0 (ac68faa20 2026-05-25)
+write-devnull	cargo	cargo 1.96.0 (30a34c682 2026-05-25)
+clock-gettime	timestamp_utc	2026-07-26T15:22:33Z
+clock-gettime	run_start_utc	2026-07-26T15:21:10Z
+clock-gettime	run_start_load1_load5_load15	31.84 49.02 66.40
+clock-gettime	metadata_load1_load5_load15	48.16 51.04 65.71
+clock-gettime	hostname	devbig030.atn3.facebook.com
+clock-gettime	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
+clock-gettime	cpu_model	AMD EPYC 9D85 158-Core Processor
+clock-gettime	logical_cpus	316
+clock-gettime	benchmark_cpu	25
+clock-gettime	smt_siblings	25,183
+clock-gettime	scaling_governor	performance 
+clock-gettime	scaling_driver	amd-pstate-epp 
+clock-gettime	cpufreq_boost	1 
+clock-gettime	amd_pstate_status	active 
+clock-gettime	sample_size	20
+clock-gettime	warmup_seconds	2
+clock-gettime	measurement_seconds	5
+clock-gettime	bootstrap_resamples	50000
+clock-gettime	confidence_level	0.95
+clock-gettime	idle_gate_seconds	10
+clock-gettime	minimum_cpu_idle_percent	95
+clock-gettime	maximum_load_per_logical_cpu	0.25
+clock-gettime	order_seed	20260726
+clock-gettime	parent_head	667fa56c0ac21f050f27bf2a41bfcdc9cfc58d4f
+clock-gettime	parent_commit_depth	103
+clock-gettime	harness_source_sha256	cd2ba8feb2df82969d9db5c23835dad1f399ed84f84574558754f9f03c21091f
+clock-gettime	helper_source_sha256	c83ae1cfcaa264809fac5e66c4d7e037b3047c0ab372142fea3c3aa53be5a77f
+clock-gettime	reverie_head	88fb2656059c4f41d5b9c9f6da016cef941bc317
+clock-gettime	reverie_commit_depth	565
+clock-gettime	reverie_diff_sha256	8a7f2b84a8ab9724de231906e5a4e4622a1f24b8d736aff35ef985befbf7ed20
+clock-gettime	gvisor_head	8eb8f9e0df89e0352305057c2c08a993fe92bc03
+clock-gettime	gvisor_commit_depth	11495
+clock-gettime	gvisor_diff_sha256	e87f1970bd534a37ecbabd38e6f2eb7e2e17bb472c1c3a9e5ae94097e3474aa4
+clock-gettime	rustc	rustc 1.96.0 (ac68faa20 2026-05-25)
+clock-gettime	cargo	cargo 1.96.0 (30a34c682 2026-05-25)

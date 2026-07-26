@@ -1,0 +1,12 @@
+artifact	sha256
+/tmp/criterion-counter1-v3-clock3-20260726/syscall-server-v3	634c70472773839cd5c4f23e1765a519664a8381baa67b8c7ad68e3cbbe56eae
+/home/newton/work/dev-hermit/experiments/gvisor/bazel-bin/runsc/runsc_/runsc	1d58df2480722c24e574e4dc0fd195ff95d6a9a3d928b4408f60245c7571c9e5
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/counter1	aa0d674d3d105e8063a9920497f9cd4b9be2d5a1d524d3ad1a1643ab6d40aca6
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/build/reverie-dbi-fa86f460bfce05f3/out/dynamorio-install/bin64/drrun	dc3619e9259a737ac13fe4c5d35807a6b88ab848deecf692602d01c16201110a
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/reverie-dbi-native/libreverie_dbi_client.so	3f017798ce66dae025f8968c0e8be14fc10aabe84be53de184687fdd84cd8ba9
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/reverie-kvm-counter1	ad1b2504778a1923664ddc825e3b2b7a74953565ca3c826f92792b82c97f3843
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/reverie-sabre-strace	5a8985dda463a92f123dc53a321f5a717359ee6a09e8ee14505dfda174f9de81
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/release/libreverie_sabre_strace_plugin.so	186c41f4fae78245b07b4c0a25a9bcad079cb751af0f3081a1fc973bbcdac580
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/target/sabre-v3/sabre	4204999ce476e0dd2e4ac88ae40823b5cfaeefe74501686ea5d28e4b837edef1
+/home/newton/work/dev-hermit/worktrees/slot330/reverie/reverie-examples/counter1_tool.rs	a5e2e5a42624e70021396d3102acd60c4d030bcd04dbdb2fcf096ffd781453d1
+/home/newton/work/dev-hermit/experiments/gvisor/pkg/sentry/platform/counter1/counter1.go	9d645aee67a1c387cddbdb293c81041251bbf51324d660d156fd54628c543ed6

@@ -1,0 +1,5 @@
+run_syscall	syscall	seed	backend_order
+getpid	getpid	11400714819309886307	native,reverie-kvm,gvisor-kvm,reverie-ptrace,reverie-sabre,gvisor-systrap,reverie-dbi
+read-devnull	read-devnull	11400714819309886307	native,reverie-kvm,gvisor-kvm,reverie-ptrace,reverie-sabre,gvisor-systrap,reverie-dbi
+write-devnull	write-devnull	11400714819309886307	native,reverie-kvm,gvisor-kvm,reverie-ptrace,reverie-sabre,gvisor-systrap,reverie-dbi
+clock-gettime	clock-gettime	11400714819309886307	native,reverie-kvm,gvisor-kvm,reverie-ptrace,reverie-sabre,gvisor-systrap,reverie-dbi

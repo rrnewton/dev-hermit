@@ -1,0 +1,54 @@
+{
+  "experiment": "gVisor vs Reverie syscall-interception benchmark (v2, steady-state)",
+  "date": "2026-07-25",
+  "owner": "hermit-178 (resumed from hermit-165 after OOMD kill)",
+  "host": {
+    "fqdn": "devbig030.atn3.facebook.com",
+    "kernel": "6.17.13-0_fbk0_crackerjackhost",
+    "cpu": "AMD EPYC 9D85 158-Core Processor",
+    "logical_cpus": 316,
+    "pinned_cpu": 112,
+    "load_caveat": "system load ~300-400 during runs; medians are directional, not publication-grade"
+  },
+  "methodology": {
+    "warmups": 2,
+    "measured_samples": 9,
+    "statistic": "median",
+    "backend_rotation": "backend order rotated by round to spread interference",
+    "env": {"LC_ALL": "C", "LANG": "C", "RUST_LOG": "off"}
+  },
+  "backends": [
+    "native",
+    "gvisor-systrap",
+    "gvisor-kvm",
+    "reverie-ptrace (counter2)",
+    "reverie-dbi (drrun + libreverie_dbi_client.so, PrototypeTool)",
+    "reverie-kvm (reverie-kvm-counter)",
+    "reverie-sabre (riptrace + SaBRe + libriptrace_plugin.so)"
+  ],
+  "provenance": {
+    "gvisor_revision": "8eb8f9e0df89e0352305057c2c08a993fe92bc03",
+    "runsc_sha256": "609fa54eb3d2021c0039a000d97e7585bd6c7c7217446a8690049f9649614aa8",
+    "reverie_base_revision": "d0bf6cc8dd70c9218853ed992a6a3b63d14ff007",
+    "hermit_primary_main": "e5a83fc342627b1d03b4e5865792c0a9dce0ed36",
+    "toolchain": "rustc 1.96.0; rust-script 0.36.0",
+    "reverie_binary_sha256_prefixes": {
+      "counter2": "9a91170cbd068629",
+      "reverie-kvm-counter": "95265368dc5afe82",
+      "riptrace": "65c43383cb3d7052",
+      "sabre": "65387a9dc062e877",
+      "libreverie_dbi_client.so": "f3fd35a4645267d5"
+    }
+  },
+  "workloads": {
+    "getpid-3s": "dynamic C fixture, 40,000,000 getpid() calls (exact op count)",
+    "find-usr": "/usr/bin/find /usr -type f; expected exit 1 (3 unreadable host dirs); ~3.019M syscalls",
+    "dd-byte-io": "dd if=/dev/zero of=/dev/null bs=1 count=15000000 (30M read+write ops, exact)",
+    "tar-doc": "tar cf /dev/null with /usr/share/doc repeated 120x; ~1.96M syscalls",
+    "sqlite-100k": "sqlite3 :memory: 100K-row insert + index + 900 full scans; COMPUTE-bound (~167 syscalls)"
+  },
+  "compatibility_exclusions": {
+    "reverie-kvm": "cannot run find-usr / dd-byte-io / tar-doc (ENOSYS: /usr, /dev/zero, /dev/null); passes getpid-3s and sqlite-100k only"
+  },
+  "artifacts_source": "hermit/target/gvisor-benchmark-v2/ (gitignored scratch); raw TSVs copied here for durability"
+}

@@ -1,0 +1,23 @@
+{
+  "task": "research-linux-vm-roadmap",
+  "captured_utc": "2026-07-26T12:49:57Z",
+  "hermit_sha": "fb5f201487d2a135ad455a4d5b08c86718359c8a",
+  "hermit_binary_sha256": "21ff6e012b1d357582d892822d4ff3befb6f938eaeeca5756114b47717469480",
+  "backend": "ptrace",
+  "qemu_version": "10.1.0 (qemu-kvm-10.1.0-21.el9)",
+  "qemu_accel": "tcg,thread=single",
+  "qemu_smp": 1,
+  "qemu_icount": "shift=0,sleep=off",
+  "kernel_sha256": "e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2",
+  "initramfs_sha256": "b54056eab4a2c939e946b9c15eeadf45fb3cff8f9b5e75f5f884657802543292",
+  "host_kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+  "host_arch": "x86_64",
+  "perf_event_paranoid": 1,
+  "source_isolation": "git archive of origin/main into /tmp; no checkout modified",
+  "raw_artifacts": "scratch/linux-vm-roadmap-20260726/",
+  "fail_open_control": {
+    "hermit_sha": "54ff993753a62dd174f4af8aff4ed306c2589766",
+    "hermit_binary_sha256": "05e4cf08bd6c01fea40bd32ba5507fba0a26276f155b4552c710a83e3c7ce95a",
+    "initramfs_sha256": "e430910ceb247c9111215a75e0fe2c38381a86382ad4878183b0a29343d5249d"
+  }
+}

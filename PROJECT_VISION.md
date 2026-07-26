@@ -30,7 +30,7 @@ Every mode must catch up to the one before it:
 1. **Land PRs, keep main green, zero compile warnings**
 2. **Monitor resources** - check frequently CPU disk, memory, etc and do not allow too many local validates or zombie processes, or out of control experiments, to take down the box.
 3. **Keep agent fleet busy** s You are driving autonomously at FULL SPEED, with 10-15 agents busy on this big dev box. You have multiple lines of P0 work and massive open-ended backlogs. Pre-generate parallel work in the task graph
-4. **Check CI health and ci-runner queue depth**, make sure we are not overwhelming CI and that it is healthy. Cancellation policy should not have too many jobs outstanding and we can always supplement CI with local validate.sh / locally-validated PR label protocol.
+4. **Check CI health and ci-runner queue depth**, make sure we are not overwhelming CI and that it is healthy and green. Cancellation policy should mean not too many jobs outstanding and we can always supplement CI with local validate.sh / locally-validated PR label protocol. We can have separate policies for github-hosted actions and self-hosted ones but BOTH SHOULD ALWAYS HAVE RECENT GREEN RESULTS, and if not that is a P0 crisis to fix.
 5. **Clean repo state** — minimal open PRs, branches deleted after merge, `git status` clean in both parent and hermit/reverie checkouts
 
 ## Failure Modes to Avoid
@@ -45,6 +45,7 @@ Every mode must catch up to the one before it:
 8. **Waiting for user review:** Do own review iterations. Don't block on human review. Use adversarial agent review.
 9. **Single-threaded thinking:** Debugging is parallelizable. Burst agents for root-causing. Implementation can parallelize across subsystems.
 10. **Stale context reuse:** Restart agents when their context is stale or full. Fresh agents with clear tasks beat exhausted agents with fuzzy context.
+11. **Broken CI, agents ignoring it:** CI is red but agents locally validate to land, not fixing the problem.
 
 ## Autonomous Operation Protocol
 
@@ -66,18 +67,39 @@ Allows advanced chaos mode which perturbs program schedule orders and is compati
 
 Works for everything rr does. Eventually is configurable from an rr-like mode to a `hermit run` mode that ONLY records external communication at the container boundary (and optionally file system boundary).
 
-### DBI Backend
-```
-hermit-cli → Detcore<DbiGuest> → DynamoRIO
-  NO hacks or temporary proof-of-concepts. Fully runs all hermit --strict --verify that ptrace can.
-```
+### Drive Reverie BACKENDS
+
+Keep one fixed-purpose agent for each backend: "hermit-kvm", "hermit-dbi", "hermit-sabre", "hermit-liteinst", "hermit-e9patch".  Each will drive forward to have a complete and correct Reverie backend (working for arbitrary Reverie tools) plus hermit/detcore integration eventually supporting ALL the same guest programs deterministically as hermit/ptrace.
 
 ### KVM Backend
+Highest priority, will probably be our flagship backend.
 ```
 hermit-cli → Detcore<KvmGuest> → KVM (gvisor model)
   Similar to gvisor (Go program as kernel, trap all syscalls in userspace) but with Detcore tool as the "operating system".
   NO hacks or temporary proof-of-concepts. Fully runs all hermit --strict --verify that ptrace can.
 ```
+### LiteInst Backend
+
+Aside from KVM and ptrace, ALL other binary patching/instrumentation backends keep the Reverie local tool INSIDE the guest address space (communicating to the global state through RPC that shares code between reverie-liteinst, reverie-dbi, reverie-sabre, reverie-e9patch).
+
+Based on my instruction punning invention and our new reimplemntation (liteinst2), which provides DYNAMIC hooking of arbitrary instructions.
+In this backend, we trap nondeterministic instructions (syscalls/cpuid/rdtsc/rdrand/etc) but on the first trap we patch them to hook directly into the guest.
+
+Our plan is to use LD_PRELOAD to infect the guest (and its children) and remove the need for ptrace as much as possible, but resort to a ptrace supervisor as a backup if there is a corner case we cannot handle.
+
+### DBI Backend
+Dynamic Binary Translation based on DynamoRIO. This should be foolproof at catching nondeterministic instructions, and has the benefit that it can build branch-counting directly in, avoiding the problem of massive skid on PMU retired branch conditional timers. But it will probably fail on self-modifying code, e.g JVM JITs or QEMU TCG.
+
+```
+hermit-cli → Detcore<DbiGuest> → DynamoRIO
+  NO hacks or temporary proof-of-concepts. Fully runs all hermit --strict --verify that ptrace can.
+```
+
+### Sabre Backend
+Another binary patching backend, but at startup time it scans all application code.  With this one we use ptrace + sabre and hew closer to the design of the ptrace backend but try to optimize how many nondet instructions avoid traps.  However, ptrace needs to be able to redirect trapped instructions to in-guest handlers because the Reverie tool state lives in guest address spaces.
+
+### e9patch Backend
+Based on instruction punning like LiteInst but at startup time.  We pair this with our own scanning for nondet instructions (CFG reconstruction), very similar to Sabre. But we try to share the same LD_PRELOAD injection method making this a close counterpart to the LiteInst backend.
 
 ### Done = Identical
-A backend is done when ALL programs produce bitwise-identical output across all hermit reverie backends (ptrace/DBI/KVM). Same memory hashes, same guest output, same exit codes.
+A backend is done when ALL programs produce bitwise-identical output across all hermit reverie backends (ptrace/KVM/Liteinst/etc). Same memory hashes, same guest output, same exit codes.

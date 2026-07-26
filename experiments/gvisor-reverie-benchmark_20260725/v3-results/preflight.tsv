@@ -1,0 +1,8 @@
+backend	tool	n0_count	n16_count	delta	status
+native	tool-free-subtraction-baseline	NA	NA	NA	pass
+gvisor-systrap	CounterLocal	33	49	16	pass
+gvisor-kvm	CounterLocal	33	49	16	pass
+reverie-ptrace	CounterLocal	33	49	16	pass
+reverie-dbi	CounterLocal	32	48	16	pass
+reverie-kvm	CounterLocal	33	49	16	pass
+reverie-sabre	CounterLocal	7	23	16	pass

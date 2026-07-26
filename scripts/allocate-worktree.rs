@@ -59,8 +59,9 @@ Options:
 
 Homeostasis (advisory, never blocks): every allocation also prints a LOUD
 banner if worktrees/ disk exceeds the GB cap (env HERMIT_WORKTREE_GB_CAP,
-default 200 GB), if any slot has had no state update in >24h, or if slot dirs
-exceed a soft count. The GB cap is the real limit; slot count is advisory.
+default 200 GB), if any physical slot has had no file edits in >24h (registered
+or orphaned), or if slot dirs exceed a soft count. The GB cap is the real limit;
+slot count is advisory.
 
 Policy:
   * One mutating owner per slot; a second mutating agent is refused.
@@ -156,6 +157,32 @@ fn dir_size_bytes(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Newest modification time (epoch seconds) of a *source* file anywhere under
+/// `dir`, ignoring build/VCS churn (target/, .git/, node_modules/). This is the
+/// real "when was this slot last edited" signal — unlike the state timestamp,
+/// which only moves when allocate-worktree runs. Returns 0 when nothing is found.
+fn newest_source_mtime(dir: &Path) -> i64 {
+    if !dir.exists() {
+        return 0;
+    }
+    let out = Command::new("find")
+        .arg(dir)
+        .args([
+            "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", "node_modules", ")",
+            "-prune", "-o", "-type", "f", "-printf", "%T@\n",
+        ])
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            // find prints float epochs like "1690000000.1234567"; take the seconds.
+            .filter_map(|l| l.split('.').next().and_then(|s| s.parse::<i64>().ok()))
+            .max()
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
 /// Count physical slot directories under worktrees/ (each child dir is a slot).
 fn physical_slot_count(root: &Path) -> usize {
     let wt = root.join("worktrees");
@@ -195,29 +222,68 @@ fn homeostasis_check(root: &Path) {
         eprintln!("homeostasis: worktrees/ = {gb:.1} GB / {cap_gb} GB cap (ok)");
     }
 
-    // Languishing slots: no state update in >24h.
+    let languish_hours: i64 = std::env::var("HERMIT_WORKTREE_LANGUISH_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(LANGUISH_HOURS);
+
+    // Languishing slots: no *file edits* in >24h. We walk the PHYSICAL slot dirs
+    // (not just registered ones) so abandoned/orphaned slots are caught, and use
+    // the real newest source-file mtime — max'd with the registered state
+    // timestamp so a freshly-allocated slot that hasn't been touched yet isn't
+    // falsely flagged. Re-read state fresh so --check-only reflects current truth.
     let now = epoch_now();
-    // Re-read state fresh so --check-only reflects current disk truth.
     let state = load_state(root);
-    let mut languishing: Vec<String> = Vec::new();
-    if let Some(slots) = state["slots"].as_object() {
-        for (name, s) in slots {
-            let iso = s["updated"].as_str().or_else(|| s["allocated"].as_str());
-            if let Some(iso) = iso {
-                if let Some(e) = epoch_of(iso) {
-                    let hours = (now - e) / 3600;
-                    if hours >= LANGUISH_HOURS {
-                        languishing.push(format!("{name} ({hours}h idle)"));
-                    }
-                }
+    let slots_obj = state["slots"].as_object();
+    // (name, idle_hours, registered) sorted most-idle-first.
+    let mut languishing: Vec<(String, i64, bool)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root.join("worktrees")) {
+        let mut names: Vec<String> = rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        for name in names {
+            let dir = root.join("worktrees").join(&name);
+            let registered = slots_obj.map(|s| s.contains_key(&name)).unwrap_or(false);
+            let state_ts = slots_obj
+                .and_then(|s| s.get(&name))
+                .and_then(|s| s["updated"].as_str().or_else(|| s["allocated"].as_str()))
+                .and_then(epoch_of)
+                .unwrap_or(0);
+            // Last activity = most recent of {real edit, registration bump}.
+            let last = newest_source_mtime(&dir).max(state_ts);
+            if last == 0 {
+                continue; // can't determine an age; don't guess.
+            }
+            let hours = (now - last) / 3600;
+            if hours >= languish_hours {
+                languishing.push((name, hours, registered));
             }
         }
     }
     if !languishing.is_empty() {
+        languishing.sort_by(|a, b| b.1.cmp(&a.1));
+        let total = languishing.len();
+        const SHOW: usize = 10;
+        let shown: Vec<String> = languishing
+            .iter()
+            .take(SHOW)
+            .map(|(n, h, reg)| {
+                let tag = if *reg { "" } else { ", UNREGISTERED" };
+                format!("{n} ({h}h no edits{tag})")
+            })
+            .collect();
+        let more = if total > SHOW {
+            format!(" (+{} more)", total - SHOW)
+        } else {
+            String::new()
+        };
         warnings.push(format!(
-            "LANGUISHING SLOTS (>{LANGUISH_HOURS}h, no state update): {}.\n     \
-             Land their work as a branch/draft PR, then release the slot.",
-            languishing.join(", ")
+            "LANGUISHING SLOTS: {total} slot(s) with no file edits in >{languish_hours}h: {}{more}.\n     \
+             Land their work as a branch/draft PR, then release: scripts/release-worktree.rs --slot <slot> --clean",
+            shown.join(", ")
         ));
     }
 

@@ -1,0 +1,5 @@
+probe,hermit_mode,log,relaxations,exit_or_result,guest_marker,comparison,notes
+minimal_strict_gate,run_--strict,info,none,fail_before_L1,absent,not_run,"seccomp TSYNC NULL capability probe rejected as Unsupported after PR #644"
+minimal_fail_open_oracle,run,warn,unsupported_syscall_passthrough,exit_0,present,not_run,"21626-byte console; Linux /init ran and powered down"
+minimal_fail_open_verify,run_--verify,warn,unsupported_syscall_passthrough,exit_0,not_replayed,"1130696 messages/run; 852621 DETLOG+COMMIT/run; no substantive differences","diagnostic only; not L2 because explicit --strict was absent"
+native_seccomp_probe,native_strace,n/a,n/a,EFAULT,n/a,n/a,"seccomp(SECCOMP_SET_MODE_FILTER,SECCOMP_FILTER_FLAG_TSYNC,NULL)"

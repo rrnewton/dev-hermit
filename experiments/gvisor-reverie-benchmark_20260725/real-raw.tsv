@@ -1,0 +1,387 @@
+suite	workload	backend	phase	sample	wall_ns	status	observed_syscalls	operations	stderr_tail
+real	getpid-3s	native	warmup	0	4180332282	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	warmup	0	324970344426	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	warmup	0	44431741385	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	warmup	0	1648035416534	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	warmup	0	67142539305	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056192 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	warmup	0	1182371312390	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	warmup	0	46033008708	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	gvisor-systrap	warmup	1	332508868338	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	warmup	1	43125086901	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	warmup	1	1624567709477	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	warmup	1	58937391215	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056189 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	warmup	1	1206294581838	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	warmup	1	48218947977	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	warmup	1	4116128871	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	0	46640970911	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	0	1584284423032	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	0	61980950687	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056190 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	0	1164087843963	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	0	41814556454	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	0	4187588257	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	0	322759940546	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	1	1605575553769	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	1	61108527870	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056190 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	1	1176513681020	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	1	38653948121	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	1	3767781050	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	1	311172746473	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	1	43500580938	0	NA	40000000	
+real	getpid-3s	reverie-dbi	measure	2	59610705973	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056192 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	2	1153000074275	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	2	39511870423	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	2	4139483136	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	2	341303639535	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	2	44641636213	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	2	1583862671510	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-kvm	measure	3	1157142819819	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	3	44640345669	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	3	4103206823	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	3	313165330134	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	3	43270543807	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	3	1607672841654	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	3	60489923253	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056190 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-sabre	measure	4	45974021312	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	4	4235715640	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	4	327484408140	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	4	43183188287	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	4	1624675322463	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	4	58523725372	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056189 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	4	1179039509970	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	native	measure	5	4029748071	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	5	326471084078	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	5	45322500276	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	5	1661860487021	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	5	59787140845	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056189 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	5	1191096240486	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	5	37855511559	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	gvisor-systrap	measure	6	342714019261	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	6	44714425391	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	6	1652519845659	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	6	61564367077	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056189 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	6	1171729230720	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	6	45419917394	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	6	4318987981	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	7	45215399497	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	7	1627636862872	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	7	66272726541	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056189 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	7	1190186476363	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	7	46756010092	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	7	3984867730	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	7	330228190715	0	NA	40000000	
+real	getpid-3s	reverie-ptrace	measure	8	1632415977044	0	40000039	40000000	 [counter tool] Total system calls in process tree: 40000039, from 1 processes, 1 thread(s).\n
+real	getpid-3s	reverie-dbi	measure	8	66693226273	0	40000038	40000000	reverie-dbi: tool=PrototypeTool branches=40056190 syscalls=40000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+real	getpid-3s	reverie-kvm	measure	8	1194920707341	0	40000039	40000000	reverie-counter: syscalls=40000039 threads=1\n
+real	getpid-3s	reverie-sabre	measure	8	43616724189	0	40000011	40000000	Saw 40000011 syscalls\n
+real	getpid-3s	native	measure	8	4142370840	0	NA	40000000	
+real	getpid-3s	gvisor-systrap	measure	8	340982006963	0	NA	40000000	
+real	getpid-3s	gvisor-kvm	measure	8	45621294718	0	NA	40000000	
+real	find-usr	native	warmup	0	10642844966	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	warmup	0	42051406926	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	warmup	0	58764462371	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	warmup	0	135142865885	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	warmup	0	14561342226	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519295 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	warmup	0	109471635	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	warmup	0	12247887608	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	gvisor-systrap	warmup	1	36924025905	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	warmup	1	60912523760	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	warmup	1	131444888596	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	warmup	1	16126847320	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519261 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	warmup	1	310530599	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	warmup	1	13790362316	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	warmup	1	7985658011	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	0	57561983749	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	0	133413242683	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	0	14397024756	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519257 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	0	47601459	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	0	12612328380	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	measure	0	6581110079	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	0	38311399126	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	1	130528640656	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	1	17580709434	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519271 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	1	211783789	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	1	13743423913	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	measure	1	7792202992	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	1	34489941229	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	1	59562277108	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-dbi	measure	2	17554807135	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519305 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	2	36718773	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	2	10784757040	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	measure	2	8255383039	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	2	38231590302	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	2	60569481026	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	2	133130178839	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-kvm	measure	3	100057934	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	3	14055094402	1	3019133	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019133 syscalls\n
+real	find-usr	native	measure	3	7889190681	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	3	39188453933	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	3	59827030049	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	3	130290876312	1	3019181	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019181, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	3	17087209150	1	3019179	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=287483847 syscalls=3019179 rewritten=2590346 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-sabre	measure	4	12795840854	1	3019133	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019133 syscalls\n
+real	find-usr	native	measure	4	7291360905	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	4	37556245346	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	4	60564033789	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	4	130417914047	1	3019181	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019181, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	4	17576603094	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=287478823 syscalls=3019178 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	4	119125401	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	native	measure	5	7609682942	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	5	38281412735	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	5	57990564959	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	5	129168194511	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	5	17610151565	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519307 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	5	38200614	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	5	13623171302	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	gvisor-systrap	measure	6	39377568440	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	6	63634943468	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	6	132997711086	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	6	17226411525	1	3019176	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=289519307 syscalls=3019176 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	6	191864652	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	6	13196235640	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	measure	6	7559997957	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-kvm	measure	7	58731569672	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	7	135758595750	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019178, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	7	17952535655	1	3019219	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=290025599 syscalls=3019219 rewritten=2590382 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	7	101949413	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	7	10736443477	1	3019130	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019130 syscalls\n
+real	find-usr	native	measure	7	5614928623	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	7	30553897821	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	reverie-ptrace	measure	8	146087858792	1	3019180	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n [counter tool] Total system calls in process tree: 3019180, from 1 processes, 1 thread(s).\n
+real	find-usr	reverie-dbi	measure	8	17561526549	1	3019178	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nreverie-dbi: tool=PrototypeTool branches=287478749 syscalls=3019178 rewritten=2590345 stdin_reads=0 memory_hash=0000000000000000\n
+real	find-usr	reverie-kvm	measure	8	43973413	1	80	NA	/usr/bin/find: '/usr': Function not implemented\n/usr/bin/find: Failed to restore initial working directory: Function not implemented\nreverie-counter: syscalls=80 threads=1\n
+real	find-usr	reverie-sabre	measure	8	13368640819	1	3019132	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\nSaw 3019132 syscalls\n
+real	find-usr	native	measure	8	7725650373	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	find-usr	gvisor-systrap	measure	8	2301890137927	143	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n
+real	find-usr	gvisor-kvm	measure	8	49183242734	1	NA	NA	/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied\n/usr/bin/find: '/usr/share/empty.sshd': Permission denied\n/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied\n
+real	dd-byte-io	native	warmup	0	3568235589	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	warmup	0	186450136839	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	warmup	0	36035760934	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	warmup	0	1021584339586	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	warmup	0	50431154088	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	warmup	0	44913326	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	warmup	0	42608811550	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	gvisor-systrap	warmup	1	190435629711	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	warmup	1	37339907082	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	warmup	1	954292493002	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	warmup	1	48954760907	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068507 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	warmup	1	36676440	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	warmup	1	41578332638	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	warmup	1	3225870762	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	0	35349622217	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	0	949190196329	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	0	48496404739	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	0	37146698	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	0	41330520774	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	0	3247425278	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	0	170198529083	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	1	941954541510	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	1	48848435459	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068507 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	1	43178296	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	1	41625617272	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	1	3364364642	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	1	170817477950	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	1	34766692096	0	NA	30000000	
+real	dd-byte-io	reverie-dbi	measure	2	48615658029	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	2	33572701	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	2	42313140621	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	2	3506417195	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	2	169753807016	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	2	34850822216	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	2	939238739308	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-kvm	measure	3	38581573	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	3	41536065894	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	3	3346294159	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	3	169853639913	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	3	35055799507	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	3	933938144659	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	3	49078758442	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-sabre	measure	4	41779962014	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	4	3387271769	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	4	166888632281	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	4	34821088962	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	4	933294794134	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	4	48718077131	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	4	33384292	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	native	measure	5	3197925305	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	5	166749311523	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	5	35051836427	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	5	937175002611	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	5	48495778373	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	5	35776988	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	5	41526228459	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	gvisor-systrap	measure	6	170533539755	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	6	35035682084	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	6	942303539918	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	6	48799323702	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	6	111209169	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	6	41135261683	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	6	3337236396	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	7	34943173504	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	7	936489062118	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	7	49505472401	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068504 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	7	41309383	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	7	41461495266	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	7	3387821812	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	7	167143435255	0	NA	30000000	
+real	dd-byte-io	reverie-ptrace	measure	8	926005250240	0	30000050	30000000	 [counter tool] Total system calls in process tree: 30000050, from 1 processes, 1 thread(s).\n
+real	dd-byte-io	reverie-dbi	measure	8	48815110652	0	30000048	30000000	reverie-dbi: tool=PrototypeTool branches=750068507 syscalls=30000048 rewritten=30000023 stdin_reads=15000000 memory_hash=0000000000000000\n
+real	dd-byte-io	reverie-kvm	measure	8	65773239	1	47	30000000	/usr/bin/dd: failed to open '/dev/zero': Function not implemented\nreverie-counter: syscalls=47 threads=1\n
+real	dd-byte-io	reverie-sabre	measure	8	41794300897	0	30000021	30000000	Saw 30000021 syscalls\n
+real	dd-byte-io	native	measure	8	3217481460	0	NA	30000000	
+real	dd-byte-io	gvisor-systrap	measure	8	166692899421	0	NA	30000000	
+real	dd-byte-io	gvisor-kvm	measure	8	34768130670	0	NA	30000000	
+real	tar-doc	native	warmup	0	3231604708	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	warmup	0	31488046674	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	warmup	0	79800477653	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	warmup	0	65814501200	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	warmup	0	15072357829	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	warmup	0	37109219	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	warmup	0	5769948199	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	gvisor-systrap	warmup	1	31803956990	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	warmup	1	81571996380	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	warmup	1	65614029434	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	warmup	1	15098582994	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	warmup	1	41195828	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	warmup	1	5753351579	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	warmup	1	3095978576	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	0	79753649494	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	0	64988097287	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	0	15218254205	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514721 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	0	42147235	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	0	5813674458	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	0	3013285964	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	0	31565327110	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	1	65448844020	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	1	15299428442	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	1	281388653	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	1	5727789531	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	1	3056870996	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	1	31614301210	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	1	80026296032	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-dbi	measure	2	15137813332	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514721 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	2	44807863	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	2	5780743073	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	2	3063834953	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	2	31420809779	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	2	79481395685	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	2	64987712592	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-kvm	measure	3	35965089	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	3	5884732923	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	3	3139608366	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	3	31688685560	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	3	81119653628	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	3	64584916015	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	3	16284986570	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-sabre	measure	4	5757335285	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	4	3187399790	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	4	31281986572	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	4	79846970080	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	4	66002404502	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	4	15212219305	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	4	38112713	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	native	measure	5	3026691376	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	5	31631859190	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	5	80868613939	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	5	64541963715	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	5	15213204889	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	5	129433239	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	5	5917060512	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	gvisor-systrap	measure	6	32244783419	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	6	82450387213	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	6	65398373403	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	6	15801078774	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514706 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	6	557936258	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	6	5976631666	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	6	3240339000	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	7	81971284293	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	7	65318305727	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	7	15540865361	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514705 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	7	551080042	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	7	5887372009	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	7	3230311261	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	7	34193491795	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	reverie-ptrace	measure	8	65471013707	0	1963837	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n [counter tool] Total system calls in process tree: 1963837, from 1 processes, 1 thread(s).\n
+real	tar-doc	reverie-dbi	measure	8	15688545040	0	1963832	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nreverie-dbi: tool=PrototypeTool branches=1267514721 syscalls=1963832 rewritten=1710773 stdin_reads=0 memory_hash=0000000000000000\n
+real	tar-doc	reverie-kvm	measure	8	105987816	2	94	NA	/usr/bin/tar: /dev/null: Cannot open: Function not implemented\n/usr/bin/tar: Error is not recoverable: exiting now\nreverie-counter: syscalls=94 threads=1\n
+real	tar-doc	reverie-sabre	measure	8	6186823528	0	1963764	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\nSaw 1963764 syscalls\n
+real	tar-doc	native	measure	8	3263307320	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-systrap	measure	8	34404351577	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	tar-doc	gvisor-kvm	measure	8	84423558802	0	NA	NA	/usr/bin/tar: Removing leading `/' from member names\n/usr/bin/tar: Removing leading `/' from hard link targets\n
+real	sqlite-100k	native	warmup	0	4024686245	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	warmup	0	3916870241	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	warmup	0	5575072381	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	warmup	0	3250979769	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	warmup	0	63097858826	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	warmup	0	3799792302	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	warmup	0	3408645496	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	gvisor-systrap	warmup	1	3844577589	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	warmup	1	6499485859	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	warmup	1	4729624911	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	warmup	1	64180917741	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447093 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	warmup	1	4906334330	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	warmup	1	3426759062	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	warmup	1	3491134907	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	0	5797449943	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	0	3075301994	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	0	64214150830	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447093 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	0	3025431793	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	0	3109317782	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	0	2997304830	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	0	3438006636	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	1	2988704257	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	1	65338496375	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447093 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	1	3125208272	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	1	3110512479	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	1	2974658792	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	1	4714987637	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	1	5442813544	0	NA	100000	
+real	sqlite-100k	reverie-dbi	measure	2	63358335890	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447093 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	2	3334085215	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	2	3093253299	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	2	2982513553	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	2	4271473753	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	2	5108377921	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	2	3000576597	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-kvm	measure	3	3629176721	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	3	3088454378	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	3	2978889652	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	3	4266556555	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	3	4340858473	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	3	2988132343	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	3	62962562955	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-sabre	measure	4	3088870655	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	4	3041565392	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	4	3448190475	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	4	4211664394	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	4	3025291430	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	4	63275491421	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	4	3118125111	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	native	measure	5	3029370326	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	5	3514226794	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	5	5147789339	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	5	3103482910	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	5	63339251721	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	5	3218845464	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	5	3154578275	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	gvisor-systrap	measure	6	3666104431	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	6	3918305271	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	6	3036167542	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	6	69193598901	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	6	3031724225	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	6	3064072343	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	6	3110135831	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	7	4001868345	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	7	3050348130	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	7	65492124855	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	7	3247404322	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	7	3183192325	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	7	3087468177	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	7	3816304752	0	NA	100000	
+real	sqlite-100k	reverie-ptrace	measure	8	3005533711	0	167	100000	 [counter tool] Total system calls in process tree: 167, from 1 processes, 1 thread(s).\n
+real	sqlite-100k	reverie-dbi	measure	8	63352160231	0	166	100000	reverie-dbi: tool=PrototypeTool branches=8418447078 syscalls=166 rewritten=48 stdin_reads=0 memory_hash=0000000000000000\n
+real	sqlite-100k	reverie-kvm	measure	8	3055459410	0	174	100000	reverie-counter: syscalls=174 threads=1\n
+real	sqlite-100k	reverie-sabre	measure	8	3084594373	0	99	100000	Saw 99 syscalls\n
+real	sqlite-100k	native	measure	8	2968799419	0	NA	100000	
+real	sqlite-100k	gvisor-systrap	measure	8	3426926484	0	NA	100000	
+real	sqlite-100k	gvisor-kvm	measure	8	3336338728	0	NA	100000	
+real	find-usr	gvisor-systrap	measure	8	44556224981	1	NA	NA	REPLACEMENT for killed status=143 sample; 3 Permission denied; rc=1; CPU112; hermit-178

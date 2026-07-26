@@ -1,0 +1,3 @@
+/usr/bin/find: '/usr/libexec/initscripts/legacy-actions/auditd': Permission denied
+/usr/bin/find: '/usr/share/empty.sshd': Permission denied
+/usr/bin/find: '/usr/share/polkit-1/rules.d': Permission denied

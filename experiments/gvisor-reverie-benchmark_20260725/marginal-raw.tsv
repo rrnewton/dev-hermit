@@ -1,0 +1,309 @@
+suite	workload	backend	phase	sample	wall_ns	status	observed_syscalls	operations	stderr_tail
+marginal	getpid-1000	native	warmup	0	1098831	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	warmup	0	1732823289	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	warmup	0	1849067236	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	warmup	0	49206348	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	warmup	0	1152901920	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	warmup	0	254402789	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	warmup	0	82989523	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	gvisor-systrap	warmup	1	432294483	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	warmup	1	1138944260	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	warmup	1	49991314	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	warmup	1	52341815	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	warmup	1	106954992	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	warmup	1	65814312	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	warmup	1	910826	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	0	210110886	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	0	45547029	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	0	54056195	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	0	176720955	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	0	64431813	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	0	867461	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	0	172366286	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	1	41031275	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	1	48485228	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	1	96232511	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	1	64343449	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	1	1250179	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	1	169173972	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	1	204529333	0	NA	1000	
+marginal	getpid-1000	reverie-dbi	measure	2	53194585	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	2	90696267	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	2	63494777	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	2	873941	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	2	151125843	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	2	207081067	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	2	48194639	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-kvm	measure	3	80689087	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	3	67716155	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	3	947431	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	3	157207512	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	3	204524335	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	3	48015640	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	3	53930827	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55976 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-sabre	measure	4	68583045	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	4	945909	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	4	148619105	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	4	203337241	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	4	49551650	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	4	48653833	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	4	132043029	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	native	measure	5	1066982	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	5	221799567	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	5	246746831	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	5	43961864	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	5	51582749	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	5	87205462	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	5	70242022	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	gvisor-systrap	measure	6	179522799	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	6	194916458	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	6	43514047	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	6	47852483	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	6	77151862	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	6	67482162	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	6	991218	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	7	226666420	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	7	48480041	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	7	49049551	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55980 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	7	585368699	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	7	75826991	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	7	1046121	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	7	176705101	0	NA	1000	
+marginal	getpid-1000	reverie-ptrace	measure	8	47306258	0	1039	1000	 [counter tool] Total system calls in process tree: 1039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000	reverie-dbi	measure	8	52376007	0	1038	1000	reverie-dbi: tool=PrototypeTool branches=55977 syscalls=1038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000	reverie-kvm	measure	8	1708669564	0	1039	1000	reverie-counter: syscalls=1039 threads=1\n
+marginal	getpid-1000	reverie-sabre	measure	8	298148105	0	1012	1000	Saw 1012 syscalls\n
+marginal	getpid-1000	native	measure	8	1021113	0	NA	1000	
+marginal	getpid-1000	gvisor-systrap	measure	8	2937347547	0	NA	1000	
+marginal	getpid-1000	gvisor-kvm	measure	8	1084682294	0	NA	1000	
+marginal	getpid-10000	native	warmup	0	1841663	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	warmup	0	6528271652	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	warmup	0	2898474633	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	warmup	0	332557195	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	warmup	0	812175151	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	warmup	0	3020588490	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	warmup	0	69936700	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	gvisor-systrap	warmup	1	1133415457	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	warmup	1	7172930825	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	warmup	1	356512610	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	warmup	1	68853914	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64988 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	warmup	1	508484562	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	warmup	1	70375934	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	warmup	1	1618265	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	0	3051168822	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	0	333397074	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	0	1496217549	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	0	1155851055	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	0	70615686	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	0	1557843	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	0	654078336	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	1	332570545	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	1	121182469	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64988 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	1	1759539785	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	1	70050903	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	1	1531624	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	1	2298920257	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	1	2067284429	0	NA	10000	
+marginal	getpid-10000	reverie-dbi	measure	2	233514076	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	2	382883135	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	2	72968080	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	2	1572496	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	2	217575694	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	2	190209726	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	2	339128554	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-kvm	measure	3	298694490	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	3	70159237	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	3	1540167	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	3	222954512	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	3	193983307	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	3	337244657	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	3	56703155	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-sabre	measure	4	70060989	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	4	1526326	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	4	218385067	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	4	198567324	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	4	356094398	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	4	56875015	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	4	308670584	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	native	measure	5	1820522	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	5	232833908	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	5	191236187	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	5	345177504	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	5	58162340	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	5	289879982	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	5	72223446	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	gvisor-systrap	measure	6	229412459	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	6	210241402	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	6	341481899	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	6	58815907	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64985 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	6	359241714	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	6	68642865	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	6	1512065	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	7	215418815	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	7	366541603	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	7	77280887	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64988 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	7	395354708	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	7	81191365	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	7	1879179	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	7	303892984	0	NA	10000	
+marginal	getpid-10000	reverie-ptrace	measure	8	369612874	0	10039	10000	 [counter tool] Total system calls in process tree: 10039, from 1 processes, 1 thread(s).\n
+marginal	getpid-10000	reverie-dbi	measure	8	78517085	0	10038	10000	reverie-dbi: tool=PrototypeTool branches=64988 syscalls=10038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-10000	reverie-kvm	measure	8	318617613	0	10039	10000	reverie-counter: syscalls=10039 threads=1\n
+marginal	getpid-10000	reverie-sabre	measure	8	96586627	0	10012	10000	Saw 10012 syscalls\n
+marginal	getpid-10000	native	measure	8	2137029	0	NA	10000	
+marginal	getpid-10000	gvisor-systrap	measure	8	315589307	0	NA	10000	
+marginal	getpid-10000	gvisor-kvm	measure	8	504649126	0	NA	10000	
+marginal	getpid-100000	native	warmup	0	12884077	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	warmup	0	894279296	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	warmup	0	452301011	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	warmup	0	3330667829	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	warmup	0	253534025	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154996 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	warmup	0	3198738070	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	warmup	0	2602806843	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	gvisor-systrap	warmup	1	1134676051	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	warmup	1	1002742676	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	warmup	1	3181232291	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	warmup	1	1604908845	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	warmup	1	2574268263	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	warmup	1	132892764	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	warmup	1	7660375	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	0	472696557	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	0	3267396459	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	0	675497427	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	0	3322384373	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	0	360566164	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	0	7664581	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	0	2196237660	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	1	3143233546	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	1	1832915591	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	1	3499083496	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	1	135628297	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	1	7546833	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	1	4175476035	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	1	8632491693	0	NA	100000	
+marginal	getpid-100000	reverie-dbi	measure	2	170203407	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	2	2575468630	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	2	134455585	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	2	7699193	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	2	820498255	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	2	299536472	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	2	3282399360	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-kvm	measure	3	2898574755	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	3	211170056	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	3	8361224	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	3	3733127194	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	3	841079872	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	3	3175908229	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	3	923215894	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-sabre	measure	4	135277886	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	4	7644861	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	4	3447044250	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	4	2527063583	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	4	3344155641	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	4	587517364	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	4	5301056963	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	native	measure	5	7806435	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	5	1476412612	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	5	7462405523	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	5	3304625193	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	5	152656825	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	5	2564591456	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	5	130048436	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	gvisor-systrap	measure	6	775403188	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	6	313044161	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	6	3272818675	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	6	696500801	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	6	3140010306	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	6	210401163	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	6	8113439	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	7	2241665400	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	7	3177628372	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	7	1795237374	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154996 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	7	2716779198	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	7	480967894	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	7	7817802	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	7	7864494782	0	NA	100000	
+marginal	getpid-100000	reverie-ptrace	measure	8	5712918302	0	100039	100000	 [counter tool] Total system calls in process tree: 100039, from 1 processes, 1 thread(s).\n
+marginal	getpid-100000	reverie-dbi	measure	8	178601876	0	100038	100000	reverie-dbi: tool=PrototypeTool branches=154993 syscalls=100038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-100000	reverie-kvm	measure	8	4478301651	0	100039	100000	reverie-counter: syscalls=100039 threads=1\n
+marginal	getpid-100000	reverie-sabre	measure	8	132338084	0	100012	100000	Saw 100012 syscalls\n
+marginal	getpid-100000	native	measure	8	7605261	0	NA	100000	
+marginal	getpid-100000	gvisor-systrap	measure	8	1926106089	0	NA	100000	
+marginal	getpid-100000	gvisor-kvm	measure	8	720302684	0	NA	100000	
+marginal	getpid-1000000	native	warmup	0	77598757	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	warmup	0	7032709175	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	warmup	0	1344408480	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	warmup	0	32555243221	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	warmup	0	1182470208	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	warmup	0	26524666183	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	warmup	0	1000684661	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	gvisor-systrap	warmup	1	10576219385	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	warmup	1	2164060558	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	warmup	1	32309447741	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	warmup	1	2275363787	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	warmup	1	25368569497	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	warmup	1	864596950	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	warmup	1	86683152	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	0	5446049428	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	0	32325553714	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	0	1630507388	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	0	25353015137	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	0	7048989190	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	0	68610366	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	0	7555801990	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	1	31635202308	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	1	1407679643	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	1	25762480319	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	1	792151581	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	1	70527473	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	1	21546545736	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	1	9590215312	0	NA	1000000	
+marginal	getpid-1000000	reverie-dbi	measure	2	1242239678	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	2	25772146121	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	2	936506860	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	2	70728259	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	2	9093708087	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	2	17189815426	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	2	34059459261	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-kvm	measure	3	26413732210	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	3	922657313	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	3	77021549	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	3	7593444607	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	3	5899090308	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	3	32196587445	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	3	1271713154	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055004 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-sabre	measure	4	801467271	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	4	70865076	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	4	7496772234	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	4	3655906576	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	4	32998360147	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	4	1248806696	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	4	26603759805	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	native	measure	5	74420107	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	5	7331052411	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	5	1919329294	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	5	32679626348	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	5	1189488406	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	5	26157220210	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	5	741325553	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	gvisor-systrap	measure	6	7073765999	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	6	3653740412	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	6	33374092086	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	6	6542858343	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	6	25456495528	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	6	741155676	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	6	78479432	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	7	3199258800	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	7	31498303811	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	7	5121651318	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055004 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	7	33442435285	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	7	873844937	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	7	68376230	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	7	16769224348	0	NA	1000000	
+marginal	getpid-1000000	reverie-ptrace	measure	8	30910642083	0	1000039	1000000	 [counter tool] Total system calls in process tree: 1000039, from 1 processes, 1 thread(s).\n
+marginal	getpid-1000000	reverie-dbi	measure	8	2979244810	0	1000038	1000000	reverie-dbi: tool=PrototypeTool branches=1055001 syscalls=1000038 rewritten=15 stdin_reads=0 memory_hash=0000000000000000\n
+marginal	getpid-1000000	reverie-kvm	measure	8	26168021155	0	1000039	1000000	reverie-counter: syscalls=1000039 threads=1\n
+marginal	getpid-1000000	reverie-sabre	measure	8	743871568	0	1000012	1000000	Saw 1000012 syscalls\n
+marginal	getpid-1000000	native	measure	8	68975327	0	NA	1000000	
+marginal	getpid-1000000	gvisor-systrap	measure	8	21010516622	0	NA	1000000	
+marginal	getpid-1000000	gvisor-kvm	measure	8	3254788956	0	NA	1000000	
