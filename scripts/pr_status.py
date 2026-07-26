@@ -12,7 +12,10 @@ from typing import Sequence
 
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
 DEFAULT_WARN_THRESHOLD = 10
-HUMAN_REVIEW_LABEL = "human-review"
+# Landing is never gated on human review. Every open PR is free to land once CI
+# is green; the only distinction this report draws is whether the post-facto
+# (post-landing) review label has already been applied.
+POST_FACTO_REVIEW_LABEL = "post-facto-review"
 
 RED_CONCLUSIONS = frozenset(
     (
@@ -41,8 +44,8 @@ class PullRequest:
     ci_status: str
 
     @property
-    def needs_human_review(self) -> bool:
-        return HUMAN_REVIEW_LABEL in self.labels
+    def has_post_facto_review(self) -> bool:
+        return POST_FACTO_REVIEW_LABEL in self.labels
 
 
 def classify_ci_rollup(checks: object) -> str:
@@ -148,12 +151,15 @@ def _format_pr(pr: PullRequest) -> str:
 
 
 def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
-    human_review = sorted(
-        (pr for pr in prs if pr.needs_human_review),
+    # Every open PR is free to land once CI is green. The ONLY distinction is
+    # whether the post-facto (post-landing) review label is already applied;
+    # nothing here is blocked on human review.
+    labeled = sorted(
+        (pr for pr in prs if pr.has_post_facto_review),
         key=lambda pr: (pr.repo, -pr.number),
     )
-    free_to_land = sorted(
-        (pr for pr in prs if not pr.needs_human_review),
+    unlabeled = sorted(
+        (pr for pr in prs if not pr.has_post_facto_review),
         key=lambda pr: (pr.repo, -pr.number),
     )
     ci_failing = sum(pr.ci_status == "red" for pr in prs)
@@ -161,41 +167,45 @@ def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
     lines = [
         "Open PR health: rrnewton/hermit + rrnewton/reverie",
         "",
-        f"Ready to land - needs post-facto review ({len(human_review)})",
-        "  NOT BLOCKED. The 'human-review' label is a POST-LANDING review tag,",
-        "  not a pre-landing gate. Land these as soon as CI is green.",
+        "  All open PRs are FREE TO LAND once CI is green. 'post-facto-review' is",
+        "  a POST-LANDING tag, never a pre-landing gate. The two groups below only",
+        "  differ by whether that label has been applied yet.",
+        "",
+        f"Free to land (post-facto-review label applied) ({len(labeled)})",
     ]
-    for pr in human_review:
-        lines.append(_format_pr(pr))
-        lines.append(
-            "    ACTION: add post-facto-review label, merge immediately if CI green"
-        )
-    if not human_review:
+    lines.extend(_format_pr(pr) for pr in labeled)
+    if not labeled:
         lines.append("  (none)")
 
-    lines.extend(("", f"Free to land: no human-review label ({len(free_to_land)})"))
-    lines.extend(_format_pr(pr) for pr in free_to_land)
-    if not free_to_land:
+    lines.extend(
+        ("", f"Free to land (no post-facto-review label yet) ({len(unlabeled)})")
+    )
+    for pr in unlabeled:
+        lines.append(_format_pr(pr))
+        lines.append(
+            "    ACTION: add the post-facto-review label, then merge when CI is green"
+        )
+    if not unlabeled:
         lines.append("  (none)")
 
     lines.extend(
         (
             "",
             "Summary",
-            f"  total open:        {len(prs)}",
-            f"  post-facto-land:   {len(human_review)}",
-            f"  free-to-land:      {len(free_to_land)}",
-            f"  CI-failing:        {ci_failing}",
+            f"  total open (all free to land):  {len(prs)}",
+            f"  with post-facto-review label:   {len(labeled)}",
+            f"  need post-facto-review label:   {len(unlabeled)}",
+            f"  CI-failing:                     {ci_failing}",
         )
     )
 
-    if len(free_to_land) > warn_threshold:
+    if len(prs) > warn_threshold:
         lines.extend(
             (
                 "",
                 "WARNING: "
-                f"{len(free_to_land)} free-to-land PRs exceeds the "
-                f"{warn_threshold} PR threshold; prioritize CI repair, review, and landing.",
+                f"{len(prs)} free-to-land PRs exceeds the "
+                f"{warn_threshold} PR threshold; prioritize CI repair and landing.",
             )
         )
     return "\n".join(lines)
