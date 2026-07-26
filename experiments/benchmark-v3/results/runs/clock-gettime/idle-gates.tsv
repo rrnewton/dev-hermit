@@ -1,0 +1,2 @@
+unix_time	load1_before	load1_after	logical_cpus	max_load1	cpu	sibling	cpu_idle_percent	sibling_idle_percent	sample_seconds
+1785079282	31.840	36.520	316	79.000	25	183	96.496	95.473	10.000

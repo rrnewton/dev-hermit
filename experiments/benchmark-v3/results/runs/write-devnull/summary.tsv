@@ -1,0 +1,8 @@
+syscall	backend	statistic	normalization_scale	ns_per_syscall	ci_lower_ns	ci_upper_ns	confidence	standard_error
+write-devnull	native	slope	1	87.741005	87.445185	88.068508	0.950	0.159849
+write-devnull	gvisor-systrap	slope	1	7138.564839	7076.768743	7202.959992	0.950	31.957826
+write-devnull	gvisor-kvm	slope	1	1071.845544	1066.043613	1077.085791	0.950	2.839138
+write-devnull	reverie-ptrace	slope	1	16760.376811	16574.850924	16922.328665	0.950	89.195172
+write-devnull	reverie-dbi	slope	1	1222.492451	1162.798247	1294.752425	0.950	35.671156
+write-devnull	reverie-kvm	slope	1	12705.703151	12661.556617	12802.081272	0.950	37.678790
+write-devnull	reverie-sabre	slope	1	862.448549	858.264956	868.579645	0.950	2.642814

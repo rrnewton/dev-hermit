@@ -1,0 +1,8 @@
+syscall	backend	samples	median_ns_per_syscall	minimum_ns_per_syscall	maximum_ns_per_syscall
+getpid	native	20	70.211634	67.070749	73.879737
+getpid	gvisor-systrap	20	7324.574331	6921.204859	7895.148299
+getpid	gvisor-kvm	20	914.505725	886.941575	947.833692
+getpid	reverie-ptrace	20	16953.319695	16672.135250	17759.879306
+getpid	reverie-dbi	20	1000.867065	993.014659	1014.307883
+getpid	reverie-kvm	20	9977.964783	9923.456941	10176.619348
+getpid	reverie-sabre	20	612.757920	602.770367	627.242867

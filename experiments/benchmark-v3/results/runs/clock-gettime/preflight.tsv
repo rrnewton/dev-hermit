@@ -1,0 +1,8 @@
+backend	tool	n0_count	n16_count	delta	status
+native	tool-free-subtraction-baseline	NA	NA	NA	pass
+gvisor-systrap	Counter1GlobalRpc	33	49	16	pass
+gvisor-kvm	Counter1GlobalRpc	33	49	16	pass
+reverie-ptrace	Counter1GlobalRpc	33	49	16	pass
+reverie-dbi	Counter1GlobalRpc	32	48	16	pass
+reverie-kvm	Counter1GlobalRpc	33	49	16	pass
+reverie-sabre	Counter1GlobalRpc	8	24	16	pass

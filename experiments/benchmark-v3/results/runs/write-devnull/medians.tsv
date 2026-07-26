@@ -1,0 +1,8 @@
+syscall	backend	samples	median_ns_per_syscall	minimum_ns_per_syscall	maximum_ns_per_syscall
+write-devnull	native	20	87.715834	87.000061	88.803916
+write-devnull	gvisor-systrap	20	7194.189043	6957.106826	7539.381411
+write-devnull	gvisor-kvm	20	1076.775946	1033.775774	1099.988554
+write-devnull	reverie-ptrace	20	16566.001273	15948.228947	17303.123214
+write-devnull	reverie-dbi	20	1172.029623	1144.364959	1477.155531
+write-devnull	reverie-kvm	20	12694.549504	12621.999505	18175.404584
+write-devnull	reverie-sabre	20	858.974914	853.040578	905.356037

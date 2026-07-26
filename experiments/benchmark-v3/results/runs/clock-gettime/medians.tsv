@@ -1,0 +1,8 @@
+syscall	backend	samples	median_ns_per_syscall	minimum_ns_per_syscall	maximum_ns_per_syscall
+clock-gettime	native	20	115.299292	112.083631	122.216554
+clock-gettime	gvisor-systrap	20	7144.599479	7030.718379	7493.259087
+clock-gettime	gvisor-kvm	20	1081.299949	1023.369696	1143.590303
+clock-gettime	reverie-ptrace	20	17186.113327	16622.192661	18064.537091
+clock-gettime	reverie-dbi	20	1170.109235	1159.589744	1215.912713
+clock-gettime	reverie-kvm	20	11042.389334	10975.991775	11430.906858
+clock-gettime	reverie-sabre	20	665.225487	655.636960	679.363896

@@ -1,0 +1,8 @@
+backend	syscall	status	detail
+native	read-devnull	pass	16-call semantic preflight passed
+reverie-kvm	read-devnull	pass	16-call semantic preflight passed
+gvisor-kvm	read-devnull	pass	16-call semantic preflight passed
+reverie-ptrace	read-devnull	pass	16-call semantic preflight passed
+reverie-sabre	read-devnull	pass	16-call semantic preflight passed
+gvisor-systrap	read-devnull	pass	16-call semantic preflight passed
+reverie-dbi	read-devnull	pass	16-call semantic preflight passed

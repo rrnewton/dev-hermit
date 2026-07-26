@@ -1,0 +1,5 @@
+run_syscall	unix_time	load1_before	load1_after	logical_cpus	max_load1	cpu	sibling	cpu_idle_percent	sibling_idle_percent	sample_seconds
+getpid	1785078620	48.930	45.310	316	79.000	148	306	97.289	97.495	10.000
+read-devnull	1785078794	54.960	49.290	316	79.000	148	306	98.395	98.897	10.000
+write-devnull	1785079064	55.660	53.050	316	79.000	115	273	97.292	95.687	10.000
+clock-gettime	1785079282	31.840	36.520	316	79.000	25	183	96.496	95.473	10.000

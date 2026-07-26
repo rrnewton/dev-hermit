@@ -1,0 +1,8 @@
+syscall	backend	statistic	normalization_scale	ns_per_syscall	ci_lower_ns	ci_upper_ns	confidence	standard_error
+getpid	native	slope	1	69.554455	68.464296	71.214484	0.950	0.702299
+getpid	gvisor-systrap	slope	1	7305.646025	7132.485125	7508.248435	0.950	98.164355
+getpid	gvisor-kvm	slope	1	911.083747	904.958987	916.667953	0.950	2.986447
+getpid	reverie-ptrace	slope	1	16945.545137	16880.530428	17013.757112	0.950	33.844141
+getpid	reverie-dbi	slope	1	1001.195110	998.146649	1004.377793	0.950	1.596246
+getpid	reverie-kvm	slope	1	9965.556380	9943.981300	9996.990836	0.950	13.649469
+getpid	reverie-sabre	slope	1	614.419766	609.579119	618.687500	0.950	2.319483
