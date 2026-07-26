@@ -96,3 +96,4 @@ ACTIVE.md
 # Local backup and type-checker cache files.
 *.orig
 **/.mypy_cache/
+/worktree-state.json

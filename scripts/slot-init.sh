@@ -7,34 +7,39 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 
-# Flat, direct-worktree layout:
-#   worktrees/slotNN          -> Hermit worktree   (from the hermit/ primary)
-#   worktrees_reverie/slotNN  -> Reverie worktree  (from the reverie/ primary)
-readonly HERMIT_WORKTREES="$ROOT_DIR/worktrees"
-readonly REVERIE_WORKTREES="$ROOT_DIR/worktrees_reverie"
+# Canonical nested layout v2 (one slot per agent):
+#   worktrees/<slot>/hermit   -> Hermit worktree  (from the hermit/ primary)
+#   worktrees/<slot>/reverie  -> Reverie worktree (from the reverie/ primary)
+#
+# PREFER scripts/allocate-worktree.rs: it is registry-aware (updates
+# worktree-state.json + worktrees/ACTIVE.md, enforces one-owner-per-slot and
+# one-slot-per-agent). This shell helper only creates detached worktrees and
+# does NOT touch the registry; use it for quick manual scaffolding.
+readonly WORKTREES="$ROOT_DIR/worktrees"
 
 function usage {
     cat <<'EOF'
 Usage: ./scripts/slot-init.sh SLOT [PRODUCT] [START_POINT]
 
-Create one or both direct product worktrees for a numbered slot. Each worktree
-is the checkout root itself, created from the matching primary checkout:
+Create one or both nested product worktrees for a slot:
 
-  worktrees/slotNN          Hermit worktree  (from the hermit/ primary)
-  worktrees_reverie/slotNN  Reverie worktree (from the reverie/ primary)
+  worktrees/<slot>/hermit   Hermit worktree  (from the hermit/ primary)
+  worktrees/<slot>/reverie  Reverie worktree (from the reverie/ primary)
 
-  SLOT         slotNN, where NN is two or more digits (e.g. slot01, slot17).
+  SLOT         Named token ([a-z][a-z0-9-]*, e.g. kvm) or slotNN (e.g. slot01).
   PRODUCT      hermit | reverie | both  (default: both).
   START_POINT  Commit or branch to base the detached worktree on
                (default: the primary checkout's current HEAD).
 
 The worktree is created detached at START_POINT. Create a task-specific feature
-branch inside the slot before editing, and register it in the matching ACTIVE.md.
+branch inside the slot before editing, and register it in worktrees/ACTIVE.md.
+
+PREFER scripts/allocate-worktree.rs (registry-aware) for real agent work.
 
 Example:
   ./scripts/slot-init.sh slot01
-  ./scripts/slot-init.sh slot02 hermit
-  ./scripts/slot-init.sh slot03 reverie main
+  ./scripts/slot-init.sh kvm hermit
+  ./scripts/slot-init.sh dbi reverie main
 EOF
 }
 
@@ -45,8 +50,8 @@ if (($# < 1)) || (($# > 3)) || [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
 fi
 
 readonly SLOT=${1:-}
-if [[ ! $SLOT =~ ^slot[0-9]{2,}$ ]]; then
-    echo "Invalid SLOT: '$SLOT' (expected slotNN, e.g. slot01)" >&2
+if [[ ! $SLOT =~ ^(slot[0-9]{2,}|[a-z][a-z0-9-]*)$ ]]; then
+    echo "Invalid SLOT: '$SLOT' (expected slotNN or a named token like kvm)" >&2
     usage >&2
     exit 2
 fi
@@ -63,12 +68,12 @@ esac
 
 readonly START_POINT_OVERRIDE=${3:-}
 
-# add_worktree PRIMARY_DIR WORKTREES_PARENT
-#   Create $WORKTREES_PARENT/$SLOT as a detached worktree of the primary repo.
+# add_worktree PRIMARY_DIR PRODUCT_SUBDIR
+#   Create worktrees/<slot>/<product> as a detached worktree of the primary repo.
 function add_worktree {
     local primary_dir=$1
-    local worktrees_parent=$2
-    local slot_dir="$worktrees_parent/$SLOT"
+    local product_subdir=$2
+    local slot_dir="$WORKTREES/$SLOT/$product_subdir"
 
     if [[ ! -d $primary_dir ]]; then
         echo "Missing primary checkout: $primary_dir" >&2
@@ -84,7 +89,7 @@ function add_worktree {
         start_point=$(git -C "$primary_dir" rev-parse --abbrev-ref HEAD)
     fi
 
-    mkdir -p "$worktrees_parent"
+    mkdir -p "$WORKTREES/$SLOT"
     git -C "$primary_dir" worktree add --detach "$slot_dir" "$start_point"
 
     if ! git -C "$slot_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -95,8 +100,8 @@ function add_worktree {
 }
 
 if [[ $PRODUCT == hermit || $PRODUCT == both ]]; then
-    add_worktree "$ROOT_DIR/hermit" "$HERMIT_WORKTREES"
+    add_worktree "$ROOT_DIR/hermit" "hermit"
 fi
 if [[ $PRODUCT == reverie || $PRODUCT == both ]]; then
-    add_worktree "$ROOT_DIR/reverie" "$REVERIE_WORKTREES"
+    add_worktree "$ROOT_DIR/reverie" "reverie"
 fi

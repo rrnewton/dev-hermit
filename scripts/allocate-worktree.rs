@@ -1,0 +1,584 @@
+#!/usr/bin/env rust-script
+//! Allocate a worktree slot for a dev-hermit agent, enforcing worktree discipline.
+//!
+//! CANONICAL LAYOUT v2 (nested, one slot per agent):
+//!
+//!   worktrees/<slot>/hermit    Hermit worktree  (from the hermit/ primary)
+//!   worktrees/<slot>/reverie   Reverie worktree (from the reverie/ primary)
+//!
+//! `<slot>` is either a NAMED agent slot (e.g. worktrees/kvm, worktrees/dbi for
+//! the purpose-fixed agents hermit-kvm, hermit-dbi, ...) or a generic slotNN
+//! (worktrees/slot01, ...). Each agent owns exactly ONE slot (1-1 mapping). A
+//! slot may hold a hermit checkout, a reverie checkout, or both.
+//!
+//! This is the ONLY sanctioned way to create an agent worktree. It refuses to
+//! let two mutating agents share a slot, records ownership in the machine-
+//! readable `worktree-state.json`, and regenerates the machine-parseable table
+//! block in `worktrees/ACTIVE.md`.
+//!
+//! ```cargo
+//! [dependencies]
+//! serde_json = "1"
+//! ```
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::process::{exit, Command};
+
+/// Workspace homeostasis caps. Disk is the real cap (expressed in GB); the slot
+/// count is a secondary advisory against the active-worktree policy limit.
+/// Override the disk cap with HERMIT_WORKTREE_GB_CAP.
+const DEFAULT_DISK_CAP_GB: u64 = 200;
+const SLOT_COUNT_ADVISORY: usize = 12;
+const LANGUISH_HOURS: i64 = 24;
+
+const USAGE: &str = r#"Usage: allocate-worktree.rs --agent NAME [OPTIONS]
+
+Allocate a worktree slot (nested layout worktrees/<slot>/{hermit,reverie}) and
+register its ownership. Each agent owns exactly one slot.
+
+Required:
+  --agent NAME        Owning agent (e.g. hermit-kvm). Mutating owner of the slot.
+
+Options:
+  --slot SLOT         Slot name. Default: the agent name with a leading
+                      'hermit-' stripped (hermit-kvm -> worktrees/kvm), or a
+                      generic slotNN if the agent name is not a clean token.
+                      Accepts a named token ([a-z0-9-]+) or slotNN.
+  --task TASK-ID      Task this slot serves (recorded in state + ACTIVE.md).
+  --product P         hermit | reverie | both   (default: both).
+  --hermit-branch B   Create this feature branch in the hermit worktree.
+  --reverie-branch B  Create this feature branch in the reverie worktree.
+  --start-point REF   Base for detached/new worktrees (default: primary HEAD).
+  --purpose TEXT      One-line purpose recorded in state + ACTIVE.md.
+  --i-promise-this-agent-is-read-mostly
+                      Join an already-owned slot as an ADDITIONAL read-only
+                      agent instead of failing the collision check.
+  --check-only        Run the workspace homeostasis check (disk cap, languishing
+                      slots, slot sprawl) and exit WITHOUT allocating anything.
+  -h, --help          Show this help.
+
+Homeostasis (advisory, never blocks): every allocation also prints a LOUD
+banner if worktrees/ disk exceeds the GB cap (env HERMIT_WORKTREE_GB_CAP,
+default 200 GB), if any slot has had no state update in >24h, or if slot dirs
+exceed a soft count. The GB cap is the real limit; slot count is advisory.
+
+Policy:
+  * One mutating owner per slot; a second mutating agent is refused.
+  * One slot per agent; if the agent already owns a different slot, refused.
+  * Read-mostly agents may share and are recorded as such.
+
+Examples:
+  ./scripts/allocate-worktree.rs --agent hermit-kvm --task impl-kvm-ratchet
+      -> worktrees/kvm/{hermit,reverie}
+  ./scripts/allocate-worktree.rs --agent hermit-201 --slot slot01 \
+      --product hermit --hermit-branch debug-batch1 --task impl-debug
+  ./scripts/allocate-worktree.rs --agent hermit-ci --slot kvm \
+      --i-promise-this-agent-is-read-mostly --task research-ci
+"#;
+
+fn die(msg: &str) -> ! {
+    eprintln!("allocate-worktree: {msg}");
+    exit(1);
+}
+
+/// Walk up from CWD to the dev-hermit parent (has .gitmodules + hermit + reverie).
+fn find_root() -> PathBuf {
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        if dir.join(".gitmodules").is_file()
+            && dir.join("hermit").is_dir()
+            && dir.join("reverie").is_dir()
+        {
+            return dir;
+        }
+        if !dir.pop() {
+            die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/)");
+        }
+    }
+}
+
+fn now_iso() -> String {
+    match Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// Run a git command in `dir`; return (success, stdout, stderr).
+fn git(dir: &Path, args: &[&str]) -> (bool, String, String) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| die(&format!("failed to spawn git: {e}")));
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        String::from_utf8_lossy(&out.stderr).trim().to_string(),
+    )
+}
+
+fn epoch_now() -> i64 {
+    Command::new("date")
+        .args(["+%s"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Convert an ISO-8601 timestamp to epoch seconds via `date -d`.
+fn epoch_of(iso: &str) -> Option<i64> {
+    let out = Command::new("date").args(["-d", iso, "+%s"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Total size of a directory in bytes via `du -sb`.
+fn dir_size_bytes(path: &Path) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    Command::new("du")
+        .arg("-sb")
+        .arg(path)
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+/// Count physical slot directories under worktrees/ (each child dir is a slot).
+fn physical_slot_count(root: &Path) -> usize {
+    let wt = root.join("worktrees");
+    std::fs::read_dir(&wt)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// LOUD workspace-health check: disk cap (GB), languishing slots (>24h), and a
+/// slot-count advisory. Emits a banner impossible to miss. Never fails the run —
+/// homeostasis is advisory so allocation is never blocked, but the warnings are
+/// printed to stderr with a heavy banner so agents notice and act.
+fn homeostasis_check(root: &Path) {
+    let cap_gb: u64 = std::env::var("HERMIT_WORKTREE_GB_CAP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_DISK_CAP_GB);
+
+    let wt = root.join("worktrees");
+    let bytes = dir_size_bytes(&wt);
+    let gb = bytes as f64 / 1e9;
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    if gb > cap_gb as f64 {
+        warnings.push(format!(
+            "DISK OVER CAP: worktrees/ = {gb:.1} GB > {cap_gb} GB cap.\n     \
+             Reclaim: blast target/ dirs and release idle slots:\n     \
+             find worktrees -name target -type d -maxdepth 3 -exec rm -rf {{}} +\n     \
+             scripts/release-worktree.rs --slot <slot> --clean"
+        ));
+    } else {
+        eprintln!("homeostasis: worktrees/ = {gb:.1} GB / {cap_gb} GB cap (ok)");
+    }
+
+    // Languishing slots: no state update in >24h.
+    let now = epoch_now();
+    // Re-read state fresh so --check-only reflects current disk truth.
+    let state = load_state(root);
+    let mut languishing: Vec<String> = Vec::new();
+    if let Some(slots) = state["slots"].as_object() {
+        for (name, s) in slots {
+            let iso = s["updated"].as_str().or_else(|| s["allocated"].as_str());
+            if let Some(iso) = iso {
+                if let Some(e) = epoch_of(iso) {
+                    let hours = (now - e) / 3600;
+                    if hours >= LANGUISH_HOURS {
+                        languishing.push(format!("{name} ({hours}h idle)"));
+                    }
+                }
+            }
+        }
+    }
+    if !languishing.is_empty() {
+        warnings.push(format!(
+            "LANGUISHING SLOTS (>{LANGUISH_HOURS}h, no state update): {}.\n     \
+             Land their work as a branch/draft PR, then release the slot.",
+            languishing.join(", ")
+        ));
+    }
+
+    // Slot-count advisory (disk is the real cap; this flags sprawl).
+    let phys = physical_slot_count(root);
+    if phys > SLOT_COUNT_ADVISORY {
+        warnings.push(format!(
+            "SLOT SPRAWL: {phys} physical slot dirs under worktrees/ (advisory soft \
+             limit {SLOT_COUNT_ADVISORY}).\n     \
+             The real cap is disk ({cap_gb} GB); consolidate/clean idle slots."
+        ));
+    }
+
+    if !warnings.is_empty() {
+        eprintln!();
+        eprintln!("╔════════════════════════════════════════════════════════════════════╗");
+        eprintln!("║  ⚠  WORKTREE HOMEOSTASIS WARNING  ⚠   (workspace health degraded)   ║");
+        eprintln!("╚════════════════════════════════════════════════════════════════════╝");
+        for (n, w) in warnings.iter().enumerate() {
+            eprintln!("  {}. {w}", n + 1);
+        }
+        eprintln!("  See ai_docs/transient/worktree-management-map.md §5 (disk hygiene).");
+        eprintln!("═══════════════════════════════════════════════════════════════════════");
+        eprintln!();
+    }
+}
+
+fn state_path(root: &Path) -> PathBuf {
+    root.join("worktree-state.json")
+}
+
+fn load_state(root: &Path) -> Value {
+    let p = state_path(root);
+    if !p.exists() {
+        return json!({ "version": 2, "updated": Value::Null, "slots": {} });
+    }
+    let txt = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("read state: {e}")));
+    let mut v: Value =
+        serde_json::from_str(&txt).unwrap_or_else(|e| die(&format!("parse worktree-state.json: {e}")));
+    if !v.get("slots").map(|s| s.is_object()).unwrap_or(false) {
+        v["slots"] = json!({});
+    }
+    v
+}
+
+fn save_state(root: &Path, state: &mut Value) {
+    state["updated"] = json!(now_iso());
+    state["version"] = json!(2);
+    let txt = serde_json::to_string_pretty(state).unwrap();
+    std::fs::write(state_path(root), txt + "\n").unwrap_or_else(|e| die(&format!("write state: {e}")));
+}
+
+/// Rewrite the managed table block inside worktrees/ACTIVE.md from state.
+/// Human-authored content outside the markers is preserved verbatim.
+fn regen_active_md(root: &Path, state: &Value) {
+    const BEGIN: &str = "<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->";
+    const END: &str = "<!-- END worktree-state -->";
+
+    let mut rows = String::new();
+    rows.push_str("| Slot | Agent | HermitBranch | ReverieBranch | Task | Status | ReadOnly |\n");
+    rows.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    if let Some(slots) = state["slots"].as_object() {
+        let mut names: Vec<&String> = slots.keys().collect();
+        names.sort();
+        for name in names {
+            let s = &slots[name];
+            let agents = s["agents"].as_array().cloned().unwrap_or_default();
+            let owner = agents
+                .iter()
+                .find(|a| !a["read_only"].as_bool().unwrap_or(false))
+                .and_then(|a| a["name"].as_str())
+                .unwrap_or("-");
+            let ro_agents: Vec<String> = agents
+                .iter()
+                .filter(|a| a["read_only"].as_bool().unwrap_or(false))
+                .filter_map(|a| a["name"].as_str().map(|n| n.to_string()))
+                .collect();
+            let agent_cell = if ro_agents.is_empty() {
+                owner.to_string()
+            } else {
+                format!("{owner} (+ro: {})", ro_agents.join(", "))
+            };
+            let hb = s["hermit_branch"].as_str().unwrap_or("-");
+            let rb = s["reverie_branch"].as_str().unwrap_or("-");
+            let task = s["task"].as_str().unwrap_or("-");
+            let status = s["status"].as_str().unwrap_or("active");
+            let read_only = if ro_agents.is_empty() { "no" } else { "shared" };
+            rows.push_str(&format!(
+                "| {name} | {agent_cell} | {hb} | {rb} | {task} | {status} | {read_only} |\n"
+            ));
+        }
+    }
+    let block = format!("{BEGIN}\n{rows}{END}\n");
+
+    let path = root.join("worktrees").join("ACTIVE.md");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let new_content = if let (Some(b), Some(e)) = (existing.find(BEGIN), existing.find(END)) {
+        let e_end = e + END.len();
+        let after = existing[e_end..].strip_prefix('\n').unwrap_or(&existing[e_end..]);
+        format!("{}{}{}", &existing[..b], block, after)
+    } else {
+        let sep = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
+        let lead = if existing.is_empty() {
+            "# Active Hermit Worktrees\n\n## Machine-managed slot table\n\n".to_string()
+        } else {
+            format!("{sep}\n## Machine-managed slot table\n\n")
+        };
+        format!("{existing}{lead}{block}")
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+}
+
+/// Slot name is a named token [a-z0-9-]+ (e.g. kvm) or slotNN.
+fn valid_slot(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && name.chars().next().map(|c| c.is_ascii_alphanumeric()).unwrap_or(false)
+}
+
+fn next_free_slot(root: &Path, state: &Value) -> String {
+    let slots = state["slots"].as_object();
+    for n in 1..=999 {
+        let name = format!("slot{n:02}");
+        let in_state = slots.map(|s| s.contains_key(&name)).unwrap_or(false);
+        if !in_state && !root.join("worktrees").join(&name).exists() {
+            return name;
+        }
+    }
+    die("no free slot found in slot01..slot999");
+}
+
+fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
+    if dst.exists() {
+        let (ok, _, _) = git(dst, &["rev-parse", "--is-inside-work-tree"]);
+        if ok {
+            println!("  adopt existing worktree {}", dst.display());
+            return;
+        }
+        die(&format!("path exists but is not a git worktree: {}", dst.display()));
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let dst_s = dst.to_string_lossy().to_string();
+    let (ok, _, err) = match branch {
+        Some(b) => git(primary, &["worktree", "add", "-b", b, &dst_s, start]),
+        None => git(primary, &["worktree", "add", "--detach", &dst_s, start]),
+    };
+    if !ok {
+        die(&format!("git worktree add failed for {}: {err}", dst.display()));
+    }
+    println!("  created {}", dst.display());
+}
+
+fn main() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut agent = String::new();
+    let mut slot = String::new();
+    let mut task = String::new();
+    let mut product = "both".to_string();
+    let mut hermit_branch: Option<String> = None;
+    let mut reverie_branch: Option<String> = None;
+    let mut start_point: Option<String> = None;
+    let mut purpose = String::new();
+    let mut read_mostly = false;
+    let mut check_only = false;
+
+    let mut i = 0;
+    let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
+        *i += 1;
+        if *i >= argv.len() {
+            die(&format!("{flag} requires a value"));
+        }
+        argv[*i].clone()
+    };
+    while i < argv.len() {
+        match argv[i].as_str() {
+            "--agent" => agent = take(&mut i, &argv, "--agent"),
+            "--slot" => slot = take(&mut i, &argv, "--slot"),
+            "--task" => task = take(&mut i, &argv, "--task"),
+            "--product" => product = take(&mut i, &argv, "--product"),
+            "--hermit-branch" => hermit_branch = Some(take(&mut i, &argv, "--hermit-branch")),
+            "--reverie-branch" => reverie_branch = Some(take(&mut i, &argv, "--reverie-branch")),
+            "--start-point" => start_point = Some(take(&mut i, &argv, "--start-point")),
+            "--purpose" => purpose = take(&mut i, &argv, "--purpose"),
+            "--i-promise-this-agent-is-read-mostly" => read_mostly = true,
+            "--check-only" => check_only = true,
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                return;
+            }
+            other => die(&format!("unknown argument: {other}\n\n{USAGE}")),
+        }
+        i += 1;
+    }
+
+    // Health check only: report homeostasis and exit without allocating.
+    if check_only {
+        let root = find_root();
+        homeostasis_check(&root);
+        return;
+    }
+
+    if agent.is_empty() {
+        die(&format!("--agent is required\n\n{USAGE}"));
+    }
+    if !matches!(product.as_str(), "hermit" | "reverie" | "both") {
+        die("--product must be hermit, reverie, or both");
+    }
+
+    let root = find_root();
+    let mut state = load_state(&root);
+
+    // Default slot name: agent name with a leading 'hermit-' stripped.
+    if slot.is_empty() {
+        let candidate = agent.strip_prefix("hermit-").unwrap_or(&agent).to_string();
+        slot = if valid_slot(&candidate) { candidate } else { next_free_slot(&root, &state) };
+        println!("selected slot: {slot}");
+    }
+    if !valid_slot(&slot) {
+        die(&format!("invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"));
+    }
+
+    // 1-1 mapping: refuse if this mutating agent already owns a different slot.
+    if !read_mostly {
+        if let Some(slots) = state["slots"].as_object() {
+            for (other, s) in slots {
+                if other == &slot {
+                    continue;
+                }
+                let owns = s["agents"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter().any(|x| {
+                            x["name"].as_str() == Some(&agent)
+                                && !x["read_only"].as_bool().unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                if owns {
+                    die(&format!(
+                        "agent '{agent}' already owns slot '{other}' (1 slot per agent).\n\
+                         Release it first (scripts/release-worktree.rs --slot {other}) \
+                         or reuse it."
+                    ));
+                }
+            }
+        }
+    }
+
+    // Collision check against existing owner of the target slot.
+    if let Some(existing) = state["slots"].get(&slot) {
+        let owner = existing["agents"]
+            .as_array()
+            .and_then(|a| a.iter().find(|x| !x["read_only"].as_bool().unwrap_or(false)))
+            .and_then(|x| x["name"].as_str())
+            .map(|s| s.to_string());
+        if let Some(owner) = owner {
+            if owner != agent && !read_mostly {
+                die(&format!(
+                    "slot {slot} is owned by '{owner}'. Refusing collision.\n\
+                     Use a different --slot, or pass --i-promise-this-agent-is-read-mostly \
+                     to share read-only."
+                ));
+            }
+        }
+    }
+
+    let start = start_point.clone().unwrap_or_else(|| {
+        let (ok, out, _) = git(&root.join("hermit"), &["rev-parse", "--abbrev-ref", "HEAD"]);
+        if ok && !out.is_empty() { out } else { "main".to_string() }
+    });
+
+    println!("Allocating worktrees/{slot} for agent '{agent}' (product={product}, start={start})");
+
+    let slot_dir = root.join("worktrees").join(&slot);
+    if product == "hermit" || product == "both" {
+        add_worktree(
+            &root.join("hermit"),
+            &slot_dir.join("hermit"),
+            hermit_branch.as_deref(),
+            &start,
+        );
+    }
+    if product == "reverie" || product == "both" {
+        let rstart = start_point.clone().unwrap_or_else(|| {
+            let (ok, out, _) = git(&root.join("reverie"), &["rev-parse", "--abbrev-ref", "HEAD"]);
+            if ok && !out.is_empty() { out } else { "main".to_string() }
+        });
+        add_worktree(
+            &root.join("reverie"),
+            &slot_dir.join("reverie"),
+            reverie_branch.as_deref(),
+            &rstart,
+        );
+    }
+
+    // Merge/append this agent into the slot record.
+    let now = now_iso();
+    let entry = state["slots"]
+        .as_object_mut()
+        .unwrap()
+        .entry(slot.clone())
+        .or_insert_with(|| {
+            json!({
+                "agents": [],
+                "allocated": now.clone(),
+                "hermit_path": format!("worktrees/{slot}/hermit"),
+                "reverie_path": format!("worktrees/{slot}/reverie"),
+            })
+        });
+    entry["status"] = json!("active");
+    entry["updated"] = json!(now);
+    // Slot-level task/purpose/branches describe the mutating OWNER. A read-mostly
+    // sharer records its own task per-agent (below) but must not clobber these.
+    if !read_mostly {
+        if !task.is_empty() {
+            entry["task"] = json!(task);
+        }
+        if !purpose.is_empty() {
+            entry["purpose"] = json!(purpose);
+        }
+        if let Some(b) = &hermit_branch {
+            entry["hermit_branch"] = json!(b);
+        }
+        if let Some(b) = &reverie_branch {
+            entry["reverie_branch"] = json!(b);
+        }
+    }
+    if entry.get("hermit_branch").is_none() {
+        entry["hermit_branch"] = json!(if product == "reverie" { "-" } else { "detached" });
+    }
+    if entry.get("reverie_branch").is_none() {
+        entry["reverie_branch"] = json!(if product == "hermit" { "-" } else { "detached" });
+    }
+    let agents = entry["agents"].as_array_mut().unwrap();
+    if let Some(a) = agents.iter_mut().find(|a| a["name"].as_str() == Some(&agent)) {
+        a["read_only"] = json!(read_mostly);
+        if !task.is_empty() {
+            a["task"] = json!(task.clone());
+        }
+    } else {
+        agents.push(json!({ "name": agent, "read_only": read_mostly, "task": task }));
+    }
+
+    save_state(&root, &mut state);
+    regen_active_md(&root, &state);
+
+    println!("\n✓ allocated worktrees/{slot} to {agent}");
+    println!("  state:   {}", state_path(&root).display());
+    println!("  active:  {}", root.join("worktrees/ACTIVE.md").display());
+
+    // Advisory workspace-health banner (never blocks allocation).
+    homeostasis_check(&root);
+    if hermit_branch.is_none() && (product == "hermit" || product == "both") {
+        println!(
+            "  note: hermit worktree is DETACHED. Create a feature branch before editing:\n\
+             \r        git -C worktrees/{slot}/hermit switch -c <branch> origin/main"
+        );
+    }
+}

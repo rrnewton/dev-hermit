@@ -121,32 +121,59 @@ The intended parent layout is:
 |-- .gitmodules
 |-- hermit/                         # primary; coordinator only
 |-- reverie/                        # primary; coordinator only
+|-- worktree-state.json             # machine-local slot->owner map (gitignored)
 |-- worktrees/
-|   |-- ACTIVE.md                   # exactly one row per active slot pair
+|   |-- ACTIVE.md                   # human notes + script-managed slot table
 |   |-- ARCHIVED.md                 # append-only completed-slot history
-|   |-- slot01/
+|   |-- kvm/                        # named-agent slot (agent hermit-kvm)
 |   |   |-- hermit/                 # Hermit worktree
-|   |   `-- reverie/                # Reverie worktree
-|   |-- slot02/
+|   |   `-- reverie/                # Reverie worktree (omit if not needed)
+|   |-- dbi/
+|   |   `-- hermit/                 # Hermit-only slot (no reverie child)
+|   |-- slot01/                     # generic slot for an unnamed agent
 |   |   |-- hermit/
 |   |   `-- reverie/
-|   |-- slot03/
-|   |   |-- hermit/
-|   |   `-- reverie/
-|   `-- slotNN/                    # up to 12 active, plus 5 parked
+|   `-- slotNN/                     # up to 12 active, plus 5 parked
 |-- ai_docs/                        # durable textual research and handoffs
+|   `-- transient/
+|       `-- worktree-management-map.md   # index of every worktree-info source
 |-- experiments/                    # durable reproducible evidence
 `-- scratch/                        # ignored transient material
 ```
 
-A slot is normally one ownership unit. It may be shared by research-only
-agents or by agents with explicitly disjoint file ownership when the registry
-names every agent, task, branch, and owned path. A Hermit-only task leaves the
-slot's Reverie worktree clean and detached unless coordinated Reverie work is
-explicitly assigned. Never allow concurrent edits to the same file or branch.
+**Nested layout v2, one slot per agent.** Each slot is `worktrees/<slot>/` and
+holds a `hermit` child, a `reverie` child, or both. `<slot>` is either a
+**named agent** (`kvm`, `dbi`, `sabre`, `liteinst`, `ci`, `coord`, `lander`,
+`opt` — the `hermit-` prefix is stripped) or a generic `slotNN` for an unnamed
+agent. Exactly one mutating agent owns a slot; a Hermit-only task creates only
+the `hermit` child. This deprecates the old flat layout (`worktrees/slotNN` as
+the hermit tree plus a sibling `worktrees_reverie/slotNN`) and the
+primary-nested `hermit/.worktrees/…` scratch trees — do not create either; the
+scripts only produce the nested form.
 
-Physical worktrees, their build output, and `ACTIVE.md` are machine-local and
-ignored by the parent repository. `ARCHIVED.md` remains the durable history.
+**Provision and release slots with the registry-aware scripts**, never raw
+`git worktree add`:
+
+```bash
+scripts/allocate-worktree.rs --agent hermit-kvm --task <id> --product both
+scripts/release-worktree.rs  --slot kvm --clean
+```
+
+These enforce one-owner-per-slot and one-slot-per-agent, and are the **single
+writer** of `worktree-state.json` and the ACTIVE.md managed table block, so
+those two never drift. `scripts/slot-init.sh` is a quick manual fallback that
+creates detached worktrees only and does NOT touch the registry.
+
+A slot may be shared by research-only agents or by agents with explicitly
+disjoint file ownership when the registry names every agent, task, branch, and
+owned path (use `--i-promise-this-agent-is-read-mostly`). Never allow
+concurrent edits to the same file or branch.
+
+Physical worktrees, their build output, `worktree-state.json`, and `ACTIVE.md`
+are machine-local and ignored by the parent repository. `ARCHIVED.md` remains
+the durable history. **`ai_docs/transient/worktree-management-map.md` is the
+authoritative index of every place worktree information lives and how the
+places stay consistent — read it before any worktree operation.**
 
 ## Hard Invariants
 
@@ -167,7 +194,8 @@ ignored by the parent repository. `ARCHIVED.md` remains the durable history.
 11. Never commit binaries or generated build artifacts to any repository.
 12. A handoff is incomplete without exact SHAs and validation results.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents;
-    never create a non-`slotNN` worktree path.
+    every worktree path must be `worktrees/<slot>/{hermit,reverie}` where
+    `<slot>` is a named agent or `slotNN` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
 
 ## Clean Start And Checkout Ownership
@@ -259,11 +287,13 @@ uncommitted work before the coordinator decides its disposition.
 
 ## Strict Slot Pool
 
-All new work uses a top-level canonical `slotNN` name. At most twelve
-worktrees may be active and at most five clean slots may be parked. Up to
-fifteen agents may work concurrently, including agents explicitly sharing a
-slot for research-only or disjoint-file work. Branch names, task names, and
-agent names never appear in worktree paths.
+All new work uses a canonical slot name — a named agent (`kvm`, `dbi`, …) or a
+generic `slotNN` — under `worktrees/<slot>/`. At most twelve worktrees may be
+active and at most five clean slots may be parked. Up to fifteen agents may
+work concurrently, including agents explicitly sharing a slot for
+research-only or disjoint-file work. **Branch names and task names never
+appear in worktree paths**; an agent name may name its slot, but the branch it
+works on does not.
 
 A canonical slot is either:
 
@@ -289,9 +319,10 @@ not park, rename, or assign them to another task.
 ### Provisioning A Missing Slot
 
 Provisioning is a coordinator operation. Initialize both primary submodules
-first, then use the tracked helper. The helper enforces the canonical name,
-requires agent/task metadata, enforces active and parked capacity separately,
-initializes the nested submodules, and appends the registry row:
+first, then use the registry-aware allocator. It enforces the canonical name,
+requires agent metadata, enforces one-owner-per-slot and one-slot-per-agent,
+creates the nested product worktrees, and writes both `worktree-state.json`
+and the ACTIVE.md managed table block:
 
 ```bash
 cd ~/work/dev-hermit
@@ -299,11 +330,13 @@ git submodule update --init --checkout -- hermit
 git -c submodule.reverie.update=checkout \
   submodule update --init --checkout -- reverie
 
-./slot-init.sh slot01 --owner <agent> --task <task-id> \
-  --purpose "<one-line purpose>"
+scripts/allocate-worktree.rs --agent <agent> --task <task-id> \
+  --product both --purpose "<one-line purpose>"
 ```
 
-Do not invoke `git worktree add` directly for agent work.
+`scripts/slot-init.sh <slot> [hermit|reverie|both] [start-point]` is a quick
+manual fallback that creates detached worktrees only and does NOT update the
+registry. Do not invoke `git worktree add` directly for agent work.
 
 Build caches may be seeded with copy-on-write copies when useful:
 
