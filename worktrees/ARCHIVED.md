@@ -418,3 +418,12 @@ Kept 14 (live/active/new): slot129,160,220,225,227,229,234,237,241,250,261,270,2
   into ratchet-7 to avoid double-landing.
 - Slot detached clean at origin/main 767f7d1 (dynamorio submodule kept as warm
   cache). Parent gitlink NOT bumped (coordinator owns reverie pinning).
+
+## slot222 — impl-debug-batch-55 (hermit-222) — DONE 2026-07-26
+- Product: hermit-only. Branch debug-batch55-slot222 (base main 7bd9f800d9d9127ab1752e8b02a802003e01c4cf). No commits (diagnosis-only task).
+- Debugged 3 failing programs under --strict --verify --log debug (ptrace backend, no relaxations). Two root-cause classes:
+  - tar ('tar cf t.tar /etc/hostname && tar tf'): SYSCALL FAIL-CLOSED. openat2(AT_FDCWD,"/etc/",open_how,24) classified Unsupported (syscall_classification.rs:516); sole ERROR line tears container down -> "Sandbox container exited unexpectedly" exit 1. Fix: route openat2 -> Openat handler. Matches memory openat2-unsupported-tar-strict-fail.
+  - top ('top -bn1'): LIVE /proc PASSTHROUGH. %Cpu(s) line diverges run1 vs run2; DETLOG clean (stable schedule). /proc/stat, /proc/uptime, /proc/[pid]/stat passthrough (Path R) leak live host cpu jiffies.
+  - ps ('ps aux'): LIVE /proc PASSTHROUGH (same class as top). STAT col Rl vs Sl + VSZ/RSS diverge; /proc/[pid]/stat state char + /proc/[pid]/statm mem passthrough. Fix class = in-flight /proc/meminfo virtualization (memory proc-meminfo-live-passthrough-nondet).
+  - CONTROLS this run: pgrep, uptime -p, df -P all PASS L2 despite touching /proc (no volatile fields surfaced).
+- Slot released clean via scripts/release-worktree.rs.
