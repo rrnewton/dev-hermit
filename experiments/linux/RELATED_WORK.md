@@ -1,217 +1,242 @@
 # Related Work: Deterministic Whole-System Linux Execution
 
-_Prepared 2026-07-27 for task `research-related-work-linux-determ`._
+_Updated 2026-07-27 for task `impl-related-work-cleanup`._
 
-This document surveys prior art in deterministic execution, record/replay, and
-whole-system reproducibility, and situates Hermit's deterministic QEMU/Linux
-boot against it. Sources are cited inline; every external claim links to a
-primary or authoritative page. Our own result is reported with exact backend,
-determinism level, kernel, and relaxations per the Hermit Communication
-Precision rules — no unqualified "it works" claims.
+This survey separates two properties that are often grouped under the word
+"deterministic":
 
-## 1. Our Result (stated precisely)
+1. **A-priori determinism.** Given the same program, inputs, seed, and system
+   configuration, each of N independent executions follows the same behavior.
+   The machines do not exchange a recording. Hermit, dettrace, Dthreads, dOS,
+   Determinator, DMP, CoreDet, and Kendo target this property at different
+   scopes.
+2. **Deterministic replay.** The first execution is allowed to be
+   nondeterministic. The system records the choices or external events that
+   occurred, and later executions reproduce that particular trace. rr, PANDA,
+   ReVirt, SimuBoost, and Arnold target this property.
 
-Hermit runs an **unmodified Linux guest kernel plus userspace as a QEMU/TCG
-process under the Hermit ptrace backend**, imposing deterministic thread
-scheduling, virtual time, and I/O so the *entire virtual machine* executes
-reproducibly. Determinism is imposed on QEMU's own host-level execution; the
-guest OS is reproducible by construction, not by replaying a captured log.
+The distinction matters operationally. A replay system can reproduce a boot
+only after receiving that boot's snapshot or event log. An a-priori
+deterministic system aims to make fresh executions agree without sharing such
+an artifact.
 
-Execution context (from `experiments/linux-vm-roadmap_20260726/` and
-`hermit/docs/QEMU_BOOT.md`):
+**Literature finding.** In the primary sources reviewed here, we found no
+earlier published demonstration of an unmodified Linux kernel cold-booting on
+the first execution with the same execution across independent machines,
+without a prior recording. Whole-system systems such as PANDA and ReVirt
+replay a captured boot; a-priori systems before Hermit target applications,
+process groups, containers, or a purpose-built OS. This is a bounded literature
+finding, not a claim that no unpublished or differently framed experiment has
+ever done it.
 
-- **Backend:** ptrace (default, best-tested).
-- **Emulator:** QEMU `10.1.0`, `-accel tcg,thread=single -smp 1`,
-  `-icount shift=0,sleep=off` (a single instruction-derived virtual clock
-  unifies guest TSC and device timers, avoiding PIT-calibration / TSC-watchdog
-  / no-clocksource boot failures).
-- **Guest kernel:** Linux `6.17.13` (bzImage), as confirmed by the hermit-ci
-  artifact audit. The host kernel observed for these runs was
-  `6.17.13-0_fbk0_crackerjackhost`; guest and host remain distinct execution
-  layers even though their base kernel versions match.
+## 1. Hermit + QEMU (2022-present; whole-VM result in 2026)
 
-Best determinism evidence, bound to commits rather than a branch name:
+Hermit runs an **unmodified Linux guest kernel and userspace inside QEMU/TCG**
+while determinizing QEMU's host-level process. Hermit controls thread
+scheduling, time, randomness, and supported I/O at QEMU's Linux interface;
+QEMU's fixed instruction-count clock (`-icount shift=0,sleep=off`) supplies one
+coherent guest clock. The guest boot is a fresh forward execution, not a replay
+of a previous VM log.
 
-| Workload | Level | Evidence | Notes |
-| --- | --- | --- | --- |
-| Cold boot to initramfs marker | **L2**: `--strict` fail-closed forward execution plus `--verify` cross-run comparison (ptrace) | Hermit `fe97efd`, 2026-07-24 | Bitwise-identical repeat run. |
-| `scx_rlfifo` sched_ext + 4 CPU workers | **Historically attested L2, needs reproduction**: `--strict` forward execution plus `--verify` comparison (ptrace) | Hermit `0c419bf` | Historical report of 1,340,266 messages/run; not reproduced on current main. |
-| Cold boot verify (fail-open control) | **Repeatability evidence only**: `--verify` comparison, no `--strict` enforcement | Hermit `54ff993` | Reported 1,130,696 messages with "no substantive differences found." Because unsupported operations could execute natively, this does not establish strict L2. |
+The maintained configuration is:
 
-The flags establish different properties. `--strict` controls the forward run:
-Detcore fails closed when it encounters an unsupported syscall instead of
-allowing that operation to execute natively and potentially expose host
-nondeterminism. `--verify` compares two executions for matching event streams;
-it does not make an otherwise fail-open run strict. Therefore `--verify`
-without `--strict` is repeatability evidence for that run configuration, while
-`--strict --verify` additionally demonstrates that the compared execution
-stayed within Detcore's supported deterministic boundary.
+- **Backend:** Hermit's ptrace backend with serialized scheduling.
+- **Emulator:** QEMU 10.1.0, `-accel tcg,thread=single -smp 1`, fixed icount.
+- **Guest:** Linux 6.17.13 bzImage plus a minimal initramfs.
+- **Oracle:** the guest prints `SHARED_FUTEX_QEMU_KERNEL_OK` and powers off.
 
-**Current-main caveat.** On current main (`fb5f2014`, 2026-07-26)
-strict QEMU boot is **regressed**: PR #644 made `--strict` fail-closed on any
-unsupported syscall, and QEMU issues an unsupported `seccomp(SECCOMP_SET_MODE_
-FILTER, TSYNC, NULL)` capability probe at startup, so Detcore stops before
-Linux boots. The strongest strict-L2 results above are therefore historical
-(2026-07-24 tree) pending restoration, tracked as `p0_restore_qemu_strict`.
-The "1M+ messages, zero differences" headline corresponds to the fail-open
-`run --verify` control (1.13M messages) and the historical strict sched_ext run
-(1.34M messages); it should not be read as a current-main strict L2 claim.
+Evidence is bound to exact revisions:
 
-The distinctive property, relative to the prior art below, is **determinize-
-forward whole-system execution**: two independent cold boots of the same VM
-produce identical event streams *without recording a log first*, and the scope
-is an entire guest OS (kernel + userspace) rather than a single application or
-container.
+| Workload | Assurance | Evidence |
+| --- | --- | --- |
+| Cold boot to the initramfs marker | L2: `run --strict --verify`, ptrace, no scheduling relaxation | Hermit `fe97efd`, 2026-07-24 |
+| Strict cold boot to marker and poweroff | L1: `run --strict`, ptrace, no scheduling relaxation | Hermit `dd60278f`, 166.486 s |
+| Maintained boot and verification harness | Requires the marker, rejects known clock failures, and provides strict L1/L2 commands | `experiments/linux/strict_l2_test.sh`; `hermit/docs/QEMU_BOOT.md` |
 
-## 2. Process-Level Record/Replay
+`--strict` and `--verify` establish different facts. `--strict` makes the
+forward run fail closed outside Hermit's supported deterministic boundary.
+`--verify` executes the workload twice and compares its event streams. The L2
+result therefore demonstrates two independent cold boots with no recording;
+it is not record/replay.
 
-### rr (Mozilla / rr-project)
-- Sources: <https://rr-project.org/>,
-  <https://github.com/rr-debugger/rr>,
-  <https://en.wikipedia.org/wiki/Rr_(debugging)>.
-- What it achieves: lightweight record-and-replay of Linux user-space processes
-  for reverse debugging. Serializes threads onto a single core and uses
-  `ptrace` plus hardware performance counters (retired-conditional-branch
-  counts) to make replay deterministic.
-- Comparison: rr's *mechanism* is the closest cousin to Hermit's ptrace
-  backend — single-core serialization plus PMU/RCB-based preemption. But rr
-  **records then replays** one captured execution for debugging; it does not
-  make a *fresh* run deterministic and does not run a whole VM. Hermit
-  `--strict` determinizes the forward execution itself, so two independent runs
-  match (`--verify`), and here that guest is an entire QEMU/Linux system, not a
-  single traced process.
+The public origin of this work is Meta's 2022 post,
+["Hermit: Deterministic Linux for Controlled Testing and Software
+Bug-finding"](https://developers.facebook.com/blog/post/2022/11/22/hermit-deterministic-linux-testing/).
+It states the a-priori goal directly: a network-free program should execute
+identically irrespective of time and place. Hermit grew from the dettrace
+prototype described in the ASPLOS 2020 paper
+["Reproducible Containers"](https://doi.org/10.1145/3373376.3378519).
 
-### dettrace (Navarro Leija et al., ASPLOS 2020)
-- Source: <https://krs85.github.io/dettrace.pdf> ("Reproducible Containers").
-- What it achieves: deterministic, reproducible execution of normal Linux
-  programs inside a container using `ptrace` to intercept and sanitize sources
-  of nondeterminism (time, randomness, scheduling of syscalls, etc.).
-- Comparison: dettrace is the direct intellectual predecessor of Hermit's
-  Detcore approach. It determinizes *application processes* in a container but
-  does not provide full deterministic thread scheduling with PMU preemption,
-  and it never ran an entire guest OS. Hermit extends the determinize-forward
-  container idea with a serialized deterministic scheduler and `--verify`
-  bitwise checking, and applies it to QEMU running a complete Linux kernel.
+The existing QEMU evidence used independent executions on the evidence host.
+A literal N-host experiment using identical Hermit, QEMU, kernel, initramfs,
+and configuration artifacts would be the strongest direct validation of the
+cross-machine part of the a-priori contract.
 
-## 3. Whole-System Record/Replay
+## 2. A-Priori Deterministic Execution
 
-### PANDA (MIT Lincoln Laboratory)
-- Sources: <https://github.com/panda-re/panda>, <https://panda.re/>,
-  <https://www.ll.mit.edu/r-d/projects/panda-platform-architecture-neutral-dynamic-analysis>,
-  PyPANDA (NDSS): <https://www.ndss-symposium.org/ndss-paper/auto-draft-152/>.
-- What it achieves: a QEMU-based Platform for Architecture-Neutral Dynamic
-  Analysis with whole-system record/replay. It records an entire guest
-  execution and deterministically replays it for reverse engineering, malware
-  analysis, and taint tracking.
-- Comparison: PANDA and Hermit both concern *whole-system* determinism over
-  QEMU, but from opposite directions. PANDA instruments **inside** QEMU to
-  record and replay a captured guest trace. Hermit runs **QEMU itself** as a
-  deterministic guest process — determinism is imposed at the host boundary
-  (QEMU's syscalls, threads, time), so the full VM is reproducible across
-  independent runs with no recorded log. PANDA answers "replay what happened";
-  Hermit answers "make every run the same, and diff two of them."
+### dettrace / Reproducible Containers (2020)
 
-### ReVirt (Dunlap et al., OSDI 2002, U. Michigan)
-- Sources:
-  <https://www.usenix.org/conference/osdi-02/revirt-enabling-intrusion-analysis-through-virtual-machine-logging-and-replay>,
-  <https://cs.nyu.edu/~mwalfish/classes/ut/s13-cs439/ref/dunlap02revirt.pdf>.
-- What it achieves: VM-level logging and replay (on UMLinux) for intrusion
-  analysis. Logs nondeterministic inputs/events so an entire VM can be replayed
-  instruction-for-instruction after a compromise.
-- Comparison: ReVirt pioneered whole-VM deterministic replay but is a
-  **log-and-replay forensics** tool — it reproduces a recorded incident.
-  Hermit is determinize-by-construction: the goal is that fresh boots are
-  identical and races surface as divergences under chaos/schedule search, not
-  that a past run can be reconstructed.
+- Sources: [ASPLOS 2020 paper](https://doi.org/10.1145/3373376.3378519),
+  [author PDF](https://krs85.github.io/dettrace.pdf).
+- **Class:** a-priori determinism; no recording is required.
+- **Scope:** normal Linux applications in a container. dettrace uses `ptrace`
+  to intercept and normalize time, randomness, filesystem observations, and
+  syscall ordering.
+- **Boundary:** application/container processes, not a guest kernel. It does
+  not provide Hermit's PMU-driven preemption of CPU-bound threads.
+- **Relation to Hermit:** direct predecessor. Hermit retains the userspace
+  determinization model, adds a deterministic scheduler and verification, and
+  applies the model to QEMU as an arbitrary Linux process.
 
-### SimuBoost (KIT / Karlsruhe, Bellosa group)
-- Related context: full-system-simulation acceleration literature, e.g.
-  <https://www.sigarch.org/the-return-of-rigorous-full-system-timing-simulation/>.
-  (SimuBoost is the KIT project applying deterministic record/replay plus
-  periodic checkpointing to parallelize slow full-system simulation.)
-- What it achieves: records a workload once in a fast VM with periodic
-  checkpoints, then replays checkpoint intervals *in parallel* inside a slow
-  functional/timing simulator, using deterministic replay to guarantee each
-  interval reproduces the recorded run.
-- Comparison: SimuBoost treats determinism as a **means to accelerate
-  simulation**. Hermit treats deterministic execution as the **product**
-  (race discovery/localization, replay, schedule search, lower-overhead
-  backends). Both rely on the same underlying guarantee — an interval replays
-  identically — but Hermit does not need a prior recording to make a boot
-  reproducible.
+### dOS: Deterministic Process Groups (2010)
 
-### Eidetic systems / Arnold (Devecsery et al., OSDI 2014, U. Michigan)
-- Context/survey: "Deterministic Record-and-Replay," CACM 2025,
-  <https://dl.acm.org/doi/10.1145/3724381>.
-- What it achieves: an *eidetic* system (Arnold) records the entire lineage of
-  all machine state over long periods so any past state can be replayed and
-  data-provenance queries answered years later.
-- Comparison: Arnold is whole-machine record/replay optimized for provenance
-  and retrospection at massive time scales. Hermit shares the "reproduce
-  execution" foundation but is forward-deterministic and interactive: the value
-  is that the *next* run matches, enabling `--verify` and race localization,
-  not archival lineage.
+- Source: [OSDI 2010](https://www.usenix.org/conference/osdi10/deterministic-process-groups-dos).
+- **Class:** a-priori determinism.
+- **Scope:** an OS abstraction for deterministic groups of communicating
+  processes. It requires kernel support and does not determinize a stock guest
+  Linux kernel as a whole.
 
-## 4. Deterministic OS / Deterministic Multithreading
+### Determinator (2010)
 
-These systems make concurrent *applications* deterministic; none runs an
-unmodified whole guest OS the way Hermit-over-QEMU does.
+- Source: ["Efficient System-Enforced Deterministic
+  Parallelism"](https://www.usenix.org/legacy/events/osdi10/tech/full_papers/Aviram.pdf).
+- **Class:** a-priori determinism.
+- **Scope:** a purpose-built operating system and parallel programming model.
+  Determinator makes its own applications deterministic; it is not a method
+  for running an unmodified Linux kernel deterministically.
 
-- **dOS — Deterministic Process Groups** (Bergan et al., OSDI 2010):
-  <https://www.usenix.org/conference/osdi10/deterministic-process-groups-dos>.
-  An OS abstraction that makes an arbitrary group of processes execute
-  deterministically. Kernel-integrated; scope is process groups, not a full
-  guest kernel.
-- **Determinator — Efficient System-Enforced Deterministic Parallelism**
-  (Aviram et al., OSDI 2010):
-  <https://web3.arxiv.org/pdf/1005.3450>,
-  <https://explore.openaire.eu/search/publication?pid=10.1145%2F2160718.2160742>.
-  A from-scratch OS whose parallel model is deterministic by design — requires
-  its own OS/programming model rather than running stock Linux.
-- **DMP / CoreDet / Kendo** — deterministic multithreading via hardware,
-  compiler runtime, and software:
-  Kendo <https://projects.csail.mit.edu/kendo/>;
-  schedule-memoization line
-  <https://llvm.org/pubs/2010-10-OSDI-DeterministicMT.html>;
-  survey <https://www.academia.edu/123979074/Deterministic_Execution_for_Multicore_and_Cloud_Computing>.
-  These deterministically schedule threads of a *single program*.
-- Comparison: all of the above determinize application-level concurrency, often
-  requiring recompilation, a special runtime, or a bespoke OS. Hermit
-  determinizes an **arbitrary unmodified x86-64 binary** — here QEMU, which
-  transitively carries an entire guest kernel and userspace — with no guest
-  recompilation and no custom OS, using ptrace + PMU preemption + a serialized
-  deterministic scheduler.
+### Dthreads (2011)
 
-## 5. Summary Comparison
+- Source: [SOSP 2011](https://doi.org/10.1145/2043556.2043587).
+- **Class:** a-priori determinism.
+- **Scope:** a deterministic replacement for the pthreads runtime. It isolates
+  threads and merges state at synchronization boundaries, targeting
+  multithreaded applications rather than an operating-system boot.
 
-| System | Scope | Direction | Needs prior recording? | Guest OS unmodified? |
-| --- | --- | --- | --- | --- |
-| rr | Process | replay for debug | Yes | n/a (user process) |
-| dettrace | Container/process | determinize-forward | No | n/a (user process) |
-| PANDA | Whole system (QEMU) | record→replay | Yes | Yes |
-| ReVirt | Whole VM | record→replay | Yes | Yes (UMLinux) |
-| SimuBoost | Whole system (sim) | record→replay (parallel) | Yes | Yes |
-| Arnold/eidetic | Whole machine | record→replay (archival) | Yes | Modified stack |
-| dOS / Determinator | Process group / new OS | determinize-forward | No | No (custom OS/model) |
-| DMP / CoreDet / Kendo | Multithreaded app | determinize-forward | No | n/a (app) |
-| **Hermit + QEMU** | **Whole VM (kernel+userspace)** | **determinize-forward** | **No** | **Yes** |
+### DMP (2009), CoreDet (2010), and Kendo (2009)
 
-Hermit occupies a corner that the prior art does not: **forward-deterministic,
-whole-system, over an unmodified guest OS, without a prior recording.** The
-whole-system record/replay systems (PANDA, ReVirt, SimuBoost, Arnold) reproduce
-a *captured* execution; the forward-deterministic systems (dettrace, dOS,
-Determinator, DMP/Kendo/CoreDet) target applications, containers, or a bespoke
-OS. Hermit combines determinize-forward semantics with whole-system scope by
-running the emulator itself as the deterministic guest, which is what makes
-`--strict --verify` boot-to-boot bitwise comparison — and, ultimately, chaos
-scheduling and schedule search across a full kernel — possible.
+- Sources: [DMP](https://doi.org/10.1145/1508244.1508255),
+  [CoreDet](https://doi.org/10.1145/1736020.1736029),
+  [Kendo](https://doi.org/10.1145/1508244.1508256).
+- **Class:** a-priori deterministic multithreading.
+- **Scope:** DMP explores deterministic shared-memory multiprocessing;
+  CoreDet combines compiler and runtime support; Kendo determinizes lock-based
+  programs in software. Their unit of control is a parallel application, not
+  an unmodified guest OS and its devices.
+
+## 3. Deterministic Replay
+
+### rr (2014-present)
+
+- Sources: <https://rr-project.org/>, <https://github.com/rr-debugger/rr>.
+- **Class:** deterministic replay.
+- **Scope:** Linux userspace processes for reverse debugging. rr serializes
+  threads on one core and combines `ptrace`, syscall recording, and retired
+  conditional branch counters to return to recorded asynchronous events.
+- **Distinction:** rr does not constrain two fresh executions to choose the
+  same schedule or inputs. It records one execution and makes replay match that
+  execution. Hermit's ptrace/PMU mechanics are related, but its forward run is
+  determinized before `--verify` compares independent executions.
+
+### PANDA (2013-present)
+
+- Sources: <https://panda.re/>, <https://github.com/panda-re/panda>,
+  [PANDA manual: Record/Replay
+  Details](https://github.com/panda-re/panda/blob/dev/panda/docs/manual.md#recordreplay-details),
+  [MIT Lincoln Laboratory overview](https://www.ll.mit.edu/r-d/projects/panda-platform-architecture-neutral-dynamic-analysis).
+- **Class:** deterministic whole-system replay and dynamic analysis.
+- **Scope:** PANDA is built into QEMU, so plugins can observe all guest code and
+  data. Its current documentation identifies whole-system replay for x86,
+  x86-64, and ARM, plus OS introspection, taint analysis, time-travel
+  debugging, and an architecture-neutral callback/plugin framework.
+- **Recording contract:** `begin_record` produces two required artifacts:
+  `<name>-rr-snp`, the VM snapshot at the beginning of the recording, and
+  `<name>-rr-nondet.log`, the log of nondeterministic changes crossing the
+  CPU/RAM boundary (for example DMA, interrupts, and input instructions).
+  `panda-system-$arch -replay <name>` consumes both artifacts. The official
+  README emphasizes compact, shareable logs and repeatable analysis.
+- **Portability boundary:** PANDA avoids trace-format changes, but its README
+  guarantees replay only between PANDA builds with the same address length.
+  That is trace portability, not a guarantee that an unrecorded run on another
+  host independently makes the same choices.
+- **Distinction:** PANDA can record and replay an entire Linux execution,
+  including a boot. The first run remains the event source. Hermit instead
+  determinizes QEMU's host interface so a fresh boot is the comparison unit.
+
+### ReVirt (2002)
+
+- Source: [OSDI 2002](https://www.usenix.org/conference/osdi-02/revirt-enabling-intrusion-analysis-through-virtual-machine-logging-and-replay).
+- **Class:** whole-VM deterministic replay.
+- **Scope:** logs nondeterministic events in a UMLinux virtual machine for
+  instruction-level intrusion analysis. It reconstructs a recorded incident;
+  it does not prescribe the outcome of a fresh boot.
+
+### SimuBoost (2019)
+
+- Source: [KIT dissertation, "SimuBoost: Scalable Parallelization of Functional
+  System Simulation"](https://publikationen.bibliothek.kit.edu/1000097700).
+- **Class:** checkpointed deterministic replay.
+- **Scope:** runs a workload first in a fast hardware-assisted VM, creates
+  periodic checkpoints, then replays intervals in parallel in a slower
+  functional simulator. Heterogeneous deterministic replay ensures each
+  interval reproduces the recorded predecessor state. A Linux build is an
+  evaluation workload, not an a-priori deterministic Linux boot claim.
+
+### Arnold / Eidetic Systems (2014)
+
+- Source: [OSDI 2014](https://www.usenix.org/conference/osdi14/technical-sessions/presentation/devecsery).
+- **Class:** long-horizon whole-system record/replay.
+- **Scope:** records machine-state lineage so past states can be reconstructed
+  and queried. Its objective is retrospective provenance, not making the next
+  independent run choose the same execution.
+
+## 4. Comparison
+
+| System | Years | Scope | Class | Prior recording? | Fresh unmodified Linux boot? |
+| --- | --- | --- | --- | --- | --- |
+| Hermit + QEMU | 2022-present; VM result 2026 | Whole VM | A-priori determinism | No | **Demonstrated without replay** |
+| dettrace | 2020 | Process/container | A-priori determinism | No | No |
+| dOS | 2010 | Process group | A-priori determinism | No | No |
+| Determinator | 2010 | Purpose-built OS | A-priori determinism | No | No; custom OS |
+| Dthreads | 2011 | Multithreaded app | A-priori determinism | No | No |
+| DMP / CoreDet / Kendo | 2009-2010 | Multithreaded app | A-priori determinism | No | No |
+| rr | 2014-present | Process | Deterministic replay | Yes | No |
+| PANDA | 2013-present | Whole system / QEMU | Deterministic replay | Yes: snapshot + nondeterminism log | Replay only |
+| ReVirt | 2002 | Whole VM | Deterministic replay | Yes | Replay only |
+| SimuBoost | 2019 | Whole-system simulation | Deterministic replay | Yes: checkpoints + trace | Replay only |
+| Arnold | 2014 | Whole machine | Deterministic replay | Yes | Replay only |
+
+The empty quadrant in the reviewed literature is **a-priori determinism at
+whole-system scope over an unmodified guest OS**. Hermit reaches that quadrant
+by treating QEMU as the determinized process. PANDA and ReVirt provide deeper
+whole-system replay facilities, but their reproducibility is conditional on a
+recorded execution. Dthreads, dOS, Determinator, DMP, CoreDet, Kendo, and
+dettrace avoid a prior recording, but stop at an application, process group,
+container, or custom OS boundary.
+
+## 5. Answer to the Linux-Boot Question
+
+**Has another published system deterministically booted an unmodified Linux
+kernel on the first run, reproducibly across N independent machines, without
+sharing a recording?** Not in the primary literature reviewed for this survey.
+
+That conclusion has three precise limits:
+
+1. PANDA, ReVirt, SimuBoost, and related whole-system tools can reproduce Linux
+   executions, but only from a recording or checkpoint lineage.
+2. Earlier a-priori systems can make concurrent programs reproducible, but do
+   not claim this whole-system, unmodified-Linux scope.
+3. Hermit's current evidence establishes independent no-recording cold boots;
+   publishing an N-host run with content-addressed Hermit, QEMU, kernel, and
+   initramfs inputs would make the cross-machine comparison explicit.
 
 ## 6. General References
 
-- "Deterministic Record-and-Replay," Communications of the ACM, 2025 —
-  <https://dl.acm.org/doi/10.1145/3724381> (umbrella survey).
-- Record and replay debugging (overview) —
-  <https://en.wikipedia.org/wiki/Record_and_replay_debugging>.
-- Hermit determinism levels and QEMU boot procedure —
-  `hermit/docs/QEMU_BOOT.md`; evidence and current-main regression analysis —
-  `experiments/linux-vm-roadmap_20260726/README.md` and `metadata.json`.
+- Meta, ["Hermit: Deterministic Linux for Controlled Testing and Software
+  Bug-finding" (2022)](https://developers.facebook.com/blog/post/2022/11/22/hermit-deterministic-linux-testing/).
+- Navarro Leija et al., ["Reproducible Containers" (ASPLOS
+  2020)](https://doi.org/10.1145/3373376.3378519).
+- ["Deterministic Record-and-Replay" (Communications of the ACM,
+  2025)](https://dl.acm.org/doi/10.1145/3724381).
+- Hermit QEMU procedure and evidence: `hermit/docs/QEMU_BOOT.md`,
+  `experiments/linux/README.md`, and `experiments/linux/strict_l2_test.sh`.
