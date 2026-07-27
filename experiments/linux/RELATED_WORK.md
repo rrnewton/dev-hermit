@@ -37,7 +37,16 @@ Best determinism evidence, bound to commits rather than a branch name:
 | `scx_rlfifo` sched_ext + 4 CPU workers | **L2** (`--strict --verify`, ptrace) | Hermit `0c419bf` | 1,340,266 messages/run, per-run repeatable. |
 | Cold boot verify (fail-open control) | verify only, **no `--strict`** | Hermit `54ff993` | `run --verify`: 1,130,696 messages, "no substantive differences found." A determinism-verify result, **not** a strict L2 claim. |
 
-**Current-main caveat (honesty).** On current main (`fb5f2014`, 2026-07-26)
+The flags establish different properties. `--strict` controls the forward run:
+Detcore fails closed when it encounters an unsupported syscall instead of
+allowing that operation to execute natively and potentially expose host
+nondeterminism. `--verify` compares two executions for matching event streams;
+it does not make an otherwise fail-open run strict. Therefore `--verify`
+without `--strict` is repeatability evidence for that run configuration, while
+`--strict --verify` additionally demonstrates that the compared execution
+stayed within Detcore's supported deterministic boundary.
+
+**Current-main caveat.** On current main (`fb5f2014`, 2026-07-26)
 strict QEMU boot is **regressed**: PR #644 made `--strict` fail-closed on any
 unsupported syscall, and QEMU issues an unsupported `seccomp(SECCOMP_SET_MODE_
 FILTER, TSYNC, NULL)` capability probe at startup, so Detcore stops before
