@@ -14,7 +14,7 @@ walkthrough covers five working workflows:
 2. record an execution and replay it, with or without GDB;
 3. search seeded thread schedules for a concurrency failure; and
 4. bisect two schedules to identify the events that change the outcome; and
-5. boot Linux in QEMU under Hermit's relaxed virtual-time profile.
+5. boot Linux in QEMU under Hermit's strict deterministic profile.
 
 > [!WARNING]
 >
@@ -28,8 +28,9 @@ Use an x86-64 Linux host with Rust nightly (selected by the submodule's
 `rust-toolchain.toml`), libunwind and LZMA development libraries, Linux
 user/PID namespaces, and parent-child ptrace and seccomp support. GDB is needed
 for the record/replay section, and the Python demo uses `/usr/bin/python3`. The
-`--verify` step in demo 1 and the schedule-bisection demo (demo 4) both need
-user-accessible CPU performance counters (PMU).
+`--verify` step in demo 1 needs user-accessible CPU performance counters (PMU).
+Demo 4 defaults to syscall-boundary schedule exploration; set
+`ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption.
 
 The demos use private temporary and ignored build-artifact directories and
 require no external network access. Demo 5 additionally needs
@@ -46,9 +47,10 @@ demos/
   01-deterministic-run.sh   # stable inputs, --verify
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
-  04-schedule-bisection.sh  # hermit analyze (requires PMU)
-  05-qemu-assets.sh         # first-run kernel/initramfs provisioning
-  05-qemu-boot.sh           # relaxed QEMU/Linux boot
+  04-schedule-bisection.sh  # portable syscall-boundary hermit analyze
+  05-qemu-boot.sh           # strict QEMU/Linux boot
+  lib/
+    qemu-assets.sh          # internal first-run kernel/initramfs helper
   run-all.sh                # demos 1-3; demos 4 and 5 are opt-in
 ```
 
@@ -61,8 +63,8 @@ input in those commands, and CPU-bound guests receive fewer preemption
 opportunities. `verify_hermit` is different: it keeps PMU-based preemption on
 (the racy verify guest is only reliably determinized with real preemption) and
 raises the log level to `info` (at `--log=error` the execution log that
-`--verify` compares is empty). Demo 4 and the demo-1 `--verify` step are the
-exceptions that require the PMU.
+`--verify` compares is empty). The demo-1 `--verify` step requires the PMU;
+demo 4 only requires it when `ANALYZE_PREEMPTION_TIMEOUT` enables preemption.
 
 ## Quick Start
 
@@ -74,7 +76,7 @@ git submodule update --init hermit
 ./demos/run-all.sh
 ```
 
-Include the slow PMU-based analysis at the end with:
+Include the slow schedule analysis at the end with:
 
 ```bash
 ./demos/run-all.sh --with-analyze
@@ -133,34 +135,41 @@ that exact schedule, confirming the outputs match.
 `hermit analyze` first finds passing and failing schedules, then bisects their
 event streams to identify the ordering that changes the outcome. It builds a
 debug guest so the report can resolve source locations. This is intentionally
-the slow finale: it runs the guest many times, requires PMU access, and can emit
-scheduler-desynchronization diagnostics while converging. A successful run ends
+the slow finale: it runs the guest many times and can emit convergence
+diagnostics. A successful run ends
 with `Completed analysis successfully`. On the verified host, the report
-identified two adjacent events in different `hello_race` threads and resolved
-both stacks to the intentional racy access in `flaky-tests/hello_race.rs`. Event
-numbers can vary with the binary and Hermit revision; the source-level diagnosis
-is the durable result.
+identified two adjacent syscall events in different `hello_race` threads whose
+order changes the outcome. Event numbers can vary with the binary and Hermit
+revision. The default uses portable syscall-boundary chaos. Set
+`ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption and obtain
+finer-grained source localization on a validated host.
 
 ### 5. QEMU Linux Boot
 
 Hermit runs `qemu-system-x86_64`, which boots a real x86-64 Linux kernel under
 TCG, reaches the initramfs serial shell, and powers off cleanly. The guest RTC
 is checked against Hermit's fixed 2022 virtual-time epoch rather than host wall
-time. QEMU 10.1 requires `-monitor none` alongside the requested
+time. Here RTC means the guest's Real-Time Clock; the demo explicitly starts it
+at `2022-01-01T00:00:00` on QEMU's VM clock. QEMU 10.1 requires `-monitor none`
+alongside the requested
 `-nographic -serial stdio` combination; otherwise the monitor and serial device
 both claim stdio and QEMU exits immediately.
 
-On first use, `05-qemu-assets.sh` copies the host's bootable kernel and builds a
-small static BusyBox initramfs, then caches both in the parent checkout's
-ignored artifact directory, matching `experiments/qemu-linux/setup.sh`. Set
-`KERNEL_IMAGE`, `BUSYBOX`, or `QEMU_ASSETS` when the host defaults are
-unsuitable. Later runs reuse the cached images.
+On first use, the internal `demos/lib/qemu-assets.sh` helper copies the host's
+bootable kernel and builds a small static BusyBox initramfs, then caches both in
+the parent checkout's ignored artifact directory, matching
+`experiments/qemu-linux/setup.sh`. Set `KERNEL_IMAGE`, `BUSYBOX`, or
+`QEMU_ASSETS` when the host defaults are unsuitable. Later runs reuse the
+cached images.
 
-This is a compatibility profile, not L2. `--no-sequentialize-threads` is needed
-so QEMU's vCPU and helper threads can make progress, and the large
-`--preemption-timeout` avoids interrupting the vCPU during boot. Those QEMU
-host-thread interleavings remain uncontrolled even though `-icount
-shift=0,sleep=off` gives the nested Linux guest an instruction-derived clock.
+The boot uses `--strict`, `--target-timeslice 100000`, and
+`--max-timeslice 2000000000`. Strict mode fails closed on unsupported
+operations; the timeslice settings retain deterministic scheduling while
+keeping the VM boot practical. To avoid writing millions of per-syscall lines,
+the script enables stable scheduler/run lifecycle INFO targets and prints a
+concise excerpt after poweroff. Run it again to see identical INFO logs.
+Hermit's `--verify` mode is available for an automatic paired comparison, but
+the demo omits it to avoid a second slow VM boot.
 
 ## Scope And Next Steps
 
@@ -172,8 +181,8 @@ shift=0,sleep=off` gives the nested Linux guest an instruction-derived clock.
   program works.
 - Benchmark the real workload; ptrace overhead varies with syscall frequency,
   thread count, scheduling, and logging.
-- Treat demo 5's 2022 RTC as virtual-time compatibility evidence, not a
-  repeat-identical strict/verify claim.
+- Demo 5 runs inside the strict deterministic boundary and shows its INFO-log
+  evidence. Use `--verify` when an automatic paired-run comparison is required.
 
 For full option and troubleshooting coverage, see the Hermit product
 documentation under `hermit/docs/`. Hermit is BSD-licensed; see
