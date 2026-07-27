@@ -19,14 +19,20 @@ build: check-deps
 
 check-deps:
 	@set -eu; \
-	if ! command -v "$(PKG_CONFIG)" >/dev/null 2>&1; then \
+	pkg_config="$(PKG_CONFIG)"; \
+	if ! command -v "$$pkg_config" >/dev/null 2>&1 \
+		&& [ "$$pkg_config" = "pkg-config" ] \
+		&& command -v pkgconf >/dev/null 2>&1; then \
+		pkg_config="pkgconf"; \
+	fi; \
+	if ! command -v "$$pkg_config" >/dev/null 2>&1; then \
 		echo "ERROR: pkg-config (pkgconf on CentOS/RHEL) is required." >&2; \
 		echo "Run: make install-deps" >&2; \
 		exit 1; \
 	fi; \
 	missing=""; \
 	for module in $(PKG_CONFIG_MODULES); do \
-		if ! "$(PKG_CONFIG)" --exists "$$module"; then \
+		if ! "$$pkg_config" --exists "$$module"; then \
 			missing="$$missing $$module"; \
 		fi; \
 	done; \
@@ -60,18 +66,16 @@ install-deps:
 	distro="$${ID:-} $${ID_LIKE:-}"; \
 	case "$$distro" in \
 		*debian*|*ubuntu*) \
-			$$sudo_cmd apt-get update; \
-			$$sudo_cmd apt-get install -y \
-				build-essential libunwind-dev liblzma-dev pkg-config \
+			$$sudo_cmd apt install -y \
+				libunwind-dev liblzma-dev pkg-config \
 			;; \
 		*rhel*|*fedora*|*centos*) \
-			package_manager="$$(command -v dnf || command -v yum || true)"; \
-			if [ -z "$$package_manager" ]; then \
-				echo "ERROR: neither dnf nor yum is available." >&2; \
+			if ! command -v dnf >/dev/null 2>&1; then \
+				echo "ERROR: dnf is required on CentOS/RHEL/Fedora." >&2; \
 				exit 1; \
 			fi; \
-			$$sudo_cmd "$$package_manager" install -y \
-				gcc gcc-c++ libunwind-devel xz-devel pkgconf-pkg-config \
+			$$sudo_cmd dnf install -y \
+				libunwind-devel xz-devel pkgconf \
 			;; \
 		*) \
 			echo "ERROR: unsupported distribution: $${PRETTY_NAME:-unknown}." >&2; \

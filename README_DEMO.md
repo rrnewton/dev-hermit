@@ -43,7 +43,7 @@ make check-deps
 
 `install-deps` warns before invoking `sudo` and installs `libunwind-dev`,
 `liblzma-dev`, and `pkg-config` on Debian-family hosts, or
-`libunwind-devel`, `xz-devel`, and `pkgconf-pkg-config` on Red Hat-family
+`libunwind-devel`, `xz-devel`, and `pkgconf` on Red Hat-family
 hosts. In particular, Hermit's `unwind-sys` build requires the
 `libunwind-ptrace.pc` file; the Makefile reports that missing dependency before
 Cargo starts. Build the release Hermit binary with `make build`.
