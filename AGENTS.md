@@ -53,12 +53,13 @@ product-specific requirements with a summary.
 ## Project Overview
 
 `~/work/dev-hermit/` is a multi-agent development harness. It is **not** the
-Hermit or Reverie code project. The parent repository coordinates two pinned
-Git submodules:
+Hermit, Reverie, or LiteInst2 code project. The parent repository coordinates
+three pinned Git submodules:
 
 - `hermit/`: the primary Hermit product checkout.
 - `reverie/`: the Reverie instrumentation/runtime checkout used for reference,
   compatibility work, and coordinated changes.
+- `liteinst2/`: the standalone LiteInst2 instrumentation checkout.
 
 The parent owns orchestration policy, worktree registries, reproducible
 experiments, AI research notes, and exact submodule pins. Product source,
@@ -82,9 +83,10 @@ parent branches do not override this model or the Hermit workflow below.
 
 - **Parent**: `~/work/dev-hermit/`, the harness repository containing the
   submodule gitlinks and workspace state.
-- **Primary checkout**: `~/work/dev-hermit/hermit/` or
-  `~/work/dev-hermit/reverie/`. A primary checkout is coordinator-owned and is
-  used for integration, pinning, inspection, and cache donation.
+- **Primary checkout**: `~/work/dev-hermit/hermit/`,
+  `~/work/dev-hermit/reverie/`, or `~/work/dev-hermit/liteinst2/`. A primary
+  checkout is coordinator-owned and is used for integration, pinning,
+  inspection, and cache donation.
 - **Submodule**: a repository recorded by the parent as an exact gitlink SHA.
   The parent records a commit, not a branch and not uncommitted contents.
 - **Slot**: one opaque paired workspace named `slotNN` under
@@ -121,18 +123,23 @@ The intended parent layout is:
 |-- .gitmodules
 |-- hermit/                         # primary; coordinator only
 |-- reverie/                        # primary; coordinator only
+|-- liteinst2/                      # primary; coordinator only
 |-- worktree-state.json             # machine-local slot->owner map (gitignored)
 |-- worktrees/
 |   |-- ACTIVE.md                   # human notes + script-managed slot table
 |   |-- ARCHIVED.md                 # append-only completed-slot history
 |   |-- kvm/                        # named-agent slot (agent hermit-kvm)
 |   |   |-- hermit/                 # Hermit worktree
-|   |   `-- reverie/                # Reverie worktree (omit if not needed)
+|   |   |-- reverie/                # Reverie worktree
+|   |   `-- liteinst2/              # LiteInst2 worktree
 |   |-- dbi/
-|   |   `-- hermit/                 # Hermit-only slot (no reverie child)
+|   |   |-- hermit/
+|   |   |-- reverie/
+|   |   `-- liteinst2/
 |   |-- slot01/                     # generic slot for an unnamed agent
 |   |   |-- hermit/
-|   |   `-- reverie/
+|   |   |-- reverie/
+|   |   `-- liteinst2/
 |   `-- slotNN/                     # up to 12 active, plus 5 parked
 |-- ai_docs/                        # durable textual research and handoffs
 |   `-- transient/
@@ -141,13 +148,16 @@ The intended parent layout is:
 `-- scratch/                        # ignored transient material
 ```
 
-**Nested layout v2, one slot per agent.** Each slot is `worktrees/<slot>/` and
-holds a `hermit` child, a `reverie` child, or both. `<slot>` is either a
+**Nested layout v3, one slot per agent.** Each slot is `worktrees/<slot>/` and
+holds `hermit`, `reverie`, and `liteinst2` children by default. `<slot>` is
+either a
 **named agent** (`kvm`, `dbi`, `sabre`, `liteinst`, `ci`, `coord`, `lander`,
 `opt` — the `hermit-` prefix is stripped) or a generic `slotNN` for an unnamed
-agent. Exactly one mutating agent owns a slot; a Hermit-only task creates only
-the `hermit` child. This deprecates the old flat layout (`worktrees/slotNN` as
-the hermit tree plus a sibling `worktrees_reverie/slotNN`) and the
+agent. Exactly one mutating agent owns a slot. Explicit single-product
+allocations remain available for exceptional lightweight use, but the normal
+slot shape contains all three children. This deprecates the old flat layout
+(`worktrees/slotNN` as the hermit tree plus a sibling
+`worktrees_reverie/slotNN`) and the
 primary-nested `hermit/.worktrees/…` scratch trees — do not create either; the
 scripts only produce the nested form.
 
@@ -155,7 +165,7 @@ scripts only produce the nested form.
 `git worktree add`:
 
 ```bash
-scripts/allocate-worktree.rs --agent hermit-kvm --task <id> --product both
+scripts/allocate-worktree.rs --agent hermit-kvm --task <id> --product all
 scripts/release-worktree.rs  --slot kvm --clean
 ```
 
@@ -194,13 +204,14 @@ places stay consistent — read it before any worktree operation.**
 11. Never commit binaries or generated build artifacts to any repository.
 12. A handoff is incomplete without exact SHAs and validation results.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents;
-    every worktree path must be `worktrees/<slot>/{hermit,reverie}` where
+    every normal worktree path must be
+    `worktrees/<slot>/{hermit,reverie,liteinst2}` where
     `<slot>` is a named agent or `slotNN` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
 
 ## Clean Start And Checkout Ownership
 
-Before dispatching or beginning work, inspect the parent, both primaries, and
+Before dispatching or beginning work, inspect the parent, all primaries, and
 the assigned slot. A dirty checkout is not an invitation to clean it.
 
 ```bash
@@ -209,8 +220,10 @@ git status --short --branch
 git submodule status
 git -C hermit status --short --branch
 git -C reverie status --short --branch
+git -C liteinst2 status --short --branch
 git -C worktrees/slot0X/hermit status --short --branch
 git -C worktrees/slot0X/reverie status --short --branch
+git -C worktrees/slot0X/liteinst2 status --short --branch
 ```
 
 Interpret parent submodule status carefully:
@@ -245,7 +258,7 @@ unrelated product task.
 exactly one live row per active slot pair, with at least:
 
 ```text
-slot | agents/tasks | owned paths | Hermit branch | Reverie branch | started | purpose
+slot | agents/tasks | owned paths | Hermit branch | Reverie branch | LiteInst2 branch | started | purpose
 ```
 
 Use `-` or `detached:<short-sha>` for an unchanged child; do not create
@@ -255,18 +268,19 @@ marked `read-only`. Update the existing row. A row marked DONE, HELD, or
 ABANDONED does not belong in `ACTIVE.md`: either keep it active with an accurate
 current purpose or park it and append the final state to `ARCHIVED.md`.
 
-Before dispatch, compare the registry with both Git worktree registries and
+Before dispatch, compare the registry with all Git worktree registries and
 the filesystem:
 
 ```bash
 git worktree list --porcelain
 git -C hermit worktree list --porcelain
 git -C reverie worktree list --porcelain
+git -C liteinst2 worktree list --porcelain
 find worktrees -mindepth 1 -maxdepth 3 -name .git -print | sort
 ```
 
 The parent worktree list owns canonical nested slots. The product worktree
-lists expose old direct Hermit/Reverie worktrees and must normally contain
+lists expose old direct product worktrees and must normally contain
 only the primary checkout; any legacy exception must have a live registry row.
 The workspace may have at most twelve active worktrees, five parked slots, and
 fifteen agents. Count each category separately; active work does not consume
@@ -300,7 +314,7 @@ A canonical slot is either:
 - **Active**: the slot is registered to one or more listed agents and tasks; at
   least one child may be on a feature branch. Shared mutating work requires
   disjoint paths, and shared research access remains read-only.
-- **Parked**: both children are clean and detached in place; their caches and
+- **Parked**: all children are clean and detached in place; their caches and
   Git registrations remain available for the next task.
 
 Parking is optional cache retention, not permanence. Reclaim the least useful
@@ -318,7 +332,7 @@ not park, rename, or assign them to another task.
 
 ### Provisioning A Missing Slot
 
-Provisioning is a coordinator operation. Initialize both primary submodules
+Provisioning is a coordinator operation. Initialize all primary submodules
 first, then use the registry-aware allocator. It enforces the canonical name,
 requires agent metadata, enforces one-owner-per-slot and one-slot-per-agent,
 creates the nested product worktrees, and writes both `worktree-state.json`
@@ -329,12 +343,14 @@ cd ~/work/dev-hermit
 git submodule update --init --checkout -- hermit
 git -c submodule.reverie.update=checkout \
   submodule update --init --checkout -- reverie
+git submodule update --init --checkout -- liteinst2
 
 scripts/allocate-worktree.rs --agent <agent> --task <task-id> \
-  --product both --purpose "<one-line purpose>"
+  --product all --purpose "<one-line purpose>"
 ```
 
-`scripts/slot-init.sh <slot> [hermit|reverie|both] [start-point]` is a quick
+`scripts/slot-init.sh <slot> [hermit|reverie|liteinst2|both|all] [start-point]`
+is a quick
 manual fallback that creates detached worktrees only and does NOT update the
 registry. Do not invoke `git worktree add` directly for agent work.
 
@@ -343,6 +359,7 @@ Build caches may be seeded with copy-on-write copies when useful:
 ```bash
 cp -a --reflink=auto hermit/target/ "worktrees/$slot/hermit/target/"
 cp -a --reflink=auto reverie/target/ "worktrees/$slot/reverie/target/"
+cp -a --reflink=auto liteinst2/target/ "worktrees/$slot/liteinst2/target/"
 ```
 
 Skip a missing or stale donor cache. Never symlink `target/` or another
@@ -354,7 +371,7 @@ The coordinator may assign a parked slot, provision an active slot within the
 twelve-worktree limit, or authorize sharing with research-only or disjoint-path
 ownership. Before editing:
 
-1. Confirm the parent slot and both nested submodules are registered and clean.
+1. Confirm the parent slot and all nested submodules are registered and clean.
 2. Fetch the relevant remotes without changing checked-out files.
 3. For Hermit, branch from current `origin/main`; for Reverie, confirm the
    task's intended base and publication target.
@@ -371,11 +388,13 @@ HTTPS_PROXY=http://fwdproxy:8080 git -C "$slot/hermit" fetch origin main
 git -C "$slot/hermit" switch -c codex/<task-name> origin/main
 git -C "$slot/reverie" switch --detach \
   "$(git -C "$slot" rev-parse HEAD:reverie)"
+git -C "$slot/liteinst2" switch --detach \
+  "$(git -C "$slot" rev-parse HEAD:liteinst2)"
 ```
 
-For a coordinated change, create task branches in both children. They may use
-the same descriptive branch name because they live in separate repositories.
-Record both names and both base SHAs.
+For a coordinated change, create task branches in each changed child. They may
+use the same descriptive branch name because they live in separate
+repositories. Record every changed branch and base SHA.
 
 Run all edits, formatting, builds, tests, and commits from the assigned child
 worktrees. Always set the command working directory explicitly; similar paths
@@ -384,16 +403,18 @@ under the primary and slots make accidental edits easy.
 ### Closing, Parking, And Reclaiming A Slot
 
 Close a slot only after intended work is committed and handed off. First
-capture both child states:
+capture all child states:
 
 ```bash
 git -C worktrees/slot0X/hermit status --short
 git -C worktrees/slot0X/reverie status --short
+git -C worktrees/slot0X/liteinst2 status --short
 git -C worktrees/slot0X/hermit rev-parse HEAD
 git -C worktrees/slot0X/reverie rev-parse HEAD
+git -C worktrees/slot0X/liteinst2 rev-parse HEAD
 ```
 
-Both status commands must produce no output. Record feature branches, exact
+All status commands must produce no output. Record feature branches, exact
 SHAs, validation, and integration disposition in `ARCHIVED.md`. Detach each
 child at the exact gitlink pinned by its parent slot so the parent becomes
 clean:
@@ -402,6 +423,7 @@ clean:
 slot=worktrees/slot0X
 git -C "$slot/hermit" switch --detach "$(git -C "$slot" rev-parse HEAD:hermit)"
 git -C "$slot/reverie" switch --detach "$(git -C "$slot" rev-parse HEAD:reverie)"
+git -C "$slot/liteinst2" switch --detach "$(git -C "$slot" rev-parse HEAD:liteinst2)"
 git -C "$slot" status --short
 ```
 

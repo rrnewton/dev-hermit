@@ -1,7 +1,8 @@
 #!/usr/bin/env rust-script
 //! Release a worktree slot allocated by `allocate-worktree.rs`.
 //!
-//! CANONICAL LAYOUT v2 (nested): worktrees/<slot>/{hermit,reverie}.
+//! CANONICAL LAYOUT v3 (nested):
+//! worktrees/<slot>/{hermit,reverie,liteinst2}.
 //!
 //! Refuses to silently discard work: it inspects each product worktree for
 //! uncommitted changes and warns loudly. `--clean` physically removes the
@@ -19,7 +20,8 @@ use std::process::{exit, Command};
 
 const USAGE: &str = r#"Usage: release-worktree.rs --slot SLOT [OPTIONS]
 
-Release a worktree slot (worktrees/<slot>/{hermit,reverie}) and update ownership.
+Release a worktree slot (worktrees/<slot>/{hermit,reverie,liteinst2}) and
+update ownership.
 
 Required:
   --slot SLOT         Slot to release (named token or slotNN).
@@ -53,11 +55,12 @@ fn find_root() -> PathBuf {
         if dir.join(".gitmodules").is_file()
             && dir.join("hermit").is_dir()
             && dir.join("reverie").is_dir()
+            && dir.join("liteinst2").is_dir()
         {
             return dir;
         }
         if !dir.pop() {
-            die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/)");
+            die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/ + liteinst2/)");
         }
     }
 }
@@ -103,7 +106,7 @@ fn load_state(root: &Path) -> Value {
 
 fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
-    state["version"] = json!(2);
+    state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
     std::fs::write(state_path(root), txt + "\n").unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
@@ -113,8 +116,8 @@ fn regen_active_md(root: &Path, state: &Value) {
     const END: &str = "<!-- END worktree-state -->";
 
     let mut rows = String::new();
-    rows.push_str("| Slot | Agent | HermitBranch | ReverieBranch | Task | Status | ReadOnly |\n");
-    rows.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    rows.push_str("| Slot | Agent | HermitBranch | ReverieBranch | LiteInst2Branch | Task | Status | ReadOnly |\n");
+    rows.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     if let Some(slots) = state["slots"].as_object() {
         let mut names: Vec<&String> = slots.keys().collect();
         names.sort();
@@ -138,11 +141,12 @@ fn regen_active_md(root: &Path, state: &Value) {
             };
             let hb = s["hermit_branch"].as_str().unwrap_or("-");
             let rb = s["reverie_branch"].as_str().unwrap_or("-");
+            let lb = s["liteinst2_branch"].as_str().unwrap_or("-");
             let task = s["task"].as_str().unwrap_or("-");
             let status = s["status"].as_str().unwrap_or("active");
             let read_only = if ro_agents.is_empty() { "no" } else { "shared" };
             rows.push_str(&format!(
-                "| {name} | {agent_cell} | {hb} | {rb} | {task} | {status} | {read_only} |\n"
+                "| {name} | {agent_cell} | {hb} | {rb} | {lb} | {task} | {status} | {read_only} |\n"
             ));
         }
     }
@@ -235,12 +239,17 @@ fn main() {
         println!("agent '{name}' was the last owner of {slot}; releasing whole slot");
     }
 
-    // Inspect both product worktrees for uncommitted work.
+    // Inspect all product worktrees for uncommitted work.
     let slot_dir = root.join("worktrees").join(&slot);
     let hpath = slot_dir.join("hermit");
     let rpath = slot_dir.join("reverie");
+    let lpath = slot_dir.join("liteinst2");
     let mut any_dirty = false;
-    for (label, p) in [("hermit", &hpath), ("reverie", &rpath)] {
+    for (label, p) in [
+        ("hermit", &hpath),
+        ("reverie", &rpath),
+        ("liteinst2", &lpath),
+    ] {
         if let Some(status) = dirty(p) {
             any_dirty = true;
             eprintln!("⚠  {label} worktree {} has uncommitted work:", p.display());
@@ -257,9 +266,11 @@ fn main() {
     }
 
     if clean {
+        let mut remove_failed = false;
         for (label, primary, p) in [
             ("hermit", root.join("hermit"), &hpath),
             ("reverie", root.join("reverie"), &rpath),
+            ("liteinst2", root.join("liteinst2"), &lpath),
         ] {
             if p.exists() {
                 let ps = p.to_string_lossy().to_string();
@@ -271,12 +282,17 @@ fn main() {
                 if ok {
                     println!("  removed {label} worktree {}", p.display());
                 } else {
+                    remove_failed = true;
                     eprintln!("  could not remove {label} worktree {}: {err}", p.display());
                 }
             }
         }
         git(&root.join("hermit"), &["worktree", "prune"]);
         git(&root.join("reverie"), &["worktree", "prune"]);
+        git(&root.join("liteinst2"), &["worktree", "prune"]);
+        if remove_failed {
+            die("one or more product worktrees could not be removed; slot state retained");
+        }
         // Remove the now-empty slot dir.
         std::fs::remove_dir(&slot_dir).ok();
         state["slots"].as_object_mut().unwrap().remove(&slot);

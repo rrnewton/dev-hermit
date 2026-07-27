@@ -7,9 +7,10 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 
-# Canonical nested layout v2 (one slot per agent):
+# Canonical nested layout v3 (one slot per agent):
 #   worktrees/<slot>/hermit   -> Hermit worktree  (from the hermit/ primary)
 #   worktrees/<slot>/reverie  -> Reverie worktree (from the reverie/ primary)
+#   worktrees/<slot>/liteinst2 -> LiteInst2 worktree (from the liteinst2/ primary)
 #
 # PREFER scripts/allocate-worktree.rs: it is registry-aware (updates
 # worktree-state.json + worktrees/ACTIVE.md, enforces one-owner-per-slot and
@@ -21,13 +22,15 @@ function usage {
     cat <<'EOF'
 Usage: ./scripts/slot-init.sh SLOT [PRODUCT] [START_POINT]
 
-Create one or both nested product worktrees for a slot:
+Create one or more nested product worktrees for a slot:
 
   worktrees/<slot>/hermit   Hermit worktree  (from the hermit/ primary)
   worktrees/<slot>/reverie  Reverie worktree (from the reverie/ primary)
+  worktrees/<slot>/liteinst2 LiteInst2 worktree (from the liteinst2/ primary)
 
   SLOT         Named token ([a-z][a-z0-9-]*, e.g. kvm) or slotNN (e.g. slot01).
-  PRODUCT      hermit | reverie | both  (default: both).
+  PRODUCT      hermit | reverie | liteinst2 | both | all
+               (default: all; both means Hermit + Reverie).
   START_POINT  Commit or branch to base the detached worktree on
                (default: the primary checkout's current HEAD).
 
@@ -56,11 +59,11 @@ if [[ ! $SLOT =~ ^(slot[0-9]{2,}|[a-z][a-z0-9-]*)$ ]]; then
     exit 2
 fi
 
-readonly PRODUCT=${2:-both}
+readonly PRODUCT=${2:-all}
 case "$PRODUCT" in
-    hermit | reverie | both) ;;
+    hermit | reverie | liteinst2 | both | all) ;;
     *)
-        echo "Invalid PRODUCT: '$PRODUCT' (expected hermit, reverie, or both)" >&2
+        echo "Invalid PRODUCT: '$PRODUCT' (expected hermit, reverie, liteinst2, both, or all)" >&2
         usage >&2
         exit 2
         ;;
@@ -99,9 +102,12 @@ function add_worktree {
     echo "Initialized $slot_dir (detached at $start_point)"
 }
 
-if [[ $PRODUCT == hermit || $PRODUCT == both ]]; then
+if [[ $PRODUCT == hermit || $PRODUCT == both || $PRODUCT == all ]]; then
     add_worktree "$ROOT_DIR/hermit" "hermit"
 fi
-if [[ $PRODUCT == reverie || $PRODUCT == both ]]; then
+if [[ $PRODUCT == reverie || $PRODUCT == both || $PRODUCT == all ]]; then
     add_worktree "$ROOT_DIR/reverie" "reverie"
+fi
+if [[ $PRODUCT == liteinst2 || $PRODUCT == all ]]; then
+    add_worktree "$ROOT_DIR/liteinst2" "liteinst2"
 fi

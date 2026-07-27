@@ -1,15 +1,18 @@
 #!/usr/bin/env rust-script
 //! Allocate a worktree slot for a dev-hermit agent, enforcing worktree discipline.
 //!
-//! CANONICAL LAYOUT v2 (nested, one slot per agent):
+//! CANONICAL LAYOUT v3 (nested, one slot per agent):
 //!
 //!   worktrees/<slot>/hermit    Hermit worktree  (from the hermit/ primary)
 //!   worktrees/<slot>/reverie   Reverie worktree (from the reverie/ primary)
+//!   worktrees/<slot>/liteinst2 LiteInst2 worktree (from the liteinst2/ primary)
 //!
 //! `<slot>` is either a NAMED agent slot (e.g. worktrees/kvm, worktrees/dbi for
 //! the purpose-fixed agents hermit-kvm, hermit-dbi, ...) or a generic slotNN
 //! (worktrees/slot01, ...). Each agent owns exactly ONE slot (1-1 mapping). A
-//! slot may hold a hermit checkout, a reverie checkout, or both.
+//! New slots contain all three product worktrees by default. A specialized
+//! allocation may request an individual product or the legacy Hermit+Reverie
+//! pair (`both`).
 //!
 //! This is the ONLY sanctioned way to create an agent worktree. It refuses to
 //! let two mutating agents share a slot, records ownership in the machine-
@@ -33,8 +36,9 @@ const LANGUISH_HOURS: i64 = 24;
 
 const USAGE: &str = r#"Usage: allocate-worktree.rs --agent NAME [OPTIONS]
 
-Allocate a worktree slot (nested layout worktrees/<slot>/{hermit,reverie}) and
-register its ownership. Each agent owns exactly one slot.
+Allocate a worktree slot (nested layout
+worktrees/<slot>/{hermit,reverie,liteinst2}) and register its ownership. Each
+agent owns exactly one slot.
 
 Required:
   --agent NAME        Owning agent (e.g. hermit-kvm). Mutating owner of the slot.
@@ -45,9 +49,12 @@ Options:
                       generic slotNN if the agent name is not a clean token.
                       Accepts a named token ([a-z0-9-]+) or slotNN.
   --task TASK-ID      Task this slot serves (recorded in state + ACTIVE.md).
-  --product P         hermit | reverie | both   (default: both).
+  --product P         hermit | reverie | liteinst2 | both | all
+                      (default: all; both means Hermit + Reverie).
   --hermit-branch B   Create this feature branch in the hermit worktree.
   --reverie-branch B  Create this feature branch in the reverie worktree.
+  --liteinst2-branch B
+                      Create this feature branch in the liteinst2 worktree.
   --start-point REF   Base for detached/new worktrees (default: primary HEAD).
   --purpose TEXT      One-line purpose recorded in state + ACTIVE.md.
   --i-promise-this-agent-is-read-mostly
@@ -70,7 +77,7 @@ Policy:
 
 Examples:
   ./scripts/allocate-worktree.rs --agent hermit-kvm --task impl-kvm-ratchet
-      -> worktrees/kvm/{hermit,reverie}
+      -> worktrees/kvm/{hermit,reverie,liteinst2}
   ./scripts/allocate-worktree.rs --agent hermit-201 --slot slot01 \
       --product hermit --hermit-branch debug-batch1 --task impl-debug
   ./scripts/allocate-worktree.rs --agent hermit-ci --slot kvm \
@@ -82,18 +89,19 @@ fn die(msg: &str) -> ! {
     exit(1);
 }
 
-/// Walk up from CWD to the dev-hermit parent (has .gitmodules + hermit + reverie).
+/// Walk up from CWD to the dev-hermit parent (all three primary submodules).
 fn find_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
         if dir.join(".gitmodules").is_file()
             && dir.join("hermit").is_dir()
             && dir.join("reverie").is_dir()
+            && dir.join("liteinst2").is_dir()
         {
             return dir;
         }
         if !dir.pop() {
-            die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/)");
+            die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/ + liteinst2/)");
         }
     }
 }
@@ -318,7 +326,7 @@ fn state_path(root: &Path) -> PathBuf {
 fn load_state(root: &Path) -> Value {
     let p = state_path(root);
     if !p.exists() {
-        return json!({ "version": 2, "updated": Value::Null, "slots": {} });
+        return json!({ "version": 3, "updated": Value::Null, "slots": {} });
     }
     let txt = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("read state: {e}")));
     let mut v: Value =
@@ -331,7 +339,7 @@ fn load_state(root: &Path) -> Value {
 
 fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
-    state["version"] = json!(2);
+    state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
     std::fs::write(state_path(root), txt + "\n").unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
@@ -343,8 +351,8 @@ fn regen_active_md(root: &Path, state: &Value) {
     const END: &str = "<!-- END worktree-state -->";
 
     let mut rows = String::new();
-    rows.push_str("| Slot | Agent | HermitBranch | ReverieBranch | Task | Status | ReadOnly |\n");
-    rows.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    rows.push_str("| Slot | Agent | HermitBranch | ReverieBranch | LiteInst2Branch | Task | Status | ReadOnly |\n");
+    rows.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     if let Some(slots) = state["slots"].as_object() {
         let mut names: Vec<&String> = slots.keys().collect();
         names.sort();
@@ -368,11 +376,12 @@ fn regen_active_md(root: &Path, state: &Value) {
             };
             let hb = s["hermit_branch"].as_str().unwrap_or("-");
             let rb = s["reverie_branch"].as_str().unwrap_or("-");
+            let lb = s["liteinst2_branch"].as_str().unwrap_or("-");
             let task = s["task"].as_str().unwrap_or("-");
             let status = s["status"].as_str().unwrap_or("active");
             let read_only = if ro_agents.is_empty() { "no" } else { "shared" };
             rows.push_str(&format!(
-                "| {name} | {agent_cell} | {hb} | {rb} | {task} | {status} | {read_only} |\n"
+                "| {name} | {agent_cell} | {hb} | {rb} | {lb} | {task} | {status} | {read_only} |\n"
             ));
         }
     }
@@ -441,14 +450,36 @@ fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
     println!("  created {}", dst.display());
 }
 
+fn includes_product(selection: &str, product: &str) -> bool {
+    selection == "all"
+        || selection == product
+        || (selection == "both" && matches!(product, "hermit" | "reverie"))
+}
+
+fn primary_start(root: &Path, product: &str, override_start: Option<&str>) -> String {
+    if let Some(start) = override_start {
+        return start.to_string();
+    }
+    let (ok, out, _) = git(
+        &root.join(product),
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+    );
+    if ok && !out.is_empty() {
+        out
+    } else {
+        "HEAD".to_string()
+    }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut agent = String::new();
     let mut slot = String::new();
     let mut task = String::new();
-    let mut product = "both".to_string();
+    let mut product = "all".to_string();
     let mut hermit_branch: Option<String> = None;
     let mut reverie_branch: Option<String> = None;
+    let mut liteinst2_branch: Option<String> = None;
     let mut start_point: Option<String> = None;
     let mut purpose = String::new();
     let mut read_mostly = false;
@@ -470,6 +501,9 @@ fn main() {
             "--product" => product = take(&mut i, &argv, "--product"),
             "--hermit-branch" => hermit_branch = Some(take(&mut i, &argv, "--hermit-branch")),
             "--reverie-branch" => reverie_branch = Some(take(&mut i, &argv, "--reverie-branch")),
+            "--liteinst2-branch" => {
+                liteinst2_branch = Some(take(&mut i, &argv, "--liteinst2-branch"))
+            }
             "--start-point" => start_point = Some(take(&mut i, &argv, "--start-point")),
             "--purpose" => purpose = take(&mut i, &argv, "--purpose"),
             "--i-promise-this-agent-is-read-mostly" => read_mostly = true,
@@ -493,8 +527,24 @@ fn main() {
     if agent.is_empty() {
         die(&format!("--agent is required\n\n{USAGE}"));
     }
-    if !matches!(product.as_str(), "hermit" | "reverie" | "both") {
-        die("--product must be hermit, reverie, or both");
+    if !matches!(
+        product.as_str(),
+        "hermit" | "reverie" | "liteinst2" | "both" | "all"
+    ) {
+        die("--product must be hermit, reverie, liteinst2, both, or all");
+    }
+
+    let include_hermit = includes_product(&product, "hermit");
+    let include_reverie = includes_product(&product, "reverie");
+    let include_liteinst2 = includes_product(&product, "liteinst2");
+    if hermit_branch.is_some() && !include_hermit {
+        die("--hermit-branch requires --product hermit, both, or all");
+    }
+    if reverie_branch.is_some() && !include_reverie {
+        die("--reverie-branch requires --product reverie, both, or all");
+    }
+    if liteinst2_branch.is_some() && !include_liteinst2 {
+        die("--liteinst2-branch requires --product liteinst2 or all");
     }
 
     let root = find_root();
@@ -555,15 +605,14 @@ fn main() {
         }
     }
 
-    let start = start_point.clone().unwrap_or_else(|| {
-        let (ok, out, _) = git(&root.join("hermit"), &["rev-parse", "--abbrev-ref", "HEAD"]);
-        if ok && !out.is_empty() { out } else { "main".to_string() }
-    });
-
-    println!("Allocating worktrees/{slot} for agent '{agent}' (product={product}, start={start})");
+    println!(
+        "Allocating worktrees/{slot} for agent '{agent}' (product={product}, start={})",
+        start_point.as_deref().unwrap_or("each primary HEAD")
+    );
 
     let slot_dir = root.join("worktrees").join(&slot);
-    if product == "hermit" || product == "both" {
+    if include_hermit {
+        let start = primary_start(&root, "hermit", start_point.as_deref());
         add_worktree(
             &root.join("hermit"),
             &slot_dir.join("hermit"),
@@ -571,16 +620,22 @@ fn main() {
             &start,
         );
     }
-    if product == "reverie" || product == "both" {
-        let rstart = start_point.clone().unwrap_or_else(|| {
-            let (ok, out, _) = git(&root.join("reverie"), &["rev-parse", "--abbrev-ref", "HEAD"]);
-            if ok && !out.is_empty() { out } else { "main".to_string() }
-        });
+    if include_reverie {
+        let rstart = primary_start(&root, "reverie", start_point.as_deref());
         add_worktree(
             &root.join("reverie"),
             &slot_dir.join("reverie"),
             reverie_branch.as_deref(),
             &rstart,
+        );
+    }
+    if include_liteinst2 {
+        let lstart = primary_start(&root, "liteinst2", start_point.as_deref());
+        add_worktree(
+            &root.join("liteinst2"),
+            &slot_dir.join("liteinst2"),
+            liteinst2_branch.as_deref(),
+            &lstart,
         );
     }
 
@@ -596,8 +651,12 @@ fn main() {
                 "allocated": now.clone(),
                 "hermit_path": format!("worktrees/{slot}/hermit"),
                 "reverie_path": format!("worktrees/{slot}/reverie"),
+                "liteinst2_path": format!("worktrees/{slot}/liteinst2"),
             })
         });
+    entry["hermit_path"] = json!(format!("worktrees/{slot}/hermit"));
+    entry["reverie_path"] = json!(format!("worktrees/{slot}/reverie"));
+    entry["liteinst2_path"] = json!(format!("worktrees/{slot}/liteinst2"));
     entry["status"] = json!("active");
     entry["updated"] = json!(now);
     // Slot-level task/purpose/branches describe the mutating OWNER. A read-mostly
@@ -615,12 +674,20 @@ fn main() {
         if let Some(b) = &reverie_branch {
             entry["reverie_branch"] = json!(b);
         }
+        if let Some(b) = &liteinst2_branch {
+            entry["liteinst2_branch"] = json!(b);
+        }
     }
-    if entry.get("hermit_branch").is_none() {
-        entry["hermit_branch"] = json!(if product == "reverie" { "-" } else { "detached" });
+    if entry.get("hermit_branch").is_none() || (include_hermit && entry["hermit_branch"] == "-") {
+        entry["hermit_branch"] = json!(if include_hermit { "detached" } else { "-" });
     }
-    if entry.get("reverie_branch").is_none() {
-        entry["reverie_branch"] = json!(if product == "hermit" { "-" } else { "detached" });
+    if entry.get("reverie_branch").is_none() || (include_reverie && entry["reverie_branch"] == "-") {
+        entry["reverie_branch"] = json!(if include_reverie { "detached" } else { "-" });
+    }
+    if entry.get("liteinst2_branch").is_none()
+        || (include_liteinst2 && entry["liteinst2_branch"] == "-")
+    {
+        entry["liteinst2_branch"] = json!(if include_liteinst2 { "detached" } else { "-" });
     }
     let agents = entry["agents"].as_array_mut().unwrap();
     if let Some(a) = agents.iter_mut().find(|a| a["name"].as_str() == Some(&agent)) {
@@ -641,7 +708,7 @@ fn main() {
 
     // Advisory workspace-health banner (never blocks allocation).
     homeostasis_check(&root);
-    if hermit_branch.is_none() && (product == "hermit" || product == "both") {
+    if hermit_branch.is_none() && include_hermit {
         println!(
             "  note: hermit worktree is DETACHED. Create a feature branch before editing:\n\
              \r        git -C worktrees/{slot}/hermit switch -c <branch> origin/main"

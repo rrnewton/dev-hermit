@@ -2,7 +2,7 @@
 
 **Status:** transient (living doc); regenerate when the layout or tooling changes.
 **Owner:** coordinator (`hermit-coord`).
-**Last updated:** 2026-07-26.
+**Last updated:** 2026-07-27.
 
 This document is the single index of *every* place worktree/slot information
 lives in the `dev-hermit` harness, what each place is authoritative for, who
@@ -11,22 +11,26 @@ read this first.
 
 ---
 
-## 1. Canonical layout (v2, NESTED)
+## 1. Canonical layout (v3, NESTED)
 
 ```
 worktrees/<slot>/hermit    # Hermit worktree  (from the hermit/ primary)
 worktrees/<slot>/reverie   # Reverie worktree (from the reverie/ primary)
+worktrees/<slot>/liteinst2 # LiteInst2 worktree (from the liteinst2/ primary)
 ```
 
 - **One slot per agent.** `<slot>` is either a **named agent** (`kvm`, `dbi`,
   `sabre`, `liteinst`, `ci`, `coord`, `lander`, `opt`) or a **generic**
   `slotNN` (`slot01`, `slot02`, …). The `hermit-` prefix on an agent name is
   stripped for the slot (agent `hermit-kvm` → `worktrees/kvm`).
-- A slot may hold a `hermit` child, a `reverie` child, or **both**. A slot that
-  needs only Hermit leaves no `reverie` child (and vice-versa).
-- Primaries `hermit/` and `reverie/` are **never** feature-development
-  surfaces. They stay on `main` and are used only for integration, inspection,
-  cache donation, and as the source repos for `git worktree add`.
+- New slots contain all three children by default. Explicit single-product
+  allocations and the legacy `both` (Hermit + Reverie) selector remain
+  available for exceptional lightweight use.
+- Primaries `hermit/`, `reverie/`, and `liteinst2/` are **never**
+  feature-development surfaces. Hermit and Reverie stay on `main`; LiteInst2
+  stays clean at the parent-pinned commit except during coordinator-owned
+  integration. Primaries are used only for integration, inspection, cache
+  donation, and as the source repos for `git worktree add`.
 
 ### Deprecated layouts (do NOT create new ones; migrate opportunistically)
 
@@ -48,14 +52,14 @@ reconciled against them.
 
 | # | Location | Tracked? | Authoritative for | Writer | Lifetime |
 |---|----------|----------|-------------------|--------|----------|
-| 1 | **git worktree registries** — `git -C hermit worktree list`, `git -C reverie worktree list`, `git worktree list` (parent) | git-internal | **Physical truth**: which worktrees exist, their path, HEAD, branch | `git worktree add/remove/prune` (via the scripts) | until removed |
+| 1 | **git worktree registries** — `git -C hermit worktree list`, `git -C reverie worktree list`, `git -C liteinst2 worktree list`, `git worktree list` (parent) | git-internal | **Physical truth**: which worktrees exist, their path, HEAD, branch | `git worktree add/remove/prune` (via the scripts) | until removed |
 | 2 | **`worktree-state.json`** (repo root) | **gitignored** (`/worktree-state.json`) | Machine-readable slot→owner map: agents, branches, task, status, purpose, paths | `scripts/allocate-worktree.rs`, `scripts/release-worktree.rs` (SINGLE writer) | machine-local |
 | 3 | **`worktrees/ACTIVE.md`** | **gitignored** (`worktrees/*` except ARCHIVED.md) | Human-readable current ownership. Two zones: (a) freeform human notes, (b) a **script-managed table block** between `<!-- BEGIN worktree-state … -->` / `<!-- END worktree-state -->` | Managed block: the two scripts. Freeform: humans/coordinator | machine-local |
 | 4 | **`worktrees/ARCHIVED.md`** | **tracked** (durable history) | Append-only closeout record: slot, branch, exact SHAs, validation, disposition | coordinator at closeout | permanent |
 | 5 | **`AGENTS.md`** (= `CLAUDE.md` symlink) | tracked | **Policy**: layout rules, hard invariants, slot lifecycle, registry protocol | coordinator (policy change) | permanent |
 | 6 | **`scripts/allocate-worktree.rs`** | tracked | Tool: create a slot, enforce one-owner-per-slot + one-slot-per-agent, write (2)+(3) | coordinator | permanent |
 | 7 | **`scripts/release-worktree.rs`** | tracked | Tool: release/clean a slot, warn on uncommitted work, update (2)+(3) | coordinator | permanent |
-| 8 | **`scripts/slot-init.sh`** | tracked | Tool: quick manual detached scaffolding of `worktrees/<slot>/{hermit,reverie}` (does NOT touch registry) | coordinator | permanent |
+| 8 | **`scripts/slot-init.sh`** | tracked | Tool: quick manual detached scaffolding of `worktrees/<slot>/{hermit,reverie,liteinst2}` (does NOT touch registry) | coordinator | permanent |
 | 9 | **`hermit/.claude/skills/hermit-*.md`** (exposed via `.llms/skills` + `.agents/skills` symlinks) | tracked (in hermit) | Per-agent worktree assignment: which named slot an agent owns + its constraints | coordinator (via hermit PR) | permanent |
 | 10 | **Auto-memory** (`…/memory/*.md` + `MEMORY.md`) | machine-local | Durable gotchas: parked-slot reuse is racy; cleanup is unsafe; detached≠idle | coordinator/agents | machine-local |
 | 11 | **tmux** (`orc-hermit` etc. windows/panes) | runtime | Which agent processes are actually alive and their CWD | ORC / humans | session |
@@ -101,6 +105,7 @@ cd ~/work/dev-hermit
 git worktree list --porcelain
 git -C hermit worktree list --porcelain
 git -C reverie worktree list --porcelain
+git -C liteinst2 worktree list --porcelain
 find worktrees -mindepth 1 -maxdepth 3 -name .git -print | sort
 cat worktree-state.json
 ```
@@ -108,7 +113,7 @@ cat worktree-state.json
 Resolve any of: a physical checkout not in its repo's registry; a registered
 worktree whose dir is missing; a live slot absent from ACTIVE.md; an ACTIVE.md
 row for a missing slot; duplicate rows; a branch checked out by two worktrees;
-any path not matching `worktrees/<slot>/{hermit,reverie}`.
+any path not matching `worktrees/<slot>/{hermit,reverie,liteinst2}`.
 
 ---
 
@@ -116,7 +121,7 @@ any path not matching `worktrees/<slot>/{hermit,reverie}`.
 
 | Phase | Command | Updates |
 |-------|---------|---------|
-| **Allocate** | `scripts/allocate-worktree.rs --agent <name> [--slot S] [--task T] [--product hermit\|reverie\|both] [--i-promise-this-agent-is-read-mostly]` | (1) git add, (2) JSON, (3) ACTIVE.md block |
+| **Allocate** | `scripts/allocate-worktree.rs --agent <name> [--slot S] [--task T] [--product hermit\|reverie\|liteinst2\|both\|all] [--i-promise-this-agent-is-read-mostly]` | (1) git add, (2) JSON, (3) ACTIVE.md block |
 | **Work** | edits/commits on a feature branch inside `worktrees/<slot>/<product>` | (1) branch HEAD moves |
 | **Release (retain cache)** | `scripts/release-worktree.rs --slot S` | (2)+(3): status→released; worktree kept |
 | **Release (remove)** | `scripts/release-worktree.rs --slot S --clean` | (1) worktree removed, (2) slot dropped, (3) regenerated |
@@ -138,9 +143,10 @@ slot is idle:
 find ~/work/dev-hermit/worktrees -name target -type d -maxdepth 3 -exec rm -rf {} +
 ```
 
-Primary `hermit/target` and `reverie/target` are shared cache donors
-(`cp -a --reflink=auto`); do NOT blast them unless under real disk pressure.
-Never commit `target/` or any build artifact (binary policy in AGENTS.md).
+Primary `hermit/target`, `reverie/target`, and `liteinst2/target` are shared
+cache donors (`cp -a --reflink=auto`); do NOT blast them unless under real disk
+pressure. Never commit `target/` or any build artifact (binary policy in
+AGENTS.md).
 
 ---
 
