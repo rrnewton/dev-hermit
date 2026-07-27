@@ -51,7 +51,8 @@ Evidence is bound to exact revisions:
 | --- | --- | --- |
 | Cold boot to the initramfs marker | L2: `run --strict --verify`, ptrace, no scheduling relaxation | Hermit `fe97efd`, 2026-07-24 |
 | Strict cold boot to marker and poweroff | L1: `run --strict`, ptrace, no scheduling relaxation | Hermit `dd60278f`, 166.486 s |
-| Maintained boot and verification harness | Requires the marker, rejects known clock failures, and provides strict L1/L2 commands | `experiments/linux/strict_l2_test.sh`; `hermit/docs/QEMU_BOOT.md` |
+
+Boot and verification scripts are maintained at `experiments/linux/strict_l2_test.sh` and `hermit/docs/QEMU_BOOT.md`.
 
 `--strict` and `--verify` establish different facts. `--strict` makes the
 forward run fail closed outside Hermit's supported deterministic boundary.
@@ -59,9 +60,7 @@ forward run fail closed outside Hermit's supported deterministic boundary.
 result therefore demonstrates two independent cold boots with no recording;
 it is not record/replay.
 
-The public origin of this work is Meta's 2022 post,
-["Hermit: Deterministic Linux for Controlled Testing and Software
-Bug-finding"](https://developers.facebook.com/blog/post/2022/11/22/hermit-deterministic-linux-testing/).
+A longer, accessible explanation of Hermit's design and goals can be found in the 2022 blog post, ["Hermit: Deterministic Linux for Controlled Testing and Software Bug-finding"](https://developers.facebook.com/blog/post/2022/11/22/hermit-deterministic-linux-testing/).
 It states the a-priori goal directly: a network-free program should execute
 identically irrespective of time and place. Hermit grew from the dettrace
 prototype described in the ASPLOS 2020 paper
