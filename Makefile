@@ -15,7 +15,7 @@ build: check-deps
 		echo "ERROR: cargo is required to build Hermit." >&2; \
 		exit 1; \
 	}
-	cd hermit && cargo build --release
+	cd hermit && cargo build --release -p hermit --bin hermit
 
 check-deps:
 	@set -eu; \
