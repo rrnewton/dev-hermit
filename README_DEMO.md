@@ -8,13 +8,14 @@ random data, CPUID results, address layout, and selected file metadata.
 
 The demo materials live entirely in this parent repository. The pinned
 `hermit/` submodule is unmodified: the outer workspace only adds to it. The
-walkthrough covers five working workflows:
+walkthrough covers six working workflows:
 
 1. repeat an execution with stable guest-visible inputs;
 2. record an execution and replay it, with or without GDB;
-3. search seeded thread schedules for a concurrency failure; and
-4. bisect two schedules to identify the events that change the outcome; and
-5. boot Linux in QEMU under Hermit's strict deterministic profile.
+3. search seeded thread schedules for a concurrency failure;
+4. bisect two schedules to identify the events that change the outcome;
+5. boot Linux in QEMU and save a live snapshot under Hermit's strict profile;
+6. resume that snapshot and inject repeatable commands over its serial port.
 
 > [!WARNING]
 >
@@ -33,10 +34,11 @@ Demo 4 defaults to syscall-boundary schedule exploration; set
 `ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption.
 
 The demos use private temporary and ignored build-artifact directories and
-require no external network access. Demo 5 additionally needs
-`qemu-system-x86_64`, a readable host kernel under `/boot` (or a
-`KERNEL_IMAGE` override), static BusyBox, `cpio`, and `gzip`. It provisions and
-caches its kernel and initramfs under `ignored/qemu-linux` on first use.
+require no external network access. Demos 5 and 6 additionally need
+`qemu-system-x86_64`, `qemu-img`, Ncat (`nc`), a readable host kernel under
+`/boot` (or a `KERNEL_IMAGE` override), static BusyBox, `cpio`, and `gzip`.
+Demo 5 provisions and caches its kernel, initramfs, and qcow2 snapshot disk
+under `ignored/qemu-linux` on first use.
 
 ## Layout
 
@@ -48,10 +50,12 @@ demos/
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
   04-schedule-bisection.sh  # portable syscall-boundary hermit analyze
-  05-qemu-boot.sh           # strict QEMU/Linux boot
+  05-qemu-boot.sh           # strict QEMU/Linux boot and snapshot
+  06-qemu-resume.sh         # resume snapshot and inject a serial command
   lib/
     qemu-assets.sh          # internal first-run kernel/initramfs helper
-  run-all.sh                # demos 1-3; demos 4 and 5 are opt-in
+    qemu-snapshot.sh        # QMP, snapshot, and stable-log helpers
+  run-all.sh                # demos 1-3; demo 4 and QEMU pair are opt-in
 ```
 
 Each script sources `demos/common.sh`, which locates the `hermit/` submodule,
@@ -82,8 +86,8 @@ Include the slow schedule analysis at the end with:
 ./demos/run-all.sh --with-analyze
 ```
 
-Include the QEMU boot with `--with-qemu`, or use `--all` for both optional
-demos:
+Include the QEMU boot-and-resume pair with `--with-qemu`, or use `--all` for
+all optional demos:
 
 ```bash
 ./demos/run-all.sh --with-qemu
@@ -144,16 +148,19 @@ revision. The default uses portable syscall-boundary chaos. Set
 `ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption and obtain
 finer-grained source localization on a validated host.
 
-### 5. QEMU Linux Boot
+### 5. QEMU Linux Snapshot
 
 Hermit runs `qemu-system-x86_64`, which boots a real x86-64 Linux kernel under
-TCG, reaches the initramfs serial shell, and powers off cleanly. The guest RTC
-is checked against Hermit's fixed 2022 virtual-time epoch rather than host wall
-time. Here RTC means the guest's Real-Time Clock; the demo explicitly starts it
-at `2022-01-01T00:00:00` on QEMU's VM clock. QEMU 10.1 requires `-monitor none`
-alongside the requested
-`-nographic -serial stdio` combination; otherwise the monitor and serial device
-both claim stdio and QEMU exits immediately.
+TCG and reaches the initramfs serial shell. The guest RTC is checked against
+Hermit's fixed 2022 virtual-time epoch rather than host wall time. Here RTC
+means the guest's Real-Time Clock; the demo explicitly starts it at
+`2022-01-01T00:00:00` on QEMU's VM clock.
+
+At the shell, Demo 5 asks QEMU's QMP control socket to run `savevm hermit-boot`.
+The resulting internal snapshot is stored in the ignored
+`hermit-snapshot.qcow2` disk. The disk is deliberately not attached to the
+guest; it exists only as QEMU's VM-state store. Demo 5 then exits QEMU over QMP
+and prints pastable Demo 6 commands.
 
 On first use, the internal `demos/lib/qemu-assets.sh` helper copies the host's
 bootable kernel and builds a small static BusyBox initramfs, then caches both in
@@ -162,14 +169,30 @@ the parent checkout's ignored artifact directory, matching
 `QEMU_ASSETS` when the host defaults are unsuitable. Later runs reuse the
 cached images.
 
-The boot uses `--strict`, `--target-timeslice 100000`, and
+The boot and every resume use `--strict`, `--target-timeslice 100000`, and
 `--max-timeslice 2000000000`. Strict mode fails closed on unsupported
 operations; the timeslice settings retain deterministic scheduling while
-keeping the VM boot practical. To avoid writing millions of per-syscall lines,
-the script enables stable scheduler/run lifecycle INFO targets and prints a
-concise excerpt after poweroff. Run it again to see identical INFO logs.
-Hermit's `--verify` mode is available for an automatic paired comparison, but
-the demo omits it to avoid a second slow VM boot.
+keeping the VM practical. To avoid writing millions of per-syscall lines, the
+scripts enable stable scheduler/run lifecycle INFO targets and print a concise,
+timestamp-free tail.
+
+### 6. QEMU Snapshot Resume
+
+Demo 6 starts the same QEMU machine with `-loadvm hermit-boot`, connects to its
+Unix serial socket, and injects one shell command. It prints the guest output,
+powers the guest off, and prints the normalized Hermit INFO tail. For example:
+
+```bash
+./demos/06-qemu-resume.sh 'ls /'
+./demos/06-qemu-resume.sh 'cat /proc/cpuinfo'
+./demos/06-qemu-resume.sh 'uname -a'
+./demos/06-qemu-resume.sh 'echo hello'
+```
+
+The first run of each command stores its INFO tail under the ignored QEMU asset
+directory, keyed by the snapshot image and command. Repeating the same command
+from the same snapshot must match that tail byte for byte; Demo 6 reports the
+match or fails with a diff.
 
 ## Scope And Next Steps
 
@@ -181,8 +204,9 @@ the demo omits it to avoid a second slow VM boot.
   program works.
 - Benchmark the real workload; ptrace overhead varies with syscall frequency,
   thread count, scheduling, and logging.
-- Demo 5 runs inside the strict deterministic boundary and shows its INFO-log
-  evidence. Use `--verify` when an automatic paired-run comparison is required.
+- Demos 5 and 6 run inside the strict deterministic boundary and show their
+  INFO-log evidence. Demo 6 performs the paired comparison for repeated guest
+  commands without paying for a second Linux boot.
 
 For full option and troubleshooting coverage, see the Hermit product
 documentation under `hermit/docs/`. Hermit is BSD-licensed; see
