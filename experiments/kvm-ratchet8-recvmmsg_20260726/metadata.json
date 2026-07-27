@@ -1,0 +1,27 @@
+{
+  "task": "impl-kvm-ratchet-8",
+  "date": "2026-07-26",
+  "hermit_branch": "kvm-ratchet8",
+  "hermit_base_sha": "617f8188048bc52fda912110d30b2ad51195b80b",
+  "reverie_pin": "4c6e9a0b73376ad18b7c5d4ad6e365ccd3d964ac",
+  "gvisor_ref_sha": "012cf0b0b14d7b8aa2a4424867ecec8e6121e69d",
+  "syscall": "recvmmsg",
+  "classification_change": "Unsupported -> Determinized",
+  "count_guard": "[200,91,82] -> [201,91,81]",
+  "files_changed": [
+    "detcore/src/syscall_classification.rs",
+    "detcore/src/lib.rs",
+    "tests/rust/recvmmsg.rs",
+    "tests/Cargo.toml"
+  ],
+  "validation": {
+    "ptrace_strict_verify_rustbin_recvmmsg": "PASS (L2)",
+    "ptrace_strict_verify_c_repro": "PASS (L2)",
+    "kvm_strict_verify": "blocked in reverie-kvm executor: socketpair=ENOSYS, socket(AF_INET)=EAFNOSUPPORT (cross-repo, not detcore-side)",
+    "detcore_lib_tests": "130 passed",
+    "cargo_fmt": "clean",
+    "cargo_clippy_detcore": "clean"
+  },
+  "toolchain": "rust nightly per rust-toolchain.toml",
+  "host": "Meta devserver, x86_64 Linux 6.17.13"
+}

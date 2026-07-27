@@ -1,0 +1,28 @@
+{
+  "task": "impl-kvm-ratchet-9",
+  "date": "2026-07-26",
+  "hermit_branch": "kvm-ratchet9",
+  "hermit_base_sha": "0744e2366e41...origin/main",
+  "hermit_commit_sha": "4612d077df22db463db4d6b836540df2cfca2c9f",
+  "reverie_pin": "4c6e9a0b73376ad18b7c5d4ad6e365ccd3d964ac",
+  "gvisor_ref_sha": "012cf0b0b14d7b8aa2a4424867ecec8e6121e69d",
+  "syscall": "select",
+  "classification_change": "Unsupported -> Determinized",
+  "count_guard": "[205,91,77] -> [206,91,76]",
+  "files_changed": [
+    "detcore/src/syscall_classification.rs",
+    "detcore/src/lib.rs",
+    "detcore/src/syscalls/io.rs",
+    "tests/rust/select.rs",
+    "tests/Cargo.toml"
+  ],
+  "validation": {
+    "ptrace_strict_verify_rustbin_select": "PASS (L2); DETLOG confirms raw select(...)=Ok(1) ready and select(...)=Ok(0) timeout",
+    "kvm_strict_verify": "blocked in reverie-kvm executor: select=ENOSYS (executor.rs fallthrough; same gap blocks pselect6/socketpair/recvmmsg) -- cross-repo, not detcore-side",
+    "detcore_lib_tests": "132 passed",
+    "cargo_fmt": "clean",
+    "cargo_clippy_detcore": "clean"
+  },
+  "toolchain": "rust nightly per rust-toolchain.toml",
+  "host": "Meta devserver, x86_64 Linux 6.17.13"
+}
