@@ -4,18 +4,24 @@
 
 set -euo pipefail
 
-readonly MEMORY_PERCENT=80
-readonly CPU_PERCENT=90
+readonly OUTER_MEMORY_PERCENT=80
+readonly OUTER_CPU_PERCENT=90
+readonly DEFAULT_MEMORY_FRACTION=0.8
+readonly DEFAULT_CPU_FRACTION=0.9
+readonly FRACTION_SCALE=1000000
+readonly STATE_FORMAT_VERSION=2
+
 USER_ID=$(id -u)
 readonly USER_ID
 readonly OUTER_SLICE_UNIT="user-$USER_ID.slice"
-readonly CONTROL_SLICE_UNIT=devhermit_control.slice
+readonly LEGACY_CONTROL_SLICE_UNIT=devhermit_control.slice
 readonly AGENT_SLICE_UNIT=3pai_sandbox.slice
 # Expanded by the interactive child shell after its startup files set PS1.
-# Re-export the scalar hook because Bash arrays do not survive into nested
-# shells or a tmux server started from this shell.
+# The hook is session-independent so nested shells do not accumulate one hook
+# per session name.
 # shellcheck disable=SC2016
-readonly SAFE_DEV_PROMPT_HOOK='PS1=${PS1//"[safe-dev] "/}; PS1="[safe-dev] ${PS1}"; unset _FB_SHELL_RC_PROMPT_COMMANDS; _FB_SHELL_RC_PROMPT_COMMANDS=${SAFE_DEV_LIMITS_PROMPT_HOOK-}; export _FB_SHELL_RC_PROMPT_COMMANDS'
+readonly SAFE_DEV_PROMPT_HOOK='while [[ ${PS1-} == "[safe-dev"*"] "* ]]; do PS1=${PS1#*"] "}; done; PS1="[safe-dev:${SAFE_DEV_LIMITS_SESSION_NAME:-?}] ${PS1-}"; unset _FB_SHELL_RC_PROMPT_COMMANDS; _FB_SHELL_RC_PROMPT_COMMANDS=${SAFE_DEV_LIMITS_PROMPT_HOOK-}; export _FB_SHELL_RC_PROMPT_COMMANDS'
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
@@ -23,48 +29,49 @@ readonly SCRIPT_PATH
 
 function usage {
     cat <<'EOF'
-safe-dev-limits caps the common systemd user slice, keeping every tmux, orc,
-agent, Buck2 daemon, and child scope below one 80% RAM / 90% CPU envelope.
+safe-dev-limits creates named development cgroup sessions under one shared
+machine guard.
 
 Usage:
-  ./safe-dev-limits [--] COMMAND [ARGUMENT ...]
-  ./safe-dev-limits
-  ./safe-dev-limits --help
+  ./safe-dev-limits start --name NAME [--mem FRACTION] [--cpu FRACTION]
+                          [-- COMMAND [ARGUMENT ...]]
+  ./safe-dev-limits join --name NAME [-- COMMAND [ARGUMENT ...]]
+  ./safe-dev-limits list
+  ./safe-dev-limits stop --name NAME
+  ./safe-dev-limits help
 
-Limits:
-  MemoryMax     80% of physical RAM across the complete user slice
-  MemorySwapMax 0, preventing additional swap growth
-  CPUQuota      90% of all machine CPUs across the complete user slice
-  Nesting       Neutral delegated control scope for inner cgroup levels
+With no subcommand, the script prints this help. start and join run a login
+shell when no command is supplied. Use -- before an explicit command.
 
-The script uses passwordless sudo only to set runtime properties on the
-system-owned user-$(id -u).slice. With no command it starts a login shell in
-devhermit_control.slice with [safe-dev] prepended to its Bash prompt, outside
-the 3pai BPFJailer boundary. Calling the script again from that shell reports
-the live limits without nesting another shell. Start a new tmux server and orc
-there. Official launchers continue placing native agent payloads in
-3pai_sandbox.slice; both slices inherit the same outer cap.
+Session limits:
+  --mem FRACTION  Fraction of physical RAM (default 0.8)
+  --cpu FRACTION  Fraction of all machine CPUs (default 0.9)
+  MemorySwapMax   0, preventing additional swap growth
 
-The runtime outer cap remains active after the wrapped command exits and is
-cleared by reboot or an explicit systemd property reset.
+Fractions must be greater than zero and cannot exceed the shared outer guard:
+80% of physical RAM and 90% of total CPU. Named limits are ceilings rather
+than reservations, so their sum may exceed the guard, but their actual combined
+usage cannot. The outer guard also covers payloads moved by the platform into
+the global 3pai_sandbox.slice; those payloads cannot currently be attributed
+to an individual named session.
 
-Do not reuse a shell or tmux server created by an older safe-dev-limits. Exit
-that shell and use the versioned socket below from a normal SSH or tmux shell.
-Clear inherited TMUX variables as shown so the command cannot select the old
-server.
+start creates a new runtime session and never changes an existing session.
+join verifies the stored and live limits before entering it. stop terminates
+processes still in the named slice and removes its runtime definition; run it
+from a shell outside that session. Runtime sessions and the shared outer guard
+are otherwise cleared by reboot.
 
 Examples:
-  ./safe-dev-limits
-  ./safe-dev-limits -- env -u TMUX -u TMUX_PANE \
-    tmux -L safe-dev-v2 new -A -s dev
-  socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/orc-tmux-safe-dev-v2"
-  mkdir -p "$socket"
-  ./safe-dev-limits -- env -u TMUX -u TMUX_PANE orc \
-    --tmux-socket-dir "$socket"
+  ./safe-dev-limits start --name hermit --mem 0.8 --cpu 0.7
+  ./safe-dev-limits join --name hermit
+  ./safe-dev-limits join --name hermit -- make test
+  ./safe-dev-limits list
+  ./safe-dev-limits stop --name hermit
 
-Check the effective kernel limits:
-  cg=$(systemctl show "user-$(id -u).slice" -p ControlGroup --value)
-  cat "/sys/fs/cgroup$cg"/{memory.max,memory.swap.max,cpu.max}
+Start a new tmux server inside a session; attaching to an older server does not
+move that server into the named slice:
+  ./safe-dev-limits join --name hermit -- env -u TMUX -u TMUX_PANE \
+    tmux -L safe-dev-hermit new -A -s dev
 EOF
 }
 
@@ -80,19 +87,267 @@ function current_cgroup {
 function path_is_within {
     local path=$1
     local ancestor=$2
-    [[ $path == "$ancestor" || $path == "$ancestor/"* ]]
+
+    [[ -n $path && -n $ancestor ]] && \
+        [[ $path == "$ancestor" || $path == "$ancestor/"* ]]
+}
+
+function parse_fraction {
+    local value=$1
+    local option=$2
+    local whole decimals padded
+
+    [[ $value =~ ^([01]([.][0-9]{1,6})?|[.][0-9]{1,6})$ ]] || \
+        fail "$option must be a decimal fraction greater than 0 and at most 1"
+    [[ $value == .* ]] && value="0$value"
+
+    if [[ $value == *.* ]]; then
+        whole=${value%%.*}
+        decimals=${value#*.}
+    else
+        whole=$value
+        decimals=0
+    fi
+    padded="${decimals}000000"
+    padded=${padded:0:6}
+    PARSED_FRACTION_PPM=$((10#$whole * FRACTION_SCALE + 10#$padded))
+    ((PARSED_FRACTION_PPM > 0 && PARSED_FRACTION_PPM <= FRACTION_SCALE)) || \
+        fail "$option must be a decimal fraction greater than 0 and at most 1"
+}
+
+function format_fraction {
+    local ppm=$1
+    local whole=$((ppm / FRACTION_SCALE))
+    local remainder=$((ppm % FRACTION_SCALE))
+    local decimals
+
+    if ((remainder == 0)); then
+        printf '%d' "$whole"
+        return
+    fi
+    printf -v decimals '%06d' "$remainder"
+    while [[ $decimals == *0 ]]; do
+        decimals=${decimals%0}
+    done
+    printf '%d.%s' "$whole" "$decimals"
+}
+
+function validate_session_name {
+    local name=$1
+
+    [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$ ]] || \
+        fail "session name must match [A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
+}
+
+function set_session_identity {
+    local name=$1
+    local escaped
+
+    validate_session_name "$name"
+    escaped=$(systemd-escape -- "$name") || fail "could not encode session name"
+    SESSION_NAME=$name
+    SESSION_KEY=$escaped
+    SESSION_SLICE_UNIT="safe_dev-$escaped.slice"
+    ((${#SESSION_SLICE_UNIT} <= 255)) || fail "encoded session name is too long"
+}
+
+function require_command {
+    local command=$1
+    local message=$2
+
+    command -v "$command" >/dev/null || fail "$message"
+}
+
+function require_common_tools {
+    require_command systemctl "systemctl is required"
+    require_command systemd-escape "systemd-escape is required"
+    require_command flock "flock is required"
+    [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || \
+        fail "cgroup v2 is required"
+}
+
+function require_launch_tools {
+    require_common_tools
+    require_command systemd-run "systemd-run is required"
+}
+
+function reject_agent_jail {
+    local current agent_cgroup
+
+    current=$(current_cgroup)
+    agent_cgroup=$(systemctl --user show "$AGENT_SLICE_UNIT" \
+        -p ControlGroup --value 2>/dev/null || true)
+    if [[ -n $agent_cgroup ]] && path_is_within "$current" "$agent_cgroup"; then
+        fail "already inside the 3pai agent jail; enter from a normal shell"
+    fi
+}
+
+function load_host_capacity {
+    MEM_TOTAL_KIB=$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)
+    [[ $MEM_TOTAL_KIB =~ ^[0-9]+$ && $MEM_TOTAL_KIB -gt 0 ]] || \
+        fail "could not determine physical memory"
+    TOTAL_MEMORY_BYTES=$((MEM_TOTAL_KIB * 1024))
+
+    AVAILABLE_CPUS=$(nproc --all)
+    [[ $AVAILABLE_CPUS =~ ^[0-9]+$ && $AVAILABLE_CPUS -gt 0 ]] || \
+        fail "could not determine total CPUs"
+
+    BOOT_ID=$(</proc/sys/kernel/random/boot_id)
+    [[ $BOOT_ID =~ ^[0-9a-f-]+$ ]] || fail "could not determine boot ID"
+
+    OUTER_MEMORY_MAX_BYTES=$((TOTAL_MEMORY_BYTES * OUTER_MEMORY_PERCENT / 100))
+    OUTER_CPU_QUOTA_PERCENT=$((AVAILABLE_CPUS * OUTER_CPU_PERCENT))
+}
+
+function init_runtime_state {
+    RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$USER_ID}
+    [[ -d $RUNTIME_DIR ]] || \
+        fail "user runtime directory is missing: $RUNTIME_DIR"
+    STATE_ROOT="$RUNTIME_DIR/safe-dev-limits"
+    STATE_DIR="$STATE_ROOT/sessions"
+    mkdir -p -- "$STATE_DIR"
+    chmod 700 "$STATE_ROOT" "$STATE_DIR"
+    LOCK_FILE="$STATE_ROOT/lock"
+}
+
+function lock_runtime_state {
+    exec 9>"$LOCK_FILE"
+    flock 9
+}
+
+function unlock_runtime_state {
+    exec 9>&-
+}
+
+function state_file_for_current_session {
+    SESSION_STATE_FILE="$STATE_DIR/$SESSION_KEY.state"
+}
+
+function write_session_state {
+    local temporary
+
+    temporary=$(mktemp "$STATE_DIR/.${SESSION_KEY}.XXXXXX")
+    chmod 600 "$temporary"
+    {
+        printf 'version=%s\n' "$STATE_FORMAT_VERSION"
+        printf 'name=%s\n' "$SESSION_NAME"
+        printf 'session_id=%s\n' "$SESSION_ID"
+        printf 'unit=%s\n' "$SESSION_SLICE_UNIT"
+        printf 'memory_ppm=%s\n' "$SESSION_MEMORY_PPM"
+        printf 'cpu_ppm=%s\n' "$SESSION_CPU_PPM"
+        printf 'memory_max_bytes=%s\n' "$SESSION_MEMORY_MAX_BYTES"
+        printf 'cpu_quota_percent=%s\n' "$SESSION_CPU_QUOTA_PERCENT"
+        printf 'total_memory_bytes=%s\n' "$TOTAL_MEMORY_BYTES"
+        printf 'total_cpus=%s\n' "$AVAILABLE_CPUS"
+        printf 'boot_id=%s\n' "$BOOT_ID"
+    } >"$temporary"
+    mv -f -- "$temporary" "$SESSION_STATE_FILE"
+}
+
+function load_session_state_file {
+    local file=$1
+    local key value expected_unit expected_key expected_file
+    local expected_memory expected_cpu
+    declare -A seen=()
+
+    STATE_VERSION_VALUE=
+    STATE_NAME=
+    STATE_SESSION_ID=
+    STATE_UNIT=
+    STATE_MEMORY_PPM=
+    STATE_CPU_PPM=
+    STATE_MEMORY_MAX_BYTES=
+    STATE_CPU_QUOTA_PERCENT=
+    STATE_TOTAL_MEMORY_BYTES=
+    STATE_TOTAL_CPUS=
+    STATE_BOOT_ID=
+
+    while IFS='=' read -r key value || [[ -n $key ]]; do
+        [[ -n $key && -z ${seen[$key]+x} ]] || \
+            fail "corrupt session state: $file"
+        seen[$key]=1
+        case $key in
+            version) STATE_VERSION_VALUE=$value ;;
+            name) STATE_NAME=$value ;;
+            session_id) STATE_SESSION_ID=$value ;;
+            unit) STATE_UNIT=$value ;;
+            memory_ppm) STATE_MEMORY_PPM=$value ;;
+            cpu_ppm) STATE_CPU_PPM=$value ;;
+            memory_max_bytes) STATE_MEMORY_MAX_BYTES=$value ;;
+            cpu_quota_percent) STATE_CPU_QUOTA_PERCENT=$value ;;
+            total_memory_bytes) STATE_TOTAL_MEMORY_BYTES=$value ;;
+            total_cpus) STATE_TOTAL_CPUS=$value ;;
+            boot_id) STATE_BOOT_ID=$value ;;
+            *) fail "unknown field in session state: $key" ;;
+        esac
+    done <"$file"
+
+    [[ $STATE_VERSION_VALUE == "$STATE_FORMAT_VERSION" ]] || \
+        fail "unsupported session state format in $file"
+    validate_session_name "$STATE_NAME"
+    [[ $STATE_SESSION_ID =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || \
+        fail "invalid session ID in session state: $file"
+    [[ $STATE_MEMORY_PPM =~ ^[0-9]+$ && $STATE_CPU_PPM =~ ^[0-9]+$ && \
+        $STATE_MEMORY_MAX_BYTES =~ ^[0-9]+$ && \
+        $STATE_CPU_QUOTA_PERCENT =~ ^[0-9]+$ && \
+        $STATE_TOTAL_MEMORY_BYTES =~ ^[0-9]+$ && \
+        $STATE_TOTAL_CPUS =~ ^[0-9]+$ ]] || fail "invalid numeric session state: $file"
+    ((STATE_MEMORY_PPM > 0 && STATE_MEMORY_PPM <= \
+        OUTER_MEMORY_PERCENT * FRACTION_SCALE / 100)) || \
+        fail "invalid memory fraction in session state: $file"
+    ((STATE_CPU_PPM > 0 && STATE_CPU_PPM <= \
+        OUTER_CPU_PERCENT * FRACTION_SCALE / 100)) || \
+        fail "invalid CPU fraction in session state: $file"
+    [[ $STATE_BOOT_ID == "$BOOT_ID" ]] || \
+        fail "session state is from a different boot: $file"
+    ((STATE_TOTAL_MEMORY_BYTES == TOTAL_MEMORY_BYTES && \
+        STATE_TOTAL_CPUS == AVAILABLE_CPUS)) || \
+        fail "host capacity changed since the session was created: $file"
+
+    set_session_identity "$STATE_NAME"
+    expected_unit=$SESSION_SLICE_UNIT
+    expected_key=$SESSION_KEY
+    expected_file="$STATE_DIR/$expected_key.state"
+    [[ $STATE_UNIT == "$expected_unit" && $file == "$expected_file" ]] || \
+        fail "session identity does not match its state file: $file"
+
+    expected_memory=$((STATE_TOTAL_MEMORY_BYTES * STATE_MEMORY_PPM / FRACTION_SCALE))
+    expected_cpu=$((STATE_TOTAL_CPUS * STATE_CPU_PPM * 100 / FRACTION_SCALE))
+    ((expected_cpu > 0 && STATE_MEMORY_MAX_BYTES == expected_memory && \
+        STATE_CPU_QUOTA_PERCENT == expected_cpu)) || \
+        fail "derived limits do not match session state: $file"
+
+    SESSION_NAME=$STATE_NAME
+    SESSION_ID=$STATE_SESSION_ID
+    SESSION_KEY=$expected_key
+    SESSION_SLICE_UNIT=$expected_unit
+    SESSION_MEMORY_PPM=$STATE_MEMORY_PPM
+    SESSION_CPU_PPM=$STATE_CPU_PPM
+    SESSION_MEMORY_MAX_BYTES=$STATE_MEMORY_MAX_BYTES
+    SESSION_CPU_QUOTA_PERCENT=$STATE_CPU_QUOTA_PERCENT
+    SESSION_STATE_FILE=$file
+}
+
+function load_session_state {
+    local requested_name=$1
+
+    set_session_identity "$requested_name"
+    state_file_for_current_session
+    [[ -f $SESSION_STATE_FILE ]] || \
+        fail "session '$requested_name' does not exist; create it with start"
+    load_session_state_file "$SESSION_STATE_FILE"
+    [[ $SESSION_NAME == "$requested_name" ]] || \
+        fail "session state name mismatch for '$requested_name'"
 }
 
 function verify_outer_limits {
-    local expected_memory=$1
-    local expected_cpu_percent=$2
-    local cgroup_path=$3
+    local cgroup_path=$1
     local expected_path="/user.slice/user-$USER_ID.slice"
     local directory="/sys/fs/cgroup$cgroup_path"
     local page_size actual_memory quota period expected_quota controllers
 
-    [[ $cgroup_path == "$expected_path" ]] || \
-        fail "unexpected outer cgroup path: $cgroup_path"
+    [[ -n $cgroup_path && $cgroup_path == "$expected_path" ]] || \
+        fail "unexpected outer cgroup path: ${cgroup_path:-<empty>}"
     [[ -d $directory ]] || fail "outer cgroup is missing: $cgroup_path"
     [[ -r $directory/memory.max && -r $directory/memory.swap.max && \
         -r $directory/cpu.max ]] || \
@@ -101,14 +356,13 @@ function verify_outer_limits {
     page_size=$(getconf PAGESIZE)
     actual_memory=$(<"$directory/memory.max")
     [[ $actual_memory =~ ^[0-9]+$ ]] || fail "outer MemoryMax was not applied"
-    if ((actual_memory != expected_memory / page_size * page_size)); then
-        fail "outer MemoryMax verification failed: expected at most $expected_memory, got $actual_memory"
-    fi
+    ((actual_memory == OUTER_MEMORY_MAX_BYTES / page_size * page_size)) || \
+        fail "outer MemoryMax verification failed: expected $OUTER_MEMORY_MAX_BYTES, got $actual_memory"
 
     read -r quota period <"$directory/cpu.max"
     [[ $quota =~ ^[0-9]+$ && $period =~ ^[0-9]+$ ]] || \
         fail "outer CPUQuota was not applied"
-    expected_quota=$((expected_cpu_percent * period / 100))
+    expected_quota=$((OUTER_CPU_QUOTA_PERCENT * period / 100))
     ((quota == expected_quota)) || \
         fail "outer CPUQuota verification failed: expected $expected_quota/$period, got $quota/$period"
 
@@ -126,7 +380,8 @@ function verify_child_slice {
     local directory="/sys/fs/cgroup$cgroup_path"
     local memory swap quota period
 
-    [[ -d $directory ]] || fail "$label cgroup is missing: $cgroup_path"
+    [[ -n $cgroup_path && -d $directory ]] || \
+        fail "$label cgroup is missing: ${cgroup_path:-<empty>}"
     path_is_within "$cgroup_path" "$outer_path" || \
         fail "$label escaped the outer user slice"
     memory=$(<"$directory/memory.max")
@@ -141,6 +396,61 @@ function verify_child_slice {
     [[ $period =~ ^[0-9]+$ ]] || fail "$label has an invalid CPUQuota period"
 }
 
+function verify_session_slice {
+    local cgroup_path=$1
+    local outer_path=$2
+    local directory="/sys/fs/cgroup$cgroup_path"
+    local page_size actual_memory quota period expected_quota controllers
+
+    [[ -n $cgroup_path && -d $directory ]] || \
+        fail "session '$SESSION_NAME' cgroup is missing"
+    path_is_within "$cgroup_path" "$outer_path" || \
+        fail "session '$SESSION_NAME' escaped the outer user slice"
+    [[ $cgroup_path == */"$SESSION_SLICE_UNIT" ]] || \
+        fail "session '$SESSION_NAME' has an unexpected cgroup path: $cgroup_path"
+    [[ $cgroup_path != *"/$AGENT_SLICE_UNIT"* ]] || \
+        fail "session '$SESSION_NAME' is inside the agent jail"
+
+    page_size=$(getconf PAGESIZE)
+    actual_memory=$(<"$directory/memory.max")
+    [[ $actual_memory =~ ^[0-9]+$ ]] || \
+        fail "session '$SESSION_NAME' MemoryMax was not applied"
+    ((actual_memory == SESSION_MEMORY_MAX_BYTES / page_size * page_size)) || \
+        fail "session '$SESSION_NAME' MemoryMax verification failed"
+    [[ $(<"$directory/memory.swap.max") == 0 ]] || \
+        fail "session '$SESSION_NAME' MemorySwapMax was not set to zero"
+
+    read -r quota period <"$directory/cpu.max"
+    [[ $quota =~ ^[0-9]+$ && $period =~ ^[0-9]+$ ]] || \
+        fail "session '$SESSION_NAME' CPUQuota was not applied"
+    expected_quota=$((SESSION_CPU_QUOTA_PERCENT * period / 100))
+    ((quota == expected_quota)) || \
+        fail "session '$SESSION_NAME' CPUQuota verification failed"
+    controllers=$(<"$directory/cgroup.controllers")
+    [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
+        fail "session '$SESSION_NAME' lacks CPU or memory controllers"
+}
+
+function verify_launcher_scope {
+    local outer_path=$1
+    local session_path=$2
+    local scope_path directory controllers
+
+    scope_path=$(current_cgroup)
+    path_is_within "$scope_path" "$session_path" || \
+        fail "launcher scope escaped session '$SESSION_NAME'"
+    path_is_within "$scope_path" "$outer_path" || \
+        fail "launcher scope escaped the outer user slice"
+    directory="/sys/fs/cgroup$scope_path"
+    [[ $(<"$directory/memory.oom.group") == 1 ]] || \
+        fail "launcher scope group OOM handling was not enabled"
+    controllers=$(<"$directory/cgroup.controllers")
+    [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
+        fail "launcher scope lacks delegated CPU and memory controllers"
+    [[ -w $directory/cgroup.subtree_control ]] || \
+        fail "launcher scope is not delegated for inner levels"
+}
+
 function matches_legacy_limits {
     local cgroup_path=$1
     local expected_memory=$2
@@ -148,6 +458,7 @@ function matches_legacy_limits {
     local directory="/sys/fs/cgroup$cgroup_path"
     local page_size memory swap quota period expected_quota
 
+    [[ -n $cgroup_path && -d $directory ]] || return 1
     page_size=$(getconf PAGESIZE)
     memory=$(<"$directory/memory.max")
     swap=$(<"$directory/memory.swap.max")
@@ -167,27 +478,82 @@ function reset_child_slice_limits {
         'CPUQuota='
 }
 
-function verify_control_scope {
-    local outer_path=$1
-    local control_path=$2
-    local scope_path directory controllers
+function rollback_uncommitted_session {
+    if [[ ${SESSION_SETUP_COMMITTED:-1} == 0 ]]; then
+        systemctl --user stop "$SESSION_SLICE_UNIT" >/dev/null 2>&1 || true
+        systemctl --user revert "$SESSION_SLICE_UNIT" >/dev/null 2>&1 || true
+        rm -f -- "${SESSION_STATE_FILE:-}"
+    fi
+}
 
-    [[ $control_path != *"/$AGENT_SLICE_UNIT"* ]] || \
-        fail "control slice is incorrectly nested inside the BPFJailer boundary"
-    path_is_within "$control_path" "$outer_path" || \
-        fail "control slice escaped the outer user slice"
+function apply_outer_guard {
+    local migration_marker legacy_control_cgroup
+    local legacy_control_memory legacy_control_cpu
+    local legacy_agent_memory legacy_agent_cpu
 
-    scope_path=$(current_cgroup)
-    path_is_within "$scope_path" "$control_path" || \
-        fail "launcher scope escaped the neutral control slice"
-    directory="/sys/fs/cgroup$scope_path"
-    [[ $(<"$directory/memory.oom.group") == 1 ]] || \
-        fail "launcher scope group OOM handling was not enabled"
-    controllers=$(<"$directory/cgroup.controllers")
-    [[ " $controllers " == *" cpu "* && " $controllers " == *" memory "* ]] || \
-        fail "launcher scope lacks delegated CPU and memory controllers"
-    [[ -w $directory/cgroup.subtree_control ]] || \
-        fail "launcher scope is not delegated for inner levels"
+    require_command sudo "sudo is required to cap the system user slice"
+    if ! sudo -n /usr/bin/systemctl set-property --runtime "$OUTER_SLICE_UNIT" \
+        "MemoryMax=$OUTER_MEMORY_MAX_BYTES" \
+        MemorySwapMax=0 \
+        "CPUQuota=$OUTER_CPU_QUOTA_PERCENT%"; then
+        fail "passwordless sudo could not apply limits to $OUTER_SLICE_UNIT"
+    fi
+
+    OUTER_CGROUP=$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)
+    [[ -n $OUTER_CGROUP ]] || fail "systemd did not expose $OUTER_SLICE_UNIT"
+    verify_outer_limits "$OUTER_CGROUP"
+
+    systemctl --user start "$AGENT_SLICE_UNIT"
+    AGENT_CGROUP=$(systemctl --user show "$AGENT_SLICE_UNIT" \
+        -p ControlGroup --value)
+    verify_child_slice "$AGENT_CGROUP" "agent slice" "$OUTER_CGROUP"
+
+    # Clear only limits written by pre-session versions of this script.
+    migration_marker="$RUNTIME_DIR/safe-dev-limits-parent-slice-v1.migrated"
+    if [[ ! -e $migration_marker ]]; then
+        systemctl --user start "$LEGACY_CONTROL_SLICE_UNIT"
+        legacy_control_cgroup=$(systemctl --user show \
+            "$LEGACY_CONTROL_SLICE_UNIT" -p ControlGroup --value)
+        legacy_control_memory=$((TOTAL_MEMORY_BYTES * 5 / 100))
+        legacy_control_cpu=$((AVAILABLE_CPUS * 5))
+        legacy_agent_memory=$((TOTAL_MEMORY_BYTES * 75 / 100))
+        legacy_agent_cpu=$((AVAILABLE_CPUS * 85))
+
+        if matches_legacy_limits "$legacy_control_cgroup" \
+            "$legacy_control_memory" "$legacy_control_cpu"; then
+            reset_child_slice_limits "$LEGACY_CONTROL_SLICE_UNIT"
+        fi
+        if matches_legacy_limits "$AGENT_CGROUP" \
+            "$OUTER_MEMORY_MAX_BYTES" "$OUTER_CPU_QUOTA_PERCENT" || \
+            matches_legacy_limits "$AGENT_CGROUP" \
+                "$legacy_agent_memory" "$legacy_agent_cpu"; then
+            reset_child_slice_limits "$AGENT_SLICE_UNIT"
+        fi
+        : >"$migration_marker"
+        verify_child_slice "$legacy_control_cgroup" "legacy control slice" \
+            "$OUTER_CGROUP"
+        verify_child_slice "$AGENT_CGROUP" "agent slice" "$OUTER_CGROUP"
+    fi
+}
+
+function load_and_verify_live_session {
+    local name=$1
+
+    load_session_state "$name"
+    systemctl --user is-active --quiet "$SESSION_SLICE_UNIT" || \
+        fail "session '$name' is not active; remove it with stop and create it again"
+
+    OUTER_CGROUP=$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)
+    [[ -n $OUTER_CGROUP ]] || fail "shared outer guard is unavailable"
+    verify_outer_limits "$OUTER_CGROUP"
+
+    SESSION_CGROUP=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p ControlGroup --value)
+    verify_session_slice "$SESSION_CGROUP" "$OUTER_CGROUP"
+
+    AGENT_CGROUP=$(systemctl --user show "$AGENT_SLICE_UNIT" \
+        -p ControlGroup --value)
+    verify_child_slice "$AGENT_CGROUP" "agent slice" "$OUTER_CGROUP"
 }
 
 function human_bytes {
@@ -202,8 +568,7 @@ function human_bytes {
 }
 
 function print_human_limits {
-    local cgroup_path=$1
-    local directory="/sys/fs/cgroup$cgroup_path"
+    local directory="/sys/fs/cgroup$SESSION_CGROUP"
     local memory_current memory_max memory_headroom swap_current
     local quota period cpu_cores cpu_percent
 
@@ -214,29 +579,45 @@ function print_human_limits {
     ((memory_current < memory_max)) && \
         memory_headroom=$((memory_max - memory_current)) || memory_headroom=0
     cpu_cores=$(awk -v quota="$quota" -v period="$period" \
-        'BEGIN { printf "%.1f", quota / period }')
-    cpu_percent=$(awk -v quota="$quota" -v period="$period" -v cpus="$AVAILABLE_CPUS" \
-        'BEGIN { printf "%.0f", 100 * quota / period / cpus }')
+        'BEGIN { printf "%.2f", quota / period }')
+    cpu_percent=$(awk -v quota="$quota" -v period="$period" \
+        -v cpus="$AVAILABLE_CPUS" \
+        'BEGIN { printf "%.1f", 100 * quota / period / cpus }')
 
-    echo "safe-dev-limits: already inside [safe-dev]."
+    printf "safe-dev-limits: already inside session '%s'.\n" "$SESSION_NAME"
     printf '  Memory: %s used / %s max (%s headroom)\n' \
         "$(human_bytes "$memory_current")" "$(human_bytes "$memory_max")" \
         "$(human_bytes "$memory_headroom")"
     printf '  Swap:   %s used; additional growth disabled\n' \
         "$(human_bytes "$swap_current")"
-    printf '  CPU:    %s of %d CPUs max (%s%%)\n' \
+    printf '  CPU:    %s of %d CPUs max (%s%% of total)\n' \
         "$cpu_cores" "$AVAILABLE_CPUS" "$cpu_percent"
-    printf '  Cgroup: %s (%s)\n' "$OUTER_SLICE_UNIT" "$cgroup_path"
+    printf '  Cgroup: %s (%s)\n' "$SESSION_SLICE_UNIT" "$SESSION_CGROUP"
 }
 
 function export_limit_metadata {
     export SAFE_DEV_LIMITS_ACTIVE=1
+    export SAFE_DEV_LIMITS_FORMAT_VERSION=$STATE_FORMAT_VERSION
+    export SAFE_DEV_LIMITS_SESSION_NAME=$SESSION_NAME
+    export SAFE_DEV_LIMITS_SESSION_ID=$SESSION_ID
+    export SAFE_DEV_LIMITS_SESSION_SLICE=$SESSION_SLICE_UNIT
+    export SAFE_DEV_LIMITS_SESSION_MEMORY_FRACTION
+    SAFE_DEV_LIMITS_SESSION_MEMORY_FRACTION=$(format_fraction "$SESSION_MEMORY_PPM")
+    export SAFE_DEV_LIMITS_SESSION_CPU_FRACTION
+    SAFE_DEV_LIMITS_SESSION_CPU_FRACTION=$(format_fraction "$SESSION_CPU_PPM")
+    export SAFE_DEV_LIMITS_SESSION_MEMORY_MAX_BYTES=$SESSION_MEMORY_MAX_BYTES
+    export SAFE_DEV_LIMITS_SESSION_CPU_QUOTA_PERCENT=$SESSION_CPU_QUOTA_PERCENT
+    export SAFE_DEV_LIMITS_TOTAL_MEMORY_BYTES=$TOTAL_MEMORY_BYTES
+    export SAFE_DEV_LIMITS_TOTAL_CPUS=$AVAILABLE_CPUS
+
+    # Preserve the aggregate meanings exposed by pre-session versions while
+    # the explicit SESSION_* names describe the named child limits.
     export SAFE_DEV_LIMITS_SLICE=$OUTER_SLICE_UNIT
     export SAFE_DEV_LIMITS_OUTER_SLICE=$OUTER_SLICE_UNIT
-    export SAFE_DEV_LIMITS_CONTROL_SLICE=$CONTROL_SLICE_UNIT
+    export SAFE_DEV_LIMITS_CONTROL_SLICE=$SESSION_SLICE_UNIT
     export SAFE_DEV_LIMITS_AGENT_SLICE=$AGENT_SLICE_UNIT
-    export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$MEMORY_MAX_BYTES
-    export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$CPU_QUOTA_PERCENT
+    export SAFE_DEV_LIMITS_MEMORY_MAX_BYTES=$OUTER_MEMORY_MAX_BYTES
+    export SAFE_DEV_LIMITS_CPU_QUOTA_PERCENT=$OUTER_CPU_QUOTA_PERCENT
     export SAFE_DEV_LIMITS_PROMPT_HOOK=$SAFE_DEV_PROMPT_HOOK
     if [[ ${_FB_SHELL_RC_PROMPT_COMMANDS-} != *"$SAFE_DEV_PROMPT_HOOK"* ]]; then
         export _FB_SHELL_RC_PROMPT_COMMANDS="${_FB_SHELL_RC_PROMPT_COMMANDS:+${_FB_SHELL_RC_PROMPT_COMMANDS}; }$SAFE_DEV_PROMPT_HOOK"
@@ -246,215 +627,398 @@ function export_limit_metadata {
     fi
 }
 
-# Internal entry point: systemd creates a neutral delegated scope, then this
-# branch verifies the privileged outer cap before starting the command.
-if [[ ${1:-} == "--verify-and-exec" ]]; then
-    (($# >= 7)) || fail "invalid internal invocation"
-    readonly MEMORY_MAX_BYTES=$2
-    readonly CPU_QUOTA_PERCENT=$3
-    readonly OUTER_CGROUP=$4
-    readonly CONTROL_CGROUP=$5
-    shift 5
-    [[ ${1:-} == "--" ]] || fail "invalid internal command separator"
+function prepare_command {
+    START_LOGIN_SHELL=0
+    if (($# == 0)); then
+        START_LOGIN_SHELL=1
+        LOGIN_SHELL=${SHELL:-/bin/bash}
+        [[ -x $LOGIN_SHELL ]] || \
+            fail "login shell is not executable: $LOGIN_SHELL"
+        PREPARED_COMMAND=("$LOGIN_SHELL" -l)
+    else
+        PREPARED_COMMAND=("$@")
+    fi
+}
+
+function launch_session {
+    local current unit_name
+
+    current=$(current_cgroup)
+    if path_is_within "$current" "$AGENT_CGROUP"; then
+        fail "already inside the 3pai agent jail; enter from a normal shell"
+    fi
+
+    if path_is_within "$current" "$SESSION_CGROUP"; then
+        export_limit_metadata
+        if ((START_LOGIN_SHELL)); then
+            print_human_limits
+            exit 0
+        fi
+        echo "safe-dev-limits: already inside session '$SESSION_NAME'; preserving the current cgroup." >&2
+        exec -- "${PREPARED_COMMAND[@]}"
+    fi
+
+    unit_name="safe_dev_scope_${USER_ID}_$$_$RANDOM"
+    exec systemd-run \
+        --user \
+        --scope \
+        --collect \
+        --quiet \
+        --same-dir \
+        --slice="$SESSION_SLICE_UNIT" \
+        --unit="$unit_name" \
+        --description="safe-dev session $SESSION_NAME" \
+        --property=Delegate=yes \
+        --property=OOMPolicy=kill \
+        --expand-environment=no \
+        -- "$SCRIPT_PATH" --internal-enter "$SESSION_NAME" "$SESSION_ID" -- \
+        "${PREPARED_COMMAND[@]}"
+}
+
+function internal_enter {
+    local name=$1
+    local expected_session_id=$2
+    shift 2
+    [[ ${1:-} == -- ]] || fail "invalid internal command separator"
     shift
     (($# > 0)) || fail "internal invocation has no command"
 
-    [[ $MEMORY_MAX_BYTES =~ ^[0-9]+$ ]] || fail "invalid internal memory limit"
-    [[ $CPU_QUOTA_PERCENT =~ ^[0-9]+$ ]] || fail "invalid internal CPU limit"
-    ((MEMORY_MAX_BYTES > 0 && CPU_QUOTA_PERCENT > 0)) || \
-        fail "invalid internal limit value"
-
-    MEM_TOTAL_KIB=$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)
-    AVAILABLE_CPUS=$(nproc --all)
-    [[ $MEM_TOTAL_KIB =~ ^[0-9]+$ && $AVAILABLE_CPUS =~ ^[0-9]+$ ]] || \
-        fail "could not recompute host capacity"
-    ((MEMORY_MAX_BYTES == MEM_TOTAL_KIB * 1024 * MEMORY_PERCENT / 100)) || \
-        fail "internal memory limit does not equal $MEMORY_PERCENT% of physical RAM"
-    ((CPU_QUOTA_PERCENT == AVAILABLE_CPUS * CPU_PERCENT)) || \
-        fail "internal CPU limit does not equal $CPU_PERCENT% of machine CPUs"
-
-    [[ $OUTER_CGROUP == \
-        "$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)" ]] || \
-        fail "outer cgroup path changed during launch"
-    [[ $CONTROL_CGROUP == \
-        "$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value)" ]] || \
-        fail "control cgroup path changed during launch"
-
-    AGENT_CGROUP=$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value)
-    [[ -n $AGENT_CGROUP ]] || fail "agent cgroup path is unavailable"
-    verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CGROUP"
-    verify_child_slice "$CONTROL_CGROUP" "control slice" "$OUTER_CGROUP"
-    verify_child_slice "$AGENT_CGROUP" "agent slice" "$OUTER_CGROUP"
-    verify_control_scope "$OUTER_CGROUP" "$CONTROL_CGROUP"
+    require_common_tools
+    load_host_capacity
+    init_runtime_state
+    lock_runtime_state
+    load_and_verify_live_session "$name"
+    [[ $SESSION_ID == "$expected_session_id" ]] || \
+        fail "session '$name' was replaced while it was being entered"
+    verify_launcher_scope "$OUTER_CGROUP" "$SESSION_CGROUP"
+    unlock_runtime_state
     export_limit_metadata
     exec -- "$@"
+}
+
+function start_session {
+    local name=$1
+    local memory_ppm=$2
+    local cpu_ppm=$3
+    local active_state drop_ins fragment_path memory_fraction cpu_fraction
+    shift 3
+
+    prepare_command "$@"
+    require_launch_tools
+    reject_agent_jail
+    load_host_capacity
+    init_runtime_state
+    set_session_identity "$name"
+    state_file_for_current_session
+
+    ((memory_ppm <= OUTER_MEMORY_PERCENT * FRACTION_SCALE / 100)) || \
+        fail "--mem cannot exceed the shared outer limit of 0.8"
+    ((cpu_ppm <= OUTER_CPU_PERCENT * FRACTION_SCALE / 100)) || \
+        fail "--cpu cannot exceed the shared outer limit of 0.9"
+    SESSION_MEMORY_PPM=$memory_ppm
+    SESSION_CPU_PPM=$cpu_ppm
+    SESSION_ID=$(</proc/sys/kernel/random/uuid)
+    [[ $SESSION_ID =~ ^[0-9a-f-]+$ ]] || fail "could not create a session ID"
+    SESSION_MEMORY_MAX_BYTES=$((TOTAL_MEMORY_BYTES * memory_ppm / FRACTION_SCALE))
+    SESSION_CPU_QUOTA_PERCENT=$((AVAILABLE_CPUS * cpu_ppm * 100 / FRACTION_SCALE))
+    ((SESSION_MEMORY_MAX_BYTES > 0 && SESSION_CPU_QUOTA_PERCENT > 0)) || \
+        fail "requested limit is too small for this host"
+
+    lock_runtime_state
+    [[ ! -e $SESSION_STATE_FILE ]] || \
+        fail "session '$name' already exists; use join or stop it first"
+    active_state=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p ActiveState --value)
+    drop_ins=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p DropInPaths --value)
+    fragment_path=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p FragmentPath --value)
+    [[ $active_state == inactive && -z $drop_ins && -z $fragment_path ]] || \
+        fail "unregistered unit $SESSION_SLICE_UNIT already exists"
+
+    apply_outer_guard
+    SESSION_SETUP_COMMITTED=0
+    trap rollback_uncommitted_session EXIT
+    systemctl --user set-property --runtime "$SESSION_SLICE_UNIT" \
+        "MemoryMax=$SESSION_MEMORY_MAX_BYTES" \
+        MemorySwapMax=0 \
+        "CPUQuota=$SESSION_CPU_QUOTA_PERCENT%"
+    systemctl --user start "$SESSION_SLICE_UNIT" || \
+        fail "could not start session '$name'"
+
+    SESSION_CGROUP=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p ControlGroup --value)
+    verify_session_slice "$SESSION_CGROUP" "$OUTER_CGROUP"
+    write_session_state
+    SESSION_SETUP_COMMITTED=1
+    trap - EXIT
+    unlock_runtime_state
+
+    memory_fraction=$(format_fraction "$SESSION_MEMORY_PPM")
+    cpu_fraction=$(format_fraction "$SESSION_CPU_PPM")
+    printf "safe-dev-limits: started session '%s': RAM <= %s of total, CPU <= %s of %d CPUs; no new swap.\n" \
+        "$SESSION_NAME" "$memory_fraction" "$cpu_fraction" "$AVAILABLE_CPUS" >&2
+    echo "safe-dev-limits: all sessions and global agent payloads still share the 0.8 RAM / 0.9 CPU outer guard." >&2
+    launch_session
+}
+
+function join_session {
+    local name=$1
+    shift
+
+    prepare_command "$@"
+    require_launch_tools
+    reject_agent_jail
+    load_host_capacity
+    init_runtime_state
+    lock_runtime_state
+    load_and_verify_live_session "$name"
+    unlock_runtime_state
+    launch_session
+}
+
+function stop_session {
+    local name=$1
+    local session_cgroup current drop_ins
+
+    require_common_tools
+    load_host_capacity
+    init_runtime_state
+    lock_runtime_state
+    load_session_state "$name"
+
+    session_cgroup=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+        -p ControlGroup --value)
+    current=$(current_cgroup)
+    if [[ -n $session_cgroup ]] && path_is_within "$current" "$session_cgroup"; then
+        fail "stop session '$name' from a shell outside that session"
+    fi
+
+    if ! systemctl --user stop "$SESSION_SLICE_UNIT"; then
+        fail "could not stop session '$name'"
+    fi
+    if ! systemctl --user --quiet revert "$SESSION_SLICE_UNIT"; then
+        drop_ins=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+            -p DropInPaths --value)
+        [[ -z $drop_ins ]] || \
+            fail "session '$name' stopped, but its runtime limits could not be removed"
+    fi
+    rm -f -- "$SESSION_STATE_FILE"
+    systemctl --user reset-failed "$SESSION_SLICE_UNIT" >/dev/null 2>&1 || true
+    unlock_runtime_state
+    printf "safe-dev-limits: stopped session '%s'.\n" "$name"
+    echo "safe-dev-limits: globally reparented 3pai agent payloads are not owned or stopped by a named session." >&2
+}
+
+function list_sessions {
+    local file state cgroup populated memory_fraction cpu_fraction
+    local found=0
+    local -a files
+
+    require_common_tools
+    load_host_capacity
+    init_runtime_state
+    lock_runtime_state
+    shopt -s nullglob
+    files=("$STATE_DIR"/*.state)
+    shopt -u nullglob
+
+    if ((${#files[@]} == 0)); then
+        unlock_runtime_state
+        echo "No named safe-dev-limits sessions."
+        return
+    fi
+
+    printf 'NAME\tSTATE\tMEM\tCPU\tSLICE\n'
+    for file in "${files[@]}"; do
+        load_session_state_file "$file"
+        state=stale
+        if systemctl --user is-active --quiet "$SESSION_SLICE_UNIT"; then
+            state=idle
+            if ! (load_and_verify_live_session "$SESSION_NAME") \
+                >/dev/null 2>&1; then
+                state=invalid
+            else
+                cgroup=$(systemctl --user show "$SESSION_SLICE_UNIT" \
+                    -p ControlGroup --value)
+                if [[ -n $cgroup && -r /sys/fs/cgroup$cgroup/cgroup.events ]]; then
+                    populated=$(awk '$1 == "populated" { print $2; exit }' \
+                        "/sys/fs/cgroup$cgroup/cgroup.events")
+                    [[ $populated == 1 ]] && state=running
+                fi
+            fi
+        fi
+        memory_fraction=$(format_fraction "$SESSION_MEMORY_PPM")
+        cpu_fraction=$(format_fraction "$SESSION_CPU_PPM")
+        printf '%s\t%s\t%s\t%s\t%s\n' "$SESSION_NAME" "$state" \
+            "$memory_fraction" "$cpu_fraction" "$SESSION_SLICE_UNIT"
+        found=1
+    done
+    unlock_runtime_state
+    ((found == 1)) || echo "No named safe-dev-limits sessions."
+}
+
+function parse_start {
+    local name=
+    local memory_value=$DEFAULT_MEMORY_FRACTION
+    local cpu_value=$DEFAULT_CPU_FRACTION
+    local memory_seen=0 cpu_seen=0 name_seen=0
+
+    while (($# > 0)); do
+        case $1 in
+            --name)
+                (($# >= 2)) || fail "--name requires a value"
+                ((name_seen == 0)) || fail "--name may be specified only once"
+                name=$2
+                name_seen=1
+                shift 2
+                ;;
+            --name=*)
+                ((name_seen == 0)) || fail "--name may be specified only once"
+                name=${1#*=}
+                name_seen=1
+                shift
+                ;;
+            --mem)
+                (($# >= 2)) || fail "--mem requires a value"
+                ((memory_seen == 0)) || fail "--mem may be specified only once"
+                memory_value=$2
+                memory_seen=1
+                shift 2
+                ;;
+            --mem=*)
+                ((memory_seen == 0)) || fail "--mem may be specified only once"
+                memory_value=${1#*=}
+                memory_seen=1
+                shift
+                ;;
+            --cpu)
+                (($# >= 2)) || fail "--cpu requires a value"
+                ((cpu_seen == 0)) || fail "--cpu may be specified only once"
+                cpu_value=$2
+                cpu_seen=1
+                shift 2
+                ;;
+            --cpu=*)
+                ((cpu_seen == 0)) || fail "--cpu may be specified only once"
+                cpu_value=${1#*=}
+                cpu_seen=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                fail "unexpected start argument '$1'; put commands after --"
+                ;;
+        esac
+    done
+
+    [[ -n $name ]] || fail "start requires --name NAME"
+    validate_session_name "$name"
+    parse_fraction "$memory_value" --mem
+    local memory_ppm=$PARSED_FRACTION_PPM
+    parse_fraction "$cpu_value" --cpu
+    local cpu_ppm=$PARSED_FRACTION_PPM
+    start_session "$name" "$memory_ppm" "$cpu_ppm" "$@"
+}
+
+function parse_join {
+    local name=
+    local name_seen=0
+
+    while (($# > 0)); do
+        case $1 in
+            --name)
+                (($# >= 2)) || fail "--name requires a value"
+                ((name_seen == 0)) || fail "--name may be specified only once"
+                name=$2
+                name_seen=1
+                shift 2
+                ;;
+            --name=*)
+                ((name_seen == 0)) || fail "--name may be specified only once"
+                name=${1#*=}
+                name_seen=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                fail "unexpected join argument '$1'; put commands after --"
+                ;;
+        esac
+    done
+
+    [[ -n $name ]] || fail "join requires --name NAME"
+    validate_session_name "$name"
+    join_session "$name" "$@"
+}
+
+function parse_stop {
+    local name=
+
+    while (($# > 0)); do
+        case $1 in
+            --name)
+                (($# >= 2)) || fail "--name requires a value"
+                [[ -z $name ]] || fail "--name may be specified only once"
+                name=$2
+                shift 2
+                ;;
+            --name=*)
+                [[ -z $name ]] || fail "--name may be specified only once"
+                name=${1#*=}
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *) fail "unexpected stop argument '$1'" ;;
+        esac
+    done
+
+    [[ -n $name ]] || fail "stop requires --name NAME"
+    validate_session_name "$name"
+    stop_session "$name"
+}
+
+if [[ ${1:-} == --internal-enter ]]; then
+    (($# >= 5)) || fail "invalid internal invocation"
+    shift
+    internal_enter "$@"
 fi
 
-if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+if (($# == 0)); then
     usage
     exit 0
 fi
 
-if [[ ${1:-} == "--" ]]; then
-    shift
-fi
-
-START_LOGIN_SHELL=0
-LOGIN_SHELL=
-if (($# == 0)); then
-    START_LOGIN_SHELL=1
-    LOGIN_SHELL=${SHELL:-/bin/bash}
-    set -- "$LOGIN_SHELL" -l
-fi
-readonly START_LOGIN_SHELL LOGIN_SHELL
-
-command -v systemctl >/dev/null || fail "systemctl is required"
-[[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || fail "cgroup v2 is required"
-
-MEM_TOTAL_KIB="$(awk '$1 == "MemTotal:" { print $2; exit }' /proc/meminfo)"
-readonly MEM_TOTAL_KIB
-[[ $MEM_TOTAL_KIB =~ ^[0-9]+$ && $MEM_TOTAL_KIB -gt 0 ]] || \
-    fail "could not determine physical memory"
-readonly MEMORY_MAX_BYTES=$((MEM_TOTAL_KIB * 1024 * MEMORY_PERCENT / 100))
-
-AVAILABLE_CPUS="$(nproc --all)"
-readonly AVAILABLE_CPUS
-[[ $AVAILABLE_CPUS =~ ^[0-9]+$ && $AVAILABLE_CPUS -gt 0 ]] || \
-    fail "could not determine available CPUs"
-readonly CPU_QUOTA_PERCENT=$((AVAILABLE_CPUS * CPU_PERCENT))
-
-readonly GIB=$((1024 * 1024 * 1024))
-readonly MEMORY_GIB_WHOLE=$((MEMORY_MAX_BYTES / GIB))
-readonly MEMORY_GIB_TENTH=$((MEMORY_MAX_BYTES % GIB * 10 / GIB))
-readonly CPU_WHOLE=$((CPU_QUOTA_PERCENT / 100))
-readonly CPU_TENTH=$((CPU_QUOTA_PERCENT % 100 / 10))
-
-INITIAL_CGROUP="$(current_cgroup)"
-readonly INITIAL_CGROUP
-EXISTING_OUTER_CGROUP="$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
-readonly EXISTING_OUTER_CGROUP
-EXISTING_CONTROL_CGROUP="$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
-readonly EXISTING_CONTROL_CGROUP
-EXISTING_AGENT_CGROUP="$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value 2>/dev/null || true)"
-readonly EXISTING_AGENT_CGROUP
-
-if [[ -n $EXISTING_AGENT_CGROUP ]] && \
-    path_is_within "$INITIAL_CGROUP" "$EXISTING_AGENT_CGROUP"; then
-    fail "already inside the 3pai agent jail; rerun safe-dev-limits from a normal SSH or unjailed tmux shell"
-fi
-
-if [[ -n $EXISTING_OUTER_CGROUP && -n $EXISTING_CONTROL_CGROUP ]] && \
-    path_is_within "$INITIAL_CGROUP" "$EXISTING_CONTROL_CGROUP"; then
-    verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$EXISTING_OUTER_CGROUP"
-    verify_child_slice "$EXISTING_CONTROL_CGROUP" "control slice" "$EXISTING_OUTER_CGROUP"
-    export_limit_metadata
-    if ((START_LOGIN_SHELL)); then
-        print_human_limits "$EXISTING_OUTER_CGROUP"
-        exit 0
-    fi
-    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
-    exec -- "$@"
-fi
-
-if ((START_LOGIN_SHELL)); then
-    [[ -x $LOGIN_SHELL ]] || fail "login shell is not executable: $LOGIN_SHELL"
-fi
-
-command -v systemd-run >/dev/null || fail "systemd-run is required"
-command -v sudo >/dev/null || fail "sudo is required to cap the system user slice"
-command -v flock >/dev/null || fail "flock is required"
-
-readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$USER_ID}
-[[ -d $RUNTIME_DIR ]] || fail "user runtime directory is missing: $RUNTIME_DIR"
-exec 9>"$RUNTIME_DIR/safe-dev-limits.lock"
-flock 9
-
-if ! sudo -n /usr/bin/systemctl set-property --runtime "$OUTER_SLICE_UNIT" \
-    "MemoryMax=$MEMORY_MAX_BYTES" \
-    MemorySwapMax=0 \
-    "CPUQuota=$CPU_QUOTA_PERCENT%"; then
-    fail "passwordless sudo could not apply limits to $OUTER_SLICE_UNIT"
-fi
-
-OUTER_CONTROL_GROUP="$(systemctl show "$OUTER_SLICE_UNIT" -p ControlGroup --value)"
-readonly OUTER_CONTROL_GROUP
-[[ -n $OUTER_CONTROL_GROUP ]] || fail "systemd did not expose $OUTER_SLICE_UNIT"
-verify_outer_limits "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" "$OUTER_CONTROL_GROUP"
-
-systemctl --user start "$CONTROL_SLICE_UNIT" "$AGENT_SLICE_UNIT"
-
-CONTROL_CONTROL_GROUP="$(systemctl --user show "$CONTROL_SLICE_UNIT" -p ControlGroup --value)"
-readonly CONTROL_CONTROL_GROUP
-AGENT_CONTROL_GROUP="$(systemctl --user show "$AGENT_SLICE_UNIT" -p ControlGroup --value)"
-readonly AGENT_CONTROL_GROUP
-[[ -n $CONTROL_CONTROL_GROUP && -n $AGENT_CONTROL_GROUP ]] || \
-    fail "systemd did not create the control and agent slices"
-
-# Migrate only the exact runtime limits written by earlier safe-dev-limits
-# versions. The marker prevents later operator-defined child caps from being
-# cleared on subsequent invocations.
-readonly MIGRATION_MARKER="$RUNTIME_DIR/safe-dev-limits-parent-slice-v1.migrated"
-if [[ ! -e $MIGRATION_MARKER ]]; then
-    readonly LEGACY_CONTROL_MEMORY=$((MEM_TOTAL_KIB * 1024 * 5 / 100))
-    readonly LEGACY_CONTROL_CPU=$((AVAILABLE_CPUS * 5))
-    readonly LEGACY_AGENT_MEMORY=$((MEM_TOTAL_KIB * 1024 * 75 / 100))
-    readonly LEGACY_AGENT_CPU=$((AVAILABLE_CPUS * 85))
-
-    if matches_legacy_limits "$CONTROL_CONTROL_GROUP" \
-        "$LEGACY_CONTROL_MEMORY" "$LEGACY_CONTROL_CPU"; then
-        reset_child_slice_limits "$CONTROL_SLICE_UNIT"
-    fi
-    if matches_legacy_limits "$AGENT_CONTROL_GROUP" \
-        "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" || \
-        matches_legacy_limits "$AGENT_CONTROL_GROUP" \
-            "$LEGACY_AGENT_MEMORY" "$LEGACY_AGENT_CPU"; then
-        reset_child_slice_limits "$AGENT_SLICE_UNIT"
-    fi
-    : >"$MIGRATION_MARKER"
-fi
-
-verify_child_slice "$CONTROL_CONTROL_GROUP" "control slice" "$OUTER_CONTROL_GROUP"
-verify_child_slice "$AGENT_CONTROL_GROUP" "agent slice" "$OUTER_CONTROL_GROUP"
-exec 9>&-
-
-CURRENT_CGROUP="$(current_cgroup)"
-readonly CURRENT_CGROUP
-path_is_within "$CURRENT_CGROUP" "$OUTER_CONTROL_GROUP" || \
-    fail "current process is outside the capped user slice"
-
-if path_is_within "$CURRENT_CGROUP" "$AGENT_CONTROL_GROUP"; then
-    fail "already inside the 3pai agent jail; rerun safe-dev-limits from a normal SSH or unjailed tmux shell"
-fi
-
-if path_is_within "$CURRENT_CGROUP" "$CONTROL_CONTROL_GROUP"; then
-    export_limit_metadata
-    if ((START_LOGIN_SHELL)); then
-        print_human_limits "$OUTER_CONTROL_GROUP"
-        exit 0
-    fi
-    echo "safe-dev-limits: already inside the neutral control slice; preserving the current cgroup." >&2
-    exec -- "$@"
-fi
-
-printf 'safe-dev-limits: capping %s: RAM <= %d.%d GiB, CPU <= %d.%d of %d CPUs; no new swap.\n' \
-    "$OUTER_SLICE_UNIT" "$MEMORY_GIB_WHOLE" "$MEMORY_GIB_TENTH" \
-    "$CPU_WHOLE" "$CPU_TENTH" "$AVAILABLE_CPUS" >&2
-echo "safe-dev-limits: tmux, orc, agents, Buck2, and sibling scopes share this hard aggregate ceiling." >&2
-
-UNIT_NAME="safe-dev-limits-control-$USER_ID-$$"
-readonly UNIT_NAME
-exec systemd-run \
-    --user \
-    --scope \
-    --collect \
-    --quiet \
-    --same-dir \
-    --slice="$CONTROL_SLICE_UNIT" \
-    --unit="$UNIT_NAME" \
-    --description="Outermost dev-hermit control scope" \
-    --property=Delegate=yes \
-    --property=OOMPolicy=kill \
-    --expand-environment=no \
-    -- "$SCRIPT_PATH" --verify-and-exec \
-    "$MEMORY_MAX_BYTES" "$CPU_QUOTA_PERCENT" \
-    "$OUTER_CONTROL_GROUP" "$CONTROL_CONTROL_GROUP" -- "$@"
+subcommand=$1
+shift
+case $subcommand in
+    start) parse_start "$@" ;;
+    join) parse_join "$@" ;;
+    list)
+        (($# == 0)) || fail "list does not accept arguments"
+        list_sessions
+        ;;
+    stop) parse_stop "$@" ;;
+    help|-h|--help)
+        (($# == 0)) || fail "$subcommand does not accept arguments"
+        usage
+        ;;
+    *) fail "unknown subcommand '$subcommand'; run '$0 help'" ;;
+esac
