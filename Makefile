@@ -3,14 +3,20 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build build-hermit check-deps install-deps help
+.PHONY: build build-hermit check-deps init-hermit install-deps help
 
 build: check-deps build-hermit
 
-build-hermit:
+init-hermit:
+	@set -eu; \
+	if [ ! -e hermit/.git ]; then \
+		echo "Hermit submodule is not initialized; checking it out..."; \
+		git submodule update --init hermit; \
+	fi
+
+build-hermit: init-hermit
 	@if [ ! -f hermit/Cargo.toml ]; then \
-		echo "ERROR: hermit submodule is not populated." >&2; \
-		echo "Run: git submodule update --init hermit" >&2; \
+		echo "ERROR: Hermit submodule checkout did not produce hermit/Cargo.toml." >&2; \
 		exit 1; \
 	fi
 	@command -v cargo >/dev/null 2>&1 || { \
@@ -28,7 +34,7 @@ check-deps:
 		pkg_config="pkgconf"; \
 	fi; \
 	if ! command -v "$$pkg_config" >/dev/null 2>&1; then \
-		echo "ERROR: pkg-config (pkgconf on CentOS/RHEL) is required." >&2; \
+		echo "WARNING: pkg-config (pkgconf on CentOS/RHEL) is required." >&2; \
 		echo "Run: make install-deps" >&2; \
 		exit 1; \
 	fi; \
@@ -39,7 +45,7 @@ check-deps:
 		fi; \
 	done; \
 	if [ -n "$$missing" ]; then \
-		echo "ERROR: missing required pkg-config modules:$$missing" >&2; \
+		echo "WARNING: missing required build dependencies:$$missing" >&2; \
 		echo "libunwind-ptrace is provided by libunwind-dev (Debian/Ubuntu)" >&2; \
 		echo "or libunwind-devel (CentOS/RHEL/Fedora)." >&2; \
 		echo "liblzma is provided by liblzma-dev (Debian/Ubuntu)" >&2; \
@@ -90,4 +96,4 @@ install-deps:
 help:
 	@echo "make install-deps  Install native Hermit build dependencies"
 	@echo "make check-deps    Verify required pkg-config modules"
-	@echo "make build         Build hermit in release mode"
+	@echo "make / make build  Initialize and build Hermit in release mode"
