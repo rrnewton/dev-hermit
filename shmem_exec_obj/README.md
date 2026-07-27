@@ -3,12 +3,21 @@
 ## Verdict
 
 The concept is feasible on Linux x86-64 for a deliberately restricted, trusted
-object:
+object. The experiment now proves two useful tiers:
 
-- Code is freestanding, relocation-free machine code with a versioned C ABI.
-- State has a fixed, pointer-free `#[repr(C)]` layout.
-- Every process passes its own state mapping address as a raw pointer.
-- Shared mutations use process-visible atomics or locks built from atomics.
+- V1 copies independently relocation-free Rust functions behind a versioned C
+  ABI and passes each process's state mapping address explicitly.
+- V2 links a complete immutable RX closure, permits audited in-blob PC-relative
+  calls, and rejects absolute, undefined, out-of-range-addend, and non-RX
+  dependencies.
+- The `no_std` `shmem-pod` SDK supports compiler-selected `repr(Rust)` layouts
+  when code and state authenticate the same exact structural fingerprint.
+- `PodValue` state is pointer-free and may move between process VAs;
+  `FixedAddressPodValue` permits audited absolute-address wrappers when every
+  process reserves the same VA.
+- Shared mutation uses process-visible atomics, process spin locks, or a
+  hierarchical lock-free SNZI. A Talc allocator can own an exact shared page
+  range through stable `allocator-api2` handles.
 - The processes are cooperative. This is not an isolation boundary.
 
 It is not feasible to copy an arbitrary Rust object or ordinary Rust library
@@ -48,7 +57,7 @@ POD_RUSTC="$(rustup which --toolchain nightly rustc)" ./scripts/run-poc.sh
 ```
 
 Successful output has one relocation-gate result followed by one exact-total
-result for each synchronization mode:
+result for each synchronization mode, V2 negative gates, and a V2 process run:
 
 ```text
 PASS compiler rejected a method containing an external relocation
@@ -56,15 +65,32 @@ PASS relocation gate demonstrated it is not a code-safety verifier
 PASS mode=coarse ... code_perms=r-xs state_perms=rw-s ...
 PASS mode=fine   ... code_perms=r-xs state_perms=rw-s ...
 PASS mode=atomic ... code_perms=r-xs state_perms=rw-s ...
+PASS V2 compiler rejected outside-addend
+PASS V2 compiler rejected absolute
+PASS V2 compiler rejected undefined
+v2-ok ... snzi_query=false snzi_quiescent=true ...
 ```
 
-Every host `PASS` also means:
+Every V1 host `PASS` also means:
 
 - an out-of-range method call returned the defined error;
 - a forked child faulted when it attempted to write the RX mapping;
 - every counter exactly matched the computed process/thread/call total;
 - connection records contained unique PIDs, code VAs, and state VAs;
 - no call returned a failure status.
+
+The publishable SDK examples can also be run independently:
+
+```bash
+cargo run -p shmem-pod --example process_locks
+cargo run -p shmem-pod --example snzi
+cargo run -p shmem-pod --features fixed-allocator --example fixed_allocator
+cargo run -p shmem-pod --features fixed-allocator --example fixed_allocator_exec
+```
+
+The final example uses a memfd and `MAP_FIXED_NOREPLACE` at a recorded high
+address, then independently execs children which validate the bootstrap and
+attach to the same allocator pages.
 
 ## Components
 
@@ -77,11 +103,17 @@ Every host `PASS` also means:
 | `pod-preload` | Interposes libc calls and phones home through a pod method |
 | `pod-guest` | Recursively execs a process tree and creates concurrent worker threads |
 | `pod-host` | Launches a case and validates mappings, records, and exact totals |
+| `shmem-pod` (`pod-v2-types`) | Publishable `no_std` traits, layouts, offsets, locks, SNZI, and optional allocator |
+| `shmem-pod-macros` (`pod-v2-derive`) | Recursive structural capability derives and compile-fail checks |
+| `pod-v2-code` | Freestanding linked methods using offsets, an arena, and SNZI |
+| `pod-v2-compiler` | Builds/audits one RX closure and records transitive build provenance |
+| `pod-v2-runtime` | Authenticates, seals, maps, validates, and invokes a V2 image |
+| `pod-v2-host` | Exec-process stress and exact allocator/SNZI lifecycle validation |
 
 Generated objects, images, instances, manifests, and traces stay under
 `target/` and are not versioned.
 
-## Runtime Shape
+## V1 Runtime Shape
 
 The compiler emits a small image with a 128-byte header followed by four
 independently audited function bodies. The host creates one file-backed pod
@@ -114,7 +146,7 @@ The pod call itself performs no syscall, allocation, serialization, socket
 operation, or pointer swizzling. The credential syscall remains because the
 hook preserves the original libc behavior.
 
-## Compiler Contract
+## V1 Compiler Contract
 
 `pod-compiler` invokes `rustc` with an explicit target baseline and these
 important properties:
@@ -175,7 +207,48 @@ no relocation but writes to absolute address 1. The compiler can accept it,
 which demonstrates why accepted artifacts must still come from trusted,
 reviewed source. The fixture must never be executed.
 
-## Shared State And Synchronization
+## V2 SDK And Compiler
+
+`shmem-pod` is a candidate crates.io SDK with Rust 1.85 MSRV and a `no_std`
+default library. Its unsafe marker traits separate two representation tiers:
+
+- `PodValue`: no typed absolute address, destructor, allocator header, or
+  process-local resource; checked `Offset<T>` and `OffsetSlice<T>` express
+  links into a mapping.
+- `FixedAddressPodValue`: the weaker exact-VA tier used by audited wrappers
+  such as `FixedRegionAllocator`.
+- `PodSync`: ordinary typed shared access remains race-free through atomics or
+  synchronization stored in the shared object itself.
+
+The derives accept concrete `repr(Rust)` structs and fingerprint type identity,
+size, alignment, field names, compiler-selected offsets, and transitive field
+fingerprints. They reject references, pointers, standard owning collections,
+ordinary mutexes, destructors, generics, enums, and unions. This relaxes
+`#[repr(C)]` only for authenticated exact-build compatibility; it does not
+create a stable Rust ABI or audit method semantics.
+
+The optional fixed allocator uses Talc 5.0.4 behind a process-shared raw lock
+and stable `allocator-api2`. It claims exactly the caller's pages and rejects
+relocated attachment. A tracing allocator was deliberately deferred: safe
+cross-process mark/sweep additionally needs shared roots, mutation barriers,
+global coordination, and crash recovery. Explicit allocation/deallocation
+proves dense page control without pretending those policies are solved.
+
+`Snzi<NODES>` implements the four-way tree algorithm from Ellen, Lev,
+Luchangco, and Moir, including `HALF` helping, parent compensation, activation
+generations, and a centralized atomic root. Typed arrival tokens are linear and
+bound to the exact issuing instance. The executable pod exposes the same
+operations through a checked scalar C ABI.
+
+`pod-v2-compiler` compiles the SDK without default features, links the complete
+closure into one `.pod` RX section at VMA zero, and admits only signed 32-bit
+PC-relative relocations whose effective target remains inside that section. It
+rejects writable/other allocated sections, absolute and undefined references,
+and section-symbol addends which escape the blob. Its manifest hashes rustc,
+rust-lld, linker script, objects, rlib, dep-info, and every transitive source
+reported by rustc.
+
+## V1 Shared State And Synchronization
 
 `PodState` is 33,536 bytes, aligned to 64 bytes, and initialized in the shared
 mapping before any guest attaches. It contains no allocator-owned pointers.
@@ -263,14 +336,16 @@ constraint:
   directly so `MAP_FIXED_NOREPLACE`, exact offsets, and permissions remain
   visible in the audited code.
 - `iceoryx2-bb-container`: potentially useful for a later fixed-capacity data
-  model. Four counters and fixed connection records do not justify its larger
-  dependency and ABI surface here.
+  model. The current SDK instead keeps its core structures fixed-size and uses
+  checked offsets for relocatable links.
 - `mmap-sync`: relevant to read-mostly snapshot/RCU state, not required for
   contended increment semantics.
 - `rkyv` and `zerocopy`: useful representation tools, but they do not make
   atomics, mutexes, pointers, or executable bytes process-safe.
 - `object`: used by the pod compiler because structured ELF parsing is part of
   the relocation gate.
+- `talc`, `lock_api`, and `allocator-api2`: used by the optional fixed-address
+  allocator to constrain all allocation metadata and buffers to supplied pages.
 
 ## Reverie And Hermit Fit
 

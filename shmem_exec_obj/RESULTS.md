@@ -1,6 +1,122 @@
 # Feasibility Results
 
-## Test Point
+## SDK And V2 Checkpoint
+
+The publishable SDK and linked executable-object implementation were validated
+on 2026-07-26 at commit
+`7165198cb82dc47d0853b814c3de7aaf44cd07d6`.
+
+```text
+Host:       devbig030.atn3.facebook.com
+Kernel:     Linux 6.17.13 x86_64
+Page size:  4096
+MSRV:       rustc 1.85.0, LLVM 19.1.7
+Current:    rustc 1.96.0, LLVM 22.1.2
+```
+
+### New Claims And Evidence
+
+| Hypothesis | Result | Evidence |
+| --- | --- | --- |
+| User state requires `#[repr(C)]` | False for exact-build peers | Default `repr(Rust)` derives fingerprint actual field offsets; descriptor mismatch tests pass |
+| A `no_std` SDK can express admissible state | Proven for structural capabilities | `PodValue`, `FixedAddressPodValue`, and `PodSync`; 12 negative compile cases |
+| General allocation can be confined to known pages | Proven with explicit deallocation | Talc/allocator-api2 vectors remained inside a caller-supplied 2 MiB arena |
+| Absolute allocator metadata can survive independent exec | Proven at a required VA | Five processes remapped one memfd at `0x500000000000`, validated bootstrap/layout, and completed 750 vector rounds |
+| A real hierarchical SNZI works in shared pages | Proven under process/thread contention | Four-way `HALF` helping tree completed 160,000 fork operations and deterministic helper scheduling |
+| The SNZI can execute inside the copied pod | Proven | Three exec'd processes completed 400 to 1,000 tested arrival/departure cycles and ended false/quiescent |
+| Rust code may use internal calls in one copied closure | Proven for audited x86 PC32/PLT32 | V2 linked 6,608 bytes into one RX `.pod` section and ran at distinct VAs |
+| Section membership alone bounds relocations | False | A `.pod` section-symbol relocation with an escaping addend is rejected using its effective target |
+| Build provenance can cover transitive Rust inputs | Proven for rustc dep-info scope | Manifest records hashes for rustc, rust-lld, linker script, rlib/object, and every reported source dependency |
+
+The traits are representation capabilities, not a general code verifier.
+Integers can still be misused as pointers or file descriptors by unsafe methods,
+and a writable guest can corrupt shared bytes directly.
+
+### Validation
+
+The exact implementation tree passed both the declared MSRV and current stable:
+
+```bash
+cargo +1.85.0 test --locked --workspace --all-features
+cargo +1.85.0 test -p shmem-pod --no-default-features
+cargo +1.85.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS='-D warnings' \
+  cargo +1.85.0 doc --locked -p shmem-pod -p shmem-pod-macros \
+  --no-deps --all-features
+cargo test --locked --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+The SDK process examples reported:
+
+```text
+PASS process_locks workers=8 iterations=25000 updates=400000
+PASS snzi workers=8 operations=160000 leaves=64
+PASS fixed_allocator processes=7 vector_rounds=1400 arena_bytes=2097152
+PASS fixed_allocator_exec processes=5 vector_rounds=750
+     fixed_address=0x500000000000 arena_bytes=2097152
+```
+
+The complete harness selected Rust 1.85 for freestanding code generation:
+
+```bash
+POD_DEPTH=1 POD_FANOUT=2 POD_THREADS=2 POD_ITERATIONS=200 \
+POD_V2_WORKERS=2 POD_V2_THREADS=2 POD_V2_ITERATIONS=100 \
+POD_RUSTC="$(rustup which --toolchain 1.85.0 rustc)" \
+./scripts/run-poc.sh
+```
+
+V1 again produced exact coarse, fine, and atomic totals in three independently
+exec'd processes. V2 rejected the outside-addend, absolute, undefined-symbol,
+and mismatched-SDK-provenance fixtures, then produced:
+
+```text
+image bytes:       7120
+linked code bytes: 6608
+artifact sha256:   324e9c9454ef28ba590142effe5cba5f9e7a72182496bb15ef6ace40ae069fa7
+processes:         3 (host plus two independent exec workers)
+SNZI leaves:       16
+final query:       false
+final quiescent:   true
+code VAs:          0x300000000000, 0x300010000000, 0x300020000000
+state VAs:         0x400000000000, 0x400010000000, 0x400020000000
+```
+
+Both crates packaged and verified using Rust 1.85, including license texts and
+the four SDK examples. Initial publication must be sequential:
+`shmem-pod-macros` first, then `shmem-pod` after the registry indexes version
+0.1.0.
+
+### Blind Consumer Reviews
+
+Two fresh agents were limited to generated rustdoc and a dependency stanza.
+Both built working programs on their first compile without reading source. The
+first used a default-layout state, process mutex, and checked atomic offset
+across four processes. The second independently built descriptor/bootstrap and
+fixed-allocator attachment with allocator-aware vectors. Their feedback
+directly produced `LayoutDescriptor`, complete mapping docs, standard errors,
+and the independent-exec allocator example. See `reviews/` for the durable
+reports.
+
+### Remaining Restrictions
+
+- Native participants remain mutually trusted; RW state is not isolation.
+- `repr(Rust)` compatibility requires the exact authenticated build and layout
+  fingerprint. It is not a stable ABI.
+- Talc stores absolute pointers, so allocator users require collision-safe
+  identical-VA mappings and the same complete SDK build.
+- Spin locks are non-fair and not robust; owner death can wedge them. Process
+  death can leak an SNZI arrival.
+- Fork duplicates Rust ownership capabilities; live guards, tokens, and
+  allocation owners require the documented exec/`_exit` discipline.
+- The linked executable audit is x86-64-specific and still trusts reviewed
+  source. It is not a machine-code sandbox.
+- Mark/sweep remains future work because roots, mutation coordination, and
+  crash recovery are not yet specified.
+- Current Detcore `GlobalState` cannot be moved wholesale. Incremental atomic,
+  counter, presence, and fixed-arena fast paths are the practical integration.
+
+## Original V1 Test Point
 
 The results below were collected on 2026-07-25. The final reviewed
 implementation was validated at commit
