@@ -584,3 +584,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | slot116 | hermit-liteinst / impl-liteinst-guest-trait | impl-liteinst-advanced-features-slot116 | `dff7ee5fcf94e11bad1ff077498fb33e969d6aa6` | Remaining work preserved and pushed as `cleanup-preserve/slot116-reverie-20260727`; original PR https://github.com/rrnewton/reverie/pull/93 closed unmerged at `e9456e43dc5c7cc42b21d00c39dc97ab57393200`. | Legacy worktree already absent; no registry entry remained. | 2026-07-27 |
 | slot129 | hermit-sabre / impl-sabre-real-backend | impl-sabre-real-backend-slot129 | `c417a969d97dfa869d49cdc96ebede6613149081` | Paired RPC/adapter work and HANDOFF preserved and pushed as `cleanup-preserve/slot129-reverie-20260727`; original branch base `2dc6fecd7d6baf173a0764561c2cb926f7430297` is PR #98's pre-squash head. | Legacy worktree already absent; no registry entry remained. | 2026-07-27 |
 | slot203 | hermit-181 / impl-fix-reverie-gueststack-panic | fix-gueststack-panic | `6e2bdba26d153d3af99cc8164bd2e0e8bb0de292` | PR https://github.com/rrnewton/reverie/pull/104 merged as `08f9c563545195e58779cc7361c233774c00376b`; feature branch retained. | Legacy worktree already absent; empty slot directory removed. | 2026-07-27 |
+
+### Released slot reclamation for CI timeout work (2026-07-27)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/272` | hermit-272 / impl-landing-272-to-zero | Hermit `2b88c095408b2fa11e80a00b82fd994dee9ded55`; Reverie `043aa00d9ea2dc27fa0e9e887c14f47de486bc68`; LiteInst2 `261671a655086c0d3f4642b24718bb64586c1384` | Hermit tip is reachable from pushed `origin/codex/skid-margin-cli-override`; all three children were clean; feature refs remain in their owning repositories. | Released slot removed through `scripts/release-worktree.rs --slot 272 --clean` so a clean current-main slot could be allocated for `impl-ci-timeout-layers`. |
