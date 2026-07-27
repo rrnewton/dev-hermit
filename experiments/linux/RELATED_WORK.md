@@ -25,17 +25,18 @@ Execution context (from `experiments/linux-vm-roadmap_20260726/` and
   `-icount shift=0,sleep=off` (a single instruction-derived virtual clock
   unifies guest TSC and device timers, avoiding PIT-calibration / TSC-watchdog
   / no-clocksource boot failures).
-- **Guest kernel:** Linux `6.13.2` (bzImage). Host kernel is
-  `6.17.13-0_fbk0_crackerjackhost` — the host and guest kernels are different;
-  the "6.17.13" figure is the *host* that produced these runs, not the guest.
+- **Guest kernel:** Linux `6.17.13` (bzImage), as confirmed by the hermit-ci
+  artifact audit. The host kernel observed for these runs was
+  `6.17.13-0_fbk0_crackerjackhost`; guest and host remain distinct execution
+  layers even though their base kernel versions match.
 
 Best determinism evidence, bound to commits rather than a branch name:
 
 | Workload | Level | Evidence | Notes |
 | --- | --- | --- | --- |
-| Cold boot to initramfs marker | **L2** (`--strict --verify`, ptrace) | Hermit `fe97efd`, 2026-07-24 | Bitwise-identical repeat run. |
-| `scx_rlfifo` sched_ext + 4 CPU workers | **L2** (`--strict --verify`, ptrace) | Hermit `0c419bf` | 1,340,266 messages/run, per-run repeatable. |
-| Cold boot verify (fail-open control) | verify only, **no `--strict`** | Hermit `54ff993` | `run --verify`: 1,130,696 messages, "no substantive differences found." A determinism-verify result, **not** a strict L2 claim. |
+| Cold boot to initramfs marker | **L2**: `--strict` fail-closed forward execution plus `--verify` cross-run comparison (ptrace) | Hermit `fe97efd`, 2026-07-24 | Bitwise-identical repeat run. |
+| `scx_rlfifo` sched_ext + 4 CPU workers | **Historically attested L2, needs reproduction**: `--strict` forward execution plus `--verify` comparison (ptrace) | Hermit `0c419bf` | Historical report of 1,340,266 messages/run; not reproduced on current main. |
+| Cold boot verify (fail-open control) | **Repeatability evidence only**: `--verify` comparison, no `--strict` enforcement | Hermit `54ff993` | Reported 1,130,696 messages with "no substantive differences found." Because unsupported operations could execute natively, this does not establish strict L2. |
 
 The flags establish different properties. `--strict` controls the forward run:
 Detcore fails closed when it encounters an unsupported syscall instead of
