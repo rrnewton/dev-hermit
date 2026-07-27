@@ -1,9 +1,8 @@
-//! Derives for `pod-v2-types` shared-memory capability traits.
+//! Derives for `shmem-pod` shared-memory capability traits.
 //!
 //! Derive exactly one storage tier (`PodValue` or `FixedAddressPodValue`) and
-//! optionally derive `PodSync`. Generic types perform their no-drop check when
-//! their mandatory layout fingerprint is instantiated; image descriptors must
-//! always materialize that fingerprint.
+//! optionally derive `PodSync`. Generic structs are rejected because stable
+//! Rust cannot eagerly prove that every instantiation has no destructor.
 
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
@@ -14,7 +13,22 @@ use syn::{
 };
 
 #[proc_macro_derive(PodValue)]
-/// Derives the address-independent storage tier for a struct.
+/// Derives the address-independent structural storage tier for a concrete struct.
+///
+/// Every field must implement `shmem_pod::PodValue`. The macro also implements
+/// `FixedAddressPodValue` and computes a fingerprint from the type identity,
+/// size, alignment, field names, compiler-selected offsets, and transitive
+/// fingerprints. `#[repr(C)]` is not required; compatibility is for the exact
+/// authenticated build, not a stable Rust ABI.
+///
+/// Enums, unions, generic structs, fields needing drop, references, raw
+/// pointers, standard owning collections, and fields without `PodValue` are
+/// rejected. Materialize `T::FINGERPRINT` in an image descriptor; this also
+/// forces evaluation of the generated no-drop assertion.
+///
+/// This derive certifies stored field representation only. It does not inspect
+/// methods, unsafe blocks, byte validity, or scalar semantics such as casting a
+/// `usize` to a pointer.
 pub fn derive_pod_value(input: TokenStream) -> TokenStream {
     derive_storage(
         parse_macro_input!(input as DeriveInput),
@@ -25,7 +39,18 @@ pub fn derive_pod_value(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_derive(FixedAddressPodValue)]
-/// Derives the same-virtual-address storage tier for a struct.
+/// Derives the same-virtual-address structural storage tier for a concrete struct.
+///
+/// Every field must implement `shmem_pod::FixedAddressPodValue`. The generated
+/// fingerprint covers the exact compiler-selected layout and transitive field
+/// fingerprints, so user structs may retain default Rust representation.
+/// Generics, enums, unions, destructors, and fields without the capability are
+/// rejected.
+///
+/// This derive is not permission to use arbitrary pointers. Absolute-address
+/// fields need an audited wrapper with an unsafe constructor, and every process
+/// must obey that wrapper's exact mapping contract. Scalar meanings, methods,
+/// and external resources remain outside this structural capability.
 pub fn derive_fixed_address_pod_value(input: TokenStream) -> TokenStream {
     derive_storage(
         parse_macro_input!(input as DeriveInput),
@@ -36,7 +61,14 @@ pub fn derive_fixed_address_pod_value(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_derive(PodSync)]
-/// Derives process-shared access capability for a struct with a storage tier.
+/// Derives structural process-shared access for a concrete stored struct.
+///
+/// The struct must already implement `FixedAddressPodValue`, every field must
+/// implement `PodSync`, and the resulting type must satisfy Rust's `Sync`
+/// supertrait. Derive `PodValue` or `FixedAddressPodValue` alongside this macro.
+///
+/// This marker covers ordinary typed field access. It does not audit arbitrary
+/// methods or unsafe code, make raw writes safe, or add owner-death recovery.
 pub fn derive_pod_sync(input: TokenStream) -> TokenStream {
     derive_sync(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
@@ -56,13 +88,13 @@ struct FieldInfo {
 }
 
 fn pod_types_path() -> TokenStream2 {
-    match crate_name("pod-v2-types") {
-        Ok(FoundCrate::Itself) => quote!(crate),
+    match crate_name("shmem-pod") {
+        Ok(FoundCrate::Itself) => quote!(::shmem_pod),
         Ok(FoundCrate::Name(name)) => {
             let ident = syn::Ident::new(&name, Span::call_site());
             quote!(::#ident)
         }
-        Err(_) => quote!(::pod_v2_types),
+        Err(_) => quote!(::shmem_pod),
     }
 }
 
@@ -124,14 +156,18 @@ fn bounded_generics(input: &DeriveInput, fields: &[FieldInfo], bound: TokenStrea
 }
 
 fn derive_storage(input: DeriveInput, tier: StorageTier) -> syn::Result<TokenStream2> {
+    reject_generics(&input)?;
     let fields = struct_fields(&input)?;
     let pod = pod_types_path();
     let name = &input.ident;
     let (field_bound, domain) = match tier {
-        StorageTier::Relocatable => (quote!(#pod::PodValue), b"pod-v2-derived-value".as_slice()),
+        StorageTier::Relocatable => (
+            quote!(#pod::PodValue),
+            b"shmem-pod-derived-value-v1".as_slice(),
+        ),
         StorageTier::FixedAddress => (
             quote!(#pod::FixedAddressPodValue),
-            b"pod-v2-derived-fixed-address".as_slice(),
+            b"shmem-pod-derived-fixed-address-v1".as_slice(),
         ),
     };
     let domain = syn::LitByteStr::new(domain, Span::call_site());
@@ -214,6 +250,7 @@ fn derive_storage(input: DeriveInput, tier: StorageTier) -> syn::Result<TokenStr
 }
 
 fn derive_sync(input: DeriveInput) -> syn::Result<TokenStream2> {
+    reject_generics(&input)?;
     let fields = struct_fields(&input)?;
     let pod = pod_types_path();
     let name = &input.ident;
@@ -230,4 +267,15 @@ fn derive_sync(input: DeriveInput) -> syn::Result<TokenStream2> {
         #where_clause
         {}
     })
+}
+
+fn reject_generics(input: &DeriveInput) -> syn::Result<()> {
+    if input.generics.params.is_empty() {
+        Ok(())
+    } else {
+        Err(syn::Error::new_spanned(
+            &input.generics,
+            "generic pod capability derives are not supported: stable Rust cannot eagerly prove that every instantiation has no destructor; use a concrete wrapper or a manually audited unsafe impl",
+        ))
+    }
 }

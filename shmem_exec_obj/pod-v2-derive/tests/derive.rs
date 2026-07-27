@@ -1,46 +1,41 @@
 use core::mem::{align_of, offset_of, size_of};
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use pod_v2_types::{FixedAddressPodValue, PodSync, PodValue};
+use shmem_pod::{FixedAddressPodValue, PodSync, PodValue};
 
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Inner {
     sequence: u64,
     flags: [u32; 2],
 }
 
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Outer {
     byte: u8,
     inner: Inner,
 }
 
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Reordered {
     inner: Inner,
     byte: u8,
 }
 
-#[derive(pod_v2_derive::FixedAddressPodValue)]
+#[derive(shmem_pod_macros::FixedAddressPodValue)]
 struct FixedOnly {
     address_word: usize,
 }
 
-#[derive(pod_v2_derive::PodValue, pod_v2_derive::PodSync)]
+#[derive(shmem_pod_macros::PodValue, shmem_pod_macros::PodSync)]
 struct SharedCounters {
     epoch: u32,
     completed: AtomicU64,
     state: AtomicU32,
 }
 
-#[derive(pod_v2_derive::PodValue)]
-struct Generic<T: 'static> {
-    value: T,
-}
-
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Tuple(u8, u64);
 
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Unit;
 
 fn require_pod<T: PodValue>() {}
@@ -53,7 +48,6 @@ fn derives_are_recursive_without_repr_c() {
     require_pod::<Outer>();
     require_fixed::<FixedOnly>();
     require_sync::<SharedCounters>();
-    require_pod::<Generic<[u64; 2]>>();
     require_pod::<Tuple>();
     require_pod::<Unit>();
 
@@ -77,9 +71,9 @@ fn derives_are_recursive_without_repr_c() {
 }
 
 const fn expected_outer_fingerprint() -> u128 {
-    use pod_v2_types::__private::{FINGERPRINT_SEED, finish, mix_bytes, mix_u128, mix_usize};
+    use shmem_pod::__private::{FINGERPRINT_SEED, finish, mix_bytes, mix_u128, mix_usize};
 
-    let mut state = mix_bytes(FINGERPRINT_SEED, b"pod-v2-derived-value");
+    let mut state = mix_bytes(FINGERPRINT_SEED, b"shmem-pod-derived-value-v1");
     state = mix_bytes(state, concat!(module_path!(), "::Outer").as_bytes());
     state = mix_usize(state, size_of::<Outer>());
     state = mix_usize(state, align_of::<Outer>());

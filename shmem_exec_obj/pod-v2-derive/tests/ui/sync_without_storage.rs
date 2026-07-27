@@ -1,4 +1,4 @@
-#[derive(pod_v2_derive::PodSync)]
+#[derive(shmem_pod_macros::PodSync)]
 struct MissingStorageTier {
     value: u64,
 }

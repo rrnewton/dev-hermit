@@ -1,18 +1,26 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![deny(missing_docs)]
+#![doc = include_str!("../README.md")]
 
-//! Compile-time capabilities for values stored in an executable shared-memory pod.
-//!
-//! These traits describe semantic properties that Rust's normal layout traits do
-//! not capture. They do not mean that arbitrary bytes may be transmuted to a type.
-//! State must still be initialized as the declared Rust type and validated before
-//! typed access.
+extern crate self as shmem_pod;
+
+#[cfg(feature = "fixed-allocator")]
+pub mod fixed_allocator;
+pub mod layout;
+pub mod offset;
+#[cfg(target_has_atomic = "64")]
+pub mod snzi;
+pub mod sync;
+
+#[cfg(feature = "derive")]
+#[doc(inline)]
+pub use shmem_pod_macros::{FixedAddressPodValue, PodSync, PodValue};
 
 use core::mem::{align_of, needs_drop, size_of};
 
-/// A value that can be stored in shared memory when every process maps it at the
-/// same virtual address.
+/// A structural representation that can be stored in shared memory when every
+/// process maps it at the same virtual address.
 ///
 /// This is the weaker storage tier. Unlike [`PodValue`], an implementation may
 /// contain process-independent absolute addresses whose validity depends on a
@@ -20,11 +28,12 @@ use core::mem::{align_of, needs_drop, size_of};
 ///
 /// # Safety
 ///
-/// Implementors must have no destructor, must remain valid for the mapping's
-/// lifetime, and must not own process-local resources. Every transitive field
-/// must meet the same fixed-address contract. Implementors may not rely on a
-/// process-local allocator, TLS, file descriptor table, or code/data address
-/// outside the fixed pod mappings.
+/// Implementors must have no destructor and every transitive field must meet
+/// the same fixed-address storage contract. This is a representation capability
+/// only: it does not certify the meaning of scalar fields, arbitrary methods, or
+/// external resources. For example, deriving it for an integer field does not
+/// make a stored file descriptor meaningful in another process. Executable pod
+/// APIs need a separate unsafe audit.
 pub unsafe trait FixedAddressPodValue: Sized + 'static {
     /// Structural fingerprint of the exact compiled layout.
     ///
@@ -35,31 +44,32 @@ pub unsafe trait FixedAddressPodValue: Sized + 'static {
     const FINGERPRINT: u128;
 }
 
-/// An address-independent value that can be stored in shared memory mapped at
-/// different virtual addresses.
+/// An address-independent structural representation that can be stored in
+/// shared memory mapped at different virtual addresses.
 ///
 /// # Safety
 ///
-/// In addition to [`FixedAddressPodValue`]'s requirements, the value and all of
-/// its transitive fields must contain no absolute pointers, references, function
-/// pointers, vtables, allocator headers, or integer values used as addresses.
-/// Any link to other shared state must use a bounds-checked relative offset that
-/// is resolved from the current process's mapping base.
+/// In addition to [`FixedAddressPodValue`]'s requirements, the stored fields must
+/// contain no typed absolute pointers, references, function pointers, vtables,
+/// or allocator headers. Links represented by the type must use checked relative
+/// offsets. Integer scalars are treated as data by this capability; it does not
+/// certify methods or unsafe code that reinterpret an integer as an address.
 pub unsafe trait PodValue: FixedAddressPodValue {}
 
-/// Capability for typed access while the same storage may be accessed by other
-/// threads or processes.
+/// Structural capability for shared typed references while the same storage may
+/// be accessed by other threads or processes.
 ///
 /// This capability is deliberately separate from [`PodValue`]. A type may have
 /// an address-independent representation without supporting concurrent access.
 ///
 /// # Safety
 ///
-/// All safe operations exposed for the type must remain data-race-free across
-/// processes. Non-atomic mutation requires a process-shared synchronization
-/// protocol. This trait does not make raw concurrent writes safe and does not
-/// provide crash recovery or owner-death handling.
-pub unsafe trait PodSync: FixedAddressPodValue {}
+/// The type must be Rust [`Sync`] and every transitive field's ordinary typed
+/// access must remain data-race-free in process-shared memory. Non-atomic
+/// mutation requires a process-shared synchronization field. This structural
+/// marker does not audit arbitrary methods or unsafe blocks, make raw concurrent
+/// writes safe, or provide crash recovery or owner-death handling.
+pub unsafe trait PodSync: FixedAddressPodValue + Sync {}
 
 /// Implementation details used by generated derives.
 #[doc(hidden)]
@@ -101,7 +111,7 @@ pub mod __private {
 
     /// Computes a primitive type fingerprint.
     pub const fn primitive(tag: &[u8], size: usize, alignment: usize) -> u128 {
-        let state = mix_bytes(FINGERPRINT_SEED, b"pod-v2-value-primitive");
+        let state = mix_bytes(FINGERPRINT_SEED, b"shmem-pod-value-primitive-v1");
         let state = mix_bytes(state, tag);
         let state = mix_usize(state, size);
         finish(mix_usize(state, alignment))
@@ -149,7 +159,7 @@ pod_primitives! {
 unsafe impl<T: FixedAddressPodValue, const N: usize> FixedAddressPodValue for [T; N] {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "pod values must not need drop");
-        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"pod-v2-array");
+        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-array-v1");
         let state = __private::mix_usize(state, size_of::<Self>());
         let state = __private::mix_usize(state, align_of::<Self>());
         let state = __private::mix_usize(state, N);

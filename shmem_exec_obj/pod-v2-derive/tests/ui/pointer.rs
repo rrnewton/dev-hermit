@@ -1,7 +1,7 @@
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct Target(u8);
 
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct ContainsPointer {
     pointer: *const Target,
 }

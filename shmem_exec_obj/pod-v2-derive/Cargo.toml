@@ -1,9 +1,15 @@
 [package]
-name = "pod-v2-derive"
+name = "shmem-pod-macros"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
+description = "Derive macros for shmem-pod shared-memory capability traits"
+repository = "https://github.com/rrnewton/dev-hermit"
+readme = "README.md"
+keywords = ["shared-memory", "ipc", "derive"]
+categories = ["concurrency", "no-std"]
+exclude = ["tests/**"]
 
 [lib]
 proc-macro = true
@@ -16,5 +22,4 @@ quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 
 [dev-dependencies]
-pod-v2-types = { path = "../pod-v2-types" }
-trybuild = "1.0"
+shmem-pod = { path = "../pod-v2-types", default-features = false }

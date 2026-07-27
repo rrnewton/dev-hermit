@@ -1,8 +1,10 @@
 #![no_std]
 
 use core::mem::{align_of, offset_of, size_of};
-use core::ptr::addr_of;
+use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering};
+use shmem_pod::FixedAddressPodValue;
+use shmem_pod::snzi::{Snzi, SnziError};
 
 const STATE_MAGIC: u64 = u64::from_le_bytes(*b"POD2RUST");
 const STATUS_OK: i32 = 0;
@@ -11,10 +13,22 @@ const STATUS_BAD_STATE: i32 = -2;
 const STATUS_OUT_OF_MEMORY: i32 = -3;
 const STATUS_NOT_FOUND: i32 = -4;
 const STATUS_BAD_ARGUMENT: i32 = -5;
+const STATUS_SNZI_INVALID_LEAF: i32 = -10;
+const STATUS_SNZI_MALFORMED_TOKEN: i32 = -11;
+const STATUS_SNZI_GENERATION_MISMATCH: i32 = -12;
+const STATUS_SNZI_INACTIVE_TOKEN: i32 = -13;
+const STATUS_SNZI_POISONED: i32 = -14;
 const MIN_CAPACITY: u32 = 4;
 const INVALID_U64: u64 = u64::MAX;
+const SNZI_NODES: usize = 20;
+const SNZI_LEAF_COUNT: u64 = SharedSnzi::new().leaf_count() as u64;
+const SNZI_TOKEN_LEAF_MASK: u64 = (1_u64 << 16) - 1;
+const SNZI_TOKEN_RESERVED_BIT: u64 = 1_u64 << 63;
+const SNZI_TOKEN_GENERATION_SHIFT: u32 = 16;
 
-static LAYOUT_TAG: [u8; 16] = *b"offset-arena-v2!";
+static LAYOUT_TAG: [u8; 16] = *b"offset-snzi-v2!!";
+
+type SharedSnzi = Snzi<SNZI_NODES>;
 
 // Deliberately repr(Rust). Only this exact linked code image interprets it.
 struct State {
@@ -25,6 +39,7 @@ struct State {
     arena: OffsetArena,
     entries: OffsetVec,
     operations: u64,
+    snzi: SharedSnzi,
 }
 
 struct OffsetArena {
@@ -45,37 +60,6 @@ struct OffsetVec {
 struct Entry {
     key: u64,
     value: u64,
-}
-
-type LayoutFn = unsafe extern "C" fn() -> u64;
-type StateLenFn = unsafe extern "C" fn(*mut u8, u64) -> i32;
-type UpsertFn = unsafe extern "C" fn(*mut u8, u64, u64) -> i32;
-type GetFn = unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32;
-type StateU64Fn = unsafe extern "C" fn(*mut u8) -> u64;
-
-impl State {
-    fn new(region_len: u32) -> Self {
-        let first = align_up(size_of::<Self>() as u32, align_of::<Entry>() as u32);
-        Self {
-            magic: STATE_MAGIC,
-            layout_hash: layout_hash_impl(),
-            region_len,
-            lock: AtomicU32::new(0),
-            arena: OffsetArena {
-                first,
-                next: first,
-                end: region_len,
-                allocations: 0,
-            },
-            entries: OffsetVec {
-                offset: 0,
-                len: 0,
-                capacity: 0,
-                generations: 0,
-            },
-            operations: 0,
-        }
-    }
 }
 
 #[inline(always)]
@@ -105,9 +89,19 @@ fn layout_hash_impl() -> u64 {
     hash = mix(hash, offset_of!(State, arena) as u64);
     hash = mix(hash, offset_of!(State, entries) as u64);
     hash = mix(hash, offset_of!(State, operations) as u64);
+    hash = mix(hash, offset_of!(State, snzi) as u64);
     hash = mix(hash, size_of::<OffsetArena>() as u64);
     hash = mix(hash, size_of::<OffsetVec>() as u64);
     hash = mix(hash, size_of::<Entry>() as u64);
+    hash = mix(hash, size_of::<SharedSnzi>() as u64);
+    hash = mix(
+        hash,
+        <SharedSnzi as FixedAddressPodValue>::FINGERPRINT as u64,
+    );
+    hash = mix(
+        hash,
+        (<SharedSnzi as FixedAddressPodValue>::FINGERPRINT >> 64) as u64,
+    );
     hash
 }
 
@@ -166,6 +160,9 @@ unsafe fn validate_inner(state: *mut State, supplied_len: u64) -> bool {
     if vector.len > vector.capacity {
         return false;
     }
+    if unsafe { (*state).snzi.poison_reason().is_some() } {
+        return false;
+    }
     if vector.capacity == 0 {
         return vector.offset == 0 && vector.len == 0;
     }
@@ -173,6 +170,28 @@ unsafe fn validate_inner(state: *mut State, supplied_len: u64) -> bool {
     vector.offset >= arena.first
         && vector.offset as u64 + bytes <= arena.next as u64
         && vector.offset as usize % align_of::<Entry>() == 0
+}
+
+#[inline(always)]
+fn snzi_error_status(error: SnziError) -> i32 {
+    match error {
+        SnziError::InvalidLeaf { .. } => STATUS_SNZI_INVALID_LEAF,
+        SnziError::MalformedToken => STATUS_SNZI_MALFORMED_TOKEN,
+        SnziError::GenerationMismatch { .. } => STATUS_SNZI_GENERATION_MISMATCH,
+        SnziError::InactiveToken { .. } => STATUS_SNZI_INACTIVE_TOKEN,
+        SnziError::Poisoned(_) => STATUS_SNZI_POISONED,
+    }
+}
+
+#[inline(always)]
+fn validate_raw_snzi_token(raw: u64) -> Result<(), i32> {
+    if raw & SNZI_TOKEN_RESERVED_BIT != 0 || raw >> SNZI_TOKEN_GENERATION_SHIFT == 0 {
+        return Err(STATUS_SNZI_MALFORMED_TOKEN);
+    }
+    if raw & SNZI_TOKEN_LEAF_MASK >= SNZI_LEAF_COUNT {
+        return Err(STATUS_SNZI_INVALID_LEAF);
+    }
+    Ok(())
 }
 
 #[inline(never)]
@@ -282,8 +301,24 @@ pub unsafe extern "C" fn pod_v2_init(state: *mut u8, region_len: u64) -> i32 {
     if region_len < size_of::<State>() as u64 || region_len > u32::MAX as u64 {
         return STATUS_BAD_ARGUMENT;
     }
+    let region_len = region_len as u32;
+    let first = align_up(size_of::<State>() as u32, align_of::<Entry>() as u32);
+    let state = state.cast::<State>();
     unsafe {
-        state.cast::<State>().write(State::new(region_len as u32));
+        addr_of_mut!((*state).region_len).write(region_len);
+        addr_of_mut!((*state).lock).write(AtomicU32::new(0));
+        addr_of_mut!((*state).arena.first).write(first);
+        addr_of_mut!((*state).arena.next).write(first);
+        addr_of_mut!((*state).arena.end).write(region_len);
+        addr_of_mut!((*state).arena.allocations).write(0);
+        addr_of_mut!((*state).entries.offset).write(0);
+        addr_of_mut!((*state).entries.len).write(0);
+        addr_of_mut!((*state).entries.capacity).write(0);
+        addr_of_mut!((*state).entries.generations).write(0);
+        addr_of_mut!((*state).operations).write(0);
+        SharedSnzi::initialize_at(addr_of_mut!((*state).snzi));
+        addr_of_mut!((*state).layout_hash).write(layout_hash_impl());
+        addr_of_mut!((*state).magic).write(STATE_MAGIC);
     }
     STATUS_OK
 }
@@ -459,13 +494,159 @@ pub unsafe extern "C" fn pod_v2_capacity(state: *mut u8) -> u64 {
     unsafe { read_stat(state, 2) }
 }
 
-const _: LayoutFn = pod_v2_layout_size;
-const _: LayoutFn = pod_v2_layout_align;
-const _: LayoutFn = pod_v2_layout_hash;
-const _: StateLenFn = pod_v2_init;
-const _: StateLenFn = pod_v2_validate;
-const _: UpsertFn = pod_v2_upsert;
-const _: GetFn = pod_v2_get;
-const _: StateU64Fn = pod_v2_len;
-const _: StateU64Fn = pod_v2_allocated;
-const _: StateU64Fn = pod_v2_capacity;
+#[unsafe(no_mangle)]
+/// Returns the number of addressable leaves in the embedded four-way SNZI.
+///
+/// # Safety
+///
+/// This entry has no memory preconditions; the caller must use the declared C ABI.
+pub unsafe extern "C" fn pod_v2_snzi_leaf_count() -> u64 {
+    SNZI_LEAF_COUNT
+}
+
+#[unsafe(no_mangle)]
+/// Records one SNZI arrival and writes its stable scalar departure token.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image. `output` must be
+/// nonnull, aligned, writable, and valid for one `u64` for the duration of the call.
+pub unsafe extern "C" fn pod_v2_snzi_arrive(state: *mut u8, leaf: u64, output: *mut u64) -> i32 {
+    if output.is_null() || (output as usize) & (align_of::<u64>() - 1) != 0 {
+        return STATUS_BAD_ARGUMENT;
+    }
+    let state = match unsafe { checked_state(state) } {
+        Ok(state) => state,
+        Err(status) => return status,
+    };
+    let leaf = match usize::try_from(leaf) {
+        Ok(leaf) => leaf,
+        Err(_) => return STATUS_SNZI_INVALID_LEAF,
+    };
+    match unsafe { (*state).snzi.arrive(leaf) } {
+        Ok(token) => {
+            unsafe { output.write(token.into_raw()) };
+            STATUS_OK
+        }
+        Err(error) => snzi_error_status(error),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Matches one SNZI arrival using its stable scalar token.
+///
+/// # Safety
+///
+/// `state` must identify the exact live region which issued `token`. The caller must submit each
+/// successful arrival token exactly once.
+pub unsafe extern "C" fn pod_v2_snzi_depart(state: *mut u8, token: u64) -> i32 {
+    let state = match unsafe { checked_state(state) } {
+        Ok(state) => state,
+        Err(status) => return status,
+    };
+    if let Err(status) = validate_raw_snzi_token(token) {
+        return status;
+    }
+    // SAFETY: The encoding and destination leaf were checked above. The C ABI caller promises
+    // that this raw token came from this exact state and is submitted exactly once.
+    match unsafe { (*state).snzi.depart_raw(token) } {
+        Ok(()) => STATUS_OK,
+        Err(error) => snzi_error_status(error),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Returns one when the SNZI may contain an unmatched arrival and zero otherwise.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image.
+pub unsafe extern "C" fn pod_v2_snzi_query(state: *mut u8) -> u64 {
+    let state = match unsafe { checked_state(state) } {
+        Ok(state) => state,
+        Err(_) => return INVALID_U64,
+    };
+    unsafe { (*state).snzi.query() as u64 }
+}
+
+#[unsafe(no_mangle)]
+/// Returns one when a diagnostic scan observes a healthy, fully idle SNZI.
+///
+/// # Safety
+///
+/// `state` must identify a live region initialized by this exact code image. Callers use this only
+/// after external admission has stopped and all arrival holders have joined.
+pub unsafe extern "C" fn pod_v2_snzi_quiescent(state: *mut u8) -> u64 {
+    let state = match unsafe { checked_state(state) } {
+        Ok(state) => state,
+        Err(_) => return INVALID_U64,
+    };
+    unsafe { (*state).snzi.is_quiescent() as u64 }
+}
+
+const _: unsafe extern "C" fn() -> u64 = pod_v2_layout_size;
+const _: unsafe extern "C" fn() -> u64 = pod_v2_layout_align;
+const _: unsafe extern "C" fn() -> u64 = pod_v2_layout_hash;
+const _: unsafe extern "C" fn(*mut u8, u64) -> i32 = pod_v2_init;
+const _: unsafe extern "C" fn(*mut u8, u64) -> i32 = pod_v2_validate;
+const _: unsafe extern "C" fn(*mut u8, u64, u64) -> i32 = pod_v2_upsert;
+const _: unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32 = pod_v2_get;
+const _: unsafe extern "C" fn(*mut u8) -> u64 = pod_v2_len;
+const _: unsafe extern "C" fn(*mut u8) -> u64 = pod_v2_allocated;
+const _: unsafe extern "C" fn(*mut u8) -> u64 = pod_v2_capacity;
+const _: unsafe extern "C" fn() -> u64 = pod_v2_snzi_leaf_count;
+const _: unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32 = pod_v2_snzi_arrive;
+const _: unsafe extern "C" fn(*mut u8, u64) -> i32 = pod_v2_snzi_depart;
+const _: unsafe extern "C" fn(*mut u8) -> u64 = pod_v2_snzi_query;
+const _: unsafe extern "C" fn(*mut u8) -> u64 = pod_v2_snzi_quiescent;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::MaybeUninit;
+
+    #[test]
+    fn snzi_c_abi_validates_raw_leaves_and_tokens() {
+        let mut state = MaybeUninit::<State>::uninit();
+        let state_ptr = state.as_mut_ptr().cast::<u8>();
+        assert_eq!(
+            unsafe { pod_v2_init(state_ptr, size_of::<State>() as u64) },
+            STATUS_OK
+        );
+
+        let mut raw = INVALID_U64;
+        assert_eq!(
+            unsafe { pod_v2_snzi_arrive(state_ptr, SNZI_LEAF_COUNT, &mut raw) },
+            STATUS_SNZI_INVALID_LEAF
+        );
+        assert_eq!(raw, INVALID_U64);
+        assert_eq!(
+            unsafe { pod_v2_snzi_depart(state_ptr, 0) },
+            STATUS_SNZI_MALFORMED_TOKEN
+        );
+        assert_eq!(
+            unsafe { pod_v2_snzi_depart(state_ptr, 1_u64 << 63) },
+            STATUS_SNZI_MALFORMED_TOKEN
+        );
+
+        assert_eq!(
+            unsafe { pod_v2_snzi_arrive(state_ptr, 3, &mut raw) },
+            STATUS_OK
+        );
+        assert_ne!(raw, INVALID_U64);
+        assert_eq!(unsafe { pod_v2_snzi_query(state_ptr) }, 1);
+        assert_eq!(unsafe { pod_v2_snzi_quiescent(state_ptr) }, 0);
+        assert_eq!(unsafe { pod_v2_snzi_depart(state_ptr, raw) }, STATUS_OK);
+        assert_eq!(unsafe { pod_v2_snzi_query(state_ptr) }, 0);
+        assert_eq!(unsafe { pod_v2_snzi_quiescent(state_ptr) }, 1);
+        assert_eq!(
+            unsafe { pod_v2_snzi_depart(state_ptr, raw) },
+            STATUS_SNZI_INACTIVE_TOKEN
+        );
+        let future_generation = raw.wrapping_add(1_u64 << 16);
+        assert_eq!(
+            unsafe { pod_v2_snzi_depart(state_ptr, future_generation) },
+            STATUS_SNZI_GENERATION_MISMATCH
+        );
+    }
+}

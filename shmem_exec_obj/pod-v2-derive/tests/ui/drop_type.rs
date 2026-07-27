@@ -1,4 +1,4 @@
-#[derive(pod_v2_derive::PodValue)]
+#[derive(shmem_pod_macros::PodValue)]
 struct NeedsDrop {
     value: u64,
 }

@@ -1,5 +1,5 @@
 use core::sync::atomic::AtomicU64;
-use pod_v2_types::{FixedAddressPodValue, PodSync, PodValue};
+use shmem_pod::{FixedAddressPodValue, PodSync, PodValue};
 
 fn require_pod<T: PodValue>() {}
 fn require_sync<T: PodSync>() {}

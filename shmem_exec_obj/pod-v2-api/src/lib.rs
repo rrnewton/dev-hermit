@@ -8,7 +8,7 @@ pub const TARGET_ARCH_X86_64: u16 = 0x3e;
 pub const STATE_ENVELOPE_SIZE: usize = PAGE_SIZE;
 pub const DEFAULT_PAYLOAD_LEN: usize = 1024 * 1024;
 pub const DEFAULT_STATE_FILE_LEN: usize = STATE_ENVELOPE_SIZE + DEFAULT_PAYLOAD_LEN;
-pub const METHOD_COUNT: usize = 10;
+pub const METHOD_COUNT: usize = 15;
 pub const FLAG_OFFSET_ARENA: u64 = 1 << 0;
 pub const FLAG_REQUIRES_SAME_VA: u64 = 1 << 1;
 pub const FLAG_ALLOCATOR_API: u64 = 1 << 2;
@@ -47,6 +47,11 @@ pub const METHOD_GET: usize = 6;
 pub const METHOD_LEN: usize = 7;
 pub const METHOD_ALLOCATED: usize = 8;
 pub const METHOD_CAPACITY: usize = 9;
+pub const METHOD_SNZI_LEAF_COUNT: usize = 10;
+pub const METHOD_SNZI_ARRIVE: usize = 11;
+pub const METHOD_SNZI_DEPART: usize = 12;
+pub const METHOD_SNZI_QUERY: usize = 13;
+pub const METHOD_SNZI_QUIESCENT: usize = 14;
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,6 +61,8 @@ pub enum Signature {
     StateKeyDeltaStatus = 3,
     StateKeyOutStatus = 4,
     StateU64 = 5,
+    StateU64OutStatus = 6,
+    StateU64Status = 7,
 }
 
 impl Signature {
@@ -66,6 +73,8 @@ impl Signature {
             3 => Self::StateKeyDeltaStatus,
             4 => Self::StateKeyOutStatus,
             5 => Self::StateU64,
+            6 => Self::StateU64OutStatus,
+            7 => Self::StateU64Status,
             _ => return None,
         })
     }
@@ -82,6 +91,11 @@ pub const METHOD_SPECS: [(&str, Signature); METHOD_COUNT] = [
     ("pod_v2_len", Signature::StateU64),
     ("pod_v2_allocated", Signature::StateU64),
     ("pod_v2_capacity", Signature::StateU64),
+    ("pod_v2_snzi_leaf_count", Signature::NoArgsU64),
+    ("pod_v2_snzi_arrive", Signature::StateU64OutStatus),
+    ("pod_v2_snzi_depart", Signature::StateU64Status),
+    ("pod_v2_snzi_query", Signature::StateU64),
+    ("pod_v2_snzi_quiescent", Signature::StateU64),
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -342,5 +356,13 @@ mod tests {
         let mut encoded = header().encode().unwrap();
         encoded[HEADER_SIZE - 1] = 1;
         assert!(ImageHeader::decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn rejects_wrong_snzi_signature() {
+        let mut header = header();
+        header.methods[METHOD_SNZI_ARRIVE].signature = Signature::StateU64Status as u16;
+        let error = header.encode().unwrap_err();
+        assert!(error.0.contains("method 11 signature is invalid"));
     }
 }

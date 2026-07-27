@@ -1,9 +1,43 @@
 [package]
-name = "pod-v2-types"
+name = "shmem-pod"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
+description = "No-std types and synchronization for executable shared-memory objects"
+repository = "https://github.com/rrnewton/dev-hermit"
+readme = "README.md"
+keywords = ["shared-memory", "ipc", "no-std", "allocator"]
+categories = ["concurrency", "memory-management", "no-std"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["derive"]
+derive = ["dep:shmem-pod-macros"]
+fixed-allocator = ["dep:allocator-api2", "dep:lock_api", "dep:talc"]
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+allocator-api2 = { workspace = true, optional = true }
+lock_api = { workspace = true, optional = true }
+shmem-pod-macros = { path = "../pod-v2-derive", version = "0.1.0", optional = true }
+talc = { workspace = true, optional = true }
+
+[dev-dependencies]
+libc.workspace = true
+
+[[example]]
+name = "fixed_allocator"
+required-features = ["fixed-allocator"]
+
+[[example]]
+name = "fixed_allocator_exec"
+required-features = ["fixed-allocator"]
+
+[[example]]
+name = "process_locks"
+required-features = ["derive"]

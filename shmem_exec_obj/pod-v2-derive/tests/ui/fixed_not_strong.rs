@@ -1,6 +1,6 @@
-use pod_v2_types::PodValue;
+use shmem_pod::PodValue;
 
-#[derive(pod_v2_derive::FixedAddressPodValue)]
+#[derive(shmem_pod_macros::FixedAddressPodValue)]
 struct FixedOnly {
     address_word: usize,
 }

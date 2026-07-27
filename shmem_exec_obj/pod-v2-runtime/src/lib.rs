@@ -14,9 +14,10 @@ use pod_v2_api::{
     ENVELOPE_READY_COUNT_OFFSET, ENVELOPE_REQUIRED_ADDRESS_OFFSET, ENVELOPE_START_FLAG_OFFSET,
     ENVELOPE_STATUS_OFFSET, ENVELOPE_VERSION_OFFSET, FLAG_REQUIRES_SAME_VA, HEADER_SIZE,
     ImageHeader, METHOD_ALLOCATED, METHOD_CAPACITY, METHOD_GET, METHOD_INIT, METHOD_LAYOUT_ALIGN,
-    METHOD_LAYOUT_HASH, METHOD_LAYOUT_SIZE, METHOD_LEN, METHOD_UPSERT, METHOD_VALIDATE, PAGE_SIZE,
-    STATE_ENVELOPE_SIZE, STATE_MAGIC, STATE_STATUS_EMPTY, STATE_STATUS_INITIALIZING,
-    STATE_STATUS_POISONED, STATE_STATUS_READY, STATE_VERSION,
+    METHOD_LAYOUT_HASH, METHOD_LAYOUT_SIZE, METHOD_LEN, METHOD_SNZI_ARRIVE, METHOD_SNZI_DEPART,
+    METHOD_SNZI_LEAF_COUNT, METHOD_SNZI_QUERY, METHOD_SNZI_QUIESCENT, METHOD_UPSERT,
+    METHOD_VALIDATE, PAGE_SIZE, STATE_ENVELOPE_SIZE, STATE_MAGIC, STATE_STATUS_EMPTY,
+    STATE_STATUS_INITIALIZING, STATE_STATUS_POISONED, STATE_STATUS_READY, STATE_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::ffi::CString;
@@ -34,12 +35,22 @@ const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
 const MFD_EXEC: libc::c_uint = 0x0010;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 const INVALID_U64: u64 = u64::MAX;
+const STATUS_SNZI_INVALID_LEAF: i32 = -10;
+const STATUS_SNZI_MALFORMED_TOKEN: i32 = -11;
+const STATUS_SNZI_GENERATION_MISMATCH: i32 = -12;
+const STATUS_SNZI_INACTIVE_TOKEN: i32 = -13;
+const STATUS_SNZI_POISONED: i32 = -14;
+const SNZI_TOKEN_LEAF_MASK: u64 = (1_u64 << 16) - 1;
+const SNZI_TOKEN_RESERVED_BIT: u64 = 1_u64 << 63;
+const SNZI_TOKEN_GENERATION_SHIFT: u32 = 16;
 
 type LayoutFn = unsafe extern "C" fn() -> u64;
 type StateLenFn = unsafe extern "C" fn(*mut u8, u64) -> i32;
 type UpsertFn = unsafe extern "C" fn(*mut u8, u64, u64) -> i32;
 type GetFn = unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32;
 type StateU64Fn = unsafe extern "C" fn(*mut u8) -> u64;
+type SnziArriveFn = unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32;
+type SnziDepartFn = unsafe extern "C" fn(*mut u8, u64) -> i32;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -157,6 +168,7 @@ pub struct PodImage {
     layout_size: u64,
     layout_align: u64,
     layout_hash: u64,
+    snzi_leaf_count: usize,
 }
 
 // The mapped code is immutable and every public state operation synchronizes in the pod.
@@ -199,12 +211,16 @@ impl PodImage {
         let layout_size = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_SIZE) };
         let layout_align = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_ALIGN) };
         let layout_hash = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_HASH) };
+        let snzi_leaf_count =
+            unsafe { call_layout(&artifact.header, &code, METHOD_SNZI_LEAF_COUNT) };
         if layout_size == 0
             || layout_size > artifact.header.payload_len
             || layout_align == 0
             || !layout_align.is_power_of_two()
             || layout_align > PAGE_SIZE as u64
             || layout_hash == 0
+            || snzi_leaf_count == 0
+            || snzi_leaf_count > (u16::MAX as u64) + 1
         {
             return Err(Error::message(
                 "pod returned invalid opaque layout metadata",
@@ -218,6 +234,7 @@ impl PodImage {
             layout_size,
             layout_align,
             layout_hash,
+            snzi_leaf_count: snzi_leaf_count as usize,
         })
     }
 
@@ -250,6 +267,10 @@ impl PodImage {
 
     pub fn layout_hash(&self) -> u64 {
         self.layout_hash
+    }
+
+    pub fn snzi_leaf_count(&self) -> usize {
+        self.snzi_leaf_count
     }
 
     pub fn artifact_digest(&self) -> [u8; 32] {
@@ -304,6 +325,38 @@ impl PodImage {
 
     pub fn capacity(&self, state: &PodState) -> Result<u64> {
         self.read_stat(state, METHOD_CAPACITY, "capacity")
+    }
+
+    pub fn snzi_arrive<'image, 'state>(
+        &'image self,
+        state: &'state PodState,
+        leaf: usize,
+    ) -> Result<SnziToken<'image, 'state>> {
+        self.ensure_pair(state)?;
+        if leaf >= self.snzi_leaf_count {
+            return Err(Error::message(format!(
+                "SNZI leaf {leaf} is outside 0..{}",
+                self.snzi_leaf_count
+            )));
+        }
+        let function: SnziArriveFn = unsafe { mem::transmute(self.entry(METHOD_SNZI_ARRIVE)) };
+        let mut raw = INVALID_U64;
+        let status = unsafe { function(state.payload_ptr(), leaf as u64, &mut raw) };
+        snzi_status_result("arrive", status)?;
+        validate_snzi_token(raw, leaf)?;
+        Ok(SnziToken {
+            raw,
+            image: self,
+            state,
+        })
+    }
+
+    pub fn snzi_query(&self, state: &PodState) -> Result<bool> {
+        self.read_snzi_bool(state, METHOD_SNZI_QUERY, "query")
+    }
+
+    pub fn snzi_is_quiescent(&self, state: &PodState) -> Result<bool> {
+        self.read_snzi_bool(state, METHOD_SNZI_QUIESCENT, "quiescent")
     }
 
     pub fn verify_runtime_permissions(&self, state: &PodState) -> Result<()> {
@@ -485,6 +538,54 @@ impl PodImage {
         } else {
             Ok(value)
         }
+    }
+
+    fn read_snzi_bool(&self, state: &PodState, method: usize, name: &str) -> Result<bool> {
+        self.ensure_pair(state)?;
+        let function: StateU64Fn = unsafe { mem::transmute(self.entry(method)) };
+        match unsafe { function(state.payload_ptr()) } {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(Error::message(format!(
+                "pod SNZI {name} returned invalid boolean value {value}"
+            ))),
+        }
+    }
+}
+
+/// Linear evidence for one successful SNZI arrival.
+///
+/// The token is bound to the exact code image and state mapping that issued it,
+/// and [`SnziToken::depart`] consumes it. Dropping a token without departing is
+/// an explicit arrival leak; departure is not attempted from `Drop` because a
+/// native call can fail and `Drop` cannot report that failure.
+///
+/// A caller cannot substitute another image or state at departure:
+///
+/// ```compile_fail
+/// use pod_v2_runtime::{PodImage, PodState, SnziToken};
+///
+/// fn wrong_issuer(
+///     other_image: &PodImage,
+///     other_state: &PodState,
+///     token: SnziToken<'_, '_>,
+/// ) {
+///     other_image.snzi_depart(other_state, token);
+/// }
+/// ```
+#[must_use = "a successful SNZI arrival must eventually be departed"]
+pub struct SnziToken<'image, 'state> {
+    raw: u64,
+    image: &'image PodImage,
+    state: &'state PodState,
+}
+
+impl SnziToken<'_, '_> {
+    pub fn depart(self) -> Result<()> {
+        let function: SnziDepartFn =
+            unsafe { mem::transmute(self.image.entry(METHOD_SNZI_DEPART)) };
+        let status = unsafe { function(self.state.payload_ptr(), self.raw) };
+        snzi_status_result("depart", status)
     }
 }
 
@@ -937,6 +1038,45 @@ fn status_error(operation: &str, status: i32) -> Error {
     Error::message(format!("pod {operation} returned status {status}"))
 }
 
+fn snzi_status_result(operation: &str, status: i32) -> Result<()> {
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(snzi_status_error(operation, status))
+    }
+}
+
+fn snzi_status_error(operation: &str, status: i32) -> Error {
+    let meaning = match status {
+        -1 => "null or misaligned state",
+        -2 => "state layout mismatch",
+        -5 => "invalid output argument",
+        STATUS_SNZI_INVALID_LEAF => "invalid leaf",
+        STATUS_SNZI_MALFORMED_TOKEN => "malformed raw token",
+        STATUS_SNZI_GENERATION_MISMATCH => "stale token generation",
+        STATUS_SNZI_INACTIVE_TOKEN => "inactive or already departed token",
+        STATUS_SNZI_POISONED => "poisoned indicator",
+        _ => "unknown raw status",
+    };
+    Error::message(format!(
+        "pod SNZI {operation} returned status {status} ({meaning})"
+    ))
+}
+
+fn validate_snzi_token(raw: u64, expected_leaf: usize) -> Result<()> {
+    let malformed = raw == INVALID_U64
+        || raw & SNZI_TOKEN_RESERVED_BIT != 0
+        || raw >> SNZI_TOKEN_GENERATION_SHIFT == 0
+        || raw & SNZI_TOKEN_LEAF_MASK != expected_leaf as u64;
+    if malformed {
+        Err(Error::message(format!(
+            "pod SNZI arrive returned malformed raw token 0x{raw:016x}"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn last_os(operation: &str) -> Error {
     Error::message(format!("{operation}: {}", io::Error::last_os_error()))
 }
@@ -993,6 +1133,33 @@ mod tests {
         assert_eq!(hex(&parse_sha256(&value).unwrap()), value);
         assert!(parse_sha256("abc").is_err());
         assert!(parse_sha256(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn validates_snzi_raw_tokens_and_statuses() {
+        let token = (7_u64 << SNZI_TOKEN_GENERATION_SHIFT) | 3;
+        validate_snzi_token(token, 3).unwrap();
+        assert!(validate_snzi_token(token, 2).is_err());
+        assert!(validate_snzi_token(3, 3).is_err());
+        assert!(validate_snzi_token(token | SNZI_TOKEN_RESERVED_BIT, 3).is_err());
+        assert!(validate_snzi_token(INVALID_U64, 3).is_err());
+
+        for (status, text) in [
+            (STATUS_SNZI_INVALID_LEAF, "invalid leaf"),
+            (STATUS_SNZI_MALFORMED_TOKEN, "malformed raw token"),
+            (STATUS_SNZI_GENERATION_MISMATCH, "stale token generation"),
+            (STATUS_SNZI_INACTIVE_TOKEN, "already departed token"),
+            (STATUS_SNZI_POISONED, "poisoned indicator"),
+            (-99, "unknown raw status"),
+        ] {
+            assert!(snzi_status_error("test", status).to_string().contains(text));
+        }
+    }
+
+    #[test]
+    fn snzi_token_departure_is_consuming_and_drop_is_not_raii() {
+        let _: fn(SnziToken<'static, 'static>) -> Result<()> = SnziToken::depart;
+        assert!(!mem::needs_drop::<SnziToken<'static, 'static>>());
     }
 
     #[test]
