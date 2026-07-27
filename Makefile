@@ -1,0 +1,91 @@
+.DEFAULT_GOAL := build
+
+PKG_CONFIG ?= pkg-config
+PKG_CONFIG_MODULES := libunwind-ptrace liblzma
+
+.PHONY: build check-deps install-deps help
+
+build: check-deps
+	@if [ ! -f hermit/Cargo.toml ]; then \
+		echo "ERROR: hermit submodule is not populated." >&2; \
+		echo "Run: git submodule update --init hermit" >&2; \
+		exit 1; \
+	fi
+	@command -v cargo >/dev/null 2>&1 || { \
+		echo "ERROR: cargo is required to build Hermit." >&2; \
+		exit 1; \
+	}
+	cd hermit && cargo build --release -p hermit --bin hermit
+
+check-deps:
+	@set -eu; \
+	pkg_config="$(PKG_CONFIG)"; \
+	if ! command -v "$$pkg_config" >/dev/null 2>&1 \
+		&& [ "$$pkg_config" = "pkg-config" ] \
+		&& command -v pkgconf >/dev/null 2>&1; then \
+		pkg_config="pkgconf"; \
+	fi; \
+	if ! command -v "$$pkg_config" >/dev/null 2>&1; then \
+		echo "ERROR: pkg-config (pkgconf on CentOS/RHEL) is required." >&2; \
+		echo "Run: make install-deps" >&2; \
+		exit 1; \
+	fi; \
+	missing=""; \
+	for module in $(PKG_CONFIG_MODULES); do \
+		if ! "$$pkg_config" --exists "$$module"; then \
+			missing="$$missing $$module"; \
+		fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "ERROR: missing required pkg-config modules:$$missing" >&2; \
+		echo "libunwind-ptrace is provided by libunwind-dev (Debian/Ubuntu)" >&2; \
+		echo "or libunwind-devel (CentOS/RHEL/Fedora)." >&2; \
+		echo "liblzma is provided by liblzma-dev (Debian/Ubuntu)" >&2; \
+		echo "or xz-devel (CentOS/RHEL/Fedora)." >&2; \
+		echo "Run: make install-deps" >&2; \
+		exit 1; \
+	fi; \
+	echo "Dependency check passed: $(PKG_CONFIG_MODULES)"
+
+install-deps:
+	@set -eu; \
+	echo "WARNING: install-deps installs system packages and may invoke sudo."; \
+	if [ ! -r /etc/os-release ]; then \
+		echo "ERROR: cannot detect the operating system (/etc/os-release is missing)." >&2; \
+		exit 1; \
+	fi; \
+	. /etc/os-release; \
+	if [ "$$(id -u)" -eq 0 ]; then \
+		sudo_cmd=""; \
+	elif command -v sudo >/dev/null 2>&1; then \
+		sudo_cmd="sudo"; \
+	else \
+		echo "ERROR: sudo is required when make is not running as root." >&2; \
+		exit 1; \
+	fi; \
+	distro="$${ID:-} $${ID_LIKE:-}"; \
+	case "$$distro" in \
+		*debian*|*ubuntu*) \
+			$$sudo_cmd apt install -y \
+				libunwind-dev liblzma-dev pkg-config \
+			;; \
+		*rhel*|*fedora*|*centos*) \
+			if ! command -v dnf >/dev/null 2>&1; then \
+				echo "ERROR: dnf is required on CentOS/RHEL/Fedora." >&2; \
+				exit 1; \
+			fi; \
+			$$sudo_cmd dnf install -y \
+				libunwind-devel xz-devel pkgconf \
+			;; \
+		*) \
+			echo "ERROR: unsupported distribution: $${PRETTY_NAME:-unknown}." >&2; \
+			echo "Install pkg-config, libunwind-ptrace.pc, and liblzma.pc, then run make check-deps." >&2; \
+			exit 1 \
+			;; \
+	esac
+	@$(MAKE) --no-print-directory check-deps
+
+help:
+	@echo "make install-deps  Install native Hermit build dependencies"
+	@echo "make check-deps    Verify required pkg-config modules"
+	@echo "make build         Build hermit in release mode"
