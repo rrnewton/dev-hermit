@@ -1,16 +1,8 @@
 ---
-name: core-memory-record-requires-sequentialization
-description: "hermit record/replay is fundamentally coupled to sequentialize_threads=true; QEMU can't be recorded because it can't boot sequentialized (CORE-MEMORY mirror of memory/record-requires-sequentialization.md)"
+name: record-requires-sequentialization
+description: "hermit record/replay is fundamentally coupled to sequentialize_threads=true; QEMU can't be recorded because it can't boot sequentialized"
 ---
 
-# CORE-MEMORY: record-requires-sequentialization
-
-<!-- GENERATED MIRROR of core memory `record-requires-sequentialization`. Source of truth is the memory
-     file `record-requires-sequentialization.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: record-requires-sequentialization.md) -->
 hermit record/replay is FUNDAMENTALLY coupled to `sequentialize_threads=true`, not a conservative default (investigated 2026-07-23, task impl-qemu-recording-exploration).
 
 - `hermit-cli/src/metadata.rs:145-156` `record_or_replay_config()` hardcodes `sequentialize_threads:true`; comment: record & replay must use the EXACT SAME config or replay diverges.
@@ -22,4 +14,3 @@ Recording a schedule WITHOUT sequentialization is NOT a shortcut:
 - Empirical: `run --no-sequentialize-threads --record-preemptions-to X` → PANIC/SIGSEGV at tool_global.rs:1590. `hermit record start -- qemu…` (forces seq, no --no-seq flag) → HANGS, 0 serial output (QEMU can't boot sequentialized, see [[qemu-linux-boots-under-hermit-config]] which needs --no-sequentialize-threads).
 
 BOTTOM LINE: QEMU can't be recorded today because record REQUIRES sequentialization AND QEMU can't boot under it. The unlock is the SCHEDULER FIX (make hermit sequentialize QEMU without the TCG vCPU starving support threads); once QEMU boots under --sequentialize-threads, record/replay works unchanged. Recording is downstream of, not an alternative to, the scheduler fix. Related: [[strict-mode-frontier-regresses-real-workloads]].
-<!-- END CORE-MEMORY-MIRROR -->

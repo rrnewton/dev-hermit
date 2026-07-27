@@ -1,16 +1,8 @@
 ---
-name: core-memory-multi-backend-tool-binaries
-description: "reverie multi-backend tool build infra — one tool crate, per-backend bins; backend run-API divergence (CORE-MEMORY mirror of memory/multi-backend-tool-binaries.md)"
+name: multi-backend-tool-binaries
+description: "reverie multi-backend tool build infra — one tool crate, per-backend bins; backend run-API divergence"
 ---
 
-# CORE-MEMORY: multi-backend-tool-binaries
-
-<!-- GENERATED MIRROR of core memory `multi-backend-tool-binaries`. Source of truth is the memory
-     file `multi-backend-tool-binaries.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: multi-backend-tool-binaries.md) -->
 Multi-backend tool binary infrastructure in `reverie/` (task impl-multi-backend-tools, slot140, branch impl-multi-backend-tools-slot140; validated but LEFT UNCOMMITTED because that task's protocol forbade commit/PR without explicit instruction).
 
 Shape: write each Reverie `Tool` ONCE in a lib crate depending only on `reverie`, then a `reverie-multibackend-tools` crate holds thin per-backend adapters + `[[bin]]` targets gated by Cargo **features** (backends can't all be default — see below).
@@ -27,4 +19,3 @@ Cross-backend agreement observed: `reverie-sysctr-{ptrace,kvm} /bin/true` both =
 Gotcha: `#[reverie::tool]`/`#[reverie::global_tool]`/`#[reverie::backend]` are just re-exports of `#[async_trait::async_trait]` (reverie/src/lib.rs) — no special codegen; a shared tool lib needs only the `reverie` dep. Config `()` → pass `()` not `Default::default()` (clippy::unit_arg).
 
 Related: [[reverie-kvm-has-no-tool-guest-adapter]], [[dbi-no-runtime-tool-selection]], [[detcore-over-dbi-blocked-by-executor]], [[reverie-rpc-transport-crate]], [[good-hermit-binary-for-tests]].
-<!-- END CORE-MEMORY-MIRROR -->

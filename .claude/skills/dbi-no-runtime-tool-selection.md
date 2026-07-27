@@ -1,16 +1,8 @@
 ---
-name: core-memory-dbi-no-runtime-tool-selection
-description: "DBI backend has no runtime tool selection; the Tool is compiled into client.so, only handle_syscall_event is dispatched (CORE-MEMORY mirror of memory/dbi-no-runtime-tool-selection.md)"
+name: dbi-no-runtime-tool-selection
+description: "DBI backend has no runtime tool selection; the Tool is compiled into client.so, only handle_syscall_event is dispatched"
 ---
 
-# CORE-MEMORY: dbi-no-runtime-tool-selection
-
-<!-- GENERATED MIRROR of core memory `dbi-no-runtime-tool-selection`. Source of truth is the memory
-     file `dbi-no-runtime-tool-selection.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: dbi-no-runtime-tool-selection.md) -->
 The reverie-dbi (DynamoRIO) backend has **no runtime tool selection**. The
 native client (`libreverie_dbi_client.so`) links a `static PROTOTYPE_TOOL`
 compiled in; `DbiRunner`/`hermit run --backend dbi` just shells
@@ -43,4 +35,3 @@ is `()`).
 don't expect reverie-examples tools to run on DBI as-is. Full audit:
 `ai_docs/transient/20260722_dbi-guest-trait-audit.md`. Related:
 [[dbi-client-must-be-release-built]], [[dbi-client-rev-e3e2c965-broken]].
-<!-- END CORE-MEMORY-MIRROR -->

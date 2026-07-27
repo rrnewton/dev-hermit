@@ -1,16 +1,8 @@
 ---
-name: core-memory-ci-capacity-single-pmu-runner-bottleneck
-description: "rrnewton/hermit Rust CI is chronically queued/never-green because ONE pmu self-hosted runner can't drain its heavy determinism suite x high PR volume; reverie has the same 1-runner setup but drains (light job). Not broken tests — a capacity mismatch. Status tool: ci-runner/ci-status.py. (CORE-MEMORY mirror of memory/ci-capacity-single-pmu-runner-bottleneck.md)"
+name: ci-capacity-single-pmu-runner-bottleneck
+description: "rrnewton/hermit Rust CI is chronically queued/never-green because ONE pmu self-hosted runner can't drain its heavy determinism suite x high PR volume; reverie has the same 1-runner setup but drains (light job). Not broken tests — a capacity mismatch. Status tool: ci-runner/ci-status.py."
 ---
 
-# CORE-MEMORY: ci-capacity-single-pmu-runner-bottleneck
-
-<!-- GENERATED MIRROR of core memory `ci-capacity-single-pmu-runner-bottleneck`. Source of truth is the memory
-     file `ci-capacity-single-pmu-runner-bottleneck.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: ci-capacity-single-pmu-runner-bottleneck.md) -->
 Task impl-ci-deep-dive (2026-07-24). Deep dive on the Hermit CI alarm
 ("queue, cancelled runs, no green runs").
 
@@ -83,4 +75,3 @@ Remediation for the human: (1) add N>1 pmu runners for hermit, (2) split the
 Rust job so non-PMU parts (build/clippy/fmt/unit) run GitHub-hosted in parallel,
 leaving only RCB tests on pmu, (3) throttle redundant PR triggers, (4) formally
 accept locally-validated as the gate (current practice).
-<!-- END CORE-MEMORY-MIRROR -->

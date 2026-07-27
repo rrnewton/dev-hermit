@@ -1,16 +1,8 @@
 ---
-name: core-memory-detached-clean-merged-slot-can-be-busy
-description: "A hermit worktree slot that is detached+clean+merged can STILL be actively in use — agents run in detached HEAD with work in /tmp chroots, so the slot looks idle between operations. Always check for live processes (cwd) before removing. Also two schemes of slotNN dirs exist. (CORE-MEMORY mirror of memory/detached-clean-merged-slot-can-be-busy.md)"
+name: detached-clean-merged-slot-can-be-busy
+description: "A hermit worktree slot that is detached+clean+merged can STILL be actively in use — agents run in detached HEAD with work in /tmp chroots, so the slot looks idle between operations. Always check for live processes (cwd) before removing. Also two schemes of slotNN dirs exist."
 ---
 
-# CORE-MEMORY: detached-clean-merged-slot-can-be-busy
-
-<!-- GENERATED MIRROR of core memory `detached-clean-merged-slot-can-be-busy`. Source of truth is the memory
-     file `detached-clean-merged-slot-can-be-busy.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: detached-clean-merged-slot-can-be-busy.md) -->
 Task impl-worktree-cleanup (2026-07-23). Refines
 [[worktree-cleanup-is-unsafe-for-agents]] and [[parked-slot-reuse-is-racy]].
 
@@ -44,4 +36,3 @@ slots are live; do a single safe sweep (state + no-live-proc, re-verified, no
 --force), log removals to ARCHIVED.md, and leave the rest for the coordinator in
 a quiescent window. This task has now been worked 4× with the same conservative
 outcome — that IS the correct outcome, not under-delivery.
-<!-- END CORE-MEMORY-MIRROR -->

@@ -1,16 +1,8 @@
 ---
-name: core-memory-self-hosted-ci-sigsegv-blocks-all-prs
-description: "All rrnewton/hermit PRs show red self-hosted CI due to one main-level SIGSEGV, not per-PR bugs (CORE-MEMORY mirror of memory/self-hosted-ci-sigsegv-blocks-all-prs.md)"
+name: self-hosted-ci-sigsegv-blocks-all-prs
+description: "All rrnewton/hermit PRs show red self-hosted CI due to one main-level SIGSEGV, not per-PR bugs"
 ---
 
-# CORE-MEMORY: self-hosted-ci-sigsegv-blocks-all-prs
-
-<!-- GENERATED MIRROR of core memory `self-hosted-ci-sigsegv-blocks-all-prs`. Source of truth is the memory
-     file `self-hosted-ci-sigsegv-blocks-all-prs.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: self-hosted-ci-sigsegv-blocks-all-prs.md) -->
 As of 2026-07-22, essentially every open PR on rrnewton/hermit fails the
 **"Host-dependent tests (self-hosted)"** CI check while "Regular tests
 (GitHub-hosted)" passes. This is NOT per-PR breakage: even docs-only PRs and the
@@ -50,4 +42,3 @@ cargo test, 15x standalone `hermit run --strict`, and under CI-like `unshare
 runner. No coverage lost: the test is namespace-dependent and never ran on the
 GitHub-hosted job. Root-causing the reverie clone crash remains open debt.
 Precedent for the pattern: `fp_reduction_determinism` (AmdSpecLockMapShouldBeDisabled).
-<!-- END CORE-MEMORY-MIRROR -->

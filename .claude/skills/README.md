@@ -1,34 +1,73 @@
-# Coordinator skills (parent-owned)
+# Skill Scope Map
 
-This is a **real directory** — deliberately NOT a symlink into
-`hermit/.claude/skills/`. It holds the **coordinator-level** skills for agents
-launched from the `dev-hermit` parent workspace (loaded via
-`.llms/skills -> ../.claude/skills`).
+The parent and product repositories have separate skill audiences. Keep this
+split mechanical; do not copy coordinator skills into a product repository.
 
-Coordinator vs. repo skills are separated on purpose:
+## Parent Coordinator Skills
 
-- **Here (`dev-hermit/.claude/skills/`, coordinator):** agent roles, workspace
-  discipline, landing/review protocol, and the CORE-memory mirror. These govern
-  task dispatch, slot/checkout ownership, PR landing, and status rollups — the
-  coordinator role described in `AGENTS.md`.
-  - `hermit-{coord,ci,dbi,kvm,lander,liteinst,opt,sabre}.md` — purpose-fixed
-    agent-role charters.
-  - `repo-cleanliness.md` — where artifacts belong; keep hermit/reverie clean.
-  - `post-facto-review/`, `human-review-first/` — landing/review discipline.
-  - `backend-reality-reviewer/` — auditing backend completion claims.
-  - `progress-rubric/` — evidence-based progress reports.
-  - `core-memory/` — generated mirrors of CORE memories. **Do not hand-edit;**
-    regenerate with `scripts/sync-memory-skill.rs` (verify:
-    `scripts/lint-memory-skill-sync.rs`). Both scripts root at this parent, so
-    they write/check here.
+Agents launched from `dev-hermit/` discover this real directory through
+`.llms/skills -> ../.claude/skills` and the workspace skill hook. The parent
+does not currently carry an `.agents/skills` link.
 
-- **`hermit/.claude/skills/` (repo, implementor):** debugging and coding
-  workflows for implementor agents working inside a product checkout —
-  `deadlock-debugging.md`, `hermit-debugging/`, `fabler/`. Implementor agents in
-  a worktree slot resolve these via `hermit/.llms/skills -> hermit/.claude/skills`.
+The active set is:
 
-The agent-role and protocol skills currently also exist in
-`hermit/.claude/skills/` (their original landing home, hermit PR #759 et al.).
-This parent copy is the coordinator-authoritative one going forward; a follow-up
-hermit PR may prune the coordinator-only skills from the product repo to remove
-the duplication. Until then both trees carry them, which is backward-compatible.
+- Purpose-fixed roles: `hermit-ci.md`, `hermit-coord.md`,
+  `hermit-dbi.md`, `hermit-kvm.md`, `hermit-lander.md`,
+  `hermit-linux.md`, `hermit-liteinst.md`, `hermit-opt.md`, and
+  `hermit-sabre.md`.
+- Coordinator review and reporting:
+  `backend-reality-reviewer.md`, `post-facto-review.md`, and
+  `progress-rubric.md`.
+- Memory-backed policy skills: the 22 remaining flat Markdown files.
+  Edit their source memories and run the sync tool.
+
+Every active coordinator skill is a flat `.claude/skills/<memory-slug>.md` file.
+
+`human-review-first` is dormant and archived at
+`.claude/archived_skills/human-review-first/SKILL.md`. Archived skills are not
+part of normal discovery or the active memory coverage gate.
+
+Every active parent skill has exactly one source memory. The memory frontmatter
+declares the exact `core_skill` path. Run:
+
+```bash
+scripts/sync-memory-skill.rs --check
+scripts/lint-memory-skill-sync.rs
+```
+
+Use `scripts/sync-memory-skill.rs --adopt-skill <path>...` when adding an
+existing hand-written coordinator skill to the contract.
+
+## Product Worker Skills
+
+Hermit keeps only workflows usable by an implementation agent with a Hermit
+checkout and no parent-harness role:
+
+- `deadlock-debugging.md`
+- `fabler/SKILL.md`
+- `hermit-debugging/SKILL.md`
+- `repo-cleanliness.md`
+
+Reverie currently keeps only `repo-cleanliness.md`. A future Reverie worker
+skill must describe Reverie product implementation, not parent coordination.
+
+The cleanliness skill is intentionally duplicated between the two independent
+product histories. It is worker policy, not a parent coordinator skill.
+
+Neither product repository may contain `core-memory/`, purpose-fixed
+harness-role charters, landing policy, coordinator progress reporting, or
+backend completion-review policy.
+
+## Discovery Check
+
+This workspace run confirmed that the project hook discovers the parent flat
+Markdown skills through `.llms/skills -> ../.claude/skills`. Parent discovery
+does not depend on recursive folder scanning.
+
+A separate raw-client check was unavailable: both installed `claude --help`
+and `codex --help` abort in the Meta launcher because it injects the
+development-only `META_DANGEROUSLY_DISABLE_LINUX_SANDBOX` setting. Treat the
+workspace hook result as environment-specific evidence, not a portable client
+guarantee.
+
+Product repositories may retain their own documented skill shapes. The parent

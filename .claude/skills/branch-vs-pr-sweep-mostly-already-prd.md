@@ -1,16 +1,8 @@
 ---
-name: core-memory-branch-vs-pr-sweep-mostly-already-prd
-description: "How to sweep today's branches for missing PRs; most 'un-PR'd' branches are superseded/stale, not orphaned work (CORE-MEMORY mirror of memory/branch-vs-pr-sweep-mostly-already-prd.md)"
+name: branch-vs-pr-sweep-mostly-already-prd
+description: "How to sweep today's branches for missing PRs; most 'un-PR'd' branches are superseded/stale, not orphaned work"
 ---
 
-# CORE-MEMORY: branch-vs-pr-sweep-mostly-already-prd
-
-<!-- GENERATED MIRROR of core memory `branch-vs-pr-sweep-mostly-already-prd`. Source of truth is the memory
-     file `branch-vs-pr-sweep-mostly-already-prd.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: branch-vs-pr-sweep-mostly-already-prd.md) -->
 Coordinator sweep for "completed feature branches lacking PRs" (task
 `impl-open-prs-today-work`, 2026-07-25). Reusable method + finding:
 
@@ -40,4 +32,3 @@ DRAFT reverie#106 + hermit#723 (cross-linked). Deliberately NOT labeled
 restructure), so a head-gate would false-bless. Land reverie dep first, repin,
 then validate consumer — see cross-repo rule. Don't apply the gate label to a
 stale-based draft.
-<!-- END CORE-MEMORY-MIRROR -->

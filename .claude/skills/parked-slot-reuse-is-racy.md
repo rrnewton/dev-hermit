@@ -1,16 +1,8 @@
 ---
-name: core-memory-parked-slot-reuse-is-racy
-description: "reusing a detached/clean/not-in-ACTIVE.md slot is racy — another agent can switch its branch mid-work; only use an explicitly-assigned slot (CORE-MEMORY mirror of memory/parked-slot-reuse-is-racy.md)"
+name: parked-slot-reuse-is-racy
+description: "reusing a detached/clean/not-in-ACTIVE.md slot is racy — another agent can switch its branch mid-work; only use an explicitly-assigned slot"
 ---
 
-# CORE-MEMORY: parked-slot-reuse-is-racy
-
-<!-- GENERATED MIRROR of core memory `parked-slot-reuse-is-racy`. Source of truth is the memory
-     file `parked-slot-reuse-is-racy.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: parked-slot-reuse-is-racy.md) -->
 Reusing a "parked-looking" hermit slot (detached HEAD, clean, absent from
 worktrees/ACTIVE.md) is NOT safe under concurrent agents. Observed 2026-07-23:
 fell back to slot84 after the assigned slot02 was occupied; created branch
@@ -32,4 +24,3 @@ git op). If the assigned slot is occupied, do NOT grab an arbitrary parked slot
 — report the conflict and request an exclusive assignment or a fresh
 `./slot-init.sh slotNN hermit`. Preserve verified work outside any repo checkout
 so a collision never loses it. Relates to [[git-stash-shared-across-worktrees]].
-<!-- END CORE-MEMORY-MIRROR -->

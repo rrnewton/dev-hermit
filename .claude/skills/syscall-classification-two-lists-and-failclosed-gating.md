@@ -1,16 +1,8 @@
 ---
-name: core-memory-syscall-classification-two-lists-and-failclosed-gating
-description: "Syscall policy lives in TWO synced lists; --strict IS fail-closed (aborts on UNSUPPORTED syscalls), as does HERMIT_FAIL_CLOSED / --panic-on-unsupported-syscalls (CORE-MEMORY mirror of memory/syscall-classification-two-lists-and-failclosed-gating.md)"
+name: syscall-classification-two-lists-and-failclosed-gating
+description: "Syscall policy lives in TWO synced lists; --strict IS fail-closed (aborts on UNSUPPORTED syscalls), as does HERMIT_FAIL_CLOSED / --panic-on-unsupported-syscalls"
 ---
 
-# CORE-MEMORY: syscall-classification-two-lists-and-failclosed-gating
-
-<!-- GENERATED MIRROR of core memory `syscall-classification-two-lists-and-failclosed-gating`. Source of truth is the memory
-     file `syscall-classification-two-lists-and-failclosed-gating.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: syscall-classification-two-lists-and-failclosed-gating.md) -->
 Reclassifying a Hermit syscall requires editing **two** places that must stay
 in sync (editing only the classifier is silently insufficient):
 
@@ -48,4 +40,3 @@ after batch18 (flock->PassThrough; close_range,epoll_pwait2->Determinized; PR #7
 
 Corrects/extends [[syscall-classification-issue-batches]]. See also
 [[strict-mode-unusable-rseq-cascade]].
-<!-- END CORE-MEMORY-MIRROR -->

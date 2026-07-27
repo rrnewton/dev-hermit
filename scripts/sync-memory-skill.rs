@@ -1,24 +1,23 @@
 #!/usr/bin/env rust-script
-//! Sync CORE memories to their mirror skill files (memory is the source of truth).
+//! Keep every active coordinator skill synchronized with one source memory.
 //!
-//! Companion to scripts/lint-memory-skill-sync.rs. See that file's header for the
-//! model: a memory is CORE when its frontmatter has `core_memory: true`; each
-//! core memory mirrors to `.claude/skills/core-memory/<slug>.md`.
+//! Companion to scripts/lint-memory-skill-sync.rs. A mapped memory declares
+//! `core_memory: true` and `core_skill: <active skill path>`. Every mapping
+//! uses the canonical flat path `.claude/skills/<slug>.md`. Running the tool
+//! migrates older nested mappings and removes their old skill files after
+//! writing the flat replacement.
 //!
-//! Memory store is FILE-BASED markdown (not sqlite); override with HERMIT_MEMORY_DIR.
+//! Memory storage is file-based Markdown; override it with HERMIT_MEMORY_DIR.
 //!
 //! Usage:
-//!   scripts/sync-memory-skill.rs                     # regenerate ALL mirrors
-//!   scripts/sync-memory-skill.rs --promote <slug>..  # mark memories core + mirror
-//!   scripts/sync-memory-skill.rs --demote  <slug>..  # unmark + remove mirror
-//!   scripts/sync-memory-skill.rs --check             # dry-run (no writes), list plan
-//!
-//! Promote is idempotent: it adds `core_memory: true` + `core_skill: <path>` under
-//! `metadata:`, inserts a visible `> **CORE-MEMORY**` body tag, then writes the
-//! mirror. Regenerate mode (no args) refreshes every mirror from its memory body.
+//!   scripts/sync-memory-skill.rs                         # regenerate all mapped skills
+//!   scripts/sync-memory-skill.rs --adopt-skill <path>.. # create memories from active skills
+//!   scripts/sync-memory-skill.rs --promote <slug>..     # promote memories to flat skills
+//!   scripts/sync-memory-skill.rs --demote <slug>..      # unmap memories and remove skills
+//!   scripts/sync-memory-skill.rs --check                # dry-run
 use std::path::{Path, PathBuf};
 
-const SKILL_SUBDIR: &str = ".claude/skills/core-memory";
+const SKILL_DIR: &str = ".claude/skills";
 const DEFAULT_MEMORY_DIR: &str =
     "/home/newton/.claude/projects/-home-newton-work-dev-hermit/memory";
 
@@ -26,11 +25,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let root = find_root();
     let memory_dir = memory_dir();
-    let skill_dir = root.join(SKILL_SUBDIR);
-    std::fs::create_dir_all(&skill_dir).ok();
 
     if !memory_dir.is_dir() {
-        eprintln!("memory dir not found: {} (set HERMIT_MEMORY_DIR)", memory_dir.display());
+        eprintln!(
+            "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
+            memory_dir.display()
+        );
         std::process::exit(2);
     }
 
@@ -38,28 +38,49 @@ fn main() {
     let mode = args.first().map(|s| s.as_str());
 
     match mode {
+        Some("--adopt-skill") => {
+            let skills: Vec<String> = args[1..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect();
+            if skills.is_empty() {
+                eprintln!("--adopt-skill needs at least one parent-relative skill path");
+                std::process::exit(2);
+            }
+            for skill in &skills {
+                adopt_skill(&root, &memory_dir, skill, check);
+            }
+        }
         Some("--promote") => {
-            let slugs: Vec<String> = args[1..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+            let slugs: Vec<String> = args[1..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect();
             if slugs.is_empty() {
                 eprintln!("--promote needs at least one memory slug");
                 std::process::exit(2);
             }
             for slug in &slugs {
-                promote(&memory_dir, &skill_dir, slug, check);
+                promote(&root, &memory_dir, slug, check);
             }
         }
         Some("--demote") => {
-            let slugs: Vec<String> = args[1..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+            let slugs: Vec<String> = args[1..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect();
             if slugs.is_empty() {
                 eprintln!("--demote needs at least one memory slug");
                 std::process::exit(2);
             }
             for slug in &slugs {
-                demote(&memory_dir, &skill_dir, slug, check);
+                demote(&root, &memory_dir, slug, check);
             }
         }
         _ => {
-            // Regenerate every mirror from its core memory.
             let mut n = 0;
             for entry in read_md_files(&memory_dir) {
                 let slug = stem(&entry);
@@ -68,23 +89,179 @@ fn main() {
                 }
                 let content = std::fs::read_to_string(&entry).unwrap_or_default();
                 if parse_meta(&content).core_memory {
-                    write_mirror(&skill_dir, &slug, &content, check);
+                    let (content, old_skill) = flatten_mapping(&entry, &slug, &content, check);
+                    write_mapped_skill(&root, &slug, &content, check);
+                    if !check {
+                        remove_old_mapping(&root, old_skill.as_deref(), &flat_skill_rel(&slug));
+                    }
                     n += 1;
                 }
             }
-            println!("{} {} mirror(s)", if check { "would refresh" } else { "refreshed" }, n);
+            println!(
+                "{} {} mapped skill(s)",
+                if check { "would refresh" } else { "refreshed" },
+                n
+            );
         }
     }
 }
 
-fn promote(memory_dir: &Path, skill_dir: &Path, slug: &str, check: bool) {
+fn adopt_skill(root: &Path, memory_dir: &Path, skill_rel: &str, check: bool) {
+    let path = Path::new(skill_rel);
+    if path.parent() != Some(Path::new(SKILL_DIR))
+        || path.extension().and_then(|ext| ext.to_str()) != Some("md")
+    {
+        eprintln!("adopt {skill_rel}: path must be a flat .claude/skills/<name>.md file");
+        std::process::exit(2);
+    }
+
+    let skill_path = root.join(skill_rel);
+    let skill = std::fs::read_to_string(&skill_path).unwrap_or_else(|error| {
+        eprintln!("adopt {skill_rel}: {error}");
+        std::process::exit(1);
+    });
+    let meta = parse_meta(&skill);
+    if meta.name.is_empty() || meta.description.is_empty() {
+        eprintln!("adopt {skill_rel}: skill needs name and description frontmatter");
+        std::process::exit(1);
+    }
+    if !meta
+        .name
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        eprintln!("adopt {skill_rel}: invalid memory slug '{}'", meta.name);
+        std::process::exit(1);
+    }
+    let canonical = flat_skill_rel(&meta.name);
+    if skill_rel != canonical {
+        eprintln!("adopt {skill_rel}: skill name '{}' requires path {canonical}", meta.name);
+        std::process::exit(1);
+    }
+
+    let body = canonical_body(&skill);
+    let description = meta.description.replace('"', "'");
+    let tag = format!(
+        "> **CORE-MEMORY** — mirrored to skill `{skill_rel}` (sync: `scripts/sync-memory-skill.rs`; lint: `scripts/lint-memory-skill-sync.rs`)."
+    );
+    let memory = format!(
+        "---\nname: {}\ndescription: \"{}\"\nmetadata:\n  core_memory: true\n  core_skill: {}\n  node_type: memory\n  type: reference\n---\n\n{}\n\n{}\n",
+        meta.name, description, skill_rel, tag, body
+    );
+    let memory_path = memory_dir.join(format!("{}.md", meta.name));
+    if memory_path.is_file() {
+        let current = std::fs::read_to_string(&memory_path).unwrap_or_default();
+        if current != memory {
+            eprintln!(
+                "adopt {skill_rel}: memory {} already exists with different content",
+                memory_path.display()
+            );
+            std::process::exit(1);
+        }
+        println!("memory {} already adopts {skill_rel}", meta.name);
+        return;
+    }
+
+    if check {
+        println!("would adopt {skill_rel} as memory {}.md", meta.name);
+    } else {
+        std::fs::write(&memory_path, memory).unwrap_or_else(|error| {
+            eprintln!("write memory {}: {error}", meta.name);
+            std::process::exit(1);
+        });
+        println!("adopted {skill_rel} as memory {}.md", meta.name);
+    }
+}
+
+fn flat_skill_rel(slug: &str) -> String {
+    format!("{SKILL_DIR}/{slug}.md")
+}
+
+fn flatten_mapping(
+    memory_path: &Path,
+    slug: &str,
+    content: &str,
+    check: bool,
+) -> (String, Option<String>) {
+    let old_skill = parse_meta(content).core_skill;
+    let skill_rel = flat_skill_rel(slug);
+    let tag = format!(
+        "> **CORE-MEMORY** — mirrored to skill `{skill_rel}` (sync: `scripts/sync-memory-skill.rs`; lint: `scripts/lint-memory-skill-sync.rs`)."
+    );
+    let mut in_frontmatter = false;
+    let mut seen_frontmatter = false;
+    let mut changed = false;
+    let mut lines = Vec::new();
+
+    for line in content.lines() {
+        if line.trim() == "---" {
+            if !seen_frontmatter {
+                seen_frontmatter = true;
+                in_frontmatter = true;
+            } else if in_frontmatter {
+                in_frontmatter = false;
+            }
+            lines.push(line.to_string());
+            continue;
+        }
+        if in_frontmatter && line.trim_start().starts_with("core_skill:") {
+            let replacement = format!("  core_skill: {skill_rel}");
+            changed |= line != replacement;
+            lines.push(replacement);
+        } else if line.trim_start().starts_with("> **CORE-MEMORY**") {
+            changed |= line != tag;
+            lines.push(tag.clone());
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+
+    let mut flattened = lines.join("\n");
+    if content.ends_with('\n') {
+        flattened.push('\n');
+    }
+    if changed {
+        if check {
+            println!("would flatten memory {slug} -> {skill_rel}");
+        } else {
+            std::fs::write(memory_path, &flattened).unwrap_or_else(|error| {
+                eprintln!("write memory {slug}: {error}");
+                std::process::exit(1);
+            });
+            println!("flattened memory {slug} -> {skill_rel}");
+        }
+    }
+    (flattened, old_skill)
+}
+
+fn remove_old_mapping(root: &Path, old_skill: Option<&str>, flat_skill: &str) {
+    let Some(old_skill) = old_skill else {
+        return;
+    };
+    if old_skill == flat_skill {
+        return;
+    }
+    let old_path = root.join(old_skill);
+    if old_path.is_file() {
+        std::fs::remove_file(&old_path).unwrap_or_else(|error| {
+            eprintln!("remove old mapped skill {old_skill}: {error}");
+            std::process::exit(1);
+        });
+        println!("removed old mapped skill {old_skill}");
+    }
+}
+
+fn promote(root: &Path, memory_dir: &Path, slug: &str, check: bool) {
     let mem_path = memory_dir.join(format!("{slug}.md"));
     if !mem_path.is_file() {
-        eprintln!("promote {slug}: memory file not found ({})", mem_path.display());
+        eprintln!(
+            "promote {slug}: memory file not found ({})",
+            mem_path.display()
+        );
         return;
     }
     let mut content = std::fs::read_to_string(&mem_path).unwrap_or_default();
-    let skill_rel = format!("{SKILL_SUBDIR}/{slug}.md");
+    let skill_rel = flat_skill_rel(slug);
 
     let mut changed = false;
     // 1. frontmatter keys under `metadata:`. Check the FRONTMATTER only — a
@@ -112,37 +289,55 @@ fn promote(memory_dir: &Path, skill_dir: &Path, slug: &str, check: bool) {
     } else {
         println!("memory {slug} already core");
     }
-    write_mirror(skill_dir, slug, &content, check);
+    let (content, old_skill) = flatten_mapping(&mem_path, slug, &content, check);
+    write_mapped_skill(root, slug, &content, check);
+    if !check {
+        remove_old_mapping(root, old_skill.as_deref(), &flat_skill_rel(slug));
+    }
 }
 
-fn demote(memory_dir: &Path, skill_dir: &Path, slug: &str, check: bool) {
+fn demote(root: &Path, memory_dir: &Path, slug: &str, check: bool) {
     let mem_path = memory_dir.join(format!("{slug}.md"));
-    if let Ok(content) = std::fs::read_to_string(&mem_path) {
-        let cleaned: String = content
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !(t.starts_with("core_memory:")
-                    || t.starts_with("core_skill:")
-                    || t.trim_start().starts_with("> **CORE-MEMORY**"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let cleaned = if content.ends_with('\n') { format!("{cleaned}\n") } else { cleaned };
-        if check {
-            println!("would demote memory {slug}");
-        } else {
-            std::fs::write(&mem_path, cleaned).ok();
-            println!("demoted memory {slug}");
-        }
+    let Ok(content) = std::fs::read_to_string(&mem_path) else {
+        eprintln!(
+            "demote {slug}: memory file not found ({})",
+            mem_path.display()
+        );
+        return;
+    };
+    let mapped_skill = parse_meta(&content).core_skill;
+    let cleaned: String = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.starts_with("core_memory:")
+                || trimmed.starts_with("core_skill:")
+                || trimmed.starts_with("> **CORE-MEMORY**"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cleaned = if content.ends_with('\n') {
+        format!("{cleaned}\n")
+    } else {
+        cleaned
+    };
+    if check {
+        println!("would demote memory {slug}");
+    } else {
+        std::fs::write(&mem_path, cleaned).ok();
+        println!("demoted memory {slug}");
     }
-    let skill_path = skill_dir.join(format!("{slug}.md"));
+
+    let Some(skill_rel) = mapped_skill else {
+        return;
+    };
+    let skill_path = root.join(&skill_rel);
     if skill_path.is_file() {
         if check {
-            println!("would remove mirror {slug}.md");
+            println!("would remove mapped skill {skill_rel}");
         } else {
             std::fs::remove_file(&skill_path).ok();
-            println!("removed mirror {slug}.md");
+            println!("removed mapped skill {skill_rel}");
         }
     }
 }
@@ -176,7 +371,10 @@ fn insert_frontmatter_keys(content: &str, _slug: &str, skill_rel: &str) -> Strin
                     out.push(format!("  core_skill: {skill_rel}"));
                     out.push(line.to_string());
                     // append the rest verbatim below by breaking to a second pass
-                    let idx = content.find("\n---").map(|i| i + 4).unwrap_or(content.len());
+                    let idx = content
+                        .find("\n---")
+                        .map(|i| i + 4)
+                        .unwrap_or(content.len());
                     out.push(content[idx..].trim_start_matches('\n').to_string());
                     return out.join("\n");
                 }
@@ -185,7 +383,11 @@ fn insert_frontmatter_keys(content: &str, _slug: &str, skill_rel: &str) -> Strin
         }
     }
     let joined = out.join("\n");
-    if content.ends_with('\n') { format!("{joined}\n") } else { joined }
+    if content.ends_with('\n') {
+        format!("{joined}\n")
+    } else {
+        joined
+    }
 }
 
 /// True when the body already carries the visible CORE-MEMORY tag LINE (as
@@ -214,40 +416,46 @@ fn insert_body_tag(content: &str, skill_rel: &str) -> String {
     format!("{tag}\n\n{content}")
 }
 
-fn write_mirror(skill_dir: &Path, slug: &str, memory_content: &str, check: bool) {
+fn write_mapped_skill(root: &Path, slug: &str, memory_content: &str, check: bool) {
     let meta = parse_meta(memory_content);
+    let Some(skill_rel) = &meta.core_skill else {
+        eprintln!("write {slug}: core memory has no core_skill path");
+        std::process::exit(1);
+    };
+    let expected = flat_skill_rel(slug);
+    if skill_rel != &expected {
+        eprintln!("write {slug}: mapped skill must use flat path '{expected}'");
+        std::process::exit(1);
+    }
+
     let body = canonical_body(memory_content);
-    let desc = meta.description.replace('"', "'");
+    let description = meta.description.replace('"', "'");
     let skill = format!(
-        "---\n\
-         name: core-memory-{slug}\n\
-         description: \"{desc} (CORE-MEMORY mirror of memory/{slug}.md)\"\n\
-         ---\n\
-         \n\
-         # CORE-MEMORY: {slug}\n\
-         \n\
-         <!-- GENERATED MIRROR of core memory `{slug}`. Source of truth is the memory\n\
-         \x20    file `{slug}.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in\n\
-         \x20    sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the\n\
-         \x20    markers — edit the memory and re-run sync. -->\n\
-         \n\
-         <!-- BEGIN CORE-MEMORY-MIRROR (source: {slug}.md) -->\n\
-         {body}\n\
-         <!-- END CORE-MEMORY-MIRROR -->\n"
+        "---\nname: {}\ndescription: \"{}\"\n---\n\n{}\n",
+        meta.name, description, body
     );
-    let path = skill_dir.join(format!("{slug}.md"));
+
+    let path = root.join(skill_rel);
     if check {
-        let exists = path.is_file();
-        let cur = if exists { std::fs::read_to_string(&path).unwrap_or_default() } else { String::new() };
-        let verb = if !exists { "create" } else if cur != skill { "update" } else { "keep" };
-        println!("would {verb} mirror {slug}.md");
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let verb = if !path.is_file() {
+            "create"
+        } else if current != skill {
+            "update"
+        } else {
+            "keep"
+        };
+        println!("would {verb} mapped skill {skill_rel}");
         return;
     }
-    std::fs::write(&path, skill).unwrap_or_else(|e| {
-        eprintln!("write mirror {slug}: {e}");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&path, skill).unwrap_or_else(|error| {
+        eprintln!("write mapped skill {skill_rel}: {error}");
         std::process::exit(1);
     });
-    println!("wrote mirror {slug}.md");
+    println!("wrote mapped skill {skill_rel}");
 }
 
 // ---- shared extraction/normalization (kept identical in lint-memory-skill-sync.rs) ----
@@ -262,7 +470,12 @@ struct Meta {
 }
 
 fn parse_meta(content: &str) -> Meta {
-    let mut m = Meta { name: String::new(), description: String::new(), core_memory: false, core_skill: None };
+    let mut m = Meta {
+        name: String::new(),
+        description: String::new(),
+        core_memory: false,
+        core_skill: None,
+    };
     if !content.starts_with("---") {
         return m;
     }
@@ -367,13 +580,18 @@ fn read_md_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn stem(p: &Path) -> String {
-    p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
+    p.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn find_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
-        if dir.join(".gitmodules").is_file() && dir.join("hermit").is_dir() && dir.join("reverie").is_dir()
+        if dir.join(".gitmodules").is_file()
+            && dir.join("hermit").is_dir()
+            && dir.join("reverie").is_dir()
         {
             return dir;
         }

@@ -1,16 +1,8 @@
 ---
-name: core-memory-base-feature-branches-on-frontier
-description: "dev-hermit is now MAIN-ONLY — frontier branch deleted 2026-07-22; base all work on origin/main (CORE-MEMORY mirror of memory/base-feature-branches-on-frontier.md)"
+name: base-feature-branches-on-frontier
+description: "dev-hermit is now MAIN-ONLY — frontier branch deleted 2026-07-22; base all work on origin/main"
 ---
 
-# CORE-MEMORY: base-feature-branches-on-frontier
-
-<!-- GENERATED MIRROR of core memory `base-feature-branches-on-frontier`. Source of truth is the memory
-     file `base-feature-branches-on-frontier.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: base-feature-branches-on-frontier.md) -->
 **SUPERSEDED 2026-07-22:** The `frontier` branch has been DELETED on both
 `rrnewton/hermit` and `rrnewton/reverie` (remote), by user directive to move to a
 main-only workflow. Do NOT base work on `origin/frontier` — it no longer exists.
@@ -32,4 +24,3 @@ PRs was closed and the workflow flipped to direct-to-main.
 **How to apply:** `git -C worktrees/slotNN switch -c <branch> origin/main`;
 `gh pr create --base main --draft`. See [[frontier-already-complete-dont-force-push]]
 and [[frontier-diverges-on-reverie-fork]] — both now obsolete.
-<!-- END CORE-MEMORY-MIRROR -->

@@ -1,16 +1,8 @@
 ---
-name: core-memory-validate-sh-rr-compat-counter-conflict
-description: "validate.sh RR_COMPAT_EXPECTED is a recurring rebase-conflict hotspot; it must EXACTLY equal the RR_COMPAT_PASSING_LABELS array size. Reconcile = base's current count + the PR's net-new additions, then verify the array count. (CORE-MEMORY mirror of memory/validate-sh-rr-compat-counter-conflict.md)"
+name: validate-sh-rr-compat-counter-conflict
+description: "validate.sh RR_COMPAT_EXPECTED is a recurring rebase-conflict hotspot; it must EXACTLY equal the RR_COMPAT_PASSING_LABELS array size. Reconcile = base's current count + the PR's net-new additions, then verify the array count."
 ---
 
-# CORE-MEMORY: validate-sh-rr-compat-counter-conflict
-
-<!-- GENERATED MIRROR of core memory `validate-sh-rr-compat-counter-conflict`. Source of truth is the memory
-     file `validate-sh-rr-compat-counter-conflict.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: validate-sh-rr-compat-counter-conflict.md) -->
 Recurring merge-conflict class when rebasing any hermit PR that adds programs to the record/replay corpus (seen landing PR #662, 2026-07-26). `validate.sh` has TWO coupled values that MUST agree:
 - `readonly RR_COMPAT_EXPECTED=<N>` (~line 291)
 - `declare -Ar RR_COMPAT_PASSING_LABELS=( [prog]=1 ... )` (~line 332)
@@ -22,4 +14,3 @@ When main and the PR both bump the RR corpus, the labels ARRAY usually auto-merg
 **CI gates for landing a hermit PR (merge-gate.yml):** the required check `merge-gate` passes iff EITHER the latest `ci-hosted.yml` run for the exact head SHA is `completed:success` OR the PR carries the `locally-validated` label. It does NOT check self-hosted PMU or `validation-levels.yml` ("Portable validation (PR)"). A merge-gate that ran while hosted CI was `in_progress` fails STALE; re-fire with `gh workflow run merge-gate.yml --ref <branch> -f pr_number=<n>` once ci-hosted is green. See [[undraft-does-not-trigger-ci]], [[self-hosted-ci-sigsegv-blocks-all-prs]], [[validate-sh-cannot-be-green-on-devserver]].
 
 **Flaky CI timeouts (not code regressions):** ci-hosted "Portable test lane" and validation-levels "Portable validation (PR)" intermittently fail on DBI/heavy-L2 program TIMEOUTS in the no-PMU hosted runner: `run_dbi_verifies_shell_process_lifecycle`/`dbi/argument_forwarding` (600s gate, exit 124) and rustc/java/javac/zstd L2 (exit 124 -> panic at reverie-ptrace/src/stack.rs:49, the unwinder after the forced kill). These clear on re-run; main's own ci-hosted passes them on faster runners. Don't attribute them to a record/replay or ptrace-fs PR.
-<!-- END CORE-MEMORY-MIRROR -->

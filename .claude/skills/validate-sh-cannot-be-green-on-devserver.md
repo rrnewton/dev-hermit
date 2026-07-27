@@ -1,16 +1,8 @@
 ---
-name: core-memory-validate-sh-cannot-be-green-on-devserver
-description: "./validate.sh never exits 0 on this devserver because baseline main fails host-sensitive detcore tests (CORE-MEMORY mirror of memory/validate-sh-cannot-be-green-on-devserver.md)"
+name: validate-sh-cannot-be-green-on-devserver
+description: "./validate.sh never exits 0 on this devserver because baseline main fails host-sensitive detcore tests"
 ---
 
-# CORE-MEMORY: validate-sh-cannot-be-green-on-devserver
-
-<!-- GENERATED MIRROR of core memory `validate-sh-cannot-be-green-on-devserver`. Source of truth is the memory
-     file `validate-sh-cannot-be-green-on-devserver.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: validate-sh-cannot-be-green-on-devserver.md) -->
 The prescribed local-landing gate is: run `./validate.sh` on a PR's rebased SHA,
 and if green apply the `locally-validated` label (the legitimate substitute for
 green CI), then merge. **Do NOT `--admin`-merge over red self-hosted CI**, and
@@ -43,4 +35,3 @@ host exception. Prefer merging on REAL "Regular tests (GitHub-hosted)" green
 (force-push triggers it) rather than `--admin`. Seed a warm `target/` into a slot
 with `cp -a --reflink=auto main/hermit/target <slot>/` — build drops from cold to
 ~2-14s. Relates to [[self-hosted-ci-sigsegv-blocks-all-prs]].
-<!-- END CORE-MEMORY-MIRROR -->

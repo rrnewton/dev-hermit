@@ -1,16 +1,8 @@
 ---
-name: core-memory-progress-reports-location-and-skill-symlink
-description: "Progress reports go in docs/progress-reports/ (NOT ai_docs/); the progress-rubric skill is symlinked into the hermit submodule (CORE-MEMORY mirror of memory/progress-reports-location-and-skill-symlink.md)"
+name: progress-reports-location-and-skill-symlink
+description: "Progress reports go in docs/progress-reports/ (NOT ai_docs/); the progress-rubric skill is symlinked into the hermit submodule"
 ---
 
-# CORE-MEMORY: progress-reports-location-and-skill-symlink
-
-<!-- GENERATED MIRROR of core memory `progress-reports-location-and-skill-symlink`. Source of truth is the memory
-     file `progress-reports-location-and-skill-symlink.md`. Regenerate: scripts/sync-memory-skill.rs. Verify in
-     sync: scripts/lint-memory-skill-sync.rs. Do NOT hand-edit inside the
-     markers — edit the memory and re-run sync. -->
-
-<!-- BEGIN CORE-MEMORY-MIRROR (source: progress-reports-location-and-skill-symlink.md) -->
 Canonical progress-report location = `docs/progress-reports/vN-YYYY-MM-DD.md`
 (where `scripts/progress-report.sh` writes; real reports v3-2026-07-22.md /
 v3-2026-07-23.md live there in the hermit submodule). The `progress-rubric`
@@ -33,4 +25,3 @@ REPO STRUCTURE GOTCHA (cost real investigation 2026-07-23):
 Delivered v4-2026-07-23.md report in parent devbig-lead (commit f6c66fd). A v3
 for today already existed in the submodule (c88bc0f) — check before creating to
 avoid dupes.
-<!-- END CORE-MEMORY-MIRROR -->
