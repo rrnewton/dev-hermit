@@ -1,0 +1,116 @@
+{
+  "date": "2026-07-26",
+  "task": "impl-kvm-linux-boot",
+  "host": {
+    "hostname": "devbig030.atn3.facebook.com",
+    "kernel": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+    "rustc": "rustc 1.99.0-nightly (be8e82435 2026-07-11)",
+    "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",
+    "qemu": "QEMU emulator version 10.1.0 (qemu-kvm-10.1.0-21.el9)"
+  },
+  "source": {
+    "hermit": {
+      "worktree": "worktrees/linux/hermit",
+      "branch": "kvm-linux-boot",
+      "base_sha": "c1c3eb2de826abe7c66a3ae8e7fd218036a9beb3",
+      "diff_sha256": "6eb5da47eaf9a3d60aa06b5bcc6f8b73768485929dc9da90438569f3f526cf2b",
+      "status": "uncommitted"
+    },
+    "reverie": {
+      "worktree": "worktrees/linux/reverie",
+      "branch": "kvm-linux-boot",
+      "base_sha": "e3300b20ae4901620d21f66dbd33699cd30da687",
+      "diff_sha256": "49f47710aa949e80d558234607087784d29e964d58a3d42aa784965faffb4722",
+      "hermit_pinned_sha": "4c6e9a0b73376ad18b7c5d4ad6e365ccd3d964ac",
+      "status": "uncommitted temporary Cargo patch"
+    }
+  },
+  "inputs": {
+    "kernel": {
+      "path": "ignored/qemu-linux/bzImage",
+      "bytes": 12742656,
+      "sha256": "e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2"
+    },
+    "initramfs": {
+      "path": "ignored/qemu-linux/initramfs-hermit.cpio.gz",
+      "bytes": 887,
+      "sha256": "33c545d416edafec0b5ae42afc457f7e2c61363e090ed2ad7af90882cd3d2eb0"
+    },
+    "hermit_binary": {
+      "path": "worktrees/linux/hermit/target/release/hermit",
+      "bytes": 54712584,
+      "sha256": "9bcc91dd23130743f7fd34f5fa27327c37a077b91eada853430156fe40eac58c"
+    },
+    "userspace_initramfs": {
+      "path": "scratch/kvm-linux-boot-20260726/userspace-initramfs.cpio.gz",
+      "bytes": 765030,
+      "sha256": "02f78aadb68d593974807a218a168007f7e768d2cc5393b6e508888b914559fb"
+    },
+    "busybox": {
+      "path": "/usr/sbin/busybox",
+      "bytes": 1306976,
+      "sha256": "e35db14651077c08598fbc3259609b2db398e5b7dcf07b28f1f3156118bcc081"
+    }
+  },
+  "qemu_arguments": [
+    "-m", "256M",
+    "-accel", "tcg,thread=single",
+    "-smp", "1",
+    "-icount", "shift=0,sleep=off",
+    "-kernel", "/home/newton/work/dev-hermit/ignored/qemu-linux/bzImage",
+    "-initrd", "/home/newton/work/dev-hermit/ignored/qemu-linux/initramfs-hermit.cpio.gz",
+    "-display", "none",
+    "-serial", "stdio",
+    "-monitor", "none",
+    "-no-reboot",
+    "-append", "console=ttyS0 panic=-1 rdinit=/init"
+  ],
+  "result": {
+    "exit_status": 0,
+    "console_lines": 311,
+    "console_bytes": 21609,
+    "marker": "SHARED_FUTEX_QEMU_KERNEL_OK",
+    "powered_down": true,
+    "strict": true,
+    "verify_runs": 2,
+    "verification_scope": "captured stdout, stderr, and exit status; internal concurrent Detcore log order excluded",
+    "stdout_sha256": "06eacb202e5e2f2005c8ca50a5765c98317d402560f8e18aaf8d9d0bea5f94f5",
+    "stderr_sha256": "1553f3e820fca5c6845a744fde43f369f15742cd87cd417f52780bd5d6e45f6d"
+  },
+  "expansion": {
+    "userspace": {
+      "exit_status": 0,
+      "console_lines": 321,
+      "console_bytes": 22121,
+      "verify_runs": 2,
+      "marker": "HERMIT-QEMU-AUTOTEST-PASS",
+      "stdout_sha256": "1096932938934e18135de64959caed276df5712dd669faef30e2735e235d1a64",
+      "stderr_sha256": "1553f3e820fca5c6845a744fde43f369f15742cd87cd417f52780bd5d6e45f6d"
+    },
+    "snapshot": {
+      "status": "blocked before savevm",
+      "timeout_seconds": 30.172,
+      "serial_bytes": 0,
+      "snapshot_listed": false,
+      "running_after_load": false,
+      "result_sha256": "6f3eb905ee799e0b4863dbccb826d63ee33ac52fd2f10e293eb1aedebf38eb7a"
+    },
+    "record_replay": {
+      "status": "unsupported for KVM; CLI now rejects",
+      "pre_guard_runtime": "ptrace",
+      "pre_guard_timeout_seconds": 20,
+      "pre_guard_console_bytes": 0,
+      "pre_guard_stderr_sha256": "40b45d53e1bbf47aece58d9f9c1d5088692b6fdbc1607f5ca19988838edb584e",
+      "rejection_stderr_sha256": "0c928ef3649291c7af88770593ef58e1f78d092a67f2eee143820d6d3630d6f7"
+    }
+  },
+  "raw_evidence": {
+    "directory": "scratch/kvm-linux-boot-20260726",
+    "native_stdout_sha256": "51b0aa64a1b683bccbf5b0142007c2c73cc2e5cbdd89060d0d2f64026efab9f7",
+    "native_stderr_sha256": "368032812453b688abb69904970e13ec36de607a7d29aa3ce616d30e1e98977e",
+    "verified_stdout_sha256": "06eacb202e5e2f2005c8ca50a5765c98317d402560f8e18aaf8d9d0bea5f94f5",
+    "verified_stderr_sha256": "1553f3e820fca5c6845a744fde43f369f15742cd87cd417f52780bd5d6e45f6d",
+    "userspace_verified_stdout_sha256": "1096932938934e18135de64959caed276df5712dd669faef30e2735e235d1a64",
+    "userspace_verified_stderr_sha256": "1553f3e820fca5c6845a744fde43f369f15742cd87cd417f52780bd5d6e45f6d"
+  }
+}

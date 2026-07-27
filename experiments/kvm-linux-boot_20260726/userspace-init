@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fixed non-interactive Linux userspace workload for QEMU-under-Hermit runs.
+mount -t proc none /proc 2>/dev/null
+mount -t sysfs none /sys 2>/dev/null
+mount -t devtmpfs none /dev 2>/dev/null || mount -t tmpfs none /dev 2>/dev/null
+[ -c /dev/ttyS0 ] || mknod /dev/ttyS0 c 4 64 2>/dev/null
+
+echo 'HERMIT-QEMU-AUTOTEST-START'
+uname -a
+echo '--- ls / ---'
+ls /
+echo '--- pi (bc -l, scale=10) ---'
+echo 'scale=10;4*a(1)' | busybox bc -l
+echo '--- sha256 /bin/busybox ---'
+busybox sha256sum /bin/busybox
+echo 'HERMIT-QEMU-AUTOTEST-PASS'
+poweroff -f
