@@ -33,12 +33,11 @@ for the record/replay section, and the Python demo uses `/usr/bin/python3`. The
 Demo 4 defaults to syscall-boundary schedule exploration; set
 `ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption.
 
-The demos use private temporary and ignored build-artifact directories and
-require no external network access. Demos 5 and 6 additionally need
-`qemu-system-x86_64`, `qemu-img`, Ncat (`nc`), a readable host kernel under
-`/boot` (or a `KERNEL_IMAGE` override), static BusyBox, `cpio`, and `gzip`.
-Demo 5 provisions and caches its kernel, initramfs, and qcow2 snapshot disk
-under `ignored/qemu-linux` on first use.
+The demos use private temporary and ignored build-artifact directories. Demos 5
+and 6 additionally need `qemu-system-x86_64`, `qemu-img`, the Meta `manifold`
+CLI, Ncat (`nc`), static BusyBox, `cpio`, and `gzip`. Demo 5 downloads a fixed
+kernel from Manifold, verifies its SHA-256, and caches it with the generated
+initramfs and qcow2 snapshot disk under `ignored/qemu-linux`.
 
 ## Layout
 
@@ -162,12 +161,20 @@ The resulting internal snapshot is stored in the ignored
 guest; it exists only as QEMU's VM-state store. Demo 5 then exits QEMU over QMP
 and prints pastable Demo 6 commands.
 
-On first use, the internal `demos/lib/qemu-assets.sh` helper copies the host's
-bootable kernel and builds a small static BusyBox initramfs, then caches both in
-the parent checkout's ignored artifact directory, matching
-`experiments/qemu-linux/setup.sh`. Set `KERNEL_IMAGE`, `BUSYBOX`, or
-`QEMU_ASSETS` when the host defaults are unsuitable. Later runs reuse the
-cached images.
+On first use, `demos/lib/qemu-assets.sh` downloads this content-addressed
+kernel and verifies it before atomically populating the cache:
+
+```text
+manifold://test/tree/dev-hermit/qemu-kernels/e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2/bzImage
+sha256: e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2
+```
+
+The helper also builds a small static BusyBox initramfs. Later runs reuse the
+kernel only after checking its SHA again, so stale or host-specific cache
+contents are replaced. `KERNEL_IMAGE` supplies a local copy of the same fixed
+kernel for offline testing. `QEMU_KERNEL_MANIFOLD_PATH` and
+`QEMU_KERNEL_SHA256` provide an explicit paired override for intentional kernel
+updates; `BUSYBOX` and `QEMU_ASSETS` retain their existing overrides.
 
 The boot and every resume use `--strict`, `--target-timeslice 100000`, and
 `--max-timeslice 2000000000`. Strict mode fails closed on unsupported
