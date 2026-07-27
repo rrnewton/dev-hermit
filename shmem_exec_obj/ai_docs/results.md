@@ -1,5 +1,66 @@
 # Feasibility Results
 
+## Versioned SDK, Futex, And Injection Checkpoint
+
+The standalone `v2` SDK, executable-image harness, and injection demo were
+validated on 2026-07-26 at implementation commit
+`a6be8551747a0935987578d2bcc4a9cfd352fee8`.
+
+### New Claims And Evidence
+
+| Hypothesis | Result | Evidence |
+| --- | --- | --- |
+| A process-shared lock must busy-spin | False on Linux | `ProcessFutexMutex` spins briefly, then uses non-private `FUTEX_WAIT`/`FUTEX_WAKE`; an exec test maps one memfd at a different VA and observes the waiter sleeping in the kernel before wakeup |
+| The futex slow path needs a libc relocation | False on tested LP64 targets | The copied `no_std` pod issues the raw syscall on x86-64/AArch64; the image closure has no undefined libc symbol |
+| An unaware executable can call the pod | Proven with `LD_PRELOAD` | A dependency-free guest calls ordinary `getuid`; the shim authenticates and maps inherited sealed FDs, then updates shared pod counters across a recursive exec tree |
+| `#[repr(C)]` is required for exact-build Rust peers | False | Default `repr(Rust)` state works when the loader authenticates the build and validates the generated size/alignment/field-offset/type fingerprint |
+| Public packaging must include the private image harness | False | Independent crates.io package verification includes the SDK, macros, docs, tests, and examples while excluding `poc/` and `demos/` |
+| Rustdoc alone is enough to use the core API | Proven for the tested surface | A third source-blind consumer built a default-layout state with atomics, a futex mutex, and a checked offset on its first compile |
+
+The full v2 harness produced an 8,216-byte authenticated image containing
+7,704 bytes of linked code:
+
+```text
+artifact sha256:   f87e73d2b8bde7ef74c441c5ebde1217246f7d2fef29e3218576dc07a27acd8c
+processes:         3 (host plus two independent exec workers)
+calls:             4,000 exact
+SNZI cycles:       2,000
+final query:       false
+final quiescent:   true
+```
+
+The default preload tree reported exactly 1,407 intercepted calls and seven
+attachments for seven processes, two threads per process, and 100 calls per
+thread. The extra seven calls are deliberate per-process initialization
+preflights. The legacy v1 harness also reproduced exact coarse, fine, and
+atomic totals after the directory split.
+
+### Validation
+
+```bash
+cargo +1.85.0 check --locked --workspace --all-targets --all-features
+cargo +1.85.0 test --locked -p shmem-pod --no-default-features
+cargo test --locked --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS='-D warnings' \
+  cargo +1.85.0 doc --locked --workspace --all-features --no-deps
+cargo package --locked -p shmem-pod-macros --allow-dirty
+cargo package --locked -p shmem-pod --allow-dirty \
+  --config 'patch.crates-io.shmem-pod-macros.path="crates/macros"'
+./v2/scripts/run-poc.sh
+./v2/scripts/run-preload-demo.sh
+```
+
+The macro package contained 8 files (9.3 KiB compressed). The main package
+contained 44 files (62.4 KiB compressed). Both verified independently; the
+local patch only simulates publishing `shmem-pod-macros` first.
+
+The futex mutex deliberately is not robust: a process killed while holding it
+can wedge peers just as the spin mutex can. Ptrace bootstrap and binary-patch
+trampolines are specified against the same C ABI but remain designs rather
+than implemented proofs. Fixed-address Talc remains experimental because the
+cross-process typed-pointer strict-provenance argument is unresolved.
+
 ## SDK And V2 Checkpoint
 
 The publishable SDK and linked executable-object implementation were validated
