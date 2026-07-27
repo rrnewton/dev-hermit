@@ -74,7 +74,7 @@ if [ "${HERMIT_AUTOTEST:-}" = "1" ] || grep -q hermit_autotest /proc/cmdline 2>/
     echo "HERMIT-QEMU-AUTOTEST-DONE"; poweroff -f
 fi
 echo "Interactive busybox shell. Type 'poweroff -f' to exit."
-exec /bin/sh
+exec setsid cttyhack sh
 INIT
 chmod +x "$root/init"
 printf 'root:x:0:0:root:/:/bin/sh\n' > "$root/etc/passwd"
