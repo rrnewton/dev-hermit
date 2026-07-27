@@ -57,25 +57,29 @@ initramfs and qcow2 snapshot disk under `ignored/qemu-linux`.
 ## Layout
 
 ```text
-README_DEMO.md              # this walkthrough
 Makefile                    # dependency install/check and release build
 demos/
+  README.md                 # this walkthrough
   common.sh                 # checks dependencies, builds hermit/, defines helpers
   01-deterministic-run.sh   # stable inputs, --verify
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
   04-schedule-bisection.sh  # portable syscall-boundary hermit analyze
-  05-qemu-boot.sh           # strict QEMU/Linux boot and snapshot
-  06-qemu-resume.sh         # resume snapshot and inject a serial command
+  05-qemu-boot.py           # boot, snapshot, metadata, repeat verification
+  06-qemu-resume.py         # resume, command snapshot, repeat verification
   lib/
+    demo_common.py          # hashes, metadata, QMP, serial, normalized log diff
+    qemu_controller.py      # deterministic in-Hermit QEMU serial/QMP controller
     qemu-assets.sh          # internal first-run kernel/initramfs helper
     qemu-snapshot.sh        # QMP, snapshot, and stable-log helpers
   run-all.sh                # demos 1-3; demo 4 and QEMU pair are opt-in
 ```
 
-Each script sources `demos/common.sh`, which locates the `hermit/` submodule,
+Demos 1-4 source `demos/common.sh`, which locates the `hermit/` submodule,
 builds the release and debug binaries, and defines the shared `run_hermit`,
-`verify_hermit`, and `chaos_run` wrappers. `run_hermit` and `chaos_run`
+`verify_hermit`, and `chaos_run` wrappers. The Python QEMU demos use
+`demos/lib/demo_common.py` for QMP, serial streaming, hashes, metadata, and
+repeat comparison. `run_hermit` and `chaos_run`
 deliberately disable CPUID virtualization and PMU timer preemption so the short
 examples also run on hosts without those features; CPUID is therefore a host
 input in those commands, and CPU-bound guests receive fewer preemption
@@ -181,7 +185,33 @@ At the shell, Demo 5 asks QEMU's QMP control socket to run `savevm hermit-boot`.
 The resulting internal snapshot is stored in the ignored
 `hermit-snapshot.qcow2` disk. The disk is deliberately not attached to the
 guest; it exists only as QEMU's VM-state store. Demo 5 then exits QEMU over QMP
-and prints pastable Demo 6 commands.
+and records the image hash, raw INFO log, tool versions, and timestamp. The
+first run becomes `ignored/qemu-linux/run-metadata.json`; later runs compare
+their exact qcow2 SHA-256 and normalized INFO log with that anchor and print a
+clear `PASS` or `WARN` report.
+
+Both Python QEMU demos keep the QEMU-visible paths fixed at
+`ignored/qemu-linux/qmp.sock`, `serial.sock`, and `hermit-snapshot.qcow2`.
+Changing a socket or image path changes QEMU's initial stack and heap, so a
+timestamped runtime directory would invalidate repeat comparisons before Linux
+boots. A shared lock prevents concurrent demos from colliding on these paths.
+The serial transcript is written to the fixed `serial.log` and copied into each
+run's history directory after QEMU exits. Demo 5 also preserves the clean boot
+image as `hermit-boot.qcow2` so Demo 6 can restore it into the fixed working
+image before every command.
+
+The serial marker observer and QMP client run in `qemu_controller.py` as a
+Hermit-managed parent of QEMU. Keeping that control process inside Hermit's
+scheduler prevents host Python scheduling from choosing the `savevm` turn.
+The outer demo process only streams the transcript and archives completed
+artifacts; it does not inject input into the running VM.
+
+QEMU stores a host-observation subsecond creation timestamp in each internal
+snapshot entry. That field does not describe guest state: two snapshots with
+identical VM state and VM clock can differ only in `date-nsec`. After QEMU
+exits, the demos parse the version 3 qcow2 snapshot table, validate the named
+entry, and zero only that field before hashing. The seconds-level creation
+time, VM clock, and serialized VM state remain part of the exact comparison.
 
 On first use, `demos/lib/qemu-assets.sh` downloads this content-addressed
 kernel and verifies it before atomically populating the cache:
@@ -208,20 +238,21 @@ timestamp-free tail.
 ### 6. QEMU Snapshot Resume
 
 Demo 6 starts the same QEMU machine with `-loadvm hermit-boot`, connects to its
-Unix serial socket, and injects one shell command. It prints the guest output,
-powers the guest off, and prints the normalized Hermit INFO tail. For example:
+Unix serial socket, and injects one shell command. It prints the guest output
+and normalized Hermit INFO tail, then saves a post-command snapshot unless
+`--no-save-snapshot` is passed. For example:
 
 ```bash
-./demos/06-qemu-resume.sh 'ls /'
-./demos/06-qemu-resume.sh 'cat /proc/cpuinfo'
-./demos/06-qemu-resume.sh 'uname -a'
-./demos/06-qemu-resume.sh 'echo hello'
+./demos/06-qemu-resume.py 'ls /'
+./demos/06-qemu-resume.py 'cat /proc/cpuinfo'
+./demos/06-qemu-resume.py 'uname -a'
+./demos/06-qemu-resume.py --no-save-snapshot 'echo hello'
 ```
 
-The first run of each command stores its INFO tail under the ignored QEMU asset
-directory, keyed by the snapshot image and command. Repeating the same command
-from the same snapshot must match that tail byte for byte; Demo 6 reports the
-match or fails with a diff.
+The command's SHA-256 selects its metadata directory. The first run anchors the
+guest-output hash, post-command qcow2 hash, and raw INFO log. Repeating that
+command compares all three and reports the first normalized log divergence
+without hiding virtual-time or scheduler differences.
 
 ## Scope And Next Steps
 
