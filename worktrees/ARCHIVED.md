@@ -427,3 +427,79 @@ Kept 14 (live/active/new): slot129,160,220,225,227,229,234,237,241,250,261,270,2
   - ps ('ps aux'): LIVE /proc PASSTHROUGH (same class as top). STAT col Rl vs Sl + VSZ/RSS diverge; /proc/[pid]/stat state char + /proc/[pid]/statm mem passthrough. Fix class = in-flight /proc/meminfo virtualization (memory proc-meminfo-live-passthrough-nondet).
   - CONTROLS this run: pgrep, uptime -p, df -P all PASS L2 despite touching /proc (no volatile fields surfaced).
 - Slot released clean via scripts/release-worktree.rs.
+
+## impl-kvm-ratchet-11 (KVM ratchet 11) — LANDED
+- Slot worktrees/kvm (hermit-kvm), branch kvm-ratchet11, base origin/main 1a2bd5eb.
+- PR #812 squash-merged to origin/main **50217651** (merge commit 502176516e48931a27af58886defe84b142cf527).
+- Change: determinize signal-send siblings tkill + rt_sigqueueinfo + rt_tgsigqueueinfo (detcore-only, no reverie gate). Count guard [206,91,76]->[209,91,73].
+- Validation: ptrace --strict --verify L2 byte-identical on rustbin_tkill; detcore --lib 140/140; fmt+clippy clean. Regular tests (GitHub-hosted) + merge-gate GREEN at PR head; PMU self-hosted queued (single-runner bottleneck) -> admin merge.
+- KVM: syscalls now serviced but in-process executor does NOT deliver signal to guest handler (pre-existing gap, proven via raise()/tgkill; cross-repo reverie-kvm follow-up).
+- Slot detached clean at 50217651, kept as standing hermit-kvm named slot.
+
+## kvm (agent hermit-kvm) — impl-kvm-ratchet-12 — LANDED 2026-07-26
+
+- Task: impl-kvm-ratchet-12 "KVM ratchet round 12: fix blockers, land"
+- Slot: worktrees/kvm (flat Hermit-only worktree), agent hermit-kvm
+- Branch: kvm-ratchet12 @ bbbba70cecccd5a63dc5737a3b30c035fc152573
+- Base: origin/main 50217651 (ratchet-11)
+- PR: https://github.com/rrnewton/hermit/pull/818 (MERGED)
+- Landed: origin/main merge commit 3b711be869c378afe013c9f91bb07fc3e42d0174
+- Change: determinize shutdown(2), the lone remaining Unsupported socket-family
+  syscall; count guard [209,91,73]->[210,91,72]; handle_shutdown record_or_replay
+  forward; rustbin_shutdown regression guest. detcore-only, no reverie gate.
+- Validation (ptrace): cargo test -p detcore --lib 140/140 (re-confirmed at
+  landed 3b711be8); hermit run --strict --verify -- rustbin_shutdown L2
+  byte-identical 639/639 msgs; fmt+clippy clean.
+- CI: Regular tests (GitHub-hosted) PASS 7m20s; PMU self-hosted QUEUED
+  (single-runner bottleneck) -> admin-squash-merge per rounds 7/8/9/11 precedent.
+  main advanced 3 commits (#811/#814/#815) pre-merge, none touched the
+  classification file (no count-guard collision; merge-tree clean).
+- Slot disposition: detached clean at landed main 3b711be8.
+- NB: open PR #820 (SysV sem/shm ENOSYS -> [217,91,65]) will count-collide
+  with this when it lands; coordinator reconciles.
+
+## impl-dbi-ratchet-16 — DBI Guest::backtrace (LANDED)
+- Agent: hermit-dbi | slot worktrees/dbi/reverie | branch dbi-ratchet-16-backtrace
+- Feature SHA: c362c45613adf31deedee245e7210b53842172c5 (base origin/main 9d360d5)
+- PR: https://github.com/rrnewton/reverie/pull/171 (MERGED, squash)
+- Landed: rrnewton/reverie origin/main e3300b20ae4901620d21f66dbd33699cd30da687
+  ("Implement Guest::backtrace for the DBI backend (#171)")
+- Change: implement DBI Guest::backtrace (was trait-default None) via an
+  in-process x86-64 frame-pointer walk seeded from the guest register file
+  (dr_get_mcontext), reading stack words through process_vm_readv on self
+  (read_guest_word) so a wild frame pointer ends the trace instead of SIGSEGV
+  aborting DynamoRIO. Requires guest frame pointers; DWARF-CFI unwinding is a
+  larger separate increment. Adds BacktraceTool + HERMIT_DBI_TEST_BACKTRACE +
+  backtrace_probe.c fixture. reverie-only, no hermit-side change.
+- Validation (backend=DBI, L0 Reverie-only, default log, no relaxations):
+  cargo test -p reverie-dbi --lib 41/41 (+2 new backtrace unit tests);
+  clippy+fmt clean; PROFILE=release test-example-tools.sh 25/25 incl new
+  HERMIT_DBI_TEST_BACKTRACE E2E (BACKTRACE ok=1 frames=5 top=0x401131).
+- CI at PR head: Regular tests (GitHub-hosted) PASS 3m30s; Host-dependent
+  tests (self-hosted) PASS 1m54s; merge-gate PASS after rerun (stale-fired
+  at 4s pre-CI, known behavior).
+- Slot disposition: detached clean at landed main e3300b2. Primary reverie/
+  ff-pulled to e3300b2.
+- FOLLOW-UP (coordinator): parent reverie gitlink bump 9d360d5 -> e3300b2 not
+  done (coordinator-owned); no hermit consumer change required for this
+  reverie-only Guest-contract addition.
+
+## impl-coord-worktree-health — registry reconciliation (2026-07-27)
+
+- Reclaimed released slot `worktrees/kvm`: local `kvm-ratchet15` tip
+  `732899f10e5631078abbd59fb89ea57b3b7b84cb` has stable patch-id
+  `7d499808946056521a434f94ca9195b6dd2f7da7`, identical to final PR #835 head
+  `1ba4ecbf98add983e801aefd99c5ed2eb8de52b7`; PR #835 landed on Hermit main as
+  `0087502fc9d1dce83fccd255bcac07bebe381379`. The clean physical worktree was
+  removed; the local branch remains as recovery history.
+- Removed released registry entries `249` (`impl-debug-batch-108`, closed) and
+  `253` (`impl-debug-batch-113`, closed). Slot `249` was no longer a Git
+  worktree and contained only a generated `target/` cache; slot `253` had no
+  physical path.
+- Removed the generated-only orphan `worktrees/slot229/target-hermit` and 22
+  empty orphan slot directories. No source checkout or uncommitted work was
+  removed.
+- Reconciled active branch/task metadata through `scripts/allocate-worktree.rs`.
+  Dirty `ci`, `debug30`, and `linux` worktrees were explicitly preserved.
+  Legacy Reverie PR #156 at `/tmp/dev-hermit-worktrees/slot344/reverie` and the
+  separate LiteInst2 worktree at `worktrees/slot241/liteinst2` remain intact.
