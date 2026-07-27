@@ -1,0 +1,94 @@
+[package]
+name = "shmem-pod"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+description = "No-std types and synchronization for executable shared-memory objects"
+documentation = "https://docs.rs/shmem-pod"
+readme = "README.md"
+keywords = ["shared-memory", "ipc", "no-std", "allocator"]
+categories = ["concurrency", "memory-management", "no-std"]
+include = ["/src/**", "/examples/**", "/tests/**", "/docs/**", "/README.md", "/LICENSE-*"]
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/macros",
+    "poc/api",
+    "poc/code",
+    "poc/compiler",
+    "poc/runtime",
+    "poc/host",
+    "demos/preload/shim",
+    "demos/preload/guest",
+    "demos/preload/host",
+]
+default-members = [".", "crates/macros"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+allocator-api2 = { version = "=0.4.0", default-features = false, features = ["alloc"] }
+libc = "0.2.174"
+lock_api = { version = "=0.4.14", default-features = false }
+shmem-pod = { path = ".", version = "0.1.0", default-features = false }
+shmem-pod-image-api = { path = "poc/api" }
+shmem-pod-runtime = { path = "poc/runtime" }
+sha2 = "0.10.9"
+talc = { version = "=5.0.4", default-features = false }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["derive"]
+derive = ["dep:shmem-pod-macros"]
+fixed-allocator = ["dep:allocator-api2", "dep:lock_api", "dep:talc"]
+linux-futex = ["dep:libc"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+allocator-api2 = { workspace = true, optional = true }
+lock_api = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+shmem-pod-macros = { path = "crates/macros", version = "0.1.0", optional = true }
+talc = { workspace = true, optional = true }
+
+[dev-dependencies]
+libc.workspace = true
+
+[[example]]
+name = "fixed_allocator_fork"
+required-features = ["fixed-allocator"]
+
+[[example]]
+name = "fixed_allocator_exec"
+required-features = ["fixed-allocator"]
+
+[[example]]
+name = "shared_counters"
+required-features = ["derive"]
+
+[[example]]
+name = "layout_handshake"
+required-features = ["derive"]
+
+[[example]]
+name = "relative_offsets"
+required-features = ["derive"]
+
+[[example]]
+name = "futex_mutex"
+required-features = ["linux-futex"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"

@@ -1,0 +1,12 @@
+[package]
+name = "shmem-pod-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+libc.workspace = true
+shmem-pod-image-api.workspace = true
+sha2.workspace = true

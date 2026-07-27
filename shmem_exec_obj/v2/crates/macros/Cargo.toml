@@ -1,0 +1,21 @@
+[package]
+name = "shmem-pod-macros"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+description = "Derive macros for shmem-pod shared-memory capability traits"
+documentation = "https://docs.rs/shmem-pod-macros"
+readme = "README.md"
+keywords = ["shared-memory", "ipc", "derive"]
+categories = ["concurrency", "no-std"]
+
+[lib]
+proc-macro = true
+path = "src/lib.rs"
+
+[dependencies]
+proc-macro-crate = "3.4"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }

@@ -1,0 +1,13 @@
+[package]
+name = "shmem-pod-image-code"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+shmem-pod = { workspace = true, features = ["linux-futex"] }
