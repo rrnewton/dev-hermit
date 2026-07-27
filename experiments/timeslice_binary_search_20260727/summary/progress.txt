@@ -1,0 +1,9 @@
+10:29:45 START max-timeslice=100000000
+10:32:58 DONE  max-timeslice=100000000 rc=0 wall=192.8s count=28520
+10:32:58 START max-timeslice=500000000
+10:34:00 DONE  max-timeslice=500000000 rc=0 wall=60.9s count=39015
+10:34:00 START max-timeslice=1000000000
+10:34:24 DONE  max-timeslice=1000000000 rc=0 wall=24.1s count=27623
+10:34:24 START max-timeslice=2000000000
+10:34:50 DONE  max-timeslice=2000000000 rc=0 wall=24.9s count=27636
+10:34:50 ALL DONE

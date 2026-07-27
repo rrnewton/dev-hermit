@@ -2,6 +2,4 @@ This is your periodic reminder to make sure your running state is aligned with y
 
 If you've been given a headline goal from the human, keep your main focus on that while keeping all the background prioritise moving.
 
-CURRENTLY: As of the morning of July 27, EDT. The human wants the landing sprint to get our open PRs count down to single digits, and ideally as close to zero as possible.  On the administrative side, make sure we finish or did finish sorting out the skills separation and workflow/memories/protocol cleanup, and when we get back to NEW work after the landing sprint: ratcheting up Reverie backend completeness and compat, and beyond that hermit --verify and R/R compat.
-
-Remember to keep your fixed-target agents going, one per backend, hermit-coord, and one hermit-ci to always focus on CI health and CI improvements.
+CURRENTLY: As of the 3pm of July 27, EDT. I want us improving main (stability CI cleanup etc) for a mini "release" and landing quickly. I want a really high quality Linux qemu boot demo and the hermit-linux experimental work to keep pushing forward as planned.

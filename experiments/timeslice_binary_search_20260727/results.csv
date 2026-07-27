@@ -1,0 +1,7 @@
+max_timeslice,exit_code,wall_seconds,timeslice_count,reached_serial
+10000000,124,300.0,NA,yes
+50000000,124,300.0,NA,yes
+100000000,0,194.1,NA,yes
+500000000,0,60.5,NA,yes
+1000000000,0,20.1,NA,yes
+2000000000,0,35.3,NA,yes

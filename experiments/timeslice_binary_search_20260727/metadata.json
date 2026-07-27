@@ -1,0 +1,18 @@
+{
+  "task": "impl-timeslice-binary-search",
+  "agent": "hermit-274",
+  "slot": "worktrees/274",
+  "date": "2026-07-27",
+  "hermit_sha": "d16b7fc67c190e489cd2f58b0173570d8d39c0ad",
+  "hermit_binary": "worktrees/274/hermit/target/release/hermit",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 devbig030.atn3.facebook.com",
+  "qemu": "/usr/local/bin/qemu-system-x86_64",
+  "kernel": "ignored/qemu-linux/bzImage",
+  "initrd": "ignored/qemu-linux/initramfs-hermit.cpio.gz",
+  "hermit_flags": "run --strict --target-timeslice 100000 --max-timeslice <V>",
+  "qemu_flags": "-accel tcg,thread=single -smp 1 -icount shift=0,sleep=off -append 'console=ttyS0 panic=1' -nographic -no-reboot -m 256",
+  "timeout_seconds": 300,
+  "values_tested": [10000000, 50000000, 100000000, 500000000, 1000000000, 2000000000],
+  "primary_metric": "PMU RCB overshoot count (deterministic, load-independent)",
+  "knee": 1000000000
+}

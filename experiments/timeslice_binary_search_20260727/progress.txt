@@ -1,0 +1,13 @@
+=== max-timeslice=10000000 start ===
+=== max-timeslice=10000000 done ec=124 wall=300.005898777s count=NA reached=yes ===
+=== max-timeslice=50000000 start ===
+=== max-timeslice=50000000 done ec=124 wall=300.005764349s count=NA reached=yes ===
+=== max-timeslice=100000000 start ===
+=== max-timeslice=100000000 done ec=0 wall=194.135577313s count=NA reached=yes ===
+=== max-timeslice=500000000 start ===
+=== max-timeslice=500000000 done ec=0 wall=60.544967897s count=NA reached=yes ===
+=== max-timeslice=1000000000 start ===
+=== max-timeslice=1000000000 done ec=0 wall=20.125286613s count=NA reached=yes ===
+=== max-timeslice=2000000000 start ===
+=== max-timeslice=2000000000 done ec=0 wall=35.335902961s count=NA reached=yes ===
+ALL DONE

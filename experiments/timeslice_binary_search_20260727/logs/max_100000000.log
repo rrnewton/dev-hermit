@@ -1,0 +1,1219 @@
+WARNING: /usr/local/bin/qemu-system-x86_64 looks like a hardware emulator (VMM). Hermit's host-time virtualization exposes mutually inconsistent clock sources (a synthetic RDTSC versus a virtualized clock_gettime) to the emulated guest, which can corrupt its clock calibration (for example "Unable to calibrate against PIT", TSC marked unstable, or "No current clocksource") and stall boot. If the nested guest misbehaves, either disable Hermit's virtual clock with --no-virtualize-time --no-virtualize-metadata, or make the emulator use a single instruction-derived clock (for QEMU: -icount shift=0,sleep=off). See docs/QEMU_BOOT.md.
+2026-07-27T17:07:38.264258Z  WARN detcore: [dtid 3] cpuid leaf 0x8000000 not in deterministic table; returning zero result
+qemu-system-x86_64: warning: Machine type 'pc-i440fx-rhel7.6.0' is deprecated: machines from the previous RHEL major release are subject to deletion in the next RHEL major release
+qemu-system-x86_64: warning: CPU model qemu64-x86_64-cpu is deprecated -- use at least 'Nehalem' / 'Opteron_G4', or 'host' / 'max'
+2026-07-27T17:07:38.595591Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11008097. Stepped forward 9998493 RCBs, but should have trapped at 9998493
+2026-07-27T17:07:38.785735Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 39385392. Stepped forward 9999800 RCBs, but should have trapped at 9999800
+c[?7l[2J[0mSeaBIOS (version 1.16.3-5.el9)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+0EFCCB30+0EF0CB30 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from ROM...
+Probing EDD (edd=off to disable)... o2026-07-27T17:07:39.800001Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 284403496. Stepped forward 9999408 RCBs, but should have trapped at 9999408
+2026-07-27T17:07:39.927036Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 294403496. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+c[?7l[2J2026-07-27T17:07:40.090018Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 318410702. Stepped forward 9999800 RCBs, but should have trapped at 9999800
+2026-07-27T17:07:40.238661Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 328410702. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:40.388136Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 338410702. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:40.535601Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 348410702. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:40.783795Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 365532472. Stepped forward 9998759 RCBs, but should have trapped at 9998759
+2026-07-27T17:07:41.027382Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 375532472. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:41.271550Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 385532472. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:41.517015Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 395532472. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:41.761008Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 406759863. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:41.980266Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 416759863. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:42.242528Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 426759863. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:42.486093Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 436759863. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:42.721382Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 455857522. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:42.966432Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 465857522. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:43.210402Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 475857522. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:43.457253Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 485857522. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:43.697662Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 495857522. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:43.961830Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 507140385. Stepped forward 9992517 RCBs, but should have trapped at 9992517
+2026-07-27T17:07:44.273909Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 517140385. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:44.492810Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 527140385. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:44.762078Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 537140385. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:44.996804Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 547140385. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:45.243148Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 557242912. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:45.511423Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 567242912. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:45.749017Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 577242912. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:45.986375Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 587242912. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:46.271305Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 607176851. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:46.557103Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 617176851. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:46.807079Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 627176851. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:47.050316Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 637176851. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:47.282622Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 656344448. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:47.488402Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 666344448. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:47.705754Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 676344448. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:47.925318Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 686344448. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:48.175091Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 696344448. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:48.420013Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 706455881. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:48.649990Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 716455881. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:48.867127Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 726455881. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:49.101452Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 736455881. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:49.349638Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 756191400. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:49.578315Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 766191400. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:49.807544Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 776191400. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:50.038093Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 786191400. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:50.288818Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 805928803. Stepped forward 9996555 RCBs, but should have trapped at 9996555
+2026-07-27T17:07:50.511006Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 815928803. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:50.737957Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 825928803. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:50.954556Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 835928803. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:51.201731Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 855753523. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:51.451174Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 865753523. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:51.665190Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 875753523. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:51.921050Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 885753523. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:52.172301Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 895753523. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:52.399117Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 905845406. Stepped forward 9996587 RCBs, but should have trapped at 9996587
+2026-07-27T17:07:52.633016Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 915845406. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:52.870402Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 925845406. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:53.115763Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 935845406. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:53.358637Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 945845406. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:53.619625Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 956543417. Stepped forward 9993899 RCBs, but should have trapped at 9993899
+2026-07-27T17:07:53.875397Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 966543417. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:54.107209Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 976543417. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:54.340004Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 986543417. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:54.593731Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 996543417. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:54.855237Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1006966992. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:55.114746Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1016966992. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:55.358828Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1026966992. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:55.629435Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1036966992. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:55.895119Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1046966992. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:56.130558Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1057456537. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:56.353179Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1067456537. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:56.572552Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1077456537. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:56.794667Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1087456537. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:57.057399Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1097456537. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:57.296965Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1108634914. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:57.526323Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1118634914. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:57.782356Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1128634914. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:58.037101Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1138634914. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:58.288708Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1148634914. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:58.523967Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1159064026. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:07:58.781994Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1169064026. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:59.025401Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1179064026. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:59.255144Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1189064026. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:59.483826Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1199064026. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:07:59.757810Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1209491336. Stepped forward 9993321 RCBs, but should have trapped at 9993321
+2026-07-27T17:08:00.022271Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1219491336. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:00.274544Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1229491336. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:00.547757Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1239491336. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:00.804674Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1249491336. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:01.061770Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1260706927. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:01.338748Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1270706927. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:01.581654Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1280706927. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:01.836381Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1290706927. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:02.097610Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1300706927. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:02.367101Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1312556538. Stepped forward 9996530 RCBs, but should have trapped at 9996530
+2026-07-27T17:08:02.622069Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1322556538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:02.891655Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1332556538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:03.148383Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1342556538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:03.369399Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1352556538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:03.594154Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1365396551. Stepped forward 9990675 RCBs, but should have trapped at 9990675
+2026-07-27T17:08:03.850920Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1375396551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:04.080483Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1385396551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:04.317214Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1395396551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:04.553632Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1405396551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:04.835700Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1418331356. Stepped forward 9996188 RCBs, but should have trapped at 9996188
+2026-07-27T17:08:05.069832Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1428331356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:05.318903Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1438331356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:05.555643Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1448331356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:05.806048Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1458331356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:06.062831Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1469431172. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:06.299821Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1479431172. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:06.563336Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1489431172. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:06.792657Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1499431172. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:07.048524Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1509431172. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:07.312069Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1521173216. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:07.562809Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1531173216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:07.824888Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1541173216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:08.050273Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1551173216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:08.288846Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1561173216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:08.508681Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1572691501. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:08.752212Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1582691501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:08.980597Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1592691501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:09.219050Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1602691501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:09.438249Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1612691501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:09.675113Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1624218543. Stepped forward 9994068 RCBs, but should have trapped at 9994068
+2026-07-27T17:08:09.914120Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1634218543. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:10.158634Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1644218543. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:10.383190Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1654218543. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:10.618850Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1664218543. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:10.845746Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1675841876. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:11.086193Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1685841876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:11.349212Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1695841876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:11.607228Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1705841876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:11.865467Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1715841876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:12.126797Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1727762434. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:12.360428Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1737762434. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:12.583921Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1747762434. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:12.815832Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1757762434. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:13.054048Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1767762434. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:13.288331Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1779301504. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:13.517161Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1789301504. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:13.755419Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1799301504. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:13.988602Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1809301504. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:14.242242Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1819301504. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:14.518617Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1831147435. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:14.755654Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1841147435. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:15.066271Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1851147435. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:15.303222Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1861147435. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:15.584434Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1871147435. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:15.821872Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1882671710. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:16.048056Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1892671710. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:16.304181Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1902671710. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:16.570755Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1912671710. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:16.801508Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1922671710. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:17.040320Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1934585034. Stepped forward 9993503 RCBs, but should have trapped at 9993503
+2026-07-27T17:08:17.275007Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1944585034. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:17.581448Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1954585034. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:17.841031Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1964585034. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:18.068257Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1974585034. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:18.297508Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1986356326. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:18.549099Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 1996356326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:18.774270Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2006356326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:18.996557Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2016356326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:19.308993Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2026356326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:19.572355Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2038011132. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:19.835331Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2048011132. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:20.076025Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2058011132. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:20.313643Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2068011132. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:20.590503Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2078011132. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:20.846790Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2089724398. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:21.114469Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2099724398. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:21.346546Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2109724398. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:21.606487Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2119724398. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:21.856676Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2129724398. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:22.122545Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2141715463. Stepped forward 9996306 RCBs, but should have trapped at 9996306
+2026-07-27T17:08:22.354087Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2151715463. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:22.575248Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2161715463. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:22.848160Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2171715463. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:23.099093Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2181715463. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:23.341669Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2193237439. Stepped forward 9993629 RCBs, but should have trapped at 9993629
+2026-07-27T17:08:23.591954Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2203237439. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:23.837054Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2213237439. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:24.064994Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2223237439. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:24.294104Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2233237439. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:24.551614Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2245123926. Stepped forward 9992215 RCBs, but should have trapped at 9992215
+2026-07-27T17:08:24.795549Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2255123926. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:25.034211Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2265123926. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:25.304472Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2275123926. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:25.560440Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2290824610. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:25.789141Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2300824610. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:26.016445Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2310824610. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:26.247947Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2320824610. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:26.472418Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2338429382. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:26.707749Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2348429382. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:26.947986Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2358429382. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:27.210581Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2368429382. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:27.489173Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2387600334. Stepped forward 9993669 RCBs, but should have trapped at 9993669
+2026-07-27T17:08:27.732250Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2397600334. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:27.950997Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2407600334. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:28.206744Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2417600334. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:28.467308Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2434306755. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:28.702255Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2444306755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:28.930269Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2454306755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:29.148692Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2464306755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:29.417423Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2483289558. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:29.658084Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2493289558. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:29.895056Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2503289558. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:30.153404Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2513289558. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:30.391438Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2531594708. Stepped forward 9996611 RCBs, but should have trapped at 9996611
+2026-07-27T17:08:30.619200Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2541594708. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:30.827825Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2551594708. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:31.052181Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2561594708. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:31.263696Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2571594708. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:31.498565Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2582621333. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:31.721969Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2592621333. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:31.944044Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2602621333. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:32.157616Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2612621333. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:32.373188Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2622621333. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:32.597224Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2632621333. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:32.845397Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2646146565. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:33.056470Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2656146565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:33.277019Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2666146565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:33.493918Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2676146565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:33.706323Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2686146565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:33.922858Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2696146565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:34.149183Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2710042501. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:34.392743Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2720042501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:34.651364Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2730042501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:34.865308Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2740042501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:35.078497Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2750042501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:35.287519Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2760042501. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:35.504171Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2772019018. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:35.722027Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2782019018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:35.938929Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2792019018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:36.157516Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2802019018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:36.398010Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2812019018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:36.659190Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2829197060. Stepped forward 9990517 RCBs, but should have trapped at 9990517
+2026-07-27T17:08:36.893799Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2839197060. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:37.157387Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2849197060. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:37.424119Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2859197060. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:37.689661Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2872310354. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:37.928212Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2882310354. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:38.191707Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2892310354. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:38.424964Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2902310354. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:38.695456Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2914629453. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:38.912768Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2924629453. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:39.144206Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2934629453. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:39.389813Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2944629453. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:39.613554Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2954629453. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:39.843969Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2967511738. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:40.054603Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2977511738. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:40.278731Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2987511738. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:40.487979Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 2997511738. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:40.709000Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3007511738. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:40.981345Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3026716454. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:41.238090Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3036716454. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:41.464460Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3046716454. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:41.702045Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3056716454. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:41.930800Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3073346560. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:42.152619Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3083346560. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:42.365775Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3093346560. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:42.577458Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3103346560. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:42.829043Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3113346560. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:43.051079Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3131271876. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:43.311429Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3141271876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:43.526982Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3151271876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:43.740521Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3161271876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:43.971728Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3171271876. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:44.207075Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3188089661. Stepped forward 9992123 RCBs, but should have trapped at 9992123
+2026-07-27T17:08:44.425805Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3198089661. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:44.689656Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3208089661. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:44.928357Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3218089661. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:45.141702Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3228089661. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:45.360448Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3243227351. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:45.585993Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3253227351. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:45.815579Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3263227351. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:46.072208Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3273227351. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:46.332464Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3283227351. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:46.581635Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3298384240. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:46.811049Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3308384240. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:47.022702Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3318384240. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:47.259803Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3328384240. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:47.476815Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3338384240. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:47.716898Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3353732755. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:47.938118Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3363732755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:48.163140Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3373732755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:48.384894Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3383732755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:48.618110Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3393732755. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:48.862281Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3408785955. Stepped forward 9996450 RCBs, but should have trapped at 9996450
+2026-07-27T17:08:49.090736Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3418785955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:49.324898Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3428785955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:49.581874Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3438785955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:49.841231Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3448785955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:50.118407Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3461306404. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:50.371007Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3471306404. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:50.653926Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3481306404. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:50.950320Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3491306404. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:51.208328Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3505088209. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:51.471360Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3515088209. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:51.743899Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3525088209. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:52.005595Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3535088209. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:52.280853Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3547564707. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:52.540629Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3557564707. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:52.802433Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3567564707. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:53.064334Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3577564707. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:53.321346Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3589879930. Stepped forward 9996710 RCBs, but should have trapped at 9996710
+2026-07-27T17:08:53.579092Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3599879930. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:53.821392Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3609879930. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:54.051950Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3619879930. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:54.299138Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3634806001. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:54.547291Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3644806001. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:54.798003Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3654806001. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:55.048788Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3664806001. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:55.358682Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3681381017. Stepped forward 9990944 RCBs, but should have trapped at 9990944
+2026-07-27T17:08:55.608506Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3691381017. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:55.849985Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3701381017. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:56.089235Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3711381017. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:56.330208Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3727527431. Stepped forward 9992810 RCBs, but should have trapped at 9992810
+2026-07-27T17:08:56.555208Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3737527431. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:56.798033Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3747527431. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:57.046658Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3757527431. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:57.263646Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3767527431. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:57.493532Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3777671599. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:08:57.711892Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3787671599. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:57.946819Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3797671599. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:58.159057Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3807671599. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:58.375932Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3817671599. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:58.606592Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3835677882. Stepped forward 9996186 RCBs, but should have trapped at 9996186
+2026-07-27T17:08:58.830446Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3845677882. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:59.047831Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3855677882. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:59.260644Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3865677882. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:59.471473Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3875677882. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:59.680899Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3885677882. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:08:59.895430Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3902321064. Stepped forward 9992300 RCBs, but should have trapped at 9992300
+2026-07-27T17:09:00.101303Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3912321064. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:00.337760Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3922321064. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:00.555146Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3932321064. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:00.760975Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3942321064. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:00.981292Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3952321064. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:01.202494Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3969799674. Stepped forward 9993241 RCBs, but should have trapped at 9993241
+2026-07-27T17:09:01.426127Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3979799674. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:01.638749Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3989799674. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:01.849189Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 3999799674. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:02.066461Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4009799674. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:02.279717Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4019799674. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:02.523914Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4037316872. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:02.745448Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4047316872. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:02.956231Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4057316872. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:03.169167Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4067316872. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:03.383967Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4077316872. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:03.596857Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4087316872. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:03.824000Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4105204174. Stepped forward 9990830 RCBs, but should have trapped at 9990830
+2026-07-27T17:09:04.032473Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4115204174. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:04.251164Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4125204174. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:04.467754Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4135204174. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:04.684863Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4145204174. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:04.903375Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4155204174. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:05.120643Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4172611955. Stepped forward 9990268 RCBs, but should have trapped at 9990268
+2026-07-27T17:09:05.329780Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4182611955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:05.544839Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4192611955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:05.770029Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4202611955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:05.980545Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4212611955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:06.191403Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4222611955. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:06.451994Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4239847326. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:06.701649Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4249847326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:06.960674Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4259847326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:07.216113Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4269847326. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:07.479182Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4285058607. Stepped forward 9991556 RCBs, but should have trapped at 9991556
+2026-07-27T17:09:07.715573Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4295058607. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:07.947553Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4305058607. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:08.192327Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4315058607. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:08.427490Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4333350538. Stepped forward 9993364 RCBs, but should have trapped at 9993364
+2026-07-27T17:09:08.638729Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4343350538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:08.853475Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4353350538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:09.094872Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4363350538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:09.335966Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4373350538. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:09.550555Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4384481039. Stepped forward 9996603 RCBs, but should have trapped at 9996603
+2026-07-27T17:09:09.771171Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4394481039. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:09.992910Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4404481039. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:10.211068Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4414481039. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:10.451583Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4424481039. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:10.674578Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4443897789. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:10.898541Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4453897789. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:11.118788Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4463897789. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:11.345556Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4473897789. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:11.562708Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4483897789. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:11.801178Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4502772511. Stepped forward 9991822 RCBs, but should have trapped at 9991822
+2026-07-27T17:09:12.022948Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4512772511. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:12.246345Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4522772511. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:12.468449Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4532772511. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:12.690184Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4542772511. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:12.937805Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4562513000. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:13.175995Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4572513000. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:13.412991Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4582513000. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:13.655265Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4592513000. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:13.904670Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4608619315. Stepped forward 9996573 RCBs, but should have trapped at 9996573
+2026-07-27T17:09:14.144389Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4618619315. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:14.383122Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4628619315. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:14.615367Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4638619315. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:14.860424Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4654745157. Stepped forward 9994205 RCBs, but should have trapped at 9994205
+2026-07-27T17:09:15.095954Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4664745157. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:15.337553Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4674745157. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:15.573620Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4684745157. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:15.822967Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4700869997. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:16.048466Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4710869997. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:16.279564Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4720869997. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:16.524453Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4735989886. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:16.759891Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4745989886. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:16.998694Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4755989886. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:17.232547Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4766601711. Stepped forward 9996813 RCBs, but should have trapped at 9996813
+2026-07-27T17:09:17.463197Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4776601711. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:17.695132Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4786601711. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:17.925970Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4797171951. Stepped forward 9996815 RCBs, but should have trapped at 9996815
+2026-07-27T17:09:18.158588Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4807171951. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:18.391892Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4817171951. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:18.626775Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4827759483. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:18.857822Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4837759483. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:19.086891Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4847759483. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:19.317652Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4858586895. Stepped forward 9996813 RCBs, but should have trapped at 9996813
+2026-07-27T17:09:19.546348Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4868586895. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:19.775898Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4878586895. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:20.018444Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4889402193. Stepped forward 9991672 RCBs, but should have trapped at 9991672
+2026-07-27T17:09:20.248850Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4899402193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:20.480344Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4909402193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:20.708597Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4920231356. Stepped forward 9996813 RCBs, but should have trapped at 9996813
+2026-07-27T17:09:20.941819Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4930231356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:21.179498Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4940231356. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:21.419982Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4951056289. Stepped forward 9996632 RCBs, but should have trapped at 9996632
+2026-07-27T17:09:21.654315Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4961056289. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:21.886914Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4971056289. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:22.117278Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4981880792. Stepped forward 9996814 RCBs, but should have trapped at 9996814
+2026-07-27T17:09:22.359735Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 4991880792. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:22.596026Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5001880792. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:22.837232Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5012698192. Stepped forward 9996813 RCBs, but should have trapped at 9996813
+2026-07-27T17:09:23.074727Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5022698192. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:23.309507Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5032698192. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:23.543995Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5043527636. Stepped forward 9993172 RCBs, but should have trapped at 9993172
+2026-07-27T17:09:23.775270Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5053527636. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:24.115382Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5063527636. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:24.453628Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5074227249. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:24.792919Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5084227249. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:25.142028Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5100472099. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:25.478242Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5110472099. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:25.830904Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5126734414. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:26.167387Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5136734414. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:26.515414Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5153173076. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:26.854754Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5163173076. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:27.212245Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5179491829. Stepped forward 9992113 RCBs, but should have trapped at 9992113
+2026-07-27T17:09:27.562739Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5189491829. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:27.918264Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5205853076. Stepped forward 9993570 RCBs, but should have trapped at 9993570
+2026-07-27T17:09:28.258325Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5215853076. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:28.789893Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5232267216. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:29.127151Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5242267216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:29.475669Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5258673608. Stepped forward 9996892 RCBs, but should have trapped at 9996892
+2026-07-27T17:09:29.808417Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5268673608. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:30.157267Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5285114871. Stepped forward 9996893 RCBs, but should have trapped at 9996893
+2026-07-27T17:09:30.410227Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5295114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:30.664961Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5305114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:30.906767Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5315114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:31.136774Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5325114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:31.360576Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5335114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:31.595089Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5345114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:31.825758Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5355114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:32.056355Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5365114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:32.300637Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5375114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:32.549958Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5385114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:32.798557Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5395114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:33.063152Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5405114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:33.329444Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5415114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:33.561503Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5425114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:33.784228Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5435114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:34.006098Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5445114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:34.241614Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5455114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:34.472095Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5465114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:34.702837Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5475114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:34.944737Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5485114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:35.187991Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5495114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:35.443693Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5505114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:35.703436Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5515114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:35.950058Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5525114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:36.172299Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5535114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:36.391612Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5545114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:36.623943Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5555114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:36.852512Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5565114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:37.106535Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5575114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:37.348085Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5585114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:37.570396Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5595114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:37.794336Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5605114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:38.025086Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5615114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:38.259318Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5625114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:38.494479Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5635114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:38.739366Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5645114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:38.984250Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5655114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:39.235509Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5665114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:39.493401Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5675114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:39.752512Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5685114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:39.977734Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5695114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:40.202000Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5705114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:40.426441Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5715114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:40.658334Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5725114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:40.891401Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5735114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:41.245333Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5745114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:41.625783Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5755114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:42.013270Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5765114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:42.394130Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5775114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:42.705530Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5785114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:42.958930Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5795114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:43.176607Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5805114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:43.399649Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5815114871. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:43.622166Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5831660028. Stepped forward 9999500 RCBs, but should have trapped at 9999500
+2026-07-27T17:09:43.860803Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5841660028. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:44.062925Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5851660028. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:44.286881Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5861660028. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:44.511192Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5881292347. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:44.695309Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5898743426. Stepped forward 9999500 RCBs, but should have trapped at 9999500
+2026-07-27T17:09:44.899452Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5910416821. Stepped forward 9999500 RCBs, but should have trapped at 9999500
+2026-07-27T17:09:45.209792Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5943394662. Stepped forward 9999800 RCBs, but should have trapped at 9999800
+2026-07-27T17:09:45.382874Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5971119554. Stepped forward 9998896 RCBs, but should have trapped at 9998896
+2026-07-27T17:09:45.581482Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5981119554. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:45.806928Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 5999994891. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:46.022551Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6009994891. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:46.217281Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6019994891. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.000000] Linux version 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 (root@8799-0fd3-0004-0000.twshared50661.04.nha2.tw.fbinfra.net) (clang version 19.1.7 (CentOS 19.1.7-1.el9), LLD 19.1.7) #1 SMP Thu Dec 18 12:27:13 PST 2025
+[    0.000000] Command line: console=ttyS0 panic=1
+[    0.000000] KERNEL supported cpus:
+[    0.000000]   Intel GenuineIntel
+[    0.000000]   AMD AuthenticAMD
+[    0.000000] BIOS-provided physical RAM map:
+[    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+[    0.000000] BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+[    0.000000] BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+[    0.000000] BIOS-e820: [mem 0x0000000000100000-0x000000000ffdffff] usable
+[    0.000000] BIOS-e820: [mem 0x000000000ffe0000-0x000000000fffffff] reserved
+[    0.000000] BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+[    0.000000] NX (Execute Disable) protection: active
+[    0.000000] APIC: Static calls initialized
+[    0.000000] SMBIOS 2.8 present.
+[    0.000000] DMI: Red Hat KVM, BIOS 1.16.3-5.el9 11/05/2023
+[    0.000000] DMI: Memory slots populated: 1/1
+[    0.000000] tsc: Fast TSC calibration using PIT
+[    0.000000] tsc: Detected 1000.012 MHz processor
+[    0.005062] last_pfn = 0xffe0 max_arch_pfn = 0x400000000
+[    0.005068] MTRR map: 4 entries (3 fixed + 1 variable; max 19), built from 8 variable MTRRs
+[    0.005073] x86/PAT: Configuration [0-7]: WB  WC  UC- UC  WB  WP  UC- WT  
+[    0.006216] RAMDISK: [mem 0x0ffdf000-0x0ffdffff]
+[    0.006220] ACPI: Early table checksum verification disabled
+[    0.006224] ACPI: RSDP 0x00000000000F5290 000014 (v00 BOCHS )
+[    0.006232] ACPI: RSDT 0x000000000FFE227E 000030 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+[    0.006243] ACPI: FACP 0x000000000FFE216A 000074 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+[    0.006256] ACPI: DSDT 0x000000000FFE0040 00212A (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+[    0.006267] ACPI: FACS 0x000000000FFE0000 000040
+[    0.006275] ACPI: APIC 0x000000000FFE21DE 000078 (v03 BOCHS  BXPC     00000001 BXPC 00000001)
+[    0.006286] ACPI: WAET 0x000000000FFE2256 000028 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+[    0.006297] ACPI: Reserving FACP table memory at [mem 0xffe216a-0xffe21dd]
+[    0.006301] ACPI: Reserving DSDT table memory at [mem 0xffe0040-0xffe2169]
+[    0.006305] ACPI: Reserving FACS table memory at [mem 0xffe0000-0xffe003f]
+[    0.006310] ACPI: Reserving APIC table memory at [mem 0xffe21de-0xffe2255]
+[    0.006314] ACPI: Reserving WAET table memory at [mem 0xffe2256-0xffe227d]
+[    0.006352] No NUMA configuration found
+[    0.006354] Faking a node at [mem 0x0000000000000000-0x000000000ffdffff]
+[    0.006360] NODE_DATA(0) allocated [mem 0x0ffdc500-0x0ffdefff]
+[    0.006403] Zone ranges:
+[    0.006405]   DMA      [mem 0x0000000000001000-0x0000000000ffffff]
+[    0.006410]   DMA32    [mem 0x0000000001000000-0x000000000ffdffff]
+[    0.006415]   Normal   empty
+[    0.006418]   Device   empty
+[    0.006421] Movable zone start for each node
+[    0.006423] Early memory node ranges
+[    0.006425]   node   0: [mem 0x0000000000001000-0x000000000009efff]
+[    0.006429]   node   0: [mem 0x0000000000100000-0x000000000ffdffff]
+[    0.006434] Initmem setup node 0 [mem 0x0000000000001000-0x000000000ffdffff]
+[    0.006447] On node 0, zone DMA: 1 pages in unavailable ranges
+[    0.006582] On node 0, zone DMA: 97 pages in unavailable ranges
+[    0.008626] On node 0, zone DMA32: 32 pages in unavailable ranges
+[    0.008634] ACPI: PM-Timer IO Port: 0x608
+[    0.008644] ACPI: LAPIC_NMI (acpi_id[0xff] dfl dfl lint[0x1])
+[    0.008650] IOAPIC[0]: apic_id 0, version 32, address 0xfec00000, GSI 0-23
+[    0.008657] ACPI: INT_SRC_OVR (bus 0 bus_irq 0 global_irq 2 dfl dfl)
+[    0.008662] ACPI: INT_SRC_OVR (bus 0 bus_irq 5 global_irq 5 high level)
+[    0.008667] ACPI: INT_SRC_OVR (bus 0 bus_irq 9 global_irq 9 high level)
+[    0.008672] ACPI: INT_SRC_OVR (bus 0 bus_irq 10 global_irq 10 high level)
+[    0.008677] ACPI: INT_SRC_OVR (bus 0 bus_irq 11 global_irq 11 high level)
+[    0.008688] ACPI: Using ACPI (MADT) for SMP configuration information
+[    0.008722] CPU topo: Max. logical packages:   1
+[    0.008725] CPU topo: Max. logical dies:       1
+[    0.008727] CPU topo: Max. dies per package:   1
+[    0.008761] CPU topo: Max. threads per core:   1
+[    0.008764] CPU topo: Num. cores per package:     1
+[    0.008766] CPU topo: Num. threads per package:   1
+[    0.008769] CPU topo: Allowing 1 present CPUs plus 0 hotplug CPUs
+[    0.008789] [mem 0x10000000-0xfffbffff] available for PCI devices
+[    0.008792] Booting paravirtualized kernel on bare hardware
+[    0.008795] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 1910969940391419 ns
+[    0.037221] Load bootconfig: 23 bytes 3 nodes
+[    0.037236] setup_percpu: NR_CPUS:512 nr_cpumask_bits:1 nr_cpu_ids:1 nr_node_ids:1
+[    0.037723] percpu: Embedded 79 pages/cpu s286720 r8192 d28672 u2097152
+[    0.037795] Kernel command line: csdlock_debug=1 console=ttyS0 panic=1
+[    0.037847] printk: log buffer data + meta data: 2097152 + 7340032 = 9437184 bytes
+[    0.037903] Dentry cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.037935] Inode-cache hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    0.037964] Fallback order for Node 0: 0 
+[    0.037969] Built 1 zonelists, mobility grouping on.  Total pages: 65406
+[    0.037973] Policy zone: DMA32
+[    0.038397] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.039708] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+[    0.042166] ftrace: allocating 58796 entries in 232 pages
+[    0.042170] ftrace: allocated 232 pages with 4 groups
+[    0.042300] rcu: Hierarchical RCU implementation.
+[    0.042302] rcu: 	RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=1.
+[    0.042306] 	Rude variant of Tasks RCU enabled.
+[    0.042308] 	Tracing variant of Tasks RCU enabled.
+[    0.042309] rcu: RCU calculated value of scheduler-enlistment delay is 100 jiffies.
+[    0.042312] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
+[    0.042322] RCU Tasks Rude: Setting shift to 0 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=1.
+[    0.042327] RCU Tasks Trace: Setting shift to 0 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=1.
+[    0.070827] NR_IRQS: 33024, nr_irqs: 256, preallocated irqs: 16
+[    0.071081] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.071250] kfence: initialized - using 2097152 bytes for 255 objects at 0x(____ptrval____)-0x(____ptrval____)
+[    0.071314] Console: colour VGA+ 80x25
+[    0.071323] printk: legacy console [ttyS0] enabled
+[    0.072230] ACPI: Core revision 20250404
+[    0.072286] APIC: Switch to symmetric I/O mode setup
+[    0.072501] ..TIMER: vector=0x30 apic1=0 pin1=2 apic2=-1 pin2=-1
+2026-07-27T17:09:47.078175Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6070025497. Stepped forward 9995763 RCBs, but should have trapped at 9995763
+2026-07-27T17:09:47.238579Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6080025497. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:47.409014Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6098149322. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:47.567831Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6108148322. Stepped forward 9998879 RCBs, but should have trapped at 9998879
+2026-07-27T17:09:47.725885Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6118148322. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:47.897435Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6136292703. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:48.059160Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6146292703. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:48.223322Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6156292703. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:48.388856Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6172187193. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:48.549184Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6182187193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:48.707572Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6192187193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:48.869506Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6207690801. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:49.023864Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6217690801. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:49.180516Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6227690801. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.077288] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0xe6a2269eac, max_idle_ns: 440795236700 ns
+[    0.077311] Calibrating delay loop (skipped), value calculated using timer frequency.. 2000.02 BogoMIPS (lpj=1000012)
+[    0.077347] Last level iTLB entries: 4KB 0, 2MB 0, 4MB 0
+[    0.077359] Last level dTLB entries: 4KB 0, 2MB 0, 4MB 0, 1GB 0
+[    0.077376] mitigations: Enabled attack vectors: user_kernel, user_user, guest_host, guest_guest, SMT mitigations: auto
+[    0.077407] Speculative Store Bypass: Vulnerable
+[    0.077418] Spectre V2 : Mitigation: Retpolines
+[    0.077428] Spectre V1 : Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+[    0.077444] Spectre V2 : Spectre v2 / SpectreRSB: Filling RSB on context switch and VMEXIT
+[    0.077461] x86/fpu: x87 FPU will use FXSAVE
+[    0.134272] Freeing SMP alternatives memory: 60K
+[    0.134288] pid_max: default: 32768 minimum: 301
+[    0.134339] LSM: initializing lsm=capability,bpf,ima
+[    0.134723] LSM support for eBPF active
+[    0.134789] Mount-cache hash table entries: 512 (order: 0, 4096 bytes, linear)
+[    0.134807] Mountpoint-cache hash table entries: 512 (order: 0, 4096 bytes, linear)
+2026-07-27T17:09:51.071904Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6660942901. Stepped forward 9993930 RCBs, but should have trapped at 9993930
+2026-07-27T17:09:51.218677Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6678031010. Stepped forward 9998961 RCBs, but should have trapped at 9998961
+2026-07-27T17:09:51.384421Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6694216530. Stepped forward 9997942 RCBs, but should have trapped at 9997942
+2026-07-27T17:09:51.547691Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6704216530. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:51.710549Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6714216030. Stepped forward 9999484 RCBs, but should have trapped at 9999484
+2026-07-27T17:09:51.875108Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6726573302. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:52.035559Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6736572302. Stepped forward 9998909 RCBs, but should have trapped at 9998909
+2026-07-27T17:09:52.203089Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6746572302. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:52.370189Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6758822594. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:52.534081Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6768821594. Stepped forward 9998884 RCBs, but should have trapped at 9998884
+2026-07-27T17:09:52.697288Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6778821594. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:52.859191Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6790842762. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:53.018138Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6800842762. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:53.181178Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6810842762. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:53.343439Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6822882225. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:53.503040Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6832882225. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:53.665296Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6842882225. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:53.825523Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6854906827. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:53.983132Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6864906827. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:54.144101Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6874906827. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:54.306076Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6886920702. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:54.468854Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6896920702. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:54.627952Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6906920702. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:54.792839Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6918929126. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:54.955384Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6928929126. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:55.114414Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6938929126. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:55.278366Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6950937341. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:55.436533Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6960937341. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:55.596812Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6970937341. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:55.758397Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6982945648. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:55.922200Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 6992945648. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:56.085449Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7002945648. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:56.255798Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7014963331. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:56.420424Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7024963331. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:56.583429Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7034963331. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:56.753111Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7046976913. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:56.918240Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7056976913. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:57.077249Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7066976913. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:57.239008Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7078985442. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:57.397574Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7088985442. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:57.555954Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7098985442. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:57.715828Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7110993655. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:57.875351Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7120993655. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:58.041050Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7130993655. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:58.200710Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7143001950. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:58.361494Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7153001950. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:58.520949Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7163001950. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:58.682976Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7175010082. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:58.845530Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7185010082. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:59.006029Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7195010082. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:59.169228Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7207018500. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:59.330876Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7217018500. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:59.489158Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7227018500. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:59.650570Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7239026712. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:09:59.811611Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7249026712. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:09:59.970450Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7259026712. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:00.131040Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7271035013. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:00.294541Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7281035013. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:00.468712Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7291035013. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:00.630639Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7303043193. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:00.787652Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7313043193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:00.947725Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7323043193. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:01.108786Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7335059754. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:01.269064Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7345059754. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:01.429308Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7355059754. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:01.591530Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7367070690. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:01.753570Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7377070690. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:01.913155Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7387070690. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:02.071840Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7399083317. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:02.232310Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7409083317. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:02.394565Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7419083317. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:02.556291Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7431097503. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:02.714538Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7441097503. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:02.874232Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7451097503. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:03.037274Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7463112018. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:03.198340Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7473112018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:03.355410Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7483112018. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:03.517070Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7495120264. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:03.676815Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7505120264. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:03.838318Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7515120264. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:04.005001Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7527128565. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:04.171869Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7537128565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:04.333206Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7547128565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:04.494604Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7559136772. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:04.656133Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7569136772. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:04.814619Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7579136772. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:04.975136Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7591144953. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:05.132622Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7601144953. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:05.291678Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7611144953. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:05.454117Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7623153441. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:05.615122Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7633153441. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:05.773792Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7643153441. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:05.933269Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7655161686. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:06.092015Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7665161686. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:06.254675Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7675161686. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:06.419199Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7687169978. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:06.578042Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7697169978. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:06.738969Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7707169978. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:06.900825Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7719178150. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:07.063543Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7729178150. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:07.223216Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7739178150. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:07.388473Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7751186571. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:07.560312Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7761186571. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:07.728843Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7771186571. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:07.894736Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7783194783. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:08.057630Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7793194783. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:08.219976Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7803194783. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:08.383759Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7815203087. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:08.546310Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7825203087. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:08.708085Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7835203087. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:08.872242Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7847211270. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:09.033867Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7857211270. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:09.195243Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7867211270. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:09.359153Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7879219695. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:09.522093Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7889219695. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:09.683285Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7899219695. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:09.847176Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7911227903. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:10.008871Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7921227903. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:10.173641Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7931227903. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:10.337796Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7943236195. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:10.500052Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7953236195. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:10.664778Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7963235695. Stepped forward 9999382 RCBs, but should have trapped at 9999382
+2026-07-27T17:10:10.830461Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7975248780. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:10.992534Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7985248280. Stepped forward 9999418 RCBs, but should have trapped at 9999418
+2026-07-27T17:10:11.153846Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 7995248280. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:11.315325Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8007256471. Stepped forward 9997942 RCBs, but should have trapped at 9997942
+2026-07-27T17:10:11.475747Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8017256471. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:11.633498Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8027255971. Stepped forward 9999457 RCBs, but should have trapped at 9999457
+2026-07-27T17:10:11.795301Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8039265288. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:11.953883Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8049264788. Stepped forward 9999465 RCBs, but should have trapped at 9999465
+2026-07-27T17:10:12.113913Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8059264788. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:12.279250Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8071273643. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:12.442287Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8081273643. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:12.602030Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8091273643. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:12.777906Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8103281850. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:12.935914Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8113281850. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:13.092414Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8123281850. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:13.253012Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8135290011. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:13.412490Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8145290011. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:13.569858Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8155290011. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:13.730231Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8167299865. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:13.890699Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8177299865. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:14.048022Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8187299865. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:14.207493Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8199308165. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:14.368939Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8209308165. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:14.529601Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8219308165. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:14.694111Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8231316008. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:14.858892Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8241316008. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:15.022243Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8251316008. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:15.182767Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8263324489. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:15.343672Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8273324489. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:15.499869Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8283324489. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:15.659560Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8295332699. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:15.819472Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8305332699. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:15.975485Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8315332699. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:16.133823Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8327341047. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:16.294735Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8337341047. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:16.453663Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8347341047. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:16.621302Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8359348902. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:16.784752Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8369348902. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:16.946434Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8379348902. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:17.103239Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8391357387. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:17.270161Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8401357387. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:17.431094Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8411357387. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:17.592037Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8423365556. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:17.756104Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8433365556. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:17.916840Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8443365556. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:18.076367Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8455373892. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:18.239201Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8465373892. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:18.400447Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8475373892. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:18.565859Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8487381735. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:18.729146Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8497381735. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:18.891632Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8507381735. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:19.050655Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8519390216. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:19.212618Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8529390216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:19.369625Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8539390216. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:19.533014Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8551398389. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:19.694982Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8561398389. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:19.857690Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8571398389. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:20.020813Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8583406701. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:20.185671Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8593406701. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:20.344258Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8603406701. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:20.503831Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8615414556. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:20.664815Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8625414556. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:20.828997Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8635414556. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:20.995366Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8647427403. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:21.159329Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8657427403. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:21.320503Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8667427403. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:21.482149Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8679435887. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:21.645525Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8689435887. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:21.804671Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8699435887. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:21.965566Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8711444162. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:22.134630Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8721444162. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:22.299253Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8731444162. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:22.466456Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8743452392. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:22.629767Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8753452392. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:22.796630Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8763452392. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:22.961305Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8775460565. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:23.122461Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8785460565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:23.281767Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8795460565. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:23.442346Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8807469088. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:23.598601Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8817469088. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:23.758681Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8827469088. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:23.922312Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8839478912. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:24.080936Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8849478912. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:24.240093Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8859478912. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:24.401140Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8871486838. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:24.567404Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8881486838. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:24.729050Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8891486838. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:24.898668Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8903494999. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:25.059919Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8913494999. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:25.220358Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8923494999. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:25.380767Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8935503312. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:25.544634Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8945503312. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:25.705002Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8955503312. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:25.869347Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8967511615. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:26.032527Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8977511615. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:26.197421Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8987511615. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:26.362037Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 8999519494. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:26.529109Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9009519494. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:26.694408Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9019519494. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:26.861284Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9031527651. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:27.021193Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9041527651. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:27.182042Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9051527651. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:27.342828Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9063535902. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:27.507402Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9073535902. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:27.666724Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9083535902. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:27.831956Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9095543645. Stepped forward 9997942 RCBs, but should have trapped at 9997942
+2026-07-27T17:10:27.991194Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9105543645. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:28.150177Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9115543145. Stepped forward 9999439 RCBs, but should have trapped at 9999439
+2026-07-27T17:10:28.311965Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9127551816. Stepped forward 9997942 RCBs, but should have trapped at 9997942
+2026-07-27T17:10:28.473044Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9137551816. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:28.630975Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9147551316. Stepped forward 9999409 RCBs, but should have trapped at 9999409
+2026-07-27T17:10:28.794294Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9159560511. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:28.953500Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9169559511. Stepped forward 9998929 RCBs, but should have trapped at 9998929
+2026-07-27T17:10:29.110281Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9179559511. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:29.270341Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9191568821. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:29.430778Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9201568821. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:29.590231Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9211568821. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:29.750967Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9223577164. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:29.924062Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9233577164. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:30.083290Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9243577164. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:30.243125Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9255585323. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:30.401290Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9265585323. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:30.563847Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9275585323. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:30.723773Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9287598201. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:30.885199Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9297598201. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:31.047202Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9307598201. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:31.210133Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9319606590. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:31.375832Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9329606590. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:31.535412Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9339606590. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:31.698807Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9351614808. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:31.859924Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9361614808. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:32.017680Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9371614808. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:32.182433Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9383623150. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:32.349061Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9393623150. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:32.510983Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9403623150. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:32.673957Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9415631328. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:32.838256Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9425631328. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:32.997249Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9435631328. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:33.159796Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9447639748. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:33.322283Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9457639748. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:33.483008Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9467639748. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:33.645995Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9479647951. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:33.807269Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9489647951. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:33.970324Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9499647951. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:34.134659Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9511656246. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:34.296515Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9521656246. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:34.460631Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9531656246. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:34.624205Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9543665952. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:34.784576Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9553665952. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:34.946112Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9563665952. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:35.109641Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9575674227. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:35.274554Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9585674227. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:35.434040Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9595674227. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:35.599051Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9607682442. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:35.760386Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9617682442. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:35.923369Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9627682442. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:36.086074Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9639690649. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:36.252720Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9649690649. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:36.418214Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9659690649. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:36.585100Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9671698791. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:36.749850Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9681698791. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:36.914768Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9691698791. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:37.082795Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9703707310. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:37.249350Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9713707310. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:37.409822Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9723707310. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:37.573154Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9735715479. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:37.734239Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9745715479. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:37.894460Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9755715479. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:38.057491Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9767723709. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:38.221945Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9777723709. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:38.381805Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9787723709. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:38.546134Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9799731847. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:38.708820Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9809731847. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:38.871199Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9819731847. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:39.033853Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9831740370. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:39.197610Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9841740370. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:39.357660Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9851740370. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:39.521354Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9863748551. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:39.684320Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9873748551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:39.846019Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9883748551. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:40.011043Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9895756793. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:40.179342Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9905756793. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:40.340377Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9915756793. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:40.503910Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9927764935. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:40.663728Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9937764935. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:40.826086Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 9947764935. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.237266] smpboot: CPU0: AMD QEMU Virtual CPU version 2.5+ (family: 0x6, model: 0x6, stepping: 0x3)
+[    0.237309] Performance Events: PMU not available due to virtualization, using software events only.
+[    0.237309] signal: max sigframe size: 1440
+[    0.237309] rcu: Hierarchical SRCU implementation.
+[    0.237309] rcu: 	Max phase no-delay instances is 400.
+[    0.237888] NMI watchdog: Perf NMI watchdog permanently disabled
+[    0.237963] smp: Bringing up secondary CPUs ...
+[    0.237976] smp: Brought up 1 node, 1 CPU
+[    0.237987] smpboot: Total of 1 processors activated (2000.02 BogoMIPS)
+[    0.238060] Memory: 188544K/261624K available (20273K kernel code, 9610K rwdata, 15088K rodata, 2512K init, 6488K bss, 69328K reserved, 0K cma-reserved)
+[    0.238232] devtmpfs: initialized
+[    0.238307] x86/mm: Memory block size: 128MB
+[    0.238986] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 1911260446275000 ns
+[    0.239009] posixtimers hash table entries: 512 (order: 1, 8192 bytes, linear)
+[    0.239031] futex hash table entries: 256 (16384 bytes on 1 NUMA nodes, total 16 KiB, linear).
+[    0.240933] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.241197] DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations
+[    0.241216] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.241235] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+[    0.241265] audit: initializing netlink subsys (disabled)
+[    0.241505] thermal_sys: Registered thermal governor 'step_wise'
+[    0.241509] thermal_sys: Registered thermal governor 'user_space'
+[    0.241530] audit: type=2000 audit(1640995264.169:1): state=initialized audit_enabled=0 res=1
+[    0.241562] cpuidle: using governor menu
+[    0.241750] dca service started, version 1.12.1
+[    0.241769] PCI: Using configuration type 1 for base access
+[    0.242030] kprobes: kprobe jump-optimization is enabled. All kprobes are optimized if possible.
+[    0.385403] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.385416] HugeTLB: 28 KiB vmemmap can be freed for a 2.00 MiB page
+2026-07-27T17:10:41.446409Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10156433877. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:41.612453Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10166433877. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:41.773420Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10176433877. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:41.934327Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10186433877. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.407326] raid6: sse2x4   gen()  1287 MB/s
+2026-07-27T17:10:42.152979Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10247797457. Stepped forward 9995941 RCBs, but should have trapped at 9995941
+2026-07-27T17:10:42.313110Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10257796957. Stepped forward 9999483 RCBs, but should have trapped at 9999483
+2026-07-27T17:10:42.472558Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10267796957. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:42.631204Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10277795957. Stepped forward 9998824 RCBs, but should have trapped at 9998824
+2026-07-27T17:10:42.791134Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10287795957. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:42.950228Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10297795957. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.424326] raid6: sse2x2   gen()  1365 MB/s
+2026-07-27T17:10:43.161597Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10359668752. Stepped forward 9995930 RCBs, but should have trapped at 9995930
+2026-07-27T17:10:43.318034Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10369668752. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:43.479103Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10379668752. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:43.636462Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10389668752. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:43.794674Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10399668752. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:43.955055Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10409668752. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    0.441315] raid6: sse2x1   gen()  1135 MB/s
+[    0.441325] raid6: using algorithm sse2x2 gen() 1365 MB/s
+2026-07-27T17:10:44.170181Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10465156059. Stepped forward 9993516 RCBs, but should have trapped at 9993516
+2026-07-27T17:10:44.333108Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10475155559. Stepped forward 9999394 RCBs, but should have trapped at 9999394
+2026-07-27T17:10:44.492316Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10485155559. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:44.654612Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10495155059. Stepped forward 9999417 RCBs, but should have trapped at 9999417
+2026-07-27T17:10:44.814748Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10505155059. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:44.975067Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10515154559. Stepped forward 9999440 RCBs, but should have trapped at 9999440
+[    0.458314] raid6: .... xor() 838 MB/s, rmw enabled
+[    0.458325] raid6: using intx1 recovery algorithm
+[    0.458396] ACPI: Added _OSI(Module Device)
+[    0.458406] ACPI: Added _OSI(Processor Device)
+[    0.458417] ACPI: Added _OSI(Processor Aggregator Device)
+[    0.461479] ACPI: 1 ACPI AML tables successfully acquired and loaded
+[    0.539557] ACPI: Interpreter enabled
+[    0.539573] ACPI: PM: (supports S0 S5)
+[    0.539582] ACPI: Using IOAPIC for interrupt routing
+[    0.539610] PCI: Using host bridge windows from ACPI; if necessary, use "pci=nocrs" and report a bug
+[    0.539627] PCI: Ignoring E820 reservations for host bridge windows
+[    0.539871] ACPI: Enabled 2 GPEs in block 00 to 0F
+[    0.546186] ACPI: PCI Root Bridge [PCI0] (domain 0000 [bus 00-ff])
+[    0.546206] acpi PNP0A03:00: _OSC: OS supports [ASPM ClockPM Segments MSI EDR HPX-Type3]
+[    0.546225] acpi PNP0A03:00: _OSC: not requesting OS control; OS requires [ExtendedConfig ASPM ClockPM MSI]
+[    0.546262] acpi PNP0A03:00: fail to add MMCONFIG information, can't access extended configuration space under this bridge
+[    0.546596] PCI host bridge to bus 0000:00
+[    0.546611] pci_bus 0000:00: root bus resource [io  0x0000-0x0cf7 window]
+[    0.546627] pci_bus 0000:00: root bus resource [io  0x0d00-0xffff window]
+[    0.546644] pci_bus 0000:00: root bus resource [mem 0x000a0000-0x000bffff window]
+[    0.546661] pci_bus 0000:00: root bus resource [mem 0x10000000-0xfebfffff window]
+[    0.546679] pci_bus 0000:00: root bus resource [mem 0x100000000-0x17fffffff window]
+[    0.546697] pci_bus 0000:00: root bus resource [bus 00-ff]
+[    0.546736] pci 0000:00:00.0: [8086:1237] type 00 class 0x060000 conventional PCI endpoint
+[    0.546876] pci 0000:00:01.0: [8086:7000] type 00 class 0x060100 conventional PCI endpoint
+[    0.547029] pci 0000:00:01.1: [8086:7010] type 00 class 0x010180 conventional PCI endpoint
+[    0.547055] pci 0000:00:01.1: BAR 4 [io  0xc040-0xc04f]
+[    0.547070] pci 0000:00:01.1: BAR 0 [io  0x01f0-0x01f7]: legacy IDE quirk
+[    0.547086] pci 0000:00:01.1: BAR 1 [io  0x03f6]: legacy IDE quirk
+[    0.547101] pci 0000:00:01.1: BAR 2 [io  0x0170-0x0177]: legacy IDE quirk
+[    0.547117] pci 0000:00:01.1: BAR 3 [io  0x0376]: legacy IDE quirk
+[    0.548544] pci 0000:00:01.3: [8086:7113] type 00 class 0x068000 conventional PCI endpoint
+[    0.548576] pci 0000:00:01.3: quirk: [io  0x0600-0x063f] claimed by PIIX4 ACPI
+[    0.548594] pci 0000:00:01.3: quirk: [io  0x0700-0x070f] claimed by PIIX4 SMB
+[    0.548724] pci 0000:00:02.0: [1234:1111] type 00 class 0x030000 conventional PCI endpoint
+[    0.548749] pci 0000:00:02.0: BAR 0 [mem 0xfd000000-0xfdffffff pref]
+[    0.548766] pci 0000:00:02.0: BAR 2 [mem 0xfebf0000-0xfebf0fff]
+[    0.548782] pci 0000:00:02.0: ROM [mem 0xfebe0000-0xfebeffff pref]
+[    0.548808] pci 0000:00:02.0: Video device with shadowed ROM at [mem 0x000c0000-0x000dffff]
+[    0.548934] pci 0000:00:03.0: [8086:100e] type 00 class 0x020000 conventional PCI endpoint
+[    0.548960] pci 0000:00:03.0: BAR 0 [mem 0xfebc0000-0xfebdffff]
+[    0.548975] pci 0000:00:03.0: BAR 1 [io  0xc000-0xc03f]
+[    0.548991] pci 0000:00:03.0: ROM [mem 0xfeb80000-0xfebbffff pref]
+[    0.550835] ACPI: PCI: Interrupt link LNKA configured for IRQ 10
+[    0.550973] ACPI: PCI: Interrupt link LNKB configured for IRQ 10
+[    0.551112] ACPI: PCI: Interrupt link LNKC configured for IRQ 11
+[    0.551251] ACPI: PCI: Interrupt link LNKD configured for IRQ 11
+[    0.551325] ACPI: PCI: Interrupt link LNKS configured for IRQ 9
+[    0.560879] iommu: Default domain type: Translated
+[    0.560890] iommu: DMA domain TLB invalidation policy: lazy mode
+[    0.561147] SCSI subsystem initialized
+[    0.561225] ACPI: bus type USB registered
+[    0.561273] usbcore: registered new interface driver usbfs
+[    0.561303] usbcore: registered new interface driver hub
+[    0.561330] usbcore: registered new device driver usb
+[    0.561375] pps_core: LinuxPPS API ver. 1 registered
+[    0.561385] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.561407] PTP clock support registered
+[    0.562484] EDAC MC: Ver: 3.0.0
+[    0.563160] PCI: Using ACPI for IRQ routing
+[    0.565127] clocksource: Switched to clocksource tsc-early
+[    0.565307] VFS: Disk quotas dquot_6.6.0
+[    0.565307] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[    0.565307] pnp: PnP ACPI init
+[    0.565307] pnp: PnP ACPI: found 5 devices
+2026-07-27T17:10:45.946258Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10794403456. Stepped forward 9998266 RCBs, but should have trapped at 9998266
+2026-07-27T17:10:46.107475Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10804403456. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:46.273747Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10820120909. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:46.436296Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10830120409. Stepped forward 9999393 RCBs, but should have trapped at 9999393
+2026-07-27T17:10:46.607988Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10846807397. Stepped forward 9998266 RCBs, but should have trapped at 9998266
+2026-07-27T17:10:46.772127Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10856807397. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:46.939362Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10873498395. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:47.095869Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10883497895. Stepped forward 9999455 RCBs, but should have trapped at 9999455
+2026-07-27T17:10:47.279293Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 10900189399. Stepped forward 9998266 RCBs, but should have trapped at 9998266
+[    0.577059] clocksource: acpi_pm: mask: 0xffffff max_cycles: 0xffffff, max_idle_ns: 2085701024 ns
+[    0.577249] NET: Registered PF_INET protocol family
+[    0.577345] IP idents hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.716609] tcp_listen_portaddr_hash hash table entries: 256 (order: 0, 4096 bytes, linear)
+[    0.716631] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.716652] TCP established hash table entries: 2048 (order: 2, 16384 bytes, linear)
+[    0.716685] TCP bind hash table entries: 2048 (order: 4, 65536 bytes, linear)
+[    0.716727] TCP: Hash tables configured (established 2048 bind 2048)
+[    0.716799] MPTCP token hash table entries: 256 (order: 1, 6144 bytes, linear)
+[    0.716829] UDP hash table entries: 256 (order: 2, 16384 bytes, linear)
+[    0.716857] UDP-Lite hash table entries: 256 (order: 2, 16384 bytes, linear)
+[    0.716947] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.716967] NET: Registered PF_XDP protocol family
+[    0.716987] pci_bus 0000:00: resource 4 [io  0x0000-0x0cf7 window]
+[    0.717003] pci_bus 0000:00: resource 5 [io  0x0d00-0xffff window]
+[    0.717019] pci_bus 0000:00: resource 6 [mem 0x000a0000-0x000bffff window]
+[    0.717036] pci_bus 0000:00: resource 7 [mem 0x10000000-0xfebfffff window]
+[    0.717053] pci_bus 0000:00: resource 8 [mem 0x100000000-0x17fffffff window]
+[    0.717150] pci 0000:00:01.0: PIIX3: Enabling Passive Release
+[    0.717165] pci 0000:00:00.0: Limiting direct PCI/PCI transfers
+[    0.717218] PCI: CLS 0 bytes, default 64
+[    0.717438] Trying to unpack rootfs image as initramfs...
+[    0.717606] Freeing initrd memory: 4K
+[    1.117637] Initialise system trusted keyrings
+[    1.117751] workingset: timestamp_bits=43 max_order=16 bucket_order=0
+[    1.118212] fuse: init (API version 7.44)
+[    1.118587] SGI XFS with ACLs, security attributes, realtime, quota, no debug enabled
+[    1.121309] cryptd: max_cpu_qlen set to 1000
+[    1.217579] NET: Registered PF_ALG protocol family
+[    1.217606] xor: measuring software checksum speed
+[    1.218465]    prefetch64-sse  :  3860 MB/sec
+[    1.219430]    generic_sse     :  3438 MB/sec
+[    1.219441] xor: using function: prefetch64-sse (3860 MB/sec)
+[    1.219453] Key type asymmetric registered
+[    1.219463] Asymmetric key parser 'x509' registered
+[    1.219490] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+[    1.219621] io scheduler mq-deadline registered
+[    1.219631] io scheduler kyber registered
+[    1.219705] Memory allocation profiling is not supported!
+[    1.220026] ioatdma: Intel(R) QuickData Technology Driver 5.00
+[    1.220143] Serial: 8250/16550 driver, 16 ports, IRQ sharing enabled
+[    1.220281] 00:03: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+[    1.224002] brd: module loaded
+[    1.224650] wireguard: WireGuard 1.0.0 loaded. See www.wireguard.com for information.
+[    1.224664] wireguard: Copyright (C) 2015-2019 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
+[    1.225026] igb: Intel(R) Gigabit Ethernet Network Driver
+[    1.225037] igb: Copyright (c) 2007-2014 Intel Corporation.
+[    1.225075] ixgbe: Intel(R) 10 Gigabit PCI Express Network Driver
+[    1.225087] ixgbe: Copyright (c) 1999-2016 Intel Corporation.
+[    1.225457] usbcore: registered new interface driver ark3116
+[    1.225478] usbserial: USB Serial support registered for ark3116
+[    1.225506] usbcore: registered new interface driver pl2303
+[    1.225527] usbserial: USB Serial support registered for pl2303
+[    1.225608] i8042: PNP: PS/2 Controller [PNP0303:KBD,PNP0f13:MOU] at 0x60,0x64 irq 1,12
+[    1.225825] serio: i8042 KBD port at 0x60,0x64 irq 1
+[    1.225841] serio: i8042 AUX port at 0x60,0x64 irq 12
+[    1.225897] rtc_cmos 00:04: RTC can wake from S4
+[    1.226107] input: AT Translated Set 2 keyboard as /devices/platform/i8042/serio0/input/input0
+[    1.226363] rtc_cmos 00:04: registered as rtc0
+[    1.226378] rtc_cmos 00:04: setting system clock to 2022-01-01T00:02:23 UTC (1640995343)
+[    1.226422] rtc_cmos 00:04: alarms up to one day, y3k, 242 bytes nvram
+[    1.226450] i2c_dev: i2c /dev entries driver
+[    1.226614] device-mapper: core: CONFIG_IMA_DISABLE_HTABLE is disabled. Duplicate IMA measurements will not be recorded in the IMA log.
+[    1.226705] device-mapper: ioctl: 4.50.0-ioctl (2025-04-28) initialised: dm-devel@lists.linux.dev
+[    1.226725] amd_pstate: the _CPC object is not present in SBIOS or ACPI disabled
+[    1.227053] usbcore: registered new interface driver usbhid
+[    1.227064] usbhid: USB HID core driver
+[    1.227304] Initializing XFRM netlink socket
+[    1.227335] NET: Registered PF_INET6 protocol family
+[    1.227801] Segment Routing with IPv6
+[    1.227844] In-situ OAM (IOAM) with IPv6
+[    1.227891] NET: Registered PF_PACKET protocol family
+[    1.227992] Key type dns_resolver registered
+[    1.228063] NET: Registered PF_VSOCK protocol family
+[    1.228303] IPI shorthand broadcast: enabled
+[    1.237301] sched_clock: Marking stable (1236001583, 1224229)->(1238948940, -1723128)
+[    1.237486] registered taskstats version 1
+[    1.238004] Loading compiled-in X.509 certificates
+[    1.242549] Loaded X.509 cert 'Build time autogenerated kernel key: f6dfbbfd890fcc62dc7a9694aa194ccefbcceb25'
+[    1.242663] Loaded X.509 cert 'Facebook, Inc.: 5a72a683c8fca25b0231d7422a1ed5a038ff5fd9'
+[    1.253309] Demotion targets for Node 0: null
+[    1.254641] Btrfs loaded, zoned=no, fsverity=yes
+[    1.254796] ima: No TPM chip found, activating TPM-bypass!
+[    1.254809] ima: Allocated hash algorithm: sha256
+[    1.254839] ima: No architecture policies found
+[    1.255406] netconsole: network logging started
+[    1.284681] clk: Disabling unused clocks
+[    1.295349] Freeing unused decrypted memory: 2036K
+2026-07-27T17:10:49.311023Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11783787689. Stepped forward 9996833 RCBs, but should have trapped at 9996833
+2026-07-27T17:10:49.473734Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11793787689. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:49.618251Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11811040824. Stepped forward 9999000 RCBs, but should have trapped at 9999000
+2026-07-27T17:10:49.779969Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11821040824. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:49.938160Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11831040824. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:50.112118Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11841040824. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+[    1.297028] Freeing unused kernel image (initmem) memory: 2512K
+[    1.297274] Write protecting the kernel read-only data: 36864k
+[    1.298217] Freeing unused kernel image (text/rodata gap) memory: 204K
+[    1.299034] Freeing unused kernel image (rodata/data gap) memory: 1296K
+[    1.299045] Run /init as init process
+SHARED_FUTEX_QEMU_KERNEL_OK release=6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 machine=x86_64
+[    1.299348] ACPI: PM: Preparing to enter system sleep state S5
+[    1.299369] reboot: Power down
+2026-07-27T17:10:50.346786Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11890641019. Stepped forward 9997446 RCBs, but should have trapped at 9997446
+2026-07-27T17:10:50.510983Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11900641019. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:50.669467Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11910640519. Stepped forward 9999459 RCBs, but should have trapped at 9999459
+2026-07-27T17:10:50.830665Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11920640519. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:50.991292Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11930640019. Stepped forward 9999379 RCBs, but should have trapped at 9999379
+2026-07-27T17:10:51.151792Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11940640019. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:51.315660Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11950640019. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:51.476938Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11960639519. Stepped forward 9999463 RCBs, but should have trapped at 9999463
+2026-07-27T17:10:51.638397Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11970639519. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:51.797608Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11980639019. Stepped forward 9999396 RCBs, but should have trapped at 9999396
+2026-07-27T17:10:51.956906Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 11990639019. Stepped forward 10000000 RCBs, but should have trapped at 10000000
+2026-07-27T17:10:52.115960Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 12000638519. Stepped forward 9999461 RCBs, but should have trapped at 9999461
+2026-07-27T17:10:52.279076Z ERROR detcore: prehook: PMU RCB overshoot! Clock_value: 12010638519. Stepped forward 10000000 RCBs, but should have trapped at 10000000
