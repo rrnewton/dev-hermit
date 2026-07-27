@@ -1,0 +1,30 @@
+{
+  "experiment": "deterministic-linux-qemu-under-hermit",
+  "consolidated_utc": "2026-07-27",
+  "goal": "goal-qemu-linux-under-hermit",
+  "backend": "ptrace",
+  "qemu": "10.1.0 (qemu-kvm-10.1.0-21.el9)",
+  "qemu_flags": "-accel tcg,thread=single -smp 1 -icount shift=0,sleep=off",
+  "guest_kernels": ["6.13.2-0_fbk15_hardened_0_g33ebba20e5e4", "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79"],
+  "assets_dir": "../../ignored/qemu-linux/ (git-ignored large binaries)",
+  "results": [
+    {"name": "cold_boot_L2", "level": "L2", "relaxations": "none", "hermit": "fe97efd1", "kernel": "6.13.2", "date": "2026-07-24", "status": "historical; regressed on current main (seccomp fail-close, PR #644)", "evidence": "linux-vm-roadmap_20260726/README.md:84"},
+    {"name": "scx_rlfifo_L2", "level": "L2", "relaxations": "none", "hermit": "0c419bf", "kernel": "6.13.2", "date": "~2026-07-24", "messages_per_run": 1340266, "status": "historical; harness uncommitted, initramfs machine-local (not reproducible as-is)"},
+    {"name": "cold_boot_L1", "level": "L1", "relaxations": "none", "hermit": "dd60278f", "kernel": "6.17.13", "date": "2026-07-23", "wall_seconds": 166.486, "syscalls": 167521, "scheduler_turns": 987, "status": "reproducible", "evidence": "STRICT_BOOT_20260723.md"},
+    {"name": "compat_boot_demo", "level": "not_L2", "relaxations": "--no-sequentialize-threads,--max-timeslice disabled", "hermit": "a85f015", "kernel": "6.17.13", "date": "2026-07-27", "wall_seconds": 19, "status": "reproducible virtual-time boot", "evidence": "SAMPLE_OUTPUT.txt"},
+    {"name": "compat_boot_fixed_icount", "level": "not_L2", "relaxations": "--no-sequentialize-threads,preemption disabled", "hermit_sha256": "fb464663d3628a87e779138886e67fd210ef0b550f38928641f4c7f09ab9d233", "kernel": "6.13.2", "date": "2026-07-22", "wall_seconds": 13.25, "status": "reproducible virtual-time boot", "evidence": "results.csv:virtual_minimal_fixed_icount"},
+    {"name": "cold_boot_fail_open_verify", "level": "NOT_L2", "relaxations": "no --strict (fail-open); unsupported-syscall passthrough", "hermit": "54ff993", "kernel": "6.17.13", "date": "2026-07-26", "messages_per_run": 1130696, "detlog_commit_per_run": 852621, "status": "diagnostic control only; NOT a strict L2 claim", "evidence": "linux-vm-roadmap_20260726/results.csv:minimal_fail_open_verify"}
+  ],
+  "current_main_regression": {
+    "hermit": "fb5f2014",
+    "date": "2026-07-26",
+    "symptom": "run --strict fails before L1 when QEMU issues seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL); rejected as Unsupported after PR #644 made --strict fail-closed",
+    "evidence": "linux-vm-roadmap_20260726/results.csv:minimal_strict_gate"
+  },
+  "parent_pins_at_consolidation": {
+    "hermit_gitlink": "a23a235b",
+    "hermit_checkout_ahead": "ee7964ea",
+    "reverie_pin": "cad5d56e",
+    "note": "dispatch brief cited 'reverie f1ed0280', which is a liteinst2 pin-bump commit, not a Reverie change"
+  }
+}
