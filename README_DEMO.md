@@ -33,6 +33,21 @@ for the record/replay section, and the Python demo uses `/usr/bin/python3`. The
 Demo 4 defaults to syscall-boundary schedule exploration; set
 `ANALYZE_PREEMPTION_TIMEOUT=400000` to add precise PMU preemption.
 
+Install the native build dependencies on Debian/Ubuntu or
+CentOS/RHEL/Fedora, then verify that pkg-config can find both required modules:
+
+```bash
+make install-deps
+make check-deps
+```
+
+`install-deps` warns before invoking `sudo` and installs `libunwind-dev`,
+`liblzma-dev`, and `pkg-config` on Debian-family hosts, or
+`libunwind-devel`, `xz-devel`, and `pkgconf-pkg-config` on Red Hat-family
+hosts. In particular, Hermit's `unwind-sys` build requires the
+`libunwind-ptrace.pc` file; the Makefile reports that missing dependency before
+Cargo starts. Build the release Hermit binary with `make build`.
+
 The demos use private temporary and ignored build-artifact directories. Demos 5
 and 6 additionally need `qemu-system-x86_64`, `qemu-img`, the Meta `manifold`
 CLI, Ncat (`nc`), static BusyBox, `cpio`, and `gzip`. Demo 5 downloads a fixed
@@ -43,8 +58,9 @@ initramfs and qcow2 snapshot disk under `ignored/qemu-linux`.
 
 ```text
 README_DEMO.md              # this walkthrough
+Makefile                    # dependency install/check and release build
 demos/
-  common.sh                 # shared setup: builds hermit/, defines helpers
+  common.sh                 # checks dependencies, builds hermit/, defines helpers
   01-deterministic-run.sh   # stable inputs, --verify
   02-record-replay.sh       # record, list, replay, replay under GDB
   03-chaos-concurrency.sh   # seeded schedules, save/replay a failing schedule
@@ -76,8 +92,14 @@ portable demos:
 
 ```bash
 git submodule update --init hermit
+make install-deps
+make build
 ./demos/run-all.sh
 ```
+
+`make install-deps` is only needed once per host. Every demo runs
+`make check-deps` before attempting a Cargo build and prints the corresponding
+package names when a required `.pc` file is unavailable.
 
 Include the slow schedule analysis at the end with:
 
