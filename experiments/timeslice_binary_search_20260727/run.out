@@ -1,0 +1,19 @@
+=== max-timeslice=10000000 start ===
+10000000,124,300.0,NA,yes
+=== max-timeslice=10000000 done ec=124 wall=300.005898777s count=NA reached=yes ===
+=== max-timeslice=50000000 start ===
+50000000,124,300.0,NA,yes
+=== max-timeslice=50000000 done ec=124 wall=300.005764349s count=NA reached=yes ===
+=== max-timeslice=100000000 start ===
+100000000,0,194.1,NA,yes
+=== max-timeslice=100000000 done ec=0 wall=194.135577313s count=NA reached=yes ===
+=== max-timeslice=500000000 start ===
+500000000,0,60.5,NA,yes
+=== max-timeslice=500000000 done ec=0 wall=60.544967897s count=NA reached=yes ===
+=== max-timeslice=1000000000 start ===
+1000000000,0,20.1,NA,yes
+=== max-timeslice=1000000000 done ec=0 wall=20.125286613s count=NA reached=yes ===
+=== max-timeslice=2000000000 start ===
+2000000000,0,35.3,NA,yes
+=== max-timeslice=2000000000 done ec=0 wall=35.335902961s count=NA reached=yes ===
+ALL DONE

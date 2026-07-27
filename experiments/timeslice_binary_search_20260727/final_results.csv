@@ -1,0 +1,7 @@
+max_timeslice,exit_code,boot_completed,wall_seconds,pmu_overshoot_count,note
+10000000,124,no,300.0,9286,timeout at 300s; PMU count is partial (accumulated to cutoff)
+50000000,124,no,300.0,1869,timeout at 300s; PMU count is partial (accumulated to cutoff)
+100000000,0,yes,192.8,896,boot completes but slow
+500000000,0,yes,60.9,71,
+1000000000,0,yes,24.1,7,knee: smallest value at the single-digit PMU floor
+2000000000,0,yes,24.9,8,no gain over 1B (flat / at floor)

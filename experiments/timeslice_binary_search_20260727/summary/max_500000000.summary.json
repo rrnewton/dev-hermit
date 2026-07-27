@@ -1,0 +1,52 @@
+{
+  "sched_turns": 76034,
+  "schedevent_replayed": 0,
+  "schedevent_recorded": 0,
+  "schedevent_desynced": 0,
+  "desync_descrip": null,
+  "reprio_descrip": null,
+  "threads_descrip": "[3 5 7]",
+  "num_processes": 1,
+  "num_threads": 3,
+  "virttime_elapsed": 424675390425,
+  "virttime_final": 1640995623675390425,
+  "realtime_elapsed": {
+    "secs": 60,
+    "nanos": 673984199
+  },
+  "timeslice_stats": {
+    "count": 39015,
+    "sum_ns": 386607678415,
+    "min_ns": 32250,
+    "max_ns": 500000000
+  },
+  "per_thread_timeslice": [
+    [
+      3,
+      {
+        "count": 1053,
+        "sum_ns": 237926035,
+        "min_ns": 100020,
+        "max_ns": 13959480
+      }
+    ],
+    [
+      5,
+      {
+        "count": 129,
+        "sum_ns": 18062490,
+        "min_ns": 74590,
+        "max_ns": 1983000
+      }
+    ],
+    [
+      7,
+      {
+        "count": 37833,
+        "sum_ns": 386351689890,
+        "min_ns": 32250,
+        "max_ns": 500000000
+      }
+    ]
+  ]
+}
