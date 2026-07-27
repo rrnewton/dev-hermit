@@ -3,9 +3,11 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build check-deps install-deps help
+.PHONY: build build-hermit check-deps install-deps help
 
-build: check-deps
+build: check-deps build-hermit
+
+build-hermit:
 	@if [ ! -f hermit/Cargo.toml ]; then \
 		echo "ERROR: hermit submodule is not populated." >&2; \
 		echo "Run: git submodule update --init hermit" >&2; \
