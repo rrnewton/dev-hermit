@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 WALLCLOCK_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z[ \t]+"
 )
+HOST_HEAP_POINTER_RE = re.compile(r"(?P<prefix><ivar[ \t]+)0[xX][0-9A-Fa-f]+")
 
 
 def hash_file(path: Path) -> str:
@@ -157,13 +158,14 @@ def save_anchor(run_dir: Path, metadata: Dict[str, Any]) -> Path:
     return anchor_path
 
 
-def _strip_wallclock_prefix(line: str) -> str:
-    """Strip only the nondeterministic tracing wallclock prefix."""
-    return WALLCLOCK_RE.sub("", line, count=1)
+def _normalize_log_line(line: str) -> str:
+    """Remove nondeterministic host metadata from a Hermit log line."""
+    line = WALLCLOCK_RE.sub("", line, count=1)
+    return HOST_HEAP_POINTER_RE.sub(r"\g<prefix><host-heap-pointer>", line)
 
 
 def hermit_log_diff(log1: Path, log2: Path) -> str:
-    """Return the first exact log divergence after stripping wallclock prefixes."""
+    """Return the first divergence after normalizing host-only metadata."""
     before: List[Tuple[int, str, str]] = []
     with Path(log1).open(errors="replace") as left, Path(log2).open(
         errors="replace"
@@ -175,27 +177,27 @@ def hermit_log_diff(log1: Path, log2: Path) -> str:
             if not left_line and not right_line:
                 return ""
             line_number += 1
-            stripped_left = _strip_wallclock_prefix(left_line)
-            stripped_right = _strip_wallclock_prefix(right_line)
-            if stripped_left != stripped_right:
+            normalized_left = _normalize_log_line(left_line)
+            normalized_right = _normalize_log_line(right_line)
+            if normalized_left != normalized_right:
                 context = ["  {!r}".format(item[1]) for item in before]
                 context.extend(
                     (
-                        "- {!r}".format(stripped_left),
-                        "+ {!r}".format(stripped_right),
+                        "- {!r}".format(normalized_left),
+                        "+ {!r}".format(normalized_right),
                     )
                 )
-                return "first timestamp-stripped divergence at line {}:\n{}".format(
+                return "first normalized divergence at line {}:\n{}".format(
                     line_number, "\n".join(context)
                 )
-            before.append((line_number, stripped_left, stripped_right))
+            before.append((line_number, normalized_left, normalized_right))
             before = before[-3:]
 
 
 def compare_runs(
     anchor: Dict[str, Any], current: Dict[str, Any]
 ) -> Tuple[bool, List[str]]:
-    """Compare exact artifacts and timestamp-stripped logs."""
+    """Compare exact artifacts and logs with host-only metadata normalized."""
     passed = True
     report: List[str] = []
     if anchor.get("qemu_argv") == current.get("qemu_argv"):
@@ -231,13 +233,13 @@ def compare_runs(
         if difference:
             passed = False
             report.append(
-                "WARN: exact Hermit log differs from first run after stripping only wallclock timestamps\n{}".format(
+                "WARN: Hermit log differs from first run after normalizing wallclock timestamps and host heap pointers\n{}".format(
                     difference
                 )
             )
         else:
             report.append(
-                "PASS: exact Hermit log matches first run after stripping wallclock timestamps"
+                "PASS: Hermit log matches first run after normalizing wallclock timestamps and host heap pointers"
             )
     else:
         passed = False
