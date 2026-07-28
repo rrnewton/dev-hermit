@@ -515,7 +515,7 @@ reserved for proven pure virtualization, not used as an implicit default.
 
 ## 6. Recommended rollout
 
-### Phase 0: make the current contract honest
+### Phase 0: make the current contract accurate
 
 - Rename or document resource requests as turn/control requests until locks are
   real.

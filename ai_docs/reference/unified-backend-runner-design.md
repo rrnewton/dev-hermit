@@ -70,10 +70,10 @@ in-process tool binary. **dbi** and **sabre** fundamentally cannot:
   hermit's `detcore-dbi` + `hermit --backend dbi`.
 - **sabre** — three separately built artifacts (runner + pinned loader +
   plugin `.so`) launched via `HERMIT_SABRE_*` env vars; hermit does not even
-  link `reverie-sabre` (see `ai_docs/transient/sabre-backend-assessment.md`).
+  link `reverie-sabre` (see `ai_docs/transient/2026-07-26-sabre-backend-assessment.md`).
   Not a runtime flag in a standalone tool.
 
-So the honest unified runner supports **ptrace + kvm** as real in-process
+So the evidence-based unified runner supports **ptrace + kvm** as real in-process
 dispatch, and returns a clear, actionable error for **dbi + sabre** pointing to
 the out-of-process harnesses.
 

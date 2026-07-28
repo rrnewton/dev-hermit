@@ -8,7 +8,7 @@ PrototypeTool client (`/tmp/reverie-dbi-69f-target/.../libreverie_dbi_client.so`
 over `/bin/echo` under a source-built DynamoRIO (`branches=130548 syscalls=112
 rewritten_writes=54`, exit 0).
 
-Companion to `20260722_dbi-reverie-interface-gap.md` (which frames the same gap
+Companion to `2026-07-22-20260722_dbi-reverie-interface-gap.md` (which frames the same gap
 around *hosting Detcore*). This doc adds the two things that doc does not: a
 **complete per-method Guest-trait table**, and a **per-tool feasibility verdict**
 for the four simple tools in `impl-dbi-simple-tools`.
@@ -130,7 +130,7 @@ dispatched callback and would be the first real extension of the driver.
 **Yes — for syscall-driven tools (counter, strace, syscall-path time-pinning).**
 The `Guest` handle exposes working `memory`, `regs`, `inject`, and
 `thread_state`, which is the entire surface those tools touch, and the
-end-to-end pipeline demonstrably runs. **Two honest asterisks:** (a) there is no
+end-to-end pipeline demonstrably runs. **Two important caveats:** (a) there is no
 runtime tool selection — every "tool" is a compiled-in edit to `PrototypeTool` +
 a client rebuild, not a pluggable `impl Tool`; and (b) any tool needing a
 callback other than `handle_syscall_event` (CPUID, rdtsc, signals, timers,

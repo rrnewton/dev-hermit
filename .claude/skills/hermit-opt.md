@@ -44,7 +44,7 @@ Own the named slot **`worktrees/opt/`** (nested layout v2), provisioned with
 `scripts/allocate-worktree.rs --agent hermit-opt`, for product optimizations
 (with its own writable build dir — never share `target/`). Durable results go to
 the parent `experiments/` tree, not the slot. Never feature-build in a primary
-checkout. See `ai_docs/transient/worktree-management-map.md` for the full
+checkout. See `ai_docs/transient/2026-07-27-worktree-management-map.md` for the full
 protocol.
 
 ## Related

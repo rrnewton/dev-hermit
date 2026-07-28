@@ -55,7 +55,7 @@ explicitly authorizes it. Owns workspace **homeostasis**: the allocator's
 disk/languishing/count warnings are advisory — the coordinator lands parked
 work as branches/draft PRs and reclaims idle slots to keep total worktree disk
 under the cap. Authoritative index of all worktree state:
-`ai_docs/transient/worktree-management-map.md`.
+`ai_docs/transient/2026-07-27-worktree-management-map.md`.
 
 ## Related
 

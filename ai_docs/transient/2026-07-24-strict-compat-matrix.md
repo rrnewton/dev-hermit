@@ -5,7 +5,7 @@
 > probes. The exact PR #562 tree passed 118/118 at L2 on ptrace with default
 > logging and no relaxations. This document's 537-row table remains the
 > historical scenario matrix. See
-> [`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md)
+> [`2026-07-24-COMPATIBILITY_MATRICES_FINAL_20260724.md`](2026-07-24-COMPATIBILITY_MATRICES_FINAL_20260724.md)
 > for the final ptrace, DBI, KVM, and record/replay comparison.
 
 This is the consolidated result of the 2026-07-23 compatibility expansion

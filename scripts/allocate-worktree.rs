@@ -313,7 +313,7 @@ fn homeostasis_check(root: &Path) {
         for (n, w) in warnings.iter().enumerate() {
             eprintln!("  {}. {w}", n + 1);
         }
-        eprintln!("  See ai_docs/transient/worktree-management-map.md §5 (disk hygiene).");
+        eprintln!("  See ai_docs/transient/2026-07-27-worktree-management-map.md §5 (disk hygiene).");
         eprintln!("═══════════════════════════════════════════════════════════════════════");
         eprintln!();
     }

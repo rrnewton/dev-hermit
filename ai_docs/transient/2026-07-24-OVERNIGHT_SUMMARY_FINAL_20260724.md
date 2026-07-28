@@ -4,7 +4,7 @@
 
 The evidence cutoff below predates the final compatibility landings. The
 canonical final matrix is
-[`COMPATIBILITY_MATRICES_FINAL_20260724.md`](COMPATIBILITY_MATRICES_FINAL_20260724.md).
+[`2026-07-24-COMPATIBILITY_MATRICES_FINAL_20260724.md`](2026-07-24-COMPATIBILITY_MATRICES_FINAL_20260724.md).
 Current Hermit `main` is `a2926507aafb9c922cbe230490f1cee5ebcea586`.
 The final cross-mode accounting, retaining each mode's explicit evidence SHA,
 is:
@@ -23,7 +23,7 @@ The older counts below remain unchanged because they describe their stated
 
 This is the final morning handoff for work completed from **2026-07-23
 18:00 UTC through 2026-07-24 08:16 UTC**. It consolidates the earlier
-`OVERNIGHT_SUMMARY_20260724.md` snapshot with all later landings, validation
+`2026-07-23-OVERNIGHT_SUMMARY_20260724.md` snapshot with all later landings, validation
 results, backend measurements, active investigations, and known blockers.
 
 Live revisions at the cutoff, before this report commit:
@@ -361,9 +361,9 @@ matrix, and the R/R SIGPIPE fix. The refreshed SaBRe status check had closed.
 
 ## Primary evidence sources
 
-- `ai_docs/transient/OVERNIGHT_SUMMARY_20260724.md`
-- `ai_docs/transient/strict-compat-matrix.md`
-- `ai_docs/transient/coverage-matrix-20260723.md`
+- `ai_docs/transient/2026-07-23-OVERNIGHT_SUMMARY_20260724.md`
+- `ai_docs/transient/2026-07-24-strict-compat-matrix.md`
+- `ai_docs/transient/2026-07-24-coverage-matrix-20260723.md`
 - TaskGraph notes for `impl-validate-post-landing`,
   `impl-enshrine-qemu-l2-ci`, `impl-fix-elf-buffer-qemu-rr`,
   `impl-record-strict-cli-fix`, `impl-rr-compat-expansion`,

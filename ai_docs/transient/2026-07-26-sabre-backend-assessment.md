@@ -235,7 +235,7 @@ SaBRe-specific hooks. Such a tool is not portable across Reverie backends.
 ### P0: Make the existing compatibility claim accurate
 
 1. Update the SaBRe gate denominator from 151 to the current selected corpus and
-   record an honest floor based on measured results.
+   record an evidence-based floor from measured results.
 2. Diagnose or classify top, kill, and pgrep rather than hiding them behind the
    stale-count failure.
 3. Rename output and documentation so --strict --verify cannot be mistaken for

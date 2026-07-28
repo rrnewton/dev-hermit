@@ -36,7 +36,7 @@ Own the named slot **`worktrees/sabre/`** (nested layout v2:
 `worktrees/sabre/{hermit,reverie}`), one slot per agent. Provision it with
 `scripts/allocate-worktree.rs --agent hermit-sabre`; Reverie-only unless a
 coordinated Hermit change is explicitly assigned. Never feature-build in a
-primary checkout. See `ai_docs/transient/worktree-management-map.md` for the
+primary checkout. See `ai_docs/transient/2026-07-27-worktree-management-map.md` for the
 full protocol.
 
 ## Related

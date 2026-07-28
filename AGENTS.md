@@ -143,7 +143,7 @@ The intended parent layout is:
 |   `-- slotNN/                     # up to 12 active, plus 5 parked
 |-- ai_docs/                        # durable textual research and handoffs
 |   `-- transient/
-|       `-- worktree-management-map.md   # index of every worktree-info source
+|       `-- 2026-07-27-worktree-management-map.md   # index of every worktree-info source
 |-- experiments/                    # durable reproducible evidence
 `-- scratch/                        # ignored transient material
 ```
@@ -181,7 +181,7 @@ concurrent edits to the same file or branch.
 
 Physical worktrees, their build output, `worktree-state.json`, and `ACTIVE.md`
 are machine-local and ignored by the parent repository. `ARCHIVED.md` remains
-the durable history. **`ai_docs/transient/worktree-management-map.md` is the
+the durable history. **`ai_docs/transient/2026-07-27-worktree-management-map.md` is the
 authoritative index of every place worktree information lives and how the
 places stay consistent — read it before any worktree operation.**
 

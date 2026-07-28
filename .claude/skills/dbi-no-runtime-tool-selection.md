@@ -33,5 +33,5 @@ is `()`).
 
 **How to apply:** for DBI tool work, edit reverie-dbi and rebuild the client;
 don't expect reverie-examples tools to run on DBI as-is. Full audit:
-`ai_docs/transient/20260722_dbi-guest-trait-audit.md`. Related:
+`ai_docs/transient/2026-07-23-20260722_dbi-guest-trait-audit.md`. Related:
 [[dbi-client-must-be-release-built]], [[dbi-client-rev-e3e2c965-broken]].

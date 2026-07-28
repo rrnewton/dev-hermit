@@ -469,7 +469,7 @@ hardware support, or a comparably sound access detector.
 
 ## 6. Roadmap
 
-### Phase 0: make the existing contract honest
+### Phase 0: make the existing contract accurate
 
 Work:
 

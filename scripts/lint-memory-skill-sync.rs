@@ -5,7 +5,7 @@
 //! policy/protocol/architecture decision is updated in one place but not the
 //! other. This check makes the drift mechanical and loud instead of silent.
 //!
-//! MODEL (single-writer, mirrors ai_docs/transient/worktree-management-map.md):
+//! MODEL (single-writer, mirrors ai_docs/transient/2026-07-27-worktree-management-map.md):
 //!   * The MEMORY file is the source of truth.
 //!   * Every active file under `.claude/skills/` has one memory whose
 //!     frontmatter declares `core_memory: true` and `core_skill: <path>`.

@@ -99,7 +99,7 @@ in §6. **Takeaway: a one-shot "app passes" does not always hold under repetitio
   *"backend `dbi` has no Hermit dispatch implementation"*. It advertises DBI as available but
   errors on dispatch. **Landing #215 fixes this.**
 
-**Honest caveats on DBI:** this is **functional-correctness parity, not determinism.** DBI
+**Important caveats on DBI:** this is **functional-correctness parity, not determinism.** DBI
 does not drive the Detcore scheduler; reverie-dbi branch-count telemetry varies run-to-run, so
 DBI is *not* bit-deterministic. `--strict` is accepted but a **no-op** on the DBI path
 (`run_dbi` ignores `DetConfig`). No L1/L2 claim for DBI.
@@ -118,7 +118,7 @@ real Linux execution.**
   `handle_syscall_event` decodes syscalls and records them; test green.
 - **hermit-cli is now wired** (PR #218, draft): adds the `reverie-kvm` dep (hermit-cli only —
   detcore stays on abstract `reverie`), `run_kvm()` constructs a `KvmBackend` and **reaches KVM
-  code**, then returns an honest error. `hermit run --backend kvm -- echo hello` exits 1 with:
+  code**, then returns a clear error. `hermit run --backend kvm -- echo hello` exits 1 with:
   *"the KVM backend cannot run `echo`: … does not yet implement the Linux execution personality
   (ELF loader, virtual memory, guest-kernel ABI); see #198."*
 - **The gap (tracked as #198):** real guest execution needs an ELF loader, protected/long mode,

@@ -156,7 +156,7 @@ Applying the ratchet's classification to the 163 live tests:
 `#[ignore]`; the ratchet's ignore check precedes the known-failure check, so it
 counts as ignored, leaving 19 counted as failing.
 
-**Takeaway:** the honest current denominator is ≈**117**, not 89. `89` was
+**Takeaway:** the evidence-based current denominator is ≈**117**, not 89. `89` was
 correct for the doc's snapshot but the applicable set has grown. A fresh
 `./scripts/test-fail-closed.sh` run (which writes to `target/`, so must be run
 from a slot, not a primary) is required to publish exact live pass/fail numbers.

@@ -2,7 +2,7 @@
 
 Status: implemented + validated. Author: agent `hermit-069`
 (task `impl-dbi-simple-tools`). Builds on the interface audit in
-`20260722_dbi-guest-trait-audit.md`.
+`2026-07-23-20260722_dbi-guest-trait-audit.md`.
 
 ## TL;DR
 

@@ -42,7 +42,7 @@ Read CI state from anywhere (read-only inspection is always fine). For CI-config
 changes, own the named slot **`worktrees/ci/`** (nested layout v2), provisioned
 with `scripts/allocate-worktree.rs --agent hermit-ci --product hermit`, and open
 a PR — never edit a primary checkout. See
-`ai_docs/transient/worktree-management-map.md` for the full protocol.
+`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
 
 ## Related
 

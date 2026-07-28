@@ -323,7 +323,7 @@ with-proxy gh pr merge N -R rrnewton/hermit --squash --admin --delete-branch
   block); `scripts/slot-init.sh` (registry-less fallback).
 - **Registries** — `worktrees/ACTIVE.md` (machine-local, ignored),
   `worktrees/ARCHIVED.md` (durable history),
-  `ai_docs/transient/worktree-management-map.md` (authoritative index of every
+  `ai_docs/transient/2026-07-27-worktree-management-map.md` (authoritative index of every
   place worktree info lives — read before any worktree op).
 - **Policy sources** — `dev-hermit/AGENTS.md` (= `CLAUDE.md` symlink) for
   coordinator rules; `hermit/AGENTS.md` / `reverie/AGENTS.md` for product build,
