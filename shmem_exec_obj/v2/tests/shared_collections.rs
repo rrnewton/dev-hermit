@@ -4,9 +4,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use shmem_pod::collections::{SharedBox, SharedVec};
-use shmem_pod::reloc_allocator::{
-    RelocAllocator, RelocError, RelocRegion, RELOC_SLOT_ALIGNMENT,
-};
+use shmem_pod::reloc_allocator::{RELOC_SLOT_ALIGNMENT, RelocAllocator, RelocError, RelocRegion};
 
 const MAPPING_LEN: usize = 32 * 1024;
 const REGION_ID: u64 = 0x51a7_edc0_11ec_7101;
@@ -47,13 +45,7 @@ impl Fixture {
         // SAFETY: the fixture owns one live mapping and calls this once per test.
         unsafe {
             allocator
-                .initialize(
-                    self.base,
-                    MAPPING_LEN,
-                    REGION_ID,
-                    arena as u64,
-                    SLOT_SIZE,
-                )
+                .initialize(self.base, MAPPING_LEN, REGION_ID, arena as u64, SLOT_SIZE)
                 .unwrap()
         }
     }
