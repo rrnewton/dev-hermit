@@ -1,0 +1,31 @@
+{
+  "experiment": "qemu_userspace_determinism",
+  "date": "2026-07-28",
+  "task": "frontier-linux-hermit-parallel",
+  "milestone": "1: userspace programs inside QEMU VM under hermit",
+  "question": "Do ordinary userspace programs run to completion inside a QEMU Linux VM that is itself a userspace process under Hermit, and is their output deterministic across independent Hermit runs?",
+  "repo_shas": {
+    "hermit": "2ac20b725bad7eaa976b7271242b088a96893c97",
+    "hermit_branch": "main"
+  },
+  "host": {
+    "kernel": "6.17.13",
+    "qemu": "10.1.0 (qemu-kvm-10.1.0-21.el9)",
+    "busybox": "1.35.0 (static)",
+    "guest_kernel_bzImage": "ignored/qemu-linux/bzImage (Linux 6.17.13)"
+  },
+  "hermit_binary": "hermit/target/release/hermit",
+  "profiles": {
+    "compat": "--log error run --no-sequentialize-threads --max-timeslice disabled --no-virtualize-cpuid",
+    "strict": "--log error run --no-virtualize-cpuid"
+  },
+  "qemu_args": "-nodefaults -nic none -m 256M -accel tcg,thread=single -smp 1 -icount shift=0,sleep=off -rtc base=utc,clock=vm -kernel <bzImage> -initrd userspace-initramfs.cpio.gz -display none -serial stdio -monitor none -no-reboot -append 'console=ttyS0 panic=-1 rdinit=/init'",
+  "runs": [
+    {"name": "compat-run1", "profile": "compat", "exit": 0, "wall_seconds": 18.365},
+    {"name": "compat-run2", "profile": "compat", "exit": 0, "wall_seconds": 19.815},
+    {"name": "strict-run1", "profile": "strict", "exit": 0, "wall_seconds": null}
+  ],
+  "payload_sha256": "91d93f3e5887a5133cd877b530d2cd5197dc26099aa1f0b6a03a70c5bbbe46c6",
+  "result": "PASS: userspace battery (19 recorded output keys spanning shell arithmetic, seq, awk, sort, uniq, wc, md5sum, sha256sum, cksum, id, date, hostname, filesystem ops) completed inside the guest; payload byte-identical (same sha256) across compat-run1, compat-run2, and strict-run1. Determinism level L1 (independent runs, not --verify record/replay).",
+  "seed": "n/a (determinism comes from Hermit virtual time + QEMU fixed icount clock, no seed)"
+}

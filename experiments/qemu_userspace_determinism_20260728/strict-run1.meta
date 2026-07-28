@@ -1,0 +1,2 @@
+# profile=strict hermit=/home/newton/work/dev-hermit/hermit/target/release/hermit bzImage=/home/newton/work/dev-hermit/ignored/qemu-linux/bzImage
+# exit=0

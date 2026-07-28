@@ -1,0 +1,3 @@
+# Regenerable binary artifacts — rebuild with build-initramfs.sh; never commit.
+rootfs/
+*.cpio.gz
