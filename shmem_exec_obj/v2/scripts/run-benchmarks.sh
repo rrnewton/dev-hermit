@@ -760,7 +760,7 @@ verify_owner_files() {
 
 verify_environment_bindings() {
   local environment=$1
-  local relative digest full canonical inventory_digest inventory_entries
+  local relative digest full canonical inventory_digest inventory_entries binding_count=0
   local -A seen=()
   inventory_digest=$(jq -er '.bundle.inventory.sha256' "$environment")
   inventory_entries=$(jq -er '.bundle.inventory.entries' "$environment")
@@ -777,6 +777,7 @@ verify_environment_bindings() {
       return 1
     fi
     seen[$relative]=1
+    binding_count=$((binding_count + 1))
     full="$output_dir/$relative"
     if [[ ! -f $full || -L $full ]]; then
       echo "canonical environment provenance is not a regular bundle file: $relative" >&2
@@ -792,6 +793,10 @@ verify_environment_bindings() {
     jq -er '.provenance | to_entries[] | [.value.bundle_path, .value.sha256] | @tsv' \
       "$environment"
   )
+  if ((binding_count != 15)); then
+    echo "canonical environment has the wrong provenance binding count: $binding_count" >&2
+    return 1
+  fi
 
   verify_sha256 "$provenance_dir/source-status.txt" \
     "$(jq -er '.source.status_sha256' "$environment")"
