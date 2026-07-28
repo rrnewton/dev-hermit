@@ -30,6 +30,7 @@ static INIT_STATE: AtomicU8 = AtomicU8::new(INIT_EMPTY);
 static ATTACHED_PID: AtomicI32 = AtomicI32::new(0);
 static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 static FAIL_CLOSED: AtomicBool = AtomicBool::new(false);
+static ATFORK_WAS_DISABLED: AtomicBool = AtomicBool::new(false);
 static CALL_GATE: AdapterCallGate = AdapterCallGate::new();
 static CONTEXT: ContextCell = ContextCell(UnsafeCell::new(MaybeUninit::uninit()));
 
@@ -532,7 +533,9 @@ fn raw_getpid() -> libc::pid_t {
 
 unsafe extern "C" fn atfork_child() {
     // SAFETY: pthread invokes the child handler with only the forking thread.
-    unsafe { CALL_GATE.reset_after_fork() };
+    if !ATFORK_WAS_DISABLED.load(Ordering::Acquire) {
+        unsafe { CALL_GATE.reset_after_fork() };
+    }
     ATTACHED_PID.store(0, Ordering::Release);
     if INIT_STATE.load(Ordering::Acquire) != INIT_READY {
         INIT_STATE.store(INIT_EMPTY, Ordering::Release);
@@ -541,6 +544,7 @@ unsafe extern "C" fn atfork_child() {
 }
 
 unsafe extern "C" fn atfork_prepare() {
+    ATFORK_WAS_DISABLED.store(CALL_GATE.is_disabled(), Ordering::Release);
     let _ = CALL_GATE.disable();
     while CALL_GATE.active_calls() != 0 {
         std::hint::spin_loop();
@@ -549,7 +553,9 @@ unsafe extern "C" fn atfork_prepare() {
 
 unsafe extern "C" fn atfork_parent() {
     // SAFETY: prepare disabled the gate and observed zero active calls.
-    unsafe { CALL_GATE.reset_after_fork() };
+    if !ATFORK_WAS_DISABLED.load(Ordering::Acquire) {
+        unsafe { CALL_GATE.reset_after_fork() };
+    }
 }
 
 extern "C" fn initialize_adapter() {

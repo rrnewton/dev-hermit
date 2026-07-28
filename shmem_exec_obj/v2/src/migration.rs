@@ -157,7 +157,7 @@ pub fn negotiate_schema<T: MigrationSchema>(
     if observed == current {
         return Ok(SchemaNegotiation::Exact);
     }
-    if accepted_sources.contains(&observed) {
+    if observed.version < current.version && accepted_sources.contains(&observed) {
         return Ok(SchemaNegotiation::UpgradeRequired {
             source: observed,
             target: current,
@@ -177,6 +177,21 @@ pub struct MigrationPlan {
 }
 
 impl MigrationPlan {
+    /// Constructs a plan from two compiled schema types.
+    pub fn for_schemas<Source: MigrationSchema, Target: MigrationSchema>(
+        transaction_id: u64,
+        source_region_id: u64,
+        target_region_id: u64,
+    ) -> Result<Self, MigrationError> {
+        Self::new(
+            transaction_id,
+            SchemaIdentity::of::<Source>(),
+            SchemaIdentity::of::<Target>(),
+            source_region_id,
+            target_region_id,
+        )
+    }
+
     /// Constructs and validates a migration plan.
     ///
     /// Region and transaction identifiers must be nonzero and never reused
@@ -430,9 +445,25 @@ impl MigrationControl {
     /// `destination` must be non-null, aligned, exclusively writable for one
     /// `Self`, and valid for the completed record's full shared lifetime.
     pub unsafe fn initialize_at(destination: *mut Self) {
-        // SAFETY: the caller grants exclusive final storage and write initializes
-        // the complete value without reading old bytes.
-        unsafe { destination.write(Self::new()) };
+        // SAFETY: the caller grants exclusive final storage. Field-wise writes
+        // initialize the complete all-AtomicU64 record without inviting a
+        // freestanding compiler to lower a large aggregate copy to `memcpy` or
+        // `memset`.
+        unsafe {
+            core::ptr::addr_of_mut!((*destination).phase).write(AtomicU64::new(UNINITIALIZED));
+            core::ptr::addr_of_mut!((*destination).transaction_id).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).source_version).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).source_fingerprint_low).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).source_fingerprint_high)
+                .write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).target_version).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).target_fingerprint_low).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).target_fingerprint_high)
+                .write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).source_region_id).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).target_region_id).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*destination).checksum).write(AtomicU64::new(0));
+        }
     }
 
     /// Validates and snapshots the current record.
@@ -442,13 +473,7 @@ impl MigrationControl {
     /// visibly stuck and cannot be stolen.
     pub fn snapshot(&self) -> Result<MigrationSnapshot, MigrationError> {
         let raw = self.phase.load(Ordering::Acquire);
-        let phase = match MigrationPhase::decode(raw) {
-            Ok(phase) => phase,
-            Err(error) => {
-                self.phase.store(POISONED, Ordering::Release);
-                return Err(error);
-            }
-        };
+        let phase = self.decode_or_poison(raw)?;
         let plan = if phase.has_published_plan() {
             Some(self.load_valid_plan()?)
         } else {
@@ -493,8 +518,27 @@ impl MigrationControl {
     /// A supervisor should first prove the migration owner has exited, for
     /// example with `pidfd`, and prevent all participants from accessing the
     /// incomplete target. Poisoning never unlocks or repairs payload writes.
+    /// It cannot overwrite a committed or reclaimed route.
     pub fn poison(&self) {
-        self.phase.store(POISONED, Ordering::Release);
+        let mut phase = self.phase.load(Ordering::Acquire);
+        loop {
+            if matches!(phase, COMMITTED | RECLAIMED | POISONED) {
+                return;
+            }
+            if MigrationPhase::decode(phase).is_err() {
+                self.phase.store(POISONED, Ordering::Release);
+                return;
+            }
+            match self.phase.compare_exchange_weak(
+                phase,
+                POISONED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(actual) => phase = actual,
+            }
+        }
     }
 
     /// Returns the authoritative generation after validating all metadata.
@@ -555,7 +599,7 @@ impl MigrationControl {
         self.mark_reclaimed(plan, false)
     }
 
-    /// Fences source reclamation with a consumed typed-mapping close proof.
+    /// Fences source reclamation with a typed-mapping close proof.
     ///
     /// # Safety
     ///
@@ -564,7 +608,7 @@ impl MigrationControl {
     /// [`ClosedMapping`] alone explicitly does not prove those host conditions.
     pub unsafe fn authorize_reclamation_after_mapping_close(
         &self,
-        _closed: ClosedMapping<'_>,
+        _closed: &ClosedMapping<'_>,
     ) -> Result<ReclamationPermit, MigrationError> {
         let snapshot = self.snapshot()?;
         let plan = snapshot.plan.ok_or(MigrationError::WrongPhase {
@@ -586,6 +630,33 @@ impl MigrationControl {
         self.mark_reclaimed(plan, false)
     }
 
+    /// Resumes host cleanup after reclamation was already fenced.
+    ///
+    /// This supports a cleanup process which died after the `Reclaimed`
+    /// transition and before an idempotent `munmap`, unlink, or truncate step.
+    ///
+    /// # Safety
+    ///
+    /// The caller must authenticate this exact control record and prevent all
+    /// access to the retired source generation. This method supplies no new
+    /// quiescence proof; it relies on the proof which preceded the persistent
+    /// `Reclaimed` transition.
+    pub unsafe fn resume_reclamation(&self) -> Result<ReclamationPermit, MigrationError> {
+        let snapshot = self.snapshot()?;
+        if snapshot.phase != MigrationPhase::Reclaimed {
+            return Err(MigrationError::WrongPhase {
+                expected: MigrationPhase::Reclaimed,
+                actual: snapshot.phase,
+            });
+        }
+        Ok(ReclamationPermit {
+            plan: snapshot
+                .plan
+                .expect("reclaimed phase always publishes a plan"),
+            resumed: true,
+        })
+    }
+
     fn begin(&self, plan: MigrationPlan) -> Result<Migration<'_>, MigrationError> {
         plan.validate()?;
         if let Err(actual) = self.phase.compare_exchange(
@@ -594,9 +665,10 @@ impl MigrationControl {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
+            let actual = self.decode_or_poison(actual)?;
             return Err(MigrationError::WrongPhase {
                 expected: MigrationPhase::Uninitialized,
-                actual: MigrationPhase::decode(actual)?,
+                actual,
             });
         }
 
@@ -623,12 +695,15 @@ impl MigrationControl {
         self.target_region_id
             .store(plan.target_region_id, Ordering::Relaxed);
         self.checksum.store(plan_checksum(plan), Ordering::Relaxed);
-        self.phase
-            .compare_exchange(INITIALIZING, COPYING, Ordering::Release, Ordering::Acquire)
-            .map_err(|actual| MigrationError::WrongPhase {
+        if let Err(actual) =
+            self.phase
+                .compare_exchange(INITIALIZING, COPYING, Ordering::Release, Ordering::Acquire)
+        {
+            return Err(MigrationError::WrongPhase {
                 expected: MigrationPhase::Initializing,
-                actual: MigrationPhase::decode(actual).unwrap_or(MigrationPhase::Poisoned),
-            })?;
+                actual: self.decode_or_poison(actual)?,
+            });
+        }
         poison.armed = false;
         Ok(Migration {
             control: self,
@@ -674,13 +749,18 @@ impl MigrationControl {
             self.phase.store(POISONED, Ordering::Release);
             return Err(MigrationError::TransactionMismatch);
         }
-        self.phase
-            .compare_exchange(expected_raw, next_raw, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| ())
-            .map_err(|raw| MigrationError::WrongPhase {
+        match self.phase.compare_exchange(
+            expected_raw,
+            next_raw,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(()),
+            Err(raw) => Err(MigrationError::WrongPhase {
                 expected,
-                actual: MigrationPhase::decode(raw).unwrap_or(MigrationPhase::Poisoned),
-            })
+                actual: self.decode_or_poison(raw)?,
+            }),
+        }
     }
 
     fn poison_if_incomplete(&self, transaction_id: u64) {
@@ -711,6 +791,16 @@ impl MigrationControl {
     ) -> Result<ReclamationPermit, MigrationError> {
         self.transition(plan, MigrationPhase::Committed, COMMITTED, RECLAIMED)?;
         Ok(ReclamationPermit { plan, resumed })
+    }
+
+    fn decode_or_poison(&self, raw: u64) -> Result<MigrationPhase, MigrationError> {
+        match MigrationPhase::decode(raw) {
+            Ok(phase) => Ok(phase),
+            Err(error) => {
+                self.phase.store(POISONED, Ordering::Release);
+                Err(error)
+            }
+        }
     }
 }
 
@@ -781,6 +871,7 @@ unsafe impl PodSync for MigrationControl {}
 ///
 /// Dropping this value before commit poisons the transaction. Process death
 /// skips `Drop` and leaves `Copying` or `TargetReady`, which is also fail closed.
+#[must_use = "a migration authority must either commit or poison the transaction"]
 pub struct Migration<'a> {
     control: &'a MigrationControl,
     plan: MigrationPlan,
@@ -833,6 +924,7 @@ impl Drop for Migration<'_> {
 
 /// Confirmation that target publication linearized in this process.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "the committed plan identifies the newly authoritative generation"]
 pub struct CommittedMigration {
     plan: MigrationPlan,
 }
@@ -850,6 +942,7 @@ impl CommittedMigration {
 /// capability. The host must still exclude raw pointers, inherited mappings,
 /// and nonconforming guests before destructive operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "reclamation remains an explicit host operation"]
 pub struct ReclamationPermit {
     plan: MigrationPlan,
     resumed: bool,
@@ -1025,7 +1118,7 @@ mod tests {
 
     #[test]
     fn published_metadata_corruption_poisons() {
-        let admission = CloseableSnzi::<5>::new();
+        let admission = CloseableSnzi::<20>::new();
         admission.close();
         assert!(admission.is_drained());
         let control = MigrationControl::new();

@@ -69,7 +69,7 @@ All algorithm atomics currently use sequential consistency.
 
 | Operation | Publication/order point |
 | --- | --- |
-| Successful entry | Its initial observation of `Open`; parent contributions are installed before an idle leaf is published, and the later leaf CAS publishes the local count. |
+| Successful entry | Normally the CAS which first represents the operation at an already active node, or the highest newly installed parent/root contribution. If a racing close precedes a later successful join to already represented surplus, the entry is instead ordered at its initial `Open` observation, as in the paper. The leaf CAS always publishes local token ownership. |
 | Rejected entry | Observation of closed, closing, drained, or an unowned departure tail. |
 | Non-final departure | Successful local or ancestor decrement CAS. |
 | Final departure | Tail-to-open or tail-to-drained CAS after unwinding and verification. |
@@ -80,12 +80,20 @@ All algorithm atomics currently use sequential consistency.
 departure visible until its linearization/sealing CAS and avoids ordering a
 false query before a racing `close()` which still reports `Pending`.
 
-Packed count or generation exhaustion rejects only the attempted arrival and
-does not mutate or poison the object. Existing tokens can still depart and
-reach drain. This is necessary because an entrant may have sampled a full node,
-been delayed while all represented participants depart, and resume only after
-another process sealed `Drained`; a late capacity error must not invalidate the
-already stable terminal state.
+Packed local-count exhaustion observed before an entrant reserves a parent
+contribution rejects only that attempt and does not poison the object. If the
+count reaches its maximum only after the entrant reserved a parent during a
+race, that operation waits for a count to depart and then completes admission.
+It cannot return an error after a query or close observed its provisional
+contribution. This wait occurs only at the exact 65,535-arrival per-node limit;
+process death while waiting retains the parent contribution and fails closed.
+
+The 47-bit activation generation wraps from its maximum to one. A safe typed
+token prevents its own activation from reaching zero, so wrap cannot invalidate
+that token. Raw tokens are already unsafe linear capabilities whose contract
+forbids stale reuse; the generation is a bounded accidental-staleness check,
+not a permanent identity. The outer mapping generation remains the durable ABA
+boundary across replacement.
 
 Merely observing `Open` does not guarantee that `try_enter` succeeds. A last
 departure can win the selected leaf race; the retry may then return `Closed` or
@@ -102,6 +110,7 @@ resume with its old Rust references. Each interruption point is conservative:
 | --- | --- |
 | Sampling open, before any CAS | No footprint; a later root operation rechecks close. |
 | Parent arrival, before child activation | Leaked ancestor/root contribution. |
+| Parent arrival, while a full child count prevents publication | Leaked ancestor/root contribution. |
 | Child increment, before returning its token | Leaked participant. |
 | Redundant child increment, before compensation | Leaked ancestor contribution. |
 | Child 1-to-0, before ancestor departure | Leaked ancestor/root contribution. |
@@ -127,9 +136,11 @@ unwinding it.
 
 `into_raw()` encodes a 16-bit leaf and 47-bit activation generation in `u64`.
 `depart_raw` is unsafe because the scalar cannot carry instance identity or
-linear ownership. The generation rejects stale activations, but two valid
-same-leaf tokens in one activation share a generation; duplicating a raw token
-can consume the other participant's count.
+linear ownership. The wrapping generation rejects many accidental stale
+activations, but it is not an ABA proof: after 2^47 complete activations the tag
+can repeat. Two valid same-leaf tokens in one activation also share a
+generation. The caller must uphold exact instance and sole-consumption rules;
+duplicating a raw token can consume another participant's count.
 
 ## Storage and lifetime
 

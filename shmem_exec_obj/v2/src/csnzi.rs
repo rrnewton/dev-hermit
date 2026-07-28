@@ -40,6 +40,7 @@
 //! directly to `exec` or `_exit` without using or unwinding the token.
 
 use core::fmt;
+use core::hint::spin_loop;
 use core::mem::{align_of, needs_drop, offset_of, size_of};
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -122,13 +123,11 @@ impl CsnziPoisonReason {
     }
 }
 
-/// A representational limit which rejected an arrival without changing state.
+/// A representational limit which rejected admission without leaking presence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CsnziCapacity {
     /// A leaf or internal node already has the maximum 16-bit local count.
     NodeCount,
-    /// An idle node has exhausted its 47-bit activation generation.
-    Generation,
     /// The centralized root already has its maximum 61-bit contribution count.
     RootCount,
 }
@@ -169,7 +168,8 @@ pub enum CsnziError {
         /// The inactive generation carried by the token.
         generation: u64,
     },
-    /// This arrival could not be represented and made no state change.
+    /// This arrival could not be represented, left no contribution, and did
+    /// not poison the object.
     CapacityExhausted(CsnziCapacity),
     /// The object has entered a permanent fail-closed state.
     Poisoned(CsnziPoisonReason),
@@ -392,7 +392,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     /// The largest number of simultaneous arrivals representable at one node.
     pub const MAX_NODE_COUNT: u64 = NODE_COUNT_MASK;
 
-    /// The largest activation generation representable by a node.
+    /// The largest activation generation representable before wrapping to one.
     pub const MAX_GENERATION: u64 = NODE_GENERATION_MASK;
 
     /// Returns whether `NODES` describes a supported complete four-way tree.
@@ -482,8 +482,14 @@ impl<const NODES: usize> Csnzi<NODES> {
     /// algorithm, but merely seeing open does not guarantee success: a final
     /// departure can win the leaf race and a subsequent parent activation can
     /// return [`CsnziError::Closed`] or [`CsnziError::DepartureTailBusy`]. The
-    /// successful leaf CAS publishes the local count. If close intervenes, the
-    /// abstract admission is ordered at the earlier open observation.
+    /// successful leaf CAS publishes the local count. If close intervenes
+    /// before a successful join to already represented surplus, the abstract
+    /// admission is ordered at the earlier open observation.
+    ///
+    /// An operation which already reserved a parent and then races with the
+    /// exact 65,535-arrival local-count limit waits until a count departs. This
+    /// pathological slow path preserves the operation's pre-close admission;
+    /// killing it while it waits intentionally leaks the parent contribution.
     pub fn try_enter(&self, leaf: usize) -> Result<CsnziToken<'_, NODES>, CsnziError> {
         let node = self.leaf_node(leaf)?;
         self.ensure_healthy()?;
@@ -720,13 +726,21 @@ impl<const NODES: usize> Csnzi<NODES> {
             }
 
             if count == NODE_COUNT_MASK {
+                if arrived_at_parent {
+                    // This entry is already represented at its parent and may
+                    // have been observed by query/close. It must eventually
+                    // publish a token rather than complete as a failed no-op.
+                    spin_loop();
+                    continue;
+                }
                 return Err(CsnziError::CapacityExhausted(CsnziCapacity::NodeCount));
             }
             let next_generation = if count == 0 {
                 if generation == NODE_GENERATION_MASK {
-                    return Err(CsnziError::CapacityExhausted(CsnziCapacity::Generation));
+                    1
+                } else {
+                    generation + 1
                 }
-                generation + 1
             } else {
                 generation
             };
@@ -1154,7 +1168,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_capacity_failures_reject_without_wrapping_or_poisoning() {
+    fn packed_count_capacity_rejects_and_generation_wraps_without_poisoning() {
         let root_overflow = Csnzi::<4>::new();
         root_overflow
             .root
@@ -1166,16 +1180,17 @@ mod tests {
         );
         assert_eq!(root_overflow.poison_reason(), None);
 
-        let generation_overflow = Csnzi::<4>::new();
-        let leaf = generation_overflow.leaf_node(0).unwrap();
-        generation_overflow.nodes[leaf]
+        let generation_wrap = Csnzi::<4>::new();
+        let leaf = generation_wrap.leaf_node(0).unwrap();
+        generation_wrap.nodes[leaf]
             .value
             .store(node_state(NODE_GENERATION_MASK, 0), Ordering::SeqCst);
-        assert_eq!(
-            generation_overflow.try_enter(0),
-            Err(CsnziError::CapacityExhausted(CsnziCapacity::Generation))
-        );
-        assert_eq!(generation_overflow.poison_reason(), None);
+        let token = generation_wrap.try_enter(0).unwrap();
+        assert_eq!(token.generation(), 1);
+        assert_eq!(generation_wrap.poison_reason(), None);
+        assert_eq!(token.depart().unwrap(), DepartOutcome::Active);
+        assert!(!generation_wrap.query());
+        assert_eq!(generation_wrap.close().unwrap(), CloseOutcome::Drained);
     }
 
     #[test]

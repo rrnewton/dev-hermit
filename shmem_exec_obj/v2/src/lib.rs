@@ -17,6 +17,8 @@ pub mod injection;
 pub mod layout;
 #[cfg(target_has_atomic = "64")]
 pub mod mapping;
+#[cfg(target_has_atomic = "64")]
+pub mod migration;
 pub mod offset;
 pub mod pod_api;
 #[cfg(target_has_atomic = "64")]

@@ -8,12 +8,16 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod ptrace;
+
 const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
 const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 struct Options {
+    mode: Mode,
     image: PathBuf,
     sha256: String,
     shim: PathBuf,
@@ -22,6 +26,12 @@ struct Options {
     fanout: u32,
     threads: u32,
     calls: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Mode {
+    Preload,
+    Ptrace,
 }
 
 fn main() {
@@ -33,7 +43,9 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let mut options = parse_options()?;
-    if options.fanout == 0 || options.threads == 0 || options.calls == 0 {
+    if options.mode == Mode::Preload
+        && (options.fanout == 0 || options.threads == 0 || options.calls == 0)
+    {
         return Err("fanout, threads, and calls must all be nonzero".into());
     }
     options.image = options.image.canonicalize()?;
@@ -50,7 +62,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     let artifact_fd = artifact.duplicate_artifact_fd_for_exec()?;
     let flags = BootstrapFlags::REQUIRED.union(BootstrapFlags::INHERIT_ACROSS_EXEC);
     let context = BootstrapContext::new(
-        ConnectorKind::Preload,
+        match options.mode {
+            Mode::Preload => ConnectorKind::Preload,
+            Mode::Ptrace => ConnectorKind::Ptrace,
+        },
         flags,
         artifact_fd.as_raw_fd(),
         code_fd.as_raw_fd(),
@@ -63,27 +78,49 @@ fn run() -> Result<(), Box<dyn Error>> {
         random_nonce()?,
     );
     context.validate()?;
-    let bootstrap_fd = create_bootstrap_fd(&context)?;
-
-    // Injection is scoped to the spawned guest. The host itself never loads
-    // the shim, and every descendant naturally inherits this environment and
-    // the two non-CLOEXEC memfd descriptors.
     let mut command = Command::new(&options.guest);
-    command
-        .arg("--depth")
-        .arg(options.depth.to_string())
-        .arg("--fanout")
-        .arg(options.fanout.to_string())
-        .arg("--threads")
-        .arg(options.threads.to_string())
-        .arg("--calls")
-        .arg(options.calls.to_string())
-        .env("LD_PRELOAD", &options.shim)
-        .env(BOOTSTRAP_FD_ENV, bootstrap_fd.as_raw_fd().to_string())
-        .process_group(0);
+    let bootstrap_fd = if options.mode == Mode::Preload {
+        let bootstrap_fd = create_bootstrap_fd(&context)?;
+        command
+            .arg("--depth")
+            .arg(options.depth.to_string())
+            .arg("--fanout")
+            .arg(options.fanout.to_string())
+            .arg("--threads")
+            .arg(options.threads.to_string())
+            .arg("--calls")
+            .arg(options.calls.to_string())
+            .env("LD_PRELOAD", &options.shim)
+            .env(BOOTSTRAP_FD_ENV, bootstrap_fd.as_raw_fd().to_string());
+        Some(bootstrap_fd)
+    } else {
+        None
+    };
+    command.process_group(0);
     let mut guest = command.spawn()?;
+    // Keep the descriptor live until every recursively executed preload guest
+    // exits. The ptrace connector passes the context directly instead.
+    let _bootstrap_fd = bootstrap_fd;
     let guest_group =
         libc::pid_t::try_from(guest.id()).map_err(|_| "guest PID does not fit pid_t")?;
+
+    if options.mode == Mode::Ptrace {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            ptrace::wait_for_fixture_stop(guest_group)?;
+            if let Err(error) = ptrace::inject(guest_group, &options.shim, &context) {
+                unsafe { libc::kill(-guest_group, libc::SIGKILL) };
+                let _ = guest.wait();
+                return Err(error);
+            }
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            unsafe { libc::kill(-guest_group, libc::SIGKILL) };
+            let _ = guest.wait();
+            return Err("ptrace demo supports Linux x86-64 only".into());
+        }
+    }
     let status = guest.wait()?;
     if !status.success() {
         // The guest is a process-group leader and every recursive Command
@@ -105,15 +142,23 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     image.validate(&state)?;
     image.verify_runtime_permissions(&state)?;
-    let process_count = process_count(options.depth, options.fanout)?;
-    let expected_calls = process_count
-        .checked_mul(
-            (options.threads as u64)
-                .checked_mul(options.calls)
-                .and_then(|value| value.checked_add(1))
-                .ok_or("expected call count overflow")?,
-        )
-        .ok_or("expected call count overflow")?;
+    let process_count = if options.mode == Mode::Preload {
+        process_count(options.depth, options.fanout)?
+    } else {
+        1
+    };
+    let expected_calls = if options.mode == Mode::Preload {
+        process_count
+            .checked_mul(
+                (options.threads as u64)
+                    .checked_mul(options.calls)
+                    .and_then(|value| value.checked_add(1))
+                    .ok_or("expected call count overflow")?,
+            )
+            .ok_or("expected call count overflow")?
+    } else {
+        1
+    };
     let actual_calls = image.get(&state, CALL_KEY)?.unwrap_or(0);
     let actual_attachments = image.get(&state, ATTACH_KEY)?.unwrap_or(0);
     if actual_calls != expected_calls {
@@ -131,17 +176,28 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("preload demo created an unexpected table entry".into());
     }
 
-    println!(
-        "preload-ok artifact={} processes={} threads_per_process={} calls_per_thread={} intercepted_calls={} attachments={} code_va=0x{:x} state_va=0x{:x}",
-        artifact.digest_hex(),
-        process_count,
-        options.threads,
-        options.calls,
-        actual_calls,
-        actual_attachments,
-        image.code_address(),
-        state.state_address(),
-    );
+    match options.mode {
+        Mode::Preload => println!(
+            "preload-ok artifact={} processes={} threads_per_process={} calls_per_thread={} intercepted_calls={} attachments={} code_va=0x{:x} state_va=0x{:x}",
+            artifact.digest_hex(),
+            process_count,
+            options.threads,
+            options.calls,
+            actual_calls,
+            actual_attachments,
+            image.code_address(),
+            state.state_address(),
+        ),
+        Mode::Ptrace => println!(
+            "ptrace-ok artifact={} target_pid={} bootstrap_calls={} attachments={} injector_detached=true code_va=0x{:x} state_va=0x{:x}",
+            artifact.digest_hex(),
+            guest_group,
+            actual_calls,
+            actual_attachments,
+            image.code_address(),
+            state.state_address(),
+        ),
+    }
     Ok(())
 }
 
@@ -259,6 +315,7 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
     let mut fanout = 2;
     let mut threads = 2;
     let mut calls = 100;
+    let mut mode = Mode::Preload;
     let mut args = env::args_os().skip(1);
     while let Some(argument) = args.next() {
         let argument = argument
@@ -276,9 +333,16 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
             "--fanout" => fanout = utf8_value(value, "--fanout")?.parse()?,
             "--threads" => threads = utf8_value(value, "--threads")?.parse()?,
             "--calls" => calls = utf8_value(value, "--calls")?.parse()?,
+            "--mode" => {
+                mode = match utf8_value(value, "--mode")?.as_str() {
+                    "preload" => Mode::Preload,
+                    "ptrace" => Mode::Ptrace,
+                    other => return Err(format!("unknown connector mode {other:?}").into()),
+                }
+            }
             "-h" | "--help" => {
                 println!(
-                    "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--depth N] [--fanout N] [--threads N] [--calls N]"
+                    "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N]"
                 );
                 std::process::exit(0);
             }
@@ -286,6 +350,7 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
         }
     }
     Ok(Options {
+        mode,
         image: image.ok_or("missing --image")?,
         sha256: sha256.ok_or("missing --sha256")?,
         shim: shim.ok_or("missing --shim")?,

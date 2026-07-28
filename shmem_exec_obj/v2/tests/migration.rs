@@ -12,6 +12,7 @@ use shmem_pod::migration::{
     MigrationSchema, SchemaIdentity, SchemaNegotiation, negotiate_schema,
 };
 use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
+use shmem_pod::{PodSync, PodValue};
 
 const MAPPING_LEN: usize = 64 * 1024;
 const ARENA_OFFSET: u64 = 8 * 1024;
@@ -140,14 +141,8 @@ impl Drop for SharedMapping {
 }
 
 fn migration_plan(transaction_id: u64, source_region: u64, target_region: u64) -> MigrationPlan {
-    MigrationPlan::new(
-        transaction_id,
-        SchemaIdentity::of::<AccountV1>(),
-        SchemaIdentity::of::<AccountV2>(),
-        source_region,
-        target_region,
-    )
-    .unwrap()
+    MigrationPlan::for_schemas::<AccountV1, AccountV2>(transaction_id, source_region, target_region)
+        .unwrap()
 }
 
 #[test]
@@ -176,7 +171,7 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     let control = unsafe { &*control };
     let control_from_other_address = unsafe { &*control_alias.base.cast::<MigrationControl>() };
 
-    let admission = CloseableSnzi::<5>::new();
+    let admission = CloseableSnzi::<20>::new();
     assert!(admission.close());
     assert!(admission.is_drained());
     let plan = migration_plan(0x55, SOURCE_REGION, TARGET_REGION);
@@ -217,6 +212,14 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
             .unwrap(),
         (AuthoritativeGeneration::Target, plan)
     );
+    control.poison();
+    assert_eq!(
+        control_from_other_address
+            .authoritative_generation()
+            .unwrap(),
+        (AuthoritativeGeneration::Target, plan),
+        "late poison must not erase a committed route"
+    );
 
     let reconstructed = unsafe { SharedBox::<AccountV2>::from_descriptor(target.descriptor()) };
     assert_eq!(
@@ -247,15 +250,13 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
 
     // Reclamation state is persistent so a cleanup supervisor can resume after
     // a crash between the fence and munmap/truncate.
-    let resumed =
-        unsafe { control_from_other_address.authorize_reclamation_after_admission(&admission) }
-            .unwrap();
+    let resumed = unsafe { control_from_other_address.resume_reclamation() }.unwrap();
     assert!(resumed.is_resume());
 }
 
 #[test]
 fn active_admission_blocks_migration_until_departure_tail_finishes() {
-    let admission = CloseableSnzi::<5>::new();
+    let admission = CloseableSnzi::<20>::new();
     let token = admission.try_enter(0).unwrap();
     assert!(admission.close());
     let control = MigrationControl::new();
@@ -309,12 +310,12 @@ fn typed_mapping_close_proof_fences_reclamation() {
         .begin_after_mapping_drain(&source_draining, migration_plan(77, 101, 102))
         .unwrap();
     unsafe { migration.mark_target_ready() }.unwrap();
-    migration.commit().unwrap();
+    let _committed = migration.commit().unwrap();
     let closed_source = source_draining.try_close().unwrap();
     // SAFETY: closed_source is the exact source mapping, and this test owns all
     // raw mapping capabilities.
     let permit =
-        unsafe { control.authorize_reclamation_after_mapping_close(closed_source) }.unwrap();
+        unsafe { control.authorize_reclamation_after_mapping_close(&closed_source) }.unwrap();
     assert!(!permit.is_resume());
 
     target_owner.begin_drain().unwrap().try_close().unwrap();
@@ -324,7 +325,7 @@ fn typed_mapping_close_proof_fences_reclamation() {
 fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
     struct CrashState {
         control: MigrationControl,
-        admission: CloseableSnzi<5>,
+        admission: CloseableSnzi<20>,
         child_started: AtomicU64,
     }
 
@@ -350,9 +351,11 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
             .begin_after_admission_drain(&state.admission, plan)
             .unwrap();
         state.child_started.store(1, Ordering::Release);
-        // SAFETY: deliberately skips Rust destructors to model process death in
-        // the middle of a copy transaction.
-        unsafe { libc::_exit(0) };
+        loop {
+            // SAFETY: wait until the parent deliberately kills this process in
+            // the middle of a copy transaction.
+            unsafe { libc::pause() };
+        }
     }
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -360,9 +363,12 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
         assert!(Instant::now() < deadline, "child did not start migration");
         std::thread::yield_now();
     }
+    // SAFETY: child is a live direct child blocked above.
+    assert_eq!(unsafe { libc::kill(child, libc::SIGKILL) }, 0);
     let mut status = 0;
     assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
-    assert!(libc::WIFEXITED(status));
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
     assert_eq!(
         state.control.snapshot().unwrap().phase(),
         MigrationPhase::Copying
@@ -385,6 +391,11 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
 
 #[test]
 fn schema_negotiation_is_exact_and_plan_rejects_aba_ids() {
+    fn require_relocatable_shared<T: PodValue + PodSync>() {}
+    require_relocatable_shared::<SchemaIdentity>();
+    require_relocatable_shared::<MigrationPlan>();
+    require_relocatable_shared::<MigrationControl>();
+
     assert_eq!(
         negotiate_schema::<AccountV2>(SchemaIdentity::of::<AccountV2>(), &[]).unwrap(),
         SchemaNegotiation::Exact
@@ -400,6 +411,11 @@ fn schema_negotiation_is_exact_and_plan_rejects_aba_ids() {
     let wrong_layout = SchemaIdentity::new(AccountV1::VERSION, 0xdead_beef);
     assert!(matches!(
         negotiate_schema::<AccountV2>(wrong_layout, &[SchemaIdentity::of::<AccountV1>()]),
+        Err(MigrationError::UnsupportedSchema { .. })
+    ));
+    let future = SchemaIdentity::new(3, 0xfeed_face);
+    assert!(matches!(
+        negotiate_schema::<AccountV2>(future, &[future]),
         Err(MigrationError::UnsupportedSchema { .. })
     ));
     assert_eq!(
