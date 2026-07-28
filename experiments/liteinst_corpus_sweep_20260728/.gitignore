@@ -1,0 +1,3 @@
+# Compiled corpus binaries and per-run logs are reproducible from run_sweep.sh.
+bin/
+results/logs/

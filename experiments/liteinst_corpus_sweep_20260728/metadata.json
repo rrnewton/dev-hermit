@@ -1,0 +1,31 @@
+{
+  "experiment": "liteinst_corpus_sweep_20260728",
+  "date": "2026-07-28",
+  "question": "How much of a plain single-process C corpus determinizes (L2) under `hermit --backend liteinst --strict --verify`, and where is the LiteInst boundary?",
+  "backends_compared": ["native", "ptrace", "liteinst"],
+  "hermit_mode": "run --strict --verify",
+  "repo_shas": {
+    "reverie": "770ee38c58a419261875ac557b05342c6daee794",
+    "reverie_branch": "codex/liteinst-r5 (PR #254)",
+    "hermit": "a61e9eb78da43986338212acd755a50e8ad6123d",
+    "hermit_branch": "codex/ratchet-liteinst-r5 (PR #1140)"
+  },
+  "hermit_binary": "worktrees/liteinst/hermit/target/release/hermit",
+  "build_command": "HTTPS_PROXY=http://fwdproxy:8080 cargo build -p hermit -p detcore-liteinst --release",
+  "host": {
+    "arch": "x86_64",
+    "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+    "cc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "run_command": "TIMEOUT=45 ./run_sweep.sh",
+  "cc_flags": "-O1 (per-program: 08_mathlib -lm, 17_pthread -lpthread)",
+  "timeout_seconds": 45,
+  "results_csv": "results/results.csv",
+  "summary": {
+    "total": 20,
+    "L2-MATCH": 16,
+    "L2-WRONG": 2,
+    "REJECT": 1,
+    "HANG": 1
+  }
+}
