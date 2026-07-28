@@ -7,15 +7,16 @@ cd "$root"
 command -v jq >/dev/null || { echo "test-preload-unload.sh requires jq" >&2; exit 1; }
 command -v cc >/dev/null || { echo "test-preload-unload.sh requires a C compiler" >&2; exit 1; }
 command -v readelf >/dev/null || { echo "test-preload-unload.sh requires readelf" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "test-preload-unload.sh requires timeout" >&2; exit 1; }
 if [[ $(uname -s) != Linux ]]; then
   echo "the preload unload test requires Linux ELF semantics" >&2
   exit 1
 fi
 
-target_dir=$(cargo metadata --format-version 1 --no-deps | jq -er .target_directory)
+target_dir=$(cargo metadata --locked --format-version 1 --no-deps | jq -er .target_directory)
 messages=$(mktemp)
 trap 'rm -f "$messages"' EXIT
-cargo build --release -p shmem-pod-preload-shim \
+cargo build --locked --release -p shmem-pod-preload-shim \
   --message-format=json-render-diagnostics >"$messages"
 shim=$(jq -r \
   'select(.reason == "compiler-artifact" and .target.name == "shmem_pod_preload_shim") | .filenames[]? | select(endswith(".so"))' \
@@ -32,4 +33,4 @@ fi
 harness="$target_dir/preload-nodelete-lifetime"
 cc -std=c11 -O2 -Wall -Wextra -Werror \
   -I demos/connector demos/connector/nodelete_lifetime.c -ldl -o "$harness"
-"$harness" "$shim"
+timeout --foreground --signal=TERM --kill-after=2s 10s "$harness" "$shim"

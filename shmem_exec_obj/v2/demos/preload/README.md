@@ -35,8 +35,11 @@ From the crate root (`jq` is required):
 ./scripts/run-preload-demo.sh
 ```
 
-`./scripts/test-connector-failures.sh` also verifies that this path fails closed
-when the sealed context carries a deliberately incorrect artifact digest.
+`./scripts/test-connector-failures.sh` verifies stable `-2` transport, `-3`
+identity, and `-6` runtime-initialization failures. The direct probes cover bad
+artifact, code, and state descriptors, code/digest/API/generation mismatches,
+and a fixed-address collision. `./scripts/test-preload-unload.sh` verifies the DSO's
+ELF `NODELETE` flag and actual post-`dlclose` call lifetime.
 
 The workload is configurable:
 
@@ -62,17 +65,19 @@ prearranged descriptor table. The shim fails the demo process with exit status
 125 when required setup or a method call fails.
 
 Lazy initialization here uses Rust `std`, allocation, TLS, and filesystem I/O.
-The thread-local guard prevents recursive entry through this hook, but it does
-not make initialization safe while the dynamic-loader or allocator lock is
-held or from a signal handler. At-fork handlers serialize forks, disable and
-drain hook calls, then reset the exactly quiescent parent/child gates. Raw
-`fork` syscalls, `vfork`, and fork from inside this hook remain unsupported. A
-production shim needs an allocation-free early bootstrap or an explicit
-safe-point initializer before enabling its hooks.
+There is no loader-lock constructor; `pthread_atfork` registration and mapping
+begin at the first admitted ordinary hook. The thread-local guard is acquired
+before the real syscall and admission, but it does not make initialization safe
+from a signal handler or while the thread holds allocator/loader locks. At-fork
+handlers serialize forks, disable and drain hook calls, then reset the exactly
+quiescent parent/child gates. Raw `fork` syscalls, `vfork`, and fork from inside
+this hook remain unsupported. A production shim needs an allocation-free early
+bootstrap or an explicit safe-point initializer before enabling its hooks.
 
-The finalizer disables admission and drains existing calls, but does not drop
-the mapped context. External hooks must be removed before `dlclose`; ptrace
-injection pins the DSO with `RTLD_NODELETE`.
+The DSO is linked with ELF `DF_1_NODELETE`. Every load path, including
+`LD_PRELOAD` and callers which omit `RTLD_NODELETE`, keeps its text, TLS, and
+context resident until process exit. This release deliberately does not support
+in-process unload or reclamation.
 
 The demo launches the guest tree in its own process group. If the required shim
 terminates any process and the root reports failure, the host kills remaining

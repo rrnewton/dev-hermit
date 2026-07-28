@@ -14,10 +14,11 @@ trap 'rm -rf "$work"' EXIT
 
 expect_failure() {
   local name=$1
-  local expected=$2
-  shift 2
-  if POD_FAULT=bad-context-digest "$@" >"$work/$name.log" 2>&1; then
-    echo "$name unexpectedly accepted a context with the wrong digest" >&2
+  local fault=$2
+  local expected=$3
+  shift 3
+  if POD_FAULT="$fault" "$@" >"$work/$name.log" 2>&1; then
+    echo "$name unexpectedly accepted injected fault $fault" >&2
     cat "$work/$name.log" >&2
     exit 1
   fi
@@ -26,10 +27,25 @@ expect_failure() {
     cat "$work/$name.log" >&2
     exit 1
   fi
-  echo "$name rejected bad-context-digest as expected"
+  echo "$name rejected $fault as expected: $expected"
 }
 
-expect_failure preload "artifact authentication failed" \
+expect_failure preload bad-context-digest "artifact authentication failed" \
   ./scripts/run-preload-demo.sh
-expect_failure ptrace "remote bootstrap returned status -3" \
+expect_failure ptrace-artifact-transport unsealed-artifact \
+  "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-code-transport short-code \
+  "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-state-transport read-only-state \
+  "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-artifact-identity bad-context-digest \
+  "remote bootstrap returned status -3" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-code-identity bad-code-bytes \
+  "remote bootstrap returned status -3" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-api-identity bad-api-fingerprint \
+  "remote bootstrap returned status -3" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-state-identity bad-state-generation \
+  "remote bootstrap returned status -3" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-runtime-mapping fixed-code-collision \
+  "remote bootstrap returned status -6" \
   ./scripts/run-ptrace-demo.sh

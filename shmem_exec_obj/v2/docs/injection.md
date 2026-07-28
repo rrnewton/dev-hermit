@@ -101,18 +101,22 @@ libc's `getuid` ABI. The host:
 5. starts the guest with the shim in `LD_PRELOAD`; and
 6. verifies exact attachment and intercepted-call totals in shared state.
 
-The shim constructor only registers `pthread_atfork`; it does not allocate or
-map under the dynamic-loader lock. The first ordinary `getuid` call performs
-lazy initialization. It validates the sealed context file, duplicates all
-descriptors with `FD_CLOEXEC`, authenticates the artifact, maps code RX and
-state shared-RW behind guard pages, checks the generated API and generation,
-and verifies `/proc` permissions before publishing an immutable process-local
+The shim has no ELF constructor and performs no adapter work under the dynamic-
+loader lock. The first ordinary `getuid` call registers `pthread_atfork` and
+performs lazy initialization at that admitted safe point. Registration has its
+own PID-tagged publication state: if a process forks in the narrow window before
+the handler is registered, the child detects that the busy owner belonged to
+another PID and retries. It then validates and pre-reads each descriptor,
+authenticates the artifact and code bytes, maps code RX and state shared-RW
+behind guard pages, checks the generated API and state identity envelope, and
+verifies `/proc` permissions before publishing an immutable process-local
 context.
 
-The interposer issues the real `getuid` as a raw syscall, saves/restores
-`errno`, and uses a thread-local recursion guard. A recursive call made by the
-adapter itself bypasses instrumentation; this prevents initialization deadlock
-and is intentionally not counted.
+The interposer acquires its thread-local recursion guard before the real
+`getuid` syscall or admission gate, closing the pre-guard signal-reentry window.
+It issues the real call as a raw syscall and saves/restores `errno`. A recursive
+call made by the adapter itself bypasses instrumentation; this prevents
+initialization deadlock and is intentionally not counted.
 
 ### Fork behavior
 
@@ -142,6 +146,26 @@ call from an unrelated signal safe.
 Production preload integrations should invoke an explicit early safe-point
 initializer before enabling hooks, or replace the lazy path with an audited
 allocation-free bootstrap.
+
+### Direct status taxonomy
+
+The direct C ABI uses stable numeric classes, also declared in
+`demos/connector/shmem_pod_bootstrap.h`:
+
+- `InvalidTransport` (`-2`) means descriptor type, access mode, seal, length,
+  duplication, or `pread` validation failed. Artifact, code, and state
+  descriptors are checked independently before mapping.
+- `IncompatibleImage` (`-3`) means bytes were readable but their authenticated
+  digest/header/code hash/API fingerprint or state identity/generation did not
+  match.
+- `InitializationFailed` (`-6`) means trusted inputs passed identity checks but
+  runtime mapping, binding, permission, or method initialization failed.
+
+No runtime error string is parsed to choose a class. The adapter completes all
+descriptor transport checks and every identity check available from the
+authenticated header before mapping code. The pod-exported opaque layout is
+checked immediately after RX mapping and before state mapping, so later runtime
+errors have the `-6` meaning by construction.
 
 ## Ptrace bootstrap and detach
 
@@ -201,16 +225,26 @@ after the first failure.
 
 The adapter init claim publishes `READY` only after the complete context write;
 its drop guard publishes `FAILED` on every error or unwind, so no panic can
-strand `INIT_BUSY`. Release builds use `panic=abort`, which terminates rather
-than unwinding across the C ABI.
+strand `INIT_BUSY`. Concurrent first callers wait on a private futex and are
+woken on either terminal publication. There is no elapsed-time or observation-
+count failure for a live initializer. The per-process attachment claim has the
+same unwind rule: it resets `ATTACH_BUSY` and wakes waiters unless the PID was
+published successfully. Release builds use `panic=abort`, which terminates
+rather than unwinding across the C ABI.
 
-Ptrace maps survive detach. The demo uses `RTLD_NODELETE` so its entry points
-cannot be unmapped while the detached target may call them. The finalizer stops
-new admissions and drains existing calls, but it deliberately does not reclaim
-the mapping context. A real unloader must first remove every external hook or
-trampoline, disable admission, wait for zero active calls, and only then unmap
-code and state. Calling `dlclose` from inside an admitted hook is unsupported
-because drain would wait for the caller's own token.
+If an initializer thread is externally stopped or destroyed without unwinding,
+waiters remain blocked: the adapter never times out and steals unpublished Rust
+state. That is an explicit fail-stop boundary. A required deployment must have
+its supervisor terminate/restart the process rather than treating elapsed time
+as ownership proof.
+
+Ptrace maps survive detach. More importantly, the adapter DSO itself is linked
+with ELF `DF_1_NODELETE`; safety does not depend on every injector remembering
+an `RTLD_NODELETE` flag. `dlclose` may drop a handle but cannot unmap its text,
+TLS, or process-local context before process exit. This release intentionally
+does not offer in-process adapter unloading or reclamation. Deployments needing
+replaceable adapters must first provide a separate external-entry grace period
+and hook-removal protocol rather than weakening `NODELETE`.
 
 Run the two unaware-program proofs from the crate root:
 
@@ -218,9 +252,12 @@ Run the two unaware-program proofs from the crate root:
 ./scripts/run-preload-demo.sh
 ./scripts/run-ptrace-demo.sh
 ./scripts/test-connector-failures.sh
+./scripts/test-preload-unload.sh
 ```
 
-The failure script substitutes a structurally valid but incorrect artifact
-digest. It requires the preload path to terminate before the guest spawns its
-tree and the ptrace entry to return `BootstrapStatus::IncompatibleImage` (`-3`)
-before the injector kills the stopped target.
+The failure script directly probes all three status boundaries: unsealed
+artifact, short code, and read-only state transports return `-2`; digest, code-
+byte, API-fingerprint, and generation mismatches return `-3`; and a trusted
+fixed-code mapping collision returns `-6`. The unload script checks `DT_FLAGS_1`
+with `readelf`, calls a saved adapter entry after `dlclose`, and confirms the
+object remains resident with `RTLD_NOLOAD`.

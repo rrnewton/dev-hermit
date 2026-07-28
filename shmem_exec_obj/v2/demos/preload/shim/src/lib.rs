@@ -37,6 +37,8 @@ const MAX_ENV_FD_BYTES: usize = 10;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 static INIT_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
+static ATFORK_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
+static ATFORK_OWNER_PID: AtomicI32 = AtomicI32::new(0);
 static ATTACHED_PID: AtomicI32 = AtomicI32::new(0);
 static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 static FAIL_CLOSED: AtomicBool = AtomicBool::new(false);
@@ -163,8 +165,8 @@ impl<'a> InitClaim<'a> {
 
     fn publish_ready(mut self) {
         self.state.store(INIT_READY, Ordering::Release);
-        futex_wake_u32(self.state, i32::MAX);
         self.published = true;
+        futex_wake_u32(self.state, i32::MAX);
     }
 }
 
@@ -187,8 +189,8 @@ impl<'a> AttachmentClaim<'a> {
 
     fn publish(mut self, pid: i32) {
         self.state.store(pid, Ordering::Release);
-        futex_wake_i32(self.state, i32::MAX);
         self.published = true;
+        futex_wake_i32(self.state, i32::MAX);
     }
 }
 
@@ -308,6 +310,7 @@ fn record_call(provided: Option<BootstrapContext>) -> Result<(), AdapterError> {
 }
 
 fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Context, AdapterError> {
+    ensure_atfork_registered()?;
     loop {
         match INIT_STATE.load(Ordering::Acquire) {
             INIT_READY => {
@@ -339,13 +342,9 @@ fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Cont
                 // panic between acquisition and publication leaves FAILED,
                 // never an INIT_BUSY value which would spin every later hook.
                 let claim = InitClaim::new(&INIT_STATE);
-                let initialized = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let context = match provided {
-                        Some(context) => initialize_context(context),
-                        None => context_from_environment().and_then(initialize_context),
-                    }?;
-                    register_atfork()?;
-                    Ok::<_, AdapterError>(context)
+                let initialized = panic::catch_unwind(AssertUnwindSafe(|| match provided {
+                    Some(context) => initialize_context(context),
+                    None => context_from_environment().and_then(initialize_context),
                 }));
                 match initialized {
                     Ok(Ok(context)) => {
@@ -538,15 +537,8 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
             "sealed code bytes differ from the authenticated artifact",
         ));
     }
-    let image =
-        unsafe { PodImage::attach_trusted(&artifact, code_fd, code_address) }.map_err(|error| {
-            AdapterError::new(
-                FailureKind::Initialization,
-                format!("code attachment failed: {error}"),
-            )
-        })?;
-    if image.api_fingerprint() != bootstrap.api_fingerprint()
-        || image.state_file_len() != bootstrap.state_len
+    if artifact.header().metadata.api_fingerprint != bootstrap.api_fingerprint()
+        || artifact.header().state_file_len != bootstrap.state_len
     {
         return Err(AdapterError::new(
             FailureKind::IncompatibleImage,
@@ -572,7 +564,15 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
         0,
         "state",
     )?;
-    validate_state_identity(&state_envelope, &artifact, &image, &bootstrap)?;
+    validate_state_identity_before_mapping(&state_envelope, &artifact, &bootstrap)?;
+    let image =
+        unsafe { PodImage::attach_trusted(&artifact, code_fd, code_address) }.map_err(|error| {
+            AdapterError::new(
+                FailureKind::Initialization,
+                format!("code attachment failed: {error}"),
+            )
+        })?;
+    validate_state_layout_identity(&state_envelope, &image)?;
     let state = image
         .attach_state(state_fd, state_address)
         .map_err(|error| {
@@ -581,7 +581,12 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
                 format!("state attachment failed: {error}"),
             )
         })?;
-    debug_assert_eq!(state.generation(), bootstrap.generation);
+    if state.generation() != bootstrap.generation {
+        return Err(AdapterError::new(
+            FailureKind::IncompatibleImage,
+            "state generation changed during attachment",
+        ));
+    }
     image.verify_runtime_permissions(&state).map_err(|error| {
         AdapterError::new(
             FailureKind::Initialization,
@@ -680,10 +685,9 @@ fn read_transport_range(
     Ok(bytes)
 }
 
-fn validate_state_identity(
+fn validate_state_identity_before_mapping(
     bytes: &[u8],
     artifact: &PodArtifact,
-    image: &PodImage,
     bootstrap: &BootstrapContext,
 ) -> Result<(), AdapterError> {
     if read_u32(bytes, ENVELOPE_STATUS_OFFSET) != STATE_STATUS_READY {
@@ -695,9 +699,6 @@ fn validate_state_identity(
         || read_u32(bytes, ENVELOPE_VERSION_OFFSET) != STATE_VERSION
         || read_u32(bytes, ENVELOPE_FAILURE_OFFSET) != 0
         || bytes[ENVELOPE_CODE_HASH_OFFSET..ENVELOPE_CODE_HASH_OFFSET + 32] != header.code_sha256
-        || read_u64(bytes, ENVELOPE_LAYOUT_HASH_OFFSET) != image.layout_hash()
-        || read_u64(bytes, ENVELOPE_LAYOUT_SIZE_OFFSET) != image.layout_size()
-        || read_u64(bytes, ENVELOPE_LAYOUT_ALIGN_OFFSET) != image.layout_align()
         || read_u64(bytes, ENVELOPE_PAYLOAD_LEN_OFFSET) != header.payload_len
         || read_u64(bytes, ENVELOPE_GENERATION_OFFSET) != bootstrap.generation
         || read_u64(bytes, ENVELOPE_OWNER_PID_OFFSET) == 0
@@ -715,6 +716,22 @@ fn validate_state_identity(
     } else {
         Ok(())
     }
+}
+
+fn validate_state_layout_identity(bytes: &[u8], image: &PodImage) -> Result<(), AdapterError> {
+    if read_u32(bytes, ENVELOPE_STATUS_OFFSET) != STATE_STATUS_READY {
+        return Ok(());
+    }
+    if read_u64(bytes, ENVELOPE_LAYOUT_HASH_OFFSET) != image.layout_hash()
+        || read_u64(bytes, ENVELOPE_LAYOUT_SIZE_OFFSET) != image.layout_size()
+        || read_u64(bytes, ENVELOPE_LAYOUT_ALIGN_OFFSET) != image.layout_align()
+    {
+        return Err(AdapterError::new(
+            FailureKind::IncompatibleImage,
+            "state layout identity differs from the authenticated image",
+        ));
+    }
+    Ok(())
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
@@ -1059,23 +1076,64 @@ fn finish_fork_barrier() {
     }
 }
 
-fn register_atfork() -> Result<(), AdapterError> {
-    // This runs only after a normal hook or direct-bootstrap safe point has
-    // finished mapping the context, never from the ELF loader constructor.
-    let result = unsafe {
-        libc::pthread_atfork(
-            Some(atfork_prepare),
-            Some(atfork_parent),
-            Some(atfork_child),
-        )
-    };
-    if result != 0 {
-        Err(AdapterError::new(
-            FailureKind::Initialization,
-            format!("pthread_atfork registration failed with status {result}"),
-        ))
-    } else {
-        Ok(())
+fn ensure_atfork_registered() -> Result<(), AdapterError> {
+    loop {
+        match ATFORK_STATE.load(Ordering::Acquire) {
+            INIT_READY => return Ok(()),
+            INIT_FAILED => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "an earlier pthread_atfork registration failed",
+                ));
+            }
+            INIT_EMPTY => {
+                let pid = raw_getpid();
+                ATFORK_OWNER_PID.store(pid, Ordering::Release);
+                if ATFORK_STATE
+                    .compare_exchange(INIT_EMPTY, INIT_BUSY, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    continue;
+                }
+                let claim = InitClaim::new(&ATFORK_STATE);
+                let result = unsafe {
+                    libc::pthread_atfork(
+                        Some(atfork_prepare),
+                        Some(atfork_parent),
+                        Some(atfork_child),
+                    )
+                };
+                if result != 0 {
+                    FAIL_CLOSED.store(true, Ordering::Release);
+                    return Err(AdapterError::new(
+                        FailureKind::Initialization,
+                        format!("pthread_atfork registration failed with status {result}"),
+                    ));
+                }
+                claim.publish_ready();
+                return Ok(());
+            }
+            INIT_BUSY => {
+                let pid = raw_getpid();
+                if ATFORK_OWNER_PID.load(Ordering::Acquire) != pid {
+                    let _ = ATFORK_STATE.compare_exchange(
+                        INIT_BUSY,
+                        INIT_EMPTY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                    futex_wake_u32(&ATFORK_STATE, i32::MAX);
+                    continue;
+                }
+                wait_while_u32(&ATFORK_STATE, INIT_BUSY);
+            }
+            _ => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "pthread_atfork registration state is corrupt",
+                ));
+            }
+        }
     }
 }
 

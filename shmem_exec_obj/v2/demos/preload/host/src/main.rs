@@ -44,7 +44,9 @@ enum Fault {
     BadContextDigest,
     UnsealedArtifact,
     ShortCode,
+    BadCodeBytes,
     ReadOnlyState,
+    BadApiFingerprint,
     BadStateGeneration,
     FixedCodeCollision,
 }
@@ -80,10 +82,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
-    let fault_code_fd = if options.fault == Some(Fault::ShortCode) {
-        Some(create_short_code_fd()?)
-    } else {
-        None
+    let fault_code_fd = match options.fault {
+        Some(Fault::ShortCode) => Some(create_short_code_fd()?),
+        Some(Fault::BadCodeBytes) => Some(create_bad_code_fd(
+            &options.image,
+            artifact.header().code_offset,
+            artifact.header().code_len,
+        )?),
+        _ => None,
     };
     let fault_state_fd = if options.fault == Some(Fault::ReadOnlyState) {
         Some(reopen_read_only_for_exec(state_fd.as_raw_fd())?)
@@ -119,6 +125,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     if options.fault == Some(Fault::BadStateGeneration) {
         context.generation = context.generation.checked_add(1).unwrap_or(1);
+        context.validate()?;
+    }
+    if options.fault == Some(Fault::BadApiFingerprint) {
+        context.api_fingerprint[0] ^= 0xff;
+        if context.api_fingerprint.iter().all(|byte| *byte == 0) {
+            context.api_fingerprint[0] = 1;
+        }
         context.validate()?;
     }
     if options.mode == Mode::Preload && options.fault == Some(Fault::FixedCodeCollision) {
@@ -306,6 +319,110 @@ fn create_bootstrap_fd(context: &BootstrapContext) -> Result<OwnedFd, Box<dyn Er
         .into());
     }
     Ok(unsafe { OwnedFd::from_raw_fd(inherited) })
+}
+
+fn create_unsealed_artifact_fd(path: &PathBuf) -> Result<OwnedFd, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    let name = CString::new("shmem-pod-unsealed-artifact-probe")?;
+    let fd = unsafe {
+        libc::memfd_create(
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "memfd_create unsealed artifact probe: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), bytes.len() as libc::off_t) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    write_all_at(fd.as_raw_fd(), &bytes)?;
+    duplicate_for_exec(fd.as_raw_fd(), "unsealed artifact probe")
+}
+
+fn create_short_code_fd() -> Result<OwnedFd, Box<dyn Error>> {
+    let name = CString::new("shmem-pod-short-code-probe")?;
+    let fd = unsafe {
+        libc::memfd_create(
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_EXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "memfd_create short code probe: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), 1) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    duplicate_for_exec(fd.as_raw_fd(), "short code probe")
+}
+
+fn create_bad_code_fd(
+    path: &PathBuf,
+    code_offset: u64,
+    code_len: u64,
+) -> Result<OwnedFd, Box<dyn Error>> {
+    let artifact = fs::read(path)?;
+    let offset = usize::try_from(code_offset)?;
+    let length = usize::try_from(code_len)?;
+    let end = offset.checked_add(length).ok_or("code extent overflow")?;
+    let mut code = artifact
+        .get(offset..end)
+        .ok_or("code extent outside artifact")?
+        .to_vec();
+    code[0] ^= 0xff;
+    let mapped_len = length
+        .checked_add(4095)
+        .map(|value| value & !4095)
+        .ok_or("code page rounding overflow")?;
+    let name = CString::new("shmem-pod-bad-code-probe")?;
+    let fd = unsafe {
+        libc::memfd_create(
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_EXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), mapped_len as libc::off_t) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    write_all_at(fd.as_raw_fd(), &code)?;
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    duplicate_for_exec(fd.as_raw_fd(), "bad code bytes probe")
+}
+
+fn reopen_read_only_for_exec(fd: RawFd) -> Result<OwnedFd, Box<dyn Error>> {
+    let path = CString::new(format!("/proc/self/fd/{fd}"))?;
+    let read_only = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if read_only < 0 {
+        return Err(format!(
+            "reopen state descriptor read-only: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let read_only = unsafe { OwnedFd::from_raw_fd(read_only) };
+    duplicate_for_exec(read_only.as_raw_fd(), "read-only state probe")
 }
 
 struct PtraceFixture {
@@ -537,7 +654,7 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
             .map_err(|_| "arguments must be valid UTF-8")?;
         if matches!(argument.as_str(), "-h" | "--help") {
             println!(
-                "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N] [--fault bad-context-digest]"
+                "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N] [--fault bad-context-digest|unsealed-artifact|short-code|bad-code-bytes|read-only-state|bad-api-fingerprint|bad-state-generation|fixed-code-collision]"
             );
             std::process::exit(0);
         }
@@ -563,6 +680,13 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
             "--fault" => {
                 fault = Some(match utf8_value(value, "--fault")?.as_str() {
                     "bad-context-digest" => Fault::BadContextDigest,
+                    "unsealed-artifact" => Fault::UnsealedArtifact,
+                    "short-code" => Fault::ShortCode,
+                    "bad-code-bytes" => Fault::BadCodeBytes,
+                    "read-only-state" => Fault::ReadOnlyState,
+                    "bad-api-fingerprint" => Fault::BadApiFingerprint,
+                    "bad-state-generation" => Fault::BadStateGeneration,
+                    "fixed-code-collision" => Fault::FixedCodeCollision,
                     other => return Err(format!("unknown injected fault {other:?}").into()),
                 })
             }
