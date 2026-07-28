@@ -30,6 +30,11 @@
   },
   "issues_filed": ["https://github.com/rrnewton/hermit/issues/1039"],
   "issues_commented": ["https://github.com/rrnewton/hermit/issues/830#issuecomment-5100326404"],
-  "code_fix_landed": false,
-  "disposition": "Frontier mature; remaining failures are architectural scheduler/timer determinism (deep). No safe local fix. Task stays in_progress."
+  "code_fix_landed": "draft PR only",
+  "pr": "https://github.com/rrnewton/hermit/pull/1041",
+  "pr_branch": "codex/scheduler-signal-request-double-put-guard",
+  "pr_base_sha": "b989db08a32c3636b56e10dfeee17dcee4619311",
+  "pr_head_sha": "d9e3f17f",
+  "fix_summary": "detcore/src/scheduler.rs request_put: switch put->try_put, tolerate the async-signal double-put race (force_unblock_thread InboundSignal vs guest resource request) that panicked ivar.rs:91 on 'timeout 5 echo hi' (~1/7). Removes the CRASH only; #1039 timer-vs-child nondeterminism unchanged (now degrades gracefully). 0/30 panics post-fix; alarm+pause 12/12 L2; no regression.",
+  "disposition": "Frontier mature. One safe localized crash-fix landed as draft PR #1041 (ivar double-put guard, mirrors PR-845). Remaining compat failures (#830 livelock, #1039 timer nondeterminism) are architectural. Task stays in_progress pending PR review/merge."
 }

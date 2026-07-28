@@ -344,16 +344,6 @@ impl<const NODES: usize> fmt::Debug for CsnziToken<'_, NODES> {
     }
 }
 
-impl<const NODES: usize> PartialEq for CsnziToken<'_, NODES> {
-    fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.issuer, other.issuer)
-            && self.leaf == other.leaf
-            && self.generation == other.generation
-    }
-}
-
-impl<const NODES: usize> Eq for CsnziToken<'_, NODES> {}
-
 /// A pointer-free, scalable, one-shot closable nonzero indicator.
 ///
 /// `NODES` excludes the centralized root and must describe complete
@@ -1114,7 +1104,10 @@ mod tests {
             TreeDepart::Tail
         );
         assert!(barrier.query());
-        assert_eq!(barrier.try_enter(1), Err(CsnziError::DepartureTailBusy));
+        assert!(matches!(
+            barrier.try_enter(1),
+            Err(CsnziError::DepartureTailBusy)
+        ));
         assert_eq!(
             barrier.finish_departure_tail().unwrap(),
             DepartOutcome::Active
@@ -1134,7 +1127,7 @@ mod tests {
             .unwrap();
         assert!(barrier.is_closed());
         assert!(!barrier.is_drained());
-        assert_eq!(barrier.try_enter(0), Err(CsnziError::Closed));
+        assert!(matches!(barrier.try_enter(0), Err(CsnziError::Closed)));
         assert_eq!(barrier.close().unwrap(), CloseOutcome::AlreadyClosed);
     }
 

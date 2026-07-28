@@ -31,14 +31,14 @@ jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
 
 cargo_executable() {
   local target=$1
-  jq -er --arg target "$target" \
+  jq -r --arg target "$target" \
     'select(.reason == "compiler-artifact" and .target.name == $target) | .executable // empty' \
     "$build_messages" | tail -n 1
 }
 
 cargo_shared_library() {
   local target=$1
-  jq -er --arg target "$target" \
+  jq -r --arg target "$target" \
     'select(.reason == "compiler-artifact" and .target.name == $target) | .filenames[]? | select(endswith(".so"))' \
     "$build_messages" | tail -n 1
 }
@@ -46,6 +46,9 @@ cargo_shared_library() {
 compiler=$(cargo_executable shmem-pod-image-compiler)
 host=$(cargo_executable shmem-pod-preload-host)
 shim=$(cargo_shared_library shmem_pod_preload_shim)
+for artifact in "$compiler" "$host" "$shim"; do
+  [[ -n $artifact && -e $artifact ]] || { echo "Cargo did not report a required artifact" >&2; exit 1; }
+done
 cc -std=c11 -O2 -Wall -Wextra -Werror \
   demos/ptrace/target.c -o "$artifact_dir/ptrace-target"
 cc -std=c11 -O2 -Wall -Wextra -Werror \

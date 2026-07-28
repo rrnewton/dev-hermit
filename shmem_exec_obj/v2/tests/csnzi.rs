@@ -30,7 +30,7 @@ fn layout_and_one_shot_lifecycle() {
     assert!(barrier.query());
     assert_eq!(barrier.close().unwrap(), CloseOutcome::Pending);
     assert_eq!(barrier.close().unwrap(), CloseOutcome::AlreadyClosed);
-    assert_eq!(barrier.try_enter(3), Err(CsnziError::Closed));
+    assert!(matches!(barrier.try_enter(3), Err(CsnziError::Closed)));
 
     assert_eq!(first.depart().unwrap(), DepartOutcome::Active);
     assert!(!barrier.is_drained());
@@ -47,7 +47,7 @@ fn close_empty_seals_immediately_and_stably() {
     assert_eq!(barrier.close().unwrap(), CloseOutcome::Drained);
     for _ in 0..100 {
         assert!(barrier.is_drained());
-        assert_eq!(barrier.try_enter(0), Err(CsnziError::Closed));
+        assert!(matches!(barrier.try_enter(0), Err(CsnziError::Closed)));
         assert_eq!(barrier.close().unwrap(), CloseOutcome::AlreadyClosed);
     }
 }
@@ -185,7 +185,7 @@ fn close_races_accept_or_reject_without_losing_participants() {
             worker.join().unwrap();
         }
         assert!(barrier.is_drained());
-        assert_eq!(barrier.try_enter(0), Err(CsnziError::Closed));
+        assert!(matches!(barrier.try_enter(0), Err(CsnziError::Closed)));
     }
 }
 
@@ -196,10 +196,10 @@ fn node_count_capacity_rejects_without_poisoning_or_preventing_drain() {
     for _ in 0..Csnzi::<4>::MAX_NODE_COUNT {
         tokens.push(barrier.try_enter(0).unwrap());
     }
-    assert_eq!(
+    assert!(matches!(
         barrier.try_enter(0),
         Err(CsnziError::CapacityExhausted(CsnziCapacity::NodeCount))
-    );
+    ));
     assert_eq!(barrier.poison_reason(), None);
     assert!(barrier.query());
     assert_eq!(barrier.close().unwrap(), CloseOutcome::Pending);
