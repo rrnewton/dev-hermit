@@ -190,7 +190,7 @@ unsafe impl FailClosedSourceAuthority for RelocSourceAuthority {}
 
 impl RelocSourceAuthority {
     fn reclaim(mut self) -> AccountV1 {
-        // SAFETY: callers obtain this value only by consuming a matching
+        // SAFETY: callers obtain this value only by consuming an exact-plan
         // reclamation permit, so the owned mapping can be recovered once.
         let mapping = unsafe { ManuallyDrop::take(&mut self.mapping) };
         let mut region = unsafe { mapping.attach_region::<SLOTS>(self.region_id) };
@@ -279,6 +279,33 @@ unsafe impl PrecommitTargetBacking for ProcessTargetBacking {
     }
 }
 
+struct PermitSourceAuthority;
+
+// SAFETY: this synthetic authority owns no source bytes or access path, has no
+// destructor, and is safe to leak. It exists only to test permit provenance.
+unsafe impl FailClosedSourceAuthority for PermitSourceAuthority {}
+
+struct SyntheticTargetBacking {
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+}
+
+// SAFETY: this synthetic target has no payload, aliases, publication path, or
+// destructor. Its immutable identity answers remain stable while owned.
+unsafe impl PrecommitTargetBacking for SyntheticTargetBacking {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        true
+    }
+}
+
 #[test]
 fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     const SOURCE_REGION: u64 = 0x1001;
@@ -316,12 +343,12 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         root: source,
         region_id: SOURCE_REGION,
     };
-    // SAFETY: the terminal gate is bound to plan's exact source, and moving the
-    // authority consumes the only safe source region/root mutation paths.
-    let source_quiescence = unsafe {
-        AdmissionQuiescence::bind_with_authority(&admission, plan.source(), source_authority)
-    }
-    .unwrap();
+    // SAFETY: the terminal gate is bound to the complete plan and its unique
+    // control, and moving the authority consumes the only safe source
+    // region/root mutation paths.
+    let source_quiescence =
+        unsafe { AdmissionQuiescence::bind_with_authority(&admission, plan, source_authority) }
+            .unwrap();
     let migration = control
         .begin_with_quiescent_source(source_quiescence, plan)
         .unwrap();
@@ -394,8 +421,8 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         }
     );
 
-    // SAFETY: admission is the exact source barrier, it is terminally drained,
-    // and this test owns every mapping and descriptor.
+    // SAFETY: admission is the terminal barrier bound to this unique control's
+    // exact plan, and this test owns every mapping and descriptor.
     let permit =
         unsafe { control_from_other_address.authorize_reclamation(committed.source()) }.unwrap();
     assert!(!permit.is_resume());
@@ -424,6 +451,140 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
 }
 
 #[test]
+fn reclamation_permit_must_match_the_complete_bound_plan() {
+    fn exercise(
+        bound_plan: MigrationPlan,
+        foreign_plan: MigrationPlan,
+        expected_transaction_match: bool,
+        expected_authority_match: bool,
+    ) {
+        assert_eq!(bound_plan.source(), foreign_plan.source());
+        assert_ne!(bound_plan, foreign_plan);
+
+        let admission = CloseableSnzi::<20>::new();
+        assert!(admission.close());
+        assert!(admission.is_drained());
+
+        // SAFETY: the test's source and authority are effect-free. Constructing
+        // competing controls deliberately violates the documented uniqueness
+        // rule so the public API's fail-closed mismatch check can be exercised.
+        let bound_source = unsafe {
+            AdmissionQuiescence::bind_with_authority(&admission, bound_plan, PermitSourceAuthority)
+        }
+        .unwrap();
+        // SAFETY: as above, this is an effect-free adversarial duplicate witness.
+        let foreign_source =
+            unsafe { AdmissionQuiescence::bind(&admission, foreign_plan) }.unwrap();
+
+        let bound_control = MigrationControl::new();
+        let bound_migration = bound_control
+            .begin_with_quiescent_source(bound_source, bound_plan)
+            .unwrap();
+        let bound_committed = unsafe {
+            bound_migration.mark_target_ready(SyntheticTargetBacking {
+                generation: bound_plan.target(),
+                authority: bound_plan.target_authority(),
+            })
+        }
+        .unwrap()
+        .commit()
+        .unwrap();
+
+        let foreign_control = MigrationControl::new();
+        let foreign_migration = foreign_control
+            .begin_with_quiescent_source(foreign_source, foreign_plan)
+            .unwrap();
+        let foreign_committed = unsafe {
+            foreign_migration.mark_target_ready(SyntheticTargetBacking {
+                generation: foreign_plan.target(),
+                authority: foreign_plan.target_authority(),
+            })
+        }
+        .unwrap()
+        .commit()
+        .unwrap();
+
+        // SAFETY: all synthetic source access is excluded. The mismatched
+        // witness must be rejected before the bound control records a fence.
+        let authorization_error =
+            unsafe { bound_control.authorize_reclamation(foreign_committed.source()) }.unwrap_err();
+        assert!(matches!(
+            authorization_error,
+            MigrationError::SourcePlanMismatch {
+                transaction_matches,
+                source_matches: true,
+                target_matches: false,
+                authority_matches,
+                ..
+            } if transaction_matches == expected_transaction_match
+                && authority_matches == expected_authority_match
+        ));
+        assert_eq!(
+            bound_control.snapshot().unwrap().phase(),
+            MigrationPhase::Committed
+        );
+
+        // SAFETY: the synthetic source has no raw, inherited, or nonconforming
+        // access. This obtains a real permit from the competing control.
+        let foreign_permit =
+            unsafe { foreign_control.authorize_reclamation(foreign_committed.source()) }.unwrap();
+        let (bound_source, _bound_target) = bound_committed.into_capabilities();
+        let bound_source = match bound_source.into_authority(foreign_permit) {
+            Ok(_) => panic!("foreign permit released the bound source authority"),
+            Err((error, source)) => {
+                assert!(matches!(
+                    error,
+                    MigrationError::SourcePlanMismatch {
+                        transaction_matches,
+                        source_matches: true,
+                        target_matches: false,
+                        authority_matches,
+                        ..
+                    } if transaction_matches == expected_transaction_match
+                        && authority_matches == expected_authority_match
+                ));
+                source
+            }
+        };
+        assert_eq!(bound_source.plan(), bound_plan);
+        assert_eq!(
+            bound_control.snapshot().unwrap().phase(),
+            MigrationPhase::Committed,
+            "foreign permit must not advance or release the bound transaction"
+        );
+
+        // SAFETY: this permit exactly matches the bound witness, and the
+        // synthetic source has no access path. The foreign record exists only as
+        // an effect-free counterexample to the external uniqueness contract.
+        let bound_permit = unsafe { bound_control.authorize_reclamation(&bound_source) }.unwrap();
+        assert_eq!(bound_permit.plan(), bound_plan);
+        match bound_source.into_authority(bound_permit) {
+            Ok(PermitSourceAuthority) => {}
+            Err((error, _source)) => panic!("matching permit was rejected: {error}"),
+        }
+    }
+
+    let bound_plan = migration_plan(0xa00, 401, 402);
+    let different_transaction = MigrationPlan::new(
+        0xa01,
+        bound_plan.source(),
+        generation::<AccountV2>(403, 102, 0x43),
+        bound_plan.target_authority(),
+    )
+    .unwrap();
+    exercise(bound_plan, different_transaction, false, true);
+
+    let different_target_and_authority = MigrationPlan::new(
+        bound_plan.transaction_id(),
+        bound_plan.source(),
+        generation::<AccountV2>(404, 103, 0x44),
+        AuthorityIdentity::new([0x99; 16]),
+    )
+    .unwrap();
+    exercise(bound_plan, different_target_and_authority, true, false);
+}
+
+#[test]
 fn active_admission_blocks_migration_until_departure_tail_finishes() {
     let admission = CloseableSnzi::<20>::new();
     let token = admission.try_enter(0).unwrap();
@@ -431,15 +592,16 @@ fn active_admission_blocks_migration_until_departure_tail_finishes() {
     let control = MigrationControl::new();
     let plan = migration_plan(9, 10, 11);
     assert!(matches!(
-        // SAFETY: this test binds the synthetic generation only to exercise
-        // the not-yet-drained rejection.
-        unsafe { AdmissionQuiescence::bind(&admission, plan.source()) },
+        // SAFETY: this test binds the complete synthetic plan only to exercise
+        // the not-yet-drained rejection; its control is unique.
+        unsafe { AdmissionQuiescence::bind(&admission, plan) },
         Err(MigrationError::SourceNotDrained)
     ));
     token.depart().unwrap();
     assert!(admission.is_drained());
-    // SAFETY: the terminal gate is the sole source access path in this test.
-    let source = unsafe { AdmissionQuiescence::bind(&admission, plan.source()) }.unwrap();
+    // SAFETY: the terminal gate is the sole source access path, and the complete
+    // plan identifies this test's unique control.
+    let source = unsafe { AdmissionQuiescence::bind(&admission, plan) }.unwrap();
     let migration = control.begin_with_quiescent_source(source, plan).unwrap();
     drop(migration);
     assert_eq!(
@@ -455,13 +617,26 @@ fn drained_but_unrelated_source_witness_cannot_claim_plan() {
     assert!(unrelated_gate.is_drained());
     let plan = migration_plan(19, 31, 32);
     let unrelated = generation::<AccountV1>(99, 100, 0x99);
-    // SAFETY: the synthetic gate is correctly bound to `unrelated`; the test
-    // deliberately attempts to use that valid witness for a different plan.
-    let witness = unsafe { AdmissionQuiescence::bind(&unrelated_gate, unrelated) }.unwrap();
+    let unrelated_plan = MigrationPlan::new(
+        plan.transaction_id(),
+        unrelated,
+        plan.target(),
+        plan.target_authority(),
+    )
+    .unwrap();
+    // SAFETY: the synthetic gate is correctly bound to `unrelated_plan` and its
+    // unique control; the test deliberately attempts to retarget that witness.
+    let witness = unsafe { AdmissionQuiescence::bind(&unrelated_gate, unrelated_plan) }.unwrap();
     let control = MigrationControl::new();
     assert!(matches!(
         control.begin_with_quiescent_source(witness, plan),
-        Err(MigrationError::SourceGenerationMismatch { .. })
+        Err(MigrationError::SourcePlanMismatch {
+            transaction_matches: true,
+            source_matches: false,
+            target_matches: true,
+            authority_matches: true,
+            ..
+        })
     ));
     assert_eq!(
         control.snapshot().unwrap().phase(),
@@ -477,18 +652,31 @@ fn drained_but_unrelated_source_witness_cannot_claim_plan() {
     wrong_schema_gate.close();
     assert!(wrong_schema_gate.is_drained());
     let wrong_schema = GenerationIdentity::new(
-        SchemaIdentity::of::<AccountV2>(),
+        SchemaIdentity::new(AccountV1::VERSION, 0xdead_beef),
         plan.source().region_id(),
         plan.source().sequence(),
         plan.source().backing(),
     );
-    // SAFETY: the synthetic gate is intentionally bound to a distinct exact
-    // schema identity to exercise structural-schema rejection.
+    let wrong_schema_plan = MigrationPlan::new(
+        plan.transaction_id(),
+        wrong_schema,
+        plan.target(),
+        plan.target_authority(),
+    )
+    .unwrap();
+    // SAFETY: the synthetic gate is bound to a complete plan with a distinct
+    // schema identity and unique control to exercise retargeting rejection.
     let wrong_schema_witness =
-        unsafe { AdmissionQuiescence::bind(&wrong_schema_gate, wrong_schema) }.unwrap();
+        unsafe { AdmissionQuiescence::bind(&wrong_schema_gate, wrong_schema_plan) }.unwrap();
     assert!(matches!(
         control.begin_with_quiescent_source(wrong_schema_witness, plan),
-        Err(MigrationError::SourceGenerationMismatch { .. })
+        Err(MigrationError::SourcePlanMismatch {
+            transaction_matches: true,
+            source_matches: false,
+            target_matches: true,
+            authority_matches: true,
+            ..
+        })
     ));
     assert_eq!(
         control.snapshot().unwrap().phase(),
@@ -503,8 +691,9 @@ fn target_capability_must_match_and_remain_private_until_commit() {
         admission: &'a CloseableSnzi<20>,
         plan: MigrationPlan,
     ) -> shmem_pod::migration::Migration<'a, AdmissionQuiescence<'a, 20>> {
-        // SAFETY: each gate is the sole access path for plan's synthetic source.
-        let source = unsafe { AdmissionQuiescence::bind(admission, plan.source()) }.unwrap();
+        // SAFETY: each gate is the sole source access path, and the complete plan
+        // identifies the corresponding unique control.
+        let source = unsafe { AdmissionQuiescence::bind(admission, plan) }.unwrap();
         control.begin_with_quiescent_source(source, plan).unwrap()
     }
 
@@ -606,9 +795,9 @@ fn typed_mapping_close_proof_fences_reclamation() {
 
     let control = MigrationControl::new();
     let plan = migration_plan(77, 101, 102);
-    // SAFETY: closed_source came from the AccountV1 mapping backed by the exact
-    // synthetic generation identity in plan, and no raw access remains.
-    let source = unsafe { MappingQuiescence::bind(closed_source, plan.source()) }.unwrap();
+    // SAFETY: closed_source came from the AccountV1 mapping named by the complete
+    // plan, the control is unique, and no raw access remains.
+    let source = unsafe { MappingQuiescence::bind(closed_source, plan) }.unwrap();
     assert!(
         source_mapping.attach::<AccountV1>().is_err(),
         "consumed ClosedMapping corresponds to a lifecycle that safe attach cannot reopen"
@@ -624,8 +813,8 @@ fn typed_mapping_close_proof_fences_reclamation() {
     // mutable target access, and the recovery alias remains private.
     let ready = unsafe { migration.mark_target_ready(target) }.unwrap();
     let committed = ready.commit().unwrap();
-    // SAFETY: the consumed mapping witness is the exact source and this test
-    // owns every raw mapping capability.
+    // SAFETY: the consumed mapping witness is bound to this unique control's
+    // exact plan, and this test owns every raw mapping capability.
     let permit = unsafe { control.authorize_reclamation(committed.source()) }.unwrap();
     assert!(!permit.is_resume());
 
@@ -663,9 +852,9 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
     let child = unsafe { libc::fork() };
     assert!(child >= 0, "fork failed");
     if child == 0 {
-        // SAFETY: the shared gate is the sole access path for plan's synthetic
-        // source generation in this fork test.
-        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
+        // SAFETY: the shared gate is the sole source access path and the complete
+        // plan identifies this fork test's unique control.
+        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan) }.unwrap();
         let _migration = state
             .control
             .begin_with_quiescent_source(source, plan)
@@ -693,9 +882,9 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
         state.control.snapshot().unwrap().phase(),
         MigrationPhase::Copying
     );
-    // SAFETY: the gate remains terminal and bound to the same source; this
-    // second witness demonstrates that the occupied control cannot be stolen.
-    let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
+    // SAFETY: the gate remains terminal and bound to the same complete plan and
+    // control; this second witness demonstrates the control cannot be stolen.
+    let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan) }.unwrap();
     assert!(matches!(
         state.control.begin_with_quiescent_source(source, plan),
         Err(MigrationError::WrongPhase {
@@ -769,9 +958,9 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
                 .cast::<AccountV2>()
                 .write(RECOVERED_TARGET)
         };
-        // SAFETY: the shared terminal gate is the only source path in this
-        // synthetic crash test and is bound to plan's exact source generation.
-        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
+        // SAFETY: the shared terminal gate is the only source path and is bound
+        // to this crash test's complete plan and unique control.
+        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan) }.unwrap();
         let migration = state
             .control
             .begin_with_quiescent_source(source, plan)
@@ -846,8 +1035,7 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
         TargetCrashCut::Committed => {
             // SAFETY: the source gate is still terminal and exactly bound to the
             // committed plan; the parent is the authenticated cleanup authority.
-            let source =
-                unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
+            let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan) }.unwrap();
             let permit = unsafe { state.control.authorize_reclamation(&source) }.unwrap();
             assert!(!permit.is_resume());
             assert_eq!(

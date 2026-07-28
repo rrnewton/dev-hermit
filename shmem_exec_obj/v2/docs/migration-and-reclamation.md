@@ -29,6 +29,15 @@ that source and target region IDs and backing identities differ and that the
 target sequence increases, but only the supervisor can keep the sequence
 monotonic across control-record replacement and restart.
 
+The supervisor must also authenticate one unique, persistent control identity
+for each source generation. In the current protocol that identity is represented
+operationally by the one live/recoverable `MigrationControl` and its unique
+`transaction_id`; the library can check the complete plan but cannot detect an
+exact plan copied into another control record. Competing controls or plans for
+one source are forbidden. A replicated-control design must first add a stronger
+persistent control identity to the plan, permit, bootstrap authentication, and
+recovery procedure.
+
 ## Define and negotiate schemas
 
 A schema combines an application version with the exact `PodValue` structural
@@ -86,13 +95,17 @@ metadata.
 3. Before migration, make the recovery supervisor own an independently live,
    authenticated target backing handle. Clients must not know an attach route.
    Name that supervisor with `AuthorityIdentity`.
-4. Construct `GenerationIdentity` values and a `MigrationPlan`. Unsafely bind
-   the exact source generation and its remaining safe access authority to
+4. Construct `GenerationIdentity` values and a `MigrationPlan`. Authenticate its
+   transaction as the unique live and recoverable control for this source.
+   Unsafely bind the complete plan and the remaining safe source authority to
    `AdmissionQuiescence`, or consume a `ClosedMapping` into
    `MappingQuiescence`. This unsafe boundary is where the host attests that the
-   barrier/mapping really guards the named backing.
+   barrier/mapping really guards the named backing and that no duplicate control
+   or competing plan exists.
 5. Call `begin_with_quiescent_source`. It consumes the witness and rejects a
-   schema, region, sequence, or backing mismatch before claiming the control.
+   transaction, source, target, or recovery-authority mismatch before claiming
+   the control. A witness bound to one plan cannot be safely retargeted even when
+   another plan names the same source generation.
 6. Transform the process-local staging copy and populate the target. Resolve
    every root and validate every descriptor.
 7. Move a host type implementing unsafe `PrecommitTargetBacking` into
@@ -107,14 +120,15 @@ metadata.
    still owns both the terminal source proof and target authority. Only now may
    the host extract and publish target attachment material. Attach code must
    acquire-load `authoritative_generation` rather than cache an earlier route.
-9. Pass `committed.source()` to `authorize_reclamation`. It rechecks the exact
-   generation binding and terminal state before recording `Reclaimed`. After
+9. Pass `committed.source()` to `authorize_reclamation`. It rechecks the complete
+   plan binding and terminal state before recording `Reclaimed`. After
    splitting `CommittedMigration`, pass that permit to
    `AdmissionQuiescence::into_authority`; this consumes the witness before
-   returning the source handles. A permit for another source returns an error
-   together with the intact witness, so the caller may retry with the matching
-   permit. Only now explicitly destroy source allocations or discard the
-   complete source region.
+   returning the source handles. A permit for any other transaction, source,
+   target, or recovery authority returns `SourcePlanMismatch` together with the
+   intact witness, so the caller may retry with the exactly matching permit.
+   Only now explicitly destroy source allocations or discard the complete source
+   region.
 
 The target must not admit callers until commit succeeds. Safe source access
 cannot reopen after the consumed terminal witness, and owned source handles are
@@ -126,7 +140,7 @@ copy-on-write consistency scheme before entering this protocol.
 Every failure path is deliberately asymmetric. Dropping `Migration`,
 `TargetReadyMigration`, `CommittedMigration`, or a returned error never runs the
 source authority's destructor; the authority and source backing leak closed.
-Only matching-permit extraction restores the owned value. Conversely,
+Only exact full-plan permit extraction restores the owned value. Conversely,
 `PrecommitTargetBacking::drop` must never publish or mutate a private target,
 destroy an authoritative target, or invalidate the supervisor's independent
 recovery handle. Target publication, discard, and reclamation are explicit host
@@ -145,6 +159,11 @@ source while a generic migration callback reads it.
 be mapped at a different virtual address in every process. It is deliberately
 one-shot to avoid ABA and ambiguous recovery. These phases cover abrupt process
 termination only while a supervisor still owns the backing objects.
+
+One-shot applies to both the record and its externally authenticated identity.
+Do not copy the same plan into another live or recoverable record: exact plan
+comparison cannot distinguish those controls, and cleanup recovery would no
+longer know which `Reclaimed` transition fenced the source.
 
 | Phase | Authoritative generation | Recovery action |
 | --- | --- | --- |
@@ -178,9 +197,9 @@ immediately after `Committed` leaves the target authoritative and readable
 through the parent's recovery mapping.
 
 The metadata checksum catches accidental or torn changes after publication; it
-is not an authenticity mechanism. Authenticate the executable image, control
-object, bootstrap message, file descriptors, identities, and lengths before
-mapping or typed access.
+is not an authenticity mechanism. Authenticate the executable image, unique
+control object and transaction, bootstrap message, file descriptors, identities,
+and lengths before mapping or typed access.
 
 These atomics specify visibility between processes on coherent shared memory.
 The protocol does not cover machine crash, reboot, power loss, torn storage,
@@ -196,7 +215,8 @@ may hold a copied descriptor or a resolved reference.
 
 After a migration commits:
 
-1. obtain `ReclamationPermit` using the exact consumed `QuiescenceWitness`;
+1. obtain `ReclamationPermit` from the unique control using the exact consumed,
+   full-plan-bound `QuiescenceWitness`;
 2. ensure every raw/inherited mapping capability and nonconforming guest is
    gone;
 3. either call explicit collection destruction under exclusive access, or
@@ -260,12 +280,14 @@ not after a timer expires.
 ## Operational checklist
 
 - Authenticate complete `GenerationIdentity` and `MigrationPlan` values outside
-  attacker-writable mapped data.
+  attacker-writable mapped data. Persist one unique control/transaction identity
+  per source; never create competing or duplicate controls for it.
 - Persist and advance the supervisor generation sequence; do not call a region
   ID alone globally unique.
-- Stage source data, then consume both a terminal witness and every remaining
-  safe source access authority before `begin_with_quiescent_source`; authority
-  types must uphold `FailClosedSourceAuthority` and explicit cleanup.
+- Stage source data, then bind the complete authenticated plan while consuming
+  both a terminal witness and every remaining safe source access authority before
+  `begin_with_quiescent_source`; authority types must uphold
+  `FailClosedSourceAuthority` and explicit cleanup.
 - Give the recovery authority an authenticated duplicate target handle before
   commit, and keep every client attach route undiscoverable.
 - Treat `mark_target_ready` as an unsafe exact-generation, happens-before,
@@ -274,6 +296,7 @@ not after a timer expires.
   its destructor must have no publication or reclamation effects.
 - Route new attachments by the control record's acquire load.
 - On owner death, prove death externally; never steal a live transaction.
-- Reclaim only after commit and a matching terminal quiescence proof.
+- Reclaim only after commit and an exact full-plan permit/witness match from the
+  unique control record.
 - Prefer leaking and whole-generation replacement over uncertain repair.
 - Do not interpret process-crash recovery as machine/power durability.

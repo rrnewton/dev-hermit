@@ -437,6 +437,14 @@ unsafe impl PodValue for GenerationIdentity {}
 unsafe impl PodSync for GenerationIdentity {}
 
 /// Immutable description of one source-to-target generation replacement.
+///
+/// `transaction_id` is supplied and authenticated by the supervisor. The crate
+/// validates that it is nonzero, but cannot prove uniqueness or persist it. A
+/// source generation must have exactly one live or recoverable control record
+/// and plan. Reusing a transaction ID, duplicating a plan in another control, or
+/// creating competing plans for the same source makes reclamation provenance
+/// ambiguous. Supporting replicated controls requires a stronger persistent
+/// control identity in the protocol and in [`ReclamationPermit`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MigrationPlan {
     transaction_id: u64,
@@ -575,10 +583,10 @@ unsafe impl PodValue for MigrationPlan {}
 unsafe impl PodSync for MigrationPlan {}
 
 mod quiescence_sealed {
-    use super::GenerationIdentity;
+    use super::MigrationPlan;
 
     pub trait Sealed {
-        fn generation(&self) -> GenerationIdentity;
+        fn plan(&self) -> MigrationPlan;
         fn still_quiescent(&self) -> bool;
     }
 }
@@ -586,8 +594,10 @@ mod quiescence_sealed {
 /// Sealed terminal-quiescence capability accepted by migration operations.
 ///
 /// Callers cannot implement this trait. Obtain a witness by binding an
-/// authenticated generation identity to a terminal [`CloseableSnzi`] or by
-/// consuming a typed [`ClosedMapping`].
+/// authenticated migration plan to a terminal [`CloseableSnzi`] or by consuming
+/// a typed [`ClosedMapping`]. Binding the complete plan prevents a witness or
+/// reclamation permit from being retargeted to another transaction which names
+/// the same source generation.
 pub trait QuiescenceWitness: quiescence_sealed::Sealed {}
 
 /// Owned source access authority which is safe to leak on migration failure.
@@ -595,7 +605,8 @@ pub trait QuiescenceWitness: quiescence_sealed::Sealed {}
 /// Migration cannot run application cleanup when a process aborts or dies, and
 /// guessing which cleanup completed would violate fail-closed recovery. An
 /// authority stored in [`AdmissionQuiescence`] is therefore never dropped by
-/// the library. It is returned only after a matching [`ReclamationPermit`].
+/// the library. It is returned only after an exact full-plan matching
+/// [`ReclamationPermit`].
 ///
 /// The `'static` bound rejects ordinary borrowed handles. It is not sufficient
 /// by itself; implementations must uphold the complete contract below.
@@ -644,30 +655,37 @@ pub struct AdmissionQuiescence<
     Authority: FailClosedSourceAuthority = (),
 > {
     source: &'source CloseableSnzi<NODES>,
-    generation: GenerationIdentity,
+    plan: MigrationPlan,
     authority: ManuallyDrop<Authority>,
 }
 
 impl<'source, const NODES: usize> AdmissionQuiescence<'source, NODES> {
-    /// Binds a terminal gate to the exact authenticated source generation.
+    /// Binds a terminal gate to one exact authenticated migration plan.
     ///
     /// # Safety
     ///
-    /// `generation` must identify the schema, allocator namespace, monotonic
+    /// `plan.source()` must identify the schema, allocator namespace, monotonic
     /// generation, and backing object guarded by `source`. Every conforming
     /// source access path must pass through this gate. The caller must have
-    /// authenticated this association outside attacker-writable shared bytes.
+    /// authenticated this association and the complete plan outside
+    /// attacker-writable shared bytes.
+    ///
+    /// The plan's transaction must identify the unique live and recoverable
+    /// control record for this source generation. Creating another control for
+    /// the same source, including an exact copy of `plan`, violates this contract
+    /// unless the protocol is extended with a stronger persistent control
+    /// identity which is also checked during reclamation.
     pub unsafe fn bind(
         source: &'source CloseableSnzi<NODES>,
-        generation: GenerationIdentity,
+        plan: MigrationPlan,
     ) -> Result<Self, MigrationError> {
-        generation.validate()?;
+        plan.validate()?;
         if !source.is_drained() {
             return Err(MigrationError::SourceNotDrained);
         }
         Ok(Self {
             source,
-            generation,
+            plan,
             authority: ManuallyDrop::new(()),
         })
     }
@@ -685,42 +703,53 @@ impl<'source, const NODES: usize, Authority: FailClosedSourceAuthority>
     ///
     /// # Safety
     ///
-    /// `generation` must identify the schema, allocator namespace, monotonic
+    /// `plan.source()` must identify the schema, allocator namespace, monotonic
     /// generation, and backing object guarded by `source`. `authority` must own
     /// every remaining safe source access path which is not intrinsically tied
-    /// to an admission token. The caller must authenticate both associations,
-    /// uphold [`FailClosedSourceAuthority`], and exclude raw or nonconforming
-    /// access. This function intentionally leaks `authority` if validation
-    /// fails after ownership is transferred.
+    /// to an admission token. The caller must authenticate both associations and
+    /// the complete plan, uphold [`FailClosedSourceAuthority`], and exclude raw
+    /// or nonconforming access. The plan's transaction must identify the unique
+    /// live and recoverable control record for this source; duplicate controls or
+    /// plans are forbidden as described on [`Self::bind`]. This function
+    /// intentionally leaks `authority` if validation fails after ownership is
+    /// transferred.
     pub unsafe fn bind_with_authority(
         source: &'source CloseableSnzi<NODES>,
-        generation: GenerationIdentity,
+        plan: MigrationPlan,
         authority: Authority,
     ) -> Result<Self, MigrationError> {
         let authority = ManuallyDrop::new(authority);
-        generation.validate()?;
+        plan.validate()?;
         if !source.is_drained() {
             return Err(MigrationError::SourceNotDrained);
         }
         Ok(Self {
             source,
-            generation,
+            plan,
             authority,
         })
+    }
+
+    /// Returns the exact authenticated plan bound to this witness.
+    #[must_use]
+    pub const fn plan(&self) -> MigrationPlan {
+        self.plan
     }
 
     /// Returns the bound source generation identity.
     #[must_use]
     pub const fn generation(&self) -> GenerationIdentity {
-        self.generation
+        self.plan.source
     }
 
     /// Returns the consumed source authority after reclamation was fenced.
     ///
     /// During migration the witness is owned by the transaction. After commit,
-    /// the caller must first obtain a matching [`ReclamationPermit`]. Consuming
-    /// the witness here prevents retaining quiescence evidence while regaining
-    /// the source mutation authority.
+    /// the caller must first obtain a [`ReclamationPermit`] for the exact plan
+    /// bound at construction. Consuming the witness here prevents retaining
+    /// quiescence evidence while regaining the source mutation authority. A
+    /// permit for another transaction, source, target, or recovery authority
+    /// returns [`MigrationError::SourcePlanMismatch`] with this witness intact.
     ///
     /// The live migration types expose no source-capability extraction method:
     ///
@@ -743,18 +772,12 @@ impl<'source, const NODES: usize, Authority: FailClosedSourceAuthority>
         mut self,
         permit: ReclamationPermit,
     ) -> Result<Authority, (MigrationError, Self)> {
-        if permit.plan.source != self.generation {
-            return Err((
-                MigrationError::SourceGenerationMismatch {
-                    expected_tag: generation_tag(permit.plan.source),
-                    observed_tag: generation_tag(self.generation),
-                },
-                self,
-            ));
+        if permit.plan != self.plan {
+            return Err((source_plan_mismatch(self.plan, permit.plan), self));
         }
-        // SAFETY: this method consumes the witness and a matching permit, so the
-        // authority is taken exactly once. Drop deliberately ignores the now
-        // empty ManuallyDrop field.
+        // SAFETY: this method consumes the witness and an exact-plan permit, so
+        // the authority is taken exactly once. Drop deliberately ignores the
+        // now empty ManuallyDrop field.
         Ok(unsafe { ManuallyDrop::take(&mut self.authority) })
     }
 }
@@ -762,8 +785,8 @@ impl<'source, const NODES: usize, Authority: FailClosedSourceAuthority>
 impl<const NODES: usize, Authority: FailClosedSourceAuthority> quiescence_sealed::Sealed
     for AdmissionQuiescence<'_, NODES, Authority>
 {
-    fn generation(&self) -> GenerationIdentity {
-        self.generation
+    fn plan(&self) -> MigrationPlan {
+        self.plan
     }
 
     fn still_quiescent(&self) -> bool {
@@ -781,7 +804,7 @@ impl<const NODES: usize, Authority: FailClosedSourceAuthority> Drop
 {
     fn drop(&mut self) {
         // Fail closed. The authority may be recovered only by into_authority
-        // after a matching reclamation permit; every other path leaks it.
+        // after an exact-plan reclamation permit; every other path leaks it.
     }
 }
 
@@ -791,30 +814,40 @@ impl<const NODES: usize, Authority: FailClosedSourceAuthority> Drop
 /// mutation or obtain the payload while migration is in progress.
 pub struct MappingQuiescence<'source> {
     closed: ClosedMapping<'source>,
-    generation: GenerationIdentity,
+    plan: MigrationPlan,
 }
 
 impl<'source> MappingQuiescence<'source> {
-    /// Binds a consumed closed mapping to its authenticated generation.
+    /// Binds a consumed closed mapping to one authenticated migration plan.
     ///
     /// # Safety
     ///
     /// `closed` must be the mapping whose exact schema, allocator namespace,
-    /// monotonic generation, and backing digest are named by `generation`.
-    /// The host must have authenticated that association and excluded raw or
-    /// nonconforming access which bypasses the typed mapping lifecycle.
+    /// monotonic generation, and backing digest are named by `plan.source()`.
+    /// The host must have authenticated that association and the complete plan,
+    /// and excluded raw or nonconforming access which bypasses the typed mapping
+    /// lifecycle. The plan's transaction must identify the unique live and
+    /// recoverable control record for this source generation; duplicate controls
+    /// or plans require a stronger persistent control identity and are otherwise
+    /// forbidden.
     pub unsafe fn bind(
         closed: ClosedMapping<'source>,
-        generation: GenerationIdentity,
+        plan: MigrationPlan,
     ) -> Result<Self, MigrationError> {
-        generation.validate()?;
-        Ok(Self { closed, generation })
+        plan.validate()?;
+        Ok(Self { closed, plan })
+    }
+
+    /// Returns the exact authenticated plan bound to this witness.
+    #[must_use]
+    pub const fn plan(&self) -> MigrationPlan {
+        self.plan
     }
 
     /// Returns the bound source generation identity.
     #[must_use]
     pub const fn generation(&self) -> GenerationIdentity {
-        self.generation
+        self.plan.source
     }
 
     /// Borrows the consumed close capability for host-side mapping metadata.
@@ -825,8 +858,8 @@ impl<'source> MappingQuiescence<'source> {
 }
 
 impl quiescence_sealed::Sealed for MappingQuiescence<'_> {
-    fn generation(&self) -> GenerationIdentity {
-        self.generation
+    fn plan(&self) -> MigrationPlan {
+        self.plan
     }
 
     fn still_quiescent(&self) -> bool {
@@ -961,6 +994,9 @@ impl MigrationSnapshot {
 /// The record is suitable for a small supervisor-owned control mapping. It is
 /// not a durability primitive for disk-backed persistent memory: its atomics
 /// define process visibility, not cache-line flush or filesystem ordering.
+/// The supervisor must authenticate this record as the unique live and
+/// recoverable control for its plan's source generation. The record contains no
+/// persistent control identity capable of making duplicated controls safe.
 pub struct MigrationControl {
     phase: AtomicU64,
     transaction_id: AtomicU64,
@@ -1075,20 +1111,17 @@ impl MigrationControl {
 
     /// Claims the record while consuming a terminal source witness.
     ///
-    /// The witness generation must exactly equal the plan source, including
-    /// schema fingerprint, region namespace, monotonic sequence, and backing
-    /// digest. Consuming the witness keeps safe source mutation unavailable for
-    /// the complete migration transaction.
+    /// The witness must be bound to this complete plan, including transaction,
+    /// source, target, and recovery authority. Consuming it keeps safe source
+    /// mutation unavailable for the complete migration transaction and prevents
+    /// safe retargeting to another plan which happens to share the source.
     pub fn begin_with_quiescent_source<Q: QuiescenceWitness>(
         &self,
         source: Q,
         plan: MigrationPlan,
     ) -> Result<Migration<'_, Q>, MigrationError> {
-        if source.generation() != plan.source {
-            return Err(MigrationError::SourceGenerationMismatch {
-                expected_tag: generation_tag(plan.source),
-                observed_tag: generation_tag(source.generation()),
-            });
+        if source.plan() != plan {
+            return Err(source_plan_mismatch(source.plan(), plan));
         }
         if !source.still_quiescent() {
             return Err(MigrationError::SourceNotDrained);
@@ -1154,6 +1187,10 @@ impl MigrationControl {
     /// The caller must prevent uncounted raw access, inherited mappings, and
     /// nonconforming clients. The returned permit does not by itself make
     /// `munmap`, descriptor destruction, or file truncation safe.
+    ///
+    /// `self` must be the externally authenticated, unique live and recoverable
+    /// control record for `source.plan()`. An exact duplicate control is not
+    /// distinguishable by the current plan format and must not exist.
     pub unsafe fn authorize_reclamation<Q: QuiescenceWitness>(
         &self,
         source: &Q,
@@ -1163,11 +1200,8 @@ impl MigrationControl {
             expected: MigrationPhase::Committed,
             actual: snapshot.phase,
         })?;
-        if source.generation() != plan.source {
-            return Err(MigrationError::SourceGenerationMismatch {
-                expected_tag: generation_tag(plan.source),
-                observed_tag: generation_tag(source.generation()),
-            });
+        if source.plan() != plan {
+            return Err(source_plan_mismatch(source.plan(), plan));
         }
         if !source.still_quiescent() {
             return Err(MigrationError::SourceNotDrained);
@@ -1714,7 +1748,11 @@ impl<Q: QuiescenceWitness, B: PrecommitTargetBacking> CommittedMigration<Q, B> {
 ///
 /// This is evidence for higher-level cleanup logic, not an owning Rust
 /// capability. The host must still exclude raw pointers, inherited mappings,
-/// and nonconforming guests before destructive operations.
+/// and nonconforming guests before destructive operations. The permit carries
+/// the complete plan so a bound source authority can reject evidence from a
+/// different transaction, target, or recovery authority. Because the plan does
+/// not contain a persistent control-object identity, this evidence is valid only
+/// under the unsafe contract that no duplicate control record exists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use = "reclamation remains an explicit host operation"]
 pub struct ReclamationPermit {
@@ -1789,12 +1827,32 @@ pub enum MigrationError {
     },
     /// The supplied source has not reached stable quiescence.
     SourceNotDrained,
-    /// A terminal source witness names a different generation than the plan.
-    SourceGenerationMismatch {
-        /// Non-authenticating diagnostic tag of the plan generation.
-        expected_tag: u64,
-        /// Non-authenticating diagnostic tag of the witness generation.
-        observed_tag: u64,
+    /// A terminal source witness or reclamation permit is bound to another plan.
+    SourcePlanMismatch {
+        /// Transaction ID authenticated when the source witness was bound.
+        bound_transaction_id: u64,
+        /// Transaction ID supplied by the attempted operation.
+        supplied_transaction_id: u64,
+        /// Non-authenticating diagnostic tag of the bound source generation.
+        bound_source_tag: u64,
+        /// Non-authenticating diagnostic tag of the supplied source generation.
+        supplied_source_tag: u64,
+        /// Non-authenticating diagnostic tag of the bound target generation.
+        bound_target_tag: u64,
+        /// Non-authenticating diagnostic tag of the supplied target generation.
+        supplied_target_tag: u64,
+        /// Recovery authority authenticated when the source witness was bound.
+        bound_authority: AuthorityIdentity,
+        /// Recovery authority supplied by the attempted operation.
+        supplied_authority: AuthorityIdentity,
+        /// Whether the exact transaction IDs match.
+        transaction_matches: bool,
+        /// Whether the exact source generation identities match.
+        source_matches: bool,
+        /// Whether the exact target generation identities match.
+        target_matches: bool,
+        /// Whether the exact recovery authority identities match.
+        authority_matches: bool,
     },
     /// A target backing capability names a different generation than the plan.
     TargetGenerationMismatch {
@@ -1871,12 +1929,22 @@ impl fmt::Display for MigrationError {
                 "schema {observed:?} is unsupported by current schema {current:?}"
             ),
             Self::SourceNotDrained => formatter.write_str("source generation is not drained"),
-            Self::SourceGenerationMismatch {
-                expected_tag,
-                observed_tag,
+            Self::SourcePlanMismatch {
+                bound_transaction_id,
+                supplied_transaction_id,
+                bound_source_tag,
+                supplied_source_tag,
+                bound_target_tag,
+                supplied_target_tag,
+                bound_authority,
+                supplied_authority,
+                transaction_matches,
+                source_matches,
+                target_matches,
+                authority_matches,
             } => write!(
                 formatter,
-                "source witness generation tag {observed_tag:#018x} does not match plan tag {expected_tag:#018x}"
+                "source witness plan mismatch: bound transaction {bound_transaction_id}, source {bound_source_tag:#018x}, target {bound_target_tag:#018x}, authority {bound_authority:?}; supplied transaction {supplied_transaction_id}, source {supplied_source_tag:#018x}, target {supplied_target_tag:#018x}, authority {supplied_authority:?}; exact matches transaction={transaction_matches}, source={source_matches}, target={target_matches}, authority={authority_matches}"
             ),
             Self::TargetGenerationMismatch {
                 expected_tag,
@@ -1918,6 +1986,23 @@ fn plan_checksum(plan: MigrationPlan) -> u64 {
     state = checksum_generation(state, plan.target);
     state = checksum_mix(state, plan.target_authority.0[0]);
     checksum_mix(state, plan.target_authority.0[1])
+}
+
+fn source_plan_mismatch(bound: MigrationPlan, supplied: MigrationPlan) -> MigrationError {
+    MigrationError::SourcePlanMismatch {
+        bound_transaction_id: bound.transaction_id,
+        supplied_transaction_id: supplied.transaction_id,
+        bound_source_tag: generation_tag(bound.source),
+        supplied_source_tag: generation_tag(supplied.source),
+        bound_target_tag: generation_tag(bound.target),
+        supplied_target_tag: generation_tag(supplied.target),
+        bound_authority: bound.target_authority,
+        supplied_authority: supplied.target_authority,
+        transaction_matches: bound.transaction_id == supplied.transaction_id,
+        source_matches: bound.source == supplied.source,
+        target_matches: bound.target == supplied.target,
+        authority_matches: bound.target_authority == supplied.target_authority,
+    }
 }
 
 fn generation_tag(generation: GenerationIdentity) -> u64 {
@@ -2035,8 +2120,7 @@ mod tests {
     ) -> AdmissionQuiescence<'_, 20, DropProbe> {
         // SAFETY: the synthetic source has no access path besides this terminal
         // gate; DropProbe exists only to observe accidental destructor calls.
-        unsafe { AdmissionQuiescence::bind_with_authority(admission, plan.source(), DropProbe) }
-            .unwrap()
+        unsafe { AdmissionQuiescence::bind_with_authority(admission, plan, DropProbe) }.unwrap()
     }
 
     fn private_target(plan: MigrationPlan) -> TestTarget {
@@ -2054,17 +2138,13 @@ mod tests {
         admission.close();
         assert!(admission.is_drained());
 
-        let invalid_generation = GenerationIdentity::new(
-            SchemaIdentity::new(0, 1),
-            61,
-            300,
-            BackingIdentity::new([0x61; 32]),
-        );
+        let mut invalid_plan = plan();
+        invalid_plan.source.schema.version = 0;
         assert!(matches!(
-            // SAFETY: this deliberately invalid identity exercises fail-closed
+            // SAFETY: this deliberately invalid plan exercises fail-closed
             // ownership transfer before validation.
             unsafe {
-                AdmissionQuiescence::bind_with_authority(&admission, invalid_generation, DropProbe)
+                AdmissionQuiescence::bind_with_authority(&admission, invalid_plan, DropProbe)
             },
             Err(MigrationError::ZeroSchemaVersion)
         ));
@@ -2122,7 +2202,7 @@ mod tests {
         };
         let source = match source.into_authority(wrong_permit) {
             Ok(_) => panic!("wrong permit unexpectedly released source authority"),
-            Err((MigrationError::SourceGenerationMismatch { .. }, source)) => source,
+            Err((MigrationError::SourcePlanMismatch { .. }, source)) => source,
             Err((error, _source)) => panic!("unexpected permit error: {error}"),
         };
         assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
@@ -2142,7 +2222,7 @@ mod tests {
         let control = MigrationControl::new();
         // SAFETY: this unit test's admission gate is the sole access path for
         // the exact synthetic source generation in plan().
-        let source = unsafe { AdmissionQuiescence::bind(&admission, plan().source()) }.unwrap();
+        let source = unsafe { AdmissionQuiescence::bind(&admission, plan()) }.unwrap();
         let migration = control.begin_with_quiescent_source(source, plan()).unwrap();
         control.target_region_id.store(99, Ordering::Relaxed);
         assert_eq!(control.snapshot(), Err(MigrationError::CorruptMetadata));

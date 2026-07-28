@@ -44,8 +44,8 @@ unsafe impl FailClosedSourceAuthority for SourceAuthority {}
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
 impl SourceAuthority {
     fn reclaim(mut self) -> CounterV1 {
-        // SAFETY: a matching reclamation permit was required before this value
-        // could be returned, so the backing may now be recovered exactly once.
+        // SAFETY: an exact-plan reclamation permit was required before this
+        // value could be returned, so the backing may now be recovered once.
         let mut pages = unsafe { ManuallyDrop::take(&mut self.pages) };
         let mut region = unsafe { attach_region(&mut pages, self.region_id) };
         // SAFETY: terminal admission and the reclamation permit exclude every
@@ -177,13 +177,13 @@ fn main() {
         root: source,
         region_id: SOURCE_REGION,
     };
-    // SAFETY: the gate is terminal and bound to the exact source generation.
-    // Moving source_authority consumes the remaining safe allocator and root
-    // access paths, so only the staged process-local copy can be read below.
-    let source_quiescence = unsafe {
-        AdmissionQuiescence::bind_with_authority(&admission, source_generation, source_authority)
-    }
-    .unwrap();
+    // SAFETY: the gate is terminal and bound to the complete authenticated plan,
+    // whose transaction identifies this example's unique control. Moving
+    // source_authority consumes the remaining safe allocator and root access
+    // paths, so only the staged process-local copy can be read below.
+    let source_quiescence =
+        unsafe { AdmissionQuiescence::bind_with_authority(&admission, plan, source_authority) }
+            .unwrap();
     let migration = control
         .begin_with_quiescent_source(source_quiescence, plan)
         .unwrap();
