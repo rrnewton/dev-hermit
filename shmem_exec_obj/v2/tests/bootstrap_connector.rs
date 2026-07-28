@@ -269,3 +269,40 @@ fn post_fork_reset_fails_closed_on_non_quiescent_state() {
     assert!(!error.was_disabled());
     assert_eq!(error.active_calls(), 0);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn force_reset_in_fork_child_discards_only_vanished_parent_tokens() {
+    use std::sync::{Arc, mpsc};
+
+    let gate = Arc::new(AdapterCallGate::new());
+    let worker_gate = Arc::clone(&gate);
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let token = worker_gate.try_enter().unwrap();
+        ready_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        drop(token);
+    });
+    ready_rx.recv().unwrap();
+    assert_eq!(gate.active_calls(), 1);
+
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        // SAFETY: this is the private post-fork child copy, the surviving
+        // thread owns no token, and no child call has yet been admitted.
+        unsafe { gate.force_reset_in_fork_child() };
+        let valid = gate.active_calls() == 0 && !gate.is_disabled() && gate.try_enter().is_some();
+        unsafe { libc::_exit(if valid { 0 } else { 92 }) }
+    }
+    assert!(child > 0);
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+    assert_eq!(gate.active_calls(), 0);
+}

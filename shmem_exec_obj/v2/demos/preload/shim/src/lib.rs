@@ -17,6 +17,7 @@ use shmem_pod_image_api::{
     ENVELOPE_VERSION_OFFSET, PAGE_SIZE, STATE_MAGIC, STATE_STATUS_READY, STATE_VERSION,
 };
 use shmem_pod_runtime::{PodArtifact, PodImage, PodState};
+use std::borrow::Cow;
 use std::cell::{Cell, UnsafeCell};
 use std::ffi::c_char;
 use std::fmt;
@@ -34,6 +35,8 @@ const INIT_READY: u32 = 2;
 const INIT_FAILED: u32 = 3;
 const ATFORK_STATE_MASK: u32 = 0b11;
 const ATFORK_MAX_OWNER_PID: u32 = u32::MAX >> 2;
+const PROCESS_EPOCH_BUSY: i32 = -1;
+const PROCESS_EPOCH_FAILED: i32 = -2;
 const ATTACH_BUSY: i32 = -1;
 const MAX_ENV_FD_BYTES: usize = 10;
 const F_SEAL_FUTURE_WRITE: libc::c_int = 0x0010;
@@ -41,6 +44,7 @@ const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 static INIT_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
 static ATFORK_CLAIM: AtomicU32 = AtomicU32::new(INIT_EMPTY);
+static PROCESS_EPOCH: AtomicI32 = AtomicI32::new(0);
 static ATTACHED_PID: AtomicI32 = AtomicI32::new(0);
 static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 static FAIL_CLOSED: AtomicBool = AtomicBool::new(false);
@@ -78,11 +82,11 @@ enum FailureKind {
 
 struct AdapterError {
     kind: FailureKind,
-    message: String,
+    message: Cow<'static, str>,
 }
 
 impl AdapterError {
-    fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+    fn new(kind: FailureKind, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -113,6 +117,11 @@ struct InitClaim<'a> {
 struct AtforkRegistrationClaim<'a> {
     state: &'a AtomicU32,
     busy_word: u32,
+    published: bool,
+}
+
+struct ProcessEpochClaim<'a> {
+    epoch: &'a AtomicI32,
     published: bool,
 }
 
@@ -161,6 +170,18 @@ impl ForkBarrier {
         self.locked.store(false, Ordering::Release);
         reset
     }
+
+    /// Discards a barrier copied from parent threads after a skipped callback.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be the one serialized PID-epoch recovery in a post-fork
+    /// child, before any child hook admission. The surviving thread must not
+    /// own this barrier. Parent owners cannot observe these private stores.
+    unsafe fn force_reset_in_fork_child(&self) {
+        self.reenable.store(false, Ordering::Relaxed);
+        self.locked.store(false, Ordering::Release);
+    }
 }
 
 impl<'a> InitClaim<'a> {
@@ -197,10 +218,11 @@ impl<'a> AtforkRegistrationClaim<'a> {
     }
 
     fn publish_ready(mut self) -> Result<(), AdapterError> {
+        let ready_word = (self.busy_word & !ATFORK_STATE_MASK) | INIT_READY;
         self.state
             .compare_exchange(
                 self.busy_word,
-                INIT_READY,
+                ready_word,
                 Ordering::Release,
                 Ordering::Acquire,
             )
@@ -213,6 +235,52 @@ impl<'a> AtforkRegistrationClaim<'a> {
         self.published = true;
         futex_wake_u32(self.state, i32::MAX);
         Ok(())
+    }
+}
+
+impl<'a> ProcessEpochClaim<'a> {
+    fn new(epoch: &'a AtomicI32) -> Self {
+        Self {
+            epoch,
+            published: false,
+        }
+    }
+
+    fn publish(mut self, pid: i32) -> Result<(), AdapterError> {
+        self.epoch
+            .compare_exchange(
+                PROCESS_EPOCH_BUSY,
+                pid,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .map_err(|_| {
+                AdapterError::new(
+                    FailureKind::Initialization,
+                    "process PID epoch changed during child recovery",
+                )
+            })?;
+        self.published = true;
+        futex_wake_i32(self.epoch, i32::MAX);
+        Ok(())
+    }
+}
+
+impl Drop for ProcessEpochClaim<'_> {
+    fn drop(&mut self) {
+        if !self.published
+            && self
+                .epoch
+                .compare_exchange(
+                    PROCESS_EPOCH_BUSY,
+                    PROCESS_EPOCH_FAILED,
+                    Ordering::Release,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            futex_wake_i32(self.epoch, i32::MAX);
+        }
     }
 }
 
@@ -285,6 +353,144 @@ impl Drop for HookGuard {
     }
 }
 
+fn ensure_process_epoch() -> Result<(), AdapterError> {
+    let pid = raw_getpid();
+    loop {
+        let observed = PROCESS_EPOCH.load(Ordering::Acquire);
+        if observed == pid {
+            return Ok(());
+        }
+        match observed {
+            0 => {
+                if PROCESS_EPOCH
+                    .compare_exchange(0, pid, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            PROCESS_EPOCH_BUSY => wait_while_i32(&PROCESS_EPOCH, PROCESS_EPOCH_BUSY),
+            PROCESS_EPOCH_FAILED => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "an earlier fork-child PID epoch recovery failed",
+                ));
+            }
+            parent_pid if parent_pid > 0 => {
+                if PROCESS_EPOCH
+                    .compare_exchange(
+                        parent_pid,
+                        PROCESS_EPOCH_BUSY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                let claim = ProcessEpochClaim::new(&PROCESS_EPOCH);
+                if let Err(error) = recover_skipped_atfork_child(parent_pid, pid) {
+                    FAIL_CLOSED.store(true, Ordering::Release);
+                    return Err(error);
+                }
+                claim.publish(pid)?;
+                return Ok(());
+            }
+            _ => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "process PID epoch is corrupt",
+                ));
+            }
+        }
+    }
+}
+
+fn recover_skipped_atfork_child(parent_pid: i32, child_pid: i32) -> Result<(), AdapterError> {
+    let child_owner = atfork_pid(child_pid)?;
+    let registration = ATFORK_CLAIM.load(Ordering::Acquire);
+    match atfork_state(registration) {
+        INIT_EMPTY if registration == INIT_EMPTY => {}
+        INIT_READY if atfork_owner_pid(registration) == parent_pid as u32 => {}
+        INIT_BUSY => {
+            return Err(AdapterError::new(
+                FailureKind::Initialization,
+                "fork child inherited an ambiguous pthread_atfork registration",
+            ));
+        }
+        _ => {
+            return Err(AdapterError::new(
+                FailureKind::Initialization,
+                "fork child inherited a corrupt pthread_atfork registration",
+            ));
+        }
+    }
+
+    // SAFETY: PROCESS_EPOCH_BUSY grants this thread exclusive child recovery
+    // before CALL_GATE admission. The address space is a private fork copy and
+    // a supported fork cannot originate while the surviving thread holds a
+    // hook token or the shim fork barrier.
+    unsafe {
+        CALL_GATE.force_reset_in_fork_child();
+        FORK_BARRIER.force_reset_in_fork_child();
+    }
+    ATTACHED_PID.store(0, Ordering::Release);
+    FAILURE_REPORTED.store(false, Ordering::Release);
+
+    match INIT_STATE.load(Ordering::Acquire) {
+        INIT_EMPTY => FAIL_CLOSED.store(false, Ordering::Release),
+        INIT_READY => {
+            let context = unsafe { (&*CONTEXT.0.get()).assume_init_ref() };
+            FAIL_CLOSED.store(
+                context
+                    .bootstrap
+                    .bootstrap_flags()
+                    .contains(BootstrapFlags::REQUIRED),
+                Ordering::Release,
+            );
+        }
+        INIT_BUSY => {
+            INIT_STATE.store(INIT_FAILED, Ordering::Release);
+            futex_wake_u32(&INIT_STATE, i32::MAX);
+            return Err(AdapterError::new(
+                FailureKind::Initialization,
+                "fork child copied an incomplete adapter initialization",
+            ));
+        }
+        INIT_FAILED => {
+            return Err(AdapterError::new(
+                FailureKind::Initialization,
+                "fork child copied a failed adapter initialization",
+            ));
+        }
+        _ => {
+            return Err(AdapterError::new(
+                FailureKind::Initialization,
+                "fork child copied a corrupt adapter initialization state",
+            ));
+        }
+    }
+
+    if atfork_state(registration) == INIT_READY {
+        let child_ready = (child_owner << 2) | INIT_READY;
+        ATFORK_CLAIM
+            .compare_exchange(
+                registration,
+                child_ready,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map_err(|_| {
+                AdapterError::new(
+                    FailureKind::Initialization,
+                    "pthread_atfork registration changed during child recovery",
+                )
+            })?;
+        futex_wake_u32(&ATFORK_CLAIM, i32::MAX);
+    }
+    Ok(())
+}
+
 /// Interposes libc's `getuid` while preserving its return value and `errno`.
 ///
 /// # Safety
@@ -296,11 +502,17 @@ pub unsafe extern "C" fn getuid() -> libc::uid_t {
         return raw_getuid();
     };
     let result = raw_getuid();
-    let Some(_call) = CALL_GATE.try_enter() else {
-        return result;
-    };
     let errno = unsafe { libc::__errno_location() };
     let saved_errno = unsafe { *errno };
+    if let Err(error) = ensure_process_epoch() {
+        report_failure(&error.message);
+        unsafe { *errno = saved_errno };
+        return result;
+    }
+    let Some(_call) = CALL_GATE.try_enter() else {
+        unsafe { *errno = saved_errno };
+        return result;
+    };
 
     let update = panic::catch_unwind(AssertUnwindSafe(|| record_call(None)));
     match update {
@@ -328,6 +540,9 @@ pub unsafe extern "C" fn shmem_pod_bootstrap_v1(context: *const BootstrapContext
     let Some(_hook) = HookGuard::enter() else {
         return BootstrapStatus::Reentrant as i32;
     };
+    if let Err(error) = ensure_process_epoch() {
+        return error.status() as i32;
+    }
     let Some(_call) = CALL_GATE.try_enter() else {
         return BootstrapStatus::Disabled as i32;
     };
@@ -1117,6 +1332,26 @@ fn raw_getpid() -> libc::pid_t {
 
 unsafe extern "C" fn atfork_child() {
     finish_fork_barrier();
+    let pid = raw_getpid();
+    let pid_word = match u32::try_from(pid) {
+        Ok(pid @ 1..=ATFORK_MAX_OWNER_PID) => pid,
+        _ => {
+            raw_write(b"shmem-pod injected adapter: child PID does not fit claim\n");
+            unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+        }
+    };
+    let registration = ATFORK_CLAIM.load(Ordering::Acquire);
+    if !matches!(atfork_state(registration), INIT_BUSY | INIT_READY)
+        || atfork_owner_pid(registration) == 0
+    {
+        raw_write(b"shmem-pod injected adapter: corrupt child at-fork claim\n");
+        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+    }
+    // Running this callback proves that pthread_atfork installed the handler
+    // before this fork's callback snapshot. It may therefore promote either a
+    // published or still-BUSY registration claim without registering again.
+    ATFORK_CLAIM.store((pid_word << 2) | INIT_READY, Ordering::Release);
+    futex_wake_u32(&ATFORK_CLAIM, i32::MAX);
     ATTACHED_PID.store(0, Ordering::Release);
     // A successful prepare drained the initializer before fork. Observing BUSY
     // here therefore means a caller bypassed the adapter's admission contract;
@@ -1128,6 +1363,8 @@ unsafe extern "C" fn atfork_child() {
         unsafe { libc::_exit(FAILURE_EXIT_CODE) }
     }
     FAILURE_REPORTED.store(false, Ordering::Release);
+    PROCESS_EPOCH.store(pid, Ordering::Release);
+    futex_wake_i32(&PROCESS_EPOCH, i32::MAX);
 }
 
 unsafe extern "C" fn atfork_prepare() {
@@ -1181,6 +1418,7 @@ fn try_claim_atfork_registration(state: &AtomicU32, pid: u32) -> Option<u32> {
         .map(|_| busy_word)
 }
 
+#[cfg(test)]
 fn try_reset_foreign_atfork_registration(state: &AtomicU32, observed_word: u32, pid: u32) -> bool {
     if atfork_state(observed_word) != INIT_BUSY || atfork_owner_pid(observed_word) == pid {
         return false;
@@ -1199,7 +1437,6 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
     loop {
         let observed = ATFORK_CLAIM.load(Ordering::Acquire);
         match observed {
-            INIT_READY => return Ok(()),
             INIT_FAILED => {
                 return Err(AdapterError::new(
                     FailureKind::Initialization,
@@ -1232,11 +1469,25 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
                 }
                 return Ok(());
             }
+            word if atfork_state(word) == INIT_READY && atfork_owner_pid(word) != 0 => {
+                let pid = atfork_pid(raw_getpid())?;
+                if atfork_owner_pid(word) == pid {
+                    return Ok(());
+                }
+                FAIL_CLOSED.store(true, Ordering::Release);
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "pthread_atfork READY claim belongs to another process epoch",
+                ));
+            }
             word if atfork_state(word) == INIT_BUSY && atfork_owner_pid(word) != 0 => {
                 let pid = atfork_pid(raw_getpid())?;
-                if try_reset_foreign_atfork_registration(&ATFORK_CLAIM, word, pid) {
-                    futex_wake_u32(&ATFORK_CLAIM, i32::MAX);
-                    continue;
+                if atfork_owner_pid(word) != pid {
+                    FAIL_CLOSED.store(true, Ordering::Release);
+                    return Err(AdapterError::new(
+                        FailureKind::Initialization,
+                        "fork child inherited an ambiguous pthread_atfork registration",
+                    ));
                 }
                 wait_while_u32(&ATFORK_CLAIM, word);
             }
@@ -1264,7 +1515,114 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    static THIRD_PARTY_PREPARE_ENTERED: AtomicBool = AtomicBool::new(false);
+    static THIRD_PARTY_PREPARE_RELEASE: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C" fn paused_third_party_prepare() {
+        THIRD_PARTY_PREPARE_ENTERED.store(true, Ordering::Release);
+        while !THIRD_PARTY_PREPARE_RELEASE.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[test]
+    fn registration_added_after_fork_snapshot_recovers_child_epoch() {
+        assert_eq!(ATFORK_CLAIM.load(Ordering::Acquire), INIT_EMPTY);
+        assert!(ensure_process_epoch().is_ok());
+        let parent_pid = raw_getpid();
+        assert_eq!(PROCESS_EPOCH.load(Ordering::Acquire), parent_pid);
+        assert_eq!(
+            unsafe { libc::pthread_atfork(Some(paused_third_party_prepare), None, None) },
+            0
+        );
+
+        let (forked_tx, forked_rx) = mpsc::channel();
+        let fork_thread = std::thread::spawn(move || {
+            let fork_result = unsafe { libc::fork() };
+            if fork_result == 0 {
+                let child_pid = raw_getpid();
+                let recovered = ensure_process_epoch().is_ok();
+                let registration = ATFORK_CLAIM.load(Ordering::Acquire);
+                let valid = recovered
+                    && PROCESS_EPOCH.load(Ordering::Acquire) == child_pid
+                    && CALL_GATE.active_calls() == 0
+                    && !CALL_GATE.is_disabled()
+                    && atfork_state(registration) == INIT_READY
+                    && atfork_owner_pid(registration) == child_pid as u32;
+                unsafe { libc::_exit(if valid { 0 } else { 90 }) }
+            }
+            forked_tx.send(fork_result).unwrap();
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !THIRD_PARTY_PREPARE_ENTERED.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "third-party prepare did not run");
+            std::thread::yield_now();
+        }
+
+        // This token belongs to a thread which vanishes from the child. Since
+        // registration occurs after the fork callback snapshot, our prepare
+        // handler cannot drain it for this fork; PID-epoch recovery must use
+        // the explicit child-only force reset instead.
+        let mut phantom_parent_call = Some(CALL_GATE.try_enter().unwrap());
+        assert!(ensure_atfork_registered().is_ok());
+        let ready = ATFORK_CLAIM.load(Ordering::Acquire);
+        assert_eq!(atfork_state(ready), INIT_READY);
+        assert_eq!(atfork_owner_pid(ready), parent_pid as u32);
+        THIRD_PARTY_PREPARE_RELEASE.store(true, Ordering::Release);
+
+        let child_pid = match forked_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(pid) => pid,
+            Err(error) => {
+                // Avoid hanging the test if a libc implementation included a
+                // handler registered after its prepare snapshot.
+                drop(phantom_parent_call.take());
+                let pid = forked_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                let _ = fork_thread.join();
+                let mut status = 0;
+                unsafe { libc::waitpid(pid, &mut status, 0) };
+                panic!("fork did not bypass the late shim callback: {error}");
+            }
+        };
+        drop(phantom_parent_call.take());
+        fork_thread.join().unwrap();
+
+        assert!(child_pid > 0);
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(child_pid, &mut status, 0) },
+            child_pid
+        );
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert_eq!(CALL_GATE.active_calls(), 0);
+
+        // A BUSY claim cannot reveal whether pthread_atfork inserted the
+        // callback before the creating fork's snapshot. Model that child-only
+        // copy and require immediate fail-stop without changing or replacing
+        // the ambiguous registration claim.
+        let ambiguous_child = unsafe { libc::fork() };
+        if ambiguous_child == 0 {
+            let inherited_busy = atfork_busy_word(parent_pid as u32);
+            ATFORK_CLAIM.store(inherited_busy, Ordering::Release);
+            PROCESS_EPOCH.store(parent_pid, Ordering::Release);
+            let rejected = ensure_process_epoch().is_err();
+            let valid = rejected
+                && PROCESS_EPOCH.load(Ordering::Acquire) == PROCESS_EPOCH_FAILED
+                && ATFORK_CLAIM.load(Ordering::Acquire) == inherited_busy;
+            unsafe { libc::_exit(if valid { 0 } else { 91 }) }
+        }
+        assert!(ambiguous_child > 0);
+        let mut ambiguous_status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(ambiguous_child, &mut ambiguous_status, 0) },
+            ambiguous_child
+        );
+        assert!(libc::WIFEXITED(ambiguous_status));
+        assert_eq!(libc::WEXITSTATUS(ambiguous_status), 0);
+    }
 
     #[test]
     fn unpublished_initialization_claim_marks_state_failed_on_panic() {
@@ -1334,7 +1692,9 @@ mod tests {
         assert!(try_claim_atfork_registration(&state, PID).is_none());
         release.wait();
         claimant.join().unwrap();
-        assert_eq!(state.load(Ordering::Acquire), INIT_READY);
+        let ready = state.load(Ordering::Acquire);
+        assert_eq!(atfork_state(ready), INIT_READY);
+        assert_eq!(atfork_owner_pid(ready), PID);
     }
 
     #[test]

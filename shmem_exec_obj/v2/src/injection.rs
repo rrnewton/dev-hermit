@@ -787,6 +787,26 @@ impl AdapterCallGate {
                 active_calls: state & ACTIVE_MASK,
             })
     }
+
+    /// Forcibly resets a copied gate when a registered at-fork callback was
+    /// omitted from the fork operation's earlier callback snapshot.
+    ///
+    /// # Safety
+    ///
+    /// This may be called only in the child address space after `fork`, before
+    /// that child admits any adapter call. The caller must serialize recovery
+    /// so exactly one child thread performs the reset, and the surviving fork
+    /// thread must not hold an [`AdapterCall`] for this gate. Under those
+    /// conditions every copied active count belongs to a parent thread which
+    /// does not exist in the child, and the private post-fork address space
+    /// prevents this store from invalidating a parent token.
+    ///
+    /// Unlike [`reset_after_fork`](Self::reset_after_fork), this intentionally
+    /// accepts an enabled gate with phantom active counts because the skipped
+    /// callback never had an opportunity to disable and drain it.
+    pub unsafe fn force_reset_in_fork_child(&self) {
+        self.state.store(0, Ordering::Release);
+    }
 }
 
 /// A fork handler attempted to reset a gate that was not disabled and drained.

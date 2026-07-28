@@ -71,7 +71,10 @@ begin at the first admitted ordinary hook. The thread-local guard is acquired
 before the real syscall and admission, but it does not make initialization safe
 from a signal handler or while the thread holds allocator/loader locks. At-fork
 handlers serialize forks, disable and drain hook calls, then reset the exactly
-quiescent parent/child gates. Raw `fork` syscalls, `vfork`, and fork from inside
+quiescent parent/child gates. A pre-admission PID epoch also detects a child
+whose fork snapshot omitted a concurrently registered shim callback; installed
+`READY` state is rebound without duplicate registration, while ambiguous
+`BUSY` state fails closed. Raw `fork` syscalls, `vfork`, and fork from inside
 this hook remain unsupported. A production shim needs an allocation-free early
 bootstrap or an explicit safe-point initializer before enabling its hooks.
 

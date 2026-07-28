@@ -104,16 +104,19 @@ libc's `getuid` ABI. The host:
 The shim has no ELF constructor and performs no adapter work under the dynamic-
 loader lock. The first ordinary `getuid` call registers `pthread_atfork` and
 performs lazy initialization at that admitted safe point. Registration has its
-own PID-tagged publication state: if a process forks in the narrow window before
-the handler is registered, the child detects that the busy owner belonged to
-another PID and retries. State and owner PID occupy one atomic word. Child
-recovery compares the complete inherited `(BUSY, parent_pid)` claim, so a stale
-observer cannot erase a replacement `(BUSY, child_pid)` claim or create a
-second registration owner. It then validates and pre-reads each descriptor,
-authenticates the artifact and code bytes, maps code RX and state shared-RW
-behind guard pages, checks the generated API and state identity envelope, and
-verifies `/proc` permissions before publishing an immutable process-local
-context.
+own PID-tagged publication state, and `READY` retains that owner. Every exported
+hook checks a separate process PID epoch before call-gate admission. This also
+covers a fork which snapshots its callback list before another thread installs
+the shim handler: a child which inherits foreign `READY` serializes one recovery,
+forcibly discards copied process-local gate counts, resets attachment/failure
+markers, and rebinds the installed handler to the child without registering it
+again. Foreign `EMPTY` is known not to be installed and may register normally
+after recovery. Foreign `BUSY` is ambiguous about installation and fails closed
+immediately; it is never waited on, reset, or re-registered. Initialization then
+validates and pre-reads each descriptor, authenticates the artifact and code
+bytes, maps code RX and state shared-RW behind guard pages, checks the generated
+API and state identity envelope, and verifies `/proc` permissions before
+publishing an immutable process-local context.
 
 The interposer acquires its thread-local recursion guard before the real
 `getuid` syscall or admission gate, closing the pre-guard signal-reentry window.
@@ -127,8 +130,17 @@ The at-fork prepare handler serializes concurrent forks, disables new hook
 entries, and waits for admitted calls to drain. Parent and child handlers reset
 only an exactly disabled, quiescent gate. The child keeps a fully published
 mapping, clears its per-process attachment marker, and records itself on its
-next hook call. An impossible copied `INIT_BUSY` value is converted to
-`INIT_FAILED`, never retried against potentially unwritten context bytes.
+next hook call. Running the child callback proves handler installation, so it
+may promote an installed `BUSY` registration directly to child-owned `READY`.
+An impossible copied `INIT_BUSY` context value is converted to `INIT_FAILED`,
+never retried against potentially unwritten context bytes.
+
+The skipped-callback recovery uses
+[`AdapterCallGate::force_reset_in_fork_child`] under its unsafe contract: the
+PID epoch serializes exactly one recovery before child admission, the surviving
+fork thread holds no adapter token, and the post-fork address space is private.
+Forking from inside an admitted hook violates that contract and remains
+unsupported.
 
 This protocol applies to libc `fork` paths which run `pthread_atfork` handlers.
 It does not cover raw `fork` syscalls, `vfork`, or a fork initiated from inside
@@ -169,8 +181,9 @@ The direct C ABI uses stable numeric classes, also declared in
 No runtime error string is parsed to choose a class. The adapter completes all
 descriptor transport checks and every identity check available from the
 authenticated header before mapping code. The pod-exported opaque layout is
-checked immediately after RX mapping and before state mapping, so later runtime
-errors have the `-6` meaning by construction.
+checked immediately after RX mapping, and a post-attachment generation recheck
+remains an identity error (`-3`) even though mapping already occurred. Mapping,
+binding, permission, and method-operation failures are runtime errors (`-6`).
 
 ## Ptrace bootstrap and detach
 
