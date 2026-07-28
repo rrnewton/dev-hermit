@@ -1,0 +1,62 @@
+# Excerpt of hermit --log info run --strict -- ./forkpipe_stress
+# (full log is 6348 lines; this is the determinism-relevant subset)
+2026-07-28T03:57:56.880272Z  INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0
+2026-07-28T03:57:56.881317Z  INFO detcore::tool_local: DETLOG CHAOSRAND: seeding chaos scheduler with seed 0
+ COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_000s
+ COMMIT turn 1, dettid 3 using resources {MemAddrSpace(DetPid(3)): RW}, on previously committed 1_767_225_600.000_500_000s
+2026-07-28T03:57:56.886110Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.886377Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.886572Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.886579Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 5: [167, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 2, dettid 5 using resources {MemAddrSpace(DetPid(5)): RW}, on previously committed 1_767_225_600.003_401_270s
+ COMMIT turn 3, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(5) }: W}, on previously committed 1_767_225_600.003_936_660s
+2026-07-28T03:57:56.887206Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.887434Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.887576Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.887583Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 7: [165, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 4, dettid 7 using resources {MemAddrSpace(DetPid(7)): RW}, on previously committed 1_767_225_600.006_237_635s
+ COMMIT turn 5, dettid 5 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.006_773_025s
+2026-07-28T03:57:56.891188Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.891429Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.891584Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.891592Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 9: [171, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 10, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(9) }: W}, on previously committed 1_767_225_600.011_439_710s
+2026-07-28T03:57:56.895241Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.895476Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.895640Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.895649Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 11: [169, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 11, dettid 11 using resources {MemAddrSpace(DetPid(11)): RW}, on previously committed 1_767_225_600.014_341_025s
+ COMMIT turn 12, dettid 9 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.014_876_415s
+ COMMIT turn 13, dettid 7 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.015_386_465s
+ COMMIT turn 14, dettid 5 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.015_896_515s
+ COMMIT turn 15, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(11) }: W}, on previously committed 1_767_225_600.016_406_565s
+2026-07-28T03:57:56.899441Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.899675Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.899835Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.899849Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 13: [175, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 16, dettid 13 using resources {MemAddrSpace(DetPid(13)): RW}, on previously committed 1_767_225_600.019_608_050s
+ COMMIT turn 17, dettid 11 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.020_143_440s
+ COMMIT turn 18, dettid 9 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.020_653_490s
+ COMMIT turn 19, dettid 7 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.021_163_540s
+ COMMIT turn 20, dettid 5 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.021_673_590s
+ COMMIT turn 21, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(13) }: W}, on previously committed 1_767_225_600.022_183_640s
+2026-07-28T03:57:56.904427Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.904674Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.904827Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.904834Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 15: [173, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 22, dettid 15 using resources {MemAddrSpace(DetPid(15)): RW}, on previously committed 1_767_225_600.025_685_295s
+ COMMIT turn 23, dettid 13 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.026_220_685s
+ COMMIT turn 24, dettid 11 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.026_730_735s
+ COMMIT turn 25, dettid 9 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.027_240_785s
+ COMMIT turn 26, dettid 7 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.027_750_835s
+ COMMIT turn 27, dettid 5 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.028_260_885s
+ COMMIT turn 28, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(15) }: W}, on previously committed 1_767_225_600.028_770_935s
+2026-07-28T03:57:56.905682Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: pipe(0x7fffffffad40) = ?
+2026-07-28T03:57:56.905951Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: clone(CloneFlags(0x1200011), NULL, NULL, 0x4c9650, 0) = ?
+2026-07-28T03:57:56.906094Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND Generated new seed [162, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214]
+2026-07-28T03:57:56.906100Z  INFO detcore::tool_local: DETLOG RNG CHAOSRAND seeding child tid 17: [179, 236, 125, 64, 66, 242, 3, 86, 205, 26, 226, 233, 117, 95, 132, 214] from parent Mcg128Xsl64 {}
+ COMMIT turn 29, dettid 17 using resources {MemAddrSpace(DetPid(17)): RW}, on previously committed 1_767_225_600.032_572_760s
+ COMMIT turn 30, dettid 15 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.033_108_150s
+ COMMIT turn 31, dettid 13 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.033_618_200s
+ COMMIT turn 32, dettid 11 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.034_128_250s
+ COMMIT turn 33, dettid 9 using resources {InternalIOPolling: W}, on previously committed 1_767_225_600.034_638_300s

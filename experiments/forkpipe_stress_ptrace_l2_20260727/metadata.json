@@ -1,0 +1,47 @@
+{
+  "experiment": "forkpipe_stress_ptrace_l2_20260727",
+  "date": "2026-07-27",
+  "task": "ptrace compat — hard programs: fork+pipe stress test under --strict --verify",
+  "milestone": "L2 determinism (hermit run --strict --verify, bitwise-identical) for a high-fork-volume concurrent-pipe fan-in stress program, ptrace backend",
+  "result": "PASS",
+  "assurance_level": "L2",
+  "backend": "ptrace",
+  "relaxations": "none",
+  "mode": "run (NOT record; record is known to hang on concurrent pipes)",
+  "log_level": "info (for the debug pass); default for the verify pass",
+  "hermit_binary": "worktrees/275/hermit/target/release/hermit",
+  "hermit_branch": "codex/qemu-userspace-program-l2",
+  "hermit_sha": "15293c34bc9a957d62314ab727dea5bba2d98df7",
+  "note_branch": "Exploratory compat probe; no hermit source change. Binary built at this SHA on origin/main lineage.",
+  "guest_source": "forkpipe_stress.c",
+  "guest_build": "gcc -O2 -static -fno-pie -no-pie -o forkpipe_stress forkpipe_stress.c",
+  "host": "linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "workload": {
+    "children": 16,
+    "records_per_child": 64,
+    "bytes_per_record": 4,
+    "pattern": "each child writes 256 bytes of value (id+1) into its own pipe; parent poll()s all 16 read ends and drains, logging arrival order"
+  },
+  "commands": {
+    "verify": "hermit run --strict --verify -- ./forkpipe_stress",
+    "strict": "hermit run --strict -- ./forkpipe_stress",
+    "debug": "hermit --log info run --strict -- ./forkpipe_stress"
+  },
+  "results": {
+    "verify_verdict": "Success: deterministic. Determinism verified.",
+    "independent_strict_runs_identical": true,
+    "checksum_order_independent": 34816,
+    "checksum_expected": "256 * sum(1..16) = 256 * 136 = 34816",
+    "statushash": 615731795747517251,
+    "orderdig_order_dependent": 11853468550816639891,
+    "arrivals_native_varies": 17,
+    "arrivals_hermit_deterministic": 63,
+    "arrival_order_signature": "deterministic round-robin 1..16 repeating (sequentialized scheduler), vs host-scheduling coalescing natively",
+    "scheduler_commit_turns": 1192,
+    "syscall_counts": { "clone": 16, "pipe": 16, "poll": 5, "wait4": 16 },
+    "virtual_epoch": "1_767_225_600.000_000_000s (2026-01-01 UTC)"
+  },
+  "interpretation": "A high-fork-volume concurrent-pipe fan-in — a historically-hard determinism case — is L2-deterministic in run mode on ptrace. The order-DEPENDENT digest (ORDERDIG) and full arrival order (ORDERHEAD) are bitwise-stable, so this is genuine scheduling determinism, not merely an order-independent checksum coincidence.",
+  "scope": "ptrace, run mode only. record mode is separately known to hang on concurrent pipes (not retested here). Uses fork() (clone SIGCHLD), not vfork.",
+  "excluded_evidence": "full 6348-line --log info dump (584 KB); info_excerpt.log holds the determinism-relevant subset"
+}
