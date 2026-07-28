@@ -7,9 +7,10 @@
 
 The benchmark suite measures the costs and contention shapes that matter to a
 shared-memory pod on one controlled host. It is an experiment harness, not a
-leaderboard. Every result is bound to its source revision, Cargo lockfile,
-toolchain and build flags, kernel, CPU model, exact harness/compiler binaries,
-executable-pod digest, and explicit workload counts.
+leaderboard. Every result is bound to an immutable snapshot of every
+non-ignored v2 input, the Cargo lockfile, toolchain and build flags, kernel, CPU
+model, exact harness/compiler binaries, compiler evidence, executable-pod
+digest, and explicit workload counts.
 
 ## Run It
 
@@ -57,30 +58,68 @@ substituting a different workload.
 Each successful run creates one self-contained, run-owned bundle:
 
 - `environment.json` is the completion marker. It records the run ID, source
-  SHA, dirty state, stable status and complete measured-source fingerprints,
-  workspace and normalized harness lockfile SHA-256 values, exact runner,
-  harness source/binary, harness manifest, and compiler binary digests,
+  SHA and dirty state, exact initial-live and retained-snapshot manifest
+  digests, whole-bundle inventory digest, workspace and normalized harness
+  lockfile digests, exact runner, harness source/binary/report, harness
+  manifest, compiler binary/manifest/cross-check, result-file digests,
   toolchain and build-affecting environment, host/kernel/CPU/NUMA metadata,
-  observed CPU and memory affinity, cgroup-v2 limits and effective CPU/memory
-  sets, pod artifact digest, timer, timeout, and all workload counts.
+  observed CPU and memory affinity, inherited cgroup-v2 limits and effective
+  CPU/memory sets, pod artifact digest, timer, timeout, and all workload counts.
 - `results.jsonl` contains one
   `shmem-pod-benchmark-result-v1` object per timing sample.
 - `results.csv` contains the same fields with a header for statistical tools.
 - `artifacts/` retains the pod binary, ELF, object, manifest, SDK rlib, and
   dependency evidence produced for this run.
 - `bin/` retains the exact compiler and benchmark harness executables.
-- `provenance/` retains the exact runner, harness source, workspace/harness
-  manifests, and workspace/normalized harness lockfiles.
+- `provenance/source/` is the read-only source snapshot used to compile the
+  compiler, runtime, pod, and harness. It contains every tracked or untracked,
+  non-ignored file under v2, not a hand-selected subset.
+- `provenance/source-live-manifest.tsv` records the initial live file type,
+  mode, size, SHA-256, and hex-encoded path. `provenance/source-manifest.tsv`
+  records those fields again for the retained read-only snapshot.
+- `provenance/compiler-crosscheck.json`, the harness manifest/lockfile, and
+  `harness-report.json` retain the independent build and execution evidence.
+- `bundle-inventory.tsv` records the type, exact mode, size, SHA-256, and
+  hex-encoded path of every retained file except itself and the self-describing
+  `environment.json` completion marker. The environment binds its digest and
+  entry count.
 - `runner-owner` and `harness-owner.json` bind the directory and result files to
-  this run. Both the runner and direct harness reject reuse independently.
+  this run and its random owner token. Both the runner and direct harness
+  reject reuse independently.
 
-The harness flushes and synchronizes the result files, then exclusively creates,
-writes, and synchronizes `environment.json.pending`. The runner rechecks the
-source revision, status, complete measured-source contents, and bundle digests;
-validates the exact result matrix and byte-equivalent CSV/JSON rows; and only then
-renames the pending file atomically to `environment.json`. Its presence therefore
-identifies a full successful run by the runner. Later runs use different
-directories and cannot overwrite the retained artifact or executable paths.
+The runner first manifests the live v2 tree, copies that exact path set, proves
+that the snapshot equals the initial manifest and that the live tree did not
+drift during the copy, and makes the snapshot read-only. All four builds then
+consume only snapshot paths; Cargo also runs from a temporary directory rather
+than discovering configuration from the live checkout. The retained snapshot
+is re-manifested after hardening and checked throughout the run. Source
+symlinks are rejected: retaining only link text would not bind bytes read from
+an external target by Cargo, rustc, or an `include_*` macro.
+
+The harness cannot create completion metadata. It requires the exact run ID,
+runner-owner token, canonical bundle and artifact paths, the retained harness
+executable, and `--defer-completion 1`; it emits only synchronized results and a
+report of its own runtime observations. The runner independently observes and
+requires the exact same runtime/configuration object, cross-checks every path
+and digest in the compiler manifest, validates the exact result matrix and
+byte-equivalent CSV/JSON rows, freezes every payload file, and inventories the
+whole bundle. It regenerates the canonical environment deterministically and
+rechecks the immutable snapshot and inventory immediately before atomically
+publishing `environment.json`. A failure removes only the directory claimed by
+that run. A directory without `environment.json` is not a completed bundle.
+
+Read-only file modes are accidental-mutation hardening, not an adversarial
+immutability boundary. A process running as the bundle owner can restore write
+permission. A consumer must treat a trusted copy or externally recorded digest
+of `environment.json` as the trust anchor, verify its
+`bundle.inventory.sha256` and entry count against `bundle-inventory.tsv`, then
+recompute every inventory row's type, exact mode, size, and digest before using
+any result or artifact. The environment also names and hashes the compiler
+manifest and cross-check, retained source manifests, harness report/binary, and
+result files; consumers should require those exact paths rather than searching
+for substitutes. Without an external signature, checksum, or read-only storage
+boundary, no bundle format can authenticate a wholesale same-UID rewrite of
+both the completion record and its payload.
 
 Every result row carries raw `elapsed_ns` and `operations`. The integer
 `operations_per_second` is a convenience derived from those fields. Retain the
@@ -97,8 +136,9 @@ jq -s 'group_by(.variant) | map({variant: .[0].variant, samples: length})' \
 
 Before reporting `PASS`, the runner requires exactly 22 unique rows for every
 sample, the one expected run ID, exact sample indices, variants, topologies,
-worker counts and operation denominators, an exactly recomputed rate, and full
-field equality between every JSONL and CSV row.
+worker counts and operation denominators, an exactly recomputed rate, full field
+equality between every JSONL and CSV row, and unchanged compiler and bundle
+evidence.
 
 ## What Is Measured
 
@@ -194,9 +234,7 @@ mutex is robust against owner death. The suite therefore has no
 Benchmarking a pthread robust mutex would be a distinct kernel baseline and
 must not be mislabeled as behavior provided by this crate.
 
-Do not compare a dirty-tree run to a clean revision without preserving the
-diff. `source_dirty: true` is evidence that the SHA alone is insufficient to
-reconstruct that run. The measured-source fingerprint covers the workspace
-manifest/lock, SDK, macros, pod API/code/compiler/runtime, runner, and harness;
-it proves those bytes remained unchanged during collection but is not a
-substitute for retaining a dirty diff.
+Do not compare a dirty-tree run to a clean revision by SHA alone.
+`source.dirty: true` means the revision is not a sufficient reconstruction key;
+the retained full snapshot is authoritative for that run. The initial-live and
+retained-snapshot manifests prove which bytes and modes were copied and used.

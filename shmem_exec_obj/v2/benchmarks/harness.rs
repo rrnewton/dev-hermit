@@ -13,7 +13,7 @@ use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
 use shmem_pod::snzi::Snzi;
 use shmem_pod::sync::{ProcessFutexMutex, ProcessSpinMutex};
 use shmem_pod_runtime::{PodArtifact, PodImage};
-use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
+use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::env;
 use std::error::Error;
 use std::ffi::{c_int, c_long, c_void};
@@ -61,6 +61,8 @@ unsafe extern "C" {
 
 #[derive(Debug)]
 struct Config {
+    run_id: String,
+    runner_owner_token: String,
     artifact: PathBuf,
     artifact_sha256: String,
     output_dir: PathBuf,
@@ -78,6 +80,8 @@ impl Config {
         let mut artifact = None;
         let mut artifact_sha256 = None;
         let mut output_dir = None;
+        let mut run_id = None;
+        let mut runner_owner_token = None;
         let mut warmup = None;
         let mut iterations = None;
         let mut samples = None;
@@ -91,6 +95,8 @@ impl Config {
                 .next()
                 .ok_or_else(|| format!("missing value after {argument}"))?;
             match argument.as_str() {
+                "--run-id" => run_id = Some(value),
+                "--runner-owner-token" => runner_owner_token = Some(value),
                 "--artifact" => artifact = Some(PathBuf::from(value)),
                 "--sha256" => artifact_sha256 = Some(value),
                 "--output-dir" => output_dir = Some(PathBuf::from(value)),
@@ -111,6 +117,8 @@ impl Config {
             }
         }
         let config = Self {
+            run_id: run_id.ok_or("--run-id is required")?,
+            runner_owner_token: runner_owner_token.ok_or("--runner-owner-token is required")?,
             artifact: artifact.ok_or("--artifact is required")?,
             artifact_sha256: artifact_sha256.ok_or("--sha256 is required")?,
             output_dir: output_dir.ok_or("--output-dir is required")?,
@@ -120,7 +128,7 @@ impl Config {
             workers: workers.ok_or("--workers is required")?,
             mode: mode.ok_or("--mode is required")?,
             timeout_seconds: timeout_seconds.ok_or("--timeout-seconds is required")?,
-            defer_completion: defer_completion.unwrap_or(false),
+            defer_completion: defer_completion.ok_or("--defer-completion 1 is required")?,
         };
         if config.iterations == 0
             || config.samples == 0
@@ -131,6 +139,25 @@ impl Config {
         }
         if config.workers > MAX_WORKERS {
             return Err(format!("workers must not exceed {MAX_WORKERS}").into());
+        }
+        if !config.defer_completion {
+            return Err("standalone completion is forbidden; --defer-completion must be 1".into());
+        }
+        if config.run_id.is_empty()
+            || !config
+                .run_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err("--run-id contains unsupported characters".into());
+        }
+        if config.runner_owner_token.len() != 64
+            || !config
+                .runner_owner_token
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("--runner-owner-token must be 64 lowercase hexadecimal digits".into());
         }
         if config.artifact_sha256.len() != 64
             || !config
@@ -192,13 +219,81 @@ struct Measurement<'a> {
     elapsed: Duration,
 }
 
+fn runner_owner_contents(config: &Config) -> String {
+    format!(
+        "shmem-pod-benchmark-runner-owner-v1\nrun_id={}\ntoken={}\n",
+        config.run_id, config.runner_owner_token
+    )
+}
+
+fn validate_runner_claim(config: &Config) -> io::Result<()> {
+    let output = fs::canonicalize(&config.output_dir)?;
+    if output != config.output_dir {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--output-dir must be a canonical absolute path",
+        ));
+    }
+    if fs::read_to_string(output.join("runner-owner"))? != runner_owner_contents(config) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "runner owner token does not match this run",
+        ));
+    }
+    for forbidden in ["environment.json", "environment.json.pending"] {
+        if fs::symlink_metadata(output.join(forbidden)).is_ok() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("runner-owned completion path already exists: {forbidden}"),
+            ));
+        }
+    }
+    let required = [
+        "artifacts/pod.bin",
+        "artifacts/pod.manifest",
+        "bin/shmem-pod-image-compiler",
+        "bin/shmem-pod-benchmark-harness",
+        "provenance/source-manifest.tsv",
+        "provenance/source/Cargo.toml",
+        "provenance/source/Cargo.lock",
+        "provenance/source/benchmarks/harness.rs",
+        "provenance/source/scripts/run-benchmarks.sh",
+    ];
+    for relative in required {
+        let metadata = fs::symlink_metadata(output.join(relative))?;
+        if !metadata.file_type().is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("required runner bundle member is not a regular file: {relative}"),
+            ));
+        }
+    }
+    let expected_artifact = fs::canonicalize(output.join("artifacts/pod.bin"))?;
+    if fs::canonicalize(&config.artifact)? != expected_artifact {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--artifact is not this runner bundle's pod.bin",
+        ));
+    }
+    let expected_executable = fs::canonicalize(output.join("bin/shmem-pod-benchmark-harness"))?;
+    if fs::canonicalize(env::current_exe()?)? != expected_executable {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "harness executable is not the binary retained by this runner bundle",
+        ));
+    }
+    Ok(())
+}
+
 impl ResultWriter {
-    fn create(output_dir: &Path, run_id: String) -> io::Result<Self> {
-        fs::create_dir_all(output_dir)?;
+    fn create(config: &Config) -> io::Result<Self> {
+        validate_runner_claim(config)?;
+        let output_dir = &config.output_dir;
         for reserved in [
             "harness-owner.json",
             "environment.json",
             "environment.json.pending",
+            "harness-report.json",
             "results.jsonl",
             "results.csv",
         ] {
@@ -219,8 +314,9 @@ impl ResultWriter {
             .open(output_dir.join("harness-owner.json"))?;
         writeln!(
             owner,
-            "{{\"schema\":\"shmem-pod-benchmark-owner-v1\",\"run_id\":\"{}\"}}",
-            json_escape(&run_id)
+            "{{\"schema\":\"shmem-pod-benchmark-owner-v2\",\"run_id\":\"{}\",\"runner_owner_token\":\"{}\"}}",
+            json_escape(&config.run_id),
+            config.runner_owner_token,
         )?;
         owner.flush()?;
         owner.sync_all()?;
@@ -243,7 +339,7 @@ impl ResultWriter {
         Ok(Self {
             json,
             csv,
-            run_id,
+            run_id: config.run_id.clone(),
             rows: 0,
         })
     }
@@ -310,10 +406,6 @@ fn json_escape(value: &str) -> String {
         }
     }
     output
-}
-
-fn environment(name: &str) -> String {
-    env::var(name).unwrap_or_else(|_| "unknown".to_owned())
 }
 
 fn proc_field(path: &str, field: &str) -> String {
@@ -472,7 +564,7 @@ fn cgroup_metadata() -> CgroupMetadata {
     }
 }
 
-fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::Result<()> {
+fn write_harness_report(config: &Config, result_rows: usize) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
     let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
     let memory_affinity = proc_field("/proc/self/status", "Mems_allowed_list:");
@@ -486,96 +578,38 @@ fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::R
         .map(|value| value.trim().to_owned())
         .unwrap_or_else(|_| "unknown".to_owned());
     let cgroup = cgroup_metadata();
-    let pending_path = config.output_dir.join("environment.json.pending");
+    let report_path = config.output_dir.join("harness-report.json");
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&pending_path)?;
+        .open(&report_path)?;
     let mut output = BufWriter::new(file);
     writeln!(output, "{{")?;
     writeln!(
         output,
-        "  \"schema\": \"shmem-pod-benchmark-environment-v1\","
+        "  \"schema\": \"shmem-pod-benchmark-harness-report-v1\","
     )?;
-    writeln!(output, "  \"run_id\": \"{}\",", json_escape(run_id))?;
-    writeln!(output, "  \"complete\": true,")?;
+    writeln!(output, "  \"run_id\": \"{}\",", json_escape(&config.run_id))?;
     writeln!(output, "  \"result_rows\": {result_rows},")?;
     writeln!(
         output,
-        "  \"source_revision\": \"{}\",",
-        json_escape(&environment("SHMEM_POD_BENCH_GIT_SHA"))
-    )?;
-    writeln!(
-        output,
-        "  \"source_dirty\": {},",
-        environment("SHMEM_POD_BENCH_GIT_DIRTY") == "1"
-    )?;
-    writeln!(
-        output,
-        "  \"source_status_sha256\": \"{}\",",
-        json_escape(&environment("SHMEM_POD_BENCH_SOURCE_STATUS_SHA256"))
-    )?;
-    writeln!(
-        output,
-        "  \"source_tree_sha256\": \"{}\",",
-        json_escape(&environment("SHMEM_POD_BENCH_SOURCE_TREE_SHA256"))
-    )?;
-    writeln!(
-        output,
-        "  \"cargo_lock_sha256\": \"{}\",",
-        json_escape(&environment("SHMEM_POD_BENCH_LOCK_SHA256"))
-    )?;
-    writeln!(
-        output,
-        "  \"harness_lock_sha256\": \"{}\",",
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"))
-    )?;
-    writeln!(
-        output,
         concat!(
-            "  \"provenance\": {{",
-            "\"workspace_manifest\": {{\"bundle_path\": \"provenance/workspace-Cargo.toml\", \"sha256\": \"{}\"}}, ",
-            "\"runner\": {{\"bundle_path\": \"provenance/run-benchmarks.sh\", \"sha256\": \"{}\"}}, ",
-            "\"harness_source\": {{\"bundle_path\": \"provenance/harness.rs\", \"sha256\": \"{}\"}}, ",
-            "\"harness_manifest\": {{\"bundle_path\": \"provenance/harness-Cargo.toml\", \"sha256\": \"{}\"}}, ",
-            "\"harness_binary\": {{\"bundle_path\": \"bin/shmem-pod-benchmark-harness\", \"sha256\": \"{}\"}}, ",
-            "\"compiler_binary\": {{\"bundle_path\": \"bin/shmem-pod-image-compiler\", \"sha256\": \"{}\"}}}},"
-        ),
-        json_escape(&environment("SHMEM_POD_BENCH_WORKSPACE_MANIFEST_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_RUNNER_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_SOURCE_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_BINARY_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_COMPILER_SHA256")),
-    )?;
-    writeln!(
-        output,
-        concat!(
-            "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", ",
-            "\"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\", ",
+            "  \"runtime_context\": {{\"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\", ",
             "\"numa_nodes_online\": \"{}\", \"numa_nodes_possible\": \"{}\", ",
-            "\"automatic_numa_balancing\": \"{}\"}},"
-        ),
-        json_escape(&environment("SHMEM_POD_BENCH_HOSTNAME")),
-        json_escape(&environment("SHMEM_POD_BENCH_KERNEL")),
-        json_escape(&environment("SHMEM_POD_BENCH_CPU_MODEL")),
-        available,
-        env::consts::OS,
-        env::consts::ARCH,
-        json_escape(&numa_nodes_online),
-        json_escape(&numa_nodes_possible),
-        json_escape(&automatic_numa_balancing),
-    )?;
-    writeln!(
-        output,
-        concat!(
-            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"memory_affinity_list\": \"{}\", ",
+            "\"automatic_numa_balancing\": \"{}\", ",
+            "\"cpu_affinity_list\": \"{}\", \"memory_affinity_list\": \"{}\", ",
             "\"cgroup_v2_path\": \"{}\", \"inherited_cpu_max\": \"{}\", \"inherited_cpu_max_source\": \"{}\", ",
             "\"inherited_memory_max\": \"{}\", \"inherited_memory_max_source\": \"{}\", ",
             "\"inherited_memory_swap_max\": \"{}\", \"inherited_memory_swap_max_source\": \"{}\", ",
             "\"effective_cpuset\": \"{}\", \"effective_cpuset_source\": \"{}\", ",
             "\"effective_cpuset_mems\": \"{}\", \"effective_cpuset_mems_source\": \"{}\"}},"
         ),
+        available,
+        env::consts::OS,
+        env::consts::ARCH,
+        json_escape(&numa_nodes_online),
+        json_escape(&numa_nodes_possible),
+        json_escape(&automatic_numa_balancing),
         json_escape(&affinity),
         json_escape(&memory_affinity),
         json_escape(&cgroup.path),
@@ -589,51 +623,6 @@ fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::R
         json_escape(&cgroup.cpuset_source),
         json_escape(&cgroup.cpuset_mems),
         json_escape(&cgroup.cpuset_mems_source),
-    )?;
-    writeln!(
-        output,
-        "  \"toolchain\": {{\"rustc\": \"{}\", \"cargo\": \"{}\", \"pod_rustc\": \"{}\"}},",
-        json_escape(&environment("SHMEM_POD_BENCH_RUSTC")),
-        json_escape(&environment("SHMEM_POD_BENCH_CARGO")),
-        json_escape(&environment("SHMEM_POD_BENCH_POD_RUSTC_VERSION")),
-    )?;
-    writeln!(
-        output,
-        concat!(
-            "  \"build_environment\": {{\"rustflags\": \"{}\", \"cargo_encoded_rustflags\": \"{}\", ",
-            "\"rustc_override\": \"{}\", \"pod_rustc\": \"{}\", \"rustc_wrapper\": \"{}\", ",
-            "\"rustc_workspace_wrapper\": \"{}\", \"cargo_home\": \"{}\", \"cargo_build_target\": \"{}\", ",
-            "\"workspace_profile\": \"{}\", \"harness_profile\": \"{}\", ",
-            "\"profile_overrides\": {{\"opt_level\": \"{}\", \"debug\": \"{}\", \"strip\": \"{}\", ",
-            "\"debug_assertions\": \"{}\", \"overflow_checks\": \"{}\", \"lto\": \"{}\", ",
-            "\"panic\": \"{}\", \"incremental\": \"{}\", \"codegen_units\": \"{}\", \"rpath\": \"{}\"}}}},"
-        ),
-        json_escape(&environment("SHMEM_POD_BENCH_RUSTFLAGS")),
-        json_escape(&environment("SHMEM_POD_BENCH_CARGO_ENCODED_RUSTFLAGS")),
-        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_OVERRIDE")),
-        json_escape(&environment("SHMEM_POD_BENCH_POD_RUSTC")),
-        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_WRAPPER")),
-        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_WORKSPACE_WRAPPER")),
-        json_escape(&environment("SHMEM_POD_BENCH_CARGO_HOME")),
-        json_escape(&environment("SHMEM_POD_BENCH_CARGO_BUILD_TARGET")),
-        json_escape(&environment("SHMEM_POD_BENCH_WORKSPACE_PROFILE")),
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_PROFILE")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_OPT_LEVEL")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_DEBUG")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_STRIP")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_DEBUG_ASSERTIONS")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_OVERFLOW_CHECKS")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_LTO")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_PANIC")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_INCREMENTAL")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_CODEGEN_UNITS")),
-        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_RPATH")),
-    )?;
-    writeln!(
-        output,
-        "  \"artifact\": {{\"path\": \"{}\", \"bundle_path\": \"artifacts/pod.bin\", \"sha256\": \"{}\"}},",
-        json_escape(&config.artifact.display().to_string()),
-        json_escape(&config.artifact_sha256),
     )?;
     writeln!(
         output,
@@ -651,29 +640,10 @@ fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::R
         config.workers,
         config.timeout_seconds,
     )?;
-    writeln!(
-        output,
-        "  \"interpretation\": \"One-host observations only; compare rows within a controlled run and do not treat them as portable performance claims.\""
-    )?;
+    writeln!(output, "  \"runner_completion_deferred\": true")?;
     writeln!(output, "}}")?;
     output.flush()?;
     output.get_ref().sync_all()?;
-    drop(output);
-    if !config.defer_completion {
-        let completion_path = config.output_dir.join("environment.json");
-        match fs::symlink_metadata(&completion_path) {
-            Ok(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "benchmark completion marker already exists",
-                ));
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        fs::rename(&pending_path, completion_path)?;
-        File::open(&config.output_dir)?.sync_all()?;
-    }
     Ok(())
 }
 
@@ -1089,9 +1059,11 @@ fn validate_process_total(
         ProcessWorkload::FutexMutex => assert_eq!(*state.futex.0.lock(), expected_total),
         ProcessWorkload::CoarseCounter => {
             let counters = state.coarse.0.lock();
-            assert!(counters[..workers]
-                .iter()
-                .all(|value| *value == expected_per_worker));
+            assert!(
+                counters[..workers]
+                    .iter()
+                    .all(|value| *value == expected_per_worker)
+            );
             assert!(counters[workers..].iter().all(|value| *value == 0));
         }
         ProcessWorkload::FineHot => {
@@ -1110,8 +1082,10 @@ fn validate_process_total(
             assert!((0..workers).all(|slot| {
                 state.atomic[slot].0.load(Ordering::Relaxed) == expected_per_worker
             }));
-            assert!((workers..MAX_WORKERS)
-                .all(|slot| state.atomic[slot].0.load(Ordering::Relaxed) == 0));
+            assert!(
+                (workers..MAX_WORKERS)
+                    .all(|slot| state.atomic[slot].0.load(Ordering::Relaxed) == 0)
+            );
         }
     }
 }
@@ -1529,8 +1503,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let config = Config::parse()?;
-    let run_id = environment("SHMEM_POD_BENCH_RUN_ID");
-    let mut writer = ResultWriter::create(&config.output_dir, run_id.clone())?;
+    let mut writer = ResultWriter::create(&config)?;
 
     benchmark_direct(&config, &mut writer)?;
     benchmark_syscall(&config, &mut writer)?;
@@ -1548,9 +1521,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     // The environment file is also the completion marker. A failed run may
     // leave individually verified rows, but never metadata claiming the whole
     // configured matrix succeeded.
-    write_environment(&config, &run_id, rows)?;
+    write_harness_report(&config, rows)?;
     println!(
-        "benchmark-ok run_id={run_id} rows={rows} output={} warmup={} iterations={} samples={} workers={} verified=true",
+        "benchmark-ok run_id={} rows={rows} output={} warmup={} iterations={} samples={} workers={} verified=true completion=deferred",
+        config.run_id,
         config.output_dir.display(),
         config.warmup,
         config.iterations,

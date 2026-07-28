@@ -5,18 +5,18 @@ priority: 2
 issue_type: task
 assignee: devbig030
 depends_on:
-  pod-9: blocks
   pod-8: blocks
-  pod-1: parent-child
-  pod-6: blocks
-  pod-4: blocks
-  pod-5: blocks
   pod-7: blocks
+  pod-1: parent-child
+  pod-5: blocks
+  pod-6: blocks
   pod-17: blocks
+  pod-4: blocks
+  pod-9: blocks
 created_at: 2026-07-28T03:39:16.035270684+00:00
-updated_at: 2026-07-28T12:15:22.100087831+00:00
-claimed_at: 2026-07-28T10:35:38.427417925+00:00
-claimed_until: 2026-07-28T18:35:38.227858288+00:00
+updated_at: 2026-07-28T12:25:48.600819771+00:00
+claimed_at: 2026-07-28T12:25:48.600819771+00:00
+claimed_until: 2026-07-28T20:25:48.600526267+00:00
 ---
 
 # Description
