@@ -24,7 +24,7 @@ class ComparisonTests(unittest.TestCase):
                 "stable-sha",
                 "Boot",
             )
-        self.assertIn("PASS: run matches anchor", output.getvalue())
+        self.assertIn("PASS: all repeat checks match the first run", output.getvalue())
         self.assertIn("DETERMINISTIC!", output.getvalue())
         self.assertNotIn("ERROR", output.getvalue())
 
