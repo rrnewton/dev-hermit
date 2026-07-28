@@ -18,13 +18,11 @@
 use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
-const DEFAULT_MEMORY_DIR: &str =
-    "/home/newton/.claude/projects/-home-newton-work-dev-hermit/memory";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let root = find_root();
-    let memory_dir = memory_dir();
+    let memory_dir = memory_dir(&root);
 
     if !memory_dir.is_dir() {
         eprintln!(
@@ -558,10 +556,26 @@ fn normalize_lines(lines: Vec<String>) -> String {
 
 // ---- filesystem helpers ----
 
-fn memory_dir() -> PathBuf {
+fn memory_dir(root: &Path) -> PathBuf {
     match std::env::var("HERMIT_MEMORY_DIR") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => PathBuf::from(DEFAULT_MEMORY_DIR),
+        _ => {
+            let home = std::env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    eprintln!("HOME is not set (set HERMIT_MEMORY_DIR)");
+                    std::process::exit(2);
+                });
+            let project_key: String = root
+                .to_string_lossy()
+                .chars()
+                .map(|ch| if ch == '/' || ch == '\\' { '-' } else { ch })
+                .collect();
+            home.join(".claude/projects")
+                .join(project_key)
+                .join("memory")
+        }
     }
 }
 
