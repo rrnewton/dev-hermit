@@ -5,14 +5,14 @@ priority: 2
 issue_type: task
 assignee: devbig030/migration-reclamation
 depends_on:
+  pod-8: blocks
+  pod-7: blocks
   pod-1: parent-child
   pod-4: blocks
-  pod-7: blocks
-  pod-8: blocks
-  pod-5: blocks
   pod-6: blocks
+  pod-5: blocks
 created_at: 2026-07-28T03:39:42.092157584+00:00
-updated_at: 2026-07-28T12:01:06.980588500+00:00
+updated_at: 2026-07-28T12:10:29.604253793+00:00
 claimed_at: 2026-07-28T05:19:32.486714861+00:00
 claimed_until: 2026-07-30T05:19:32.486511533+00:00
 ---
@@ -38,3 +38,5 @@ IMPLEMENTED (awaiting coordinator review): added v2/src/migration.rs, tests/migr
 [impl agent, gpt-5.6-sol] 2026-07-28 permit-provenance Major corrected; keep in_progress for a fresh adversarial reviewer. AdmissionQuiescence and MappingQuiescence now bind the complete authenticated MigrationPlan, and safe begin, authorize_reclamation, and into_authority exact-compare that plan. SourcePlanMismatch reports exact match status plus bound/supplied transaction, source/target tags, and recovery authorities; a mismatch returns the intact fail-closed witness. Public-API regression coverage proves plans sharing a source cannot exchange permits when transactions differ or when transaction IDs match but target/authority differ, then retries successfully with the correct permit. Unsafe contracts and migration docs require one externally authenticated live/recoverable control and transaction per source and forbid duplicate controls/plans without a stronger persistent control identity. Validation on Rust 1.96.0 and exact MSRV 1.85.0: focused migration integration 10/10, migration unit 3/3, schema_migration PASS, default doctests 7/7, full all-feature package suites PASS including 8 doctests, no-default lib checks PASS, all-target/all-feature strict Clippy PASS, strict rustdoc PASS, rustfmt checks PASS, git diff --check PASS, and cargo package list contains migration source/test/example/docs. Exact handoff SHA will be recorded after the selective implementation commit.
 
 [impl agent, gpt-5.6-sol] HANDOFF: permit-provenance implementation commit 7e30537aae304a9a2905a30b1a42721683141e9b. Validation evidence is recorded in the immediately preceding note and bound to this source tip. Task intentionally remains in_progress pending fresh adversarial acceptance.
+
+[impl agent, gpt-5.6-sol] Accepted-review Minor corrected at db18d52d5de5834dca2d0f27d38953b5f56264aa. The public migration regression now isolates transaction-only, target-only, and recovery-authority-only differences between two effect-free controls sharing the same source. Each foreign authorization is rejected without advancing the bound control, foreign-permit extraction returns the intact witness and its exact authority marker, and the witness succeeds only with its own permit. A dedicated same-source transaction-only safe-begin retarget attempt returns SourcePlanMismatch while the destination control remains Uninitialized and terminal admission cannot reopen. Focused validation on current Rust 1.96.0 and exact MSRV 1.85.0: all-feature migration integration 11/11 on each; cargo fmt --all -- --check passed on each. No production behavior changed. Task remains in_progress for coordinator landing/closure.
