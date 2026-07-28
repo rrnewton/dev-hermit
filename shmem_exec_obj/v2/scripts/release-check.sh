@@ -263,12 +263,13 @@ if [[ $dry_run == 0 ]]; then
   done
   for required in \
     Cargo.toml Cargo.lock README.md LICENSE-APACHE LICENSE-MIT \
-    src/lib.rs src/mapping.rs src/admission.rs src/pod_api.rs \
+    src/lib.rs src/mapping.rs src/admission.rs src/csnzi.rs src/pod_api.rs \
     src/collections.rs src/reloc_allocator.rs \
-    docs/locking.md docs/admission.md docs/relocatable-allocation.md docs/support.md \
+    docs/locking.md docs/admission.md docs/csnzi.md docs/relocatable-allocation.md docs/support.md \
     examples/README.md examples/typed_mapping.rs examples/closeable_snzi.rs \
+    examples/csnzi.rs examples/csnzi_comparison.rs \
     examples/relocatable_collections.rs \
-    tests/layout.rs tests/closeable_snzi.rs tests/pod_api.rs \
+    tests/layout.rs tests/closeable_snzi.rs tests/csnzi.rs tests/pod_api.rs \
     tests/reloc_allocator.rs tests/shared_collections.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
@@ -315,6 +316,10 @@ else
     cargo run --locked --example snzi
   run_gate long "closeable SNZI admission process example" \
     cargo run --locked --example closeable_snzi
+  run_gate long "C-SNZI admission process example" \
+    cargo run --locked --example csnzi
+  run_gate long "SNZI topology comparison" \
+    cargo run --locked --release --example csnzi_comparison -- 2 2000
   run_gate long "relocatable allocator and collections process example" \
     cargo run --locked --example relocatable_collections
 

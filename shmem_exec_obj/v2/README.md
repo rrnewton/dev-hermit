@@ -307,9 +307,19 @@ replaces the complete mapping generation. The
 [admission guide](docs/admission.md) gives the proof, crash matrix, and
 literature precedents.
 
+`Csnzi` is the scalable closeable variant. It retains the parent-before-child
+C-SNZI algorithm, so repeated activity on an already active leaf avoids a
+global admission-gate RMW. Its terminal tail states make the final sealing CAS
+the departure's last shared-memory access. Use `CloseableSnzi` when the simpler
+global gate is preferable; use `Csnzi` only after reading its capacity, raw
+token, crash, and control-page lifetime contracts in the
+[C-SNZI guide](docs/csnzi.md).
+
 ```text
 cargo run --example snzi
 cargo run --example closeable_snzi
+cargo run --example csnzi
+cargo run --release --example csnzi_comparison -- 8 100000
 ```
 
 ## Allocate Inside Known Pages

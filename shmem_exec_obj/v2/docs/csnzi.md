@@ -169,6 +169,18 @@ Run the process example with:
 cargo run --example csnzi
 ```
 
+For a bounded shape comparison against raw `Snzi` and gate-based
+`CloseableSnzi`, run:
+
+```console
+cargo run --release --example csnzi_comparison -- 8 100000
+```
+
+The harness runs hot-leaf and sharded topologies, verifies the exact completed
+operation count and terminal state for every primitive, and emits one JSON line
+per result plus environment metadata. Its elapsed time is evidence for that
+host, build, and invocation only. It is not a cross-machine performance claim.
+
 ## Rust 1.85 freestanding evidence
 
 `examples/csnzi.rs` is also the minimal freestanding closure used for codegen
@@ -209,9 +221,9 @@ objdump -dC "$out/csnzi.elf"
 
 The audited run used `rustc 1.85.0 (4d91de4e4 2025-02-17)` and produced:
 
-- input relocations: 102 `R_X86_64_PC32`, 7 `R_X86_64_PLT32`, and no absolute
+- input relocations: 45 `R_X86_64_PC32`, 7 `R_X86_64_PLT32`, and no absolute
   `R_X86_64_64` relocation;
-- one 6,192-byte allocated `.pod` section at VMA zero in a read/execute-only
+- one 5,676-byte allocated `.pod` section at VMA zero in a read/execute-only
   `PT_LOAD`, plus a non-executable `GNU_STACK`;
 - no undefined global symbol and no `memcpy`, `memset`, allocator, pthread,
   futex, or other host-runtime symbol;
@@ -225,8 +237,14 @@ function offsets performed `init -> enter twice on one leaf -> query -> close ->
 depart twice -> drained`, rejected a post-close entry, and printed:
 
 ```text
-PASS freestanding RX closure bytes=6192 state=1408 align=64
+PASS freestanding RX closure bytes=5676 state=1408 align=64 overlap_rejected=true unaligned_output=true
 ```
+
+The smoke runner also passed a deliberately unaligned token output pointer and
+verified that an output pointer overlapping the live state object is rejected
+before admission. The code mapping was writable only while copied, then changed
+to read/execute before any function call; state remained in a separate
+read/write, non-executable mapping.
 
 This audit caught and removed a Rust 1.85 bounds-check edge from recursive node
 indexing. Internal node access now uses one documented pointer helper after the

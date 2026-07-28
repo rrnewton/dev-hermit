@@ -73,6 +73,17 @@ first, and waits for every accepted token to depart.
 cargo run --example closeable_snzi
 ```
 
+`csnzi.rs` demonstrates the scalable closeable variant across processes,
+including its exact terminal seal. `csnzi_comparison.rs` runs raw SNZI,
+gate-based closeable SNZI, and C-SNZI through identical hot-leaf and sharded
+thread workloads. It validates every total and emits JSON lines; the timings
+describe only that invocation and are not portable performance claims.
+
+```text
+cargo run --example csnzi
+cargo run --release --example csnzi_comparison -- 8 100000
+```
+
 ## 6. Relocatable Allocation
 
 `relocatable_collections.rs` places integer-only allocator metadata,

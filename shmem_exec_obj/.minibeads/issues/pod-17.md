@@ -5,10 +5,10 @@ priority: 1
 issue_type: feature
 assignee: devbig030/csnzi
 depends_on:
-  pod-7: blocks
   pod-1: parent-child
+  pod-7: blocks
 created_at: 2026-07-28T04:45:11.434262607+00:00
-updated_at: 2026-07-28T05:20:29.915023796+00:00
+updated_at: 2026-07-28T10:21:10.610725141+00:00
 claimed_at: 2026-07-28T04:46:58.664800042+00:00
 claimed_until: 2026-07-28T12:46:58.487033158+00:00
 ---
@@ -34,3 +34,5 @@ VALIDATION: cargo test --no-default-features --lib csnzi::tests (9 passed); carg
 FREESTANDING RUST 1.85: Built examples/csnzi.rs under --cfg csnzi_freestanding with the supported opt=3/panic=abort/PIC/small-code-model/no-unwind flags and linked using poc/code/pod.ld. rustc 1.85.0 4d91de4e4 emitted 102 PC32 + 7 PLT32 input relocations, zero R_X86_64_64 absolute relocations, one 6,192-byte VMA-zero .pod in an R-E PT_LOAD, no undefined global or memcpy/memset/allocator/pthread/futex symbol, and no call instruction in shmem_pod_init. Extracted RX code executed init -> same-leaf enter twice -> query -> close -> post-close rejection -> depart twice -> drained against separate RW state: PASS freestanding RX closure bytes=6192 state=1408 align=64. Exact commands/results are durable in v2/docs/csnzi.md. This audit found and fixed a rustc 1.85 panic_bounds_check/absolute-relocation edge using one audited internal node pointer helper.
 
 RESIDUAL PROOF ASSUMPTIONS: Rust process-shared atomics are an audited Linux/hardware deployment assumption, not a complete Rust abstract-machine guarantee; safe use requires exact-once token ownership, authenticated identical code/layout fingerprints, exclusive initialization, and no byte corruption; payload access must end before depart; terminal drain permits payload reclamation but the C-SNZI control pages need an outer attachment/fencing lifetime; process death intentionally leaks and never lease-steals; 47-bit generations and packed counters poison rather than wrap; tests/model cuts are not a mechanized linearizability proof. Benchmark comparison against Snzi and baseline CloseableSnzi remains for coordinator-owned benchmark/release wiring. Bead intentionally left in_progress for fresh adversarial review.
+
+ADVERSARIAL FOLLOW-UP (2026-07-28): Fresh no-context review found and drove fixes for tail-query linearization, conditional admission linearization, post-drain capacity poisoning, provisional-parent capacity histories, bounded generation ABA semantics, raw-output ABI alias/alignment, ambiguous token equality, and missing post-reservation capacity coverage. Final design: query treats both tail phases as present; capacity observed before reservation returns an error; a local count reaching 65,535 after parent reservation waits until it can complete admission; the 47-bit raw-token tag wraps MAX->1 and is explicitly not an ABA proof; CsnziToken has no equality; unsafe enter uses unaligned output and rejects state overlap. Focused validation now passes 10 unit + 11 integration/process tests and the process example. Exact Rust 1.85 PIC rerun: 45 PC32 + 7 PLT32, zero ABS64, zero undefined symbols, zero init calls, 8 exports, 5,676-byte VMA-zero RX .pod, RW/nonexec stack. Fresh RX/RW smoke passed init, two same-leaf entries including unaligned output, query, close, post-close rejection, two departures, drain, and overlapping-output rejection: PASS freestanding RX closure bytes=5676 state=1408 align=64 overlap_rejected=true unaligned_output=true. This supersedes the earlier 102/7, 6,192-byte, and poison-on-generation-exhaustion evidence.
