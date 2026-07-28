@@ -1,6 +1,6 @@
 ---
 title: Implement scalable closeable C-SNZI admission
-status: in_progress
+status: closed
 priority: 1
 issue_type: feature
 assignee: devbig030/csnzi
@@ -8,7 +8,8 @@ depends_on:
   pod-1: parent-child
   pod-7: blocks
 created_at: 2026-07-28T04:45:11.434262607+00:00
-updated_at: 2026-07-28T10:21:10.610725141+00:00
+updated_at: 2026-07-28T10:34:22.233052398+00:00
+closed_at: 2026-07-28T10:34:22.233051877+00:00
 claimed_at: 2026-07-28T04:46:58.664800042+00:00
 claimed_until: 2026-07-28T12:46:58.487033158+00:00
 ---
@@ -36,3 +37,5 @@ FREESTANDING RUST 1.85: Built examples/csnzi.rs under --cfg csnzi_freestanding w
 RESIDUAL PROOF ASSUMPTIONS: Rust process-shared atomics are an audited Linux/hardware deployment assumption, not a complete Rust abstract-machine guarantee; safe use requires exact-once token ownership, authenticated identical code/layout fingerprints, exclusive initialization, and no byte corruption; payload access must end before depart; terminal drain permits payload reclamation but the C-SNZI control pages need an outer attachment/fencing lifetime; process death intentionally leaks and never lease-steals; 47-bit generations and packed counters poison rather than wrap; tests/model cuts are not a mechanized linearizability proof. Benchmark comparison against Snzi and baseline CloseableSnzi remains for coordinator-owned benchmark/release wiring. Bead intentionally left in_progress for fresh adversarial review.
 
 ADVERSARIAL FOLLOW-UP (2026-07-28): Fresh no-context review found and drove fixes for tail-query linearization, conditional admission linearization, post-drain capacity poisoning, provisional-parent capacity histories, bounded generation ABA semantics, raw-output ABI alias/alignment, ambiguous token equality, and missing post-reservation capacity coverage. Final design: query treats both tail phases as present; capacity observed before reservation returns an error; a local count reaching 65,535 after parent reservation waits until it can complete admission; the 47-bit raw-token tag wraps MAX->1 and is explicitly not an ABA proof; CsnziToken has no equality; unsafe enter uses unaligned output and rejects state overlap. Focused validation now passes 10 unit + 11 integration/process tests and the process example. Exact Rust 1.85 PIC rerun: 45 PC32 + 7 PLT32, zero ABS64, zero undefined symbols, zero init calls, 8 exports, 5,676-byte VMA-zero RX .pod, RW/nonexec stack. Fresh RX/RW smoke passed init, two same-leaf entries including unaligned output, query, close, post-close rejection, two departures, drain, and overlapping-output rejection: PASS freestanding RX closure bytes=5676 state=1408 align=64 overlap_rejected=true unaligned_output=true. This supersedes the earlier 102/7, 6,192-byte, and poison-on-generation-exhaustion evidence.
+
+FINAL ADVERSARIAL VERDICT: ACCEPT at main 71b6871d575abf21cfe9ba5ac6d95df9d87faa80. Fresh reviewer found no blocker or major issue after 10 unit + 11 integration tests in debug/optimized builds, 20 repeated optimized close races, 1.28 million contention cycles, fork/crash/capacity/different-VA checks, Clippy, exact Rust 1.85 PIC inspection, and independent RX smoke. Sole minor: raw-token tag has 2^47 - 1 nonzero values, not 2^47; docs corrected before closure. Focused comparison example now verifies raw SNZI, CloseableSnzi, and Csnzi totals under hot/sharded topologies and emits JSON.

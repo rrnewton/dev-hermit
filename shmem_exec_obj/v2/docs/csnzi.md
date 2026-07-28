@@ -137,8 +137,8 @@ unwinding it.
 `into_raw()` encodes a 16-bit leaf and 47-bit activation generation in `u64`.
 `depart_raw` is unsafe because the scalar cannot carry instance identity or
 linear ownership. The wrapping generation rejects many accidental stale
-activations, but it is not an ABA proof: after 2^47 complete activations the tag
-can repeat. Two valid same-leaf tokens in one activation also share a
+activations, but it is not an ABA proof: after 2^47 - 1 complete activations the
+nonzero tag can repeat. Two valid same-leaf tokens in one activation also share a
 generation. The caller must uphold exact instance and sole-consumption rules;
 duplicating a raw token can consume another participant's count.
 
