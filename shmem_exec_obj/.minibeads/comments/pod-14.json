@@ -6,5 +6,13 @@
     "body": "Release-doc hygiene audit: v2/docs/support.md currently says 'From the v2 checkout'; latest public tree must never mention the repository's v1/v2 iteration split or Hermit/Reverie context. Final grep should reject those terms in packaged files except semantic format/API version identifiers (e.g. schema ...-v1).",
     "created_at": "2026-07-28T11:02:45.594692607Z",
     "updated_at": "2026-07-28T11:02:45.594692607Z"
+  },
+  {
+    "id": "pod-14-c6fb91d485c",
+    "issue_id": "pod-14",
+    "author": "devbig030",
+    "body": "Packaging audit must cross-check every packaged doc against Cargo.toml include. Current include ships docs/** but not scripts/, benchmarks/, or poc/, so docs/benchmarks.md would contain a non-runnable ./scripts/run-benchmarks.sh instruction in the crate tarball. Either omit repository-only docs from the package or make their assets genuinely self-contained and packaged; cargo package --list plus unpacked-package smoke must catch this.",
+    "created_at": "2026-07-28T11:04:00.409328015Z",
+    "updated_at": "2026-07-28T11:04:00.409328015Z"
   }
 ]
