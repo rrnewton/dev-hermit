@@ -54,8 +54,9 @@ Each run creates three text files:
 
 - `environment.json` records the run ID, source SHA and dirty state, workspace
   and normalized harness lockfile SHA-256 values, host/kernel/CPU/toolchain,
-  observed CPU affinity, cgroup-v2 path and CPU/memory/cpuset limits, pod
-  artifact SHA-256, profile, timer, and all workload counts.
+  observed CPU affinity, cgroup-v2 path, tightest inherited CPU and memory
+  limits with their source cgroups, effective cpuset, pod artifact SHA-256,
+  profile, timer, and all workload counts.
 - `results.jsonl` contains one
   `shmem-pod-benchmark-result-v1` object per timing sample.
 - `results.csv` contains the same fields with a header for statistical tools.

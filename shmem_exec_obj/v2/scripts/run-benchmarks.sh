@@ -70,7 +70,7 @@ while (($#)); do
   esac
 done
 
-for tool in awk cargo cp date git jq mktemp rustc sed sha256sum timeout uname wc; do
+for tool in awk cargo cp date git jq mktemp nproc rustc sed sha256sum timeout uname wc; do
   command -v "$tool" >/dev/null || { echo "run-benchmarks.sh requires $tool" >&2; exit 1; }
 done
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
@@ -78,11 +78,11 @@ if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   exit 1
 fi
 
-online_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
-if [[ ! $online_cpus =~ ^[1-9][0-9]*$ ]]; then
-  online_cpus=1
+available_cpus=$(nproc 2>/dev/null || echo 1)
+if [[ ! $available_cpus =~ ^[1-9][0-9]*$ ]]; then
+  available_cpus=1
 fi
-default_workers=$online_cpus
+default_workers=$available_cpus
 if ((default_workers > 8)); then
   default_workers=8
 fi
@@ -196,20 +196,20 @@ shmem-pod-runtime = { path = "$root/poc/runtime" }
 [workspace]
 EOF
 
-export SHMEM_POD_BENCH_RUN_ID=$run_id
-export SHMEM_POD_BENCH_GIT_SHA=$(git rev-parse HEAD)
-export SHMEM_POD_BENCH_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+SHMEM_POD_BENCH_RUN_ID=$run_id
+SHMEM_POD_BENCH_GIT_SHA=$(git rev-parse HEAD)
+SHMEM_POD_BENCH_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
 if [[ -n $(git status --porcelain -- .) ]]; then
-  export SHMEM_POD_BENCH_GIT_DIRTY=1
+  SHMEM_POD_BENCH_GIT_DIRTY=1
 else
-  export SHMEM_POD_BENCH_GIT_DIRTY=0
+  SHMEM_POD_BENCH_GIT_DIRTY=0
 fi
-export SHMEM_POD_BENCH_HOSTNAME=$(uname -n)
-export SHMEM_POD_BENCH_KERNEL=$(uname -srvmo)
+SHMEM_POD_BENCH_HOSTNAME=$(uname -n)
+SHMEM_POD_BENCH_KERNEL=$(uname -srvmo)
 cpu_model=$(awk -F: '/^model name/{sub(/^[[:space:]]+/, "", $2); print $2; exit}' /proc/cpuinfo)
-export SHMEM_POD_BENCH_CPU_MODEL=${cpu_model:-unknown}
-export SHMEM_POD_BENCH_RUSTC=$(rustc --version --verbose)
-export SHMEM_POD_BENCH_CARGO=$(cargo --version --verbose)
+SHMEM_POD_BENCH_CPU_MODEL=${cpu_model:-unknown}
+SHMEM_POD_BENCH_RUSTC=$(rustc --version --verbose)
+SHMEM_POD_BENCH_CARGO=$(cargo --version --verbose)
 
 # Cargo prunes workspace-only packages from the copied lockfile. Normalize that
 # temporary lock without network access, then make the measured build immutable.
@@ -217,7 +217,11 @@ CARGO_TARGET_DIR="$target_dir/benchmark-harness" \
   timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
   cargo metadata --offline --manifest-path "$temporary/Cargo.toml" \
     --format-version 1 >/dev/null
-export SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$temporary/Cargo.lock" | awk '{print $1}')
+SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$temporary/Cargo.lock" | awk '{print $1}')
+export SHMEM_POD_BENCH_RUN_ID SHMEM_POD_BENCH_GIT_SHA SHMEM_POD_BENCH_GIT_DIRTY
+export SHMEM_POD_BENCH_LOCK_SHA256 SHMEM_POD_BENCH_HARNESS_LOCK_SHA256
+export SHMEM_POD_BENCH_HOSTNAME SHMEM_POD_BENCH_KERNEL SHMEM_POD_BENCH_CPU_MODEL
+export SHMEM_POD_BENCH_RUSTC SHMEM_POD_BENCH_CARGO
 
 echo "running verified benchmark harness"
 set +e
@@ -254,6 +258,12 @@ jq -e \
    and .configuration.workers == $workers
    and (.cargo_lock_sha256 | test("^[0-9a-f]{64}$"))
    and (.harness_lock_sha256 | test("^[0-9a-f]{64}$"))
+   and (.execution_limits.cpu_affinity_list | type == "string" and length > 0)
+   and (.execution_limits.cgroup_v2_path | type == "string" and length > 0)
+   and (.execution_limits.inherited_cpu_max | type == "string" and length > 0)
+   and (.execution_limits.inherited_cpu_max_source | type == "string" and length > 0)
+   and (.execution_limits.inherited_memory_max | type == "string" and length > 0)
+   and (.execution_limits.inherited_memory_max_source | type == "string" and length > 0)
    and (.artifact.sha256 | test("^[0-9a-f]{64}$"))' \
   "$output_dir/environment.json" >/dev/null
 jq -s -e --argjson expected "$expected_rows" \

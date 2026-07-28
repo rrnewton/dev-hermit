@@ -22,7 +22,7 @@ use std::hint::{black_box, spin_loop};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
@@ -144,7 +144,7 @@ struct Measurement<'a> {
 }
 
 impl ResultWriter {
-    fn create(output_dir: &PathBuf, run_id: String) -> io::Result<Self> {
+    fn create(output_dir: &Path, run_id: String) -> io::Result<Self> {
         fs::create_dir_all(output_dir)?;
         let json = BufWriter::new(File::create(output_dir.join("results.jsonl"))?);
         let mut csv = BufWriter::new(File::create(output_dir.join("results.csv"))?);
@@ -239,7 +239,76 @@ fn proc_field(path: &str, field: &str) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-fn cgroup_metadata() -> (String, String, String, String, String) {
+struct CgroupMetadata {
+    path: String,
+    cpu_max: String,
+    cpu_source: String,
+    memory_max: String,
+    memory_source: String,
+    swap_max: String,
+    swap_source: String,
+    cpuset: String,
+    cpuset_source: String,
+}
+
+fn cgroup_source(directory: &Path) -> String {
+    directory
+        .strip_prefix("/sys/fs/cgroup")
+        .ok()
+        .map(|path| format!("/{}", path.display()))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn inherited_numeric_limit(ancestors: &[PathBuf], name: &str) -> (String, String) {
+    let mut best: Option<(u128, String)> = None;
+    for directory in ancestors {
+        let Ok(contents) = fs::read_to_string(directory.join(name)) else {
+            continue;
+        };
+        let value = contents.trim();
+        let Ok(numeric) = value.parse::<u128>() else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(limit, _)| numeric < *limit) {
+            best = Some((numeric, cgroup_source(directory)));
+        }
+    }
+    best.map_or_else(
+        || ("max".to_owned(), "none".to_owned()),
+        |(limit, source)| (limit.to_string(), source),
+    )
+}
+
+fn inherited_cpu_limit(ancestors: &[PathBuf]) -> (String, String) {
+    let mut best: Option<(u128, u128, String)> = None;
+    for directory in ancestors {
+        let Ok(contents) = fs::read_to_string(directory.join("cpu.max")) else {
+            continue;
+        };
+        let mut fields = contents.split_whitespace();
+        let Some(quota) = fields.next().and_then(|value| value.parse::<u128>().ok()) else {
+            continue;
+        };
+        let Some(period) = fields.next().and_then(|value| value.parse::<u128>().ok()) else {
+            continue;
+        };
+        if period == 0 || fields.next().is_some() {
+            continue;
+        }
+        let tighter = best
+            .as_ref()
+            .is_none_or(|(best_quota, best_period, _)| quota * best_period < best_quota * period);
+        if tighter {
+            best = Some((quota, period, cgroup_source(directory)));
+        }
+    }
+    best.map_or_else(
+        || ("max".to_owned(), "none".to_owned()),
+        |(quota, period, source)| (format!("{quota} {period}"), source),
+    )
+}
+
+fn cgroup_metadata() -> CgroupMetadata {
     let path = fs::read_to_string("/proc/self/cgroup")
         .ok()
         .and_then(|contents| {
@@ -250,34 +319,57 @@ fn cgroup_metadata() -> (String, String, String, String, String) {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_owned());
     if path == "unknown" {
-        return (
+        return CgroupMetadata {
             path,
-            "unknown".to_owned(),
-            "unknown".to_owned(),
-            "unknown".to_owned(),
-            "unknown".to_owned(),
-        );
+            cpu_max: "unknown".to_owned(),
+            cpu_source: "unknown".to_owned(),
+            memory_max: "unknown".to_owned(),
+            memory_source: "unknown".to_owned(),
+            swap_max: "unknown".to_owned(),
+            swap_source: "unknown".to_owned(),
+            cpuset: "unknown".to_owned(),
+            cpuset_source: "unknown".to_owned(),
+        };
     }
-    let directory = PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
-    let read = |name: &str| {
-        fs::read_to_string(directory.join(name))
-            .map(|value| value.trim().to_owned())
-            .unwrap_or_else(|_| "unknown".to_owned())
-    };
-    (
+    let root = PathBuf::from("/sys/fs/cgroup");
+    let mut directory = root.join(path.trim_start_matches('/'));
+    let mut ancestors = Vec::new();
+    loop {
+        ancestors.push(directory.clone());
+        if directory == root || !directory.pop() {
+            break;
+        }
+    }
+    let (cpu_max, cpu_source) = inherited_cpu_limit(&ancestors);
+    let (memory_max, memory_source) = inherited_numeric_limit(&ancestors, "memory.max");
+    let (swap_max, swap_source) = inherited_numeric_limit(&ancestors, "memory.swap.max");
+    let (cpuset, cpuset_source) = ancestors
+        .iter()
+        .find_map(|directory| {
+            fs::read_to_string(directory.join("cpuset.cpus.effective"))
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, cgroup_source(directory)))
+        })
+        .unwrap_or_else(|| ("unknown".to_owned(), "unknown".to_owned()));
+    CgroupMetadata {
         path,
-        read("cpu.max"),
-        read("memory.max"),
-        read("memory.swap.max"),
-        read("cpuset.cpus.effective"),
-    )
+        cpu_max,
+        cpu_source,
+        memory_max,
+        memory_source,
+        swap_max,
+        swap_source,
+        cpuset,
+        cpuset_source,
+    }
 }
 
 fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
     let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
-    let (cgroup_path, cgroup_cpu, cgroup_memory, cgroup_swap, cgroup_cpuset) =
-        cgroup_metadata();
+    let cgroup = cgroup_metadata();
     let path = config.output_dir.join("environment.json");
     let mut output = BufWriter::new(File::create(path)?);
     writeln!(
@@ -291,7 +383,7 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
             "  \"cargo_lock_sha256\": \"{}\",\n",
             "  \"harness_lock_sha256\": \"{}\",\n",
             "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", \"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\"}},\n",
-            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"cgroup_v2_path\": \"{}\", \"cgroup_cpu_max\": \"{}\", \"cgroup_memory_max\": \"{}\", \"cgroup_memory_swap_max\": \"{}\", \"cgroup_cpuset_effective\": \"{}\"}},\n",
+            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"cgroup_v2_path\": \"{}\", \"inherited_cpu_max\": \"{}\", \"inherited_cpu_max_source\": \"{}\", \"inherited_memory_max\": \"{}\", \"inherited_memory_max_source\": \"{}\", \"inherited_memory_swap_max\": \"{}\", \"inherited_memory_swap_max_source\": \"{}\", \"effective_cpuset\": \"{}\", \"effective_cpuset_source\": \"{}\"}},\n",
             "  \"toolchain\": {{\"rustc\": \"{}\", \"cargo\": \"{}\"}},\n",
             "  \"artifact\": {{\"path\": \"{}\", \"sha256\": \"{}\"}},\n",
             "  \"configuration\": {{\"mode\": \"{}\", \"profile\": \"release\", \"warmup_operations_per_worker\": {}, \"iterations_per_worker\": {}, \"samples\": {}, \"workers\": {}, \"timer\": \"std::time::Instant\"}},\n",
@@ -310,11 +402,15 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
         env::consts::OS,
         env::consts::ARCH,
         json_escape(&affinity),
-        json_escape(&cgroup_path),
-        json_escape(&cgroup_cpu),
-        json_escape(&cgroup_memory),
-        json_escape(&cgroup_swap),
-        json_escape(&cgroup_cpuset),
+        json_escape(&cgroup.path),
+        json_escape(&cgroup.cpu_max),
+        json_escape(&cgroup.cpu_source),
+        json_escape(&cgroup.memory_max),
+        json_escape(&cgroup.memory_source),
+        json_escape(&cgroup.swap_max),
+        json_escape(&cgroup.swap_source),
+        json_escape(&cgroup.cpuset),
+        json_escape(&cgroup.cpuset_source),
         json_escape(&environment("SHMEM_POD_BENCH_RUSTC")),
         json_escape(&environment("SHMEM_POD_BENCH_CARGO")),
         json_escape(&config.artifact.display().to_string()),
