@@ -42,6 +42,8 @@
 use core::fmt;
 use core::hint::spin_loop;
 use core::mem::{align_of, needs_drop, offset_of, size_of};
+#[cfg(test)]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
@@ -76,6 +78,9 @@ const POISON_NONE: u64 = 0;
 const POISON_INVARIANT: u64 = 1;
 const POISON_COMPENSATION: u64 = 2;
 const POISON_ROOT_STATE: u64 = 3;
+
+#[cfg(test)]
+static CAPACITY_WAIT_OBSERVED: AtomicBool = AtomicBool::new(false);
 
 #[repr(align(64))]
 struct CacheAlignedAtomicU64 {
@@ -701,7 +706,14 @@ impl<const NODES: usize> Csnzi<NODES> {
     }
 
     fn arrive_node(&self, node: usize) -> Result<u64, CsnziError> {
-        let mut arrived_at_parent = false;
+        self.arrive_node_with_parent_state(node, false)
+    }
+
+    fn arrive_node_with_parent_state(
+        &self,
+        node: usize,
+        mut arrived_at_parent: bool,
+    ) -> Result<u64, CsnziError> {
         loop {
             self.ensure_healthy()?;
             let state = self.node_value(node).load(Ordering::SeqCst);
@@ -720,6 +732,8 @@ impl<const NODES: usize> Csnzi<NODES> {
                     // This entry is already represented at its parent and may
                     // have been observed by query/close. It must eventually
                     // publish a token rather than complete as a failed no-op.
+                    #[cfg(test)]
+                    CAPACITY_WAIT_OBSERVED.store(true, Ordering::SeqCst);
                     spin_loop();
                     continue;
                 }
@@ -1184,6 +1198,52 @@ mod tests {
         assert_eq!(token.depart().unwrap(), DepartOutcome::Active);
         assert!(!generation_wrap.query());
         assert_eq!(generation_wrap.close().unwrap(), CloseOutcome::Drained);
+    }
+
+    #[test]
+    fn post_reservation_count_capacity_waits_then_completes_admission() {
+        let barrier = Csnzi::<4>::new();
+        let leaf = barrier.leaf_node(0).unwrap();
+
+        // One root contribution represents the full leaf; the other models
+        // this entrant's already-published parent reservation.
+        barrier
+            .root
+            .value
+            .store(ROOT_OPEN | 2, Ordering::SeqCst);
+        barrier.nodes[leaf]
+            .value
+            .store(node_state(1, NODE_COUNT_MASK), Ordering::SeqCst);
+        CAPACITY_WAIT_OBSERVED.store(false, Ordering::SeqCst);
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !CAPACITY_WAIT_OBSERVED.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+                barrier.nodes[leaf]
+                    .value
+                    .compare_exchange(
+                        node_state(1, NODE_COUNT_MASK),
+                        node_state(1, NODE_COUNT_MASK - 1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .unwrap();
+            });
+
+            assert_eq!(
+                barrier.arrive_node_with_parent_state(leaf, true),
+                Ok(1)
+            );
+        });
+
+        assert!(CAPACITY_WAIT_OBSERVED.load(Ordering::SeqCst));
+        assert_eq!(barrier.debug_snapshot().root_count, 1);
+        assert_eq!(
+            node_count(barrier.nodes[leaf].value.load(Ordering::SeqCst)),
+            NODE_COUNT_MASK
+        );
     }
 
     #[test]
