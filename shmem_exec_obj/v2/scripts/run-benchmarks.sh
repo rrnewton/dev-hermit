@@ -817,6 +817,37 @@ verify_environment_bindings() {
   verify_owner_files
 }
 
+verify_compiler_crosscheck() {
+  if ! jq -e \
+    --arg manifest_sha256 "$compiler_manifest_sha256" \
+    --arg artifact_sha256 "$artifact_sha256" \
+    --arg object_sha256 "$(sha256sum "$artifact_dir/pod.o" | awk '{print $1}')" \
+    --arg elf_sha256 "$(sha256sum "$artifact_dir/pod.elf" | awk '{print $1}')" \
+    --arg sdk_rlib_sha256 "$(sha256sum "$artifact_dir/libshmem_pod.rlib" | awk '{print $1}')" \
+    --arg sdk_dep_info_sha256 "$(sha256sum "$artifact_dir/libshmem_pod.rlib.d" | awk '{print $1}')" \
+    --arg sdk_probe_dep_info_sha256 "$sdk_probe_dep_info_sha256" \
+    --arg pod_dep_info_sha256 "$(sha256sum "$artifact_dir/pod.o.d" | awk '{print $1}')" \
+    --arg pod_probe_dep_info_sha256 "$pod_probe_dep_info_sha256" \
+    '. == {
+      schema: "shmem-pod-compiler-crosscheck-v1",
+      compiler_manifest: {
+        bundle_path: "artifacts/pod.manifest",
+        sha256: $manifest_sha256
+      },
+      pod_bin_sha256: $artifact_sha256,
+      pod_object_sha256: $object_sha256,
+      pod_elf_sha256: $elf_sha256,
+      sdk_rlib_sha256: $sdk_rlib_sha256,
+      sdk_dep_info_sha256: $sdk_dep_info_sha256,
+      sdk_probe_dep_info_sha256: $sdk_probe_dep_info_sha256,
+      pod_dep_info_sha256: $pod_dep_info_sha256,
+      pod_probe_dep_info_sha256: $pod_probe_dep_info_sha256
+    }' "$provenance_dir/compiler-crosscheck.json" >/dev/null; then
+    echo "runner compiler cross-check differs from the verified compiler outputs" >&2
+    return 1
+  fi
+}
+
 while (($#)); do
   case "$1" in
     --smoke)
@@ -1161,6 +1192,7 @@ jq -n \
     pod_dep_info_sha256: $pod_dep_info_sha256,
     pod_probe_dep_info_sha256: $pod_probe_dep_info_sha256
   }' >"$provenance_dir/compiler-crosscheck.json"
+verify_compiler_crosscheck
 
 mkdir -p "$temporary/src"
 cp "$source_snapshot/benchmarks/harness.rs" "$temporary/src/main.rs"
@@ -1418,6 +1450,7 @@ verify_compiler_manifest_file "$compiler_manifest" pod.dep_info pod.dep_info_sha
 verify_sha256 "$artifact_dir/libshmem_pod.rlib.probe.d" "$sdk_probe_dep_info_sha256"
 verify_sha256 "$artifact_dir/pod.o.probe.d" "$pod_probe_dep_info_sha256"
 
+verify_compiler_crosscheck
 compiler_crosscheck_sha256=$(sha256sum "$provenance_dir/compiler-crosscheck.json" | awk '{print $1}')
 verify_owner_files
 harness_owner_sha256=$(sha256sum "$output_dir/harness-owner.json" | awk '{print $1}')
