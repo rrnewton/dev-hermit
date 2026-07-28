@@ -16,7 +16,7 @@ Usage:
     ./ci-status.py --repo owner/name [--limit 100]
 
 gh is invoked through `$GH` (default: "with-proxy gh") so it works on the
-devserver behind the proxy without changing the machine-global gh account.
+development host behind the proxy without changing the machine-global gh account.
 """
 
 from __future__ import annotations

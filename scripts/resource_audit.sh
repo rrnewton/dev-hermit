@@ -238,7 +238,7 @@ metric zombies "$zombies"
 # ---------------------------------------------------------------------------
 # 6. Stale eden/codesync mounts from fbsource imports.
 #    Codesync clones live under /tmp/codesync-* (== /data/tmpvol/codesync-*).
-#    The primary ~/work/orc-dev/fbsource* mounts are NEVER counted as stale.
+#    The cleanup helper protects primary mounts below ORC_DEV_ROOT.
 # ---------------------------------------------------------------------------
 stale_mounts=0
 if command -v edenfsctl >/dev/null 2>&1; then

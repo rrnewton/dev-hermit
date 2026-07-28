@@ -13,8 +13,8 @@
 # created it has finished. Its `chataccd --subscribe` watcher is usually
 # orphaned to `systemd --user` once the import job dies.
 #
-# This script removes ONLY those codesync clones, NEVER the primary
-# ~/work/orc-dev/fbsource* checkouts (or anything else under work/orc-dev).
+# This script removes ONLY those codesync clones, NEVER the primary checkouts
+# below ORC_DEV_ROOT (default: $HOME/work/orc-dev).
 #
 # SAFE BY DEFAULT: it prints a plan and changes nothing unless you pass --apply.
 #
@@ -44,7 +44,7 @@
 # A codesync mount is eligible for removal only when ALL of these hold:
 #   * its path matches   /tmp/codesync-*  |  /var/tmp/codesync-*  |
 #                        /data/tmpvol/codesync-*
-#   * its path does NOT contain  work/orc-dev  (the protected primaries)
+#   * its path is outside ORC_DEV_ROOT (the protected primaries)
 #   * its backing codesync dir is older than --min-age-hours
 #
 # Companion: scripts/cleanup_stale_eden.sh is an earlier, simpler variant; this
@@ -57,6 +57,7 @@ APPLY=0
 MIN_AGE_HOURS=6
 RM_TIMEOUT=1800
 RECONCILE=0
+PRIMARY_CHECKOUT_ROOT="${ORC_DEV_ROOT:-$HOME/work/orc-dev}"
 
 while (($#)); do
     case "$1" in
@@ -76,20 +77,24 @@ if ! command -v eden >/dev/null 2>&1 && ! command -v edenfsctl >/dev/null 2>&1; 
 fi
 EDEN=$(command -v eden || command -v edenfsctl)
 
-EDEN_DIR="${EDENFSCTL_CONFIG_DIR:-$HOME/../$USER}"  # placeholder, resolved below
-# Resolve eden state dir from the running daemon's --edenDir, else default.
-EDEN_DIR=$(
-    ps -o args= -C edenfs 2>/dev/null \
-        | grep -o -- '--edenDir [^ ]*' | awk '{print $2}' | head -1
-)
-[[ -z $EDEN_DIR ]] && EDEN_DIR="/data/users/$USER/.eden"
+# Prefer an explicit override, then the running daemon's --edenDir. The final
+# fallback is home-relative so the dry-run remains portable off devservers.
+EDEN_DIR="${EDENFSCTL_CONFIG_DIR:-}"
+if [[ -z $EDEN_DIR ]]; then
+    EDEN_DIR=$(
+        ps -o args= -C edenfs 2>/dev/null \
+            | grep -o -- '--edenDir [^ ]*' | awk '{print $2}' | head -1
+    )
+fi
+[[ -z $EDEN_DIR ]] && EDEN_DIR="$HOME/.eden"
 CONFIG_JSON="$EDEN_DIR/config.json"
 CLIENTS_DIR="$EDEN_DIR/clients"
 
 # --- Guardrail: is this mount path a removable codesync clone? ---
 function is_eligible_path {
     local p=$1
-    [[ $p == *"work/orc-dev"* ]] && return 1          # protect primaries
+    [[ $p == "$PRIMARY_CHECKOUT_ROOT" \
+        || $p == "$PRIMARY_CHECKOUT_ROOT/"* ]] && return 1
     [[ $p == /tmp/codesync-* || $p == /var/tmp/codesync-* \
         || $p == /data/tmpvol/codesync-* ]] && return 0
     return 1

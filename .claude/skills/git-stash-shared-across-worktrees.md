@@ -3,7 +3,7 @@ name: git-stash-shared-across-worktrees
 description: "git stash is shared across all worktrees in dev-hermit; never use it with concurrent agents"
 ---
 
-In `~/work/dev-hermit`, all slots under `worktrees/slotNN` are git worktrees of
+In the parent workspace, all slots under `worktrees/slotNN` are git worktrees of
 ONE repository, so they share a single stash stack (`refs/stash` in the common
 `.git`). Multiple agents run concurrently.
 

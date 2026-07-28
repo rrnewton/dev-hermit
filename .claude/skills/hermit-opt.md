@@ -15,7 +15,7 @@ against the gVisor reference) and land well-scoped optimizations.
 ## What this agent owns
 
 - Performance measurement methodology and the durable benchmark artifacts under
-  the parent `~/work/dev-hermit/experiments/`.
+  the parent `experiments/` directory.
 - Overhead/throughput optimizations in `hermit`/`reverie` (e.g. preemption
   timeout throughput, timeslice accounting, queue-waste reduction).
 

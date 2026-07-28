@@ -19,8 +19,8 @@ Create one registered parent worktree and initialize its nested submodules.
   --owner OWNER        Agent/team that owns the whole slot.
   --task TASK          Task identifier.
   --purpose TEXT       One-line purpose for ACTIVE.md.
-  --branch BRANCH      Parent branch (default: devbig-lead-SLOT).
-  --start-point REF    Parent start point (default: devbig-lead).
+  --branch BRANCH      Parent branch (default: task/TASK).
+  --start-point REF    Parent start point (default: main).
 
 Example:
   ./slot-init.sh slot01 --owner hermit-api --task impl-example \
@@ -43,8 +43,8 @@ shift
 OWNER=""
 TASK=""
 PURPOSE=""
-BRANCH="devbig-lead-$SLOT"
-START_POINT="devbig-lead"
+BRANCH="${SLOT_BRANCH:-}"
+START_POINT="${SLOT_START_POINT:-main}"
 
 while (($#)); do
     case $1 in
@@ -84,6 +84,10 @@ if [[ -z $OWNER || -z $TASK || -z $PURPOSE ]]; then
     echo "--owner, --task, and --purpose are required" >&2
     usage >&2
     exit 2
+fi
+
+if [[ -z $BRANCH ]]; then
+    BRANCH="task/$TASK"
 fi
 
 for value in "$OWNER" "$TASK" "$PURPOSE" "$BRANCH"; do

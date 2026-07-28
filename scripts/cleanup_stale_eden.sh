@@ -9,7 +9,7 @@
 # Each is a live edenfs FUSE checkout with a buck-out btrfs submount, so they
 # hold inodes, edenfs-daemon memory, and disk long after the import that made
 # them has finished. This script removes ONLY those codesync clones, never the
-# primary ~/work/orc-dev/fbsource* checkouts.
+# primary checkouts below ORC_DEV_ROOT (default: $HOME/work/orc-dev).
 #
 # SAFE BY DEFAULT: it prints a plan and changes nothing unless you pass --apply.
 #
@@ -25,13 +25,14 @@
 #
 # A codesync mount is eligible only when ALL hold:
 #   * its path matches   /tmp/codesync-*   or   /data/tmpvol/codesync-*
-#   * its path does NOT contain  work/orc-dev  (the protected primaries)
+#   * its path is outside ORC_DEV_ROOT (the protected primaries)
 #   * the backing codesync dir is older than --min-age-hours
 
 set -uo pipefail
 
 APPLY=0
 MIN_AGE_HOURS=6
+PRIMARY_CHECKOUT_ROOT="${ORC_DEV_ROOT:-$HOME/work/orc-dev}"
 while (($#)); do
     case "$1" in
         --apply) APPLY=1 ;;
@@ -51,7 +52,8 @@ fi
 function is_eligible_path {
     local p=$1
     # Protect the primary checkouts unconditionally.
-    [[ $p == *"work/orc-dev"* ]] && return 1
+    [[ $p == "$PRIMARY_CHECKOUT_ROOT" \
+        || $p == "$PRIMARY_CHECKOUT_ROOT/"* ]] && return 1
     # Only ever touch codesync temp clones.
     [[ $p == /tmp/codesync-* || $p == /data/tmpvol/codesync-* ]] && return 0
     return 1
