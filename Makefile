@@ -3,7 +3,7 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build build-hermit check-deps init-hermit install-deps clean distclean help
+.PHONY: build build-hermit check-deps check-portability init-hermit install-deps clean distclean help
 
 build: check-deps build-hermit
 
@@ -64,6 +64,9 @@ check-deps:
 	fi; \
 	echo "Dependency check passed: $(PKG_CONFIG_MODULES)"
 
+check-portability:
+	@scripts/check-portable-paths.sh
+
 install-deps:
 	@set -eu; \
 	echo "WARNING: install-deps installs system packages and may invoke sudo."; \
@@ -105,6 +108,7 @@ install-deps:
 help:
 	@echo "make install-deps  Install native Hermit build dependencies"
 	@echo "make check-deps    Verify required pkg-config modules"
+	@echo "make check-portability  Reject owner-specific paths in build/run files"
 	@echo "make / make build  Initialize and build Hermit in release mode"
 	@echo "make clean         Wipe stale QEMU/Linux demo results (fresh start)"
 	@echo "make distclean     Also remove the demo kernel download + initramfs"

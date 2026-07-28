@@ -1,0 +1,21 @@
+name: Portability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  path-policy:
+    name: Reject owner-specific build paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Check parent build/run files
+        run: make check-portability
