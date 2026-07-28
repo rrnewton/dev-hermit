@@ -311,11 +311,11 @@ cp "$compiler_build" "$compiler"
 compiler_sha256=$(sha256sum "$compiler" | awk '{print $1}')
 
 compiler_args=(
-  --source poc/code/src/lib.rs
-  --sdk-manifest Cargo.toml
-  --sdk-source src/lib.rs
+  --source "$root/poc/code/src/lib.rs"
+  --sdk-manifest "$root/Cargo.toml"
+  --sdk-source "$root/src/lib.rs"
   --sdk-rlib "$artifact_dir/libshmem_pod.rlib"
-  --linker-script poc/code/pod.ld
+  --linker-script "$root/poc/code/pod.ld"
   --output "$artifact_dir/pod.bin"
   --object "$artifact_dir/pod.o"
   --elf "$artifact_dir/pod.elf"
@@ -324,8 +324,13 @@ compiler_args=(
 if [[ -n ${POD_RUSTC:-} ]]; then
   compiler_args+=(--rustc "$POD_RUSTC")
 fi
-timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-  "$compiler" "${compiler_args[@]}"
+compiler_work="$temporary/compiler-work"
+mkdir "$compiler_work"
+(
+  cd "$compiler_work"
+  timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$compiler" "${compiler_args[@]}"
+)
 artifact_sha256=$(sed -n 's/^artifact_sha256=//p' "$artifact_dir/pod.manifest")
 if [[ ! $artifact_sha256 =~ ^[0-9a-f]{64}$ ]]; then
   echo "compiler manifest lacks a valid artifact SHA-256" >&2

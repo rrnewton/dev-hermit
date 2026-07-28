@@ -140,9 +140,11 @@ impl Config {
         {
             return Err("--sha256 must be 64 hexadecimal digits".into());
         }
+        let warmup = u64::try_from(config.warmup)?;
         let iterations = u64::try_from(config.iterations)?;
         let workers = u64::try_from(config.workers)?;
         let samples = u64::try_from(config.samples)?;
+        let timeout_seconds = config.timeout_seconds;
         if iterations
             .checked_mul(workers)
             .is_none_or(|count| count > JSON_SAFE_INTEGER)
@@ -152,8 +154,21 @@ impl Config {
             || samples
                 .checked_mul(22)
                 .is_none_or(|count| count > JSON_SAFE_INTEGER)
+            || warmup > JSON_SAFE_INTEGER
+            || timeout_seconds > JSON_SAFE_INTEGER
         {
             return Err("configured result integers exceed exact JSON validation range".into());
+        }
+        if warmup
+            .checked_add(iterations)
+            .and_then(|count| count.checked_mul(workers))
+            .is_none()
+            || iterations
+                .checked_mul(samples)
+                .and_then(|count| count.checked_add(warmup))
+                .is_none()
+        {
+            return Err("configured workload totals overflow u64".into());
         }
         Ok(config)
     }
