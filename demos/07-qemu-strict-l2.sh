@@ -10,7 +10,18 @@ HERMIT_BIN="${HERMIT_BIN:-$HERMIT_REPO/target/release/hermit}"
 KERNEL_IMAGE="${KERNEL_IMAGE:-/boot/vmlinuz}"
 QEMU_BIN="${QEMU_BIN:-$(command -v qemu-system-x86_64 || true)}"
 QEMU_L2_PHASE_TIMEOUT_SECONDS="${QEMU_L2_PHASE_TIMEOUT_SECONDS:-360}"
-OUTPUT_DIR="${OUTPUT_DIR:-$ROOT/ignored/qemu-linux/strict-l2}"
+if [[ -z ${OUTPUT_DIR:-} ]]; then
+  case "$ROOT/" in
+    /tmp/*)
+      # Hermit mounts a private tmpfs over /tmp. Keep QEMU's initramfs input
+      # visible when validating from a disposable checkout under /tmp.
+      OUTPUT_DIR="/var/tmp/hermit-qemu-strict-l2-$UID"
+      ;;
+    *)
+      OUTPUT_DIR="$ROOT/ignored/qemu-linux/strict-l2"
+      ;;
+  esac
+fi
 
 # shellcheck disable=SC1091  # Path is resolved relative to this script at runtime.
 source "$DEMO_DIR/lib/display.sh"

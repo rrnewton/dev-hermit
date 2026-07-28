@@ -118,7 +118,9 @@ make qemu-l2
 
 Demo 4 is intentionally slow. Demo 5 must complete before Demo 6 because it
 creates the baseline QEMU snapshot. Demo 7 is independent and intentionally
-boots Linux three times: once for the success oracle and twice for L2.
+boots Linux three times: once for the success oracle and twice for L2. From a
+checkout under `/tmp`, Demo 7 stores its generated initramfs under `/var/tmp`
+so Hermit's private guest `/tmp` does not hide that QEMU input.
 
 Set `DEMO_SKIP_BUILD=1` to reuse an existing `hermit/target` build, or export
 `HERMIT`, `HELLO_RACE`, and `HEAP_PTRS` to point at prebuilt binaries.
