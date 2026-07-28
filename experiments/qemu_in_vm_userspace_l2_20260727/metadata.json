@@ -1,0 +1,75 @@
+{
+  "experiment": "qemu_in_vm_userspace_l2_20260727",
+  "date": "2026-07-27",
+  "task": "linux-hermit frontier: run a userspace program (busybox sh, hello world) inside the deterministic QEMU VM",
+  "milestone": "L2 determinism (hermit run --strict --verify, bitwise-identical repeat) for a real userspace program executed inside a QEMU-Linux VM under Hermit",
+  "result": "PASS",
+  "assurance_level": "L2",
+  "backend": "ptrace",
+  "relaxations": "none",
+  "hermit_sha_binary": "6044c2d39ace4bd84f32598a9fde692fcea67b3f",
+  "hermit_branch": "codex/qemu-userspace-program-l2",
+  "hermit_commit": "15293c34bc9a957d62314ab727dea5bba2d98df7",
+  "hermit_base_main": "3056ae2808c97ed6798c2dbd1ff9371a33d10a8f",
+  "note_binary_vs_base": "Test-only change (guest C + shell script); the hermit binary at 6044c2d3 is byte-identical in behavior to one built at 3056ae2 for this test. Branch rebased onto current main 3056ae2.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1026",
+  "hermit_binary": "hermit/target/release/hermit",
+  "harness": "hermit/tests/qemu-boot/strict_l2_userspace_test.sh",
+  "guest_launcher_source": "hermit/tests/shared-futex-verify/qemu_exec_init.c",
+  "guest_hello_source": "hermit/tests/shared-futex-verify/qemu_hello.c",
+  "kernel_image": "/boot/vmlinuz",
+  "kernel_version": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+  "qemu_bin": "/usr/local/bin/qemu-system-x86_64",
+  "qemu_cpu": "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt",
+  "cpu_model_rationale": "Host glibc targets x86-64-v2; its IFUNC resolvers use SSSE3/SSE4.1/SSE4.2 (pmaxud, palignr, pcmpistri). Default qemu64 advertises only up to SSE3 -> static glibc SIGILLs at exec. Enable exactly the x86-64-v2 set; nothing above it (no AVX/RDRAND) to avoid new nondeterminism sources.",
+  "log_level": "info",
+  "host": "linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "busybox_bin": "/usr/sbin/busybox (static)",
+  "guest_command": "qemu-system-x86_64 -nodefaults -nic none -m 256M -accel tcg,thread=single -smp 1 -icount shift=0,sleep=off -rtc base=utc,clock=vm -cpu qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt -kernel /boot/vmlinuz -initrd <run>/initramfs.cpio.gz -display none -serial stdio -monitor none -no-reboot -append 'console=ttyS0 panic=-1 rdinit=/init'",
+  "scenarios": {
+    "hello": {
+      "target": "/hello (statically linked glibc)",
+      "boot_markers": [
+        "SHARED_FUTEX_QEMU_KERNEL_OK",
+        "QEMU_USERSPACE_LAUNCH prog=/hello",
+        "QEMU_USERSPACE_HELLO_OK pid=70",
+        "QEMU_USERSPACE_EXIT prog=hello exited=1 status=7",
+        "QEMU_USERSPACE_DONE"
+      ],
+      "boot_console_sha256": "4e520e965bfcfc68623ee9c8d41830b99ba35cd839843a9de93d81ed555aa7b1",
+      "verify": {
+        "messages_total": [526185, 526185],
+        "detcore_messages": [469067, 469067],
+        "detlog_commit_messages": [371393, 371393],
+        "substantive_differences": 0,
+        "verdict": "Success: deterministic. Determinism verified."
+      }
+    },
+    "busybox": {
+      "target": "/bin/busybox sh -c 'echo QEMU_BUSYBOX_HELLO from $(busybox uname -s); exit 5'",
+      "boot_markers": [
+        "SHARED_FUTEX_QEMU_KERNEL_OK",
+        "QEMU_USERSPACE_LAUNCH prog=/bin/busybox",
+        "QEMU_BUSYBOX_HELLO from Linux",
+        "QEMU_USERSPACE_EXIT prog=busybox-sh exited=1 status=5",
+        "QEMU_USERSPACE_DONE"
+      ],
+      "boot_console_sha256": "e662bb4c3c1c6806b9fd35fa67ab9a6ba5d8062c15de48e9eaa5b3f545db3eda",
+      "verify": {
+        "messages_total": [516241, 516241],
+        "detcore_messages": [459172, 459172],
+        "detlog_commit_messages": [363577, 363577],
+        "substantive_differences": 0,
+        "verdict": "Success: deterministic. Determinism verified."
+      }
+    }
+  },
+  "harness_verdict": "All QEMU strict L2 userspace scenarios passed.",
+  "committed_evidence": [
+    "hello_boot_console.txt",
+    "hello_verify_summary.txt",
+    "busybox_boot_console.txt",
+    "busybox_verify_summary.txt"
+  ],
+  "excluded_evidence": "boot.stderr / verifier.stderr full --log info DETLOG dumps (tens of MB; >2 MiB; regenerate by rerun)"
+}

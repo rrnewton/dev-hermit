@@ -79,13 +79,13 @@ with-proxy cargo build --release -p reverie-examples \
   --bin reverie-liteinst-examples
 
 # SaBRe loader, host, and plugin.
-scripts/backend-submodule.sh activate sabre
+with-proxy scripts/backend-submodule.sh activate sabre
 cmake -S third-party/sabre -B target/sabre
 cmake --build target/sabre
 with-proxy cargo build --release -p reverie-sabre-strace
 
 # DynamoRIO, Rust coordinator/path helper, and native client.
-scripts/backend-submodule.sh activate dynamorio
+with-proxy scripts/backend-submodule.sh activate dynamorio
 PROFILE=release with-proxy reverie-dbi/scripts/build-client.sh
 ```
 
@@ -170,7 +170,7 @@ timeout 30 target/release/strace --runner kvm --no-host-envs --trace write /tmp/
 
 The review task records exit 0 for all three, with 17 observed syscalls for
 `counter1`, 17 syscalls from one process/one thread for `counter2`, and a
-17-syscall strace stream. This is a dated capability-window rerun, not a claim
+successful strace run. This is a dated capability-window rerun, not a claim
 that KVM remained available: `/dev/kvm` was absent again when checked at
 2026-07-28 03:38 UTC. The original failure output remains above so host
 capability changes are not hidden.
@@ -623,7 +623,7 @@ The review task recorded this aggregate result (the per-process local rows and
 wall time were not retained, so they are not reconstructed here):
 
 ```text
-counter2 total=40035 processes=4 threads=4; exit_status=0
+review-task aggregate: 40035 syscalls; 4 processes; 4 threads; exit 0
 ```
 
 LiteInst failure attribution was checked with:
@@ -1024,3 +1024,30 @@ ptracer.
 5. Define a backend-neutral counting boundary (for example, marker-delimited
    subscribed syscalls) before using totals for cross-backend performance. The
    current launchers intentionally begin observation at different points.
+
+## Adversarial review disposition
+
+The 2026-07-28 review supplied eleven numbered corrections (the iteration task
+described them as ten). This revision addresses all eleven:
+
+1. Standalone SaBRe and Hermit's ptrace-assisted SaBRe are separated in the
+   executive, signal, and ptrace-sharing sections.
+2. LiteInst hook installation remains in SIGSYS, while generic Tool/RPC work is
+   correctly placed after `sigreturn`; inactive fork scaffolding is identified.
+3. SaBRe's remote `BlockingRpcClient` and legacy fd-100 `BaseChannel` transports
+   are documented as separate generations.
+4. Reverie's injected-trap `E9patchBackend` and Hermit's `before empty` plus
+   ptrace CLI path are separated.
+5. SaBRe central dispositions, the loader's SIGILL/UD0 fallback, and Hermit's
+   missed-raw-site conversion are source-cited.
+6. `reverie-ptrace` usage is qualified to include the normal ptrace backend and
+   exclude Hermit's custom SaBRe supervisor.
+7. Historical KVM-blocked output is preserved alongside the later dated KVM
+   PASS window and the subsequent loss of `/dev/kvm`.
+8. Counter2 timings are explicitly non-comparative, with missing controls and
+   the KVM 40,035 aggregate stated.
+9. RPC measurements are historical samples plus a rerun, not a stable interval
+   or backend proxy.
+10. Exact build commands, gitlinks, and artifact paths are included.
+11. LiteInst strace is labeled one PASS plus one teardown-owner failure
+    (`N=2`), without an inferred flake rate.

@@ -1,0 +1,8 @@
+[    1.326794] Run /init as init process
+SHARED_FUTEX_QEMU_KERNEL_OK release=6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 machine=x86_64
+QEMU_USERSPACE_LAUNCH prog=/bin/busybox
+QEMU_BUSYBOX_HELLO from Linux
+QEMU_USERSPACE_EXIT prog=busybox-sh exited=1 status=5
+QEMU_USERSPACE_DONE
+[    1.328311] ACPI: PM: Preparing to enter system sleep state S5
+[    1.328332] reboot: Power down

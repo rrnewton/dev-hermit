@@ -1,0 +1,8 @@
+[    1.312267] Run /init as init process
+SHARED_FUTEX_QEMU_KERNEL_OK release=6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 machine=x86_64
+QEMU_USERSPACE_LAUNCH prog=/hello
+QEMU_USERSPACE_HELLO_OK pid=70
+QEMU_USERSPACE_EXIT prog=hello exited=1 status=7
+QEMU_USERSPACE_DONE
+[    1.313320] ACPI: PM: Preparing to enter system sleep state S5
+[    1.313342] reboot: Power down
