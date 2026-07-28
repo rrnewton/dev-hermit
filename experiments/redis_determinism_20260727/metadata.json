@@ -1,0 +1,28 @@
+{
+  "experiment": "redis_determinism_20260727",
+  "date": "2026-07-27",
+  "task": "frontier-app-redis-determinism",
+  "agent": "hermit-274",
+  "slot": "worktrees/274/hermit",
+  "hermit_sha": "8568173b1c1d10ce71885f8a2b050537f9ed4749",
+  "hermit_branch": "codex/main-ci-status-script",
+  "hermit_binary": "target/release/hermit (built 2026-07-27 09:56)",
+  "backend": "ptrace",
+  "redis": "redis-server v=6.2.22, jemalloc-5.1.0, build 5d43f02b8d896191",
+  "host": "devbig030.atn3.facebook.com",
+  "nproc": 316,
+  "question": "Is a real Redis server + client (TCP loopback network inside the container) deterministic under hermit run --strict --verify?",
+  "workloads": {
+    "redis_test.sh": "basic: SET/GET/INCR/APPEND/RPUSH/LRANGE/HSET/HGET/SADD/SCARD/DBSIZE",
+    "redis_test_full.sh": "expanded: strings, counters, bitops, lists, hashes, sets, sorted sets, EXPIRE/TTL, TYPE/EXISTS/KEYS, EVAL(Lua), SCAN, and INFO server/clients/keyspace (entropy+host-state probe incl run_id)"
+  },
+  "results": {
+    "L1_strict": "PASS (exit 0, both workloads)",
+    "L2_strict_verify": "PASS both workloads: 'Determinism verified', 66905 DETLOG+COMMIT msgs identical (basic)",
+    "L4_stress": "5x --strict --verify all verified; guest stdout byte-identical (md5 ab8735d5c2195d115b6fdef5e3cf5349) across 3 independent --strict runs",
+    "entropy": "redis run_id (40-hex RNG output) byte-identical across 3 independent invocations: 13735d9863f6007b1b1f0ac329e6f0c3085d1d1d",
+    "virtualization_observed": "PID->9, timestamps->hermit epoch 2021-12-31, uptime_in_seconds->virtual, run_id->deterministic getrandom"
+  },
+  "harness_gotcha": "hermit gives the guest a PRIVATE /tmp: the guest script must live OUTSIDE /tmp (kept in scratch/), while redis rundir in the private /tmp is ideal (clean per run). Also hermit --log-file panics in the container clone callback; use 2> stderr redirection instead.",
+  "code_changes": "none - Redis is deterministic under hermit's existing virtualization (getrandom/PID/time/scheduling). No detcore change required."
+}

@@ -4,7 +4,7 @@
 
 ## Mission
 
-Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM, experimental patching backends, etc) that all produce identical behavior, plus record/replay and chaos concurrency testing that is equally broadly-compatible with arbitrary guest programs.
+Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM, experimental patching backends, etc) that all produce identical behavior/logs/memory, plus record/replay and chaos concurrency testing that is equally broadly-compatible with arbitrary guest programs.
 
 Don't forget your general princples around CLEAR and SPECIFIC communication (which programs ran what under what mode and which branch/version was experimented with?) and presenting EVIDENCE for claims, including wherever possible reproducer commands.
 
@@ -15,22 +15,26 @@ Hermit has a series of modes:
 
 0. **Smoke test** -- running through hermit at all, with enforcement less than --strict, is a good first step on a new application but is not something we track regularly in CI.
 1. **Rock-solid hermit run** — expand --strict --verify compatibility envelope to arbitrary programs across many classes.
-2. **DBI backend** — real Detcore-over-DbiGuest integration (NOT a partial prototype or code duplication)
 3. **KVM backend** — gvisor-model syscall interception through KvmGuest
+3. **DBI, Sabre, liteinst, epatch backends** — binary instrumentation with Reverie running the local tool in the guest address space.
 4. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks), perodically compare against mature "rr"
+
 ## Mode Expansion Mandate
 
 Every mode must catch up to the one before it:
-- Example: 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM
+- Example: 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM, and the denominator are always the e2e tests we planned in the overhaul.
 - There is NO stopping while trailing modes are weaker
 - Always add NEW programs to coverage even as trailing modes catch up
+
+Agents will constantly try to put up fake results that mislead you, where they have mocked up something partial that is NOT the real thing we want. You must be skeptical and you must ask questions and check assumptions, and ask for evidence and details on provenance and what's ACTUALLY running.
+
 
 ## Operations and Regulation
 
 1. **Land PRs, keep main green, zero compile warnings**
 2. **Monitor resources** - check frequently CPU disk, memory, etc and do not allow too many local validates or zombie processes, or out of control experiments, to take down the box.
-3. **Keep agent fleet busy** s You are driving autonomously at FULL SPEED, with 10-15 agents busy on this big dev box. You have multiple lines of P0 work and massive open-ended backlogs. Pre-generate parallel work in the task graph
-4. **Check CI health and ci-runner queue depth**, make sure we are not overwhelming CI and that it is healthy and green. Cancellation policy should mean not too many jobs outstanding and we can always supplement CI with local validate.sh / locally-validated PR label protocol. We can have separate policies for github-hosted actions and self-hosted ones but BOTH SHOULD ALWAYS HAVE RECENT GREEN RESULTS, and if not that is a P0 crisis to fix.
+3. **Keep agent fleet busy** You are driving autonomously at FULL SPEED, with 10-15 agents busy on this big dev box. You have multiple lines of P0 work and massive open-ended backlogs. Pre-generate parallel work in the task graph.
+4. **Check CI health and ci-runner queue depth**, make sure we are not overwhelming CI and that it is healthy and green. Get as close to zero open PRs as you can, and not PRs than agents. Cancellation policy should mean not too many jobs outstanding and we can always supplement CI with local validate.sh / locally-validated PR label protocol. We can have separate policies for github-hosted actions and self-hosted ones but BOTH SHOULD ALWAYS HAVE RECENT GREEN RESULTS, and if not that is a P0 crisis to fix.
 5. **Clean repo state** — minimal open PRs, branches deleted after merge, `git status` clean in both parent and hermit/reverie checkouts
 
 ## Failure Modes to Avoid
@@ -51,8 +55,8 @@ Every mode must catch up to the one before it:
 
 - **Generate work continuously.** Every agent completion should trigger: check results → create downstream tasks → assign next work.
 - **Own PR iterations.** Adversarial review by different agent, fix issues, land. Don't wait.
-- **Report honestly.** State WHERE (main, feature branch, PR #N). Qualify results (L0/L1/L2). Never unqualified "passing."
-- **Keep 6+ agents busy** at all times. If fewer are busy, spawn or generate work.
+- **Report precisely, with provenance.** State WHERE (main, feature branch, PR #N). Qualify results (L0/L1/L2). Never unqualified "passing."
+- **Keep 10+ agents busy** at all times. If fewer are busy, spawn or generate work.
 - **Path validation before spawn.** Check cwd exists before spawning agents.
 - **Commit immediately, push immediately.** No work left uncommitted or unpushed.
 
@@ -60,7 +64,8 @@ Every mode must catch up to the one before it:
 
 ### Hermit run
 
-Runs essentially arbitrary user space Linux programs under --strict --verify with perfect deterministic execution.
+Runs essentially arbitrary user space Linux programs under --strict --verify with perfect deterministic execution. This includes our deep workstream on emulating the Linux kernel under QEMU.
+
 Allows advanced chaos mode which perturbs program schedule orders and is compatible with all programs that normal --strict --verify runs on.
 
 ### Hermit record / replay
