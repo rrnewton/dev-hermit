@@ -1,13 +1,17 @@
+use shmem_pod::injection::{BOOTSTRAP_FD_ENV, BootstrapContext, BootstrapFlags, ConnectorKind};
 use shmem_pod_runtime::{PodArtifact, PodImage};
 use std::env;
 use std::error::Error;
-use std::os::fd::AsRawFd;
+use std::ffi::CString;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
 const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
+const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
+const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 struct Options {
     image: PathBuf,
@@ -43,9 +47,23 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let code_fd = image.duplicate_code_fd_for_exec()?;
     let state_fd = state.duplicate_fd_for_exec()?;
-    if code_fd.as_raw_fd() == state_fd.as_raw_fd() {
-        return Err("runtime returned aliased inherited descriptors".into());
-    }
+    let artifact_fd = artifact.duplicate_artifact_fd_for_exec()?;
+    let flags = BootstrapFlags::REQUIRED.union(BootstrapFlags::INHERIT_ACROSS_EXEC);
+    let context = BootstrapContext::new(
+        ConnectorKind::Preload,
+        flags,
+        artifact_fd.as_raw_fd(),
+        code_fd.as_raw_fd(),
+        state_fd.as_raw_fd(),
+        artifact.len() as u64,
+        image.state_file_len(),
+        state.generation(),
+        image.api_fingerprint(),
+        artifact.digest(),
+        random_nonce()?,
+    );
+    context.validate()?;
+    let bootstrap_fd = create_bootstrap_fd(&context)?;
 
     // Injection is scoped to the spawned guest. The host itself never loads
     // the shim, and every descendant naturally inherits this environment and
@@ -61,14 +79,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .arg("--calls")
         .arg(options.calls.to_string())
         .env("LD_PRELOAD", &options.shim)
-        .env("SHMEM_POD_PRELOAD_IMAGE", &options.image)
-        .env("SHMEM_POD_PRELOAD_SHA256", &options.sha256)
-        .env("SHMEM_POD_PRELOAD_CODE_FD", code_fd.as_raw_fd().to_string())
-        .env(
-            "SHMEM_POD_PRELOAD_STATE_FD",
-            state_fd.as_raw_fd().to_string(),
-        )
-        .env("SHMEM_POD_PRELOAD_REQUIRED", "1")
+        .env(BOOTSTRAP_FD_ENV, bootstrap_fd.as_raw_fd().to_string())
         .process_group(0);
     let mut guest = command.spawn()?;
     let guest_group =
@@ -132,6 +143,99 @@ fn run() -> Result<(), Box<dyn Error>> {
         state.state_address(),
     );
     Ok(())
+}
+
+fn create_bootstrap_fd(context: &BootstrapContext) -> Result<OwnedFd, Box<dyn Error>> {
+    let name = CString::new("shmem-pod-bootstrap")?;
+    let fd = unsafe {
+        libc::memfd_create(
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "memfd_create bootstrap: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let encoded = context.encode();
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), encoded.len() as libc::off_t) } != 0 {
+        return Err(format!("ftruncate bootstrap: {}", std::io::Error::last_os_error()).into());
+    }
+    write_all_at(fd.as_raw_fd(), &encoded)?;
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return Err(format!("seal bootstrap: {}", std::io::Error::last_os_error()).into());
+    }
+    let actual = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GET_SEALS) };
+    if actual < 0 || actual & (seals | F_SEAL_EXEC) != seals | F_SEAL_EXEC {
+        return Err("bootstrap memfd lacks required immutable/no-exec seals".into());
+    }
+    let inherited = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD, 3) };
+    if inherited < 0 {
+        return Err(format!(
+            "duplicate bootstrap FD: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(inherited) })
+}
+
+fn write_all_at(fd: RawFd, mut bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+    let mut offset = 0;
+    while !bytes.is_empty() {
+        let written = unsafe {
+            libc::pwrite(
+                fd,
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                offset as libc::off_t,
+            )
+        };
+        if written < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if written == 0 {
+            return Err("pwrite bootstrap made no progress".into());
+        }
+        let written = written as usize;
+        bytes = &bytes[written..];
+        offset += written;
+    }
+    Ok(())
+}
+
+fn random_nonce() -> Result<[u8; 16], Box<dyn Error>> {
+    let mut nonce = [0_u8; 16];
+    let mut filled = 0;
+    while filled < nonce.len() {
+        let result = unsafe {
+            libc::getrandom(nonce[filled..].as_mut_ptr().cast(), nonce.len() - filled, 0)
+        };
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if result == 0 {
+            return Err("getrandom made no progress".into());
+        }
+        filled += result as usize;
+    }
+    if nonce.iter().all(|byte| *byte == 0) {
+        return Err("getrandom returned an all-zero nonce".into());
+    }
+    Ok(nonce)
 }
 
 fn process_count(depth: u32, fanout: u32) -> Result<u64, Box<dyn Error>> {

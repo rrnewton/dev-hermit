@@ -69,13 +69,23 @@ All algorithm atomics currently use sequential consistency.
 
 | Operation | Publication/order point |
 | --- | --- |
-| Same-leaf successful entry | Successful leaf increment; its earlier open sample orders it before an overlapping close, as in the paper. |
-| Idle-leaf successful entry | Parent contributions are installed first; the successful leaf 0-to-1 CAS publishes the token. |
+| Successful entry | Its initial observation of `Open`; parent contributions are installed before an idle leaf is published, and the later leaf CAS publishes the local count. |
 | Rejected entry | Observation of closed, closing, drained, or an unowned departure tail. |
 | Non-final departure | Successful local or ancestor decrement CAS. |
 | Final departure | Tail-to-open or tail-to-drained CAS after unwinding and verification. |
 | Close of nonempty root | Open-to-closed CAS. |
 | Close of empty root | Open-to-closing CAS closes admission; closing-to-drained CAS publishes reclamation safety. |
+
+`query()` treats both departure-tail phases as nonzero. That keeps the final
+departure visible until its linearization/sealing CAS and avoids ordering a
+false query before a racing `close()` which still reports `Pending`.
+
+Packed count or generation exhaustion rejects only the attempted arrival and
+does not mutate or poison the object. Existing tokens can still depart and
+reach drain. This is necessary because an entrant may have sampled a full node,
+been delayed while all represented participants depart, and resume only after
+another process sealed `Drained`; a late capacity error must not invalidate the
+already stable terminal state.
 
 Merely observing `Open` does not guarantee that `try_enter` succeeds. A last
 departure can win the selected leaf race; the retry may then return `Closed` or

@@ -1,0 +1,35 @@
+{
+  "experiment": "compat_push_survey_20260728",
+  "date": "2026-07-28",
+  "task": "compat push",
+  "backend": "ptrace",
+  "mode": "hermit run --strict --verify (L2)",
+  "hermit": {
+    "checkout": "~/work/dev-hermit/worktrees/275/hermit",
+    "slot_head_sha": "15293c34bc9a957d62314ab727dea5bba2d98df7",
+    "slot_branch": "codex/qemu-userspace-program-l2"
+  },
+  "reverie_pin": "9233c0d099ce3bdc820958aa3071a6c1439bc249",
+  "host": {
+    "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+    "arch": "x86_64",
+    "hostname": "devbig030.atn3.facebook.com"
+  },
+  "programs_tested": 50,
+  "result": "near-all PASS at L2; all failures map to known hard issues",
+  "failures": {
+    "python3 multiprocessing.Pool(>=2)": "HANG livelock -> #830 (minimal repro added)",
+    "comm <(seq 3) <(seq 2 4)": "HANG livelock -> #830 (minimal repro added)",
+    "git init/commit fresh repo": "HANG -> #830 family + Meta git wrapper",
+    "timeout 5 echo hi": "nondeterministic across verify runs + ivar.rs:91 panic -> #1039 (filed)"
+  },
+  "non_bugs": {
+    "ssh-keygen": "persistent-workdir-across-verify artifact (key file written in run1 present in run2)",
+    "os.eventfd": "Python 3.10+ API; /usr/bin/python3 is 3.9 (native AttributeError)",
+    "strace echo": "nested ptrace under hermit"
+  },
+  "issues_filed": ["https://github.com/rrnewton/hermit/issues/1039"],
+  "issues_commented": ["https://github.com/rrnewton/hermit/issues/830#issuecomment-5100326404"],
+  "code_fix_landed": false,
+  "disposition": "Frontier mature; remaining failures are architectural scheduler/timer determinism (deep). No safe local fix. Task stays in_progress."
+}

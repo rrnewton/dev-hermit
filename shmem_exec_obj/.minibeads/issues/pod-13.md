@@ -1,17 +1,20 @@
 ---
 title: Define state migration, reclamation, and tracing-GC boundary
-status: open
+status: in_progress
 priority: 2
 issue_type: task
+assignee: devbig030/migration-reclamation
 depends_on:
-  pod-5: blocks
-  pod-4: blocks
   pod-6: blocks
-  pod-1: parent-child
+  pod-5: blocks
   pod-7: blocks
   pod-8: blocks
+  pod-4: blocks
+  pod-1: parent-child
 created_at: 2026-07-28T03:39:42.092157584+00:00
-updated_at: 2026-07-28T03:40:19.155436835+00:00
+updated_at: 2026-07-28T05:19:32.486714861+00:00
+claimed_at: 2026-07-28T05:19:32.486714861+00:00
+claimed_until: 2026-07-30T05:19:32.486511533+00:00
 ---
 
 # Description

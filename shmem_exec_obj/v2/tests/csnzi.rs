@@ -1,9 +1,7 @@
 #![cfg(target_has_atomic = "64")]
 
 use core::mem::{MaybeUninit, align_of};
-use shmem_pod::csnzi::{
-    CloseOutcome, Csnzi, CsnziError, CsnziPhase, CsnziPoisonReason, DepartOutcome,
-};
+use shmem_pod::csnzi::{CloseOutcome, Csnzi, CsnziCapacity, CsnziError, CsnziPhase, DepartOutcome};
 use shmem_pod::{PodSync, PodValue};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -192,7 +190,7 @@ fn close_races_accept_or_reject_without_losing_participants() {
 }
 
 #[test]
-fn node_count_overflow_poison_is_fail_closed() {
+fn node_count_capacity_rejects_without_poisoning_or_preventing_drain() {
     let barrier = Csnzi::<4>::new();
     let mut tokens = Vec::with_capacity(Csnzi::<4>::MAX_NODE_COUNT as usize);
     for _ in 0..Csnzi::<4>::MAX_NODE_COUNT {
@@ -200,15 +198,18 @@ fn node_count_overflow_poison_is_fail_closed() {
     }
     assert_eq!(
         barrier.try_enter(0),
-        Err(CsnziError::Poisoned(CsnziPoisonReason::NodeCountOverflow))
+        Err(CsnziError::CapacityExhausted(CsnziCapacity::NodeCount))
     );
-    assert_eq!(
-        barrier.poison_reason(),
-        Some(CsnziPoisonReason::NodeCountOverflow)
-    );
+    assert_eq!(barrier.poison_reason(), None);
     assert!(barrier.query());
-    assert!(!barrier.is_drained());
-    drop(tokens);
+    assert_eq!(barrier.close().unwrap(), CloseOutcome::Pending);
+    let mut outcome = DepartOutcome::Active;
+    for token in tokens {
+        outcome = token.depart().unwrap();
+    }
+    assert_eq!(outcome, DepartOutcome::Drained);
+    assert!(!barrier.query());
+    assert!(barrier.is_drained());
 }
 
 #[cfg(target_os = "linux")]

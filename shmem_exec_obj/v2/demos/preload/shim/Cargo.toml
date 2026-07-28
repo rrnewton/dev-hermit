@@ -11,4 +11,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 libc.workspace = true
+shmem-pod.workspace = true
 shmem-pod-runtime.workspace = true

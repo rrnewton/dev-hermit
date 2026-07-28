@@ -42,6 +42,7 @@ const STATUS_SNZI_POISONED: i32 = -14;
 const SNZI_TOKEN_LEAF_MASK: u64 = (1_u64 << 16) - 1;
 const SNZI_TOKEN_RESERVED_BIT: u64 = 1_u64 << 63;
 const SNZI_TOKEN_GENERATION_SHIFT: u32 = 16;
+const MAX_ARTIFACT_LEN: usize = 256 * 1024 * 1024;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -140,6 +141,32 @@ impl PodArtifact {
         })
     }
 
+    /// Reads a complete artifact from an immutable, sealed descriptor.
+    ///
+    /// `pread` leaves the shared open-file-description offset unchanged. The
+    /// size is checked before allocating, and the complete bytes are still
+    /// authenticated against `expected_sha256` before any code is mapped.
+    pub fn open_sealed_fd(fd: RawFd, expected_sha256: &str) -> Result<Self> {
+        require_seals(
+            fd,
+            libc::F_SEAL_WRITE
+                | libc::F_SEAL_GROW
+                | libc::F_SEAL_SHRINK
+                | libc::F_SEAL_SEAL
+                | F_SEAL_EXEC,
+            "artifact",
+        )?;
+        let length = fd_len(fd)?;
+        if !(HEADER_SIZE..=MAX_ARTIFACT_LEN).contains(&length) {
+            return Err(Error::message(format!(
+                "sealed artifact length {length} is outside {HEADER_SIZE}..={MAX_ARTIFACT_LEN}"
+            )));
+        }
+        let mut bytes = vec![0_u8; length];
+        read_exact_at(fd, &mut bytes, 0)?;
+        Self::from_bytes(bytes, parse_sha256(expected_sha256)?)
+    }
+
     pub fn header(&self) -> &ImageHeader {
         &self.header
     }
@@ -150,6 +177,20 @@ impl PodArtifact {
 
     pub fn digest_hex(&self) -> String {
         hex(&self.digest)
+    }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Creates a sealed, non-executable artifact memfd that survives `exec`.
+    pub fn duplicate_artifact_fd_for_exec(&self) -> Result<OwnedFd> {
+        let fd = create_artifact_fd(&self.bytes)?;
+        duplicate_inheritable(fd.as_raw_fd())
     }
 
     fn code(&self) -> &[u8] {
@@ -314,6 +355,14 @@ impl PodImage {
 
     pub fn artifact_digest(&self) -> [u8; 32] {
         self.artifact_digest
+    }
+
+    pub fn api_fingerprint(&self) -> u128 {
+        self.header.metadata.api_fingerprint
+    }
+
+    pub fn state_file_len(&self) -> u64 {
+        self.header.state_file_len
     }
 
     pub fn code_address(&self) -> usize {
@@ -668,6 +717,10 @@ impl PodState {
         duplicate_inheritable(self.fd.as_raw_fd())
     }
 
+    pub fn generation(&self) -> u64 {
+        self.read_u64(ENVELOPE_GENERATION_OFFSET)
+    }
+
     pub fn ready_count(&self) -> u32 {
         self.atomic(ENVELOPE_READY_COUNT_OFFSET)
             .load(Ordering::Acquire)
@@ -873,6 +926,32 @@ fn create_code_fd(code: &[u8]) -> Result<OwnedFd> {
     Ok(fd)
 }
 
+fn create_artifact_fd(bytes: &[u8]) -> Result<OwnedFd> {
+    if !(HEADER_SIZE..=MAX_ARTIFACT_LEN).contains(&bytes.len()) {
+        return Err(Error::message("invalid complete artifact length"));
+    }
+    let fd = memfd(
+        "shmem-pod-artifact",
+        libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL,
+    )?;
+    resize(fd.as_raw_fd(), bytes.len())?;
+    write_all_at(fd.as_raw_fd(), bytes, 0)?;
+    add_seals(
+        fd.as_raw_fd(),
+        libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL,
+    )?;
+    require_seals(
+        fd.as_raw_fd(),
+        libc::F_SEAL_WRITE
+            | libc::F_SEAL_GROW
+            | libc::F_SEAL_SHRINK
+            | libc::F_SEAL_SEAL
+            | F_SEAL_EXEC,
+        "artifact",
+    )?;
+    Ok(fd)
+}
+
 fn verify_code_fd(fd: RawFd, code: &[u8], mapped_len: usize) -> Result<()> {
     verify_fd_len(fd, mapped_len)?;
     require_seals(
@@ -956,18 +1035,25 @@ fn require_seals(fd: RawFd, required: libc::c_int, label: &str) -> Result<()> {
 }
 
 fn verify_fd_len(fd: RawFd, expected: usize) -> Result<()> {
+    let actual = fd_len(fd)?;
+    if actual != expected {
+        return Err(Error::message(format!(
+            "memfd length mismatch: expected {expected}, got {actual}"
+        )));
+    }
+    Ok(())
+}
+
+fn fd_len(fd: RawFd) -> Result<usize> {
     let mut stat = mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
         return Err(last_os("fstat memfd"));
     }
     let stat = unsafe { stat.assume_init() };
-    if stat.st_size != expected as libc::off_t {
-        return Err(Error::message(format!(
-            "memfd length mismatch: expected {expected}, got {}",
-            stat.st_size
-        )));
+    if stat.st_size < 0 || u64::try_from(stat.st_size).unwrap_or(u64::MAX) > usize::MAX as u64 {
+        return Err(Error::message("descriptor length does not fit usize"));
     }
-    Ok(())
+    Ok(stat.st_size as usize)
 }
 
 fn write_all_at(fd: RawFd, mut bytes: &[u8], mut offset: usize) -> Result<()> {
@@ -1267,6 +1353,42 @@ mod tests {
         changed_code[HEADER_SIZE + 1] ^= 1;
         let changed_digest = Sha256::digest(&changed_code).into();
         assert!(PodArtifact::from_bytes(changed_code, changed_digest).is_err());
+    }
+
+    #[test]
+    fn sealed_artifact_transport_is_offset_independent_and_inheritable() {
+        let (image, digest) = test_artifact();
+        let artifact = PodArtifact::from_bytes(image, digest).unwrap();
+        let fd = artifact.duplicate_artifact_fd_for_exec().unwrap();
+        assert_eq!(
+            unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        assert_eq!(
+            unsafe { libc::lseek(fd.as_raw_fd(), 17, libc::SEEK_SET) },
+            17
+        );
+        let attached = PodArtifact::open_sealed_fd(fd.as_raw_fd(), &hex(&digest)).unwrap();
+        assert_eq!(attached.digest(), digest);
+        assert_eq!(attached.len(), artifact.len());
+        // `pread` must not mutate an offset shared with descendants.
+        assert_eq!(
+            unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_CUR) },
+            17
+        );
+    }
+
+    #[test]
+    fn artifact_transport_rejects_unsealed_input_before_allocation() {
+        let (image, digest) = test_artifact();
+        let fd = memfd(
+            "shmem-pod-unsealed-artifact-test",
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL,
+        )
+        .unwrap();
+        resize(fd.as_raw_fd(), image.len()).unwrap();
+        write_all_at(fd.as_raw_fd(), &image, 0).unwrap();
+        assert!(PodArtifact::open_sealed_fd(fd.as_raw_fd(), &hex(&digest)).is_err());
     }
 
     #[test]

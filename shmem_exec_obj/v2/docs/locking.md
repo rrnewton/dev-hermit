@@ -149,6 +149,12 @@ still run or may deliver a delayed operation. Correct lease systems attach a
 monotonically increasing fencing token to every protected effect, and the
 recipient rejects tokens older than the greatest token it has accepted.
 
+The classic Gray--Cheriton lease is enforced by an authoritative server: the
+server delays a conflicting write until every holder approves it or its term
+expires, and a cache must hold a currently valid lease before reading or
+modifying its copy. That is materially different from an in-place shared-memory
+write, where there is no recipient at which to reject a stale operation.
+
 Chubby calls this token a *sequencer*: it includes the lock generation, and
 servers validate it before performing a protected operation. Chubby also has a
 lock-delay for systems that cannot check sequencers, but describes lock-delay
@@ -169,6 +175,13 @@ possible fixed-capacity design is:
 
 Merely checking the epoch before an in-place write has a check-then-use race.
 Every externally visible commit must be fenced.
+
+Recoverable-mutual-exclusion research makes a different assumption again. Its
+crash-recovery model revives a failed participant into an explicit recovery
+section, and some algorithms require that participant to re-enter the critical
+section before anyone else. Those results support an idempotent recovery
+protocol; they do not justify granting an ordinary Rust guard to a second live
+process after a wall-clock deadline.
 
 Clock choice is part of a lease protocol. `CLOCK_REALTIME` can jump.
 `CLOCK_MONOTONIC` does not jump with wall-clock changes but does not include
@@ -238,3 +251,5 @@ and a killed owner which remains locked.
 - Gray and Cheriton, "Leases", SOSP 1989: <https://doi.org/10.1145/74850.74870>
 - Burrows, "The Chubby Lock Service", OSDI 2006:
   <http://usenix.org/event/osdi06/tech/full_papers/burrows/burrows_html/index.html>
+- Golab and Ramaraju, "Recoverable Mutual Exclusion":
+  <https://uwaterloo.ca/distributed-algorithms-systems-lab/sites/default/files/uploads/files/rme_journal.pdf>

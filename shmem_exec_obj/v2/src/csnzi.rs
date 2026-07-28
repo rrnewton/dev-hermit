@@ -72,12 +72,9 @@ const ROOT_CLOSING: u64 = 5_u64 << ROOT_STATUS_SHIFT;
 const ROOT_STATUS_MASK: u64 = !ROOT_COUNT_MASK;
 
 const POISON_NONE: u64 = 0;
-const POISON_NODE_COUNT: u64 = 1;
-const POISON_GENERATION: u64 = 2;
-const POISON_ROOT_COUNT: u64 = 3;
-const POISON_INVARIANT: u64 = 4;
-const POISON_COMPENSATION: u64 = 5;
-const POISON_ROOT_STATE: u64 = 6;
+const POISON_INVARIANT: u64 = 1;
+const POISON_COMPENSATION: u64 = 2;
+const POISON_ROOT_STATE: u64 = 3;
 
 #[repr(align(64))]
 struct CacheAlignedAtomicU64 {
@@ -97,12 +94,6 @@ impl CacheAlignedAtomicU64 {
 /// Why a C-SNZI entered its permanent fail-closed state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CsnziPoisonReason {
-    /// A leaf or internal node exhausted its 16-bit local count.
-    NodeCountOverflow,
-    /// A node exhausted its 47-bit activation generation.
-    GenerationExhausted,
-    /// The centralized root exhausted its 61-bit contribution count.
-    RootCountOverflow,
     /// A node count, departure, or terminal scan violated a tree invariant.
     InvariantViolation,
     /// A redundant parent arrival unexpectedly selected the final root tail.
@@ -114,9 +105,6 @@ pub enum CsnziPoisonReason {
 impl CsnziPoisonReason {
     const fn code(self) -> u64 {
         match self {
-            Self::NodeCountOverflow => POISON_NODE_COUNT,
-            Self::GenerationExhausted => POISON_GENERATION,
-            Self::RootCountOverflow => POISON_ROOT_COUNT,
             Self::InvariantViolation => POISON_INVARIANT,
             Self::CompensationSelectedTail => POISON_COMPENSATION,
             Self::RootStateCorrupt => POISON_ROOT_STATE,
@@ -126,15 +114,23 @@ impl CsnziPoisonReason {
     const fn from_code(code: u64) -> Option<Self> {
         match code {
             POISON_NONE => None,
-            POISON_NODE_COUNT => Some(Self::NodeCountOverflow),
-            POISON_GENERATION => Some(Self::GenerationExhausted),
-            POISON_ROOT_COUNT => Some(Self::RootCountOverflow),
             POISON_INVARIANT => Some(Self::InvariantViolation),
             POISON_COMPENSATION => Some(Self::CompensationSelectedTail),
             POISON_ROOT_STATE => Some(Self::RootStateCorrupt),
             _ => Some(Self::InvariantViolation),
         }
     }
+}
+
+/// A representational limit which rejected an arrival without changing state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CsnziCapacity {
+    /// A leaf or internal node already has the maximum 16-bit local count.
+    NodeCount,
+    /// An idle node has exhausted its 47-bit activation generation.
+    Generation,
+    /// The centralized root already has its maximum 61-bit contribution count.
+    RootCount,
 }
 
 /// An error returned by a C-SNZI operation.
@@ -173,6 +169,8 @@ pub enum CsnziError {
         /// The inactive generation carried by the token.
         generation: u64,
     },
+    /// This arrival could not be represented and made no state change.
+    CapacityExhausted(CsnziCapacity),
     /// The object has entered a permanent fail-closed state.
     Poisoned(CsnziPoisonReason),
 }
@@ -200,6 +198,9 @@ impl fmt::Display for CsnziError {
                 formatter,
                 "C-SNZI leaf {leaf} has no active arrival in generation {generation}"
             ),
+            Self::CapacityExhausted(capacity) => {
+                write!(formatter, "C-SNZI capacity exhausted: {capacity:?}")
+            }
             Self::Poisoned(reason) => write!(formatter, "C-SNZI is poisoned: {reason:?}"),
         }
     }
@@ -210,7 +211,7 @@ impl core::error::Error for CsnziError {}
 /// The result of permanently closing admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloseOutcome {
-    /// This call closed a nonempty object; admitted participants remain.
+    /// This call closed while represented activity or a departure tail remains.
     Pending,
     /// This call closed an empty object and sealed terminal drain.
     Drained,
@@ -481,7 +482,8 @@ impl<const NODES: usize> Csnzi<NODES> {
     /// algorithm, but merely seeing open does not guarantee success: a final
     /// departure can win the leaf race and a subsequent parent activation can
     /// return [`CsnziError::Closed`] or [`CsnziError::DepartureTailBusy`]. The
-    /// successful leaf CAS is the local publication event.
+    /// successful leaf CAS publishes the local count. If close intervenes, the
+    /// abstract admission is ordered at the earlier open observation.
     pub fn try_enter(&self, leaf: usize) -> Result<CsnziToken<'_, NODES>, CsnziError> {
         let node = self.leaf_node(leaf)?;
         self.ensure_healthy()?;
@@ -597,7 +599,9 @@ impl<const NODES: usize> Csnzi<NODES> {
     #[inline]
     pub fn query(&self) -> bool {
         let root = self.root.value.load(Ordering::SeqCst);
-        root & ROOT_COUNT_MASK != 0 || self.poison.value.load(Ordering::SeqCst) != POISON_NONE
+        root & ROOT_COUNT_MASK != 0
+            || matches!(root & ROOT_STATUS_MASK, ROOT_OPEN_TAIL | ROOT_CLOSED_TAIL)
+            || self.poison.value.load(Ordering::SeqCst) != POISON_NONE
     }
 
     /// Returns the permanent poison reason, if any.
@@ -710,20 +714,17 @@ impl<const NODES: usize> Csnzi<NODES> {
             let generation = node_generation(state);
 
             if count == 0 && !arrived_at_parent {
-                if generation == NODE_GENERATION_MASK {
-                    return Err(self.poison_with(CsnziPoisonReason::GenerationExhausted));
-                }
                 self.arrive_parent(node)?;
                 arrived_at_parent = true;
                 continue;
             }
 
             if count == NODE_COUNT_MASK {
-                return Err(self.poison_with(CsnziPoisonReason::NodeCountOverflow));
+                return Err(CsnziError::CapacityExhausted(CsnziCapacity::NodeCount));
             }
             let next_generation = if count == 0 {
                 if generation == NODE_GENERATION_MASK {
-                    return Err(self.poison_with(CsnziPoisonReason::GenerationExhausted));
+                    return Err(CsnziError::CapacityExhausted(CsnziCapacity::Generation));
                 }
                 generation + 1
             } else {
@@ -838,7 +839,7 @@ impl<const NODES: usize> Csnzi<NODES> {
                 RootPhase::Open | RootPhase::Closed => {}
             }
             if count == ROOT_COUNT_MASK {
-                return Err(self.poison_with(CsnziPoisonReason::RootCountOverflow));
+                return Err(CsnziError::CapacityExhausted(CsnziCapacity::RootCount));
             }
             let incremented = (root & ROOT_STATUS_MASK) | (count + 1);
             match self.root.value.compare_exchange_weak(
@@ -1033,7 +1034,9 @@ mod tests {
             .depart_node(leaf, Some((0, token.generation())))
             .unwrap();
         assert_eq!(result, TreeDepart::Tail);
+        assert!(barrier.query());
         assert_eq!(barrier.close().unwrap(), CloseOutcome::Pending);
+        assert!(barrier.query());
         assert!(!barrier.is_drained());
         assert_eq!(
             barrier.debug_snapshot().phase,
@@ -1044,6 +1047,7 @@ mod tests {
             DepartOutcome::Drained
         );
         assert!(barrier.is_drained());
+        assert!(!barrier.query());
     }
 
     #[test]
@@ -1095,11 +1099,13 @@ mod tests {
                 .unwrap(),
             TreeDepart::Tail
         );
+        assert!(barrier.query());
         assert_eq!(barrier.try_enter(1), Err(CsnziError::DepartureTailBusy));
         assert_eq!(
             barrier.finish_departure_tail().unwrap(),
             DepartOutcome::Active
         );
+        assert!(!barrier.query());
         let next = barrier.try_enter(1).unwrap();
         next.depart().unwrap();
     }
@@ -1148,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_capacity_failures_poison_instead_of_wrapping() {
+    fn packed_capacity_failures_reject_without_wrapping_or_poisoning() {
         let root_overflow = Csnzi::<4>::new();
         root_overflow
             .root
@@ -1156,9 +1162,9 @@ mod tests {
             .store(ROOT_OPEN | ROOT_COUNT_MASK, Ordering::SeqCst);
         assert_eq!(
             root_overflow.root_arrive(),
-            Err(CsnziError::Poisoned(CsnziPoisonReason::RootCountOverflow))
+            Err(CsnziError::CapacityExhausted(CsnziCapacity::RootCount))
         );
-        assert!(!root_overflow.is_drained());
+        assert_eq!(root_overflow.poison_reason(), None);
 
         let generation_overflow = Csnzi::<4>::new();
         let leaf = generation_overflow.leaf_node(0).unwrap();
@@ -1167,9 +1173,9 @@ mod tests {
             .store(node_state(NODE_GENERATION_MASK, 0), Ordering::SeqCst);
         assert_eq!(
             generation_overflow.try_enter(0),
-            Err(CsnziError::Poisoned(CsnziPoisonReason::GenerationExhausted))
+            Err(CsnziError::CapacityExhausted(CsnziCapacity::Generation))
         );
-        assert!(!generation_overflow.is_drained());
+        assert_eq!(generation_overflow.poison_reason(), None);
     }
 
     #[test]

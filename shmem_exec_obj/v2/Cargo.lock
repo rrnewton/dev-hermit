@@ -380,6 +380,7 @@ name = "shmem-pod-preload-host"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "shmem-pod",
  "shmem-pod-runtime",
 ]
 
@@ -388,6 +389,7 @@ name = "shmem-pod-preload-shim"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "shmem-pod",
  "shmem-pod-runtime",
 ]
 
