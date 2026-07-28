@@ -14,6 +14,9 @@
 //! Safe shared resolution also relies on the unsafe destruction contract: no
 //! participant may destroy or mutate an allocation while a resolved borrow can
 //! exist anywhere in the process set.
+//! An interrupted exclusive `SharedVec` mutation is handled by the surrounding
+//! object lifecycle, not by the allocator: stop participants and discard that
+//! mapping generation rather than attempting to infer whether `len` published.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, needs_drop, offset_of, size_of};
@@ -88,7 +91,8 @@ impl<T: PodValue> SharedBox<T> {
     ///
     /// Before returning normally, `initialize` must write exactly one valid,
     /// fully initialized `T` without reading the destination. It must not leak
-    /// the pointer or access the same slot through another handle. Abort,
+    /// the pointer, recursively use this allocator/region, or access the same
+    /// slot through another handle. Abort,
     /// `execve`, or process death during the callback requires whole-generation
     /// restart rather than reuse.
     pub unsafe fn try_new_in_place<const SLOTS: usize>(

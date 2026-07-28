@@ -142,6 +142,23 @@ fn initialized(
 }
 
 #[test]
+fn null_descriptor_requires_the_complete_canonical_encoding() {
+    assert!(AllocationDescriptor::null().is_null());
+
+    let malformed = [
+        AllocationDescriptor::from_raw(0, u32::MAX, 0, u64::MAX, 1, 1, 0, 0),
+        AllocationDescriptor::from_raw(0, u32::MAX, 0, u64::MAX, 0, 2, 0, 0),
+        AllocationDescriptor::from_raw(0, u32::MAX, 0, u64::MAX, 0, 1, 1, 0),
+        AllocationDescriptor::from_raw(0, u32::MAX, 0, u64::MAX, 0, 1, 0, 1),
+    ];
+    assert!(
+        malformed
+            .into_iter()
+            .all(|descriptor| !descriptor.is_null())
+    );
+}
+
+#[test]
 fn exhaustion_reuse_stale_double_and_wrong_region_are_rejected() {
     let first_mapping = SharedMapping::anonymous();
     let (allocator, mut region) = initialized(&first_mapping, REGION_ID);
@@ -333,11 +350,15 @@ fn concurrent_alloc_free_is_bounded_and_leak_free() {
     std::thread::scope(|scope| {
         for worker in 0..8_u64 {
             scope.spawn(move || {
-                // SAFETY: independent local view of the same authenticated mapping.
-                let mut region = unsafe {
-                    allocator
-                        .attach(base_address as *mut u8, MAPPING_LEN, REGION_ID)
-                        .unwrap()
+                let mut region = loop {
+                    // SAFETY: independent local view of the same authenticated mapping.
+                    match unsafe {
+                        allocator.attach(base_address as *mut u8, MAPPING_LEN, REGION_ID)
+                    } {
+                        Ok(region) => break region,
+                        Err(RelocError::Busy) => std::thread::yield_now(),
+                        Err(error) => panic!("attach failed: {error}"),
+                    }
                 };
                 for iteration in 0..500_u64 {
                     let expected = worker << 32 | iteration;
@@ -491,37 +512,39 @@ fn exec_worker_resolves_integer_descriptor_at_different_address() {
         .parse::<usize>()
         .unwrap();
     let base = map_exec_worker(descriptor, parent_address);
-    let allocator = unsafe { &*base.cast::<TestAllocator>() };
-    // SAFETY: parent authenticated, initialized, and published the complete memfd.
-    let mut region = unsafe { allocator.attach(base, MAPPING_LEN, REGION_ID).unwrap() };
-    let descriptor_offset = std::mem::size_of::<TestAllocator>();
-    // SAFETY: parent wrote this copy before spawning the exec worker.
-    let allocation = unsafe {
-        base.add(descriptor_offset)
-            .cast::<AllocationDescriptor>()
-            .read()
-    };
-    // SAFETY: copied descriptor names the live box and this child never destroys it.
-    let value = unsafe { SharedBox::<AtomicU64>::from_descriptor(allocation) };
-    value.get(&region).unwrap().fetch_add(1, Ordering::Relaxed);
+    {
+        let allocator = unsafe { &*base.cast::<TestAllocator>() };
+        // SAFETY: parent authenticated, initialized, and published the complete memfd.
+        let mut region = unsafe { allocator.attach(base, MAPPING_LEN, REGION_ID).unwrap() };
+        let descriptor_offset = std::mem::size_of::<TestAllocator>();
+        // SAFETY: parent wrote this copy before spawning the exec worker.
+        let allocation = unsafe {
+            base.add(descriptor_offset)
+                .cast::<AllocationDescriptor>()
+                .read()
+        };
+        // SAFETY: copied descriptor names the live box and this child never destroys it.
+        let value = unsafe { SharedBox::<AtomicU64>::from_descriptor(allocation) };
+        value.get(&region).unwrap().fetch_add(1, Ordering::Relaxed);
 
-    let mut local = loop {
-        match SharedBox::new(&region, 10_u64) {
-            Ok(value) => break value,
-            Err(RelocError::Busy) => std::thread::yield_now(),
-            Err(error) => panic!("exec allocation failed: {error}"),
-        }
-    };
-    assert_eq!(*local.get(&region).unwrap(), 10);
-    unsafe { *local.get_mut(&mut region).unwrap() = 11 };
-    loop {
-        match unsafe { local.destroy(&mut region) } {
-            Ok(value) => {
-                assert_eq!(value, 11);
-                break;
+        let mut local = loop {
+            match SharedBox::new(&region, 10_u64) {
+                Ok(value) => break value,
+                Err(RelocError::Busy) => std::thread::yield_now(),
+                Err(error) => panic!("exec allocation failed: {error}"),
             }
-            Err(RelocError::Busy) => std::thread::yield_now(),
-            Err(error) => panic!("exec destruction failed: {error}"),
+        };
+        assert_eq!(*local.get(&region).unwrap(), 10);
+        unsafe { *local.get_mut(&mut region).unwrap() = 11 };
+        loop {
+            match unsafe { local.destroy(&mut region) } {
+                Ok(value) => {
+                    assert_eq!(value, 11);
+                    break;
+                }
+                Err(RelocError::Busy) => std::thread::yield_now(),
+                Err(error) => panic!("exec destruction failed: {error}"),
+            }
         }
     }
     assert_ne!(base as usize, parent_address);

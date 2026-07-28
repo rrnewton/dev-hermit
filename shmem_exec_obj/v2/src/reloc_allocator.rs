@@ -116,6 +116,10 @@ impl AllocationDescriptor {
             && self.slot == u32::MAX
             && self.generation == 0
             && self.offset == u64::MAX
+            && self.byte_len == 0
+            && self.alignment == 1
+            && self.fingerprint_low == 0
+            && self.fingerprint_high == 0
     }
 
     /// Returns the allocator generation identity.
@@ -490,6 +494,9 @@ impl<const SLOTS: usize> RelocAllocator<SLOTS> {
                 found: geometry.control_offset,
             });
         }
+        let operation = self.try_operation()?;
+        self.validate_metadata_locked()?;
+        drop(operation);
         Ok(RelocRegion::new(self, geometry.base, mapping_len))
     }
 
@@ -597,6 +604,55 @@ impl<const SLOTS: usize> RelocAllocator<SLOTS> {
             .compare_exchange(INITIALIZING, READY, Ordering::Release, Ordering::Acquire)
             .map(|_| ())
             .map_err(state_error)
+    }
+
+    fn validate_metadata_locked(&self) -> Result<(), RelocError> {
+        let slot_size = self.slot_size.load(Ordering::Relaxed);
+        for slot in 0..SLOTS {
+            let metadata = &self.slots[slot];
+            let token = metadata.token.load(Ordering::Acquire);
+            let generation = token & GENERATION_MASK;
+            let allocated = token & ALLOCATED_BIT != 0;
+            let (word, mask) = Self::word_and_mask(slot);
+            let bitmap_allocated = self.bitmap[word].load(Ordering::Acquire) & mask != 0;
+            let byte_len = metadata.byte_len.load(Ordering::Relaxed);
+            let alignment = metadata.alignment.load(Ordering::Relaxed);
+            let fingerprint = metadata.fingerprint_low.load(Ordering::Relaxed)
+                | metadata.fingerprint_high.load(Ordering::Relaxed);
+            let valid_free = !allocated
+                && !bitmap_allocated
+                && byte_len == 0
+                && alignment == 1
+                && fingerprint == 0;
+            let valid_allocated = allocated
+                && bitmap_allocated
+                && byte_len <= slot_size
+                && alignment.is_power_of_two()
+                && alignment <= RELOC_SLOT_ALIGNMENT as u64;
+            if generation == 0 || !(valid_free || valid_allocated) {
+                self.poison();
+                return Err(RelocError::CorruptMetadata { slot });
+            }
+        }
+
+        for word in 0..MAX_BITMAP_WORDS {
+            let first_slot = word * BITS_PER_WORD;
+            let valid_bits = if first_slot >= SLOTS {
+                0
+            } else {
+                let remaining = SLOTS - first_slot;
+                if remaining >= BITS_PER_WORD {
+                    u64::MAX
+                } else {
+                    (1_u64 << remaining) - 1
+                }
+            };
+            if self.bitmap[word].load(Ordering::Acquire) & !valid_bits != 0 {
+                self.poison();
+                return Err(RelocError::CorruptMetadata { slot: SLOTS });
+            }
+        }
+        Ok(())
     }
 
     fn word_and_mask(slot: usize) -> (usize, u64) {
@@ -1411,6 +1467,34 @@ mod tests {
         allocator.bitmap[word].fetch_and(!mask, Ordering::Release);
         assert!(matches!(
             value.get(&region),
+            Err(RelocError::CorruptMetadata { .. })
+        ));
+        assert_eq!(allocator.state(), RelocAllocatorState::Poisoned);
+    }
+
+    #[test]
+    fn attach_scans_bitmap_and_slot_metadata_before_returning_region() {
+        let mut bytes = AlignedBytes([0; 1024]);
+        let base = bytes.0.as_mut_ptr();
+        let pointer = base.cast::<RelocAllocator<2>>();
+        // SAFETY: aligned test bytes are exclusively initialized here.
+        unsafe { pointer.write(RelocAllocator::new()) };
+        // SAFETY: the initialized allocator lives for the test buffer's borrow.
+        let allocator = unsafe { &*pointer };
+        let arena_offset = size_of::<RelocAllocator<2>>().div_ceil(64) * 64;
+        // SAFETY: control and arena extents are disjoint within the live buffer.
+        let region = unsafe {
+            allocator
+                .initialize(base, bytes.0.len(), 9, arena_offset as u64, 64)
+                .unwrap()
+        };
+        let value = SharedBox::new(&region, 13_u64).unwrap();
+        let slot = value.descriptor().slot() as usize;
+        let (word, mask) = RelocAllocator::<2>::word_and_mask(slot);
+        allocator.bitmap[word].fetch_and(!mask, Ordering::Release);
+        // SAFETY: this is the same live mapping; attach must reject corruption.
+        assert!(matches!(
+            unsafe { allocator.attach(base, bytes.0.len(), 9) },
             Err(RelocError::CorruptMetadata { .. })
         ));
         assert_eq!(allocator.state(), RelocAllocatorState::Poisoned);

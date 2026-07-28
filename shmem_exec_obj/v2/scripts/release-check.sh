@@ -255,7 +255,7 @@ run_capture normal "inspect workspace publication policy" "$metadata" \
   cargo metadata --locked --format-version 1 --no-deps
 
 if [[ $dry_run == 0 ]]; then
-  for required in Cargo.toml README.md LICENSE-APACHE LICENSE-MIT src/lib.rs; do
+  for required in Cargo.toml README.md LICENSE-APACHE LICENSE-MIT src/lib.rs src/pod.rs; do
     grep -Fxq "$required" "$macro_list" || {
       echo "macro package is missing $required" >&2
       exit 1
@@ -263,10 +263,13 @@ if [[ $dry_run == 0 ]]; then
   done
   for required in \
     Cargo.toml Cargo.lock README.md LICENSE-APACHE LICENSE-MIT \
-    src/lib.rs src/mapping.rs src/admission.rs \
-    docs/locking.md docs/admission.md docs/support.md \
+    src/lib.rs src/mapping.rs src/admission.rs src/pod_api.rs \
+    src/collections.rs src/reloc_allocator.rs \
+    docs/locking.md docs/admission.md docs/relocatable-allocation.md docs/support.md \
     examples/README.md examples/typed_mapping.rs examples/closeable_snzi.rs \
-    tests/layout.rs tests/closeable_snzi.rs; do
+    examples/relocatable_collections.rs \
+    tests/layout.rs tests/closeable_snzi.rs tests/pod_api.rs \
+    tests/reloc_allocator.rs tests/shared_collections.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
       exit 1
@@ -312,6 +315,8 @@ else
     cargo run --locked --example snzi
   run_gate long "closeable SNZI admission process example" \
     cargo run --locked --example closeable_snzi
+  run_gate long "relocatable allocator and collections process example" \
+    cargo run --locked --example relocatable_collections
 
   if [[ $mode == quick ]]; then
     run_gate long "executable pod process smoke" \

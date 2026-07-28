@@ -120,6 +120,14 @@ fail-closed with `Busy`. A supervisor must then:
 A paused owner is indistinguishable from a dead owner without an external
 liveness protocol, so lock stealing is deliberately unsupported.
 
+`SharedVec` element mutation is protected by the caller's exclusive
+cross-process protocol rather than the allocator lock. If a participant dies
+while changing a vector, poison and replace the surrounding shared-object
+generation; do not guess whether its element write and length update completed.
+Death immediately after a completed allocation can also lose the returned
+descriptor and leak a slot. That leak never permits stale reuse, but recovery is
+still whole-generation replacement.
+
 ## Fixed-Address Allocator Separation
 
 `RelocAllocator` and the Talc-backed `FixedRegionAllocator` solve different

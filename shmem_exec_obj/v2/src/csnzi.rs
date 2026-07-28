@@ -20,7 +20,9 @@
 //! its last shared-memory access. Thus [`Csnzi::is_drained`] cannot race the
 //! final departure's control-memory tail. The barrier's own pages remain under
 //! an external lifetime protocol and must not be unmapped merely because the
-//! protected payload may now be reclaimed.
+//! protected payload may now be reclaimed. Non-final departures likewise make
+//! their successful decrement their last shared-memory access, but an outer
+//! attachment protocol is still required before unmapping the control object.
 //!
 //! # Crash and fork contract
 //!
@@ -66,6 +68,7 @@ const ROOT_CLOSED: u64 = 1_u64 << ROOT_STATUS_SHIFT;
 const ROOT_OPEN_TAIL: u64 = 2_u64 << ROOT_STATUS_SHIFT;
 const ROOT_CLOSED_TAIL: u64 = 3_u64 << ROOT_STATUS_SHIFT;
 const ROOT_DRAINED: u64 = 4_u64 << ROOT_STATUS_SHIFT;
+const ROOT_CLOSING: u64 = 5_u64 << ROOT_STATUS_SHIFT;
 const ROOT_STATUS_MASK: u64 = !ROOT_COUNT_MASK;
 
 const POISON_NONE: u64 = 0;
@@ -146,6 +149,12 @@ pub enum CsnziError {
     },
     /// Admission has closed permanently.
     Closed,
+    /// The final departure is completing while admission is still open.
+    ///
+    /// This transient state normally clears immediately. If its owner process
+    /// died, it remains forever and deliberately fails closed. Retrying is an
+    /// application policy decision; this method never lease-steals the state.
+    DepartureTailBusy,
     /// A raw scalar token has reserved bits or an impossible generation.
     MalformedToken,
     /// The token names an older or otherwise different leaf activation.
@@ -175,6 +184,9 @@ impl fmt::Display for CsnziError {
                 write!(formatter, "C-SNZI leaf {leaf} is outside 0..{leaf_count}")
             }
             Self::Closed => formatter.write_str("C-SNZI admission is closed"),
+            Self::DepartureTailBusy => {
+                formatter.write_str("C-SNZI final departure tail is still active")
+            }
             Self::MalformedToken => formatter.write_str("malformed C-SNZI token"),
             Self::GenerationMismatch {
                 leaf,
@@ -222,6 +234,8 @@ pub enum CsnziPhase {
     Open,
     /// Admission is closed while represented activity remains.
     Closed,
+    /// Empty admission has been atomically closed and is being verified.
+    Closing,
     /// A final departure is unwinding while admission remains logically open.
     OpenDepartureTail,
     /// A final departure is unwinding after admission closed.
@@ -361,6 +375,7 @@ pub struct Csnzi<const NODES: usize> {
 enum RootPhase {
     Open,
     Closed,
+    Closing,
     OpenTail,
     ClosedTail,
     Drained,
@@ -442,10 +457,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         // padding byte is initialized before the object becomes observable.
         unsafe {
             initialize_cacheline(core::ptr::addr_of_mut!((*destination).root), ROOT_OPEN);
-            initialize_cacheline(
-                core::ptr::addr_of_mut!((*destination).poison),
-                POISON_NONE,
-            );
+            initialize_cacheline(core::ptr::addr_of_mut!((*destination).poison), POISON_NONE);
             let nodes =
                 core::ptr::addr_of_mut!((*destination).nodes).cast::<CacheAlignedAtomicU64>();
             let mut index = 0;
@@ -464,10 +476,12 @@ impl<const NODES: usize> Csnzi<NODES> {
 
     /// Attempts to admit one participant at `leaf`.
     ///
-    /// An arrival first observes the root open. If the selected leaf is already
-    /// active, that observation is the operation's linearization point and only
-    /// the leaf cache line changes. If the leaf is idle, its activation is
-    /// represented parent-first and can still fail if close wins the root race.
+    /// An arrival first samples the root open. A successful same-leaf CAS can be
+    /// ordered at that earlier sample with respect to close, as in the SPAA
+    /// algorithm, but merely seeing open does not guarantee success: a final
+    /// departure can win the leaf race and a subsequent parent activation can
+    /// return [`CsnziError::Closed`] or [`CsnziError::DepartureTailBusy`]. The
+    /// successful leaf CAS is the local publication event.
     pub fn try_enter(&self, leaf: usize) -> Result<CsnziToken<'_, NODES>, CsnziError> {
         let node = self.leaf_node(leaf)?;
         self.ensure_healthy()?;
@@ -494,14 +508,30 @@ impl<const NODES: usize> Csnzi<NODES> {
             let (phase, count) = self.decode_root(root)?;
             match phase {
                 RootPhase::Open if count == 0 => {
-                    self.verify_nodes_idle()?;
                     match self.root.value.compare_exchange_weak(
                         root,
-                        ROOT_DRAINED,
+                        ROOT_CLOSING,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        Ok(_) => return Ok(CloseOutcome::Drained),
+                        Ok(_) => {
+                            self.verify_nodes_idle()?;
+                            match self.root.value.compare_exchange(
+                                ROOT_CLOSING,
+                                ROOT_DRAINED,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            ) {
+                                // The final CAS is the close operation's last
+                                // shared-memory access.
+                                Ok(_) => return Ok(CloseOutcome::Drained),
+                                Err(_) => {
+                                    return Err(
+                                        self.poison_with(CsnziPoisonReason::RootStateCorrupt)
+                                    );
+                                }
+                            }
+                        }
                         Err(observed) => root = observed,
                     }
                 }
@@ -526,7 +556,10 @@ impl<const NODES: usize> Csnzi<NODES> {
                     Ok(_) => return Ok(CloseOutcome::Pending),
                     Err(observed) => root = observed,
                 },
-                RootPhase::Closed | RootPhase::ClosedTail | RootPhase::Drained => {
+                RootPhase::Closed
+                | RootPhase::Closing
+                | RootPhase::ClosedTail
+                | RootPhase::Drained => {
                     return Ok(CloseOutcome::AlreadyClosed);
                 }
             }
@@ -539,7 +572,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         let root = self.root.value.load(Ordering::SeqCst);
         matches!(
             root & ROOT_STATUS_MASK,
-            ROOT_CLOSED | ROOT_CLOSED_TAIL | ROOT_DRAINED
+            ROOT_CLOSED | ROOT_CLOSING | ROOT_CLOSED_TAIL | ROOT_DRAINED
         )
     }
 
@@ -579,6 +612,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         let phase = match root & ROOT_STATUS_MASK {
             ROOT_OPEN => CsnziPhase::Open,
             ROOT_CLOSED => CsnziPhase::Closed,
+            ROOT_CLOSING => CsnziPhase::Closing,
             ROOT_OPEN_TAIL => CsnziPhase::OpenDepartureTail,
             ROOT_CLOSED_TAIL => CsnziPhase::ClosedDepartureTail,
             ROOT_DRAINED => CsnziPhase::Drained,
@@ -589,7 +623,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         let mut invalid_nodes = 0;
         let mut index = 0;
         while index < NODES {
-            let state = self.nodes[index].value.load(Ordering::SeqCst);
+            let state = self.node_value(index).load(Ordering::SeqCst);
             let count = node_count(state);
             let generation = node_generation(state);
             if state & NODE_RESERVED_BIT != 0 || (count != 0 && generation == 0) {
@@ -644,16 +678,24 @@ impl<const NODES: usize> Csnzi<NODES> {
         Ok(Self::leaf_start() + leaf)
     }
 
+    #[inline(always)]
+    fn node_value(&self, index: usize) -> &AtomicU64 {
+        debug_assert!(index < NODES);
+        // SAFETY: callers pass either a range-checked leaf, an index from a
+        // `0..NODES` scan, or `(child - FANOUT) / FANOUT`, which is strictly
+        // smaller than an already valid child index. Pointer access avoids a
+        // rustc 1.85 bounds-check panic edge in freestanding PIC output.
+        unsafe { &(*self.nodes.as_ptr().add(index)).value }
+    }
+
     fn observe_open(&self) -> Result<(), CsnziError> {
-        loop {
-            let root = self.root.value.load(Ordering::SeqCst);
-            let (phase, _) = self.decode_root(root)?;
-            match phase {
-                RootPhase::Open => return Ok(()),
-                RootPhase::OpenTail => core::hint::spin_loop(),
-                RootPhase::Closed | RootPhase::ClosedTail | RootPhase::Drained => {
-                    return Err(CsnziError::Closed);
-                }
+        let root = self.root.value.load(Ordering::SeqCst);
+        let (phase, _) = self.decode_root(root)?;
+        match phase {
+            RootPhase::Open => Ok(()),
+            RootPhase::OpenTail => Err(CsnziError::DepartureTailBusy),
+            RootPhase::Closed | RootPhase::Closing | RootPhase::ClosedTail | RootPhase::Drained => {
+                Err(CsnziError::Closed)
             }
         }
     }
@@ -662,7 +704,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         let mut arrived_at_parent = false;
         loop {
             self.ensure_healthy()?;
-            let state = self.nodes[node].value.load(Ordering::SeqCst);
+            let state = self.node_value(node).load(Ordering::SeqCst);
             self.validate_node_state(state)?;
             let count = node_count(state);
             let generation = node_generation(state);
@@ -688,19 +730,18 @@ impl<const NODES: usize> Csnzi<NODES> {
                 generation
             };
             let incremented = node_state(next_generation, count + 1);
-            match self.nodes[node].value.compare_exchange_weak(
+            match self.node_value(node).compare_exchange_weak(
                 state,
                 incremented,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
                 Ok(_) => {
-                    if arrived_at_parent && count != 0 {
-                        if self.depart_parent(node)? == TreeDepart::Tail {
-                            return Err(self.poison_with(
-                                CsnziPoisonReason::CompensationSelectedTail,
-                            ));
-                        }
+                    if arrived_at_parent
+                        && count != 0
+                        && self.depart_parent(node)? == TreeDepart::Tail
+                    {
+                        return Err(self.poison_with(CsnziPoisonReason::CompensationSelectedTail));
                     }
                     return Ok(next_generation);
                 }
@@ -713,10 +754,10 @@ impl<const NODES: usize> Csnzi<NODES> {
         let node = self.leaf_node(leaf)?;
         self.ensure_healthy()?;
         match self.depart_node(node, Some((leaf, generation)))? {
-            TreeDepart::Active => {
-                self.ensure_healthy()?;
-                Ok(DepartOutcome::Active)
-            }
+            // The successful node/ancestor CAS was this non-final departure's
+            // last shared-memory access. A later final departure may seal drain
+            // while only stack/register work remains here.
+            TreeDepart::Active => Ok(DepartOutcome::Active),
             TreeDepart::Tail => self.finish_departure_tail(),
         }
     }
@@ -728,7 +769,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     ) -> Result<TreeDepart, CsnziError> {
         loop {
             self.ensure_healthy()?;
-            let state = self.nodes[node].value.load(Ordering::SeqCst);
+            let state = self.node_value(node).load(Ordering::SeqCst);
             self.validate_node_state(state)?;
             let count = node_count(state);
             let generation = node_generation(state);
@@ -752,7 +793,7 @@ impl<const NODES: usize> Csnzi<NODES> {
             }
 
             let decremented = node_state(generation, count - 1);
-            match self.nodes[node].value.compare_exchange_weak(
+            match self.node_value(node).compare_exchange_weak(
                 state,
                 decremented,
                 Ordering::SeqCst,
@@ -789,12 +830,10 @@ impl<const NODES: usize> Csnzi<NODES> {
             self.ensure_healthy()?;
             let (phase, count) = self.decode_root(root)?;
             match phase {
-                RootPhase::OpenTail => {
-                    core::hint::spin_loop();
-                    root = self.root.value.load(Ordering::SeqCst);
-                    continue;
+                RootPhase::OpenTail => return Err(CsnziError::DepartureTailBusy),
+                RootPhase::Closing | RootPhase::ClosedTail | RootPhase::Drained => {
+                    return Err(CsnziError::Closed);
                 }
-                RootPhase::ClosedTail | RootPhase::Drained => return Err(CsnziError::Closed),
                 RootPhase::Closed if count == 0 => return Err(CsnziError::Closed),
                 RootPhase::Open | RootPhase::Closed => {}
             }
@@ -875,7 +914,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     fn verify_nodes_idle(&self) -> Result<(), CsnziError> {
         let mut index = 0;
         while index < NODES {
-            let state = self.nodes[index].value.load(Ordering::SeqCst);
+            let state = self.node_value(index).load(Ordering::SeqCst);
             self.validate_node_state(state)?;
             if node_count(state) != 0 {
                 return Err(self.poison_with(CsnziPoisonReason::InvariantViolation));
@@ -886,8 +925,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     }
 
     fn validate_node_state(&self, state: u64) -> Result<(), CsnziError> {
-        if state & NODE_RESERVED_BIT != 0
-            || (node_count(state) != 0 && node_generation(state) == 0)
+        if state & NODE_RESERVED_BIT != 0 || (node_count(state) != 0 && node_generation(state) == 0)
         {
             return Err(self.poison_with(CsnziPoisonReason::InvariantViolation));
         }
@@ -899,6 +937,7 @@ impl<const NODES: usize> Csnzi<NODES> {
         let phase = match root & ROOT_STATUS_MASK {
             ROOT_OPEN => RootPhase::Open,
             ROOT_CLOSED => RootPhase::Closed,
+            ROOT_CLOSING if count == 0 => RootPhase::Closing,
             ROOT_OPEN_TAIL if count == 0 => RootPhase::OpenTail,
             ROOT_CLOSED_TAIL if count == 0 => RootPhase::ClosedTail,
             ROOT_DRAINED if count == 0 => RootPhase::Drained,
@@ -1039,18 +1078,104 @@ mod tests {
     #[test]
     fn closed_zero_root_rejects_delayed_parent_activation() {
         let barrier = Csnzi::<4>::new();
+        barrier.observe_open().unwrap();
         barrier.close().unwrap();
-        assert_eq!(barrier.root_arrive(), Err(CsnziError::Closed));
+        assert_eq!(barrier.arrive_node(0), Err(CsnziError::Closed));
         assert!(barrier.is_drained());
+    }
+
+    #[test]
+    fn open_tail_is_bounded_busy_and_can_return_to_open() {
+        let barrier = Csnzi::<4>::new();
+        let token = barrier.try_enter(0).unwrap();
+        let leaf = barrier.leaf_node(0).unwrap();
+        assert_eq!(
+            barrier
+                .depart_node(leaf, Some((0, token.generation())))
+                .unwrap(),
+            TreeDepart::Tail
+        );
+        assert_eq!(barrier.try_enter(1), Err(CsnziError::DepartureTailBusy));
+        assert_eq!(
+            barrier.finish_departure_tail().unwrap(),
+            DepartOutcome::Active
+        );
+        let next = barrier.try_enter(1).unwrap();
+        next.depart().unwrap();
+    }
+
+    #[test]
+    fn closer_crash_after_claiming_empty_root_fails_closed() {
+        let barrier = Csnzi::<4>::new();
+        barrier
+            .root
+            .value
+            .compare_exchange(ROOT_OPEN, ROOT_CLOSING, Ordering::SeqCst, Ordering::SeqCst)
+            .unwrap();
+        assert!(barrier.is_closed());
+        assert!(!barrier.is_drained());
+        assert_eq!(barrier.try_enter(0), Err(CsnziError::Closed));
+        assert_eq!(barrier.close().unwrap(), CloseOutcome::AlreadyClosed);
+    }
+
+    #[test]
+    fn redundant_parent_contribution_model_compensates_to_one() {
+        let barrier = Csnzi::<4>::new();
+        let leaf = barrier.leaf_node(0).unwrap();
+
+        // Model the two recursive parent arrivals made by racing activators.
+        barrier.root_arrive().unwrap();
+        barrier.root_arrive().unwrap();
+        barrier.nodes[leaf]
+            .value
+            .compare_exchange(0, node_state(1, 1), Ordering::SeqCst, Ordering::SeqCst)
+            .unwrap();
+        barrier.nodes[leaf]
+            .value
+            .compare_exchange(
+                node_state(1, 1),
+                node_state(1, 2),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .unwrap();
+        assert_eq!(barrier.root_depart().unwrap(), TreeDepart::Active);
+        assert_eq!(barrier.debug_snapshot().root_count, 1);
+        assert_eq!(
+            node_count(barrier.nodes[leaf].value.load(Ordering::SeqCst)),
+            2
+        );
+    }
+
+    #[test]
+    fn packed_capacity_failures_poison_instead_of_wrapping() {
+        let root_overflow = Csnzi::<4>::new();
+        root_overflow
+            .root
+            .value
+            .store(ROOT_OPEN | ROOT_COUNT_MASK, Ordering::SeqCst);
+        assert_eq!(
+            root_overflow.root_arrive(),
+            Err(CsnziError::Poisoned(CsnziPoisonReason::RootCountOverflow))
+        );
+        assert!(!root_overflow.is_drained());
+
+        let generation_overflow = Csnzi::<4>::new();
+        let leaf = generation_overflow.leaf_node(0).unwrap();
+        generation_overflow.nodes[leaf]
+            .value
+            .store(node_state(NODE_GENERATION_MASK, 0), Ordering::SeqCst);
+        assert_eq!(
+            generation_overflow.try_enter(0),
+            Err(CsnziError::Poisoned(CsnziPoisonReason::GenerationExhausted))
+        );
+        assert!(!generation_overflow.is_drained());
     }
 
     #[test]
     fn impossible_root_state_poison_is_fail_closed() {
         let barrier = Csnzi::<4>::new();
-        barrier
-            .root
-            .value
-            .store(ROOT_DRAINED | 1, Ordering::SeqCst);
+        barrier.root.value.store(ROOT_DRAINED | 1, Ordering::SeqCst);
         assert!(matches!(
             barrier.close(),
             Err(CsnziError::Poisoned(CsnziPoisonReason::RootStateCorrupt))

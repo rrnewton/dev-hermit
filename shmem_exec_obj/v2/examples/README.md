@@ -73,7 +73,21 @@ first, and waits for every accepted token to depart.
 cargo run --example closeable_snzi
 ```
 
-## 6. Fixed-Address Allocation
+## 6. Relocatable Allocation
+
+`relocatable_collections.rs` places integer-only allocator metadata,
+`SharedBox`, and `SharedVec` descriptors in caller-selected pages. It shows the
+explicit close/drain/exclusive-destroy discipline; the integration test adds an
+independent `exec` process mapped at a different address.
+
+```text
+cargo run --example relocatable_collections
+```
+
+See the [relocatable allocation guide](../docs/relocatable-allocation.md) for
+generation checks, bounded-lock crash policy, and the contrast with Talc.
+
+## 7. Fixed-Address Allocation
 
 `fixed_allocator_fork.rs` initializes Talc over caller-selected pages and
 allocates concurrently after `fork`. Fork preserves the arena's address, and

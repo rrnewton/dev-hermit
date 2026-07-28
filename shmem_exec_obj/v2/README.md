@@ -15,6 +15,8 @@ The crate focuses on the hard parts of the state representation:
   admissions, and prevents teardown from racing a late user;
 - checked relative offsets work when each process maps the state at a different
   virtual address;
+- a fixed-capacity relocatable allocator and pointer-free `SharedBox`/`SharedVec`
+  descriptors keep all persistent ownership metadata inside known pages;
 - process-shared atomics, spin locks, Linux futex locks, and SNZI cover several
   synchronization patterns; and
 - an optional Talc allocator uses an exact caller-supplied range of shared
@@ -312,6 +314,32 @@ cargo run --example closeable_snzi
 
 ## Allocate Inside Known Pages
 
+`RelocAllocator<SLOTS>` is the preferred address-independent allocation tier.
+It divides a caller-selected arena into fixed-size slots and persists only
+integer geometry, allocation bitmaps, generation tags, and layout fingerprints.
+Each process supplies its own mapping base through a process-local
+`RelocRegion`, so one backing object can be mapped at different virtual
+addresses. Stale, wrong-region, misaligned, corrupt, and wrong-layout
+descriptors are rejected before a local pointer is formed.
+
+`SharedBox<T>` and fixed-capacity `SharedVec<T>` store only an
+`AllocationDescriptor`, lengths, and zero-sized type markers. They intentionally
+have no destructor: shared ownership cannot decide which process should free a
+slot. After closing admission and proving that every process and resolved borrow
+has drained, the unique owner calls the explicit unsafe `destroy` method. A
+process killed during an allocator transaction leaves the bounded operation lock
+held; callers return `Busy`, and a supervisor poisons and replaces the complete
+mapping generation rather than stealing the lock.
+
+```text
+cargo run --example relocatable_collections
+```
+
+The [relocatable allocation guide](docs/relocatable-allocation.md) covers
+geometry, lifecycle, crash behavior, and the different-address `exec` evidence.
+
+### Fixed-Address Allocator API Tier
+
 Enable `fixed-allocator` to bind Talc to an exact caller-supplied shared range:
 
 ```toml
@@ -390,6 +418,8 @@ cargo run --example relative_offsets
 cargo run --example shared_counters
 cargo run --features linux-futex --example futex_mutex
 cargo run --example snzi
+cargo run --example closeable_snzi
+cargo run --example relocatable_collections
 cargo run --features fixed-allocator --example fixed_allocator_fork
 cargo run --features fixed-allocator --example fixed_allocator_exec
 ```
