@@ -217,7 +217,7 @@ def compare_runs(
         report.append("PASS: QEMU argv matches anchor")
     else:
         passed = False
-        report.append("WARN: QEMU argv differs from anchor")
+        report.append("ERROR: QEMU argv differs from anchor")
     for field, label in (
         ("qcow2_sha256", "qcow2 SHA-256"),
         ("guest_output_sha256", "guest output SHA-256"),
@@ -229,7 +229,7 @@ def compare_runs(
         else:
             passed = False
             report.append(
-                "WARN: {} differs: anchor={} current={}".format(
+                "ERROR: {} differs: anchor={} current={}".format(
                     label, anchor.get(field), current.get(field)
                 )
             )
@@ -241,13 +241,13 @@ def compare_runs(
         if difference:
             passed = False
             report.append(
-                "WARN: normalized Hermit INFO log differs\n{}".format(difference)
+                "ERROR: normalized Hermit INFO log differs\n{}".format(difference)
             )
         else:
             report.append("PASS: normalized Hermit INFO log matches")
     else:
         passed = False
-        report.append("WARN: anchor INFO log is unavailable")
+        report.append("ERROR: anchor INFO log is unavailable")
     return passed, report
 
 
@@ -259,8 +259,11 @@ def print_comparison(
 ) -> None:
     for line in report:
         print(line)
-    print("PASS: run matches anchor" if passed else "WARN: RUN DIVERGED FROM ANCHOR")
-    if passed and snapshot_sha256 is not None:
+    if not passed:
+        print("ERROR: RUN DIVERGED FROM ANCHOR")
+        raise RuntimeError("run diverged from anchor")
+    print("PASS: run matches anchor")
+    if snapshot_sha256 is not None:
         print()
         print("🎉 DETERMINISTIC! Snapshot SHA-256 matches previous run:")
         print("   {}".format(snapshot_sha256))
