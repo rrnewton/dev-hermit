@@ -56,7 +56,9 @@ Each run creates three text files:
   and normalized harness lockfile SHA-256 values, host/kernel/CPU/toolchain,
   observed CPU affinity, cgroup-v2 path, tightest inherited CPU and memory
   limits with their source cgroups, effective cpuset, pod artifact SHA-256,
-  profile, timer, and all workload counts.
+  profile, timer, and all workload counts. It is written last with a complete
+  marker and the exact result-row count, so its presence identifies a
+  successful full run.
 - `results.jsonl` contains one
   `shmem-pod-benchmark-result-v1` object per timing sample.
 - `results.csv` contains the same fields with a header for statistical tools.

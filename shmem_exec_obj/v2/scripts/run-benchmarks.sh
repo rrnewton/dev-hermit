@@ -252,6 +252,8 @@ jq -e \
   --argjson samples "$samples" \
   --argjson workers "$workers" \
   '.schema == "shmem-pod-benchmark-environment-v1"
+   and .complete == true
+   and .result_rows == $samples * 22
    and .configuration.warmup_operations_per_worker == $warmup
    and .configuration.iterations_per_worker == $iterations
    and .configuration.samples == $samples

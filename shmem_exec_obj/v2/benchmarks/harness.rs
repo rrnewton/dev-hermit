@@ -366,7 +366,7 @@ fn cgroup_metadata() -> CgroupMetadata {
     }
 }
 
-fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
+fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
     let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
     let cgroup = cgroup_metadata();
@@ -378,6 +378,8 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
             "{{\n",
             "  \"schema\": \"shmem-pod-benchmark-environment-v1\",\n",
             "  \"run_id\": \"{}\",\n",
+            "  \"complete\": true,\n",
+            "  \"result_rows\": {},\n",
             "  \"source_revision\": \"{}\",\n",
             "  \"source_dirty\": {},\n",
             "  \"cargo_lock_sha256\": \"{}\",\n",
@@ -391,6 +393,7 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
             "}}"
         ),
         json_escape(run_id),
+        result_rows,
         json_escape(&environment("SHMEM_POD_BENCH_GIT_SHA")),
         environment("SHMEM_POD_BENCH_GIT_DIRTY") == "1",
         json_escape(&environment("SHMEM_POD_BENCH_LOCK_SHA256")),
@@ -1246,7 +1249,6 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let config = Config::parse()?;
     let run_id = environment("SHMEM_POD_BENCH_RUN_ID");
-    write_environment(&config, &run_id)?;
     let mut writer = ResultWriter::create(&config.output_dir, run_id.clone())?;
 
     benchmark_direct(&config, &mut writer)?;
@@ -1262,6 +1264,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     benchmark_relocatable(&config, &mut writer)?;
 
     let rows = writer.finish()?;
+    // The environment file is also the completion marker. A failed run may
+    // leave individually verified rows, but never metadata claiming the whole
+    // configured matrix succeeded.
+    write_environment(&config, &run_id, rows)?;
     println!(
         "benchmark-ok run_id={run_id} rows={rows} output={} warmup={} iterations={} samples={} workers={} verified=true",
         config.output_dir.display(),
