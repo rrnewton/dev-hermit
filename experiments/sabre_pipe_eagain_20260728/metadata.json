@@ -1,0 +1,43 @@
+{
+  "experiment": "sabre_pipe_eagain_20260728",
+  "date": "2026-07-28",
+  "task": "compat-sabre-ratchet-round3",
+  "question": "SaBRe backend L2 matrix + root-cause any genuine sabre-only failure",
+  "backend_under_test": "sabre",
+  "comparison_backend": "ptrace",
+  "hermit": {
+    "checkout": "~/work/dev-hermit/worktrees/275/hermit",
+    "binary": "target/release/hermit",
+    "slot_head_sha": "15293c34bc9a957d62314ab727dea5bba2d98df7",
+    "slot_branch": "codex/qemu-userspace-program-l2"
+  },
+  "reverie_pin": "9233c0d099ce3bdc820958aa3071a6c1439bc249",
+  "host": {
+    "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+    "arch": "x86_64",
+    "hostname": "devbig030.atn3.facebook.com"
+  },
+  "toolchain": {
+    "gcc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "commands": {
+    "fail_sabre": "hermit run --backend sabre --strict -- /bin/sh -c 'head -c 1000 /dev/urandom | wc -c'",
+    "pass_ptrace": "hermit run --backend ptrace --strict -- /bin/sh -c 'head -c 1000 /dev/urandom | wc -c'",
+    "proof_child_flag_leak": "hermit run --backend sabre --strict -- /bin/sh -c '{ sleep 0.05; echo hello; } | /var/tmp/reader2'",
+    "build_reader": "gcc -O0 reader2.c -o /var/tmp/reader2"
+  },
+  "results": {
+    "example_set_sabre_l2": "4/4 PASS (date.sh, race.sh, rand.py via /usr/bin/python3, timed-progress-bar.py); devrand.sh excluded",
+    "fail_sabre": "wc prints 0 then EAGAIN 'Resource temporarily unavailable', rc=1",
+    "pass_ptrace": "1000, rc=0",
+    "proof_execd_child": "fcntl(F_GETFL) O_NONBLOCK=1, read()=-1 (leaked); root guest same binary O_NONBLOCK=0, read()=6 (masked)"
+  },
+  "native_baselines": {
+    "head -c 1000 /dev/urandom | wc -c": "1000",
+    "echo hi | wc -c": "3",
+    "/usr/bin/python3 -c 'print(2+2)'": "4"
+  },
+  "root_cause": "Detcore forces container-internal pipe fds physically O_NONBLOCK (nonblockize-and-retry scheduler) while masking the flag from the guest logical view; masking only holds when read/write/fcntl are Detcore-mediated. Under sabre, an execve'd pipeline child has libdetcore_sabre.so loaded but its libc syscall sites are NOT SaBRe-rewritten, so its libc read/write run raw, reach the ptrace fallback (sabre_ptrace.rs), which blanket-trusts all .so mappings (anti-recursion) and runs them natively against the real physically-O_NONBLOCK fd -> EAGAIN never routed through Detcore's retry loop.",
+  "fix_status": "Not landed. Architectural: correct fix is SaBRe re-instrumenting execve'd children's libc (pinned reverie/SaBRe dep, needs approval + branch + pin bump). Same disposition bucket as reverie#207 RT-signal bug.",
+  "issue": "https://github.com/rrnewton/hermit/issues/1035"
+}

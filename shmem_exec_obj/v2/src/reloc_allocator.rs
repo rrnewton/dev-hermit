@@ -23,7 +23,7 @@
 use core::fmt;
 use core::hint::spin_loop;
 use core::marker::PhantomData;
-use core::mem::{align_of, needs_drop, size_of};
+use core::mem::{align_of, needs_drop, offset_of, size_of};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -908,6 +908,21 @@ fn state_error(raw: u32) -> RelocError {
         READY => RelocError::AlreadyInitialized,
         _ => RelocError::Poisoned,
     }
+}
+
+const fn mix_field(
+    mut state: u128,
+    name: &[u8],
+    offset: usize,
+    size: usize,
+    alignment: usize,
+    fingerprint: u128,
+) -> u128 {
+    state = __private::mix_bytes(state, name);
+    state = __private::mix_usize(state, offset);
+    state = __private::mix_usize(state, size);
+    state = __private::mix_usize(state, alignment);
+    __private::mix_u128(state, fingerprint)
 }
 
 /// Failure to initialize, attach, allocate, resolve, or destroy shared storage.
