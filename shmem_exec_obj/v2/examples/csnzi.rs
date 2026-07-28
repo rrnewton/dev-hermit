@@ -121,6 +121,19 @@ unsafe fn freestanding_object<'a>(state: *mut u8) -> Option<&'a FreestandingCsnz
     Some(unsafe { &*state.cast::<FreestandingCsnzi>() })
 }
 
+#[cfg(csnzi_freestanding)]
+fn output_overlaps_state(state: *mut u8, output: *mut u64) -> bool {
+    let state_start = state as usize;
+    let output_start = output as usize;
+    let Some(state_end) = state_start.checked_add(core::mem::size_of::<FreestandingCsnzi>()) else {
+        return true;
+    };
+    let Some(output_end) = output_start.checked_add(core::mem::size_of::<u64>()) else {
+        return true;
+    };
+    state_start < output_end && output_start < state_end
+}
+
 /// Freestanding ABI: returns the required state size.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
@@ -136,6 +149,11 @@ pub extern "C" fn shmem_pod_layout_align() -> u64 {
 }
 
 /// Freestanding ABI: initializes a C-SNZI directly in final storage.
+///
+/// # Safety
+///
+/// `state` must name an exclusively writable region of at least `region_len`
+/// bytes which remains live for the initialized object's lifetime.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_init(state: *mut u8, region_len: u64) -> i32 {
@@ -152,10 +170,15 @@ pub unsafe extern "C" fn shmem_pod_init(state: *mut u8, region_len: u64) -> i32 
 }
 
 /// Freestanding ABI: admits one participant and writes its raw token.
+///
+/// # Safety
+///
+/// `state` must name a live initialized `FreestandingCsnzi`. `output` must be
+/// writable for eight bytes and must not overlap that state object.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_csnzi_enter(state: *mut u8, leaf: u64, output: *mut u64) -> i32 {
-    if output.is_null() || leaf > usize::MAX as u64 {
+    if output.is_null() || leaf > usize::MAX as u64 || output_overlaps_state(state, output) {
         return -1;
     }
     // SAFETY: The ABI requires state to remain live for the complete call.
@@ -164,8 +187,9 @@ pub unsafe extern "C" fn shmem_pod_csnzi_enter(state: *mut u8, leaf: u64, output
     };
     match object.try_enter(leaf as usize) {
         Ok(token) => {
-            // SAFETY: output was checked non-null and the ABI requires it writable.
-            unsafe { output.write(token.into_raw()) };
+            // SAFETY: The ABI requires eight writable, non-overlapping bytes;
+            // write_unaligned accepts every non-null byte alignment.
+            unsafe { output.write_unaligned(token.into_raw()) };
             0
         }
         Err(shmem_pod::csnzi::CsnziError::Closed) => -2,
@@ -175,6 +199,11 @@ pub unsafe extern "C" fn shmem_pod_csnzi_enter(state: *mut u8, leaf: u64, output
 }
 
 /// Freestanding ABI: consumes one raw token.
+///
+/// # Safety
+///
+/// `state` must name the live initialized object which issued `token`, and the
+/// caller must own the sole unconsumed copy of that token.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_csnzi_depart(state: *mut u8, token: u64) -> i32 {
@@ -191,6 +220,10 @@ pub unsafe extern "C" fn shmem_pod_csnzi_depart(state: *mut u8, token: u64) -> i
 }
 
 /// Freestanding ABI: permanently closes admission.
+///
+/// # Safety
+///
+/// `state` must name a live initialized `FreestandingCsnzi` for the whole call.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_csnzi_close(state: *mut u8) -> i32 {
@@ -207,6 +240,10 @@ pub unsafe extern "C" fn shmem_pod_csnzi_close(state: *mut u8) -> i32 {
 }
 
 /// Freestanding ABI: reports possible represented presence.
+///
+/// # Safety
+///
+/// `state` must name a live initialized `FreestandingCsnzi` for the whole call.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_csnzi_query(state: *mut u8) -> u64 {
@@ -217,6 +254,10 @@ pub unsafe extern "C" fn shmem_pod_csnzi_query(state: *mut u8) -> u64 {
 }
 
 /// Freestanding ABI: reports stable terminal drain.
+///
+/// # Safety
+///
+/// `state` must name a live initialized `FreestandingCsnzi` for the whole call.
 #[cfg(csnzi_freestanding)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shmem_pod_csnzi_drained(state: *mut u8) -> u64 {
