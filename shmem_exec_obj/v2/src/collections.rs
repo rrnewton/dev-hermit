@@ -174,9 +174,7 @@ impl<T: PodValue> SharedBox<T> {
             return Err(RelocError::Empty);
         }
         // SAFETY: forwarded exclusive destruction contract.
-        let value = unsafe {
-            region.take_value::<T>(self.allocation, box_layout::<T>())?
-        };
+        let value = unsafe { region.take_value::<T>(self.allocation, box_layout::<T>())? };
         self.allocation = AllocationDescriptor::null();
         Ok(value)
     }
@@ -196,10 +194,7 @@ impl<T: PodValue> core::fmt::Debug for SharedBox<T> {
 unsafe impl<T: PodValue> FixedAddressPodValue for SharedBox<T> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "shared boxes must not need drop");
-        let state = __private::mix_bytes(
-            __private::FINGERPRINT_SEED,
-            b"shmem-pod-shared-box-v1",
-        );
+        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-box-v1");
         let state = __private::mix_usize(state, size_of::<Self>());
         let state = __private::mix_usize(state, align_of::<Self>());
         __private::finish(__private::mix_u128(state, T::FINGERPRINT))
@@ -249,12 +244,8 @@ impl<T: PodValue> SharedVec<T> {
         let byte_len = size_of::<T>()
             .checked_mul(capacity)
             .ok_or(RelocError::LengthOverflow)?;
-        let allocation = region.allocate_with(
-            vec_layout::<T>(),
-            byte_len,
-            align_of::<T>(),
-            |_| {},
-        )?;
+        let allocation =
+            region.allocate_with(vec_layout::<T>(), byte_len, align_of::<T>(), |_| {})?;
         Ok(Self {
             allocation,
             len: 0,
@@ -426,8 +417,7 @@ impl<T: PodValue> SharedVec<T> {
 
     fn checked_lengths(&self) -> Result<(usize, usize), RelocError> {
         let len = usize::try_from(self.len).map_err(|_| RelocError::LengthOverflow)?;
-        let capacity =
-            usize::try_from(self.capacity).map_err(|_| RelocError::LengthOverflow)?;
+        let capacity = usize::try_from(self.capacity).map_err(|_| RelocError::LengthOverflow)?;
         if capacity > isize::MAX as usize || len > capacity {
             return Err(RelocError::LengthOverflow);
         }
@@ -464,10 +454,7 @@ impl<T: PodValue> core::fmt::Debug for SharedVec<T> {
 unsafe impl<T: PodValue> FixedAddressPodValue for SharedVec<T> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "shared vectors must not need drop");
-        let state = __private::mix_bytes(
-            __private::FINGERPRINT_SEED,
-            b"shmem-pod-shared-vec-v1",
-        );
+        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-vec-v1");
         let state = __private::mix_usize(state, size_of::<Self>());
         let state = __private::mix_usize(state, align_of::<Self>());
         __private::finish(__private::mix_u128(state, T::FINGERPRINT))

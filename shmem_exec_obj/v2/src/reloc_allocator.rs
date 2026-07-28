@@ -250,7 +250,8 @@ impl<const SLOTS: usize> RelocAllocator<SLOTS> {
         let mut allocated = 0_usize;
         let words = SLOTS.div_ceil(BITS_PER_WORD).min(MAX_BITMAP_WORDS);
         for word in &self.bitmap[..words] {
-            allocated = allocated.saturating_add(word.load(Ordering::Acquire).count_ones() as usize);
+            allocated =
+                allocated.saturating_add(word.load(Ordering::Acquire).count_ones() as usize);
         }
         RelocAllocatorSnapshot {
             state: self.state(),
@@ -493,12 +494,16 @@ impl<const SLOTS: usize> Default for RelocAllocator<SLOTS> {
 // stored. The const parameter is included in the exact-build fingerprint.
 unsafe impl<const SLOTS: usize> FixedAddressPodValue for RelocAllocator<SLOTS> {
     const FINGERPRINT: u128 = {
-        assert!(!needs_drop::<Self>(), "relocatable allocators must not need drop");
-        assert!(SLOTS > 0 && SLOTS <= MAX_RELOC_SLOTS, "unsupported slot count");
-        let state = __private::mix_bytes(
-            __private::FINGERPRINT_SEED,
-            b"shmem-pod-reloc-allocator-v1",
+        assert!(
+            !needs_drop::<Self>(),
+            "relocatable allocators must not need drop"
         );
+        assert!(
+            SLOTS > 0 && SLOTS <= MAX_RELOC_SLOTS,
+            "unsupported slot count"
+        );
+        let state =
+            __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-reloc-allocator-v1");
         let state = __private::mix_usize(state, SLOTS);
         let state = __private::mix_usize(state, size_of::<Self>());
         __private::finish(__private::mix_usize(state, align_of::<Self>()))
@@ -563,11 +568,7 @@ unsafe impl<const SLOTS: usize> Send for RelocRegion<'_, SLOTS> {}
 unsafe impl<const SLOTS: usize> Sync for RelocRegion<'_, SLOTS> {}
 
 impl<'mapping, const SLOTS: usize> RelocRegion<'mapping, SLOTS> {
-    fn new(
-        allocator: &'mapping RelocAllocator<SLOTS>,
-        base: NonNull<u8>,
-        len: usize,
-    ) -> Self {
+    fn new(allocator: &'mapping RelocAllocator<SLOTS>, base: NonNull<u8>, len: usize) -> Self {
         Self {
             allocator,
             base,
@@ -659,13 +660,7 @@ impl<'mapping, const SLOTS: usize> RelocRegion<'mapping, SLOTS> {
             .checked_mul(element_capacity)
             .ok_or(RelocError::LengthOverflow)?;
         self.validate_request(bytes, align_of::<T>())?;
-        self.validate_allocation(
-            allocation,
-            descriptor,
-            bytes,
-            align_of::<T>(),
-            false,
-        )?;
+        self.validate_allocation(allocation, descriptor, bytes, align_of::<T>(), false)?;
         self.pointer(allocation.offset, bytes, align_of::<T>())
             .map(NonNull::cast)
     }
@@ -1059,36 +1054,56 @@ impl fmt::Display for RelocError {
             Self::AddressOverflow => formatter.write_str("mapping address overflows"),
             Self::AllocatorOutsideRegion => formatter.write_str("allocator is outside the mapping"),
             Self::UnsupportedSlotCount { requested, maximum } => {
-                write!(formatter, "slot count {requested} exceeds supported 1..={maximum}")
+                write!(
+                    formatter,
+                    "slot count {requested} exceeds supported 1..={maximum}"
+                )
             }
             Self::ZeroRegionId => formatter.write_str("region identity zero is reserved"),
             Self::SlotSizeAlignment { required } => {
-                write!(formatter, "slot size must be a nonzero multiple of {required}")
+                write!(
+                    formatter,
+                    "slot size must be a nonzero multiple of {required}"
+                )
             }
             Self::ArenaAlignment { required } => {
                 write!(formatter, "arena start must be aligned to {required}")
             }
-            Self::ArenaOverlapsAllocator => formatter.write_str("arena overlaps allocator metadata"),
-            Self::ArenaOutOfBounds { offset, byte_len, mapping_len } => write!(
+            Self::ArenaOverlapsAllocator => {
+                formatter.write_str("arena overlaps allocator metadata")
+            }
+            Self::ArenaOutOfBounds {
+                offset,
+                byte_len,
+                mapping_len,
+            } => write!(
                 formatter,
                 "arena extent {offset}..{} exceeds mapping length {mapping_len}",
                 offset.saturating_add(byte_len)
             ),
             Self::GeometryOverflow => formatter.write_str("allocator geometry overflows"),
             Self::MappingLength { expected, found } => {
-                write!(formatter, "mapping length mismatch: expected {expected}, found {found}")
+                write!(
+                    formatter,
+                    "mapping length mismatch: expected {expected}, found {found}"
+                )
             }
             Self::ControlOffset { expected, found } => write!(
                 formatter,
                 "allocator control offset mismatch: expected {expected}, found {found}"
             ),
             Self::NotInitialized => formatter.write_str("allocator is not initialized"),
-            Self::InitializationInProgress => formatter.write_str("allocator initialization is in progress"),
+            Self::InitializationInProgress => {
+                formatter.write_str("allocator initialization is in progress")
+            }
             Self::AlreadyInitialized => formatter.write_str("allocator is already initialized"),
             Self::Poisoned => formatter.write_str("allocator generation is poisoned"),
             Self::Busy => formatter.write_str("allocator operation lock is busy"),
             Self::Exhausted => formatter.write_str("allocator has no free slots"),
-            Self::AllocationTooLarge { requested, slot_size } => write!(
+            Self::AllocationTooLarge {
+                requested,
+                slot_size,
+            } => write!(
                 formatter,
                 "allocation of {requested} bytes exceeds slot size {slot_size}"
             ),
@@ -1098,12 +1113,22 @@ impl fmt::Display for RelocError {
             ),
             Self::LengthOverflow => formatter.write_str("collection length or extent overflows"),
             Self::WrongRegion { expected, found } => {
-                write!(formatter, "wrong allocator region: expected {expected}, found {found}")
+                write!(
+                    formatter,
+                    "wrong allocator region: expected {expected}, found {found}"
+                )
             }
             Self::SlotOutOfRange { slot, capacity } => {
-                write!(formatter, "allocation slot {slot} exceeds capacity {capacity}")
+                write!(
+                    formatter,
+                    "allocation slot {slot} exceeds capacity {capacity}"
+                )
             }
-            Self::StaleGeneration { slot, expected, found } => write!(
+            Self::StaleGeneration {
+                slot,
+                expected,
+                found,
+            } => write!(
                 formatter,
                 "stale allocation generation for slot {slot}: descriptor {expected}, current {found}"
             ),
