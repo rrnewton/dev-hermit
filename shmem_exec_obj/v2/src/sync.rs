@@ -10,6 +10,9 @@ use core::mem::{align_of, needs_drop, offset_of, size_of};
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+use core::{fmt, time::Duration};
+
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
 
 const UNLOCKED: u32 = 0;
@@ -24,9 +27,111 @@ const FUTEX_WAIT: u32 = 0;
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 const FUTEX_WAKE: u32 = 1;
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
+const FUTEX_WAIT_BITSET: u32 = 9;
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+const FUTEX_BITSET_MATCH_ANY: u32 = u32::MAX;
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
 const EINTR: isize = 4;
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 const EAGAIN: isize = 11;
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+const EOVERFLOW: i32 = 75;
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+const ETIMEDOUT: isize = 110;
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+const CLOCK_MONOTONIC: i32 = 1;
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+#[repr(C)]
+struct KernelTimespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+type KernelTime = i64;
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+type KernelLong = i64;
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "32"
+))]
+type KernelTimespec = libc::timespec;
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "32"
+))]
+type KernelTime = libc::time_t;
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "32"
+))]
+type KernelLong = libc::c_long;
+
+/// An operating-system failure while acquiring a [`ProcessFutexMutex`].
+///
+/// A timeout is not an error and is represented by `Ok(None)` from
+/// [`ProcessFutexMutex::try_lock_for`]. This error instead reports that Linux
+/// could not read the monotonic clock or perform the futex wait. A common cause
+/// in injected code is a seccomp policy which denies one of those system calls.
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FutexLockError {
+    errno: i32,
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+impl FutexLockError {
+    /// Returns the positive Linux error number.
+    #[inline]
+    pub const fn raw_os_error(self) -> i32 {
+        self.errno
+    }
+
+    #[inline]
+    const fn from_errno(errno: i32) -> Self {
+        Self { errno }
+    }
+
+    #[inline]
+    fn from_syscall_result(result: isize) -> Self {
+        debug_assert!(result < 0);
+        Self::from_errno((-result) as i32)
+    }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+impl fmt::Display for FutexLockError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "Linux futex lock operation failed with errno {}",
+            self.errno
+        )
+    }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+impl core::error::Error for FutexLockError {}
 
 /// A small, non-fair mutex whose lock word lives in process-shared memory.
 ///
@@ -233,6 +338,12 @@ impl<T> ProcessFutexMutex<T> {
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 impl<T: ?Sized> ProcessFutexMutex<T> {
     /// Acquires the mutex, sleeping in the kernel after bounded spinning.
+    ///
+    /// # Panics
+    ///
+    /// Panics rather than silently busy-looping if Linux rejects an otherwise
+    /// valid futex wait. Injectors should verify that the guest's seccomp policy
+    /// permits process-shared `futex` operations before calling this method.
     #[inline]
     pub fn lock(&self) -> ProcessFutexMutexGuard<'_, T> {
         if let Some(guard) = self.try_lock() {
@@ -259,6 +370,48 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
                 mutex: self,
                 _not_send: PhantomData,
             })
+    }
+
+    /// Attempts to acquire the mutex until `timeout` has elapsed.
+    ///
+    /// `Ok(Some(guard))` means the mutex was acquired. `Ok(None)` means the
+    /// timeout elapsed while another thread still owned it. Timeout is only a
+    /// cancellation mechanism: it never releases or steals the mutex, and it
+    /// provides no owner-death recovery. In particular, a paused owner may
+    /// resume later with its original guard still valid.
+    ///
+    /// The timeout includes the bounded spin phase. Linux waits against one
+    /// absolute `CLOCK_MONOTONIC` deadline, so signals and spurious wakeups do
+    /// not restart the requested duration. An immediately available mutex is
+    /// acquired even when `timeout` is zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FutexLockError`] if reading `CLOCK_MONOTONIC` fails, the
+    /// duration cannot be represented by the kernel ABI, or the futex wait is
+    /// denied or otherwise fails. Callers injecting this code into a sandboxed
+    /// process should verify that `clock_gettime` and `futex` are allowed.
+    #[inline]
+    pub fn try_lock_for(
+        &self,
+        timeout: Duration,
+    ) -> Result<Option<ProcessFutexMutexGuard<'_, T>>, FutexLockError> {
+        if let Some(guard) = self.try_lock() {
+            return Ok(Some(guard));
+        }
+        if timeout.is_zero() {
+            return Ok(None);
+        }
+
+        let deadline = monotonic_deadline(timeout)?;
+        for _ in 0..FUTEX_SPIN_LIMIT {
+            spin_loop();
+            if let Some(guard) = self.try_lock() {
+                return Ok(Some(guard));
+            }
+        }
+
+        self.lock_contended_until(&deadline)
     }
 
     /// Returns whether the lock word currently appears locked.
@@ -305,6 +458,29 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
             mutex: self,
             _not_send: PhantomData,
         }
+    }
+
+    #[cold]
+    fn lock_contended_until(
+        &self,
+        deadline: &KernelTimespec,
+    ) -> Result<Option<ProcessFutexMutexGuard<'_, T>>, FutexLockError> {
+        if self.state.swap(CONTENDED, Ordering::Acquire) != UNLOCKED {
+            loop {
+                let timed_out = futex_wait_until(&self.state, CONTENDED, deadline)?;
+                if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
+                    break;
+                }
+                if timed_out {
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(ProcessFutexMutexGuard {
+            mutex: self,
+            _not_send: PhantomData,
+        }))
     }
 
     #[inline]
@@ -407,20 +583,87 @@ fn futex_wait(word: &AtomicU32, expected: u32) {
     loop {
         // SAFETY: AtomicU32 has the 32-bit size and alignment required by the
         // futex ABI, and the reference remains valid throughout the syscall.
-        let result = unsafe { raw_futex(word, FUTEX_WAIT, expected) };
+        let result = unsafe { raw_futex(word, FUTEX_WAIT, expected, core::ptr::null(), 0) };
         if result == -EINTR {
             continue;
         }
-        // EAGAIN means the value changed before the kernel enqueued us.
-        // Returning makes lock_contended retry acquisition before deciding
-        // whether to sleep again. Safe construction rules out EFAULT/EINVAL.
-        debug_assert!(
-            result >= 0 || result == -EAGAIN,
-            "unexpected futex wait error: {}",
-            -result
-        );
-        break;
+        match result {
+            // EAGAIN means the value changed before the kernel enqueued us.
+            // Returning makes lock_contended retry before sleeping again.
+            result if result >= 0 || result == -EAGAIN => break,
+            // Safe construction rules out EFAULT/EINVAL. EPERM/ENOSYS can
+            // still result from sandbox policy; abort this path instead of
+            // converting a denied syscall into an unbounded hot loop.
+            result => panic!("unexpected futex wait error: {}", -result),
+        }
     }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[inline]
+fn futex_wait_until(
+    word: &AtomicU32,
+    expected: u32,
+    deadline: &KernelTimespec,
+) -> Result<bool, FutexLockError> {
+    loop {
+        // SAFETY: the atomic word and absolute timespec remain valid for the
+        // syscall. FUTEX_WAIT_BITSET uses CLOCK_MONOTONIC unless the realtime
+        // option bit is explicitly supplied, which this operation omits.
+        let result = unsafe {
+            raw_futex(
+                word,
+                FUTEX_WAIT_BITSET,
+                expected,
+                deadline,
+                FUTEX_BITSET_MATCH_ANY,
+            )
+        };
+        match result {
+            result if result >= 0 || result == -EAGAIN => return Ok(false),
+            result if result == -EINTR => continue,
+            result if result == -ETIMEDOUT => return Ok(true),
+            result => return Err(FutexLockError::from_syscall_result(result)),
+        }
+    }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+fn monotonic_deadline(timeout: Duration) -> Result<KernelTimespec, FutexLockError> {
+    let mut now = KernelTimespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a writable timespec and CLOCK_MONOTONIC is a valid
+    // Linux clock identifier.
+    let result = unsafe { raw_clock_gettime(CLOCK_MONOTONIC, &mut now) };
+    if result < 0 {
+        return Err(FutexLockError::from_syscall_result(result));
+    }
+
+    let added_seconds: KernelTime = timeout
+        .as_secs()
+        .try_into()
+        .map_err(|_| FutexLockError::from_errno(EOVERFLOW))?;
+    #[cfg(target_pointer_width = "64")]
+    let added_nanoseconds: KernelLong = i64::from(timeout.subsec_nanos());
+    #[cfg(target_pointer_width = "32")]
+    let added_nanoseconds: KernelLong = timeout
+        .subsec_nanos()
+        .try_into()
+        .map_err(|_| FutexLockError::from_errno(EOVERFLOW))?;
+    let nanoseconds = now.tv_nsec + added_nanoseconds;
+    let carry = nanoseconds / 1_000_000_000;
+    let seconds = now
+        .tv_sec
+        .checked_add(added_seconds)
+        .and_then(|value| value.checked_add(carry))
+        .ok_or_else(|| FutexLockError::from_errno(EOVERFLOW))?;
+
+    Ok(KernelTimespec {
+        tv_sec: seconds,
+        tv_nsec: nanoseconds % 1_000_000_000,
+    })
 }
 
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
@@ -428,7 +671,8 @@ fn futex_wait(word: &AtomicU32, expected: u32) {
 fn futex_wake_one(word: &AtomicU32) {
     // SAFETY: the atomic word is valid and aligned for the futex ABI. Wake has
     // no timeout or secondary pointer argument.
-    let _ = unsafe { raw_futex(word, FUTEX_WAKE, 1) };
+    let result = unsafe { raw_futex(word, FUTEX_WAKE, 1, core::ptr::null(), 0) };
+    assert!(result >= 0, "unexpected futex wake error: {}", -result);
 }
 
 #[cfg(all(
@@ -438,7 +682,13 @@ fn futex_wake_one(word: &AtomicU32) {
     target_pointer_width = "64"
 ))]
 #[inline]
-unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
+unsafe fn raw_futex(
+    word: &AtomicU32,
+    operation: u32,
+    value: u32,
+    timeout: *const KernelTimespec,
+    bitset: u32,
+) -> isize {
     let mut result = 202_isize;
     // SAFETY: this follows the Linux x86_64 syscall ABI. FUTEX_WAIT reads the
     // pointed-to atomic and FUTEX_WAKE uses it as a wait-queue key.
@@ -449,9 +699,34 @@ unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
             in("rdi") word as *const AtomicU32 as usize,
             in("rsi") operation as usize,
             in("rdx") value as usize,
-            in("r10") 0_usize,
+            in("r10") timeout as usize,
             in("r8") 0_usize,
-            in("r9") 0_usize,
+            in("r9") bitset as usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result
+}
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_pointer_width = "64"
+))]
+#[inline]
+unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize {
+    let mut result = 228_isize;
+    // SAFETY: this follows the Linux x86_64 syscall ABI. Syscall 228 writes a
+    // timespec through the valid pointer supplied by monotonic_deadline.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") result,
+            in("rdi") clock as usize,
+            in("rsi") timespec as usize,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),
@@ -462,7 +737,13 @@ unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
 
 #[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
 #[inline]
-unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
+unsafe fn raw_futex(
+    word: &AtomicU32,
+    operation: u32,
+    value: u32,
+    timeout: *const KernelTimespec,
+    bitset: u32,
+) -> isize {
     let mut result = word as *const AtomicU32 as usize;
     // SAFETY: this follows the Linux aarch64 syscall ABI. Syscall 98 is futex.
     unsafe {
@@ -471,10 +752,28 @@ unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
             inlateout("x0") result,
             in("x1") operation as usize,
             in("x2") value as usize,
-            in("x3") 0_usize,
+            in("x3") timeout as usize,
             in("x4") 0_usize,
-            in("x5") 0_usize,
+            in("x5") bitset as usize,
             in("x8") 98_usize,
+            options(nostack),
+        );
+    }
+    result as isize
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
+#[inline]
+unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize {
+    let mut result = clock as usize;
+    // SAFETY: this follows the Linux aarch64 syscall ABI. Syscall 113 writes a
+    // timespec through the valid pointer supplied by monotonic_deadline.
+    unsafe {
+        core::arch::asm!(
+            "svc 0",
+            inlateout("x0") result,
+            in("x1") timespec as usize,
+            in("x8") 113_usize,
             options(nostack),
         );
     }
@@ -490,7 +789,13 @@ unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
     ))
 ))]
 #[inline]
-unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
+unsafe fn raw_futex(
+    word: &AtomicU32,
+    operation: u32,
+    value: u32,
+    timeout: *const KernelTimespec,
+    bitset: u32,
+) -> isize {
     // SAFETY: this passes the same valid atomic address and scalar arguments to
     // libc's variadic syscall shim on Linux architectures without an inline
     // syscall implementation above.
@@ -500,11 +805,40 @@ unsafe fn raw_futex(word: &AtomicU32, operation: u32, value: u32) -> isize {
             word as *const AtomicU32,
             operation,
             value,
-            core::ptr::null::<libc::timespec>(),
+            timeout,
             0_usize,
-            0_usize,
+            bitset,
         ) as isize
     };
+    normalize_libc_syscall_result(result)
+}
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    not(any(
+        all(target_arch = "x86_64", target_pointer_width = "64"),
+        target_arch = "aarch64"
+    ))
+))]
+#[inline]
+unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize {
+    // SAFETY: the pointer is writable and SYS_clock_gettime is invoked with
+    // the target libc's timespec ABI on fallback architectures.
+    let result = unsafe { libc::syscall(libc::SYS_clock_gettime, clock, timespec) as isize };
+    normalize_libc_syscall_result(result)
+}
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    not(any(
+        all(target_arch = "x86_64", target_pointer_width = "64"),
+        target_arch = "aarch64"
+    ))
+))]
+#[inline]
+fn normalize_libc_syscall_result(result: isize) -> isize {
     if result == -1 {
         // libc's syscall shim converts the kernel's negative result to -1 and
         // records the actual error, unlike the inline syscall paths above.

@@ -7,7 +7,7 @@ use std::mem::size_of;
 use std::ops::Deref;
 use std::process::{Child, Command, ExitStatus};
 use std::ptr;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 struct SharedMapping<T> {
@@ -198,7 +198,32 @@ fn wait_for_children(
     completed
 }
 
+fn wait_for_child_stop(child: libc::pid_t, timeout: Duration) -> libc::c_int {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let mut status = 0;
+        // SAFETY: child is a direct child, status is writable, and these flags
+        // report a SIGSTOP without waiting indefinitely.
+        let result = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG | libc::WUNTRACED) };
+        if result == child {
+            return status;
+        }
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            terminate_and_reap(&[child]);
+            panic!("waitpid({child}, WUNTRACED) failed: {error}");
+        }
+        if Instant::now() >= deadline {
+            terminate_and_reap(&[child]);
+            panic!("child {child} did not stop within {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 fn require_process_shared<T: PodValue + PodSync>() {}
+
+extern "C" fn no_op_signal_handler(_: libc::c_int) {}
 
 const WORKER_FD_ENV: &str = "SHMEM_POD_FUTEX_TEST_FD";
 const PARENT_ADDRESS_ENV: &str = "SHMEM_POD_FUTEX_PARENT_ADDRESS";
@@ -390,4 +415,311 @@ fn forked_workers_produce_exact_total_under_contention() {
     }
 
     assert_eq!(*shared.counter.lock(), u64::from(CHILDREN) * INCREMENTS);
+}
+
+#[test]
+fn zero_timeout_is_an_immediate_attempt() {
+    let shared = SharedMapping::new(ProcessFutexMutex::new(7_u64));
+    let guard = shared.lock();
+    assert!(
+        shared
+            .try_lock_for(Duration::ZERO)
+            .expect("zero-duration attempt")
+            .is_none()
+    );
+    drop(guard);
+    assert_eq!(
+        *shared
+            .try_lock_for(Duration::ZERO)
+            .expect("uncontended zero-duration attempt")
+            .expect("available mutex must be acquired"),
+        7
+    );
+}
+
+#[test]
+fn timed_waiter_acquires_when_owner_releases() {
+    struct Shared {
+        mutex: ProcessFutexMutex<u64>,
+        start: AtomicU32,
+        result: AtomicU32,
+    }
+
+    let shared = SharedMapping::new(Shared {
+        mutex: ProcessFutexMutex::new(0),
+        start: AtomicU32::new(0),
+        result: AtomicU32::new(0),
+    });
+
+    // SAFETY: no guard exists across fork; the child uses only shared POD
+    // synchronization and exits without running copied test-harness drops.
+    let child = unsafe { libc::fork() };
+    assert!(
+        child >= 0,
+        "fork failed: {}",
+        std::io::Error::last_os_error()
+    );
+    if child == 0 {
+        while shared.start.load(Ordering::Acquire) == 0 {
+            spin_loop();
+        }
+        let result = match shared.mutex.try_lock_for(Duration::from_secs(2)) {
+            Ok(Some(mut guard)) => {
+                *guard += 1;
+                1
+            }
+            Ok(None) => 2,
+            Err(error) => 1_000 + error.raw_os_error() as u32,
+        };
+        shared.result.store(result, Ordering::Release);
+        // SAFETY: the child has dropped any acquired guard and must bypass
+        // copied test-harness destructors.
+        unsafe { libc::_exit(0) };
+    }
+
+    let guard = shared.mutex.lock();
+    shared.start.store(1, Ordering::Release);
+    let contended = wait_until(Duration::from_secs(2), || shared.mutex.is_contended());
+    if !contended {
+        drop(guard);
+        terminate_and_reap(&[child]);
+        panic!("timed waiter did not enter the futex slow path");
+    }
+    drop(guard);
+
+    let completed = wait_for_children(vec![child], Duration::from_secs(5));
+    assert!(libc::WIFEXITED(completed[0].1));
+    assert_eq!(libc::WEXITSTATUS(completed[0].1), 0);
+    assert_eq!(shared.result.load(Ordering::Acquire), 1);
+    assert_eq!(*shared.mutex.lock(), 1);
+}
+
+#[test]
+fn signals_do_not_restart_the_timeout_budget() {
+    struct Shared {
+        mutex: ProcessFutexMutex<u64>,
+        ready: AtomicU32,
+        start: AtomicU32,
+        result: AtomicU32,
+        elapsed_ns: AtomicU64,
+    }
+
+    let shared = SharedMapping::new(Shared {
+        mutex: ProcessFutexMutex::new(0),
+        ready: AtomicU32::new(0),
+        start: AtomicU32::new(0),
+        result: AtomicU32::new(0),
+        elapsed_ns: AtomicU64::new(0),
+    });
+
+    // SAFETY: no guard exists across fork. The child installs a private signal
+    // disposition, touches shared atomics/the mutex, and exits without unwind.
+    let child = unsafe { libc::fork() };
+    assert!(
+        child >= 0,
+        "fork failed: {}",
+        std::io::Error::last_os_error()
+    );
+    if child == 0 {
+        // SAFETY: a zeroed sigaction is a valid starting representation on
+        // Linux; the mask is initialized before the action is installed.
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = no_op_signal_handler as usize;
+        action.sa_flags = 0;
+        // SAFETY: action and its mask are valid writable objects.
+        if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
+            || unsafe { libc::sigaction(libc::SIGUSR1, &action, ptr::null_mut()) } != 0
+        {
+            unsafe { libc::_exit(3) };
+        }
+        shared.ready.store(1, Ordering::Release);
+        while shared.start.load(Ordering::Acquire) == 0 {
+            spin_loop();
+        }
+
+        let started = Instant::now();
+        let result = match shared.mutex.try_lock_for(Duration::from_millis(100)) {
+            Ok(Some(_guard)) => 2,
+            Ok(None) => 1,
+            Err(error) => 1_000 + error.raw_os_error() as u32,
+        };
+        let elapsed = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        shared.elapsed_ns.store(elapsed, Ordering::Release);
+        shared.result.store(result, Ordering::Release);
+        // SAFETY: any guard from the result match has been dropped.
+        unsafe { libc::_exit(0) };
+    }
+
+    if !wait_until(Duration::from_secs(2), || {
+        shared.ready.load(Ordering::Acquire) == 1
+    }) {
+        terminate_and_reap(&[child]);
+        panic!("signal worker did not initialize");
+    }
+    let guard = shared.mutex.lock();
+    shared.start.store(1, Ordering::Release);
+    if !wait_until(Duration::from_secs(2), || shared.mutex.is_contended()) {
+        drop(guard);
+        terminate_and_reap(&[child]);
+        panic!("signal worker did not enter the futex slow path");
+    }
+
+    let signal_deadline = Instant::now() + Duration::from_millis(500);
+    while shared.result.load(Ordering::Acquire) == 0 && Instant::now() < signal_deadline {
+        // SAFETY: child cannot be PID-reused before it is reaped. ESRCH merely
+        // means it has already completed the timed wait and exited.
+        let _ = unsafe { libc::kill(child, libc::SIGUSR1) };
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let completed_before_signals_stopped = shared.result.load(Ordering::Acquire) != 0;
+    if !completed_before_signals_stopped {
+        drop(guard);
+        terminate_and_reap(&[child]);
+        panic!("repeated EINTR restarted the timeout budget");
+    }
+    let completed = wait_for_children(vec![child], Duration::from_secs(5));
+    drop(guard);
+
+    let elapsed = Duration::from_nanos(shared.elapsed_ns.load(Ordering::Acquire));
+    assert!(libc::WIFEXITED(completed[0].1));
+    assert_eq!(libc::WEXITSTATUS(completed[0].1), 0);
+    assert_eq!(shared.result.load(Ordering::Acquire), 1);
+    assert!(
+        elapsed >= Duration::from_millis(70),
+        "timeout expired unexpectedly early after {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "signals extended the absolute deadline to {elapsed:?}"
+    );
+}
+
+#[test]
+fn timeout_does_not_steal_from_a_paused_owner() {
+    struct Shared {
+        mutex: ProcessFutexMutex<u64>,
+        held: AtomicU32,
+    }
+
+    let shared = SharedMapping::new(Shared {
+        mutex: ProcessFutexMutex::new(0),
+        held: AtomicU32::new(0),
+    });
+
+    // SAFETY: no guard exists across fork. The child is the sole mutex owner
+    // until it publishes `held` and stops itself.
+    let child = unsafe { libc::fork() };
+    assert!(
+        child >= 0,
+        "fork failed: {}",
+        std::io::Error::last_os_error()
+    );
+    if child == 0 {
+        let mut guard = shared.mutex.lock();
+        *guard = 41;
+        shared.held.store(1, Ordering::Release);
+        // SAFETY: SIGSTOP pauses this process until the parent explicitly
+        // resumes it; it does not run signal-handler code while holding guard.
+        if unsafe { libc::raise(libc::SIGSTOP) } != 0 {
+            unsafe { libc::_exit(3) };
+        }
+        *guard = 42;
+        drop(guard);
+        // SAFETY: all shared guards are gone; bypass copied harness drops.
+        unsafe { libc::_exit(0) };
+    }
+
+    if !wait_until(Duration::from_secs(2), || {
+        shared.held.load(Ordering::Acquire) == 1
+    }) {
+        terminate_and_reap(&[child]);
+        panic!("owner did not acquire the mutex");
+    }
+    let stopped_status = wait_for_child_stop(child, Duration::from_secs(2));
+    if !libc::WIFSTOPPED(stopped_status) {
+        terminate_and_reap(&[child]);
+        panic!("owner exited instead of stopping: {stopped_status:#x}");
+    }
+
+    let started = Instant::now();
+    let attempt = shared
+        .mutex
+        .try_lock_for(Duration::from_millis(80))
+        .expect("timed futex wait");
+    let elapsed = started.elapsed();
+    if attempt.is_some() {
+        // Keep the erroneous second guard away from a resumed first owner.
+        // SAFETY: child is stopped and is a direct child process.
+        let _ = unsafe { libc::kill(child, libc::SIGKILL) };
+        let _ = wait_for_children(vec![child], Duration::from_secs(5));
+        drop(attempt);
+        panic!("timeout stole the mutex from a paused live owner");
+    }
+    assert!(shared.mutex.is_locked());
+
+    // SAFETY: child is stopped and remains the legitimate mutex owner.
+    assert_eq!(unsafe { libc::kill(child, libc::SIGCONT) }, 0);
+    let completed = wait_for_children(vec![child], Duration::from_secs(5));
+
+    assert!(
+        elapsed >= Duration::from_millis(50),
+        "deadline expired unexpectedly early after {elapsed:?}"
+    );
+    assert!(libc::WIFEXITED(completed[0].1));
+    assert_eq!(libc::WEXITSTATUS(completed[0].1), 0);
+    assert_eq!(*shared.mutex.lock(), 42);
+}
+
+#[test]
+fn killed_owner_remains_locked_without_a_robust_protocol() {
+    struct Shared {
+        mutex: ProcessFutexMutex<u64>,
+        held: AtomicU32,
+    }
+
+    let shared = SharedMapping::new(Shared {
+        mutex: ProcessFutexMutex::new(0),
+        held: AtomicU32::new(0),
+    });
+
+    // SAFETY: no guard exists across fork. The child deliberately exits while
+    // holding the non-robust mutex to verify the documented fail-closed state.
+    let child = unsafe { libc::fork() };
+    assert!(
+        child >= 0,
+        "fork failed: {}",
+        std::io::Error::last_os_error()
+    );
+    if child == 0 {
+        let _guard = shared.mutex.lock();
+        shared.held.store(1, Ordering::Release);
+        loop {
+            // SAFETY: wait for the parent's SIGKILL without touching state.
+            unsafe { libc::pause() };
+        }
+    }
+
+    if !wait_until(Duration::from_secs(2), || {
+        shared.held.load(Ordering::Acquire) == 1
+    }) {
+        terminate_and_reap(&[child]);
+        panic!("owner did not acquire the mutex");
+    }
+    // SAFETY: child is a direct child and is intentionally killed while it
+    // holds the mutex.
+    assert_eq!(unsafe { libc::kill(child, libc::SIGKILL) }, 0);
+    let completed = wait_for_children(vec![child], Duration::from_secs(5));
+    assert!(libc::WIFSIGNALED(completed[0].1));
+    assert_eq!(libc::WTERMSIG(completed[0].1), libc::SIGKILL);
+
+    assert!(
+        shared
+            .mutex
+            .try_lock_for(Duration::from_millis(50))
+            .expect("timed wait after owner death")
+            .is_none(),
+        "a plain futex timeout must not infer owner death"
+    );
+    assert!(shared.mutex.try_lock().is_none());
+    assert!(shared.mutex.is_locked());
 }

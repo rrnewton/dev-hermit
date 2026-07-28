@@ -344,3 +344,16 @@ cargo run --features fixed-allocator --example fixed_allocator_exec
 
 The mapping examples target Linux. `fixed_allocator_exec` additionally targets
 x86-64 because its demonstration address is architecture-specific.
+
+## Release Verification
+
+Repository checkouts provide one bounded release command:
+
+```text
+./scripts/release-check.sh quick
+./scripts/release-check.sh full
+```
+
+The [support and release matrix](docs/support.md) defines the exact gate,
+current platform evidence, kernel requirements, package boundary, and the
+macros-first crates.io publication sequence.

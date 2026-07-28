@@ -1,12 +1,15 @@
 ---
 title: Design and implement recoverable cross-process locks
-status: open
+status: in_progress
 priority: 0
 issue_type: feature
+assignee: devbig030/locks
 depends_on:
   pod-1: parent-child
 created_at: 2026-07-28T03:39:10.745287201+00:00
-updated_at: 2026-07-28T03:39:10.745287201+00:00
+updated_at: 2026-07-28T03:48:57.640608704+00:00
+claimed_at: 2026-07-28T03:48:57.640608704+00:00
+claimed_until: 2026-07-28T09:48:57.640457505+00:00
 ---
 
 # Description

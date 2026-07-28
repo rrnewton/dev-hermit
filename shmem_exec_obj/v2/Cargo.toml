@@ -81,6 +81,10 @@ name = "layout_handshake"
 required-features = ["derive"]
 
 [[example]]
+name = "typed_mapping"
+required-features = ["derive"]
+
+[[example]]
 name = "relative_offsets"
 required-features = ["derive"]
 
