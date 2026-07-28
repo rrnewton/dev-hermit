@@ -1,30 +1,42 @@
 # Reverie Backend Architecture Report
 
-Date: 2026-07-27 (measurements completed 2026-07-28 UTC)
+Date: 2026-07-27 (measurements completed and adversarial-review corrections
+incorporated 2026-07-28 UTC)
 
 ## Executive conclusions
 
 1. The exact `counter1` and `counter2` tools run on ptrace, SaBRe, LiteInst, and
    DBI. Ptrace, SaBRe, and LiteInst run the shared strace source; DBI runs its
-   adapted strace mirror. KVM could not run because this host has no `/dev/kvm`.
-   e9patch exposes no example-tool binaries at all.
+   adapted strace mirror. KVM was blocked during the original collection, then
+   all three KVM tools passed during a later, transient `/dev/kvm` capability
+   window. e9patch exposes no example-tool binaries at all.
 2. Cross-backend counter totals do **not** match. A workload validated by normal
    `strace` at exactly 40,051 syscalls produced 40,055 under ptrace, 40,042
-   under SaBRe, and 10,042 under DBI; LiteInst failed at `fork`. These are
-   backend coverage/lifecycle boundaries, not workload randomness.
+   under SaBRe, 40,035 under KVM, and 10,042 under DBI; LiteInst failed at
+   `fork`. These are backend coverage/lifecycle boundaries, not workload
+   randomness.
 3. Reverie's logical RPC contract is shared (`GlobalRPC::send_rpc` to
    `GlobalTool::receive_rpc`). Ptrace and KVM dispatch in-process. LiteInst,
    SaBRe, and coordinated DBI use a coordinator over UDS. SaBRe reuses the
    shared blocking client; LiteInst and DBI each duplicate the wire-compatible
    client for their trusted-gate/private-loader constraints.
-4. A direct microbenchmark of `reverie-rpc-transport` measured 6.397-6.529 us
-   per UDS+bincode request/response round trip (100,000 calls, three trials).
-5. LiteInst is the LD_PRELOAD/SIGSYS backend. e9patch is not: its rewritten
-   sites execute `int3`, then the external `reverie-ptrace` controller handles
-   the event. SaBRe uses in-process binary rewriting and a central signal
-   multiplexer; it has no ptrace fallback.
-6. Only e9patch uses the Rust `reverie-ptrace` wrapper. There is no common
-   SaBRe/LiteInst/e9patch "ptrace of last resort" implementation to factor.
+4. A direct microbenchmark of `reverie-rpc-transport` produced historical
+   samples of 6,528/6,397/6,529 ns and a review rerun of
+   6,414/6,571/6,942 ns per same-process UDS+bincode round trip. This is an
+   order-of-magnitude baseline, not a stable interval or a backend RPC proxy.
+5. LiteInst uses LD_PRELOAD and SIGSYS to discover and install hooks, but the
+   generic Tool and its blocking RPC run after `sigreturn` in normal guest
+   context. Standalone Reverie e9patch replaces syscalls with an `int3` payload
+   handled by `reverie-ptrace`; Hermit's `--backend e9patch` is a different
+   no-op preprocessing/overlay path followed by ordinary ptrace Detcore.
+   Standalone SaBRe rewrites in process and mediates signals centrally; Hermit
+   additionally runs a custom ptrace supervisor that converts missed raw
+   syscall sites into SaBRe's SIGILL marker after coordinator readiness.
+6. Among the standalone SaBRe/LiteInst/e9patch alternatives, only e9patch uses
+   the Rust `reverie-ptrace` wrapper. The normal ptrace backend also uses it.
+   Hermit's SaBRe safety net instead uses a custom `nix::sys::ptrace`/libc
+   supervisor, while LiteInst has no active ptrace path; there is no existing
+   common three-way fallback implementation.
 
 ## Provenance and host
 
@@ -52,15 +64,55 @@ The e9patch source was not initialized. That does not explain the missing
 example binaries: `reverie-e9patch/Cargo.toml` defines a library and tests, not
 counter/strace binaries.
 
+### Tool build commands and artifact provenance
+
+All original matrix artifacts came from Reverie
+`f0d043620bda85d081306c376e08872e8a7782c0` in the same release target
+directory. A clean checkout can recreate them with the pinned submodules and
+commands below (all networked commands use `with-proxy`):
+
+```text
+# Shared ptrace tools, KVM adapters, and LiteInst launcher/preload.
+with-proxy cargo build --release -p reverie-examples \
+  --bin counter1 --bin counter2 --bin strace \
+  --bin reverie-kvm-counter1 --bin reverie-kvm-counter2 \
+  --bin reverie-liteinst-examples
+
+# SaBRe loader, host, and plugin.
+scripts/backend-submodule.sh activate sabre
+cmake -S third-party/sabre -B target/sabre
+cmake --build target/sabre
+with-proxy cargo build --release -p reverie-sabre-strace
+
+# DynamoRIO, Rust coordinator/path helper, and native client.
+scripts/backend-submodule.sh activate dynamorio
+PROFILE=release with-proxy reverie-dbi/scripts/build-client.sh
+```
+
+The first command produces `target/release/{counter1,counter2,strace}`,
+`target/release/reverie-kvm-{counter1,counter2}`, and
+`target/release/reverie-liteinst-examples` plus the adjacent
+`libreverie_examples.so` preload. The SaBRe commands produce
+`target/sabre/sabre`, `target/release/reverie-sabre-strace`, and
+`target/release/libreverie_sabre_strace_plugin.so`. The DBI script first builds
+`reverie-dbi` (including `reverie-dbi-counter2` and
+`reverie-dbi-dynamorio-path`), then CMake-builds
+`target/release/reverie-dbi-native/libreverie_dbi_client.so` against the pinned
+DynamoRIO install reported by the path helper. The source gitlinks were
+DynamoRIO `929840ad9190e5086775e8debc0f0b79b4208d59`, SaBRe
+`34065e7ddae6f1c90db7e0bf5c22a9aa89f9d605`, and inactive e9patch
+`6c2c03c1da74b14daf1788a9f8dccfa354ce04a6`. The two C fixtures and their
+compiler commands/digests are recorded in the benchmark section.
+
 ## Tools x backends matrix
 
 | Backend | counter1 | counter2 | strace | Qualification |
 | --- | --- | --- | --- | --- |
 | ptrace | PASS | PASS | PASS | Exact shared tools; `/bin/echo` counters both 40. |
-| KVM | BLOCKED | BLOCKED | BLOCKED | Static guest supplied, but `/dev/kvm` absent. |
+| KVM | PASS (later rerun) | PASS (later rerun) | PASS (later rerun) | Originally blocked; reviewer later observed `/dev/kvm` and all three passed on the same static guest. |
 | DBI | PASS | PASS | ADAPTED PASS | Exact counter selectors use a `bash` guest; strace is a DBI-specific mirror, not the shared strace source. |
 | SaBRe | PASS | PASS | PASS | Exact selectors are `counter1-exact` and `counter2-exact`; startup coverage differs from ptrace. |
-| LiteInst | PASS | PASS | FLAKY/PASS | Compact strace passed; an earlier `/bin/echo` run failed during coordinator teardown with an owner leak. |
+| LiteInst | PASS | PASS | PASS plus one observed teardown-owner failure (N=2) | Compact strace passed once; one preceding identical run failed during coordinator teardown. This sample does not establish a flake rate. |
 | e9patch | FAIL (missing) | FAIL (missing) | FAIL (missing) | No example-tool CLI exists. The backend API can host arbitrary `Tool`, but no requested runner is published. |
 
 ### Ptrace raw evidence
@@ -106,6 +158,23 @@ Caused by:
 All three exited 1. This is an environment BLOCKED result, not evidence that
 the tool adapters fail on a KVM-capable host.
 
+That result is historical rather than the final capability observation. At
+2026-07-28 03:34 UTC the adversarial reviewer observed `/dev/kvm`, reused the
+same Reverie SHA, release binaries, and static fixture, and reran:
+
+```text
+timeout 30 target/release/reverie-kvm-counter1 /tmp/backend-architecture-report/hello-static
+timeout 30 target/release/reverie-kvm-counter2 /tmp/backend-architecture-report/hello-static
+timeout 30 target/release/strace --runner kvm --no-host-envs --trace write /tmp/backend-architecture-report/hello-static
+```
+
+The review task records exit 0 for all three, with 17 observed syscalls for
+`counter1`, 17 syscalls from one process/one thread for `counter2`, and a
+17-syscall strace stream. This is a dated capability-window rerun, not a claim
+that KVM remained available: `/dev/kvm` was absent again when checked at
+2026-07-28 03:38 UTC. The original failure output remains above so host
+capability changes are not hidden.
+
 ### LiteInst raw evidence
 
 ```text
@@ -124,15 +193,16 @@ Process 306743 exited with status Exited(0)
 hello\
 ```
 
-These exited 0. A prior identical `/bin/echo` strace run exited 1 with:
+These exited 0. One preceding identical `/bin/echo` strace run exited 1 with:
 
 ```text
 Error: LiteInst coordinator state still has owners after connection shutdown
 ```
 
 An immediate repeat exited 0 and printed the expected write. The failure text
-comes directly from `reverie-liteinst/src/backend.rs:355-369`; strace is thus
-functional but teardown is observably flaky on this host.
+comes directly from `reverie-liteinst/src/backend.rs:355-369`. The observation
+is therefore one pass plus one teardown-owner failure (`N=2`); two trials do
+not quantify a flake rate.
 
 ### SaBRe raw evidence
 
@@ -458,11 +528,11 @@ home=$(target/release/reverie-dbi-dynamorio-path home); client=$PWD/target/relea
 
 | Backend | Totals (3 trials) | Wall seconds | Result |
 | --- | --- | --- | --- |
-| ptrace | 40,055 / 40,055 / 40,055; 4 proc, 4 threads | 0.22 / 0.23 / 0.24 | Complete tree, stable, +13 vs SaBRe |
-| SaBRe | 40,042 / 40,042 / 40,042; 4 proc, 4 threads | 0.16 / 0.07 / 0.07 | Complete tree, stable |
+| ptrace | 40,055 / 40,055 / 40,055; 4 proc, 4 threads | 0.22 / 0.23 / 0.24 | Complete tree; historical launcher samples |
+| SaBRe | 40,042 / 40,042 / 40,042; 4 proc, 4 threads | 0.16 / 0.07 / 0.07 | Complete tree; first-trial warmup outlier; historical launcher samples |
 | DBI | 10,042 / 10,042 / 10,042; 1 proc, 1 thread | 0.06 / 0.06 / 0.06 | Root only; children not delivered to Rust tool |
 | LiteInst | 4; 1 proc, 1 thread, exit 2 | 0.02 | `fork` failed |
-| KVM | no run | 0.00 to failure | `/dev/kvm` absent |
+| KVM | 40,035; 4 proc, 4 threads (later reviewer rerun) | not recorded | Complete tree during transient `/dev/kvm` window; one aggregate sample |
 | e9patch | no run | n/a | no counter2 runner |
 
 Raw ptrace output:
@@ -517,7 +587,7 @@ counter2-global syscalls=40042 processes=4 threads=4
 wall_seconds=0.07
 ```
 
-Raw DBI, LiteInst, and KVM output:
+Raw DBI, LiteInst, and original KVM output:
 
 ```text
 trial=1
@@ -546,6 +616,16 @@ Command exited with non-zero status 101
 wall_seconds=0.10
 ```
 
+The later KVM rerun used the same command shown above and the static fixture
+with SHA-256
+`a39320898c6cea64c8a6bbb40c7d122d5d5af60af831bed6b3c1da3f0b90e311`.
+The review task recorded this aggregate result (the per-process local rows and
+wall time were not retained, so they are not reconstructed here):
+
+```text
+counter2 total=40035 processes=4 threads=4; exit_status=0
+```
+
 LiteInst failure attribution was checked with:
 
 ```text
@@ -561,12 +641,15 @@ Process 3666637 exited with status Exited(2)
 Thus `sigaction` and `pipe2` succeeded; `clone` returned `-EOPNOTSUPP` and
 caused the fixture's exit 2.
 
-The performance figures are exploratory launcher-level measurements, not a
-backend throughput ranking: DBI and LiteInst did less work, and KVM/e9patch did
-none. Only ptrace versus SaBRe covers the same four processes and 40,000 spin
-syscalls. Their observed medians were 0.23 s and 0.07 s respectively, but the
-timer has 0.01 s precision, the sample is only three trials, and their
-observation boundaries differ by 13 syscalls.
+The wall-time figures are historical, exploratory launcher-level observations,
+not a backend throughput ranking or a latency interval. The runs used only
+three trials, `/usr/bin/time` at 0.01 s display precision, no CPU pinning, and
+no host-load control; SaBRe's first sample is an evident warmup outlier. DBI and
+LiteInst did less work, e9patch did none, and the later KVM rerun did not retain
+a wall time. Even ptrace, SaBRe, and KVM, which covered all four processes and
+40,000 spin calls, observed different total boundaries (40,055, 40,042, and
+40,035). The numbers support coverage-boundary auditing only; they do not
+support relative throughput or latency claims.
 
 ## Local to global Tool RPC
 
