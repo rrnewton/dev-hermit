@@ -1,0 +1,6 @@
+config	N	distinct	hit_rate	stf_med	stf_p90	mean_ms
+chaos_plain	40	2	0.45	2	4	347
+chaos_pts_r10	40	2	0.50	1	4	365
+chaos_pts_r100	40	2	0.53	1	3	368
+chaos_plain_ts1e4	40	36	1.00	1	1	423
+chaos_pts_r10_ts1e4	40	26	1.00	1	1	405

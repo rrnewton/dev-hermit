@@ -1,0 +1,30 @@
+{
+  "task": "chaos-feature-per-thread-slowdown",
+  "date": "2026-07-28",
+  "kind": "feature-benchmark",
+  "extends": "experiments/chaos_experimentation_framework_20260728",
+  "question": "does RR-style stable per-thread slowdown (--chaos-per-thread-slowdown) lower seeds-to-reproduce vs plain --chaos?",
+  "feature": {
+    "flags": ["--chaos-per-thread-slowdown", "--chaos-slowdown-max-factor <R>"],
+    "semantics": "each thread gets a factor stable for the whole run (pure fn of sched_seed+dettid), log-uniform in [1/R,R], scaling the MEAN chaos timeslice length only (out-of-band budget; does NOT scale guest-visible virtual time). --strict-safe / L2-preserving.",
+    "hermit_branch": "codex/chaos-per-thread-slowdown",
+    "hermit_head": "0b84a2344072fe6879aead7eea1c76e7ff6b9abc",
+    "binary_sha256_prefix": "d3cf69a4ee6963df"
+  },
+  "workload": {
+    "box": "ignored/btrfs-progs-v7.1-bin/btrfs.box.static",
+    "command": "btrfs rescue chunk-recover -y -v <pinned-scratch-dev>",
+    "image": "ignored/bench-seeds/bko-161811.raw",
+    "oracle": "sha256 of hermit-filtered guest output; distinct sigs = distinct benign progress-tick interleavings",
+    "race_class": "benign multithreaded progress-tick (proxy for schedule-exploration power)",
+    "caveat": "only ~2 reachable interleavings at coarse timeslice + short thread runtimes; a WEAK test of the feature's thesis (which targets long, many-thread runs where per-timeslice priority redraw averages out)."
+  },
+  "grid": {"configs": 5, "seeds_per_config": 40, "total_runs": 200, "pinned_scratch_path": true, "per_run_timeout_s": 120, "process_kills": "scoped-pgid via run_scoped.sh"},
+  "results_headline": "coarse regime: per-thread slowdown gives a slight edge (stf_med 2->1, hit 45%->50-52%) but stays in the 2-state binary (can't manufacture interleavings that don't exist); differences are within 40-seed noise. Fine timeslice (1e4) dominates either way (100% hit); adding slowdown slightly LOWERS diversity (36->26 distinct) because longer mean slices insert fewer preemption points. No regression; feature is correct, deterministic, L2-safe.",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "related_memories": [
+    "chaos-framework-target-timeslice-dominates",
+    "benchmark-seeds-to-reproduce-chaos-vs-blind",
+    "btrfs-progs-chunk-recover-only-multithreaded-benign-race"
+  ]
+}

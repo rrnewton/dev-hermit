@@ -1,0 +1,6 @@
+name	hermit_args
+chaos_plain	run --chaos
+chaos_pts_r10	run --chaos --chaos-per-thread-slowdown --chaos-slowdown-max-factor 10
+chaos_pts_r100	run --chaos --chaos-per-thread-slowdown --chaos-slowdown-max-factor 100
+chaos_pts_r10_ts1e4	run --chaos --chaos-per-thread-slowdown --chaos-slowdown-max-factor 10 --target-timeslice 10000
+chaos_plain_ts1e4	run --chaos --target-timeslice 10000
