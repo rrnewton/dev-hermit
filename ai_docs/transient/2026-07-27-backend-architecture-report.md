@@ -676,11 +676,20 @@ protocol synchronously for callbacks that must complete on their first poll.
   memfd (`reverie-liteinst/src/backend.rs:45-185,395-443`). The preload connects
   before seccomp (`reverie-liteinst/src/rpc.rs:67-109`). It duplicates the
   request envelope, bincode codec, and framing in
-  `reverie-preload/src/rpc.rs:62-72,170-180,246-267`, then adds trusted-gate
-  send/read syscalls at lines 137-167 and 183-244.
-- SaBRe: each remote thread owns a `BlockingRpcClient`
-  (`experimental/reverie-sabre/src/reverie_adapter.rs:350-390`). Fork/exec
-  reconnect logic and reserved fd 100 are in `experimental/reverie-sabre/src/rpc.rs:28-120`.
+  `reverie-preload/src/rpc.rs:62-72,170-180,246-267`, then uses trusted-gate
+  send/read syscalls at lines 137-167 and 183-244. Generic Tool callbacks and
+  their blocking RPC do **not** run in the SIGSYS handler: the handler installs
+  or selects a hook and rewrites saved RIP, then `tool_trampoline` executes the
+  Tool after `sigreturn` in normal guest context
+  (`reverie-liteinst/src/runtime.rs:746-792,851-888`).
+- SaBRe has two UDS transport generations. The exact shared tools in this
+  report use `RemoteReverieAdapter`: each guest thread lazily creates a
+  `BlockingRpcClient` keyed by TID/socket path
+  (`experimental/reverie-sabre/src/reverie_adapter.rs:350-390`). The separate
+  legacy `BaseChannel` transport uses `REVERIE_SOCK`, protects fd 100 across
+  exec, and reconnects after fork
+  (`experimental/reverie-sabre/src/rpc.rs:28-120`). The fd-100 behavior must not
+  be attributed to the exact remote-tool transport.
 - DBI: the coordinator server is shared, but `reverie-dbi/src/sync_rpc.rs:1-32`
   documents a wire-compatible duplicate blocking client. Lines 122-171 keep a
   per-thread/process connection; 175-239 use injected guest syscalls because
@@ -691,8 +700,10 @@ protocol synchronously for callbacks that must complete on their first poll.
 There is deliberate duplication at both the LiteInst preload and DBI guest
 boundaries. Factoring the envelope/codec/framing into a no-Tokio core crate
 would reduce drift, but their I/O must remain backend-specific: LiteInst must
-use its trusted gate from signal context, while DBI uses injected guest syscalls
-inside DynamoRIO. SaBRe can continue using the shared `BlockingRpcClient`.
+use its trusted gate from normal post-signal Tool context, while DBI uses
+injected guest syscalls inside DynamoRIO. SaBRe's remote tools can continue
+using the shared `BlockingRpcClient`; its legacy channel is a separate
+compatibility surface.
 
 Requested UDS/shared-memory grep:
 
@@ -818,8 +829,23 @@ ns_per_rpc=6529
 final_total=101000
 ```
 
-Median: 6,528 ns/RPC. This measures same-process UDS+bincode latency on this
-host, not fork contention or Tool handler work.
+These are three historical samples from one run, not endpoints of a stable
+6,397-6,529 ns latency interval. The adversarial reviewer reran the same
+100,000-call benchmark and recorded:
+
+```text
+trial=1 ns_per_rpc=6414 final_total=101000
+trial=2 ns_per_rpc=6571 final_total=101000
+trial=3 ns_per_rpc=6942 final_total=101000
+```
+
+The rerun is the same order of magnitude but exceeds the original narrow
+range. Neither set used CPU pinning or host-load control, and six total samples
+are insufficient for a latency distribution. This benchmark measures a
+same-process `RpcServer`/`RpcClient` UDS+bincode request/response baseline; it
+does not measure fork contention, Tool handler work, or any backend's complete
+RPC path (KVM/ptrace are direct calls, while SaBRe/LiteInst/DBI have distinct
+guest-side I/O constraints).
 
 ## In-guest signal handling
 
@@ -827,28 +853,75 @@ host, not fork contention or Tool handler work.
 
 The host sets `LD_PRELOAD`, binds a coordinator UDS, and passes the socket/tool
 bootstrap in a sealed memfd (`reverie-liteinst/src/backend.rs:372-443`). The
-preload installs a classic-BPF seccomp filter. Its documented flow is exact:
+preload connects RPC before installing a classic-BPF seccomp filter. The
+generic Tool path is split deliberately across signal and normal contexts:
 
 1. Seccomp returns `SECCOMP_RET_TRAP` for every syscall except
    `rt_sigreturn` and the trusted syscall gate
    (`reverie-preload/src/seccomp.rs:9-23,76-100`).
 2. Linux delivers thread-directed `SIGSYS`.
 3. `sigsys_handler` validates provenance and a reentrancy guard, decodes the
-   syscall from `ucontext`, and calls the registered dispatcher
+   syscall from `ucontext`, and invokes the registered dispatcher
    (`reverie-preload/src/trap.rs:139-188`).
-4. Forwarding occurs through the whitelisted assembly syscall gate
-   (`trap.rs:33-109`); the handler writes the result to RAX or redirects RIP
-   (`trap.rs:190-198`).
-5. `SIGSYS` is reserved. Guest attempts to replace/block it or install callable
+4. On the first recoverable site, `LiteinstDispatcher` asks `liteinst2` to
+   install a replacement hook. If the hook is active, `defer_to` rewrites the
+   saved RIP to its generated trampoline
+   (`reverie-liteinst/src/runtime.rs:486-555,851-869`). The signal handler then
+   returns; it does not run the arbitrary generic Tool or blocking RPC.
+5. After kernel `sigreturn`, `tool_trampoline` invokes the Tool in normal guest
+   context, where allocation, locking, blocking coordinator RPC, and trusted
+   gate syscalls are permitted (`runtime.rs:746-792,879-936`). Later executions
+   enter the installed hook directly rather than taking SIGSYS first.
+6. `SIGSYS` is reserved. Guest attempts to replace/block it or install callable
    handlers fail closed (`reverie-preload/src/signal.rs:9-29` and
    `reverie-liteinst/src/runtime.rs:595-738`).
 
-Fork inherits the filter atomically, but the child must reconnect its RPC
-socket from signal context (`reverie-preload/src/fork.rs:9-28`). The benchmark's
-exit 2 shows this intended path does not yet make the generic Tool fork workload
-operational at the tested SHA.
+If live patch installation fails, the site becomes `SITE_FALLBACK`; generic
+Tool mode cannot safely execute the callback in SIGSYS, so the syscall returns
+`EOPNOTSUPP` (`runtime.rs:851-875`). This is not a ptrace fallback. Likewise,
+the `ForkHook`/`PassthroughDispatcher` code is compatibility scaffolding, not
+the active generic Tool lifecycle: `LiteinstGuest` rejects injected
+`clone`/`clone3`/`fork`/`vfork` with `EOPNOTSUPP`
+(`reverie-liteinst/src/tool_host.rs:395-419,527-543`), and the README records
+fork reconnect as unimplemented. The benchmark's exit 2 is direct evidence of
+that boundary; no child reconnects RPC from signal context.
 
-### e9patch (not LD_PRELOAD)
+### SaBRe (in-process rewriting plus Hermit safety net)
+
+Standalone Reverie SaBRe scans executable code for x86-64 `0f 05` syscall
+sites. A normal site is replaced with a jump to `handle_syscall`; when the
+rewriter cannot fit that detour, it writes SaBRe's `0f ff` (UD0) marker. The
+loader's SIGILL path recognizes the marker, reconstructs the original syscall
+frame, and calls the plugin. This is an in-process loader fallback, not ptrace
+(`third-party/sabre/arch/x86_64/rewriter.c:112-338` and
+`third-party/sabre/loader/loader.c`).
+
+SaBRe also virtualizes mediated guest dispositions. `rt_sigaction` stores a
+guest-facing action while retaining an internal action; the installed central
+handler maps the signal, enters the signal guard, then dispatches the stored
+guest action or the emulated default behavior
+(`experimental/reverie-sabre/src/signal/mod.rs:30-73,140-159,203-382`). Catchable
+standard signals use this central path; the implementation preserves default
+ignore/stop/continue/terminate behavior but does not reproduce every Linux
+signal detail. Synchronous faults such as SIGILL/SIGSEGV are excluded from the
+generic central multiplexer; SIGILL is separately owned by the loader's UD0
+fallback. This is why "central signal handling" does not mean every signal is
+interchangeable or backend-neutral.
+
+Hermit adds a separate safety net around that standalone runtime. At Hermit
+`a62258e58544e33c8978f4ae2afa08b80f1dea87`, `run_sabre` invokes
+`sabre_ptrace::run` (`hermit-cli/src/lib.rs:728-787`). The custom supervisor
+uses `PTRACE_TRACEME`/`PTRACE_SYSCALL`, follows clone/fork/vfork/exec/exit, and
+examines syscall-entry RIP (`hermit-cli/src/sabre_ptrace.rs:81-247,413-432`).
+Only after the first complete coordinator RPC marks the plugin ready, a raw
+`0f 05` in an untrusted mapping is replaced with `0f ff`, the current kernel
+entry is suppressed, and RIP/result state is restored so the next execution
+enters SaBRe's SIGILL handler (`sabre_ptrace.rs:180-225,250-270`). Ptrace does
+not itself invoke Detcore or emulate the syscall; it converts a truly missed
+raw site into the normal in-guest SaBRe path. Loader/plugin/shared-library and
+bracket mappings are treated as trusted to avoid recursion.
+
+### Reverie E9patchBackend (not LD_PRELOAD)
 
 The task premise is incorrect for current code. e9patch rewrites recovered
 root-ELF syscall sites to a C trampoline that loads magic RAX and executes
@@ -869,12 +942,25 @@ test non_elf_script_uses_ptrace_fallback ... ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.01s
 ```
 
+Hermit's product CLI does **not** dispatch this backend. At Hermit `a62258e`,
+`RunOpts::runtime_backend` maps selected e9patch to ptrace, performs its own
+content-addressed preprocessing and read-only executable overlay, then calls
+the ordinary `reverie_ptrace::TracerBuilder<Detcore>` path
+(`hermit-cli/src/bin/hermit/run.rs:1418-1474,1969-2010,2188-2203,2278-2284`;
+`hermit-cli/src/lib.rs:1167-1225`). Hermit's rewriter selects cached instruction
+offsets and asks e9tool for `-P "before empty"`; it does not install Reverie's
+magic-int3 payload (`hermit-cli/src/e9patch.rs:105-309`). Thus Reverie's
+`E9patchBackend` demonstrates rewritten event provenance through injected
+ptrace traps, while `hermit --backend e9patch` means validated preprocessing
+plus ordinary ptrace Detcore. Neither is LD_PRELOAD, but they are not the same
+execution path.
+
 ## Ptrace of last resort and sharing recommendation
 
 Source audit command:
 
 ```text
-rg -n "ptrace|PTRACE_|nix::sys::ptrace|reverie_ptrace|TracerBuilder" experimental/reverie-sabre reverie-liteinst reverie-e9patch third-party/sabre -g '*.rs' -g '*.c' -g '*.h' -g '*.S'
+rg -n "ptrace|PTRACE_|nix::sys::ptrace|reverie_ptrace|TracerBuilder" experimental/reverie-sabre reverie-liteinst reverie-e9patch third-party/sabre ../hermit/hermit-cli/src/sabre_ptrace.rs -g '*.rs' -g '*.c' -g '*.h' -g '*.S'
 ```
 
 Relevant complete matches outside third-party syscall-name tables:
@@ -886,36 +972,55 @@ reverie-e9patch/src/backend.rs:30:use reverie_ptrace::TracerBuilder;
 reverie-e9patch/src/backend.rs:158:    TracerBuilder::<T>::new(command)
 reverie-e9patch/src/backend.rs:165:/// Hybrid e9patch backend with ptrace lifecycle and full `Guest` semantics.
 reverie-e9patch/src/backend.rs:171:/// e9patch event path, but it is not yet the planned ptrace-free fast path.
+../hermit/hermit-cli/src/sabre_ptrace.rs:29:use nix::sys::ptrace;
+../hermit/hermit-cli/src/sabre_ptrace.rs:98:        ptrace::syscall(self.root, None)
+../hermit/hermit-cli/src/sabre_ptrace.rs:160:            ptrace::Options::PTRACE_O_EXITKILL
+../hermit/hermit-cli/src/sabre_ptrace.rs:289:        libc::ptrace(libc::PTRACE_GET_SYSCALL_INFO, ...)
 ```
 
-- e9patch already shares the production Rust wrapper: `reverie-ptrace` owns all
-  lifecycle and non-rewritten event handling.
-- SaBRe does **not** fall back to ptrace for unpatched sites. Its loader scans
-  mappings and rewrites syscall instructions to `handle_syscall`
-  (`third-party/sabre/loader/rewriter.c:525-545,807-862` and
-  `third-party/sabre/arch/x86_64/rewriter.c:112-338`). Missed sites remain real
-  syscalls; there is no external tracer to catch them.
-- LiteInst also has no ptrace. It combines live patching with the seccomp/SIGSYS
-  safety net described above.
+- The normal ptrace backend and standalone Reverie `E9patchBackend` use the
+  production Rust `reverie-ptrace`/`safeptrace` stack. E9patch adds its
+  magic-int3 register-frame classifier while that tracer owns lifecycle and
+  non-rewritten events.
+- Standalone Reverie SaBRe has no external tracer: its loader rewrites syscall
+  instructions to `handle_syscall`, with its SIGILL/UD0 path for sites that the
+  loader discovered but could not detour. Hermit SaBRe is different: the
+  product wraps the loader in the custom `sabre_ptrace` supervisor described
+  above, so truly missed raw sites in untrusted mappings are caught and
+  converted to UD0 after RPC readiness.
+- Hermit's supervisor uses `nix::sys::ptrace` for options, register access,
+  memory access, resume, and events. It calls `libc::ptrace` directly only for
+  `PTRACE_GET_SYSCALL_INFO`, because the documented nix 0.30.1 wrapper passes a
+  null address (`sabre_ptrace.rs:282-301`). It does not use
+  `reverie-ptrace`/`safeptrace` today.
+- LiteInst has no active ptrace controller. Live patch failure returns
+  `EOPNOTSUPP`; clone/fork is rejected in generic Tool mode. Its
+  `HybridPtrace` type is unsupported scaffolding, not a fallback.
 
-Therefore no three-way ptrace code can be shared today. If SaBRe or LiteInst
-adds a ptrace supervisor, it should instantiate `reverie-ptrace` rather than
-introduce raw `PTRACE_*` calls. Sharing the whole e9patch controller is not
-appropriate: e9patch's magic-int3 register-frame protocol is backend-specific.
-The reusable boundary is the existing `TracerBuilder` plus a small backend event
-classifier, exactly the pattern e9patch already uses.
+There is therefore no existing three-way ptrace component to factor. The
+Hermit SaBRe loop and `reverie-ptrace` overlap in syscall-stop decoding,
+clone/fork/exec/exit following, register/memory access, and resume mechanics;
+those mechanics could be shared if `reverie-ptrace` exposed a raw-stop adapter
+for SaBRe's readiness/mapping/site-patch classifier. The policy itself should
+remain backend-specific: SaBRe suppresses one kernel entry and rewrites guest
+opcodes, whereas e9patch reconstructs an injected register frame at a known
+`int3`. LiteInst is not part of that refactor unless it gains a real lifecycle
+ptracer.
 
 ## Priority gaps
 
 1. Publish counter1/counter2/strace runners for e9patch or add a common example
    runner over the `Backend` trait.
 2. Fix LiteInst generic Tool fork handling (benchmark exits 2 after four root
-   syscalls) and the coordinator owner teardown race.
+   syscalls), then run enough teardown repetitions to quantify the single
+   owner-leak failure observed in two strace attempts.
 3. Make DBI deliver the Rust Tool in copied fork children. Its advertised UDS
    reconnect path exists, but this benchmark observed only root process/tool
    state.
-4. Run the KVM matrix on a `/dev/kvm` host; no KVM PASS/FAIL product conclusion
-   is supportable from this machine.
+4. Repeat the KVM matrix on a stable `/dev/kvm` host and retain full raw output
+   and timing metadata. The transient reviewer rerun establishes functional
+   PASS for the three tools and full-tree counter2 coverage, but not persistent
+   host availability or comparative performance.
 5. Define a backend-neutral counting boundary (for example, marker-delimited
    subscribed syscalls) before using totals for cross-backend performance. The
    current launchers intentionally begin observation at different points.
