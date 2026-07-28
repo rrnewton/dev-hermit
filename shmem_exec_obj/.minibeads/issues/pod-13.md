@@ -6,13 +6,13 @@ issue_type: task
 assignee: devbig030/migration-reclamation
 depends_on:
   pod-1: parent-child
-  pod-7: blocks
-  pod-5: blocks
   pod-4: blocks
-  pod-6: blocks
+  pod-7: blocks
   pod-8: blocks
+  pod-5: blocks
+  pod-6: blocks
 created_at: 2026-07-28T03:39:42.092157584+00:00
-updated_at: 2026-07-28T12:00:35.000827339+00:00
+updated_at: 2026-07-28T12:01:06.980588500+00:00
 claimed_at: 2026-07-28T05:19:32.486714861+00:00
 claimed_until: 2026-07-30T05:19:32.486511533+00:00
 ---
@@ -36,3 +36,5 @@ IMPLEMENTED (awaiting coordinator review): added v2/src/migration.rs, tests/migr
 [impl agent, gpt-5.6-sol] 2026-07-28 fresh-REJECT correction IMPLEMENTED at lineage 265ae8a9584f0bbd76901d0dc263315661cdb1a3 and 940e44b4d37ea202565577df2bad4803f30c4a106; keep in_progress for a new adversarial review. Added the public unsafe FailClosedSourceAuthority with a static lifetime bound and explicit safety contract, rejected borrowed authorities, and stored consumed source authority in ManuallyDrop so bind errors and every Migration, TargetReadyMigration, CommittedMigration, and wrong-permit exit leak closed rather than invoking release/reopen/reclamation effects. Only matching ReclamationPermit extraction takes the authority; a mismatched permit returns the intact witness for retry. RAII counter tests exercise bind failure, occupied begin, all three owner drops, mismatched retry, and matching extraction. The target crash cuts now acquire-observe the migration phase CAS directly with no child_started release edge; backing identity guidance binds distinct object/offset/extent/generation identities and PrecommitTargetBacking documents destructor obligations. Exact evidence on Rust 1.85.0 and current Rust 1.96.0: focused migration integration debug/release 9/9 and unit debug/release 3/3; schema_migration PASS; no-default lib tests 23/23 plus check and strict Clippy PASS; all-target/all-feature check and strict Clippy PASS; strict rustdoc PASS; seven focused doctests PASS. An external Rust 1.85 probe fails with E0277 specifically because &mut u64 does not implement FailClosedSourceAuthority. Full Rust 1.85 all-feature package suite and 8 all-feature doctests PASS. Rust 1.85/current rustfmt checks and git diff --check PASS.
 
 [impl agent, gpt-5.6-sol] 2026-07-28 permit-provenance Major corrected; keep in_progress for a fresh adversarial reviewer. AdmissionQuiescence and MappingQuiescence now bind the complete authenticated MigrationPlan, and safe begin, authorize_reclamation, and into_authority exact-compare that plan. SourcePlanMismatch reports exact match status plus bound/supplied transaction, source/target tags, and recovery authorities; a mismatch returns the intact fail-closed witness. Public-API regression coverage proves plans sharing a source cannot exchange permits when transactions differ or when transaction IDs match but target/authority differ, then retries successfully with the correct permit. Unsafe contracts and migration docs require one externally authenticated live/recoverable control and transaction per source and forbid duplicate controls/plans without a stronger persistent control identity. Validation on Rust 1.96.0 and exact MSRV 1.85.0: focused migration integration 10/10, migration unit 3/3, schema_migration PASS, default doctests 7/7, full all-feature package suites PASS including 8 doctests, no-default lib checks PASS, all-target/all-feature strict Clippy PASS, strict rustdoc PASS, rustfmt checks PASS, git diff --check PASS, and cargo package list contains migration source/test/example/docs. Exact handoff SHA will be recorded after the selective implementation commit.
+
+[impl agent, gpt-5.6-sol] HANDOFF: permit-provenance implementation commit 7e30537aae304a9a2905a30b1a42721683141e9b. Validation evidence is recorded in the immediately preceding note and bound to this source tip. Task intentionally remains in_progress pending fresh adversarial acceptance.
