@@ -389,7 +389,7 @@ def compare_runs(
     else:
         passed = False
         report.append(
-            "WARN: QEMU argv differs from first run; executable path or arguments changed"
+            "ERROR: QEMU argv differs from first run; executable path or arguments changed"
         )
     for field, label in (
         ("qemu_version", "QEMU version"),
@@ -405,7 +405,7 @@ def compare_runs(
         else:
             passed = False
             report.append(
-                "WARN: {} differs from first run: first={} current={}".format(
+                "ERROR: {} differs from first run: first={} current={}".format(
                     label, anchor.get(field), current.get(field)
                 )
             )
@@ -417,7 +417,7 @@ def compare_runs(
         if difference:
             passed = False
             report.append(
-                "WARN: exact Hermit log differs from first run after normalizing only wallclock timestamps and host inode numbers\n{}".format(
+                "ERROR: exact Hermit log differs from first run after normalizing only wallclock timestamps and host inode numbers\n{}".format(
                     difference
                 )
             )
@@ -428,7 +428,7 @@ def compare_runs(
     else:
         passed = False
         report.append(
-            "WARN: cannot compare Hermit INFO logs because the first-run log is unavailable"
+            "ERROR: cannot compare Hermit INFO logs because the first-run log is unavailable"
         )
     return passed, report
 
@@ -441,14 +441,11 @@ def print_comparison(
 ) -> None:
     for line in report:
         print(line)
-    if passed:
-        print("PASS: all repeat checks match the first run")
-    else:
-        print(
-            "PARTIAL: workload completed, but repeat verification differs from the first run."
-        )
-        print("Review the WARN lines above before sharing this artifact.")
-    if passed and snapshot_sha256 is not None:
+    if not passed:
+        print("ERROR: RUN DIVERGED FROM ANCHOR")
+        raise RuntimeError("run diverged from anchor")
+    print("PASS: all repeat checks match the first run")
+    if snapshot_sha256 is not None:
         print()
         print("🎉 DETERMINISTIC! Snapshot SHA-256 matches previous run:")
         print("   {}".format(snapshot_sha256))
