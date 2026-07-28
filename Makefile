@@ -3,9 +3,18 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build build-hermit check-deps init-hermit install-deps help
+.PHONY: build build-hermit check-deps init-hermit install-deps clean distclean help
 
 build: check-deps build-hermit
+
+# Wipe stale QEMU/Linux demo results (anchors, run history, snapshots) so the
+# next demo run starts fresh. distclean also removes the kernel download and
+# built initramfs. Both delegate to demos/clean.sh (honors QEMU_ASSETS).
+clean:
+	@demos/clean.sh
+
+distclean:
+	@demos/clean.sh --distclean
 
 init-hermit:
 	@set -eu; \
@@ -97,3 +106,5 @@ help:
 	@echo "make install-deps  Install native Hermit build dependencies"
 	@echo "make check-deps    Verify required pkg-config modules"
 	@echo "make / make build  Initialize and build Hermit in release mode"
+	@echo "make clean         Wipe stale QEMU/Linux demo results (fresh start)"
+	@echo "make distclean     Also remove the demo kernel download + initramfs"
