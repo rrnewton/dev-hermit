@@ -101,12 +101,13 @@ runner-owner token, canonical bundle and artifact paths, the retained harness
 executable, and `--defer-completion 1`; it emits only synchronized results and a
 report of its own runtime observations. The runner independently observes and
 requires the exact same runtime/configuration object, cross-checks every path
-and digest in the compiler manifest, validates the exact result matrix and
-byte-equivalent CSV/JSON rows, freezes every payload file, and inventories the
-whole bundle. It regenerates the canonical environment deterministically and
-rechecks the immutable snapshot and inventory immediately before atomically
-publishing `environment.json`. A failure removes only the directory claimed by
-that run. A directory without `environment.json` is not a completed bundle.
+and file digest pair in the compiler manifest, validates its dependency
+closures and the exact result matrix and byte-equivalent CSV/JSON rows, freezes
+every payload file, and inventories the whole bundle. It regenerates the
+canonical environment deterministically and rechecks the immutable snapshot
+and inventory immediately before atomically publishing `environment.json`. A
+failure removes only the directory claimed by that run. A directory without
+`environment.json` is not a completed bundle.
 
 Read-only file modes are accidental-mutation hardening, not an adversarial
 immutability boundary. A process running as the bundle owner can restore write
