@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("fuzz/corpus"));
-    let (artifact, _) = valid_artifact()?;
+    let (artifact, digest) = valid_artifact()?;
     write_seed(
         &root,
         "image_header",
@@ -69,8 +69,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         &artifact[..HEADER_SIZE],
     )?;
     write_seed(&root, "image_header", "truncated", &artifact[..31])?;
-    write_seed(&root, "pod_artifact", "valid-artifact", &artifact)?;
-    write_seed(&root, "pod_artifact", "empty", &[])?;
+    let mut valid_artifact_input = digest.to_vec();
+    valid_artifact_input.extend_from_slice(&artifact);
+    write_seed(
+        &root,
+        "pod_artifact",
+        "valid-digest-artifact",
+        &valid_artifact_input,
+    )?;
+    let mut wrong_digest = digest;
+    wrong_digest[0] ^= 1;
+    let mut wrong_digest_input = wrong_digest.to_vec();
+    wrong_digest_input.extend_from_slice(&artifact);
+    write_seed(
+        &root,
+        "pod_artifact",
+        "wrong-digest-artifact",
+        &wrong_digest_input,
+    )?;
+    write_seed(&root, "pod_artifact", "digest-only", &[0x5a; 32])?;
 
     let context = BootstrapContext::new(
         ConnectorKind::Preload,

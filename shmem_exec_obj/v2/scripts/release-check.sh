@@ -14,6 +14,7 @@ Environment:
   RELEASE_CHECK_TOTAL_TIMEOUT    Whole-run deadline in seconds.
   RELEASE_CHECK_COMMAND_TIMEOUT  Default per-command deadline in seconds.
   RELEASE_CHECK_LONG_TIMEOUT     Build/process per-command deadline in seconds.
+  RELEASE_CHECK_ADVERSARIAL_TIMEOUT  Adversarial-suite deadline in seconds.
   RELEASE_CHECK_SKIP_PROCESS=1   Skip Linux process evidence (not release-green).
   RELEASE_CHECK_REQUIRE_CLEAN=1  Reject changes under v2 before running.
   RELEASE_CHECK_DRY_RUN=1        Print the selected gate without executing it.
@@ -45,15 +46,18 @@ if [[ $mode == quick ]]; then
   default_total_timeout=3600
   default_command_timeout=300
   default_long_timeout=900
+  default_adversarial_timeout=1200
 else
   default_total_timeout=10800
   default_command_timeout=600
   default_long_timeout=1800
+  default_adversarial_timeout=5400
 fi
 
 total_timeout=${RELEASE_CHECK_TOTAL_TIMEOUT:-$default_total_timeout}
 command_timeout=${RELEASE_CHECK_COMMAND_TIMEOUT:-$default_command_timeout}
 long_timeout=${RELEASE_CHECK_LONG_TIMEOUT:-$default_long_timeout}
+adversarial_timeout=${RELEASE_CHECK_ADVERSARIAL_TIMEOUT:-$default_adversarial_timeout}
 skip_process=${RELEASE_CHECK_SKIP_PROCESS:-0}
 require_clean=${RELEASE_CHECK_REQUIRE_CLEAN:-0}
 dry_run=${RELEASE_CHECK_DRY_RUN:-0}
@@ -79,6 +83,7 @@ require_boolean() {
 require_positive_integer RELEASE_CHECK_TOTAL_TIMEOUT "$total_timeout"
 require_positive_integer RELEASE_CHECK_COMMAND_TIMEOUT "$command_timeout"
 require_positive_integer RELEASE_CHECK_LONG_TIMEOUT "$long_timeout"
+require_positive_integer RELEASE_CHECK_ADVERSARIAL_TIMEOUT "$adversarial_timeout"
 require_boolean RELEASE_CHECK_SKIP_PROCESS "$skip_process"
 require_boolean RELEASE_CHECK_REQUIRE_CLEAN "$require_clean"
 require_boolean RELEASE_CHECK_DRY_RUN "$dry_run"
@@ -108,11 +113,11 @@ print_command() {
 limit_for() {
   local class=$1
   local configured
-  if [[ $class == long ]]; then
-    configured=$long_timeout
-  else
-    configured=$command_timeout
-  fi
+  case "$class" in
+    long) configured=$long_timeout ;;
+    adversarial) configured=$adversarial_timeout ;;
+    *) configured=$command_timeout ;;
+  esac
 
   local elapsed=$((SECONDS - started))
   local remaining=$((total_timeout - elapsed))
@@ -272,16 +277,17 @@ if [[ $dry_run == 0 ]]; then
     examples/csnzi.rs examples/csnzi_comparison.rs \
     examples/relocatable_collections.rs examples/schema_migration.rs \
     tests/layout.rs tests/closeable_snzi.rs tests/csnzi.rs tests/pod_api.rs \
-    tests/bootstrap_connector.rs tests/migration.rs tests/reloc_allocator.rs \
+    tests/bootstrap_connector.rs tests/dynamic_analysis.rs tests/migration.rs \
+    tests/reloc_allocator.rs \
     tests/shared_collections.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
       exit 1
     }
   done
-  if grep -Eq '(^|/)(poc|demos|scripts|target|crates|ai_docs|\.minibeads)/' "$main_list"; then
+  if grep -Eq '(^|/)(poc|demos|fuzz|scripts|target|crates|ai_docs|\.minibeads)/' "$main_list"; then
     echo "main package contains a private harness or generated path:" >&2
-    grep -E '(^|/)(poc|demos|scripts|target|crates|ai_docs|\.minibeads)/' \
+    grep -E '(^|/)(poc|demos|fuzz|scripts|target|crates|ai_docs|\.minibeads)/' \
       "$main_list" >&2
     exit 1
   fi
@@ -310,6 +316,9 @@ else
     echo "Set RELEASE_CHECK_SKIP_PROCESS=1 for a non-release compile/package run." >&2
     exit 1
   fi
+
+  run_gate adversarial "bounded adversarial validation" \
+    ./scripts/adversarial-check.sh "$mode"
 
   run_gate long "typed mapping lifecycle process smoke" \
     cargo run --locked --example typed_mapping
