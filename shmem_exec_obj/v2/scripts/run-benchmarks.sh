@@ -555,6 +555,7 @@ write_canonical_environment() {
     --arg workspace_lock_sha256 "$workspace_lock_sha256" \
     --arg runner_sha256 "$runner_sha256" \
     --arg runner_owner_sha256 "$SHMEM_POD_BENCH_RUNNER_OWNER_SHA256" \
+    --arg harness_owner_sha256 "$harness_owner_sha256" \
     --arg harness_source_sha256 "$harness_source_sha256" \
     --arg harness_manifest_sha256 "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256" \
     --arg harness_lock_sha256 "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256" \
@@ -643,6 +644,7 @@ write_canonical_environment() {
         workspace_lock: {bundle_path: "provenance/source/Cargo.lock", sha256: $workspace_lock_sha256},
         runner: {bundle_path: "provenance/source/scripts/run-benchmarks.sh", sha256: $runner_sha256},
         runner_owner: {bundle_path: "runner-owner", sha256: $runner_owner_sha256},
+        harness_owner: {bundle_path: "harness-owner.json", sha256: $harness_owner_sha256},
         harness_source: {bundle_path: "provenance/source/benchmarks/harness.rs", sha256: $harness_source_sha256},
         harness_manifest: {bundle_path: "provenance/harness-Cargo.toml", sha256: $harness_manifest_sha256},
         harness_lock: {bundle_path: "provenance/harness-Cargo.lock", sha256: $harness_lock_sha256},
@@ -736,6 +738,83 @@ write_canonical_environment() {
       },
       interpretation: "One-host observations only; compare rows within a controlled run and do not treat them as portable performance claims."
     }' >"$output"
+}
+
+verify_owner_files() {
+  local expected_runner_owner="$temporary/expected-runner-owner"
+  runner_owner_contents >"$expected_runner_owner"
+  if ! cmp -s -- "$expected_runner_owner" "$output_dir/runner-owner"; then
+    echo "benchmark runner ownership record changed" >&2
+    return 1
+  fi
+  if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
+    '. == {
+      schema: "shmem-pod-benchmark-owner-v2",
+      run_id: $run_id,
+      runner_owner_token: $token
+    }' "$output_dir/harness-owner.json" >/dev/null; then
+    echo "benchmark harness ownership validation failed" >&2
+    return 1
+  fi
+}
+
+verify_environment_bindings() {
+  local environment=$1
+  local relative digest full canonical inventory_digest inventory_entries
+  local -A seen=()
+  inventory_digest=$(jq -er '.bundle.inventory.sha256' "$environment")
+  inventory_entries=$(jq -er '.bundle.inventory.entries' "$environment")
+  verify_sha256 "$output_dir/bundle-inventory.tsv" "$inventory_digest"
+  if [[ $inventory_entries != "$(wc -l <"$output_dir/bundle-inventory.tsv")" ]]; then
+    echo "canonical environment has the wrong bundle inventory entry count" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r relative digest; do
+    if [[ -z $relative || $relative == /* || $relative == *$'\n'* ||
+          ! $digest =~ ^[0-9a-f]{64}$ || -v seen[$relative] ]]; then
+      echo "canonical environment has an invalid provenance binding: $relative" >&2
+      return 1
+    fi
+    seen[$relative]=1
+    full="$output_dir/$relative"
+    if [[ ! -f $full || -L $full ]]; then
+      echo "canonical environment provenance is not a regular bundle file: $relative" >&2
+      return 1
+    fi
+    canonical=$(readlink -f -- "$full")
+    if [[ $canonical != "$full" ]]; then
+      echo "canonical environment provenance path is noncanonical: $relative" >&2
+      return 1
+    fi
+    verify_sha256 "$full" "$digest"
+  done < <(
+    jq -er '.provenance | to_entries[] | [.value.bundle_path, .value.sha256] | @tsv' \
+      "$environment"
+  )
+
+  verify_sha256 "$provenance_dir/source-status.txt" \
+    "$(jq -er '.source.status_sha256' "$environment")"
+  verify_sha256 "$provenance_dir/source-live-manifest.tsv" \
+    "$(jq -er '.source.initial_manifest.sha256' "$environment")"
+  verify_sha256 "$provenance_dir/source-manifest.tsv" \
+    "$(jq -er '.source.manifest.sha256' "$environment")"
+  verify_sha256 "$artifact_dir/pod.bin" \
+    "$(jq -er '.artifact.sha256' "$environment")"
+  if [[ $(jq -er '.source.initial_manifest.files' "$environment") != \
+          "$(wc -l <"$provenance_dir/source-live-manifest.tsv")" ||
+        $(jq -er '.source.manifest.files' "$environment") != \
+          "$(wc -l <"$provenance_dir/source-manifest.tsv")" ]]; then
+    echo "canonical environment has the wrong source manifest file count" >&2
+    return 1
+  fi
+  local expected_revision="$temporary/expected-source-revision.txt"
+  printf '%s\n' "$source_revision_before" >"$expected_revision"
+  if ! cmp -s -- "$expected_revision" "$provenance_dir/source-revision.txt"; then
+    echo "retained source revision record changed" >&2
+    return 1
+  fi
+  verify_owner_files
 }
 
 while (($#)); do
@@ -1033,8 +1112,6 @@ verify_compiler_manifest_file "$compiler_manifest" sdk.dep_info sdk.dep_info_sha
   "$artifact_dir/libshmem_pod.rlib.d"
 verify_compiler_manifest_file "$compiler_manifest" pod.dep_info pod.dep_info_sha256 \
   "$artifact_dir/pod.o.d"
-verify_sha256 "$artifact_dir/libshmem_pod.rlib.probe.d" "$sdk_probe_dep_info_sha256"
-verify_sha256 "$artifact_dir/pod.o.probe.d" "$pod_probe_dep_info_sha256"
 verify_compiler_manifest_file "$compiler_manifest" rustc_launcher rustc_launcher_sha256 \
   "$(manifest_value "$compiler_manifest" rustc_launcher)"
 verify_compiler_manifest_file "$compiler_manifest" rustc_binary rustc_binary_sha256 \
@@ -1338,8 +1415,12 @@ verify_compiler_manifest_file "$compiler_manifest" sdk.dep_info sdk.dep_info_sha
   "$artifact_dir/libshmem_pod.rlib.d"
 verify_compiler_manifest_file "$compiler_manifest" pod.dep_info pod.dep_info_sha256 \
   "$artifact_dir/pod.o.d"
+verify_sha256 "$artifact_dir/libshmem_pod.rlib.probe.d" "$sdk_probe_dep_info_sha256"
+verify_sha256 "$artifact_dir/pod.o.probe.d" "$pod_probe_dep_info_sha256"
 
 compiler_crosscheck_sha256=$(sha256sum "$provenance_dir/compiler-crosscheck.json" | awk '{print $1}')
+verify_owner_files
+harness_owner_sha256=$(sha256sum "$output_dir/harness-owner.json" | awk '{print $1}')
 harness_report_sha256=$(sha256sum "$output_dir/harness-report.json" | awk '{print $1}')
 results_jsonl_sha256=$(sha256sum "$output_dir/results.jsonl" | awk '{print $1}')
 results_csv_sha256=$(sha256sum "$output_dir/results.csv" | awk '{print $1}')
@@ -1383,6 +1464,7 @@ if ! jq -e \
   echo "runner-generated canonical environment failed exact binding checks" >&2
   exit 1
 fi
+verify_environment_bindings "$environment_staging"
 sync -f "$environment_staging"
 
 # These are deliberately the final observations before the runner alone
@@ -1390,6 +1472,7 @@ sync -f "$environment_staging"
 verify_source_stable
 verify_toolchain_stable
 verify_bundle_inventory
+verify_environment_bindings "$environment_staging"
 if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; then
   echo "refusing to replace an existing benchmark completion marker" >&2
   exit 1
