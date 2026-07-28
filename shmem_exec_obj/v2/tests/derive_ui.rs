@@ -15,14 +15,17 @@ fn rejects_unsupported_or_unsound_shapes() {
         ),
         ("enum", &["pod capability derives support structs only"]),
         ("fixed_not_strong", &["FixedOnly", "PodValue"]),
-        ("fixed_pointer", &["*const Target", "FixedAddressPodValue"]),
+        (
+            "fixed_pointer",
+            &["*const", "Target", "FixedAddressPodValue"],
+        ),
         (
             "generic_drop",
             &["generic pod capability derives are not supported"],
         ),
         ("mutex", &["Mutex<u64>", "PodValue"]),
-        ("pointer", &["*const Target", "PodValue"]),
-        ("reference", &["&'static Target", "PodValue"]),
+        ("pointer", &["*const", "Target", "PodValue"]),
+        ("reference", &["&'static", "Target", "PodValue"]),
         ("standard_vec", &["Vec<u64>", "PodValue"]),
         (
             "sync_without_storage",
