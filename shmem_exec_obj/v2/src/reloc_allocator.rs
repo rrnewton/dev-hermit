@@ -154,7 +154,7 @@ impl AllocationDescriptor {
 
     /// Returns the exact structural layout fingerprint.
     pub const fn fingerprint(self) -> u128 {
-        (self.fingerprint_high as u128) << 64 | self.fingerprint_low as u128
+        ((self.fingerprint_high as u128) << 64) | self.fingerprint_low as u128
     }
 }
 
@@ -1052,7 +1052,7 @@ impl<'mapping, const SLOTS: usize> RelocRegion<'mapping, SLOTS> {
             self.allocator.poison();
             return Err(RelocError::CorruptMetadata { slot });
         }
-        let found_fingerprint = (metadata.fingerprint_high.load(Ordering::Relaxed) as u128) << 64
+        let found_fingerprint = ((metadata.fingerprint_high.load(Ordering::Relaxed) as u128) << 64)
             | metadata.fingerprint_low.load(Ordering::Relaxed) as u128;
         if metadata.byte_len.load(Ordering::Relaxed) != byte_len as u64
             || metadata.alignment.load(Ordering::Relaxed) != alignment as u64

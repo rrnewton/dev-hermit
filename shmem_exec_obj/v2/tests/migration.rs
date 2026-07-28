@@ -6,10 +6,12 @@ use std::time::{Duration, Instant};
 
 use shmem_pod::admission::CloseableSnzi;
 use shmem_pod::collections::SharedBox;
-use shmem_pod::mapping::{BuildIdentity, InstanceIdentity, RawMapping};
+use shmem_pod::mapping::{BuildIdentity, InstanceIdentity, Owner, RawMapping};
 use shmem_pod::migration::{
-    AuthoritativeGeneration, MigrationControl, MigrationError, MigrationPhase, MigrationPlan,
-    MigrationSchema, SchemaIdentity, SchemaNegotiation, negotiate_schema,
+    AdmissionQuiescence, AuthoritativeGeneration, AuthorityIdentity, BackingIdentity,
+    GenerationIdentity, MappingQuiescence, MigrationControl, MigrationError, MigrationPhase,
+    MigrationPlan, MigrationSchema, PrecommitTargetBacking, SchemaIdentity, SchemaNegotiation,
+    negotiate_schema,
 };
 use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
 use shmem_pod::{PodSync, PodValue};
@@ -18,6 +20,7 @@ const MAPPING_LEN: usize = 64 * 1024;
 const ARENA_OFFSET: u64 = 8 * 1024;
 const SLOT_SIZE: usize = 4 * 1024;
 const SLOTS: usize = 8;
+const TARGET_AUTHORITY: AuthorityIdentity = AuthorityIdentity::new([0xa5; 16]);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, shmem_pod::PodValue, shmem_pod::PodSync)]
 struct AccountV1 {
@@ -111,7 +114,7 @@ impl SharedMapping {
         // SAFETY: the allocator is initialized within this live mapping and its
         // configured arena is aligned, disjoint, and in bounds.
         unsafe {
-            (&*allocator)
+            (*allocator)
                 .initialize(self.base, self.len, region_id, ARENA_OFFSET, SLOT_SIZE)
                 .unwrap()
         }
@@ -121,11 +124,7 @@ impl SharedMapping {
         let allocator = self.base.cast::<RelocAllocator<N>>();
         // SAFETY: this is a second mapping of the authenticated initialized
         // memfd at the same file offset.
-        unsafe {
-            (&*allocator)
-                .attach(self.base, self.len, region_id)
-                .unwrap()
-        }
+        unsafe { (*allocator).attach(self.base, self.len, region_id).unwrap() }
     }
 }
 
@@ -140,9 +139,119 @@ impl Drop for SharedMapping {
     }
 }
 
+fn generation<T: MigrationSchema>(region: u64, sequence: u64, byte: u8) -> GenerationIdentity {
+    GenerationIdentity::for_schema::<T>(region, sequence, BackingIdentity::new([byte; 32]))
+}
+
 fn migration_plan(transaction_id: u64, source_region: u64, target_region: u64) -> MigrationPlan {
-    MigrationPlan::for_schemas::<AccountV1, AccountV2>(transaction_id, source_region, target_region)
-        .unwrap()
+    MigrationPlan::new(
+        transaction_id,
+        generation::<AccountV1>(source_region, 100, 0x41),
+        generation::<AccountV2>(target_region, 101, 0x42),
+        TARGET_AUTHORITY,
+    )
+    .unwrap()
+}
+
+struct RejectedTargetBacking<'a> {
+    _builder_mapping: &'a SharedMapping,
+    _recovery_mapping: &'a SharedMapping,
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+    private: bool,
+}
+
+// SAFETY: these fixtures are used only to verify rejection before the
+// target-ready transition. Their two mappings remain private to this test.
+unsafe impl PrecommitTargetBacking for RejectedTargetBacking<'_> {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        self.private
+    }
+}
+
+struct RelocSourceAuthority<'a> {
+    region: RelocRegion<'a, SLOTS>,
+    root: SharedBox<AccountV1>,
+}
+
+struct RelocTargetBacking<'a> {
+    region: RelocRegion<'a, SLOTS>,
+    root: SharedBox<AccountV2>,
+    _recovery_mapping: &'a SharedMapping,
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+}
+
+// SAFETY: this value owns the only safe allocator/root mutation authority and
+// the test exposes no attach route until commit. The independently mapped alias
+// is retained by the recovery-authority fixture.
+unsafe impl PrecommitTargetBacking for RelocTargetBacking<'_> {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        true
+    }
+}
+
+struct TypedTargetBacking<'a> {
+    owner: Owner<'a, AccountV2>,
+    _recovery_mapping: &'a SharedMapping,
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+}
+
+// SAFETY: moving this value into migration also moves the unique typed mapping
+// owner. No Mapping handle or client attachment remains which can produce a
+// mutable target reference before commit.
+unsafe impl PrecommitTargetBacking for TypedTargetBacking<'_> {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        true
+    }
+}
+
+struct ProcessTargetBacking {
+    _builder_mapping: SharedMapping,
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+}
+
+// SAFETY: the mapping is the sole child-side target capability and is moved
+// into migration after target initialization. The parent recovery process owns
+// a distinct mapping of the same authenticated memfd.
+unsafe impl PrecommitTargetBacking for ProcessTargetBacking {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        true
+    }
 }
 
 #[test]
@@ -151,8 +260,8 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     const TARGET_REGION: u64 = 0x1002;
 
     let source_mapping = SharedMapping::anonymous(MAPPING_LEN);
-    let mut source_region = unsafe { source_mapping.initialize_region::<SLOTS>(SOURCE_REGION) };
-    let mut source = SharedBox::new(
+    let source_region = unsafe { source_mapping.initialize_region::<SLOTS>(SOURCE_REGION) };
+    let source = SharedBox::new(
         &source_region,
         AccountV1 {
             account_id: 17,
@@ -160,10 +269,10 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         },
     )
     .unwrap();
+    let old = *source.get(&source_region).unwrap();
 
     let (target_mapping, target_alias) = SharedMapping::memfd_pair(MAPPING_LEN);
     let target_region = unsafe { target_mapping.initialize_region::<SLOTS>(TARGET_REGION) };
-    let target_alias_region = unsafe { target_alias.attach_region::<SLOTS>(TARGET_REGION) };
 
     let (control_mapping, control_alias) = SharedMapping::memfd_pair(4096);
     let control = control_mapping.base.cast::<MigrationControl>();
@@ -175,8 +284,22 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     assert!(admission.close());
     assert!(admission.is_drained());
     let plan = migration_plan(0x55, SOURCE_REGION, TARGET_REGION);
-    let mut migration = control
-        .begin_after_admission_drain(&admission, plan)
+    let source_authority = RelocSourceAuthority {
+        region: source_region,
+        root: source,
+    };
+    // SAFETY: the terminal gate is bound to plan's exact source, and moving the
+    // authority consumes the only safe source region/root mutation paths.
+    let source_quiescence = unsafe {
+        AdmissionQuiescence::bind_with_authority(
+            &admission,
+            plan.source(),
+            source_authority,
+        )
+    }
+    .unwrap();
+    let migration = control
+        .begin_with_quiescent_source(source_quiescence, plan)
         .unwrap();
 
     assert_eq!(
@@ -185,7 +308,6 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
             .unwrap(),
         (AuthoritativeGeneration::Source, plan)
     );
-    let old = *source.get(&source_region).unwrap();
     let target = SharedBox::new(
         &target_region,
         AccountV2 {
@@ -195,8 +317,19 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         },
     )
     .unwrap();
+    let target_descriptor = target.descriptor();
 
-    unsafe { migration.mark_target_ready() }.unwrap();
+    let target_backing = RelocTargetBacking {
+        region: target_region,
+        root: target,
+        _recovery_mapping: &target_alias,
+        generation: plan.target(),
+        authority: plan.target_authority(),
+    };
+    // SAFETY: target construction completed, every descriptor resolves through
+    // the builder mapping, and target_backing owns the complete safe region/root
+    // mutation authority. The alias has not been converted into an attach route.
+    let ready = unsafe { migration.mark_target_ready(target_backing) }.unwrap();
     assert_eq!(
         control_from_other_address
             .authoritative_generation()
@@ -204,8 +337,13 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
             .0,
         AuthoritativeGeneration::Source
     );
-    let committed = migration.commit().unwrap();
+    let committed = ready.commit().unwrap();
     assert_eq!(committed.plan(), plan);
+    assert_eq!(committed.target().generation(), plan.target());
+    assert_eq!(
+        committed.target().recovery_authority(),
+        plan.target_authority()
+    );
     assert_eq!(
         control_from_other_address
             .authoritative_generation()
@@ -221,7 +359,8 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         "late poison must not erase a committed route"
     );
 
-    let reconstructed = unsafe { SharedBox::<AccountV2>::from_descriptor(target.descriptor()) };
+    let target_alias_region = unsafe { target_alias.attach_region::<SLOTS>(TARGET_REGION) };
+    let reconstructed = unsafe { SharedBox::<AccountV2>::from_descriptor(target_descriptor) };
     assert_eq!(
         reconstructed.get(&target_alias_region).unwrap(),
         &AccountV2 {
@@ -234,22 +373,32 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     // SAFETY: admission is the exact source barrier, it is terminally drained,
     // and this test owns every mapping and descriptor.
     let permit =
-        unsafe { control_from_other_address.authorize_reclamation_after_admission(&admission) }
-            .unwrap();
+        unsafe { control_from_other_address.authorize_reclamation(committed.source()) }.unwrap();
     assert!(!permit.is_resume());
     assert_eq!(permit.plan().source_region_id(), SOURCE_REGION);
-    // SAFETY: the permit follows terminal drain, and this process owns the only
-    // source descriptor and mapping.
+    let (source_quiescence, target_backing) = committed.into_capabilities();
     assert_eq!(
-        unsafe { source.destroy(&mut source_region) }.unwrap(),
+        target_backing.root.get(&target_backing.region).unwrap(),
+        reconstructed.get(&target_alias_region).unwrap()
+    );
+    let mut source_authority = source_quiescence.into_authority(permit).unwrap();
+    // SAFETY: the permit follows terminal drain, and the returned authority owns
+    // the only source descriptor and region handle.
+    assert_eq!(
+        unsafe {
+            source_authority
+                .root
+                .destroy(&mut source_authority.region)
+        }
+        .unwrap(),
         AccountV1 {
             account_id: 17,
             balance_cents: 1234,
         }
     );
 
-    // Reclamation state is persistent so a cleanup supervisor can resume after
-    // a crash between the fence and munmap/truncate.
+    // Reclamation state remains in the live shared control mapping so a cleanup
+    // supervisor can resume after a process crash between fence and cleanup.
     let resumed = unsafe { control_from_other_address.resume_reclamation() }.unwrap();
     assert!(resumed.is_resume());
 }
@@ -262,17 +411,146 @@ fn active_admission_blocks_migration_until_departure_tail_finishes() {
     let control = MigrationControl::new();
     let plan = migration_plan(9, 10, 11);
     assert!(matches!(
-        control.begin_after_admission_drain(&admission, plan),
+        // SAFETY: this test binds the synthetic generation only to exercise
+        // the not-yet-drained rejection.
+        unsafe { AdmissionQuiescence::bind(&admission, plan.source()) },
         Err(MigrationError::SourceNotDrained)
     ));
     token.depart().unwrap();
     assert!(admission.is_drained());
-    let migration = control
-        .begin_after_admission_drain(&admission, plan)
-        .unwrap();
+    // SAFETY: the terminal gate is the sole source access path in this test.
+    let source = unsafe { AdmissionQuiescence::bind(&admission, plan.source()) }.unwrap();
+    let migration = control.begin_with_quiescent_source(source, plan).unwrap();
     drop(migration);
     assert_eq!(
         control.snapshot().unwrap().phase(),
+        MigrationPhase::Poisoned
+    );
+}
+
+#[test]
+fn drained_but_unrelated_source_witness_cannot_claim_plan() {
+    let unrelated_gate = CloseableSnzi::<20>::new();
+    assert!(unrelated_gate.close());
+    assert!(unrelated_gate.is_drained());
+    let plan = migration_plan(19, 31, 32);
+    let unrelated = generation::<AccountV1>(99, 100, 0x99);
+    // SAFETY: the synthetic gate is correctly bound to `unrelated`; the test
+    // deliberately attempts to use that valid witness for a different plan.
+    let witness = unsafe { AdmissionQuiescence::bind(&unrelated_gate, unrelated) }.unwrap();
+    let control = MigrationControl::new();
+    assert!(matches!(
+        control.begin_with_quiescent_source(witness, plan),
+        Err(MigrationError::SourceGenerationMismatch { .. })
+    ));
+    assert_eq!(
+        control.snapshot().unwrap().phase(),
+        MigrationPhase::Uninitialized,
+        "identity mismatch must be rejected before claiming the record"
+    );
+    assert!(
+        unrelated_gate.try_enter(0).is_err(),
+        "terminal drain cannot resume safe admission after witness consumption"
+    );
+
+    let wrong_schema_gate = CloseableSnzi::<20>::new();
+    wrong_schema_gate.close();
+    assert!(wrong_schema_gate.is_drained());
+    let wrong_schema = GenerationIdentity::new(
+        SchemaIdentity::of::<AccountV2>(),
+        plan.source().region_id(),
+        plan.source().sequence(),
+        plan.source().backing(),
+    );
+    // SAFETY: the synthetic gate is intentionally bound to a distinct exact
+    // schema identity to exercise structural-schema rejection.
+    let wrong_schema_witness =
+        unsafe { AdmissionQuiescence::bind(&wrong_schema_gate, wrong_schema) }.unwrap();
+    assert!(matches!(
+        control.begin_with_quiescent_source(wrong_schema_witness, plan),
+        Err(MigrationError::SourceGenerationMismatch { .. })
+    ));
+    assert_eq!(
+        control.snapshot().unwrap().phase(),
+        MigrationPhase::Uninitialized
+    );
+}
+
+#[test]
+fn target_capability_must_match_and_remain_private_until_commit() {
+    fn begin<'a>(
+        control: &'a MigrationControl,
+        admission: &'a CloseableSnzi<20>,
+        plan: MigrationPlan,
+    ) -> shmem_pod::migration::Migration<'a, AdmissionQuiescence<'a, 20>> {
+        // SAFETY: each gate is the sole access path for plan's synthetic source.
+        let source = unsafe { AdmissionQuiescence::bind(admission, plan.source()) }.unwrap();
+        control.begin_with_quiescent_source(source, plan).unwrap()
+    }
+
+    let (target_mapping, target_recovery) = SharedMapping::memfd_pair(4096);
+    let plan = migration_plan(29, 41, 42);
+
+    let wrong_generation_gate = CloseableSnzi::<20>::new();
+    wrong_generation_gate.close();
+    assert!(wrong_generation_gate.is_drained());
+    let wrong_generation_control = MigrationControl::new();
+    let migration = begin(&wrong_generation_control, &wrong_generation_gate, plan);
+    let wrong_generation = RejectedTargetBacking {
+        _builder_mapping: &target_mapping,
+        _recovery_mapping: &target_recovery,
+        generation: generation::<AccountV2>(43, 101, 0x43),
+        authority: plan.target_authority(),
+        private: true,
+    };
+    assert!(matches!(
+        unsafe { migration.mark_target_ready(wrong_generation) },
+        Err(MigrationError::TargetGenerationMismatch { .. })
+    ));
+    assert_eq!(
+        wrong_generation_control.snapshot().unwrap().phase(),
+        MigrationPhase::Poisoned
+    );
+
+    let wrong_authority_gate = CloseableSnzi::<20>::new();
+    wrong_authority_gate.close();
+    assert!(wrong_authority_gate.is_drained());
+    let wrong_authority_control = MigrationControl::new();
+    let migration = begin(&wrong_authority_control, &wrong_authority_gate, plan);
+    let wrong_authority = RejectedTargetBacking {
+        _builder_mapping: &target_mapping,
+        _recovery_mapping: &target_recovery,
+        generation: plan.target(),
+        authority: AuthorityIdentity::new([0x66; 16]),
+        private: true,
+    };
+    assert!(matches!(
+        unsafe { migration.mark_target_ready(wrong_authority) },
+        Err(MigrationError::TargetAuthorityMismatch { .. })
+    ));
+    assert_eq!(
+        wrong_authority_control.snapshot().unwrap().phase(),
+        MigrationPhase::Poisoned
+    );
+
+    let published_gate = CloseableSnzi::<20>::new();
+    published_gate.close();
+    assert!(published_gate.is_drained());
+    let published_control = MigrationControl::new();
+    let migration = begin(&published_control, &published_gate, plan);
+    let published = RejectedTargetBacking {
+        _builder_mapping: &target_mapping,
+        _recovery_mapping: &target_recovery,
+        generation: plan.target(),
+        authority: plan.target_authority(),
+        private: false,
+    };
+    assert!(matches!(
+        unsafe { migration.mark_target_ready(published) },
+        Err(MigrationError::TargetAlreadyPublished)
+    ));
+    assert_eq!(
+        published_control.snapshot().unwrap().phase(),
         MigrationPhase::Poisoned
     );
 }
@@ -284,18 +562,18 @@ fn typed_mapping_close_proof_fences_reclamation() {
     const TARGET_INSTANCE: InstanceIdentity = InstanceIdentity::new([0x42; 16]);
 
     let source_bytes = SharedMapping::anonymous(4096);
-    let target_bytes = SharedMapping::anonymous(4096);
+    let (target_bytes, target_recovery) = SharedMapping::memfd_pair(4096);
     let source_raw = unsafe { RawMapping::from_raw_parts(source_bytes.base, 4096).unwrap() };
     let target_raw = unsafe { RawMapping::from_raw_parts(target_bytes.base, 4096).unwrap() };
     let source_mapping = source_raw.prepare(BUILD, SOURCE_INSTANCE);
-    let target_mapping = target_raw.prepare(BUILD, TARGET_INSTANCE);
     let source_owner = source_mapping
         .try_initialize(AccountV1 {
             account_id: 1,
             balance_cents: 2,
         })
         .unwrap();
-    let target_owner = target_mapping
+    let target_owner = target_raw
+        .prepare(BUILD, TARGET_INSTANCE)
         .try_initialize(AccountV2 {
             account_id: 1,
             balance_micros: 20_000,
@@ -304,21 +582,35 @@ fn typed_mapping_close_proof_fences_reclamation() {
         .unwrap();
     let source_draining = source_owner.begin_drain().unwrap();
     assert!(source_draining.is_drained().unwrap());
+    let closed_source = source_draining.try_close().unwrap();
 
     let control = MigrationControl::new();
-    let mut migration = control
-        .begin_after_mapping_drain(&source_draining, migration_plan(77, 101, 102))
-        .unwrap();
-    unsafe { migration.mark_target_ready() }.unwrap();
-    let _committed = migration.commit().unwrap();
-    let closed_source = source_draining.try_close().unwrap();
-    // SAFETY: closed_source is the exact source mapping, and this test owns all
-    // raw mapping capabilities.
-    let permit =
-        unsafe { control.authorize_reclamation_after_mapping_close(&closed_source) }.unwrap();
+    let plan = migration_plan(77, 101, 102);
+    // SAFETY: closed_source came from the AccountV1 mapping backed by the exact
+    // synthetic generation identity in plan, and no raw access remains.
+    let source = unsafe { MappingQuiescence::bind(closed_source, plan.source()) }.unwrap();
+    assert!(
+        source_mapping.attach::<AccountV1>().is_err(),
+        "consumed ClosedMapping corresponds to a lifecycle that safe attach cannot reopen"
+    );
+    let migration = control.begin_with_quiescent_source(source, plan).unwrap();
+    let target = TypedTargetBacking {
+        owner: target_owner,
+        _recovery_mapping: &target_recovery,
+        generation: plan.target(),
+        authority: plan.target_authority(),
+    };
+    // SAFETY: the backing owns target_owner, which is the only safe path to
+    // mutable target access, and the recovery alias remains private.
+    let ready = unsafe { migration.mark_target_ready(target) }.unwrap();
+    let committed = ready.commit().unwrap();
+    // SAFETY: the consumed mapping witness is the exact source and this test
+    // owns every raw mapping capability.
+    let permit = unsafe { control.authorize_reclamation(committed.source()) }.unwrap();
     assert!(!permit.is_resume());
 
-    target_owner.begin_drain().unwrap().try_close().unwrap();
+    let (_source, target) = committed.into_capabilities();
+    target.owner.begin_drain().unwrap().try_close().unwrap();
 }
 
 #[test]
@@ -346,9 +638,12 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
     let child = unsafe { libc::fork() };
     assert!(child >= 0, "fork failed");
     if child == 0 {
+        // SAFETY: the shared gate is the sole access path for plan's synthetic
+        // source generation in this fork test.
+        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
         let _migration = state
             .control
-            .begin_after_admission_drain(&state.admission, plan)
+            .begin_with_quiescent_source(source, plan)
             .unwrap();
         state.child_started.store(1, Ordering::Release);
         loop {
@@ -373,10 +668,11 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
         state.control.snapshot().unwrap().phase(),
         MigrationPhase::Copying
     );
+    // SAFETY: the gate remains terminal and bound to the same source; this
+    // second witness demonstrates that the occupied control cannot be stolen.
+    let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
     assert!(matches!(
-        state
-            .control
-            .begin_after_admission_drain(&state.admission, plan),
+        state.control.begin_with_quiescent_source(source, plan),
         Err(MigrationError::WrongPhase {
             actual: MigrationPhase::Copying,
             ..
@@ -389,8 +685,168 @@ fn killed_migrator_leaves_copying_state_and_never_steals_transaction() {
     );
 }
 
+#[derive(Clone, Copy)]
+enum TargetCrashCut {
+    TargetReady,
+    Committed,
+}
+
+fn hold_capability_until_killed<T>(_capability: T) -> ! {
+    loop {
+        // SAFETY: the parent deliberately terminates this process after it
+        // observes the selected shared control phase.
+        unsafe { libc::pause() };
+    }
+}
+
+fn exercise_target_crash_cut(cut: TargetCrashCut) {
+    struct CrashState {
+        control: MigrationControl,
+        admission: CloseableSnzi<20>,
+        child_started: AtomicU64,
+    }
+
+    const RECOVERED_TARGET: AccountV2 = AccountV2 {
+        account_id: 91,
+        balance_micros: 7_654_321,
+        migrated_by: 0xabc,
+    };
+
+    let shared = SharedMapping::anonymous(4096);
+    let state = shared.base.cast::<CrashState>();
+    unsafe {
+        state.write(CrashState {
+            control: MigrationControl::new(),
+            admission: CloseableSnzi::new(),
+            child_started: AtomicU64::new(0),
+        })
+    };
+    let state = unsafe { &*state };
+    assert!(state.admission.close());
+    assert!(state.admission.is_drained());
+
+    let transaction_id = match cut {
+        TargetCrashCut::TargetReady => 0x901,
+        TargetCrashCut::Committed => 0x902,
+    };
+    let plan = migration_plan(transaction_id, 301, 302);
+    let (target_builder, target_recovery) = SharedMapping::memfd_pair(4096);
+
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "fork failed");
+    if child == 0 {
+        // The recovery alias belongs to the supervisor process. Removing the
+        // child's copy leaves one child-side builder mapping to move into B.
+        drop(target_recovery);
+        // SAFETY: target_builder is exclusive child-side initialization storage,
+        // AccountV2 is Pod, and the complete value is written before publication.
+        unsafe {
+            target_builder
+                .base
+                .cast::<AccountV2>()
+                .write(RECOVERED_TARGET)
+        };
+        // SAFETY: the shared terminal gate is the only source path in this
+        // synthetic crash test and is bound to plan's exact source generation.
+        let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
+        let migration = state
+            .control
+            .begin_with_quiescent_source(source, plan)
+            .unwrap();
+        let target = ProcessTargetBacking {
+            _builder_mapping: target_builder,
+            generation: plan.target(),
+            authority: plan.target_authority(),
+        };
+        // SAFETY: initialization is complete, the backing owns the only child
+        // mutation path, and the parent mapping is private recovery authority.
+        let ready = unsafe { migration.mark_target_ready(target) }.unwrap();
+        match cut {
+            TargetCrashCut::TargetReady => {
+                state.child_started.store(1, Ordering::Release);
+                hold_capability_until_killed(ready);
+            }
+            TargetCrashCut::Committed => {
+                let committed = ready.commit().unwrap();
+                state.child_started.store(1, Ordering::Release);
+                hold_capability_until_killed(committed);
+            }
+        }
+    }
+
+    // The parent keeps only the independent recovery mapping. Closing its
+    // builder mapping and descriptor proves recovery does not depend on either
+    // the migrator's mapping or its descriptor surviving.
+    drop(target_builder);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while state.child_started.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline, "child did not reach crash cut");
+        std::thread::yield_now();
+    }
+
+    let expected_phase = match cut {
+        TargetCrashCut::TargetReady => MigrationPhase::TargetReady,
+        TargetCrashCut::Committed => MigrationPhase::Committed,
+    };
+    let expected_authority = match cut {
+        TargetCrashCut::TargetReady => AuthoritativeGeneration::Source,
+        TargetCrashCut::Committed => AuthoritativeGeneration::Target,
+    };
+    assert_eq!(state.control.snapshot().unwrap().phase(), expected_phase);
+    assert_eq!(
+        state.control.authoritative_generation().unwrap(),
+        (expected_authority, plan)
+    );
+
+    // SAFETY: child is a live direct child blocked while owning the migration
+    // capability selected above.
+    assert_eq!(unsafe { libc::kill(child, libc::SIGKILL) }, 0);
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
+    assert_eq!(state.control.snapshot().unwrap().phase(), expected_phase);
+
+    // The acquire phase read above observes the child release publication. The
+    // independently mapped supervisor backing remains readable after SIGKILL.
+    let recovered = unsafe { &*target_recovery.base.cast::<AccountV2>() };
+    assert_eq!(recovered, &RECOVERED_TARGET);
+
+    match cut {
+        TargetCrashCut::TargetReady => {
+            state.control.poison();
+            assert_eq!(
+                state.control.snapshot().unwrap().phase(),
+                MigrationPhase::Poisoned
+            );
+        }
+        TargetCrashCut::Committed => {
+            // SAFETY: the source gate is still terminal and exactly bound to the
+            // committed plan; the parent is the authenticated cleanup authority.
+            let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }
+                .unwrap();
+            let permit = unsafe { state.control.authorize_reclamation(&source) }.unwrap();
+            assert!(!permit.is_resume());
+            assert_eq!(
+                state.control.snapshot().unwrap().phase(),
+                MigrationPhase::Reclaimed
+            );
+        }
+    }
+}
+
 #[test]
-fn schema_negotiation_is_exact_and_plan_rejects_aba_ids() {
+fn killed_target_ready_migrator_leaves_source_authoritative() {
+    exercise_target_crash_cut(TargetCrashCut::TargetReady);
+}
+
+#[test]
+fn killed_post_commit_migrator_leaves_recovery_backing_available() {
+    exercise_target_crash_cut(TargetCrashCut::Committed);
+}
+
+#[test]
+fn schema_negotiation_is_exact_and_plan_checks_local_freshness_evidence() {
     fn require_relocatable_shared<T: PodValue + PodSync>() {}
     require_relocatable_shared::<SchemaIdentity>();
     require_relocatable_shared::<MigrationPlan>();
@@ -421,11 +877,31 @@ fn schema_negotiation_is_exact_and_plan_rejects_aba_ids() {
     assert_eq!(
         MigrationPlan::new(
             1,
-            SchemaIdentity::of::<AccountV1>(),
-            SchemaIdentity::of::<AccountV2>(),
-            7,
-            7,
+            generation::<AccountV1>(7, 1, 0x10),
+            generation::<AccountV2>(7, 2, 0x11),
+            TARGET_AUTHORITY,
         ),
         Err(MigrationError::ReusedRegionId)
+    );
+    assert_eq!(
+        MigrationPlan::new(
+            1,
+            generation::<AccountV1>(7, 9, 0x10),
+            generation::<AccountV2>(8, 9, 0x11),
+            TARGET_AUTHORITY,
+        ),
+        Err(MigrationError::GenerationDidNotIncrease {
+            source: 9,
+            target: 9,
+        })
+    );
+    assert_eq!(
+        MigrationPlan::new(
+            1,
+            generation::<AccountV1>(7, 9, 0x10),
+            generation::<AccountV2>(8, 10, 0x10),
+            TARGET_AUTHORITY,
+        ),
+        Err(MigrationError::ReusedBackingIdentity)
     );
 }

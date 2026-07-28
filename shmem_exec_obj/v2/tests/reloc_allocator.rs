@@ -361,7 +361,7 @@ fn concurrent_alloc_free_is_bounded_and_leak_free() {
                     }
                 };
                 for iteration in 0..500_u64 {
-                    let expected = worker << 32 | iteration;
+                    let expected = (worker << 32) | iteration;
                     let mut value = loop {
                         match SharedBox::new(&region, expected) {
                             Ok(value) => break value,

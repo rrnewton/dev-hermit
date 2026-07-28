@@ -5,7 +5,7 @@ rewrites a live object in place and never treats a timeout or dead owner as
 permission to continue a partly completed write.
 
 The protocol is intended for an authenticated supervisor-owned control mapping
-plus two payload generations:
+plus two payload generations on coherent shared memory:
 
 ```text
 source generation -- close/drain --> immutable source
@@ -18,8 +18,13 @@ source generation -- reclamation fence ------+
 ```
 
 The source and target can be different memfds, shared-memory objects, or
-non-overlapping regions. Their region IDs must be nonzero and different. Do not
-reuse a region ID while any stale `AllocationDescriptor` may exist.
+non-overlapping regions. A `GenerationIdentity` binds four facts: the exact
+schema, an allocator region namespace, a supervisor-persisted monotonic
+sequence, and an authenticated 256-bit backing-object digest. `region_id` alone
+is not freshness evidence and may be reused by operating systems or application
+configuration. The library checks that source and target region IDs and backing
+digests differ and that the target sequence increases, but only the supervisor
+can keep the sequence monotonic across control-record replacement and restart.
 
 ## Define and negotiate schemas
 
@@ -57,30 +62,47 @@ future schema. `repr(C)` is not required: native Rust layout is supported when
 all participants use the authenticated exact fingerprint and compatible target
 metadata.
 
-## Execute one upgrade
+## Bind capabilities and execute one upgrade
 
 1. Stop new work and prove source quiescence. Use either a
-   `CloseableSnzi` which reached terminal drain, or the typed `Mapping` owner in
-   its drained `Draining` state.
+   `CloseableSnzi` which reached terminal drain, or consume a typed `Mapping`
+   owner through `Draining::try_close`. A typed mapping cannot expose its
+   payload after close: copy the drained payload into process-local staging
+   before `try_close`, then close and bind the resulting capability. The
+   close-first path deliberately trades streaming ergonomics for a type-level
+   guarantee that safe mutation cannot resume.
 2. Allocate a new target generation. Initialize its `RelocAllocator` with a
-   fresh region ID. Keep its bootstrap handle private.
-3. Create a validated `MigrationPlan` with `for_schemas::<Old, New>` when both
-   types are compiled into the migrator (or `new` for runtime identities), then call
-   `begin_after_admission_drain` or `begin_after_mapping_drain`.
-4. Read the now-immutable source, transform it, and populate the target. Resolve
-   every root and validate every target descriptor.
-5. Call `mark_target_ready`. This method is unsafe because the library cannot
-   discover application roots or prove that an application callback finished
-   writing them.
-6. Call `commit`. The `TargetReady -> Committed` compare-exchange is the route
-   switch. Attach code must load `authoritative_generation` from the
-   authenticated control mapping rather than cache an earlier route.
-7. Close the typed source mapping or recheck its terminal admission barrier,
-   then authorize reclamation. Only now explicitly destroy source allocations
-   or discard the complete source region.
+   new region namespace and a sequence minted by the supervisor's durable
+   monotonic counter. Compute/authenticate a digest for the actual backing
+   object, not its reusable file-descriptor number.
+3. Before migration, make the recovery supervisor own an independently live,
+   authenticated target backing handle. Clients must not know an attach route.
+   Name that supervisor with `AuthorityIdentity`.
+4. Construct `GenerationIdentity` values and a `MigrationPlan`. Unsafely bind
+   the exact source generation to `AdmissionQuiescence`, or consume a
+   `ClosedMapping` into `MappingQuiescence`. This unsafe boundary is where the
+   host attests that the barrier/mapping really guards the named backing.
+5. Call `begin_with_quiescent_source`. It consumes the witness and rejects a
+   schema, region, sequence, or backing mismatch before claiming the control.
+6. For an admission-gated source, read the now-immutable source; for a typed
+   mapping, use the process-local staging copy made before close. Transform it
+   and populate the target. Resolve every root and validate every descriptor.
+7. Move a host type implementing unsafe `PrecommitTargetBacking` into
+   `mark_target_ready`. Its generation and recovery authority must match the
+   plan and `is_private` must remain true while the library owns it. The unsafe
+   call also attests that all target writes happen-before its release CAS and no
+   interior writer or raw mutable alias survives validation.
+8. Call `TargetReadyMigration::commit`. The `TargetReady -> Committed`
+   compare-exchange is the route switch. The returned `CommittedMigration`
+   still owns both the terminal source proof and target authority. Only now may
+   the host extract and publish target attachment material. Attach code must
+   acquire-load `authoritative_generation` rather than cache an earlier route.
+9. Pass `committed.source()` to `authorize_reclamation`. It rechecks the exact
+   generation binding and terminal state before recording `Reclaimed`. Only now
+   explicitly destroy source allocations or discard the complete source region.
 
-The target must not admit callers until commit succeeds. The source cannot
-reopen after the initial drain. This means the generic protocol has a bounded
+The target must not admit callers until commit succeeds. Safe source access
+cannot reopen after the consumed terminal witness. This means the generic protocol has a bounded
 cutover interval; applications that need concurrent snapshot construction must
 provide their own transactional snapshot or copy-on-write consistency scheme
 before entering this protocol.
@@ -92,11 +114,12 @@ to the target. An old executable which does not recognize the new fingerprint
 must reject it. The protocol does not let an old writer continue mutating the
 source while a generic migration callback reads it.
 
-## Persistent phases and crash cuts
+## Shared phases and process-crash cuts
 
 `MigrationControl` is pointer-free and uses release/acquire publication. It can
 be mapped at a different virtual address in every process. It is deliberately
-one-shot to avoid ABA and ambiguous recovery.
+one-shot to avoid ABA and ambiguous recovery. These phases cover abrupt process
+termination only while a supervisor still owns the backing objects.
 
 | Phase | Authoritative generation | Recovery action |
 | --- | --- | --- |
@@ -113,11 +136,13 @@ not permission to reopen its one-shot admission gate. After a failed migration,
 the supervisor can copy the still-authoritative immutable source into another
 fresh service generation, or take an application-specific recovery path.
 
-Dropping a live `Migration` before commit poisons it. `_exit`, `SIGKILL`, or a
-machine crash skips `Drop` and leaves `Initializing`, `Copying`, or
+Dropping a live `Migration` or `TargetReadyMigration` before commit poisons it.
+`_exit` or `SIGKILL` skips `Drop` and leaves `Initializing`, `Copying`, or
 `TargetReady`. No participant steals that transaction. A supervisor should use
 an external liveness authority such as `pidfd`, stop all affected participants,
-poison the record, and discard the private target.
+poison the record, and discard the private target. If the migrator dies after
+commit but before publishing its local descriptor, the independently live
+recovery-authority handle named in the plan remains available.
 
 The metadata checksum catches accidental or torn changes after publication; it
 is not an authenticity mechanism. Authenticate the executable image, control
@@ -125,9 +150,10 @@ object, bootstrap message, file descriptors, identities, and lengths before
 mapping or typed access.
 
 These atomics specify visibility between processes on coherent shared memory.
-They do not flush persistent-memory cache lines and do not make a disk-backed
-file crash-durable. A persistent-memory deployment needs a separately audited
-flush, ordering, and recovery protocol.
+The protocol does not cover machine crash, reboot, power loss, torn storage,
+filesystem durability, or persistent-memory cache flushing. Recovery claims in
+this document mean process recovery while the authenticated control and backing
+objects remain live. Durable storage needs a separate audited protocol.
 
 ## Reclaiming allocator objects and regions
 
@@ -137,17 +163,17 @@ may hold a copied descriptor or a resolved reference.
 
 After a migration commits:
 
-1. obtain `ReclamationPermit` using the exact source barrier or
-   `ClosedMapping` proof;
+1. obtain `ReclamationPermit` using the exact consumed `QuiescenceWitness`;
 2. ensure every raw/inherited mapping capability and nonconforming guest is
    gone;
 3. either call explicit collection destruction under exclusive access, or
    discard the complete source region;
-4. never publish its old region ID again.
+4. advance the supervisor's persisted generation sequence before any namespace
+   reuse, and never authenticate an old backing digest as the new generation.
 
 Whole-generation discard is the preferred crash recovery policy. It requires
 no walk and no Rust `Drop` calls because `PodValue` transitively forbids
-destructors. If a cleanup process dies after the persistent `Reclaimed`
+destructors. If a cleanup process dies after the shared `Reclaimed`
 transition but before `munmap`, `ftruncate`, or unlink, the old bytes are leaked
 rather than reused. A replacement cleanup process sees `Reclaimed`, calls the
 unsafe `resume_reclamation` after authenticating the control record and
@@ -200,11 +226,17 @@ not after a timer expires.
 
 ## Operational checklist
 
-- Authenticate schema identities and `MigrationPlan` outside the mapped data.
-- Close and drain the exact source generation before `begin`.
-- Use a fresh target memfd/region ID and keep it undiscoverable before commit.
-- Treat `mark_target_ready` as an unsafe root-validation boundary.
+- Authenticate complete `GenerationIdentity` and `MigrationPlan` values outside
+  attacker-writable mapped data.
+- Persist and advance the supervisor generation sequence; do not call a region
+  ID alone globally unique.
+- Consume a terminal source witness before `begin_with_quiescent_source`.
+- Give the recovery authority an authenticated duplicate target handle before
+  commit, and keep every client attach route undiscoverable.
+- Treat `mark_target_ready` as an unsafe exact-generation, happens-before,
+  no-interior-writers, and root-validation boundary.
 - Route new attachments by the control record's acquire load.
 - On owner death, prove death externally; never steal a live transaction.
 - Reclaim only after commit and a matching terminal quiescence proof.
 - Prefer leaking and whole-generation replacement over uncertain repair.
+- Do not interpret process-crash recovery as machine/power durability.
