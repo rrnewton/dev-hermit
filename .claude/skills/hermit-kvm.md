@@ -47,7 +47,7 @@ Provision it with `scripts/allocate-worktree.rs --agent hermit-kvm --product
 both`; coordinated Hermit/Reverie feature branches live in the same slot when a
 change spans both repos. Never do feature work in a primary checkout. Leave an
 unused child detached at its pinned gitlink. See
-`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
+`ai_docs/transient/worktree-management-map.md` for the full protocol.
 
 ## Related
 

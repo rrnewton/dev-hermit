@@ -7,27 +7,29 @@ Every active coordinator skill has exactly one ORC memory so policies cannot
 silently diverge across the two context channels.
 
 Contract:
-- Active skills are Markdown skill files recursively discovered under
-  `.claude/skills/`; README files and `.claude/archived_skills/` are not
-  active skills.
+- Active coordinator skills are flat Markdown files at
+  `.claude/skills/<slug>.md`; `README.md` and `.claude/archived_skills/` are not
+  active skills, and nested skill directories fail lint.
 - Each source memory declares `core_memory: true` and the exact stable
-  `core_skill: .claude/skills/...` path, and carries a visible
+  `core_skill: .claude/skills/<memory-slug>.md` path, and carries a visible
   `> **CORE-MEMORY**` tag. The memory is the source of truth.
-- Policy memories without a hand-written skill generate
-  `.claude/skills/core-memory/<slug>.md` with BEGIN/END mirror markers.
-  Hand-written role, review, and reporting skills retain their normal paths;
-  synchronization compares and regenerates their frontmatter and body in place.
+- Every mapped memory generates the same flat path. Synchronization derives
+  skill frontmatter and a canonical body by removing memory-only frontmatter,
+  the visible mirror tag, and full-line HTML comments, then normalizing blank
+  lines and trailing whitespace.
 - Exactly one source memory must map to every active skill. Missing, duplicate,
   stale, invalid, and orphan mappings fail lint.
 
 Tooling:
-- `scripts/lint-memory-skill-sync.rs` is read-only and checks complete active
-  skill coverage plus body equality.
+- `scripts/lint-memory-skill-sync.rs` is read-only. It checks flat mapping and
+  slug consistency, the visible source-memory tag, skill presence, frontmatter
+  and canonical-body equality, no nested directories, and exactly one source
+  memory for every active skill.
 - `scripts/sync-memory-skill.rs --adopt-skill <path>...` creates source
-  memories from existing coordinator skills.
-- Running `scripts/sync-memory-skill.rs` regenerates every mapped skill;
-  `--promote <slug>...` creates generated policy mirrors, `--demote` removes
-  mappings, and `--check` is a dry run.
+  memories from existing flat coordinator skills. Running it without a mode
+  regenerates every mapped skill; `--promote <slug>...` adds mapping metadata
+  and creates a mirror, `--demote` removes a mapping and mirror, and `--check`
+  performs the same decisions without writing.
 
 The memory store is file-based Markdown at
 `~/.claude/projects/-home-newton-work-dev-hermit/memory/`, overridable with

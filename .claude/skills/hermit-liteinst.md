@@ -36,7 +36,7 @@ Own the named slot **`worktrees/liteinst/`** (nested layout v2:
 `worktrees/liteinst/{hermit,reverie}`), one slot per agent. Provision it with
 `scripts/allocate-worktree.rs --agent hermit-liteinst`. Preserve any dirty
 LiteInst handoff in a `HANDOFF.md` before parking. Never feature-build in a
-primary checkout. See `ai_docs/transient/2026-07-27-worktree-management-map.md` for the
+primary checkout. See `ai_docs/transient/worktree-management-map.md` for the
 full protocol.
 
 ## Related
