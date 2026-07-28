@@ -53,6 +53,9 @@ talc = { version = "=5.0.4", default-features = false }
 [package.metadata.docs.rs]
 all-features = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(shmem_pod_loom)'] }
+
 [features]
 default = ["derive"]
 derive = ["dep:shmem-pod-macros"]
@@ -71,6 +74,7 @@ talc = { workspace = true, optional = true }
 
 [dev-dependencies]
 libc.workspace = true
+loom = "=0.7.2"
 
 [[example]]
 name = "fixed_allocator_fork"

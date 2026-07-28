@@ -33,6 +33,66 @@ const FUTEX_SPIN_LIMIT: usize = 64;
 const FUTEX_WAIT: u32 = 0;
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 const FUTEX_WAKE: u32 = 1;
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+pub(crate) trait FutexAtomicWord {
+    fn compare_exchange(
+        &self,
+        current: u32,
+        new: u32,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<u32, u32>;
+
+    fn swap(&self, value: u32, order: Ordering) -> u32;
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+impl FutexAtomicWord for AtomicU32 {
+    #[inline]
+    fn compare_exchange(
+        &self,
+        current: u32,
+        new: u32,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<u32, u32> {
+        self.compare_exchange(current, new, success, failure)
+    }
+
+    #[inline]
+    fn swap(&self, value: u32, order: Ordering) -> u32 {
+        self.swap(value, order)
+    }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[inline]
+pub(crate) fn futex_try_acquire(word: &(impl FutexAtomicWord + ?Sized)) -> bool {
+    let acquired = word
+        .compare_exchange(UNLOCKED, LOCKED, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok();
+    if acquired {
+        test_fault!(FutexAcquired, 0);
+    }
+    acquired
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[inline]
+pub(crate) fn futex_mark_contended(word: &(impl FutexAtomicWord + ?Sized)) -> bool {
+    let previous = word.swap(CONTENDED, Ordering::Acquire);
+    test_fault!(FutexContended, previous as usize);
+    previous == UNLOCKED
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[inline]
+pub(crate) fn futex_release(word: &(impl FutexAtomicWord + ?Sized)) -> bool {
+    let previous = word.swap(UNLOCKED, Ordering::Release);
+    test_fault!(FutexReleased, previous as usize);
+    previous == CONTENDED
+}
 #[cfg(all(
     feature = "linux-futex",
     target_os = "linux",
@@ -408,13 +468,10 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
     /// Attempts to acquire the mutex without waiting.
     #[inline]
     pub fn try_lock(&self) -> Option<ProcessFutexMutexGuard<'_, T>> {
-        self.state
-            .compare_exchange(UNLOCKED, LOCKED, Ordering::Acquire, Ordering::Relaxed)
-            .ok()
-            .map(|_| ProcessFutexMutexGuard {
-                mutex: self,
-                _not_send: PhantomData,
-            })
+        futex_try_acquire(&self.state).then(|| ProcessFutexMutexGuard {
+            mutex: self,
+            _not_send: PhantomData,
+        })
     }
 
     /// Attempts to acquire the mutex until `timeout` has elapsed.
@@ -499,10 +556,10 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
         // State 2 both records that a wake may be required and serves as the
         // futex comparison value. swap(2) acquires directly if an unlock raced
         // with entry into the slow path.
-        if self.state.swap(CONTENDED, Ordering::Acquire) != UNLOCKED {
+        if !futex_mark_contended(&self.state) {
             loop {
                 futex_wait(&self.state, CONTENDED)?;
-                if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
+                if futex_mark_contended(&self.state) {
                     break;
                 }
             }
@@ -517,7 +574,7 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
     #[cold]
     fn lock_contended_spin(&self) -> ProcessFutexMutexGuard<'_, T> {
         loop {
-            if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
+            if futex_mark_contended(&self.state) {
                 break;
             }
             while self.state.load(Ordering::Relaxed) != UNLOCKED {
@@ -540,10 +597,10 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
         &self,
         deadline: &KernelTimespec,
     ) -> Result<Option<ProcessFutexMutexGuard<'_, T>>, FutexLockError> {
-        if self.state.swap(CONTENDED, Ordering::Acquire) != UNLOCKED {
+        if !futex_mark_contended(&self.state) {
             loop {
                 let timed_out = futex_wait_until(&self.state, CONTENDED, deadline)?;
-                if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
+                if futex_mark_contended(&self.state) {
                     break;
                 }
                 if timed_out {
@@ -563,7 +620,7 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
         // A waiter changes state 1 to 2 before FUTEX_WAIT. Consequently either
         // this release observes 2 and wakes it, or the waiter observes 0 and
         // acquires without sleeping; there is no lost-wakeup interval.
-        if self.state.swap(UNLOCKED, Ordering::Release) == CONTENDED {
+        if futex_release(&self.state) {
             futex_wake_one(&self.state);
         }
     }
