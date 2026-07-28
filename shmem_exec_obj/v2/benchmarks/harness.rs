@@ -13,11 +13,11 @@ use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
 use shmem_pod::snzi::Snzi;
 use shmem_pod::sync::{ProcessFutexMutex, ProcessSpinMutex};
 use shmem_pod_runtime::{PodArtifact, PodImage};
-use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
+use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
 use std::env;
 use std::error::Error;
 use std::ffi::{c_int, c_long, c_void};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::hint::{black_box, spin_loop};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::Shutdown;
@@ -40,6 +40,7 @@ const PROT_WRITE: c_int = 0x2;
 const MAP_SHARED: c_int = 0x01;
 const MAP_ANONYMOUS: c_int = 0x20;
 const SIGKILL: c_int = 9;
+const JSON_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 unsafe extern "C" {
     fn syscall(number: c_long, ...) -> c_long;
@@ -68,6 +69,8 @@ struct Config {
     samples: usize,
     workers: usize,
     mode: String,
+    timeout_seconds: u64,
+    defer_completion: bool,
 }
 
 impl Config {
@@ -80,6 +83,8 @@ impl Config {
         let mut samples = None;
         let mut workers = None;
         let mut mode = None;
+        let mut timeout_seconds = None;
+        let mut defer_completion = None;
         let mut arguments = env::args().skip(1);
         while let Some(argument) = arguments.next() {
             let value = arguments
@@ -94,6 +99,14 @@ impl Config {
                 "--samples" => samples = Some(value.parse::<usize>()?),
                 "--workers" => workers = Some(value.parse::<usize>()?),
                 "--mode" => mode = Some(value),
+                "--timeout-seconds" => timeout_seconds = Some(value.parse::<u64>()?),
+                "--defer-completion" => {
+                    defer_completion = Some(match value.as_str() {
+                        "0" => false,
+                        "1" => true,
+                        _ => return Err("--defer-completion must be 0 or 1".into()),
+                    });
+                }
                 other => return Err(format!("unknown harness option {other}").into()),
             }
         }
@@ -106,9 +119,15 @@ impl Config {
             samples: samples.ok_or("--samples is required")?,
             workers: workers.ok_or("--workers is required")?,
             mode: mode.ok_or("--mode is required")?,
+            timeout_seconds: timeout_seconds.ok_or("--timeout-seconds is required")?,
+            defer_completion: defer_completion.unwrap_or(false),
         };
-        if config.iterations == 0 || config.samples == 0 || config.workers == 0 {
-            return Err("iterations, samples, and workers must be nonzero".into());
+        if config.iterations == 0
+            || config.samples == 0
+            || config.workers == 0
+            || config.timeout_seconds == 0
+        {
+            return Err("iterations, samples, workers, and timeout must be nonzero".into());
         }
         if config.workers > MAX_WORKERS {
             return Err(format!("workers must not exceed {MAX_WORKERS}").into());
@@ -120,6 +139,21 @@ impl Config {
                 .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("--sha256 must be 64 hexadecimal digits".into());
+        }
+        let iterations = u64::try_from(config.iterations)?;
+        let workers = u64::try_from(config.workers)?;
+        let samples = u64::try_from(config.samples)?;
+        if iterations
+            .checked_mul(workers)
+            .is_none_or(|count| count > JSON_SAFE_INTEGER)
+            || iterations
+                .checked_mul(2)
+                .is_none_or(|count| count > JSON_SAFE_INTEGER)
+            || samples
+                .checked_mul(22)
+                .is_none_or(|count| count > JSON_SAFE_INTEGER)
+        {
+            return Err("configured result integers exceed exact JSON validation range".into());
         }
         Ok(config)
     }
@@ -146,8 +180,47 @@ struct Measurement<'a> {
 impl ResultWriter {
     fn create(output_dir: &Path, run_id: String) -> io::Result<Self> {
         fs::create_dir_all(output_dir)?;
-        let json = BufWriter::new(File::create(output_dir.join("results.jsonl"))?);
-        let mut csv = BufWriter::new(File::create(output_dir.join("results.csv"))?);
+        for reserved in [
+            "harness-owner.json",
+            "environment.json",
+            "environment.json.pending",
+            "results.jsonl",
+            "results.csv",
+        ] {
+            match fs::symlink_metadata(output_dir.join(reserved)) {
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!("reserved benchmark output already exists: {reserved}"),
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let mut owner = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output_dir.join("harness-owner.json"))?;
+        writeln!(
+            owner,
+            "{{\"schema\":\"shmem-pod-benchmark-owner-v1\",\"run_id\":\"{}\"}}",
+            json_escape(&run_id)
+        )?;
+        owner.flush()?;
+        owner.sync_all()?;
+        let json = BufWriter::new(
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_dir.join("results.jsonl"))?,
+        );
+        let mut csv = BufWriter::new(
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_dir.join("results.csv"))?,
+        );
         writeln!(
             csv,
             "schema,run_id,category,benchmark,variant,topology,workers,sample,operations,elapsed_ns,operations_per_second,verified"
@@ -199,6 +272,8 @@ impl ResultWriter {
     fn finish(mut self) -> io::Result<usize> {
         self.json.flush()?;
         self.csv.flush()?;
+        self.json.get_ref().sync_all()?;
+        self.csv.get_ref().sync_all()?;
         Ok(self.rows)
     }
 }
@@ -249,6 +324,8 @@ struct CgroupMetadata {
     swap_source: String,
     cpuset: String,
     cpuset_source: String,
+    cpuset_mems: String,
+    cpuset_mems_source: String,
 }
 
 fn cgroup_source(directory: &Path) -> String {
@@ -329,6 +406,8 @@ fn cgroup_metadata() -> CgroupMetadata {
             swap_source: "unknown".to_owned(),
             cpuset: "unknown".to_owned(),
             cpuset_source: "unknown".to_owned(),
+            cpuset_mems: "unknown".to_owned(),
+            cpuset_mems_source: "unknown".to_owned(),
         };
     }
     let root = PathBuf::from("/sys/fs/cgroup");
@@ -353,6 +432,16 @@ fn cgroup_metadata() -> CgroupMetadata {
                 .map(|value| (value, cgroup_source(directory)))
         })
         .unwrap_or_else(|| ("unknown".to_owned(), "unknown".to_owned()));
+    let (cpuset_mems, cpuset_mems_source) = ancestors
+        .iter()
+        .find_map(|directory| {
+            fs::read_to_string(directory.join("cpuset.mems.effective"))
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, cgroup_source(directory)))
+        })
+        .unwrap_or_else(|| ("unknown".to_owned(), "unknown".to_owned()));
     CgroupMetadata {
         path,
         cpu_max,
@@ -363,48 +452,117 @@ fn cgroup_metadata() -> CgroupMetadata {
         swap_source,
         cpuset,
         cpuset_source,
+        cpuset_mems,
+        cpuset_mems_source,
     }
 }
 
 fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
     let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
+    let memory_affinity = proc_field("/proc/self/status", "Mems_allowed_list:");
+    let numa_nodes_online = fs::read_to_string("/sys/devices/system/node/online")
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
+    let numa_nodes_possible = fs::read_to_string("/sys/devices/system/node/possible")
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
+    let automatic_numa_balancing = fs::read_to_string("/proc/sys/kernel/numa_balancing")
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
     let cgroup = cgroup_metadata();
-    let path = config.output_dir.join("environment.json");
-    let mut output = BufWriter::new(File::create(path)?);
+    let pending_path = config.output_dir.join("environment.json.pending");
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending_path)?;
+    let mut output = BufWriter::new(file);
+    writeln!(output, "{{")?;
+    writeln!(
+        output,
+        "  \"schema\": \"shmem-pod-benchmark-environment-v1\","
+    )?;
+    writeln!(output, "  \"run_id\": \"{}\",", json_escape(run_id))?;
+    writeln!(output, "  \"complete\": true,")?;
+    writeln!(output, "  \"result_rows\": {result_rows},")?;
+    writeln!(
+        output,
+        "  \"source_revision\": \"{}\",",
+        json_escape(&environment("SHMEM_POD_BENCH_GIT_SHA"))
+    )?;
+    writeln!(
+        output,
+        "  \"source_dirty\": {},",
+        environment("SHMEM_POD_BENCH_GIT_DIRTY") == "1"
+    )?;
+    writeln!(
+        output,
+        "  \"source_status_sha256\": \"{}\",",
+        json_escape(&environment("SHMEM_POD_BENCH_SOURCE_STATUS_SHA256"))
+    )?;
+    writeln!(
+        output,
+        "  \"source_tree_sha256\": \"{}\",",
+        json_escape(&environment("SHMEM_POD_BENCH_SOURCE_TREE_SHA256"))
+    )?;
+    writeln!(
+        output,
+        "  \"cargo_lock_sha256\": \"{}\",",
+        json_escape(&environment("SHMEM_POD_BENCH_LOCK_SHA256"))
+    )?;
+    writeln!(
+        output,
+        "  \"harness_lock_sha256\": \"{}\",",
+        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"))
+    )?;
     writeln!(
         output,
         concat!(
-            "{{\n",
-            "  \"schema\": \"shmem-pod-benchmark-environment-v1\",\n",
-            "  \"run_id\": \"{}\",\n",
-            "  \"complete\": true,\n",
-            "  \"result_rows\": {},\n",
-            "  \"source_revision\": \"{}\",\n",
-            "  \"source_dirty\": {},\n",
-            "  \"cargo_lock_sha256\": \"{}\",\n",
-            "  \"harness_lock_sha256\": \"{}\",\n",
-            "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", \"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\"}},\n",
-            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"cgroup_v2_path\": \"{}\", \"inherited_cpu_max\": \"{}\", \"inherited_cpu_max_source\": \"{}\", \"inherited_memory_max\": \"{}\", \"inherited_memory_max_source\": \"{}\", \"inherited_memory_swap_max\": \"{}\", \"inherited_memory_swap_max_source\": \"{}\", \"effective_cpuset\": \"{}\", \"effective_cpuset_source\": \"{}\"}},\n",
-            "  \"toolchain\": {{\"rustc\": \"{}\", \"cargo\": \"{}\"}},\n",
-            "  \"artifact\": {{\"path\": \"{}\", \"sha256\": \"{}\"}},\n",
-            "  \"configuration\": {{\"mode\": \"{}\", \"profile\": \"release\", \"warmup_operations_per_worker\": {}, \"iterations_per_worker\": {}, \"samples\": {}, \"workers\": {}, \"timer\": \"std::time::Instant\"}},\n",
-            "  \"interpretation\": \"One-host observations only; compare rows within a controlled run and do not treat them as portable performance claims.\"\n",
-            "}}"
+            "  \"provenance\": {{",
+            "\"workspace_manifest\": {{\"bundle_path\": \"provenance/workspace-Cargo.toml\", \"sha256\": \"{}\"}}, ",
+            "\"runner\": {{\"bundle_path\": \"provenance/run-benchmarks.sh\", \"sha256\": \"{}\"}}, ",
+            "\"harness_source\": {{\"bundle_path\": \"provenance/harness.rs\", \"sha256\": \"{}\"}}, ",
+            "\"harness_manifest\": {{\"bundle_path\": \"provenance/harness-Cargo.toml\", \"sha256\": \"{}\"}}, ",
+            "\"harness_binary\": {{\"bundle_path\": \"bin/shmem-pod-benchmark-harness\", \"sha256\": \"{}\"}}, ",
+            "\"compiler_binary\": {{\"bundle_path\": \"bin/shmem-pod-image-compiler\", \"sha256\": \"{}\"}}}},"
         ),
-        json_escape(run_id),
-        result_rows,
-        json_escape(&environment("SHMEM_POD_BENCH_GIT_SHA")),
-        environment("SHMEM_POD_BENCH_GIT_DIRTY") == "1",
-        json_escape(&environment("SHMEM_POD_BENCH_LOCK_SHA256")),
-        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_LOCK_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_WORKSPACE_MANIFEST_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_RUNNER_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_SOURCE_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_BINARY_SHA256")),
+        json_escape(&environment("SHMEM_POD_BENCH_COMPILER_SHA256")),
+    )?;
+    writeln!(
+        output,
+        concat!(
+            "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", ",
+            "\"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\", ",
+            "\"numa_nodes_online\": \"{}\", \"numa_nodes_possible\": \"{}\", ",
+            "\"automatic_numa_balancing\": \"{}\"}},"
+        ),
         json_escape(&environment("SHMEM_POD_BENCH_HOSTNAME")),
         json_escape(&environment("SHMEM_POD_BENCH_KERNEL")),
         json_escape(&environment("SHMEM_POD_BENCH_CPU_MODEL")),
         available,
         env::consts::OS,
         env::consts::ARCH,
+        json_escape(&numa_nodes_online),
+        json_escape(&numa_nodes_possible),
+        json_escape(&automatic_numa_balancing),
+    )?;
+    writeln!(
+        output,
+        concat!(
+            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"memory_affinity_list\": \"{}\", ",
+            "\"cgroup_v2_path\": \"{}\", \"inherited_cpu_max\": \"{}\", \"inherited_cpu_max_source\": \"{}\", ",
+            "\"inherited_memory_max\": \"{}\", \"inherited_memory_max_source\": \"{}\", ",
+            "\"inherited_memory_swap_max\": \"{}\", \"inherited_memory_swap_max_source\": \"{}\", ",
+            "\"effective_cpuset\": \"{}\", \"effective_cpuset_source\": \"{}\", ",
+            "\"effective_cpuset_mems\": \"{}\", \"effective_cpuset_mems_source\": \"{}\"}},"
+        ),
         json_escape(&affinity),
+        json_escape(&memory_affinity),
         json_escape(&cgroup.path),
         json_escape(&cgroup.cpu_max),
         json_escape(&cgroup.cpu_source),
@@ -414,17 +572,94 @@ fn write_environment(config: &Config, run_id: &str, result_rows: usize) -> io::R
         json_escape(&cgroup.swap_source),
         json_escape(&cgroup.cpuset),
         json_escape(&cgroup.cpuset_source),
+        json_escape(&cgroup.cpuset_mems),
+        json_escape(&cgroup.cpuset_mems_source),
+    )?;
+    writeln!(
+        output,
+        "  \"toolchain\": {{\"rustc\": \"{}\", \"cargo\": \"{}\", \"pod_rustc\": \"{}\"}},",
         json_escape(&environment("SHMEM_POD_BENCH_RUSTC")),
         json_escape(&environment("SHMEM_POD_BENCH_CARGO")),
+        json_escape(&environment("SHMEM_POD_BENCH_POD_RUSTC_VERSION")),
+    )?;
+    writeln!(
+        output,
+        concat!(
+            "  \"build_environment\": {{\"rustflags\": \"{}\", \"cargo_encoded_rustflags\": \"{}\", ",
+            "\"rustc_override\": \"{}\", \"pod_rustc\": \"{}\", \"rustc_wrapper\": \"{}\", ",
+            "\"rustc_workspace_wrapper\": \"{}\", \"cargo_home\": \"{}\", \"cargo_build_target\": \"{}\", ",
+            "\"workspace_profile\": \"{}\", \"harness_profile\": \"{}\", ",
+            "\"profile_overrides\": {{\"opt_level\": \"{}\", \"debug\": \"{}\", \"strip\": \"{}\", ",
+            "\"debug_assertions\": \"{}\", \"overflow_checks\": \"{}\", \"lto\": \"{}\", ",
+            "\"panic\": \"{}\", \"incremental\": \"{}\", \"codegen_units\": \"{}\", \"rpath\": \"{}\"}}}},"
+        ),
+        json_escape(&environment("SHMEM_POD_BENCH_RUSTFLAGS")),
+        json_escape(&environment("SHMEM_POD_BENCH_CARGO_ENCODED_RUSTFLAGS")),
+        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_OVERRIDE")),
+        json_escape(&environment("SHMEM_POD_BENCH_POD_RUSTC")),
+        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_WRAPPER")),
+        json_escape(&environment("SHMEM_POD_BENCH_RUSTC_WORKSPACE_WRAPPER")),
+        json_escape(&environment("SHMEM_POD_BENCH_CARGO_HOME")),
+        json_escape(&environment("SHMEM_POD_BENCH_CARGO_BUILD_TARGET")),
+        json_escape(&environment("SHMEM_POD_BENCH_WORKSPACE_PROFILE")),
+        json_escape(&environment("SHMEM_POD_BENCH_HARNESS_PROFILE")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_OPT_LEVEL")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_DEBUG")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_STRIP")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_DEBUG_ASSERTIONS")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_OVERFLOW_CHECKS")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_LTO")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_PANIC")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_INCREMENTAL")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_CODEGEN_UNITS")),
+        json_escape(&environment("SHMEM_POD_BENCH_PROFILE_RPATH")),
+    )?;
+    writeln!(
+        output,
+        "  \"artifact\": {{\"path\": \"{}\", \"bundle_path\": \"artifacts/pod.bin\", \"sha256\": \"{}\"}},",
         json_escape(&config.artifact.display().to_string()),
         json_escape(&config.artifact_sha256),
+    )?;
+    writeln!(
+        output,
+        concat!(
+            "  \"configuration\": {{\"mode\": \"{}\", \"profile\": \"release\", ",
+            "\"warmup_operations_per_worker\": {}, \"iterations_per_worker\": {}, \"samples\": {}, ",
+            "\"workers\": {}, \"timeout_seconds\": {}, \"timer\": \"std::time::Instant\", ",
+            "\"sample_semantics\": \"ordered repeated intervals\", ",
+            "\"warmup_policy\": \"persistent-state workloads warm once; freshly constructed process and presence states warm once per sample\"}},"
+        ),
         json_escape(&config.mode),
         config.warmup,
         config.iterations,
         config.samples,
         config.workers,
+        config.timeout_seconds,
     )?;
-    output.flush()
+    writeln!(
+        output,
+        "  \"interpretation\": \"One-host observations only; compare rows within a controlled run and do not treat them as portable performance claims.\""
+    )?;
+    writeln!(output, "}}")?;
+    output.flush()?;
+    output.get_ref().sync_all()?;
+    drop(output);
+    if !config.defer_completion {
+        let completion_path = config.output_dir.join("environment.json");
+        match fs::symlink_metadata(&completion_path) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "benchmark completion marker already exists",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        fs::rename(&pending_path, completion_path)?;
+        File::open(&config.output_dir)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn operation_count(iterations: usize, workers: usize) -> u64 {
@@ -476,17 +711,12 @@ fn benchmark_syscall(config: &Config, writer: &mut ResultWriter) -> io::Result<(
         assert_eq!(unsafe { syscall(SYS_GETTID) }, expected_tid);
     }
     for sample in 0..config.samples {
-        let mut checksum = 0_i64;
         let started = Instant::now();
         for _ in 0..config.iterations {
             // SAFETY: gettid takes no arguments and has no memory preconditions.
-            checksum = checksum.wrapping_add(unsafe { syscall(SYS_GETTID) });
+            assert_eq!(unsafe { syscall(SYS_GETTID) }, expected_tid);
         }
         let elapsed = started.elapsed();
-        assert_eq!(
-            checksum,
-            expected_tid.wrapping_mul(config.iterations as i64)
-        );
         writer.record(Measurement {
             category: "latency",
             benchmark: "kernel_entry",
@@ -610,12 +840,17 @@ fn benchmark_ipc(config: &Config, writer: &mut ResultWriter) -> Result<(), Box<d
     }
     for sample in 0..config.samples {
         let started = Instant::now();
-        for _ in 0..config.iterations {
+        for exchange in 0..config.iterations {
             client.write_all(&message)?;
             client.read_exact(&mut reply)?;
+            if reply != message {
+                return Err(format!(
+                    "UnixStream reply mismatch in sample {sample}, exchange {exchange}"
+                )
+                .into());
+            }
         }
         let elapsed = started.elapsed();
-        assert_eq!(reply, message);
         writer.record(Measurement {
             category: "latency",
             benchmark: "kernel_ipc",
@@ -634,30 +869,33 @@ fn benchmark_ipc(config: &Config, writer: &mut ResultWriter) -> Result<(), Box<d
     Ok(())
 }
 
+#[repr(align(64))]
+struct CacheLine<T>(T);
+
 struct ProcessState {
-    ready: AtomicU32,
-    start: AtomicU32,
-    done: AtomicU32,
-    release: AtomicU32,
-    spin: ProcessSpinMutex<u64>,
-    futex: ProcessFutexMutex<u64>,
-    coarse: ProcessFutexMutex<[u64; MAX_WORKERS]>,
-    fine: [ProcessFutexMutex<u64>; MAX_WORKERS],
-    atomic: [AtomicU64; MAX_WORKERS],
+    ready: CacheLine<AtomicU32>,
+    start: CacheLine<AtomicU32>,
+    done: CacheLine<AtomicU32>,
+    release: CacheLine<AtomicU32>,
+    spin: CacheLine<ProcessSpinMutex<u64>>,
+    futex: CacheLine<ProcessFutexMutex<u64>>,
+    coarse: CacheLine<ProcessFutexMutex<[u64; MAX_WORKERS]>>,
+    fine: [CacheLine<ProcessFutexMutex<u64>>; MAX_WORKERS],
+    atomic: [CacheLine<AtomicU64>; MAX_WORKERS],
 }
 
 impl ProcessState {
     const fn new() -> Self {
         Self {
-            ready: AtomicU32::new(0),
-            start: AtomicU32::new(0),
-            done: AtomicU32::new(0),
-            release: AtomicU32::new(0),
-            spin: ProcessSpinMutex::new(0),
-            futex: ProcessFutexMutex::new(0),
-            coarse: ProcessFutexMutex::new([0; MAX_WORKERS]),
-            fine: [const { ProcessFutexMutex::new(0) }; MAX_WORKERS],
-            atomic: [const { AtomicU64::new(0) }; MAX_WORKERS],
+            ready: CacheLine(AtomicU32::new(0)),
+            start: CacheLine(AtomicU32::new(0)),
+            done: CacheLine(AtomicU32::new(0)),
+            release: CacheLine(AtomicU32::new(0)),
+            spin: CacheLine(ProcessSpinMutex::new(0)),
+            futex: CacheLine(ProcessFutexMutex::new(0)),
+            coarse: CacheLine(ProcessFutexMutex::new([0; MAX_WORKERS])),
+            fine: [const { CacheLine(ProcessFutexMutex::new(0)) }; MAX_WORKERS],
+            atomic: [const { CacheLine(AtomicU64::new(0)) }; MAX_WORKERS],
         }
     }
 }
@@ -743,23 +981,23 @@ impl ProcessWorkload {
             Self::SpinMutex | Self::FutexMutex => "forked_processes_hot",
             Self::CoarseCounter => "forked_processes_sharded_keys_one_lock",
             Self::FineHot | Self::AtomicHot => "forked_processes_hot_key",
-            Self::FineSharded | Self::AtomicSharded => "forked_processes_sharded_keys",
+            Self::FineSharded | Self::AtomicSharded => "forked_processes_sharded_keys_padded",
         }
     }
 }
 
 fn process_operation(state: &ProcessState, workload: ProcessWorkload, worker: usize) {
     match workload {
-        ProcessWorkload::SpinMutex => *state.spin.lock() += 1,
-        ProcessWorkload::FutexMutex => *state.futex.lock() += 1,
-        ProcessWorkload::CoarseCounter => state.coarse.lock()[worker] += 1,
-        ProcessWorkload::FineHot => *state.fine[0].lock() += 1,
-        ProcessWorkload::FineSharded => *state.fine[worker].lock() += 1,
+        ProcessWorkload::SpinMutex => *state.spin.0.lock() += 1,
+        ProcessWorkload::FutexMutex => *state.futex.0.lock() += 1,
+        ProcessWorkload::CoarseCounter => state.coarse.0.lock()[worker] += 1,
+        ProcessWorkload::FineHot => *state.fine[0].0.lock() += 1,
+        ProcessWorkload::FineSharded => *state.fine[worker].0.lock() += 1,
         ProcessWorkload::AtomicHot => {
-            state.atomic[0].fetch_add(1, Ordering::Relaxed);
+            state.atomic[0].0.fetch_add(1, Ordering::Relaxed);
         }
         ProcessWorkload::AtomicSharded => {
-            state.atomic[worker].fetch_add(1, Ordering::Relaxed);
+            state.atomic[worker].0.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -774,15 +1012,15 @@ fn child_process(
     for _ in 0..warmup {
         process_operation(state, workload, worker);
     }
-    state.ready.fetch_add(1, Ordering::Release);
-    while state.start.load(Ordering::Acquire) == 0 {
+    state.ready.0.fetch_add(1, Ordering::Release);
+    while state.start.0.load(Ordering::Acquire) == 0 {
         spin_loop();
     }
     for _ in 0..iterations {
         process_operation(state, workload, worker);
     }
-    state.done.fetch_add(1, Ordering::Release);
-    while state.release.load(Ordering::Acquire) == 0 {
+    state.done.0.fetch_add(1, Ordering::Release);
+    while state.release.0.load(Ordering::Acquire) == 0 {
         spin_loop();
     }
     // SAFETY: child intentionally bypasses inherited Rust destructors after fork.
@@ -805,10 +1043,15 @@ fn terminate_children(children: &[c_int]) {
     }
 }
 
-fn wait_for_count(counter: &AtomicU32, expected: u32, phase: &str) -> io::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(30);
+fn wait_for_count(
+    counter: &AtomicU32,
+    expected: u32,
+    phase: &str,
+    timeout: Duration,
+) -> io::Result<()> {
+    let started = Instant::now();
     while counter.load(Ordering::Acquire) != expected {
-        if Instant::now() >= deadline {
+        if started.elapsed() >= timeout {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("timed out waiting for process benchmark {phase}"),
@@ -822,21 +1065,40 @@ fn wait_for_count(counter: &AtomicU32, expected: u32, phase: &str) -> io::Result
 fn validate_process_total(
     state: &ProcessState,
     workload: ProcessWorkload,
-    expected: u64,
+    expected_per_worker: u64,
     workers: usize,
 ) {
-    let actual = match workload {
-        ProcessWorkload::SpinMutex => *state.spin.lock(),
-        ProcessWorkload::FutexMutex => *state.futex.lock(),
-        ProcessWorkload::CoarseCounter => state.coarse.lock()[..workers].iter().sum(),
-        ProcessWorkload::FineHot => *state.fine[0].lock(),
-        ProcessWorkload::FineSharded => (0..workers).map(|slot| *state.fine[slot].lock()).sum(),
-        ProcessWorkload::AtomicHot => state.atomic[0].load(Ordering::Relaxed),
-        ProcessWorkload::AtomicSharded => (0..workers)
-            .map(|slot| state.atomic[slot].load(Ordering::Relaxed))
-            .sum(),
-    };
-    assert_eq!(actual, expected);
+    let expected_total = operation_count(expected_per_worker as usize, workers);
+    match workload {
+        ProcessWorkload::SpinMutex => assert_eq!(*state.spin.0.lock(), expected_total),
+        ProcessWorkload::FutexMutex => assert_eq!(*state.futex.0.lock(), expected_total),
+        ProcessWorkload::CoarseCounter => {
+            let counters = state.coarse.0.lock();
+            assert!(counters[..workers]
+                .iter()
+                .all(|value| *value == expected_per_worker));
+            assert!(counters[workers..].iter().all(|value| *value == 0));
+        }
+        ProcessWorkload::FineHot => {
+            assert_eq!(*state.fine[0].0.lock(), expected_total);
+            assert!((1..MAX_WORKERS).all(|slot| *state.fine[slot].0.lock() == 0));
+        }
+        ProcessWorkload::FineSharded => {
+            assert!((0..workers).all(|slot| *state.fine[slot].0.lock() == expected_per_worker));
+            assert!((workers..MAX_WORKERS).all(|slot| *state.fine[slot].0.lock() == 0));
+        }
+        ProcessWorkload::AtomicHot => {
+            assert_eq!(state.atomic[0].0.load(Ordering::Relaxed), expected_total);
+            assert!((1..MAX_WORKERS).all(|slot| state.atomic[slot].0.load(Ordering::Relaxed) == 0));
+        }
+        ProcessWorkload::AtomicSharded => {
+            assert!((0..workers).all(|slot| {
+                state.atomic[slot].0.load(Ordering::Relaxed) == expected_per_worker
+            }));
+            assert!((workers..MAX_WORKERS)
+                .all(|slot| state.atomic[slot].0.load(Ordering::Relaxed) == 0));
+        }
+    }
 }
 
 fn process_sample(config: &Config, workload: ProcessWorkload) -> Result<Duration, Box<dyn Error>> {
@@ -859,21 +1121,22 @@ fn process_sample(config: &Config, workload: ProcessWorkload) -> Result<Duration
     }
 
     let expected_workers = config.workers as u32;
-    if let Err(error) = wait_for_count(&state.ready, expected_workers, "warmup") {
-        state.start.store(1, Ordering::Release);
-        state.release.store(1, Ordering::Release);
+    let timeout = Duration::from_secs(config.timeout_seconds);
+    if let Err(error) = wait_for_count(&state.ready.0, expected_workers, "warmup", timeout) {
+        state.start.0.store(1, Ordering::Release);
+        state.release.0.store(1, Ordering::Release);
         terminate_children(&children);
         return Err(error.into());
     }
     let started = Instant::now();
-    state.start.store(1, Ordering::Release);
-    if let Err(error) = wait_for_count(&state.done, expected_workers, "completion") {
-        state.release.store(1, Ordering::Release);
+    state.start.0.store(1, Ordering::Release);
+    if let Err(error) = wait_for_count(&state.done.0, expected_workers, "completion", timeout) {
+        state.release.0.store(1, Ordering::Release);
         terminate_children(&children);
         return Err(error.into());
     }
     let elapsed = started.elapsed();
-    state.release.store(1, Ordering::Release);
+    state.release.0.store(1, Ordering::Release);
     for child in children {
         let mut status = 0;
         // SAFETY: status is writable and child is a live fork result.
@@ -881,11 +1144,8 @@ fn process_sample(config: &Config, workload: ProcessWorkload) -> Result<Duration
             return Err(format!("benchmark child {child} failed with wait status {status}").into());
         }
     }
-    let expected = operation_count(
-        config.warmup.checked_add(config.iterations).unwrap(),
-        config.workers,
-    );
-    validate_process_total(state, workload, expected, config.workers);
+    let expected_per_worker = u64::try_from(config.warmup.checked_add(config.iterations).unwrap())?;
+    validate_process_total(state, workload, expected_per_worker, config.workers);
     Ok(elapsed)
 }
 
@@ -1151,16 +1411,18 @@ fn benchmark_relocatable(config: &Config, writer: &mut ResultWriter) -> Result<(
         assert_eq!(unsafe { shared.destroy(&mut region)? }, index as u64);
     }
     for sample in 0..config.samples {
-        let mut checksum = 0_u64;
         let started = Instant::now();
         for index in 0..config.iterations {
             let mut shared = SharedBox::new(&region, index as u64)?;
             // SAFETY: this single-thread benchmark owns every descriptor/reference.
-            checksum = checksum.wrapping_add(unsafe { shared.destroy(&mut region)? });
+            let value = unsafe { shared.destroy(&mut region)? };
+            if value != index as u64 {
+                return Err(
+                    format!("SharedBox destruction returned {value}, expected {index}").into(),
+                );
+            }
         }
         let elapsed = started.elapsed();
-        let expected = (0..config.iterations as u64).fold(0_u64, u64::wrapping_add);
-        assert_eq!(checksum, expected);
         assert_eq!(backing.allocator().snapshot().allocated(), 0);
         writer.record(Measurement {
             category: "latency",
@@ -1179,13 +1441,17 @@ fn benchmark_relocatable(config: &Config, writer: &mut ResultWriter) -> Result<(
         assert_eq!(*black_box(shared.get(&region)?), 0xfeed_f00d);
     }
     for sample in 0..config.samples {
-        let mut checksum = 0_u64;
         let started = Instant::now();
-        for _ in 0..config.iterations {
-            checksum ^= *black_box(shared.get(&region)?);
+        for index in 0..config.iterations {
+            let value = *black_box(shared.get(&region)?);
+            if value != 0xfeed_f00d {
+                return Err(format!(
+                    "SharedBox checked get returned {value:#x} at iteration {index}"
+                )
+                .into());
+            }
         }
         let elapsed = started.elapsed();
-        black_box(checksum);
         writer.record(Measurement {
             category: "latency",
             benchmark: "shared_box",
@@ -1208,19 +1474,19 @@ fn benchmark_relocatable(config: &Config, writer: &mut ResultWriter) -> Result<(
         assert_eq!(unsafe { vector.pop(&mut region)? }, Some(index as u64));
     }
     for sample in 0..config.samples {
-        let mut checksum = 0_u64;
         let started = Instant::now();
         for index in 0..config.iterations {
             // SAFETY: the benchmark has exclusive access to vector and region.
             unsafe { vector.push(&mut region, index as u64)? };
             // SAFETY: the benchmark has exclusive access to vector and region.
-            checksum = checksum.wrapping_add(
-                unsafe { vector.pop(&mut region)? }.expect("just-pushed vector value is present"),
-            );
+            let value = unsafe { vector.pop(&mut region)? };
+            if value != Some(index as u64) {
+                return Err(
+                    format!("SharedVec pop returned {value:?}, expected Some({index})").into(),
+                );
+            }
         }
         let elapsed = started.elapsed();
-        let expected = (0..config.iterations as u64).fold(0_u64, u64::wrapping_add);
-        assert_eq!(checksum, expected);
         assert!(vector.is_empty());
         writer.record(Measurement {
             category: "latency",
