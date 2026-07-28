@@ -234,5 +234,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as error:
-        print("WARN: {}: FAILURE: {}".format(DEMO_LABEL, error), file=sys.stderr)
+        print("ERROR: {}: FAILURE: {}".format(DEMO_LABEL, error), file=sys.stderr)
         sys.exit(1)
