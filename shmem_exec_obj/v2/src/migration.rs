@@ -685,8 +685,8 @@ impl<'source, const NODES: usize, Authority> AdmissionQuiescence<'source, NODES,
     pub fn into_authority(self, permit: ReclamationPermit) -> Result<Authority, MigrationError> {
         if permit.plan.source != self.generation {
             return Err(MigrationError::SourceGenerationMismatch {
-                expected_tag: generation_tag(self.generation),
-                observed_tag: generation_tag(permit.plan.source),
+                expected_tag: generation_tag(permit.plan.source),
+                observed_tag: generation_tag(self.generation),
             });
         }
         Ok(self.authority)
