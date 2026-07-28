@@ -157,12 +157,21 @@ impl AllocationDescriptor {
 // SAFETY: the descriptor consists exclusively of fixed-width integers.
 unsafe impl FixedAddressPodValue for AllocationDescriptor {
     const FINGERPRINT: u128 = {
-        let state = __private::mix_bytes(
+        let mut state = __private::mix_bytes(
             __private::FINGERPRINT_SEED,
             b"shmem-pod-allocation-descriptor-v1",
         );
-        let state = __private::mix_usize(state, size_of::<Self>());
-        __private::finish(__private::mix_usize(state, align_of::<Self>()))
+        state = __private::mix_usize(state, size_of::<Self>());
+        state = __private::mix_usize(state, align_of::<Self>());
+        state = mix_field(state, b"region_id", offset_of!(Self, region_id), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"slot", offset_of!(Self, slot), size_of::<u32>(), align_of::<u32>(), u32::FINGERPRINT);
+        state = mix_field(state, b"generation", offset_of!(Self, generation), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"offset", offset_of!(Self, offset), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"byte_len", offset_of!(Self, byte_len), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"alignment", offset_of!(Self, alignment), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"fingerprint_low", offset_of!(Self, fingerprint_low), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(state, b"fingerprint_high", offset_of!(Self, fingerprint_high), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        __private::finish(state)
     };
 }
 
@@ -199,6 +208,30 @@ impl SlotMetadata {
         self.token.store(INITIAL_GENERATION, Ordering::Release);
     }
 }
+
+// SAFETY: slot metadata contains only integer atomics and has no destructor.
+unsafe impl FixedAddressPodValue for SlotMetadata {
+    const FINGERPRINT: u128 = {
+        let mut state = __private::mix_bytes(
+            __private::FINGERPRINT_SEED,
+            b"shmem-pod-reloc-slot-metadata-v1",
+        );
+        state = __private::mix_usize(state, size_of::<Self>());
+        state = __private::mix_usize(state, align_of::<Self>());
+        state = mix_field(state, b"token", offset_of!(Self, token), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"byte_len", offset_of!(Self, byte_len), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"alignment", offset_of!(Self, alignment), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"fingerprint_low", offset_of!(Self, fingerprint_low), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"fingerprint_high", offset_of!(Self, fingerprint_high), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        __private::finish(state)
+    };
+}
+
+// SAFETY: all atomics store address-independent integers.
+unsafe impl PodValue for SlotMetadata {}
+
+// SAFETY: all shared access is atomic.
+unsafe impl PodSync for SlotMetadata {}
 
 /// Shared fixed-capacity allocator whose persistent state is address independent.
 ///
