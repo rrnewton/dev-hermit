@@ -1,0 +1,28 @@
+{
+  "experiment": "ptrace_stress_signals_20260727",
+  "date": "2026-07-27",
+  "task": "compat-ptrace-stress-tests",
+  "backend": "ptrace",
+  "mode": "run + --verify (L2)",
+  "relaxations": "none",
+  "hermit_slot": "worktrees/275/hermit",
+  "hermit_sha": "15293c34bc9a957d62314ab727dea5bba2d98df7",
+  "reverie_pin": "9233c0d099ce3bdc820958aa3071a6c1439bc249",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+  "toolchain": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+  "build": "gcc -O2 -static -fno-pie -no-pie [-pthread]",
+  "results": {
+    "mutex_contention": {"verify": "PASS", "detlog_commit_msgs": 6225, "native": {"MUTEX_COUNTER": 72000, "MUTEX_EXPECTED": 72000, "MUTEX_PINGPONG": 400, "MUTEX_OK": 1}},
+    "forkexec_chain": {"verify": "PASS", "detlog_commit_msgs": 3707, "native": {"CHAIN_TOP_CHILDCODE": 56, "CHAIN_DONE": true}},
+    "socket_ipc": {"verify": "PASS", "detlog_commit_msgs": 8849, "native": {"IPC_SOCKETPAIR_HASH": "9843975583526220164", "IPC_RING_EXITHASH": "12316849881530568608"}},
+    "signal_ordering": {"verify": "FAIL", "error": "wait after seccomp resume failed for tracee 3: -22 EINVAL", "native": {"SIG_RT0_COUNT": 3, "SIG_RT1_COUNT": 2, "SIG_RT2_COUNT": 1, "SIG_USR1_COUNT": 51, "SIG_USR2_COUNT": 51, "SIG_RT_QUEUED_OK": 1}}
+  },
+  "bug": {
+    "summary": "real-time signals (>=SIGRTMIN, 34) cannot be delivered to a guest handler under ptrace",
+    "root_cause": "nix::sys::signal::Signal enum has no RT-signal variants; safeptrace/src/lib.rs:345 Signal::try_from(WSTOPSIG).map_err(|_|EINVAL) fails when tracee stops to deliver signal>=34",
+    "location": ["safeptrace/src/lib.rs:337", "safeptrace/src/lib.rs:345", "safeptrace/src/lib.rs:348", "reverie-ptrace/src/task.rs:1464"],
+    "not_detcore": true,
+    "fix_scope": "core Reverie contract change (replace nix::Signal in signal path with c_int newtype); requires user approval + reverie branch + parent pin bump"
+  }
+}
