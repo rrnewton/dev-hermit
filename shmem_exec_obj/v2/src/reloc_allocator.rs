@@ -535,11 +535,21 @@ unsafe impl<const SLOTS: usize> FixedAddressPodValue for RelocAllocator<SLOTS> {
             SLOTS > 0 && SLOTS <= MAX_RELOC_SLOTS,
             "unsupported slot count"
         );
-        let state =
+        let mut state =
             __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-reloc-allocator-v1");
-        let state = __private::mix_usize(state, SLOTS);
-        let state = __private::mix_usize(state, size_of::<Self>());
-        __private::finish(__private::mix_usize(state, align_of::<Self>()))
+        state = __private::mix_usize(state, SLOTS);
+        state = __private::mix_usize(state, size_of::<Self>());
+        state = __private::mix_usize(state, align_of::<Self>());
+        state = mix_field(state, b"state", offset_of!(Self, state), size_of::<AtomicU32>(), align_of::<AtomicU32>(), AtomicU32::FINGERPRINT);
+        state = mix_field(state, b"operation_lock", offset_of!(Self, operation_lock), size_of::<AtomicU32>(), align_of::<AtomicU32>(), AtomicU32::FINGERPRINT);
+        state = mix_field(state, b"region_id", offset_of!(Self, region_id), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"control_offset", offset_of!(Self, control_offset), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"mapping_len", offset_of!(Self, mapping_len), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"arena_offset", offset_of!(Self, arena_offset), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"slot_size", offset_of!(Self, slot_size), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(state, b"bitmap", offset_of!(Self, bitmap), size_of::<[AtomicU64; MAX_BITMAP_WORDS]>(), align_of::<[AtomicU64; MAX_BITMAP_WORDS]>(), <[AtomicU64; MAX_BITMAP_WORDS]>::FINGERPRINT);
+        state = mix_field(state, b"slots", offset_of!(Self, slots), size_of::<[SlotMetadata; SLOTS]>(), align_of::<[SlotMetadata; SLOTS]>(), <[SlotMetadata; SLOTS]>::FINGERPRINT);
+        __private::finish(state)
     };
 }
 
