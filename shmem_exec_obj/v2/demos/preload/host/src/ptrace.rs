@@ -17,6 +17,7 @@ pub fn inject(
     pid: libc::pid_t,
     shim: &Path,
     context: &BootstrapContext,
+    force_code_collision: bool,
 ) -> Result<(), Box<dyn Error>> {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Err("ptrace demo supports Linux x86-64 only".into());
@@ -81,8 +82,13 @@ pub fn inject(
     }
     let remote_bootstrap = remote_symbol_from_local(pid, local_bootstrap)?;
 
+    let injected_context = if force_code_collision {
+        (*context).with_fixed_code_address(scratch)?
+    } else {
+        *context
+    };
     let context_address = align_up(scratch + shim_c.as_bytes_with_nul().len() as u64, 16)?;
-    process_write(pid, context_address, &context.encode())?;
+    process_write(pid, context_address, &injected_context.encode())?;
     // SysV integer returns define EAX; writes to EAX zero-extend RAX. Recover
     // the C `int32_t` sign instead of interpreting the full register as i64.
     let status =

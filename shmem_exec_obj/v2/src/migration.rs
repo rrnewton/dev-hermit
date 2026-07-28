@@ -17,7 +17,7 @@
 //! reboot, filesystem-durability, or power-loss guarantee.
 
 use core::fmt;
-use core::mem::{align_of, needs_drop, offset_of, size_of};
+use core::mem::{ManuallyDrop, align_of, needs_drop, offset_of, size_of};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::admission::CloseableSnzi;
@@ -123,11 +123,13 @@ unsafe impl PodValue for SchemaIdentity {}
 // SAFETY: immutable scalar fields support process-shared references.
 unsafe impl PodSync for SchemaIdentity {}
 
-/// Caller-authenticated digest of one backing object.
+/// Caller-authenticated digest of one backing object or disjoint region.
 ///
 /// The library does not compute this digest. A host should derive it from its
 /// authenticated bootstrap metadata and backing-object identity, not from a
-/// reusable file-descriptor number. All-zero bytes are reserved as invalid.
+/// reusable file-descriptor number. For a region within a larger object, the
+/// digest must also bind its offset, extent, and generation so disjoint source
+/// and target regions have distinct identities. All-zero bytes are invalid.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BackingIdentity([u64; 4]);
 
@@ -588,16 +590,62 @@ mod quiescence_sealed {
 /// consuming a typed [`ClosedMapping`].
 pub trait QuiescenceWitness: quiescence_sealed::Sealed {}
 
+/// Owned source access authority which is safe to leak on migration failure.
+///
+/// Migration cannot run application cleanup when a process aborts or dies, and
+/// guessing which cleanup completed would violate fail-closed recovery. An
+/// authority stored in [`AdmissionQuiescence`] is therefore never dropped by
+/// the library. It is returned only after a matching [`ReclamationPermit`].
+///
+/// The `'static` bound rejects ordinary borrowed handles. It is not sufficient
+/// by itself; implementations must uphold the complete contract below.
+///
+/// # Safety
+///
+/// An implementation must satisfy all of the following:
+///
+/// - it exclusively owns every safe source mutation, reopen, reclamation, and
+///   access path not intrinsically coupled to the terminal admission gate;
+/// - it contains no borrowed authority, duplicate, callback, global escape, or
+///   alias which becomes safely usable when this value is moved or forgotten;
+/// - leaking or forgetting it forever leaves the source closed, mapped, and
+///   unreclaimed rather than restoring access; and
+/// - its destructor has no release, reopen, unmap, truncate, reclamation, or
+///   other source-lifetime effect. Cleanup must be an explicit operation invoked
+///   only after the authority is returned with a reclamation permit.
+///
+/// Implementing this trait for a reference, reference-bearing wrapper, ordinary
+/// RAII mapping owner, or clonable access token is unsound.
+///
+/// Borrowed authorities are rejected:
+///
+/// ```compile_fail
+/// use shmem_pod::migration::AdmissionQuiescence;
+///
+/// fn borrowed_authority<'a>(
+///     _witness: AdmissionQuiescence<'a, 20, &'a mut u64>,
+/// ) {
+/// }
+/// ```
+pub unsafe trait FailClosedSourceAuthority: 'static {}
+
+// SAFETY: unit carries no access and has no destructor effect.
+unsafe impl FailClosedSourceAuthority for () {}
+
 /// Terminal source witness backed by a one-shot closeable admission gate.
 ///
 /// The witness borrows the gate for its lifetime. Once constructed, safe gate
 /// operations cannot admit another participant because `DRAINED` is terminal.
 /// Its optional `Authority` value can consume source handles whose APIs are not
 /// intrinsically coupled to the gate.
-pub struct AdmissionQuiescence<'source, const NODES: usize, Authority = ()> {
+pub struct AdmissionQuiescence<
+    'source,
+    const NODES: usize,
+    Authority: FailClosedSourceAuthority = (),
+> {
     source: &'source CloseableSnzi<NODES>,
     generation: GenerationIdentity,
-    authority: Authority,
+    authority: ManuallyDrop<Authority>,
 }
 
 impl<'source, const NODES: usize> AdmissionQuiescence<'source, NODES> {
@@ -620,12 +668,14 @@ impl<'source, const NODES: usize> AdmissionQuiescence<'source, NODES> {
         Ok(Self {
             source,
             generation,
-            authority: (),
+            authority: ManuallyDrop::new(()),
         })
     }
 }
 
-impl<'source, const NODES: usize, Authority> AdmissionQuiescence<'source, NODES, Authority> {
+impl<'source, const NODES: usize, Authority: FailClosedSourceAuthority>
+    AdmissionQuiescence<'source, NODES, Authority>
+{
     /// Binds terminal admission while consuming the source access authority.
     ///
     /// The authority remains owned by the migration transaction through commit.
@@ -638,14 +688,16 @@ impl<'source, const NODES: usize, Authority> AdmissionQuiescence<'source, NODES,
     /// `generation` must identify the schema, allocator namespace, monotonic
     /// generation, and backing object guarded by `source`. `authority` must own
     /// every remaining safe source access path which is not intrinsically tied
-    /// to an admission token. The caller must authenticate both associations
-    /// outside attacker-writable shared bytes and exclude raw or nonconforming
-    /// access.
+    /// to an admission token. The caller must authenticate both associations,
+    /// uphold [`FailClosedSourceAuthority`], and exclude raw or nonconforming
+    /// access. This function intentionally leaks `authority` if validation
+    /// fails after ownership is transferred.
     pub unsafe fn bind_with_authority(
         source: &'source CloseableSnzi<NODES>,
         generation: GenerationIdentity,
         authority: Authority,
     ) -> Result<Self, MigrationError> {
+        let authority = ManuallyDrop::new(authority);
         generation.validate()?;
         if !source.is_drained() {
             return Err(MigrationError::SourceNotDrained);
@@ -673,27 +725,38 @@ impl<'source, const NODES: usize, Authority> AdmissionQuiescence<'source, NODES,
     /// The live migration types expose no source-capability extraction method:
     ///
     /// ```compile_fail
-    /// use shmem_pod::migration::{AdmissionQuiescence, Migration};
+    /// use shmem_pod::migration::{
+    ///     AdmissionQuiescence, FailClosedSourceAuthority, Migration,
+    /// };
     ///
-    /// fn release_during_copy<'a, A>(
+    /// fn release_during_copy<'a, A: FailClosedSourceAuthority>(
     ///     migration: Migration<'a, AdmissionQuiescence<'a, 20, A>>,
     /// ) -> A {
     ///     let (source, _) = migration.into_capabilities();
     ///     source.into_authority()
     /// }
     /// ```
-    pub fn into_authority(self, permit: ReclamationPermit) -> Result<Authority, MigrationError> {
+    pub fn into_authority(
+        mut self,
+        permit: ReclamationPermit,
+    ) -> Result<Authority, (MigrationError, Self)> {
         if permit.plan.source != self.generation {
-            return Err(MigrationError::SourceGenerationMismatch {
-                expected_tag: generation_tag(permit.plan.source),
-                observed_tag: generation_tag(self.generation),
-            });
+            return Err((
+                MigrationError::SourceGenerationMismatch {
+                    expected_tag: generation_tag(permit.plan.source),
+                    observed_tag: generation_tag(self.generation),
+                },
+                self,
+            ));
         }
-        Ok(self.authority)
+        // SAFETY: this method consumes the witness and a matching permit, so the
+        // authority is taken exactly once. Drop deliberately ignores the now
+        // empty ManuallyDrop field.
+        Ok(unsafe { ManuallyDrop::take(&mut self.authority) })
     }
 }
 
-impl<const NODES: usize, Authority> quiescence_sealed::Sealed
+impl<const NODES: usize, Authority: FailClosedSourceAuthority> quiescence_sealed::Sealed
     for AdmissionQuiescence<'_, NODES, Authority>
 {
     fn generation(&self) -> GenerationIdentity {
@@ -705,9 +768,18 @@ impl<const NODES: usize, Authority> quiescence_sealed::Sealed
     }
 }
 
-impl<const NODES: usize, Authority> QuiescenceWitness
+impl<const NODES: usize, Authority: FailClosedSourceAuthority> QuiescenceWitness
     for AdmissionQuiescence<'_, NODES, Authority>
 {
+}
+
+impl<const NODES: usize, Authority: FailClosedSourceAuthority> Drop
+    for AdmissionQuiescence<'_, NODES, Authority>
+{
+    fn drop(&mut self) {
+        // Fail closed. The authority may be recovered only by into_authority
+        // after a matching reclamation permit; every other path leaks it.
+    }
 }
 
 /// Terminal source witness which owns a typed mapping's close capability.
@@ -781,6 +853,13 @@ impl QuiescenceWitness for MappingQuiescence<'_> {}
 ///   and publication authority until it is returned after commit; and
 /// - the generation, authority, and privacy answers must remain stable while the
 ///   library owns the value.
+///
+/// `Drop` is part of this contract. Before commit, dropping the value must not
+/// publish, mutate, reopen, or reclaim the private target and must leave the
+/// supervisor's independent recovery handle valid for cleanup. After commit, it
+/// must not destroy, truncate, or otherwise invalidate the authoritative target.
+/// Resource reclamation and publication require explicit post-commit operations;
+/// they must never be hidden in this capability's destructor.
 pub unsafe trait PrecommitTargetBacking {
     /// Returns the exact target generation represented by this capability.
     fn generation(&self) -> GenerationIdentity;
@@ -1891,6 +1970,41 @@ mod tests {
     const SOURCE_SCHEMA: SchemaIdentity = SchemaIdentity::new(1, 0x11);
     const TARGET_SCHEMA: SchemaIdentity = SchemaIdentity::new(2, 0x22);
     const AUTHORITY: AuthorityIdentity = AuthorityIdentity::new([0x77; 16]);
+    static AUTHORITY_DROPS: AtomicU64 = AtomicU64::new(0);
+
+    struct DropProbe;
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            AUTHORITY_DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    // SAFETY: this deliberately observable test probe owns no real source
+    // access. Its destructor violates the production no-effect rule only so the
+    // test can prove the library never invokes it before permitted extraction.
+    unsafe impl FailClosedSourceAuthority for DropProbe {}
+
+    struct TestTarget {
+        generation: GenerationIdentity,
+        authority: AuthorityIdentity,
+    }
+
+    // SAFETY: the synthetic unit-test target has no payload, publication path,
+    // alias, or destructor effect; it exists only to drive protocol phases.
+    unsafe impl PrecommitTargetBacking for TestTarget {
+        fn generation(&self) -> GenerationIdentity {
+            self.generation
+        }
+
+        fn recovery_authority(&self) -> AuthorityIdentity {
+            self.authority
+        }
+
+        fn is_private(&self) -> bool {
+            true
+        }
+    }
 
     fn plan() -> MigrationPlan {
         MigrationPlan::new(
@@ -1900,6 +2014,121 @@ mod tests {
             AUTHORITY,
         )
         .unwrap()
+    }
+
+    fn other_plan() -> MigrationPlan {
+        MigrationPlan::new(
+            8,
+            GenerationIdentity::new(SOURCE_SCHEMA, 51, 200, BackingIdentity::new([0x51; 32])),
+            GenerationIdentity::new(TARGET_SCHEMA, 52, 201, BackingIdentity::new([0x52; 32])),
+            AUTHORITY,
+        )
+        .unwrap()
+    }
+
+    fn probe_source<'a>(
+        admission: &'a CloseableSnzi<20>,
+        plan: MigrationPlan,
+    ) -> AdmissionQuiescence<'a, 20, DropProbe> {
+        // SAFETY: the synthetic source has no access path besides this terminal
+        // gate; DropProbe exists only to observe accidental destructor calls.
+        unsafe { AdmissionQuiescence::bind_with_authority(admission, plan.source(), DropProbe) }
+            .unwrap()
+    }
+
+    fn private_target(plan: MigrationPlan) -> TestTarget {
+        TestTarget {
+            generation: plan.target(),
+            authority: plan.target_authority(),
+        }
+    }
+
+    #[test]
+    fn source_authority_leaks_on_every_prepermit_exit() {
+        AUTHORITY_DROPS.store(0, Ordering::SeqCst);
+
+        let admission = CloseableSnzi::<20>::new();
+        admission.close();
+        assert!(admission.is_drained());
+
+        let invalid_generation = GenerationIdentity::new(
+            SchemaIdentity::new(0, 1),
+            61,
+            300,
+            BackingIdentity::new([0x61; 32]),
+        );
+        assert!(matches!(
+            // SAFETY: this deliberately invalid identity exercises fail-closed
+            // ownership transfer before validation.
+            unsafe {
+                AdmissionQuiescence::bind_with_authority(&admission, invalid_generation, DropProbe)
+            },
+            Err(MigrationError::ZeroSchemaVersion)
+        ));
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+
+        let occupied = MigrationControl::new();
+        occupied.poison();
+        assert!(
+            occupied
+                .begin_with_quiescent_source(probe_source(&admission, plan()), plan())
+                .is_err()
+        );
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+
+        let copying = MigrationControl::new();
+        drop(
+            copying
+                .begin_with_quiescent_source(probe_source(&admission, plan()), plan())
+                .unwrap(),
+        );
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+
+        let target_ready = MigrationControl::new();
+        let migration = target_ready
+            .begin_with_quiescent_source(probe_source(&admission, plan()), plan())
+            .unwrap();
+        // SAFETY: private_target satisfies the synthetic target contract above.
+        let ready = unsafe { migration.mark_target_ready(private_target(plan())) }.unwrap();
+        drop(ready);
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+
+        let committed_control = MigrationControl::new();
+        let migration = committed_control
+            .begin_with_quiescent_source(probe_source(&admission, plan()), plan())
+            .unwrap();
+        // SAFETY: private_target satisfies the synthetic target contract above.
+        let ready = unsafe { migration.mark_target_ready(private_target(plan())) }.unwrap();
+        drop(ready.commit().unwrap());
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+
+        let reclaiming_control = MigrationControl::new();
+        let migration = reclaiming_control
+            .begin_with_quiescent_source(probe_source(&admission, plan()), plan())
+            .unwrap();
+        // SAFETY: private_target satisfies the synthetic target contract above.
+        let ready = unsafe { migration.mark_target_ready(private_target(plan())) }.unwrap();
+        let committed = ready.commit().unwrap();
+        // SAFETY: this test owns the synthetic terminal source and every access.
+        let permit =
+            unsafe { reclaiming_control.authorize_reclamation(committed.source()) }.unwrap();
+        let (source, _target) = committed.into_capabilities();
+        let wrong_permit = ReclamationPermit {
+            plan: other_plan(),
+            resumed: false,
+        };
+        let source = match source.into_authority(wrong_permit) {
+            Ok(_) => panic!("wrong permit unexpectedly released source authority"),
+            Err((MigrationError::SourceGenerationMismatch { .. }, source)) => source,
+            Err((error, _source)) => panic!("unexpected permit error: {error}"),
+        };
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 0);
+        let authority = match source.into_authority(permit) {
+            Ok(authority) => authority,
+            Err((error, _source)) => panic!("matching permit failed: {error}"),
+        };
+        drop(authority);
+        assert_eq!(AUTHORITY_DROPS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

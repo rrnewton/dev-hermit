@@ -3,6 +3,7 @@ use shmem_pod_runtime::{PodArtifact, PodImage};
 use std::env;
 use std::error::Error;
 use std::ffi::CString;
+use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ mod ptrace;
 const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
 const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
+const MFD_EXEC: libc::c_uint = 0x0010;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 const PTRACE_READY_ENV: &str = "INJECTION_FIXTURE_READY_FD";
 const PTRACE_RESUME_ENV: &str = "INJECTION_FIXTURE_RESUME_FD";
@@ -40,6 +42,11 @@ enum Mode {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Fault {
     BadContextDigest,
+    UnsealedArtifact,
+    ShortCode,
+    ReadOnlyState,
+    BadStateGeneration,
+    FixedCodeCollision,
 }
 
 fn main() {
@@ -68,6 +75,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     let code_fd = image.duplicate_code_fd_for_exec()?;
     let state_fd = state.duplicate_fd_for_exec()?;
     let artifact_fd = artifact.duplicate_artifact_fd_for_exec()?;
+    let fault_artifact_fd = if options.fault == Some(Fault::UnsealedArtifact) {
+        Some(create_unsealed_artifact_fd(&options.image)?)
+    } else {
+        None
+    };
+    let fault_code_fd = if options.fault == Some(Fault::ShortCode) {
+        Some(create_short_code_fd()?)
+    } else {
+        None
+    };
+    let fault_state_fd = if options.fault == Some(Fault::ReadOnlyState) {
+        Some(reopen_read_only_for_exec(state_fd.as_raw_fd())?)
+    } else {
+        None
+    };
     let flags = BootstrapFlags::REQUIRED.union(BootstrapFlags::INHERIT_ACROSS_EXEC);
     let mut context = BootstrapContext::new(
         match options.mode {
@@ -75,9 +97,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             Mode::Ptrace => ConnectorKind::Ptrace,
         },
         flags,
-        artifact_fd.as_raw_fd(),
-        code_fd.as_raw_fd(),
-        state_fd.as_raw_fd(),
+        fault_artifact_fd
+            .as_ref()
+            .unwrap_or(&artifact_fd)
+            .as_raw_fd(),
+        fault_code_fd.as_ref().unwrap_or(&code_fd).as_raw_fd(),
+        fault_state_fd.as_ref().unwrap_or(&state_fd).as_raw_fd(),
         artifact.len() as u64,
         image.state_file_len(),
         state.generation(),
@@ -91,6 +116,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             context.artifact_sha256[0] = 1;
         }
         context.validate()?;
+    }
+    if options.fault == Some(Fault::BadStateGeneration) {
+        context.generation = context.generation.checked_add(1).unwrap_or(1);
+        context.validate()?;
+    }
+    if options.mode == Mode::Preload && options.fault == Some(Fault::FixedCodeCollision) {
+        return Err("fixed-code-collision is a ptrace-only fault probe".into());
     }
     let mut command = Command::new(&options.guest);
     let ptrace_fixture = if options.mode == Mode::Ptrace {
@@ -133,7 +165,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .as_ref()
                 .ok_or("ptrace fixture descriptors were not configured")?;
             fixture.wait_ready()?;
-            if let Err(error) = ptrace::inject(guest_group, &options.shim, &context) {
+            if let Err(error) = ptrace::inject(
+                guest_group,
+                &options.shim,
+                &context,
+                options.fault == Some(Fault::FixedCodeCollision),
+            ) {
                 unsafe { libc::kill(-guest_group, libc::SIGKILL) };
                 let _ = guest.wait();
                 return Err(error);

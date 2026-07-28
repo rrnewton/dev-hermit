@@ -1,5 +1,6 @@
 #![cfg(all(feature = "derive", target_os = "linux", target_has_atomic = "64"))]
 
+use std::mem::ManuallyDrop;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -9,9 +10,9 @@ use shmem_pod::collections::SharedBox;
 use shmem_pod::mapping::{BuildIdentity, InstanceIdentity, Owner, RawMapping};
 use shmem_pod::migration::{
     AdmissionQuiescence, AuthoritativeGeneration, AuthorityIdentity, BackingIdentity,
-    GenerationIdentity, MappingQuiescence, MigrationControl, MigrationError, MigrationPhase,
-    MigrationPlan, MigrationSchema, PrecommitTargetBacking, SchemaIdentity, SchemaNegotiation,
-    negotiate_schema,
+    FailClosedSourceAuthority, GenerationIdentity, MappingQuiescence, MigrationControl,
+    MigrationError, MigrationPhase, MigrationPlan, MigrationSchema, PrecommitTargetBacking,
+    SchemaIdentity, SchemaNegotiation, negotiate_schema,
 };
 use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
 use shmem_pod::{PodSync, PodValue};
@@ -177,9 +178,26 @@ unsafe impl PrecommitTargetBacking for RejectedTargetBacking<'_> {
     }
 }
 
-struct RelocSourceAuthority<'a> {
-    region: RelocRegion<'a, SLOTS>,
+struct RelocSourceAuthority {
+    mapping: ManuallyDrop<SharedMapping>,
     root: SharedBox<AccountV1>,
+    region_id: u64,
+}
+
+// SAFETY: the authority exclusively owns its mapping and root. ManuallyDrop
+// makes every implicit drop leak the mapping; reclamation is explicit below.
+unsafe impl FailClosedSourceAuthority for RelocSourceAuthority {}
+
+impl RelocSourceAuthority {
+    fn reclaim(mut self) -> AccountV1 {
+        // SAFETY: callers obtain this value only by consuming a matching
+        // reclamation permit, so the owned mapping can be recovered once.
+        let mapping = unsafe { ManuallyDrop::take(&mut self.mapping) };
+        let mut region = unsafe { mapping.attach_region::<SLOTS>(self.region_id) };
+        // SAFETY: terminal quiescence and the reclamation fence exclude every
+        // source reference and duplicate descriptor.
+        unsafe { self.root.destroy(&mut region) }.unwrap()
+    }
 }
 
 struct RelocTargetBacking<'a> {
@@ -208,15 +226,22 @@ unsafe impl PrecommitTargetBacking for RelocTargetBacking<'_> {
 }
 
 struct TypedTargetBacking<'a> {
-    owner: Owner<'a, AccountV2>,
+    owner: ManuallyDrop<Owner<'a, AccountV2>>,
     _recovery_mapping: &'a SharedMapping,
     generation: GenerationIdentity,
     authority: AuthorityIdentity,
 }
 
+impl<'a> TypedTargetBacking<'a> {
+    fn into_owner(mut self) -> Owner<'a, AccountV2> {
+        // SAFETY: this consumes the post-commit backing and takes its owner once.
+        unsafe { ManuallyDrop::take(&mut self.owner) }
+    }
+}
+
 // SAFETY: moving this value into migration also moves the unique typed mapping
-// owner. No Mapping handle or client attachment remains which can produce a
-// mutable target reference before commit.
+// owner. ManuallyDrop prevents implicit target poisoning if migration abandons
+// or drops the capability; explicit post-commit cleanup extracts the owner.
 unsafe impl PrecommitTargetBacking for TypedTargetBacking<'_> {
     fn generation(&self) -> GenerationIdentity {
         self.generation
@@ -282,10 +307,12 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     assert!(admission.close());
     assert!(admission.is_drained());
     let old = *source.get(&source_region).unwrap();
+    drop(source_region);
     let plan = migration_plan(0x55, SOURCE_REGION, TARGET_REGION);
     let source_authority = RelocSourceAuthority {
-        region: source_region,
+        mapping: ManuallyDrop::new(source_mapping),
         root: source,
+        region_id: SOURCE_REGION,
     };
     // SAFETY: the terminal gate is bound to plan's exact source, and moving the
     // authority consumes the only safe source region/root mutation paths.
@@ -376,11 +403,12 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         target_backing.root.get(&target_backing.region).unwrap(),
         reconstructed.get(&target_alias_region).unwrap()
     );
-    let mut source_authority = source_quiescence.into_authority(permit).unwrap();
-    // SAFETY: the permit follows terminal drain, and the returned authority owns
-    // the only source descriptor and region handle.
+    let source_authority = match source_quiescence.into_authority(permit) {
+        Ok(authority) => authority,
+        Err((error, _witness)) => panic!("reclamation permit mismatch: {error}"),
+    };
     assert_eq!(
-        unsafe { source_authority.root.destroy(&mut source_authority.region) }.unwrap(),
+        source_authority.reclaim(),
         AccountV1 {
             account_id: 17,
             balance_cents: 1234,
@@ -585,7 +613,7 @@ fn typed_mapping_close_proof_fences_reclamation() {
     );
     let migration = control.begin_with_quiescent_source(source, plan).unwrap();
     let target = TypedTargetBacking {
-        owner: target_owner,
+        owner: ManuallyDrop::new(target_owner),
         _recovery_mapping: &target_recovery,
         generation: plan.target(),
         authority: plan.target_authority(),
@@ -600,7 +628,12 @@ fn typed_mapping_close_proof_fences_reclamation() {
     assert!(!permit.is_resume());
 
     let (_source, target) = committed.into_capabilities();
-    target.owner.begin_drain().unwrap().try_close().unwrap();
+    target
+        .into_owner()
+        .begin_drain()
+        .unwrap()
+        .try_close()
+        .unwrap();
 }
 
 #[test]
@@ -693,7 +726,6 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
     struct CrashState {
         control: MigrationControl,
         admission: CloseableSnzi<20>,
-        child_started: AtomicU64,
     }
 
     const RECOVERED_TARGET: AccountV2 = AccountV2 {
@@ -708,7 +740,6 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
         state.write(CrashState {
             control: MigrationControl::new(),
             admission: CloseableSnzi::new(),
-            child_started: AtomicU64::new(0),
         })
     };
     let state = unsafe { &*state };
@@ -752,13 +783,9 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
         // mutation path, and the parent mapping is private recovery authority.
         let ready = unsafe { migration.mark_target_ready(target) }.unwrap();
         match cut {
-            TargetCrashCut::TargetReady => {
-                state.child_started.store(1, Ordering::Release);
-                hold_capability_until_killed(ready);
-            }
+            TargetCrashCut::TargetReady => hold_capability_until_killed(ready),
             TargetCrashCut::Committed => {
                 let committed = ready.commit().unwrap();
-                state.child_started.store(1, Ordering::Release);
                 hold_capability_until_killed(committed);
             }
         }
@@ -768,16 +795,20 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
     // builder mapping and descriptor proves recovery does not depend on either
     // the migrator's mapping or its descriptor surviving.
     drop(target_builder);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while state.child_started.load(Ordering::Acquire) == 0 {
-        assert!(Instant::now() < deadline, "child did not reach crash cut");
-        std::thread::yield_now();
-    }
-
     let expected_phase = match cut {
         TargetCrashCut::TargetReady => MigrationPhase::TargetReady,
         TargetCrashCut::Committed => MigrationPhase::Committed,
     };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let phase = state.control.snapshot().unwrap().phase();
+        if phase == expected_phase {
+            break;
+        }
+        assert!(Instant::now() < deadline, "child did not reach crash cut");
+        std::thread::yield_now();
+    }
+
     let expected_authority = match cut {
         TargetCrashCut::TargetReady => AuthoritativeGeneration::Source,
         TargetCrashCut::Committed => AuthoritativeGeneration::Target,

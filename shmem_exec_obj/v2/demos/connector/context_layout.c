@@ -42,5 +42,18 @@ _Static_assert(offsetof(struct shmem_pod_bootstrap_v1, reserved) == 144,
                "reserved bytes offset mismatch");
 _Static_assert(_Alignof(struct shmem_pod_bootstrap_v1) == 8,
                "bootstrap ABI alignment mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_OK == 0, "OK status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_INVALID_CONTEXT == -1,
+               "invalid-context status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_INVALID_TRANSPORT == -2,
+               "invalid-transport status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_INCOMPATIBLE_IMAGE == -3,
+               "incompatible-image status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_DISABLED == -4,
+               "disabled status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_REENTRANT == -5,
+               "reentrant status mismatch");
+_Static_assert(SHMEM_POD_BOOTSTRAP_INITIALIZATION_FAILED == -6,
+               "initialization-failed status mismatch");
 
 int main(void) { return 0; }

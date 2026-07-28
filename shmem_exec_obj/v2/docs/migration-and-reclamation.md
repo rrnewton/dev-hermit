@@ -20,11 +20,14 @@ source generation -- reclamation fence ------+
 The source and target can be different memfds, shared-memory objects, or
 non-overlapping regions. A `GenerationIdentity` binds four facts: the exact
 schema, an allocator region namespace, a supervisor-persisted monotonic
-sequence, and an authenticated 256-bit backing-object digest. `region_id` alone
-is not freshness evidence and may be reused by operating systems or application
-configuration. The library checks that source and target region IDs and backing
-digests differ and that the target sequence increases, but only the supervisor
-can keep the sequence monotonic across control-record replacement and restart.
+sequence, and an authenticated 256-bit backing identity. For non-overlapping
+regions in one enclosing object, that identity must bind object identity plus
+region offset, extent, and generation; reusing one whole-object digest for both
+regions is invalid. `region_id` alone is not freshness evidence and may be
+reused by operating systems or application configuration. The library checks
+that source and target region IDs and backing identities differ and that the
+target sequence increases, but only the supervisor can keep the sequence
+monotonic across control-record replacement and restart.
 
 ## Define and negotiate schemas
 
@@ -70,7 +73,10 @@ metadata.
    process-local staging before consuming its final access authority. A typed
    mapping cannot expose its payload after close. For an externally gated
    allocator or object graph, move its region/root authority into
-   `AdmissionQuiescence::bind_with_authority`. Both paths deliberately trade
+   `AdmissionQuiescence::bind_with_authority`. Its type must implement unsafe
+   `FailClosedSourceAuthority`: it must be owned and `'static`, safe to leak
+   forever, free of borrowed or duplicate regain paths, and have no destructor
+   which releases, reopens, unmaps, or reclaims source state. Both paths trade
    streaming ergonomics for a type-level guarantee that safe mutation cannot
    resume during migration.
 2. Allocate a new target generation. Initialize its `RelocAllocator` with a
@@ -105,8 +111,10 @@ metadata.
    generation binding and terminal state before recording `Reclaimed`. After
    splitting `CommittedMigration`, pass that permit to
    `AdmissionQuiescence::into_authority`; this consumes the witness before
-   returning the source handles. Only now explicitly destroy source allocations
-   or discard the complete source region.
+   returning the source handles. A permit for another source returns an error
+   together with the intact witness, so the caller may retry with the matching
+   permit. Only now explicitly destroy source allocations or discard the
+   complete source region.
 
 The target must not admit callers until commit succeeds. Safe source access
 cannot reopen after the consumed terminal witness, and owned source handles are
@@ -114,6 +122,15 @@ not returned until the reclamation permit is consumed. This means the generic
 protocol has a bounded cutover interval; applications that need concurrent
 snapshot construction must provide their own transactional snapshot or
 copy-on-write consistency scheme before entering this protocol.
+
+Every failure path is deliberately asymmetric. Dropping `Migration`,
+`TargetReadyMigration`, `CommittedMigration`, or a returned error never runs the
+source authority's destructor; the authority and source backing leak closed.
+Only matching-permit extraction restores the owned value. Conversely,
+`PrecommitTargetBacking::drop` must never publish or mutate a private target,
+destroy an authoritative target, or invalidate the supervisor's independent
+recovery handle. Target publication, discard, and reclamation are explicit host
+operations rather than destructor side effects.
 
 For a rolling executable deployment, first deploy code which can negotiate both
 the old exact schema and the new exact schema. Stop every old-generation writer,
@@ -154,10 +171,11 @@ recovery-authority handle named in the plan remains available.
 
 The process tests exercise both sides of that boundary. A child owns and
 release-publishes the only builder mapping while the parent retains a distinct
-mapping of the same memfd. Killing the child at `TargetReady` leaves the source
-authoritative and the private target discardable; killing it immediately after
-`Committed` leaves the target authoritative and readable through the parent's
-recovery mapping.
+mapping of the same memfd. The parent observes the migration phase CAS directly,
+without a later helper atomic publication. Killing the child at `TargetReady`
+leaves the source authoritative and the private target discardable; killing it
+immediately after `Committed` leaves the target authoritative and readable
+through the parent's recovery mapping.
 
 The metadata checksum catches accidental or torn changes after publication; it
 is not an authenticity mechanism. Authenticate the executable image, control
@@ -246,12 +264,14 @@ not after a timer expires.
 - Persist and advance the supervisor generation sequence; do not call a region
   ID alone globally unique.
 - Stage source data, then consume both a terminal witness and every remaining
-  safe source access authority before `begin_with_quiescent_source`.
+  safe source access authority before `begin_with_quiescent_source`; authority
+  types must uphold `FailClosedSourceAuthority` and explicit cleanup.
 - Give the recovery authority an authenticated duplicate target handle before
   commit, and keep every client attach route undiscoverable.
 - Treat `mark_target_ready` as an unsafe exact-generation, happens-before,
   no-interior-writers, and root-validation boundary; the backing value must own
-  the target's safe mutation and publication authorities through commit.
+  the target's safe mutation and publication authorities through commit, and
+  its destructor must have no publication or reclamation effects.
 - Route new attachments by the control record's acquire load.
 - On owner death, prove death externally; never steal a live transaction.
 - Reclaim only after commit and a matching terminal quiescence proof.

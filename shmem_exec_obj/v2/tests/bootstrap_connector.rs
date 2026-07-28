@@ -1,6 +1,7 @@
 use shmem_pod::injection::{
     AdapterCallGate, AddressRole, BOOTSTRAP_PAGE_SIZE, BootstrapContext, BootstrapError,
-    BootstrapFdError, BootstrapFlags, ConnectorKind, DescriptorRole, parse_bootstrap_fd,
+    BootstrapFdError, BootstrapFlags, BootstrapStatus, ConnectorKind, DescriptorRole,
+    parse_bootstrap_fd,
 };
 
 fn valid_context() -> BootstrapContext {
@@ -30,6 +31,17 @@ fn stable_context_round_trip_and_c_layout() {
         BootstrapContext::decode(&context.encode()).unwrap(),
         context
     );
+}
+
+#[test]
+fn bootstrap_status_values_are_stable_for_c_callers() {
+    assert_eq!(BootstrapStatus::Ok as i32, 0);
+    assert_eq!(BootstrapStatus::InvalidContext as i32, -1);
+    assert_eq!(BootstrapStatus::InvalidTransport as i32, -2);
+    assert_eq!(BootstrapStatus::IncompatibleImage as i32, -3);
+    assert_eq!(BootstrapStatus::Disabled as i32, -4);
+    assert_eq!(BootstrapStatus::Reentrant as i32, -5);
+    assert_eq!(BootstrapStatus::InitializationFailed as i32, -6);
 }
 
 #[test]

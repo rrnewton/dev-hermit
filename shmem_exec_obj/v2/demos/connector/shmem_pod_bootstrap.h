@@ -22,6 +22,16 @@ enum shmem_pod_bootstrap_flags {
     SHMEM_POD_BOOTSTRAP_SCM_RIGHTS_TRANSPORT = 1u << 4,
 };
 
+enum shmem_pod_bootstrap_status {
+    SHMEM_POD_BOOTSTRAP_OK = 0,
+    SHMEM_POD_BOOTSTRAP_INVALID_CONTEXT = -1,
+    SHMEM_POD_BOOTSTRAP_INVALID_TRANSPORT = -2,
+    SHMEM_POD_BOOTSTRAP_INCOMPATIBLE_IMAGE = -3,
+    SHMEM_POD_BOOTSTRAP_DISABLED = -4,
+    SHMEM_POD_BOOTSTRAP_REENTRANT = -5,
+    SHMEM_POD_BOOTSTRAP_INITIALIZATION_FAILED = -6,
+};
+
 struct shmem_pod_bootstrap_v1 {
     uint8_t magic[8];
     uint16_t abi_version;
@@ -46,6 +56,8 @@ struct shmem_pod_bootstrap_v1 {
 
 typedef int32_t (*shmem_pod_bootstrap_entry_v1)(
     const struct shmem_pod_bootstrap_v1 *context);
+
+typedef uint16_t (*shmem_pod_adapter_abi_version_entry_v1)(void);
 
 _Static_assert(sizeof(struct shmem_pod_bootstrap_v1) ==
                    SHMEM_POD_BOOTSTRAP_ENCODED_LEN,

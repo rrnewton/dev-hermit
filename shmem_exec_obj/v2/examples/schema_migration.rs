@@ -11,11 +11,13 @@ use shmem_pod::admission::CloseableSnzi;
 use shmem_pod::collections::SharedBox;
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
 use shmem_pod::migration::{
-    AdmissionQuiescence, AuthorityIdentity, BackingIdentity, GenerationIdentity, MigrationControl,
-    MigrationPlan, MigrationSchema, PrecommitTargetBacking,
+    AdmissionQuiescence, AuthorityIdentity, BackingIdentity, FailClosedSourceAuthority,
+    GenerationIdentity, MigrationControl, MigrationPlan, MigrationSchema, PrecommitTargetBacking,
 };
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
 use shmem_pod::reloc_allocator::{RelocAllocator, RelocRegion};
+#[cfg(all(feature = "derive", target_has_atomic = "64"))]
+use std::mem::ManuallyDrop;
 
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
 const BYTES: usize = 64 * 1024;
@@ -27,9 +29,29 @@ const SLOTS: usize = 4;
 struct Pages([u8; BYTES]);
 
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
-struct SourceAuthority<'mapping> {
-    region: RelocRegion<'mapping, SLOTS>,
+struct SourceAuthority {
+    pages: ManuallyDrop<Box<Pages>>,
     root: SharedBox<CounterV1>,
+    region_id: u64,
+}
+
+// SAFETY: the pinned backing and root are exclusively owned, contain no
+// borrowed regain path, and ManuallyDrop makes abandonment leak rather than
+// unmap or reclaim. Reclamation is explicit in SourceAuthority::reclaim.
+#[cfg(all(feature = "derive", target_has_atomic = "64"))]
+unsafe impl FailClosedSourceAuthority for SourceAuthority {}
+
+#[cfg(all(feature = "derive", target_has_atomic = "64"))]
+impl SourceAuthority {
+    fn reclaim(mut self) -> CounterV1 {
+        // SAFETY: a matching reclamation permit was required before this value
+        // could be returned, so the backing may now be recovered exactly once.
+        let mut pages = unsafe { ManuallyDrop::take(&mut self.pages) };
+        let mut region = unsafe { attach_region(&mut pages, self.region_id) };
+        // SAFETY: terminal admission and the reclamation permit exclude every
+        // duplicate descriptor and reference.
+        unsafe { self.root.destroy(&mut region) }.unwrap()
+    }
 }
 
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
@@ -103,11 +125,20 @@ unsafe fn initialize_region(pages: &mut Pages, region_id: u64) -> RelocRegion<'_
 }
 
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
+unsafe fn attach_region(pages: &mut Pages, region_id: u64) -> RelocRegion<'_, SLOTS> {
+    let base = pages.0.as_mut_ptr();
+    let allocator = base.cast::<RelocAllocator<SLOTS>>();
+    // SAFETY: SourceAuthority owns the initialized pinned pages and this
+    // authenticated attachment uses their original region identity.
+    unsafe { (*allocator).attach(base, BYTES, region_id).unwrap() }
+}
+
+#[cfg(all(feature = "derive", target_has_atomic = "64"))]
 fn main() {
     const SOURCE_REGION: u64 = 1001;
     const TARGET_REGION: u64 = 1002;
 
-    let mut source_pages = Pages([0; BYTES]);
+    let mut source_pages = Box::new(Pages([0; BYTES]));
     let mut target_pages = Pages([0; BYTES]);
     let source_region = unsafe { initialize_region(&mut source_pages, SOURCE_REGION) };
     let target_region = unsafe { initialize_region(&mut target_pages, TARGET_REGION) };
@@ -125,6 +156,7 @@ fn main() {
     assert!(admission.close());
     assert!(admission.is_drained());
     let old = *source.get(&source_region).unwrap();
+    drop(source_region);
 
     let source_generation = GenerationIdentity::for_schema::<CounterV1>(
         SOURCE_REGION,
@@ -141,8 +173,9 @@ fn main() {
         MigrationPlan::new(77, source_generation, target_generation, target_authority).unwrap();
     let control = MigrationControl::new();
     let source_authority = SourceAuthority {
-        region: source_region,
+        pages: ManuallyDrop::new(source_pages),
         root: source,
+        region_id: SOURCE_REGION,
     };
     // SAFETY: the gate is terminal and bound to the exact source generation.
     // Moving source_authority consumes the remaining safe allocator and root
@@ -183,9 +216,11 @@ fn main() {
     // this example owns every source descriptor and byte range.
     let permit = unsafe { control.authorize_reclamation(committed.source()) }.unwrap();
     let (source_quiescence, target_backing) = committed.into_capabilities();
-    let mut source_authority = source_quiescence.into_authority(permit).unwrap();
-    // SAFETY: reclamation was fenced and no other source reference exists.
-    let retired = unsafe { source_authority.root.destroy(&mut source_authority.region) }.unwrap();
+    let source_authority = match source_quiescence.into_authority(permit) {
+        Ok(authority) => authority,
+        Err((error, _witness)) => panic!("reclamation permit mismatch: {error}"),
+    };
+    let retired = source_authority.reclaim();
 
     println!(
         "PASS schema_migration attempts={} retired_successes={}",

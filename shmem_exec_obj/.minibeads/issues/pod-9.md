@@ -6,12 +6,12 @@ issue_type: feature
 assignee: devbig030/connector-recovery
 depends_on:
   pod-1: parent-child
-  pod-4: blocks
   pod-8: blocks
+  pod-4: blocks
 created_at: 2026-07-28T03:39:14.009152499+00:00
-updated_at: 2026-07-28T10:56:47.664721896+00:00
-claimed_at: 2026-07-28T10:16:16.616866177+00:00
-claimed_until: 2026-07-28T18:16:16.616695690+00:00
+updated_at: 2026-07-28T11:16:39.306893729+00:00
+claimed_at: 2026-07-28T11:16:39.306893729+00:00
+claimed_until: 2026-07-28T19:16:39.306717423+00:00
 ---
 
 # Description
