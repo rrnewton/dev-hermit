@@ -1,0 +1,36 @@
+{
+  "experiment": "sabre_rdtscp_gap_20260728",
+  "date": "2026-07-28",
+  "task": "compat-sabre-rdtsc-debug",
+  "question": "Under --backend sabre, are RDTSC/RDTSCP virtualized deterministically?",
+  "backend_under_test": "sabre",
+  "comparison_backend": "ptrace",
+  "hermit": {
+    "checkout": "~/work/dev-hermit/worktrees/275/hermit",
+    "binary": "target/release/hermit",
+    "branch": "codex/scheduler-signal-request-double-put-guard (unrelated to this fix; research-only task)"
+  },
+  "reverie_pin": "9233c0d099ce3bdc820958aa3071a6c1439bc249",
+  "host": {
+    "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+    "arch": "x86_64",
+    "hostname": "devbig030.atn3.facebook.com"
+  },
+  "toolchain": { "gcc": "GCC 11.5.0" },
+  "commands": {
+    "rustbin_rdtsc_sabre": "hermit run --backend sabre --strict --verify -- target/release/rustbin_rdtsc",
+    "rustbin_rdtsc_ptrace": "hermit run --backend ptrace --strict --verify -- target/release/rustbin_rdtsc",
+    "rdtsc_only": "hermit run --backend sabre --strict --verify -- /var/tmp/tsc_only",
+    "rdtscp_only": "hermit run --backend sabre --strict --verify -- /var/tmp/tscp_only"
+  },
+  "results": {
+    "ptrace_rustbin_rdtsc": "L2 PASS (both rdtsc AND rdtscp virtualized, magnitude 0x18867251ee..., deterministic)",
+    "sabre_rustbin_rdtsc": "FAIL nondeterministic: rdtsc lines identical run1/run2 (virtualized 0x18867251ee...); rdtscp lines diverge (raw host TSC 0x27ac.../0x27b2..., changes every run)",
+    "sabre_rdtsc_only_c": "L2 PASS",
+    "sabre_rdtscp_only_c": "FAIL nondeterministic"
+  },
+  "root_cause": "SaBRe backend does not intercept RDTSCP (opcode 0F 01 F9). SaBRe x86_64 rewriter (reverie third-party/sabre/arch/x86_64/rewriter.c) only detects 0x0F05 (SYSCALL) and 0x0F31 (RDTSC) (lines 117-119, 883); SIGILL fallback (loader/loader.c:102) recognizes only 0x0B0F (RDTSC). reverie-sabre Tool trait exposes only `fn rdtsc(&self)->u64` with FFI `handle_rdtsc_fn`; there is no rdtscp hook, handler, or FFI type anywhere in reverie-sabre. RDTSCP therefore is never rewritten/trapped and executes natively, leaking the raw host TSC (nondeterministic). The ptrace backend handles both via CR4.TSD faulting -> reverie-ptrace task.rs Rdtsc::Tsc/Tscp -> handle_rdtscs (sets rcx aux for Tscp).",
+  "fix_scope": "Pinned reverie/SaBRe dependency (rrnewton/reverie). (1) third-party/sabre/arch/x86_64/rewriter.c: detect 3-byte RDTSCP 0F 01 F9 + add rdtscp_entrypoint (must preserve/set ECX = IA32_TSC_AUX); also SIGILL fallback in loader.c. (2) reverie-sabre: add ffi::handle_rdtscp_fn, wire rdtscp_handler in internal.rs/premain.c, add Tool::rdtscp() -> (tsc, aux). (3) detcore-sabre/src/lib.rs: implement rdtscp() hook -> coordinator virtual TSC + deterministic aux (detcore already virtualizes getcpu, aux=0).",
+  "fix_status": "NOT landed. Requires approval + reverie feature branch + pin bump (interception-semantics change to a core Reverie/SaBRe contract, per parent Reverie API Policy). Same disposition bucket as sabre pipe EAGAIN (#1035) and RT-signal reverie#207.",
+  "in_hermit_mitigation": "None that makes rustbin_rdtsc deterministic. Masking the RDTSCP CPUID feature bit (CPUID 80000001H:EDX[27]) via hermit's CPUID virtualization would steer well-behaved programs to rdtsc+lfence, but rustbin_rdtsc/__rdtscp call it unconditionally regardless of the bit, and it would affect all backends. Not a fix."
+}
