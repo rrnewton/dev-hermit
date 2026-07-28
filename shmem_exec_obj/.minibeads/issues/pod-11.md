@@ -5,16 +5,16 @@ priority: 2
 issue_type: task
 assignee: devbig030
 depends_on:
+  pod-17: blocks
   pod-8: blocks
-  pod-7: blocks
   pod-1: parent-child
+  pod-7: blocks
+  pod-9: blocks
   pod-5: blocks
   pod-6: blocks
-  pod-17: blocks
   pod-4: blocks
-  pod-9: blocks
 created_at: 2026-07-28T03:39:16.035270684+00:00
-updated_at: 2026-07-28T12:25:48.600819771+00:00
+updated_at: 2026-07-28T13:37:29.586482218+00:00
 claimed_at: 2026-07-28T12:25:48.600819771+00:00
 claimed_until: 2026-07-28T20:25:48.600526267+00:00
 ---
@@ -44,3 +44,13 @@ Final stable validation at 3afdb9f: current-toolchain smoke PASS at /tmp/pod11-f
 Failure/provenance probes: existing output was rejected with environment/results hashes unchanged; RUSTC=/bin/false failed after output claim and removed only the new bundle; jq interposition changed one completed result and exact matrix validation failed/removing the bundle; two live HEAD changes were detected after harness completion and likewise withheld completion/removed output. Direct harness probes rejected a stale completion-only directory before creating files, rejected reuse after a 22-row success without changing bytes, and preserved a claimed two-row artifact-failure bundle while rejecting a second claimant. Oversized runner input exited 2 before output claim; standalone warmup and cumulative-work overflow inputs failed before claim.
 
 Static validation: bash -n, shellcheck, rustfmt --check, git diff --check, current strict Clippy, and Rust 1.85.0 strict Clippy all PASS. Coordinator follow-up outside pod-11 ownership: scripts/release-check.sh currently runs only the default-toolchain benchmark smoke in full mode; add a second full-mode smoke using `env RUSTUP_TOOLCHAIN=1.85.0 ./scripts/run-benchmarks.sh --smoke --output "$tmpdir/benchmark-smoke-msrv"`.
+
+[impl agent, gpt-5.6-sol] FRESH REJECT REMEDIATED at latest main 63585f7859f5e0db2ee936a4c670dfb0c43ee176; status intentionally remains in_progress pending fresh adversarial review.
+
+Architecture now builds compiler, runtime, pod, and harness only from a retained read-only snapshot of every tracked or untracked non-ignored v2 input. It retains separate exact initial-live and post-hardening manifests, checks snapshot equality and live copy-time stability, runs Cargo outside the live checkout config hierarchy, rejects all source symlinks, and rechecks snapshot/toolchain identity through completion. The harness requires the exact runner owner token, canonical retained executable/artifact paths, and deferred mode; it can emit results/report but never completion. The runner alone validates the exact 22-row-per-sample matrix, independent runtime observations, compiler manifest file/dependency closures and probe depfiles, all provenance bindings, full exact-mode bundle inventory, and deterministically generated environment before atomic completion.
+
+Latest-HEAD evidence: current smoke PASS at /tmp/pod11-latest-current-63585f78-1897216 and Rust 1.85.0 smoke PASS at /tmp/pod11-latest-msrv-63585f78-2244737. Each records source.dirty=false, exact revision 63585f7, 22 rows, 126 retained source files, and 149 inventoried payload files. Independent environment-to-inventory-to-payload verification recomputed every type, mode, size, and digest successfully for both bundles.
+
+Adversarial evidence at c9ac99e0cdcf445db5d61ceb93f768e9d1e7d232: concurrent same-output current smoke produced one complete 22-row winner and one rejected claimant; post-harness mutations of pod.elf, pod.manifest, and libshmem_pod.rlib each rejected on digest mismatch and removed the owned incomplete output; a copy-time transient mode change was detected against the initial manifest, restored the live file, and removed output; failed RUSTC cleanup, completed-directory reuse, wrong/stale owner token, standalone completion mode, mixed external artifact, missing artifact, and forged legacy SHMEM_POD_BENCH_* probes all rejected or remained deferred without altering/creating completion. A source symlink probe rejected before build and restored a clean v2 tree. `git diff --quiet c9ac99e 63585f7 -- v2` proves the tested v2 code is identical across the parent-only sync.
+
+Static gates at latest code: bash -n, ShellCheck, current and Rust 1.85 rustfmt --check, current and Rust 1.85 strict harness Clippy with -D warnings, git diff --check, and clean v2 status all PASS. Relevant implementation commits are 9371e5b, f199852, fee02f4, 97317be, and 53e8bd9.
