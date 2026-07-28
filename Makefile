@@ -3,7 +3,7 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build build-hermit check-deps init-hermit install-deps clean distclean help
+.PHONY: build build-hermit check-deps init-hermit install-deps qemu-l2 clean distclean help
 
 build: check-deps build-hermit
 
@@ -33,6 +33,9 @@ build-hermit: init-hermit
 		exit 1; \
 	}
 	cd hermit && cargo build --release -p hermit --bin hermit
+
+qemu-l2: check-deps build-hermit
+	DEMO_SKIP_BUILD=1 ./demos/07-qemu-strict-l2.sh
 
 check-deps:
 	@set -eu; \
@@ -106,5 +109,6 @@ help:
 	@echo "make install-deps  Install native Hermit build dependencies"
 	@echo "make check-deps    Verify required pkg-config modules"
 	@echo "make / make build  Initialize and build Hermit in release mode"
+	@echo "make qemu-l2       Boot Linux twice and verify identical Detcore logs"
 	@echo "make clean         Wipe stale QEMU/Linux demo results (fresh start)"
 	@echo "make distclean     Also remove the demo kernel download + initramfs"
