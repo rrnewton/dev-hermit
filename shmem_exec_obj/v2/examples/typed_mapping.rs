@@ -1,20 +1,22 @@
 //! Initialize, attach to, and drain typed state in caller-mapped shared pages.
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
+use std::mem::ManuallyDrop;
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
 use std::ptr;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
 use shmem_pod::mapping::{BuildIdentity, InstanceIdentity, RawMapping};
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
 #[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
 struct State {
     calls: AtomicU64,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_has_atomic = "64"))]
 fn main() {
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     assert!(page_size > 0, "sysconf(_SC_PAGESIZE) failed");
@@ -43,26 +45,34 @@ fn main() {
             calls: AtomicU64::new(0),
         })
         .unwrap();
+    // fork duplicates memory without running Rust ownership bookkeeping. Keep
+    // the duplicated child-side owner destructor inert on every failure path;
+    // the parent recovers its unique local owner after the child is reaped.
+    let mut owner = ManuallyDrop::new(owner);
 
-    // The child creates its own counted attachment. It carries no Rust guard or
-    // attachment across fork and exits without running duplicated destructors.
+    // The child creates its own counted attachment and always exits without
+    // unwinding inherited values.
     let child = unsafe { libc::fork() };
     assert!(child >= 0, "fork failed");
     if child == 0 {
-        let attachment = mapping.attach::<State>().unwrap();
-        attachment
-            .try_enter()
-            .unwrap()
-            .calls
-            .fetch_add(1, Ordering::Relaxed);
-        drop(attachment);
-        unsafe { libc::_exit(0) };
+        let exit_code = mapping
+            .attach::<State>()
+            .and_then(|attachment| {
+                let guard = attachment.try_enter()?;
+                guard.calls.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .map_or(1, |()| 0);
+        unsafe { libc::_exit(exit_code) };
     }
 
     let mut status = 0;
     assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
     assert!(libc::WIFEXITED(status));
     assert_eq!(libc::WEXITSTATUS(status), 0);
+    // SAFETY: only the parent reaches this point, and its ManuallyDrop still
+    // contains the original unique close authority.
+    let owner = unsafe { ManuallyDrop::take(&mut owner) };
     assert_eq!(owner.try_enter().unwrap().calls.load(Ordering::Relaxed), 1);
 
     let draining = owner.begin_drain().unwrap();
@@ -76,7 +86,7 @@ fn main() {
     println!("PASS typed_mapping calls=1");
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_has_atomic = "64")))]
 fn main() {
-    eprintln!("typed_mapping requires Linux");
+    eprintln!("typed_mapping requires Linux and lock-free 64-bit atomics");
 }

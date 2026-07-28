@@ -9,6 +9,7 @@ extern crate self as shmem_pod;
 pub mod fixed_allocator;
 pub mod injection;
 pub mod layout;
+#[cfg(target_has_atomic = "64")]
 pub mod mapping;
 pub mod offset;
 #[cfg(target_has_atomic = "64")]

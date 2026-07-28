@@ -328,11 +328,36 @@ impl<'mapping> Mapping<'mapping> {
     ///
     /// Exactly one racing caller can change `Uninitialized` to `Initializing`.
     /// Construction is published with release ordering only after the payload,
-    /// geometry, and exact layout descriptor are complete. A panic during this
-    /// operation poisons the mapping.
+    /// geometry, and exact layout descriptor are complete. Unwinding during
+    /// this operation poisons the mapping; abort or process death leaves it
+    /// fail-stuck in `Initializing`.
     pub fn try_initialize<T: PodValue + PodSync>(
         self,
         value: T,
+    ) -> Result<Owner<'mapping, T>, MappingError> {
+        // SAFETY: writing a moved, valid T completely initializes the target
+        // before the closure returns and no reference escapes.
+        unsafe { self.try_initialize_in_place(|target: *mut T| target.write(value)) }
+    }
+
+    /// Initializes `T` in place without first materializing a complete value.
+    ///
+    /// This is useful for large fixed-capacity state where moving a temporary
+    /// could make freestanding code generation lower to an unwanted `memcpy` or
+    /// `memset` call. Exactly one racing caller obtains the destination.
+    ///
+    /// # Safety
+    ///
+    /// Before returning normally, `initialize` must write exactly one valid,
+    /// fully initialized `T` to its pointer without reading the uninitialized
+    /// destination. It must not leak a reference or pointer whose use can race
+    /// publication, and it must not access the mapping through another typed
+    /// handle. Unwinding poisons the mapping; abort, process death, or `execve`
+    /// during the callback instead leaves `Initializing` and requires a
+    /// supervisor to poison and discard the instance.
+    pub unsafe fn try_initialize_in_place<T: PodValue + PodSync>(
+        self,
+        initialize: impl FnOnce(*mut T),
     ) -> Result<Owner<'mapping, T>, MappingError> {
         let payload = self.payload_for::<T>()?;
         let uninitialized = pack(Phase::Uninitialized, 0, 0);
@@ -359,11 +384,17 @@ impl<'mapping> Mapping<'mapping> {
         // are not read until the release publication below.
         unsafe {
             self.header().geometry.get().write(geometry);
-            payload.as_ptr().write(value);
         }
+        initialize(payload.as_ptr());
         self.header()
             .lifecycle
-            .store(pack(Phase::Open, 1, 0), Ordering::Release);
+            .compare_exchange(
+                pack(Phase::Initializing, 0, 0),
+                pack(Phase::Open, 1, 0),
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .map_err(|actual| wrong_phase(Phase::Initializing, actual))?;
         poison.armed = false;
 
         Ok(Owner {
@@ -588,15 +619,18 @@ impl<T: PodValue + PodSync> Drop for Owner<'_, T> {
 /// Counted local attachment to an open typed payload.
 ///
 /// This value is not `Clone`: each process must call [`Mapping::attach`] so the
-/// shared count reflects its handle. Do not carry an attachment across `fork`;
-/// children must immediately `exec`/`_exit` or establish a new counted attach.
+/// shared count reflects its handle. After `fork`, an inherited attachment must
+/// not be accessed or dropped: the child must immediately `exec`/`_exit` or
+/// first suppress the inherited destructor and then establish a new counted
+/// attachment.
 pub struct Attachment<'mapping, T: PodValue + PodSync> {
     mapping: Mapping<'mapping>,
     payload: NonNull<T>,
 }
 
-// SAFETY: T: PodSync and all payload access requires a counted admission.
-unsafe impl<T: PodValue + PodSync> Send for Attachment<'_, T> {}
+// SAFETY: moving the local capability between threads is valid only when T is
+// Send; Draining may eventually expose exclusive T access on the new thread.
+unsafe impl<T: PodValue + PodSync + Send> Send for Attachment<'_, T> {}
 // SAFETY: Shared access only creates guards through atomic admission.
 unsafe impl<T: PodValue + PodSync> Sync for Attachment<'_, T> {}
 
@@ -796,6 +830,14 @@ impl<'mapping, T: PodValue + PodSync> Draining<'mapping, T> {
         self.attachment
             .as_ref()
             .expect("live draining authority retains attachment")
+    }
+}
+
+impl<T: PodValue + PodSync> Drop for Draining<'_, T> {
+    fn drop(&mut self) {
+        if let Some(attachment) = self.attachment.as_ref() {
+            let _ = poison_header(attachment.mapping.header());
+        }
     }
 }
 
@@ -1077,3 +1119,111 @@ impl fmt::Display for MappingError {
 }
 
 impl core::error::Error for MappingError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::forget;
+    use core::sync::atomic::AtomicU64;
+
+    const BUILD: BuildIdentity = BuildIdentity::new([0x42; 32]);
+    const INSTANCE: InstanceIdentity = InstanceIdentity::new([0x17; 16]);
+
+    #[repr(align(64))]
+    struct AlignedBytes([u8; 512]);
+
+    fn prepared(bytes: &mut AlignedBytes) -> Mapping<'_> {
+        // SAFETY: this stack buffer is aligned, writable, and exclusively
+        // borrowed for the returned mapping lifetime.
+        unsafe { RawMapping::from_raw_parts(bytes.0.as_mut_ptr(), bytes.0.len()).unwrap() }
+            .prepare(BUILD, INSTANCE)
+    }
+
+    fn initialized(bytes: &mut AlignedBytes) -> Mapping<'_> {
+        let mapping = prepared(bytes);
+        let owner = mapping.try_initialize(AtomicU64::new(1)).unwrap();
+        // Keep the lifecycle Open while deliberately corrupting authenticated
+        // bytes through private test access.
+        forget(owner);
+        mapping
+    }
+
+    #[test]
+    fn rejects_corrupt_immutable_header_and_lifecycle_fields() {
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = prepared(&mut bytes);
+        // SAFETY: no typed payload or concurrent access exists. This emulates a
+        // corrupted backing object before open_existing.
+        unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).version).write(VERSION + 1) };
+        // SAFETY: the test intentionally passes authenticated-but-corrupt bytes.
+        assert!(matches!(
+            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
+                .unwrap()
+                .open_existing(BUILD, INSTANCE),
+            Err(MappingError::UnsupportedVersion { .. })
+        ));
+
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = prepared(&mut bytes);
+        // SAFETY: same isolated corruption setup as above.
+        unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).header_len).write(1) };
+        // SAFETY: open_existing must reject before typed access.
+        assert!(matches!(
+            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
+                .unwrap()
+                .open_existing(BUILD, INSTANCE),
+            Err(MappingError::HeaderLength { .. })
+        ));
+
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = prepared(&mut bytes);
+        // SAFETY: same isolated corruption setup as above.
+        unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).mapping_len).write(511) };
+        // SAFETY: open_existing must reject before typed access.
+        assert!(matches!(
+            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
+                .unwrap()
+                .open_existing(BUILD, INSTANCE),
+            Err(MappingError::MappingLength { .. })
+        ));
+
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = prepared(&mut bytes);
+        mapping.header().lifecycle.store(u64::MAX, Ordering::Release);
+        assert!(matches!(
+            mapping.snapshot(),
+            Err(MappingError::CorruptLifecycle { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_corrupt_payload_geometry_and_descriptor() {
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = initialized(&mut bytes);
+        // SAFETY: no attachment/guard is active; this deliberately corrupts
+        // private authenticated metadata for rejection coverage.
+        unsafe { (*mapping.header().geometry.get()).payload_offset = 0 };
+        assert!(matches!(
+            mapping.attach::<AtomicU64>(),
+            Err(MappingError::PayloadExtent { .. })
+        ));
+
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = initialized(&mut bytes);
+        // SAFETY: same isolated corruption setup as above.
+        unsafe { (*mapping.header().geometry.get()).payload_len = 1 };
+        assert!(matches!(
+            mapping.attach::<AtomicU64>(),
+            Err(MappingError::PayloadLength { .. })
+        ));
+
+        let mut bytes = AlignedBytes([0; 512]);
+        let mapping = initialized(&mut bytes);
+        // SAFETY: same isolated corruption setup as above.
+        unsafe { (*mapping.header().geometry.get()).descriptor[0] ^= 0xff };
+        assert!(matches!(
+            mapping.attach::<AtomicU64>(),
+            Err(MappingError::LayoutEncoding(DecodeError::BadMagic { .. }))
+        ));
+    }
+}

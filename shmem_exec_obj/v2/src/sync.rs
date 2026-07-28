@@ -341,10 +341,10 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
     ///
     /// # Fatal system-call failures
     ///
-    /// Traps the calling process rather than silently busy-looping if Linux
-    /// rejects an otherwise valid futex wait. Injectors should verify that the
-    /// guest's seccomp policy permits process-shared `futex` operations before
-    /// calling this method.
+    /// Terminates the calling process rather than silently busy-looping if
+    /// Linux rejects an otherwise valid futex wait. Injectors should verify
+    /// that the guest's seccomp policy permits process-shared `futex`
+    /// operations before calling this method.
     #[inline]
     pub fn lock(&self) -> ProcessFutexMutexGuard<'_, T> {
         if let Some(guard) = self.try_lock() {
@@ -681,18 +681,42 @@ fn futex_wake_one(word: &AtomicU32) {
 #[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "x86_64"))]
 #[cold]
 fn fatal_futex_error() -> ! {
-    // SAFETY: an unexpected futex failure means this mutex can no longer
-    // preserve its blocking contract. Trap rather than consuming a CPU in a
-    // retry loop or returning without mutual exclusion.
-    unsafe { core::arch::asm!("ud2", options(noreturn, nostack)) }
+    // SAFETY: an unexpected futex failure means this process can no longer
+    // preserve the mutex's blocking contract. exit_group(127) avoids unwinding
+    // through shared guards. If a seccomp policy also denies exit_group, the
+    // trap loop still cannot return into code which assumes mutual exclusion.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 231_usize,
+            in("rdi") 127_usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    loop {
+        // SAFETY: this is the fail-stop fallback described above.
+        unsafe { core::arch::asm!("ud2", options(nostack, nomem)) }
+    }
 }
 
 #[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
 #[cold]
 fn fatal_futex_error() -> ! {
-    // SAFETY: see the x86_64 implementation. BRK terminates under the default
-    // signal disposition and requires no process-local runtime dependency.
-    unsafe { core::arch::asm!("brk #0", options(noreturn, nostack)) }
+    // SAFETY: see the x86_64 implementation. Syscall 94 is exit_group.
+    unsafe {
+        core::arch::asm!(
+            "svc 0",
+            in("x0") 127_usize,
+            in("x8") 94_usize,
+            options(nostack),
+        );
+    }
+    loop {
+        // SAFETY: this is the fail-stop fallback described above.
+        unsafe { core::arch::asm!("brk #0", options(nostack, nomem)) }
+    }
 }
 
 #[cfg(all(

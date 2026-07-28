@@ -9,7 +9,7 @@ until the relevant multi-process tests have run on that target.
 | Component | x86-64 Linux | AArch64 Linux | Other Linux | Non-Linux |
 | --- | --- | --- | --- | --- |
 | `PodValue`, layout descriptors, and checked offsets | Runtime tested | Portable design; not runtime tested | Portable design; not runtime tested | `no_std` design; not runtime tested |
-| Typed mapping lifecycle | Runtime tested across fork and different-address exec attachment | Portable protocol; not runtime tested | Portable protocol; not runtime tested | Host mapping and cross-process atomic behavior are not supplied or validated |
+| Typed mapping lifecycle | Runtime tested across fork and different-address exec attachment | Implemented with lock-free 64-bit atomics; not runtime tested | Requires `target_has_atomic = "64"`; not runtime tested | Host mapping and cross-process atomic behavior are not supplied or validated |
 | Core atomics and `ProcessSpinMutex` | Runtime tested | Implemented when the target exposes the required atomic width | Implemented when the target exposes the required atomic width | Requires an OS and mapping implementation with genuinely process-shared coherent memory |
 | `ProcessFutexMutex` | Runtime tested, including different-address exec attachment and bounded wait cancellation | Inline syscall implemented; not runtime tested here | `libc::syscall` fallback; not runtime tested | Unavailable |
 | `Snzi` | Runtime tested | Implemented when `target_has_atomic = "64"`; not runtime tested here | Same requirement; not runtime tested | Same requirement; cross-process behavior is not validated |

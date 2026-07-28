@@ -1,4 +1,8 @@
-#![cfg(all(feature = "derive", target_os = "linux"))]
+#![cfg(all(
+    feature = "derive",
+    target_os = "linux",
+    target_has_atomic = "64"
+))]
 
 use std::process::{Child, Command, ExitStatus};
 use std::ptr;
@@ -117,6 +121,54 @@ fn wait_for_child(child: &mut Child, timeout: Duration) -> ExitStatus {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if predicate() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    predicate()
+}
+
+fn wait_for_pids(mut pending: Vec<libc::pid_t>, timeout: Duration) -> Vec<libc::c_int> {
+    let deadline = Instant::now() + timeout;
+    let mut statuses = Vec::with_capacity(pending.len());
+    while !pending.is_empty() {
+        let mut index = 0;
+        while index < pending.len() {
+            let mut status = 0;
+            // SAFETY: this polls a direct child without blocking.
+            let result = unsafe { libc::waitpid(pending[index], &mut status, libc::WNOHANG) };
+            if result == pending[index] {
+                pending.swap_remove(index);
+                statuses.push(status);
+            } else if result == 0 {
+                index += 1;
+            } else {
+                panic!("waitpid failed: {}", std::io::Error::last_os_error());
+            }
+        }
+        if pending.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            for child in &pending {
+                // SAFETY: bounded test cleanup for direct children.
+                let _ = unsafe { libc::kill(*child, libc::SIGKILL) };
+            }
+            for child in pending {
+                // SAFETY: reap every child killed above.
+                let _ = unsafe { libc::waitpid(child, ptr::null_mut(), 0) };
+            }
+            panic!("mapping worker processes timed out");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    statuses
 }
 
 #[test]
@@ -303,6 +355,164 @@ fn drain_linearizes_against_racing_attach_and_enter() {
 
     assert!(draining.is_drained().unwrap());
     draining.try_close().unwrap();
+}
+
+#[test]
+fn poison_wins_over_an_initializer_waiting_to_publish() {
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive initial preparation.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let entered = AtomicBool::new(false);
+    let proceed = AtomicBool::new(false);
+
+    std::thread::scope(|scope| {
+        let initializer = scope.spawn(|| {
+            // SAFETY: the callback writes one complete valid value before it
+            // returns. Synchronization only delays publication.
+            unsafe {
+                mapping.try_initialize_in_place::<SharedState>(|target| {
+                    target.write(SharedState::new(3));
+                    entered.store(true, Ordering::Release);
+                    while !proceed.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
+                })
+            }
+        });
+        assert!(wait_until(Duration::from_secs(2), || {
+            entered.load(Ordering::Acquire)
+        }));
+        mapping.poison().unwrap();
+        proceed.store(true, Ordering::Release);
+        assert!(matches!(
+            initializer.join().expect("initializer panicked"),
+            Err(MappingError::WrongPhase {
+                expected: Phase::Initializing,
+                actual: Phase::Poisoned,
+            })
+        ));
+    });
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Poisoned);
+}
+
+#[test]
+fn dropping_drain_authority_poisons_instead_of_silently_stranding() {
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive initial preparation.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let owner = mapping.try_initialize(SharedState::new(0)).unwrap();
+    let draining = owner.begin_drain().unwrap();
+    drop(draining);
+    let snapshot = mapping.snapshot().unwrap();
+    assert_eq!(snapshot.phase(), Phase::Poisoned);
+    assert_eq!(snapshot.attachments(), 0);
+}
+
+#[test]
+fn independent_processes_race_initialization_with_exactly_one_winner() {
+    const WORKERS: usize = 8;
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive initial preparation before fork.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let mut children = Vec::new();
+    for value in 0..WORKERS {
+        // SAFETY: children access only the shared lifecycle/payload and exit
+        // without unwinding duplicated process state.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork failed");
+        if child == 0 {
+            let exit_code = match mapping.try_initialize(SharedState::new(value as u64)) {
+                Ok(owner) => {
+                    // Model abrupt owner death without running the authority's
+                    // poison-on-drop path.
+                    core::mem::forget(owner);
+                    10
+                }
+                Err(_) => 0,
+            };
+            unsafe { libc::_exit(exit_code) };
+        }
+        children.push(child);
+    }
+    let statuses = wait_for_pids(children, Duration::from_secs(5));
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| libc::WIFEXITED(**status) && libc::WEXITSTATUS(**status) == 10)
+            .count(),
+        1
+    );
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Open);
+    let attachment = mapping.attach::<SharedState>().unwrap();
+    assert!(attachment.try_enter().is_ok());
+    drop(attachment);
+    // The winning process deliberately _exit'd with close authority. A
+    // supervisor must poison and replace this otherwise valid generation.
+    mapping.poison().unwrap();
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Poisoned);
+}
+
+#[test]
+fn killed_initializer_and_admitted_process_fail_stuck_until_supervisor_poison() {
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive initial preparation before fork.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    // SAFETY: child initializes only the shared mapping and is externally
+    // killed after it has entered the callback.
+    let initializer = unsafe { libc::fork() };
+    assert!(initializer >= 0, "fork failed");
+    if initializer == 0 {
+        let _ = unsafe {
+            mapping.try_initialize_in_place::<SharedState>(|target| {
+                target.write(SharedState::new(0));
+                loop {
+                    core::hint::spin_loop();
+                }
+            })
+        };
+        unsafe { libc::_exit(1) };
+    }
+    assert!(wait_until(Duration::from_secs(2), || {
+        mapping
+            .snapshot()
+            .is_ok_and(|state| state.phase() == Phase::Initializing)
+    }));
+    // SAFETY: direct child is intentionally killed at the failure point.
+    assert_eq!(unsafe { libc::kill(initializer, libc::SIGKILL) }, 0);
+    let status = wait_for_pids(vec![initializer], Duration::from_secs(5))[0];
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Initializing);
+    mapping.poison().unwrap();
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Poisoned);
+
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive preparation for the admission death case.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let owner = mapping.try_initialize(SharedState::new(0)).unwrap();
+    // SAFETY: child uses a fresh counted attachment and is killed without
+    // destructors to model process death.
+    let admitted = unsafe { libc::fork() };
+    assert!(admitted >= 0, "fork failed");
+    if admitted == 0 {
+        let attachment = mapping.attach::<SharedState>().unwrap();
+        let _guard = attachment.try_enter().unwrap();
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+    assert!(wait_until(Duration::from_secs(2), || {
+        mapping
+            .snapshot()
+            .is_ok_and(|state| state.attachments() == 2 && state.admissions() == 1)
+    }));
+    // SAFETY: direct child is intentionally killed while admitted.
+    assert_eq!(unsafe { libc::kill(admitted, libc::SIGKILL) }, 0);
+    let status = wait_for_pids(vec![admitted], Duration::from_secs(5))[0];
+    assert!(libc::WIFSIGNALED(status));
+    let draining = owner.begin_drain().unwrap();
+    assert!(!draining.is_drained().unwrap());
+    drop(draining);
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Poisoned);
 }
 
 #[test]
