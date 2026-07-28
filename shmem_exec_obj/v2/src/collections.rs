@@ -11,9 +11,12 @@
 //! generation, a changed offset or extent, a layout mismatch, allocator
 //! corruption, and an allocator transaction which is still active or was
 //! abandoned by a dead process.
+//! Safe shared resolution also relies on the unsafe destruction contract: no
+//! participant may destroy or mutate an allocation while a resolved borrow can
+//! exist anywhere in the process set.
 
 use core::marker::PhantomData;
-use core::mem::{align_of, needs_drop, size_of};
+use core::mem::{align_of, needs_drop, offset_of, size_of};
 use core::slice;
 
 use crate::layout::LayoutDescriptor;
@@ -125,10 +128,17 @@ impl<T: PodValue> SharedBox<T> {
     }
 
     /// Resolves a checked shared reference in this process's mapping.
+    ///
+    /// `T: PodSync` permits concurrent shared references. Safety additionally
+    /// relies on every caller honoring [`Self::destroy`]'s global-exclusion
+    /// precondition for the duration of the returned borrow.
     pub fn get<'a, const SLOTS: usize>(
         &'a self,
         region: &'a RelocRegion<'_, SLOTS>,
-    ) -> Result<&'a T, RelocError> {
+    ) -> Result<&'a T, RelocError>
+    where
+        T: PodSync,
+    {
         if self.allocation.is_null() {
             return Err(RelocError::Empty);
         }
@@ -194,10 +204,27 @@ impl<T: PodValue> core::fmt::Debug for SharedBox<T> {
 unsafe impl<T: PodValue> FixedAddressPodValue for SharedBox<T> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "shared boxes must not need drop");
-        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-box-v1");
-        let state = __private::mix_usize(state, size_of::<Self>());
-        let state = __private::mix_usize(state, align_of::<Self>());
-        __private::finish(__private::mix_u128(state, T::FINGERPRINT))
+        let mut state =
+            __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-box-v1");
+        state = __private::mix_usize(state, size_of::<Self>());
+        state = __private::mix_usize(state, align_of::<Self>());
+        state = mix_field(
+            state,
+            b"allocation",
+            offset_of!(Self, allocation),
+            size_of::<AllocationDescriptor>(),
+            align_of::<AllocationDescriptor>(),
+            AllocationDescriptor::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"marker",
+            offset_of!(Self, marker),
+            size_of::<PhantomData<T>>(),
+            align_of::<PhantomData<T>>(),
+            T::FINGERPRINT,
+        );
+        __private::finish(state)
     };
 }
 
@@ -301,10 +328,17 @@ impl<T: PodValue> SharedVec<T> {
     }
 
     /// Resolves the initialized prefix as a checked shared slice.
+    ///
+    /// `T: PodSync` permits concurrent shared references. Safety additionally
+    /// relies on every caller honoring [`Self::destroy`]'s global-exclusion
+    /// precondition for the duration of the returned slice.
     pub fn as_slice<'a, const SLOTS: usize>(
         &'a self,
         region: &'a RelocRegion<'_, SLOTS>,
-    ) -> Result<&'a [T], RelocError> {
+    ) -> Result<&'a [T], RelocError>
+    where
+        T: PodSync,
+    {
         let (len, capacity) = self.checked_lengths()?;
         if capacity == 0 {
             return Ok(&[]);
@@ -454,10 +488,43 @@ impl<T: PodValue> core::fmt::Debug for SharedVec<T> {
 unsafe impl<T: PodValue> FixedAddressPodValue for SharedVec<T> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "shared vectors must not need drop");
-        let state = __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-vec-v1");
-        let state = __private::mix_usize(state, size_of::<Self>());
-        let state = __private::mix_usize(state, align_of::<Self>());
-        __private::finish(__private::mix_u128(state, T::FINGERPRINT))
+        let mut state =
+            __private::mix_bytes(__private::FINGERPRINT_SEED, b"shmem-pod-shared-vec-v1");
+        state = __private::mix_usize(state, size_of::<Self>());
+        state = __private::mix_usize(state, align_of::<Self>());
+        state = mix_field(
+            state,
+            b"allocation",
+            offset_of!(Self, allocation),
+            size_of::<AllocationDescriptor>(),
+            align_of::<AllocationDescriptor>(),
+            AllocationDescriptor::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"len",
+            offset_of!(Self, len),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"capacity",
+            offset_of!(Self, capacity),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"marker",
+            offset_of!(Self, marker),
+            size_of::<PhantomData<T>>(),
+            align_of::<PhantomData<T>>(),
+            T::FINGERPRINT,
+        );
+        __private::finish(state)
     };
 }
 
@@ -467,3 +534,18 @@ unsafe impl<T: PodValue> PodValue for SharedVec<T> {}
 // SAFETY: shared methods expose only &[T], and T supports process-shared access.
 // Mutation remains behind an explicit unsafe exclusive-access contract.
 unsafe impl<T: PodValue + PodSync> PodSync for SharedVec<T> {}
+
+const fn mix_field(
+    mut state: u128,
+    name: &[u8],
+    offset: usize,
+    size: usize,
+    alignment: usize,
+    fingerprint: u128,
+) -> u128 {
+    state = __private::mix_bytes(state, name);
+    state = __private::mix_usize(state, offset);
+    state = __private::mix_usize(state, size);
+    state = __private::mix_usize(state, alignment);
+    __private::mix_u128(state, fingerprint)
+}

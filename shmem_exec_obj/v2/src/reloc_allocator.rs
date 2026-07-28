@@ -163,14 +163,70 @@ unsafe impl FixedAddressPodValue for AllocationDescriptor {
         );
         state = __private::mix_usize(state, size_of::<Self>());
         state = __private::mix_usize(state, align_of::<Self>());
-        state = mix_field(state, b"region_id", offset_of!(Self, region_id), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"slot", offset_of!(Self, slot), size_of::<u32>(), align_of::<u32>(), u32::FINGERPRINT);
-        state = mix_field(state, b"generation", offset_of!(Self, generation), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"offset", offset_of!(Self, offset), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"byte_len", offset_of!(Self, byte_len), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"alignment", offset_of!(Self, alignment), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"fingerprint_low", offset_of!(Self, fingerprint_low), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
-        state = mix_field(state, b"fingerprint_high", offset_of!(Self, fingerprint_high), size_of::<u64>(), align_of::<u64>(), u64::FINGERPRINT);
+        state = mix_field(
+            state,
+            b"region_id",
+            offset_of!(Self, region_id),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"slot",
+            offset_of!(Self, slot),
+            size_of::<u32>(),
+            align_of::<u32>(),
+            u32::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"generation",
+            offset_of!(Self, generation),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"offset",
+            offset_of!(Self, offset),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"byte_len",
+            offset_of!(Self, byte_len),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"alignment",
+            offset_of!(Self, alignment),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"fingerprint_low",
+            offset_of!(Self, fingerprint_low),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"fingerprint_high",
+            offset_of!(Self, fingerprint_high),
+            size_of::<u64>(),
+            align_of::<u64>(),
+            u64::FINGERPRINT,
+        );
         __private::finish(state)
     };
 }
@@ -218,11 +274,46 @@ unsafe impl FixedAddressPodValue for SlotMetadata {
         );
         state = __private::mix_usize(state, size_of::<Self>());
         state = __private::mix_usize(state, align_of::<Self>());
-        state = mix_field(state, b"token", offset_of!(Self, token), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"byte_len", offset_of!(Self, byte_len), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"alignment", offset_of!(Self, alignment), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"fingerprint_low", offset_of!(Self, fingerprint_low), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"fingerprint_high", offset_of!(Self, fingerprint_high), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
+        state = mix_field(
+            state,
+            b"token",
+            offset_of!(Self, token),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"byte_len",
+            offset_of!(Self, byte_len),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"alignment",
+            offset_of!(Self, alignment),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"fingerprint_low",
+            offset_of!(Self, fingerprint_low),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"fingerprint_high",
+            offset_of!(Self, fingerprint_high),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
         __private::finish(state)
     };
 }
@@ -349,7 +440,7 @@ impl<const SLOTS: usize> RelocAllocator<SLOTS> {
         for slot in &self.slots {
             slot.reset();
         }
-        self.state.store(READY, Ordering::Release);
+        self.publish_ready()?;
         poison.armed = false;
         Ok(RelocRegion::new(self, geometry.base, mapping_len))
     }
@@ -501,6 +592,13 @@ impl<const SLOTS: usize> RelocAllocator<SLOTS> {
         Err(RelocError::Busy)
     }
 
+    fn publish_ready(&self) -> Result<(), RelocError> {
+        self.state
+            .compare_exchange(INITIALIZING, READY, Ordering::Release, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(state_error)
+    }
+
     fn word_and_mask(slot: usize) -> (usize, u64) {
         (slot / BITS_PER_WORD, 1_u64 << (slot % BITS_PER_WORD))
     }
@@ -540,15 +638,78 @@ unsafe impl<const SLOTS: usize> FixedAddressPodValue for RelocAllocator<SLOTS> {
         state = __private::mix_usize(state, SLOTS);
         state = __private::mix_usize(state, size_of::<Self>());
         state = __private::mix_usize(state, align_of::<Self>());
-        state = mix_field(state, b"state", offset_of!(Self, state), size_of::<AtomicU32>(), align_of::<AtomicU32>(), AtomicU32::FINGERPRINT);
-        state = mix_field(state, b"operation_lock", offset_of!(Self, operation_lock), size_of::<AtomicU32>(), align_of::<AtomicU32>(), AtomicU32::FINGERPRINT);
-        state = mix_field(state, b"region_id", offset_of!(Self, region_id), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"control_offset", offset_of!(Self, control_offset), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"mapping_len", offset_of!(Self, mapping_len), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"arena_offset", offset_of!(Self, arena_offset), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"slot_size", offset_of!(Self, slot_size), size_of::<AtomicU64>(), align_of::<AtomicU64>(), AtomicU64::FINGERPRINT);
-        state = mix_field(state, b"bitmap", offset_of!(Self, bitmap), size_of::<[AtomicU64; MAX_BITMAP_WORDS]>(), align_of::<[AtomicU64; MAX_BITMAP_WORDS]>(), <[AtomicU64; MAX_BITMAP_WORDS]>::FINGERPRINT);
-        state = mix_field(state, b"slots", offset_of!(Self, slots), size_of::<[SlotMetadata; SLOTS]>(), align_of::<[SlotMetadata; SLOTS]>(), <[SlotMetadata; SLOTS]>::FINGERPRINT);
+        state = mix_field(
+            state,
+            b"state",
+            offset_of!(Self, state),
+            size_of::<AtomicU32>(),
+            align_of::<AtomicU32>(),
+            AtomicU32::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"operation_lock",
+            offset_of!(Self, operation_lock),
+            size_of::<AtomicU32>(),
+            align_of::<AtomicU32>(),
+            AtomicU32::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"region_id",
+            offset_of!(Self, region_id),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"control_offset",
+            offset_of!(Self, control_offset),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"mapping_len",
+            offset_of!(Self, mapping_len),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"arena_offset",
+            offset_of!(Self, arena_offset),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"slot_size",
+            offset_of!(Self, slot_size),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+            AtomicU64::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"bitmap",
+            offset_of!(Self, bitmap),
+            size_of::<[AtomicU64; MAX_BITMAP_WORDS]>(),
+            align_of::<[AtomicU64; MAX_BITMAP_WORDS]>(),
+            <[AtomicU64; MAX_BITMAP_WORDS]>::FINGERPRINT,
+        );
+        state = mix_field(
+            state,
+            b"slots",
+            offset_of!(Self, slots),
+            size_of::<[SlotMetadata; SLOTS]>(),
+            align_of::<[SlotMetadata; SLOTS]>(),
+            <[SlotMetadata; SLOTS]>::FINGERPRINT,
+        );
         __private::finish(state)
     };
 }
@@ -1210,3 +1371,48 @@ impl fmt::Display for RelocError {
 }
 
 impl core::error::Error for RelocError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collections::SharedBox;
+
+    #[repr(align(64))]
+    struct AlignedBytes([u8; 1024]);
+
+    #[test]
+    fn poison_cannot_be_overwritten_by_ready_publication() {
+        let allocator = RelocAllocator::<1>::new();
+        allocator.state.store(INITIALIZING, Ordering::Release);
+        allocator.poison();
+        assert_eq!(allocator.publish_ready(), Err(RelocError::Poisoned));
+        assert_eq!(allocator.state(), RelocAllocatorState::Poisoned);
+    }
+
+    #[test]
+    fn bitmap_slot_disagreement_poisons_before_resolution() {
+        let mut bytes = AlignedBytes([0; 1024]);
+        let base = bytes.0.as_mut_ptr();
+        let pointer = base.cast::<RelocAllocator<2>>();
+        // SAFETY: aligned test bytes are exclusively initialized here.
+        unsafe { pointer.write(RelocAllocator::new()) };
+        // SAFETY: the initialized allocator lives for the test buffer's borrow.
+        let allocator = unsafe { &*pointer };
+        let arena_offset = size_of::<RelocAllocator<2>>().div_ceil(64) * 64;
+        // SAFETY: control and arena extents are disjoint within the live buffer.
+        let region = unsafe {
+            allocator
+                .initialize(base, bytes.0.len(), 7, arena_offset as u64, 64)
+                .unwrap()
+        };
+        let value = SharedBox::new(&region, 11_u64).unwrap();
+        let slot = value.descriptor().slot() as usize;
+        let (word, mask) = RelocAllocator::<2>::word_and_mask(slot);
+        allocator.bitmap[word].fetch_and(!mask, Ordering::Release);
+        assert!(matches!(
+            value.get(&region),
+            Err(RelocError::CorruptMetadata { .. })
+        ));
+        assert_eq!(allocator.state(), RelocAllocatorState::Poisoned);
+    }
+}

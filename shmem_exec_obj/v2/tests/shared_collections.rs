@@ -3,6 +3,7 @@
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use shmem_pod::FixedAddressPodValue;
 use shmem_pod::collections::{SharedBox, SharedVec};
 use shmem_pod::reloc_allocator::{RELOC_SLOT_ALIGNMENT, RelocAllocator, RelocError, RelocRegion};
 
@@ -10,6 +11,20 @@ const MAPPING_LEN: usize = 32 * 1024;
 const REGION_ID: u64 = 0x51a7_edc0_11ec_7101;
 const SLOT_SIZE: usize = 256;
 type Allocator = RelocAllocator<8>;
+
+#[repr(C)]
+#[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
+struct NarrowThenWide {
+    narrow: u32,
+    wide: u64,
+}
+
+#[repr(C)]
+#[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
+struct WideThenNarrow {
+    wide: u64,
+    narrow: u32,
+}
 
 fn align_up(value: usize, alignment: usize) -> usize {
     value.checked_add(alignment - 1).unwrap() & !(alignment - 1)
@@ -56,6 +71,31 @@ impl Drop for Fixture {
         // SAFETY: fixture owns the complete live mapping.
         assert_eq!(unsafe { libc::munmap(self.base.cast(), MAPPING_LEN) }, 0);
     }
+}
+
+#[test]
+fn fingerprints_bind_field_order_transitive_type_and_slot_count() {
+    assert_eq!(
+        std::mem::size_of::<NarrowThenWide>(),
+        std::mem::size_of::<WideThenNarrow>()
+    );
+    assert_eq!(
+        std::mem::align_of::<NarrowThenWide>(),
+        std::mem::align_of::<WideThenNarrow>()
+    );
+    assert_ne!(NarrowThenWide::FINGERPRINT, WideThenNarrow::FINGERPRINT);
+    assert_ne!(
+        SharedBox::<NarrowThenWide>::FINGERPRINT,
+        SharedBox::<WideThenNarrow>::FINGERPRINT
+    );
+    assert_ne!(
+        SharedVec::<NarrowThenWide>::FINGERPRINT,
+        SharedVec::<WideThenNarrow>::FINGERPRINT
+    );
+    assert_ne!(
+        RelocAllocator::<7>::FINGERPRINT,
+        RelocAllocator::<8>::FINGERPRINT
+    );
 }
 
 #[test]

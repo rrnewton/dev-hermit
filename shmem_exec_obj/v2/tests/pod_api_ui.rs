@@ -9,7 +9,13 @@ fn rejects_ambiguous_or_unsupported_native_apis() {
     const CASES: &[(&str, &str)] = &[
         ("pod_api_async", "pod methods cannot be async"),
         ("pod_api_duplicate_id", "duplicate pod method ID 1"),
+        ("pod_api_duplicate_method_key", "duplicate pod method id"),
+        (
+            "pod_api_duplicate_option",
+            "duplicate #[pod] namespace option",
+        ),
         ("pod_api_duplicate_symbol", "duplicate pod export symbol"),
+        ("pod_api_empty_namespace", "namespace must not be empty"),
         ("pod_api_generic", "pod methods cannot be generic"),
         ("pod_api_missing_method", "pod method requires"),
         ("pod_api_non_c", "supports extern \"C\" only"),

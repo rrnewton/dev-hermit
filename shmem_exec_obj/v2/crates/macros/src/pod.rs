@@ -15,16 +15,40 @@ struct PodArguments {
 
 impl Parse for PodArguments {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut namespace = None;
-        let mut bindings = None;
-        let mut descriptor = None;
+        let mut namespace: Option<LitStr> = None;
+        let mut bindings: Option<Ident> = None;
+        let mut descriptor: Option<Ident> = None;
         while !input.is_empty() {
             let name: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
             match name.to_string().as_str() {
-                "namespace" => namespace = Some(input.parse()?),
-                "bindings" => bindings = Some(input.parse()?),
-                "descriptor" => descriptor = Some(input.parse()?),
+                "namespace" => {
+                    if namespace.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            name,
+                            "duplicate #[pod] namespace option",
+                        ));
+                    }
+                    namespace = Some(input.parse()?);
+                }
+                "bindings" => {
+                    if bindings.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            name,
+                            "duplicate #[pod] bindings option",
+                        ));
+                    }
+                    bindings = Some(input.parse()?);
+                }
+                "descriptor" => {
+                    if descriptor.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            name,
+                            "duplicate #[pod] descriptor option",
+                        ));
+                    }
+                    descriptor = Some(input.parse()?);
+                }
                 _ => {
                     return Err(syn::Error::new_spanned(
                         name,
@@ -37,9 +61,16 @@ impl Parse for PodArguments {
             }
             input.parse::<Token![,]>()?;
         }
+        let namespace =
+            namespace.ok_or_else(|| input.error("#[pod] requires namespace = \"...\""))?;
+        if namespace.value().is_empty() {
+            return Err(syn::Error::new_spanned(
+                &namespace,
+                "#[pod] namespace must not be empty",
+            ));
+        }
         Ok(Self {
-            namespace: namespace
-                .ok_or_else(|| input.error("#[pod] requires namespace = \"...\""))?,
+            namespace,
             bindings: bindings.ok_or_else(|| input.error("#[pod] requires bindings = TypeName"))?,
             descriptor: descriptor
                 .ok_or_else(|| input.error("#[pod] requires descriptor = CONST_NAME"))?,
@@ -315,6 +346,9 @@ fn parse_method_attribute(attributes: &[Attribute]) -> syn::Result<(u32, LitStr)
         found = true;
         attribute.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
+                if id.is_some() {
+                    return Err(meta.error("duplicate pod method id"));
+                }
                 let literal: LitInt = meta.value()?.parse()?;
                 let value = literal.base10_parse::<u32>()?;
                 if value == 0 {
@@ -323,6 +357,9 @@ fn parse_method_attribute(attributes: &[Attribute]) -> syn::Result<(u32, LitStr)
                 id = Some(value);
                 Ok(())
             } else if meta.path.is_ident("symbol") {
+                if symbol.is_some() {
+                    return Err(meta.error("duplicate pod method symbol"));
+                }
                 let literal: LitStr = meta.value()?.parse()?;
                 if literal.value().is_empty() || literal.value().as_bytes().contains(&0) {
                     return Err(meta.error("pod method symbol must be a nonempty C string"));

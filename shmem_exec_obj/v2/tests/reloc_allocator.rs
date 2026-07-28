@@ -34,6 +34,10 @@ struct SharedMapping {
     descriptor: Option<libc::c_int>,
 }
 
+#[repr(align(128))]
+#[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
+struct OverAligned;
+
 impl SharedMapping {
     fn anonymous() -> Self {
         // SAFETY: create one shared writable mapping owned by this helper.
@@ -236,6 +240,62 @@ fn corrupt_descriptor_geometry_is_rejected_before_pointer_formation() {
 }
 
 #[test]
+fn initialization_and_request_geometry_are_checked_before_mutation() {
+    let mapping = SharedMapping::anonymous();
+    // SAFETY: one-time construction in live exclusive mapping bytes.
+    let allocator = unsafe { mapping.construct_allocator() };
+    assert!(matches!(
+        unsafe {
+            allocator.initialize(
+                mapping.base,
+                MAPPING_LEN,
+                0,
+                arena_offset() as u64,
+                SLOT_SIZE,
+            )
+        },
+        Err(RelocError::ZeroRegionId)
+    ));
+    assert!(matches!(
+        unsafe {
+            allocator.initialize(
+                mapping.base,
+                MAPPING_LEN,
+                REGION_ID,
+                arena_offset() as u64,
+                RELOC_SLOT_ALIGNMENT - 1,
+            )
+        },
+        Err(RelocError::SlotSizeAlignment { .. })
+    ));
+    assert!(matches!(
+        unsafe { allocator.initialize(mapping.base, MAPPING_LEN, REGION_ID, 0, 64) },
+        Err(RelocError::ArenaOverlapsAllocator)
+    ));
+    assert!(matches!(
+        unsafe { allocator.initialize(mapping.base, MAPPING_LEN, REGION_ID, u64::MAX, SLOT_SIZE,) },
+        Err(RelocError::GeometryOverflow)
+    ));
+    // SAFETY: prior validation failures did not claim initialization.
+    let region = unsafe {
+        allocator
+            .initialize(
+                mapping.base,
+                MAPPING_LEN,
+                REGION_ID,
+                arena_offset() as u64,
+                SLOT_SIZE,
+            )
+            .unwrap()
+    };
+    assert!(matches!(
+        SharedBox::new(&region, OverAligned),
+        Err(RelocError::UnsupportedAlignment { .. })
+    ));
+    assert_eq!(allocator.snapshot().allocated(), 0);
+}
+
+#[test]
 fn randomized_model_preserves_values_capacity_and_generations() {
     let mapping = SharedMapping::anonymous();
     let (allocator, mut region) = initialized(&mapping, REGION_ID);
@@ -367,6 +427,25 @@ fn killed_transaction_stays_bounded_until_supervisor_poison() {
     ));
 }
 
+#[test]
+fn unwinding_transaction_poisons_and_releases_local_lock() {
+    let mapping = SharedMapping::anonymous();
+    let (allocator, region) = initialized(&mapping, REGION_ID);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let _ = SharedBox::<u64>::try_new_in_place(&region, |target| {
+            target.write(1);
+            panic!("deliberate initializer unwind");
+        });
+    }));
+    assert!(result.is_err());
+    assert_eq!(allocator.state(), RelocAllocatorState::Poisoned);
+    assert!(!allocator.snapshot().operation_locked());
+    assert!(matches!(
+        SharedBox::new(&region, 2_u64),
+        Err(RelocError::Poisoned)
+    ));
+}
+
 #[cfg(target_pointer_width = "64")]
 const WORKER_ADDRESSES: [usize; 4] = [
     0x2600_0000_0000,
@@ -414,7 +493,7 @@ fn exec_worker_resolves_integer_descriptor_at_different_address() {
     let base = map_exec_worker(descriptor, parent_address);
     let allocator = unsafe { &*base.cast::<TestAllocator>() };
     // SAFETY: parent authenticated, initialized, and published the complete memfd.
-    let region = unsafe { allocator.attach(base, MAPPING_LEN, REGION_ID).unwrap() };
+    let mut region = unsafe { allocator.attach(base, MAPPING_LEN, REGION_ID).unwrap() };
     let descriptor_offset = std::mem::size_of::<TestAllocator>();
     // SAFETY: parent wrote this copy before spawning the exec worker.
     let allocation = unsafe {
@@ -425,6 +504,26 @@ fn exec_worker_resolves_integer_descriptor_at_different_address() {
     // SAFETY: copied descriptor names the live box and this child never destroys it.
     let value = unsafe { SharedBox::<AtomicU64>::from_descriptor(allocation) };
     value.get(&region).unwrap().fetch_add(1, Ordering::Relaxed);
+
+    let mut local = loop {
+        match SharedBox::new(&region, 10_u64) {
+            Ok(value) => break value,
+            Err(RelocError::Busy) => std::thread::yield_now(),
+            Err(error) => panic!("exec allocation failed: {error}"),
+        }
+    };
+    assert_eq!(*local.get(&region).unwrap(), 10);
+    unsafe { *local.get_mut(&mut region).unwrap() = 11 };
+    loop {
+        match unsafe { local.destroy(&mut region) } {
+            Ok(value) => {
+                assert_eq!(value, 11);
+                break;
+            }
+            Err(RelocError::Busy) => std::thread::yield_now(),
+            Err(error) => panic!("exec destruction failed: {error}"),
+        }
+    }
     assert_ne!(base as usize, parent_address);
     // SAFETY: local borrows and process-local descriptors are no longer used.
     assert_eq!(unsafe { libc::munmap(base.cast(), MAPPING_LEN) }, 0);
@@ -436,7 +535,7 @@ fn independent_exec_maps_elsewhere_and_updates_shared_box() {
         return;
     }
     let mapping = SharedMapping::memfd();
-    let (_, mut region) = initialized(&mapping, REGION_ID);
+    let (allocator, mut region) = initialized(&mapping, REGION_ID);
     let mut value = SharedBox::new(&region, AtomicU64::new(41)).unwrap();
     let descriptor_offset = std::mem::size_of::<TestAllocator>();
     // SAFETY: descriptor storage is outside allocator metadata and arena.
@@ -462,4 +561,5 @@ fn independent_exec_maps_elsewhere_and_updates_shared_box() {
     assert_eq!(value.get(&region).unwrap().load(Ordering::Relaxed), 42);
     let final_value = unsafe { value.destroy(&mut region) }.unwrap();
     assert_eq!(final_value.load(Ordering::Relaxed), 42);
+    assert_eq!(allocator.snapshot().allocated(), 0);
 }
