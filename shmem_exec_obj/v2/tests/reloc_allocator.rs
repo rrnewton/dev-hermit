@@ -269,13 +269,14 @@ fn randomized_model_preserves_values_capacity_and_generations() {
 fn concurrent_alloc_free_is_bounded_and_leak_free() {
     let mapping = SharedMapping::anonymous();
     let (allocator, _region) = initialized(&mapping, REGION_ID);
+    let base_address = mapping.base as usize;
     std::thread::scope(|scope| {
         for worker in 0..8_u64 {
             scope.spawn(move || {
                 // SAFETY: independent local view of the same authenticated mapping.
                 let mut region = unsafe {
                     allocator
-                        .attach(mapping.base, MAPPING_LEN, REGION_ID)
+                        .attach(base_address as *mut u8, MAPPING_LEN, REGION_ID)
                         .unwrap()
                 };
                 for iteration in 0..500_u64 {
@@ -289,7 +290,16 @@ fn concurrent_alloc_free_is_bounded_and_leak_free() {
                             Err(error) => panic!("allocation failed: {error}"),
                         }
                     };
-                    assert_eq!(*value.get(&region).unwrap(), expected);
+                    loop {
+                        match value.get(&region) {
+                            Ok(found) => {
+                                assert_eq!(*found, expected);
+                                break;
+                            }
+                            Err(RelocError::Busy) => std::thread::yield_now(),
+                            Err(error) => panic!("resolve failed: {error}"),
+                        }
+                    }
                     loop {
                         match unsafe { value.destroy(&mut region) } {
                             Ok(found) => {
