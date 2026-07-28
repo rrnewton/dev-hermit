@@ -7,7 +7,12 @@ use std::mem::size_of;
 use std::ops::Deref;
 use std::process::{Child, Command, ExitStatus};
 use std::ptr;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 struct SharedMapping<T> {
@@ -198,6 +203,10 @@ fn wait_for_children(
     completed
 }
 
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn wait_for_child_stop(child: libc::pid_t, timeout: Duration) -> libc::c_int {
     let deadline = Instant::now() + timeout;
     loop {
@@ -223,7 +232,19 @@ fn wait_for_child_stop(child: libc::pid_t, timeout: Duration) -> libc::c_int {
 
 fn require_process_shared<T: PodValue + PodSync>() {}
 
-extern "C" fn no_op_signal_handler(_: libc::c_int) {}
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+static DELIVERED_SIGNALS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+extern "C" fn count_signal_handler(_: libc::c_int) {
+    DELIVERED_SIGNALS.fetch_add(1, Ordering::Relaxed);
+}
 
 const WORKER_FD_ENV: &str = "SHMEM_POD_FUTEX_TEST_FD";
 const PARENT_ADDRESS_ENV: &str = "SHMEM_POD_FUTEX_PARENT_ADDRESS";
@@ -418,6 +439,10 @@ fn forked_workers_produce_exact_total_under_contention() {
 }
 
 #[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn zero_timeout_is_an_immediate_attempt() {
     let shared = SharedMapping::new(ProcessFutexMutex::new(7_u64));
     let guard = shared.lock();
@@ -438,6 +463,71 @@ fn zero_timeout_is_an_immediate_attempt() {
 }
 
 #[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn unrepresentable_timeout_is_reported() {
+    let shared = SharedMapping::new(ProcessFutexMutex::new(()));
+    let guard = shared.lock();
+    let error = match shared.try_lock_for(Duration::MAX) {
+        Err(error) => error,
+        Ok(Some(second_guard)) => {
+            drop(second_guard);
+            panic!("unrepresentable timeout bypassed the held mutex");
+        }
+        Ok(None) => panic!("unrepresentable timeout was mistaken for expiration"),
+    };
+    drop(guard);
+
+    assert_eq!(error.raw_os_error(), libc::EOVERFLOW);
+    assert!(shared.try_lock().is_some());
+}
+
+#[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn timeout_unlock_boundary_preserves_one_owner() {
+    const ROUNDS: usize = 64;
+
+    for _ in 0..ROUNDS {
+        let mutex = std::sync::Arc::new(ProcessFutexMutex::new(0_u32));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let owner = mutex.lock();
+
+        let waiter_mutex = std::sync::Arc::clone(&mutex);
+        let waiter_barrier = std::sync::Arc::clone(&barrier);
+        let waiter = std::thread::spawn(move || {
+            waiter_barrier.wait();
+            match waiter_mutex.try_lock_for(Duration::from_millis(1)) {
+                Ok(Some(mut guard)) => {
+                    *guard += 1;
+                    true
+                }
+                Ok(None) => false,
+                Err(error) => panic!("timed wait failed: {error}"),
+            }
+        });
+
+        barrier.wait();
+        std::thread::sleep(Duration::from_millis(1));
+        drop(owner);
+        let waiter_acquired = waiter.join().expect("boundary waiter panicked");
+
+        let final_guard = mutex
+            .lock_fallible()
+            .expect("mutex stuck after boundary race");
+        assert_eq!(*final_guard, u32::from(waiter_acquired));
+    }
+}
+
+#[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn timed_waiter_acquires_when_owner_releases() {
     struct Shared {
         mutex: ProcessFutexMutex<u64>,
@@ -495,6 +585,10 @@ fn timed_waiter_acquires_when_owner_releases() {
 }
 
 #[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn signals_do_not_restart_the_timeout_budget() {
     struct Shared {
         mutex: ProcessFutexMutex<u64>,
@@ -502,6 +596,7 @@ fn signals_do_not_restart_the_timeout_budget() {
         start: AtomicU32,
         result: AtomicU32,
         elapsed_ns: AtomicU64,
+        delivered_signals: AtomicU32,
     }
 
     let shared = SharedMapping::new(Shared {
@@ -510,6 +605,7 @@ fn signals_do_not_restart_the_timeout_budget() {
         start: AtomicU32::new(0),
         result: AtomicU32::new(0),
         elapsed_ns: AtomicU64::new(0),
+        delivered_signals: AtomicU32::new(0),
     });
 
     // SAFETY: no guard exists across fork. The child installs a private signal
@@ -524,7 +620,8 @@ fn signals_do_not_restart_the_timeout_budget() {
         // SAFETY: a zeroed sigaction is a valid starting representation on
         // Linux; the mask is initialized before the action is installed.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-        action.sa_sigaction = no_op_signal_handler as *const () as usize;
+        DELIVERED_SIGNALS.store(0, Ordering::Relaxed);
+        action.sa_sigaction = count_signal_handler as *const () as usize;
         action.sa_flags = 0;
         // SAFETY: action and its mask are valid writable objects.
         if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
@@ -544,6 +641,9 @@ fn signals_do_not_restart_the_timeout_budget() {
             Err(error) => 1_000 + error.raw_os_error() as u32,
         };
         let elapsed = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        shared
+            .delivered_signals
+            .store(DELIVERED_SIGNALS.load(Ordering::Relaxed), Ordering::Release);
         shared.elapsed_ns.store(elapsed, Ordering::Release);
         shared.result.store(result, Ordering::Release);
         // SAFETY: any guard from the result match has been dropped.
@@ -585,6 +685,10 @@ fn signals_do_not_restart_the_timeout_budget() {
     assert_eq!(libc::WEXITSTATUS(completed[0].1), 0);
     assert_eq!(shared.result.load(Ordering::Acquire), 1);
     assert!(
+        shared.delivered_signals.load(Ordering::Acquire) > 0,
+        "the signal handler never ran, so EINTR was not exercised"
+    );
+    assert!(
         elapsed >= Duration::from_millis(70),
         "timeout expired unexpectedly early after {elapsed:?}"
     );
@@ -595,6 +699,10 @@ fn signals_do_not_restart_the_timeout_budget() {
 }
 
 #[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn timeout_does_not_steal_from_a_paused_owner() {
     struct Shared {
         mutex: ProcessFutexMutex<u64>,
@@ -671,6 +779,10 @@ fn timeout_does_not_steal_from_a_paused_owner() {
 }
 
 #[test]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn killed_owner_remains_locked_without_a_robust_protocol() {
     struct Shared {
         mutex: ProcessFutexMutex<u64>,

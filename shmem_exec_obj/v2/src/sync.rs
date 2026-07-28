@@ -11,7 +11,14 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
-use core::{fmt, time::Duration};
+use core::fmt;
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+use core::time::Duration;
 
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
 
@@ -26,25 +33,79 @@ const FUTEX_SPIN_LIMIT: usize = 64;
 const FUTEX_WAIT: u32 = 0;
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 const FUTEX_WAKE: u32 = 1;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const FUTEX_WAIT_BITSET: u32 = 9;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const FUTEX_BITSET_MATCH_ANY: u32 = u32::MAX;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EINTR: isize = 4;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EAGAIN: isize = 11;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    not(all(
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))
+))]
+const EINTR: isize = libc::EINTR as isize;
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    not(all(
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))
+))]
+const EAGAIN: isize = libc::EAGAIN as isize;
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EOVERFLOW: i32 = 75;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const ETIMEDOUT: isize = 110;
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const CLOCK_MONOTONIC: i32 = 1;
 
 #[cfg(all(
     feature = "linux-futex",
     target_os = "linux",
-    target_pointer_width = "64"
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 #[repr(C)]
 struct KernelTimespec {
@@ -52,47 +113,13 @@ struct KernelTimespec {
     tv_nsec: i64,
 }
 
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    target_pointer_width = "64"
-))]
-type KernelTime = i64;
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    target_pointer_width = "64"
-))]
-type KernelLong = i64;
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    target_pointer_width = "32"
-))]
-type KernelTimespec = libc::timespec;
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    target_pointer_width = "32"
-))]
-type KernelTime = libc::time_t;
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    target_pointer_width = "32"
-))]
-type KernelLong = libc::c_long;
-
 /// An operating-system failure while acquiring a [`ProcessFutexMutex`].
 ///
-/// A timeout is not an error and is represented by `Ok(None)` from
-/// [`ProcessFutexMutex::try_lock_for`]. This error instead reports that Linux
-/// could not read the monotonic clock or perform the futex wait. A common cause
-/// in injected code is a seccomp policy which denies one of those system calls.
+/// [`ProcessFutexMutex::lock_fallible`] returns this error when Linux rejects
+/// its futex wait. On targets which support timed acquisition, a timeout is not
+/// an error and is represented by `Ok(None)`; clock and timed-wait failures use
+/// this type. A common cause in injected code is a seccomp policy which denies
+/// one of those system calls.
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FutexLockError {
@@ -339,26 +366,43 @@ impl<T> ProcessFutexMutex<T> {
 impl<T: ?Sized> ProcessFutexMutex<T> {
     /// Acquires the mutex, sleeping in the kernel after bounded spinning.
     ///
-    /// # Fatal system-call failures
-    ///
-    /// Terminates the calling process rather than silently busy-looping if
-    /// Linux rejects an otherwise valid futex wait. Injectors should verify
-    /// that the guest's seccomp policy permits process-shared `futex`
-    /// operations before calling this method.
+    /// If Linux unexpectedly rejects the futex wait, this method preserves
+    /// mutual exclusion by falling back to spinning. Call
+    /// [`Self::lock_fallible`] when the caller must observe that policy or
+    /// system-call failure instead of accepting possible CPU consumption.
     #[inline]
     pub fn lock(&self) -> ProcessFutexMutexGuard<'_, T> {
+        match self.lock_fallible() {
+            Ok(guard) => guard,
+            Err(_) => self.lock_contended_spin(),
+        }
+    }
+
+    /// Acquires the mutex or reports an unexpected futex-wait failure.
+    ///
+    /// This has the same uncontended and bounded-spin fast paths as
+    /// [`Self::lock`], but it returns [`FutexLockError`] instead of switching
+    /// to an unbounded spin if Linux denies or rejects `FUTEX_WAIT`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the positive Linux error reported by the futex syscall. The
+    /// mutex remains locked by its existing owner; no recovery or ownership
+    /// transfer is inferred from the error.
+    #[inline]
+    pub fn lock_fallible(&self) -> Result<ProcessFutexMutexGuard<'_, T>, FutexLockError> {
         if let Some(guard) = self.try_lock() {
-            return guard;
+            return Ok(guard);
         }
 
         for _ in 0..FUTEX_SPIN_LIMIT {
             spin_loop();
             if let Some(guard) = self.try_lock() {
-                return guard;
+                return Ok(guard);
             }
         }
 
-        self.lock_contended()
+        self.lock_contended_fallible()
     }
 
     /// Attempts to acquire the mutex without waiting.
@@ -386,12 +430,21 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
     /// not restart the requested duration. An immediately available mutex is
     /// acquired even when `timeout` is zero.
     ///
+    /// This method is available only on 64-bit Linux `x86_64` and `aarch64`,
+    /// whose raw futex, clock, timespec, and errno ABIs are audited here. The
+    /// untimed mutex remains available on other Linux targets through the libc
+    /// syscall fallback.
+    ///
     /// # Errors
     ///
     /// Returns [`FutexLockError`] if reading `CLOCK_MONOTONIC` fails, the
     /// duration cannot be represented by the kernel ABI, or the futex wait is
     /// denied or otherwise fails. Callers injecting this code into a sandboxed
     /// process should verify that `clock_gettime` and `futex` are allowed.
+    #[cfg(all(
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[inline]
     pub fn try_lock_for(
         &self,
@@ -442,16 +495,33 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
     }
 
     #[cold]
-    fn lock_contended(&self) -> ProcessFutexMutexGuard<'_, T> {
+    fn lock_contended_fallible(&self) -> Result<ProcessFutexMutexGuard<'_, T>, FutexLockError> {
         // State 2 both records that a wake may be required and serves as the
         // futex comparison value. swap(2) acquires directly if an unlock raced
         // with entry into the slow path.
         if self.state.swap(CONTENDED, Ordering::Acquire) != UNLOCKED {
             loop {
-                futex_wait(&self.state, CONTENDED);
+                futex_wait(&self.state, CONTENDED)?;
                 if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
                     break;
                 }
+            }
+        }
+
+        Ok(ProcessFutexMutexGuard {
+            mutex: self,
+            _not_send: PhantomData,
+        })
+    }
+
+    #[cold]
+    fn lock_contended_spin(&self) -> ProcessFutexMutexGuard<'_, T> {
+        loop {
+            if self.state.swap(CONTENDED, Ordering::Acquire) == UNLOCKED {
+                break;
+            }
+            while self.state.load(Ordering::Relaxed) != UNLOCKED {
+                spin_loop();
             }
         }
 
@@ -461,6 +531,10 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
         }
     }
 
+    #[cfg(all(
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[cold]
     fn lock_contended_until(
         &self,
@@ -501,6 +575,12 @@ impl<T: ?Sized> ProcessFutexMutex<T> {
 /// live unless the child immediately forgets its duplicate guard and then
 /// `exec`s or `_exit`s without accessing the protected value. Dropping the
 /// duplicate would incorrectly unlock the parent's shared mutex.
+///
+/// A contended drop issues `FUTEX_WAKE`, but `Drop` cannot return a syscall
+/// error. Callers must establish at admission time that their sandbox permits
+/// shared futex waits and wakes. If that policy changes while waiters sleep,
+/// the release store still unlocks the mutex, but an existing sleeper may not
+/// be notified.
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 #[must_use = "dropping the guard immediately unlocks the mutex"]
 pub struct ProcessFutexMutexGuard<'a, T: ?Sized> {
@@ -580,7 +660,7 @@ unsafe impl<T: FixedAddressPodValue + Send> PodSync for ProcessFutexMutex<T> {}
 
 #[cfg(all(feature = "linux-futex", target_os = "linux"))]
 #[inline]
-fn futex_wait(word: &AtomicU32, expected: u32) {
+fn futex_wait(word: &AtomicU32, expected: u32) -> Result<(), FutexLockError> {
     loop {
         // SAFETY: AtomicU32 has the 32-bit size and alignment required by the
         // futex ABI, and the reference remains valid throughout the syscall.
@@ -591,16 +671,18 @@ fn futex_wait(word: &AtomicU32, expected: u32) {
         match result {
             // EAGAIN means the value changed before the kernel enqueued us.
             // Returning makes lock_contended retry before sleeping again.
-            result if result >= 0 || result == -EAGAIN => break,
-            // Safe construction rules out EFAULT/EINVAL. EPERM/ENOSYS can
-            // still result from sandbox policy; abort this path instead of
-            // converting a denied syscall into an unbounded hot loop.
-            _ => fatal_futex_error(),
+            result if result >= 0 || result == -EAGAIN => return Ok(()),
+            result => return Err(FutexLockError::from_syscall_result(result)),
         }
     }
 }
 
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 #[inline]
 fn futex_wait_until(
     word: &AtomicU32,
@@ -616,7 +698,7 @@ fn futex_wait_until(
                 word,
                 FUTEX_WAIT_BITSET,
                 expected,
-                deadline,
+                deadline as *const KernelTimespec as *const core::ffi::c_void,
                 FUTEX_BITSET_MATCH_ANY,
             )
         };
@@ -629,7 +711,12 @@ fn futex_wait_until(
     }
 }
 
-#[cfg(all(feature = "linux-futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn monotonic_deadline(timeout: Duration) -> Result<KernelTimespec, FutexLockError> {
     let mut now = KernelTimespec {
         tv_sec: 0,
@@ -642,17 +729,11 @@ fn monotonic_deadline(timeout: Duration) -> Result<KernelTimespec, FutexLockErro
         return Err(FutexLockError::from_syscall_result(result));
     }
 
-    let added_seconds: KernelTime = timeout
+    let added_seconds: i64 = timeout
         .as_secs()
         .try_into()
         .map_err(|_| FutexLockError::from_errno(EOVERFLOW))?;
-    #[cfg(target_pointer_width = "64")]
-    let added_nanoseconds: KernelLong = i64::from(timeout.subsec_nanos());
-    #[cfg(target_pointer_width = "32")]
-    let added_nanoseconds: KernelLong = timeout
-        .subsec_nanos()
-        .try_into()
-        .map_err(|_| FutexLockError::from_errno(EOVERFLOW))?;
+    let added_nanoseconds = i64::from(timeout.subsec_nanos());
     let nanoseconds = now.tv_nsec + added_nanoseconds;
     let carry = nanoseconds / 1_000_000_000;
     let seconds = now
@@ -671,62 +752,11 @@ fn monotonic_deadline(timeout: Duration) -> Result<KernelTimespec, FutexLockErro
 #[inline]
 fn futex_wake_one(word: &AtomicU32) {
     // SAFETY: the atomic word is valid and aligned for the futex ABI. Wake has
-    // no timeout or secondary pointer argument.
-    let result = unsafe { raw_futex(word, FUTEX_WAKE, 1, core::ptr::null(), 0) };
-    if result < 0 {
-        fatal_futex_error();
-    }
-}
-
-#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "x86_64"))]
-#[cold]
-fn fatal_futex_error() -> ! {
-    // SAFETY: an unexpected futex failure means this process can no longer
-    // preserve the mutex's blocking contract. exit_group(127) avoids unwinding
-    // through shared guards. If a seccomp policy also denies exit_group, the
-    // trap loop still cannot return into code which assumes mutual exclusion.
-    unsafe {
-        core::arch::asm!(
-            "syscall",
-            in("rax") 231_usize,
-            in("rdi") 127_usize,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack),
-        );
-    }
-    loop {
-        // SAFETY: this is the fail-stop fallback described above.
-        unsafe { core::arch::asm!("ud2", options(nostack, nomem)) }
-    }
-}
-
-#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
-#[cold]
-fn fatal_futex_error() -> ! {
-    // SAFETY: see the x86_64 implementation. Syscall 94 is exit_group.
-    unsafe {
-        core::arch::asm!(
-            "svc 0",
-            in("x0") 127_usize,
-            in("x8") 94_usize,
-            options(nostack),
-        );
-    }
-    loop {
-        // SAFETY: this is the fail-stop fallback described above.
-        unsafe { core::arch::asm!("brk #0", options(nostack, nomem)) }
-    }
-}
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    not(any(target_arch = "x86_64", target_arch = "aarch64"))
-))]
-#[cold]
-fn fatal_futex_error() -> ! {
-    panic!("unexpected futex system-call failure")
+    // no timeout or secondary pointer argument. Guard drop cannot report a
+    // wake error. The release store has already made the data consistent and
+    // spinning/new waiters can still observe it; a previously sleeping waiter
+    // may remain blocked if policy changes after admission.
+    let _ = unsafe { raw_futex(word, FUTEX_WAKE, 1, core::ptr::null(), 0) };
 }
 
 #[cfg(all(
@@ -740,7 +770,7 @@ unsafe fn raw_futex(
     word: &AtomicU32,
     operation: u32,
     value: u32,
-    timeout: *const KernelTimespec,
+    timeout: *const core::ffi::c_void,
     bitset: u32,
 ) -> isize {
     let mut result = 202_isize;
@@ -789,13 +819,18 @@ unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize 
     result
 }
 
-#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_arch = "aarch64",
+    target_pointer_width = "64"
+))]
 #[inline]
 unsafe fn raw_futex(
     word: &AtomicU32,
     operation: u32,
     value: u32,
-    timeout: *const KernelTimespec,
+    timeout: *const core::ffi::c_void,
     bitset: u32,
 ) -> isize {
     let mut result = word as *const AtomicU32 as usize;
@@ -816,7 +851,12 @@ unsafe fn raw_futex(
     result as isize
 }
 
-#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    target_arch = "aarch64",
+    target_pointer_width = "64"
+))]
 #[inline]
 unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize {
     let mut result = clock as usize;
@@ -847,7 +887,7 @@ unsafe fn raw_futex(
     word: &AtomicU32,
     operation: u32,
     value: u32,
-    timeout: *const KernelTimespec,
+    timeout: *const core::ffi::c_void,
     bitset: u32,
 ) -> isize {
     // SAFETY: this passes the same valid atomic address and scalar arguments to
@@ -864,22 +904,6 @@ unsafe fn raw_futex(
             bitset,
         ) as isize
     };
-    normalize_libc_syscall_result(result)
-}
-
-#[cfg(all(
-    feature = "linux-futex",
-    target_os = "linux",
-    not(any(
-        all(target_arch = "x86_64", target_pointer_width = "64"),
-        target_arch = "aarch64"
-    ))
-))]
-#[inline]
-unsafe fn raw_clock_gettime(clock: i32, timespec: *mut KernelTimespec) -> isize {
-    // SAFETY: the pointer is writable and SYS_clock_gettime is invoked with
-    // the target libc's timespec ABI on fallback architectures.
-    let result = unsafe { libc::syscall(libc::SYS_clock_gettime, clock, timespec) as isize };
     normalize_libc_syscall_result(result)
 }
 

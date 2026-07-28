@@ -24,7 +24,8 @@ exclusive access; it is not a data-recovery feature.
 
 ## Bounded waiting is not a lease
 
-On Linux, `ProcessFutexMutex::try_lock_for` bounds how long the caller waits:
+On 64-bit Linux x86-64 and AArch64,
+`ProcessFutexMutex::try_lock_for` bounds how long the caller waits:
 
 ```rust
 use core::time::Duration;
@@ -43,6 +44,12 @@ The method first attempts immediate acquisition. It then uses
 spurious wakeups, and contention retries do not restart the duration. A zero
 duration still succeeds when the mutex is immediately available.
 
+Timed acquisition is deliberately not exposed on other targets in this
+release. The raw clock syscall number, kernel timespec layout, futex timeout
+ABI, and errno values have been audited only for 64-bit x86-64 and AArch64.
+Untimed `ProcessFutexMutex` remains available on other Linux targets through
+the target libc's `syscall` and errno ABI.
+
 Timeout has exactly one meaning: this caller stopped waiting. It does not
 unlock the mutex, infer that the owner died, poison the protected value, or
 grant a second guard.
@@ -57,6 +64,14 @@ The timeout syscall can fail under seccomp or another sandbox policy.
 `FutexLockError::raw_os_error` exposes the positive Linux error number. An
 injector should probe the `futex` and `clock_gettime` policy before admitting
 work; treating a denied wait as owner death would be unsafe.
+
+Untimed callers may choose their failure behavior. `lock_fallible` reports an
+unexpected `FUTEX_WAIT` error without transferring ownership. The convenience
+`lock` method instead preserves exclusion and falls back to spinning, which
+can consume a CPU until the owner releases. A contended guard drop cannot
+return a `FUTEX_WAKE` error; admission must therefore verify both wait and wake
+operations. If policy changes after a waiter sleeps, the release store still
+unlocks the mutex, but that sleeping waiter may not be notified.
 
 ## Recovery for the current non-robust mutex
 
@@ -197,13 +212,15 @@ A recoverable backend should not ship until tests cover all of these cases:
 - a host pthread robust mutex and a pod robust mutex coexist in one thread;
 - mapping destruction is impossible while a guard, waiter, or robust-list node
   can still refer to it;
-- seccomp-denied clock/futex calls fail closed rather than busy-looping;
+- seccomp-denied timed/checked waits return their OS error, while convenience
+  `lock` preserves exclusion with its documented spin fallback;
 - layout and backend ABI mismatches are rejected before typed access.
 
 The current test suite includes normal cross-process wakeup, exact contention
-totals, different-address exec attachment, zero-duration acquisition, timed
-normal wakeup, a stopped owner which is not robbed, and a killed owner which
-remains locked.
+totals, different-address exec attachment, zero-duration acquisition,
+unrepresentable-duration rejection, timed normal wakeup, repeated delivered
+signals, timeout/unlock boundary races, a stopped owner which is not robbed,
+and a killed owner which remains locked.
 
 ## References
 
