@@ -392,6 +392,33 @@ fn poison_wins_over_an_initializer_waiting_to_publish() {
 }
 
 #[test]
+fn in_place_initialization_publishes_success_and_poisons_on_unwind() {
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive preparation and callback writes one complete value.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let owner = unsafe {
+        mapping.try_initialize_in_place::<SharedState>(|target| {
+            target.write(SharedState::new(23));
+        })
+    }
+    .unwrap();
+    assert_eq!(owner.try_enter().unwrap().value.load(Ordering::Relaxed), 23);
+    owner.begin_drain().unwrap().try_close().unwrap();
+
+    let bytes = SharedBytes::anonymous();
+    // SAFETY: exclusive preparation. The callback intentionally unwinds before
+    // claiming successful initialization, so the poison guard must fire.
+    let mapping = unsafe { bytes.raw() }.prepare(BUILD, INSTANCE);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let _ = mapping.try_initialize_in_place::<SharedState>(|_| {
+            panic!("intentional initialization failure");
+        });
+    }));
+    assert!(result.is_err());
+    assert_eq!(mapping.snapshot().unwrap().phase(), Phase::Poisoned);
+}
+
+#[test]
 fn dropping_drain_authority_poisons_instead_of_silently_stranding() {
     let bytes = SharedBytes::anonymous();
     // SAFETY: exclusive initial preparation.
@@ -533,6 +560,61 @@ fn corrupt_and_truncated_headers_are_rejected_before_typed_access() {
         unsafe { RawMapping::from_raw_parts(bytes.base, short_len) },
         Err(MappingError::MappingTooSmall { .. })
     ));
+}
+
+#[test]
+fn lifecycle_operates_inside_host_guard_pages() {
+    let total_len = MAPPING_LEN * 3;
+    // SAFETY: reserve three inaccessible pages; the middle page is replaced
+    // below while both guards remain PROT_NONE.
+    let reservation = unsafe {
+        libc::mmap(
+            ptr::null_mut(),
+            total_len,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(reservation, libc::MAP_FAILED, "guard reservation failed");
+    // SAFETY: middle lies within our reservation and MAP_FIXED replaces only
+    // that page with shared writable storage.
+    let base = unsafe {
+        libc::mmap(
+            reservation.cast::<u8>().add(MAPPING_LEN).cast(),
+            MAPPING_LEN,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+            -1,
+            0,
+        )
+    };
+    assert_eq!(base, unsafe {
+        reservation.cast::<u8>().add(MAPPING_LEN).cast()
+    });
+    let base = base.cast::<u8>();
+    // SAFETY: the middle page is live, writable, and exclusively prepared.
+    let mapping =
+        unsafe { RawMapping::from_raw_parts(base, MAPPING_LEN).unwrap() }.prepare(BUILD, INSTANCE);
+
+    // SAFETY: child deliberately faults on the lower guard and has no typed
+    // owner or attachment whose destructor could affect the parent.
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "fork failed");
+    if child == 0 {
+        unsafe { base.sub(1).write_volatile(1) };
+        unsafe { libc::_exit(1) };
+    }
+    let status = wait_for_pids(vec![child], Duration::from_secs(5))[0];
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGSEGV);
+
+    let owner = mapping.try_initialize(SharedState::new(1)).unwrap();
+    let draining = owner.begin_drain().unwrap();
+    draining.try_close().unwrap();
+    // SAFETY: all typed handles are gone; this removes the complete reservation.
+    assert_eq!(unsafe { libc::munmap(reservation, total_len) }, 0);
 }
 
 #[cfg(target_pointer_width = "64")]

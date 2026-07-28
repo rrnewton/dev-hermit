@@ -7,6 +7,7 @@ fn rejects_unsupported_or_unsound_shapes() {
     use std::process::Command;
 
     const CASES: &[(&str, &[&str])] = &[
+        ("attachment_not_send", &["Attachment", "Send"]),
         ("box", &["Box<u64>", "PodValue"]),
         (
             "drop_type",

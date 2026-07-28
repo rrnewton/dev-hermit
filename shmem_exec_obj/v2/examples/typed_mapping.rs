@@ -53,7 +53,12 @@ fn main() {
     // The child creates its own counted attachment and always exits without
     // unwinding inherited values.
     let child = unsafe { libc::fork() };
-    assert!(child >= 0, "fork failed");
+    if child < 0 {
+        // SAFETY: fork failed, so this process still owns the only local copy.
+        let owner = unsafe { ManuallyDrop::take(&mut owner) };
+        drop(owner);
+        panic!("fork failed");
+    }
     if child == 0 {
         let exit_code = mapping
             .attach::<State>()
@@ -65,14 +70,15 @@ fn main() {
             .map_or(1, |()| 0);
         unsafe { libc::_exit(exit_code) };
     }
+    // SAFETY: only the parent reaches this point, and its ManuallyDrop still
+    // contains the original unique close authority. Recover it before any
+    // fallible parent work so unwinding retains poison-on-drop behavior.
+    let owner = unsafe { ManuallyDrop::take(&mut owner) };
 
     let mut status = 0;
     assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
     assert!(libc::WIFEXITED(status));
     assert_eq!(libc::WEXITSTATUS(status), 0);
-    // SAFETY: only the parent reaches this point, and its ManuallyDrop still
-    // contains the original unique close authority.
-    let owner = unsafe { ManuallyDrop::take(&mut owner) };
     assert_eq!(owner.try_enter().unwrap().calls.load(Ordering::Relaxed), 1);
 
     let draining = owner.begin_drain().unwrap();

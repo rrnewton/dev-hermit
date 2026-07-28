@@ -11,6 +11,8 @@ The crate focuses on the hard parts of the state representation:
   allocator ownership;
 - exact compiled-layout fingerprints let an attacher validate the Rust layout
   before forming a typed reference;
+- a typed mapping lifecycle serializes initialization, counts attachments and
+  admissions, and prevents teardown from racing a late user;
 - checked relative offsets work when each process maps the state at a different
   virtual address;
 - process-shared atomics, spin locks, Linux futex locks, and SNZI cover several
@@ -19,8 +21,9 @@ The crate focuses on the hard parts of the state representation:
   pages.
 
 The application remains responsible for creating and transporting the shared
-mapping, authenticating any executable image, publishing initialization, and
-controlling teardown.
+mapping and authenticating the complete build or executable image. The typed
+mapping API handles publication and teardown admission once those caller-owned
+bytes cross its explicit unsafe boundary.
 
 ## Add The Crate
 
@@ -67,10 +70,9 @@ state.by_kind.lock()[2] += 1;
 # }
 ```
 
-This value is on the stack only to introduce the types. In an application, one
-process constructs it exactly once at its final address in a writable
-`MAP_SHARED` mapping. Attachers form a reference only after the validation
-sequence below.
+This value is on the stack only to introduce the types. [`mapping::Mapping`]
+constructs it exactly once at its final address in a writable `MAP_SHARED`
+mapping. Attachers access it only through a counted admission guard.
 
 ### Why `#[repr(C)]` Is Not Required
 
@@ -124,35 +126,56 @@ non-atomic fields therefore need a process-shared synchronization primitive.
 
 ## Initialize And Attach
 
-Treat typed access as the last step of a loader protocol:
+Treat typed access as the last step of an authenticated loader protocol:
 
 1. Create the state mapping as shared, writable, and non-executable. Map code in
    separate read-execute pages if the application also distributes machine
    code.
-2. Give one initializer exclusive ownership. It constructs every atomic, lock,
-   descriptor, and payload object directly at its final address.
-3. Bind the encoded `LayoutDescriptor` to the authenticated code/build identity
-   and mapping geometry. Publish a ready word with `Release` ordering only after
-   every preceding write is complete.
-4. An attacher initially treats the mapping as untyped bytes. It authenticates
-   the build, acquires the ready word, decodes and validates the descriptor,
-   checks every extent and alignment, and only then forms a Rust reference.
-5. Before teardown, close admission, drain all users and SNZI arrivals, return
-   allocator blocks, destroy owning state exactly once, and unmap only after
-   every process has detached.
+2. Create an unsafe `RawMapping` over the live caller-owned bytes. The first
+   participant calls `prepare` with a cryptographic `BuildIdentity` and a fresh
+   `InstanceIdentity`.
+3. Racing initializers call `try_initialize`; exactly one constructs the value
+   and release-publishes `Open`. Large states can use the explicitly unsafe
+   `try_initialize_in_place` API to avoid an intermediate move.
+4. An independently started participant authenticates the complete backing
+   object, then uses unsafe `open_existing`. Safe `attach::<T>` subsequently
+   validates the build, instance, geometry, and exact compiled layout before
+   incrementing the shared attachment count.
+5. `try_enter` atomically acquires an admission guard. Only that guard derefs to
+   `T`, so `begin_drain` can close admission without racing a late typed borrow.
+6. The unique `Owner` consumes close authority to enter `Draining`. Teardown is
+   allowed only when its attachment is the last one and every admission has
+   departed. `try_close` records `Closed`; the host may then unmap after also
+   excluding stale raw pointers and nonconforming guests.
 
-A fork-only child inherits the already initialized mapping, code build, and
-virtual addresses. Fork only while guards, arrival tokens, and allocator-backed
-owners are quiescent; reconstruct working references from the inherited mapping
-base and never unwind duplicated owners. An independently started or exec'd
-attacher has no such inherited validation context and must perform the complete
-descriptor and artifact handshake before forming references.
+Initialization, attachment, and admission counts occupy one atomic lifecycle
+word. A successful drain therefore cannot miss an entrant that observed an old
+phase. Losing `Owner` or `Draining` authority through normal Rust drop poisons
+the instance. Process death cannot run a destructor: it may instead strand
+`Initializing` or leak a count. The supported recovery policy is to stop every
+participant, poison/discard the complete generation, and create a new instance.
+
+A fork-only child inherits the mapping and every Rust ownership capability in
+memory without incrementing shared counts. Inherited owners, attachments,
+guards, arrival tokens, and allocator-backed owners must not be accessed or
+dropped. Use `ManuallyDrop` where needed and make every child failure path
+`exec` or `_exit`, never unwind. An independently started or exec'd attacher has
+no inherited validation context and must perform the complete authentication
+and `open_existing` handshake.
 
 `LayoutDescriptor::validate::<T>()` compares the received fingerprint, size,
 and alignment with the local `T`. A descriptor is a compatibility check, not a
 signature and not proof that the payload bytes contain a valid `T`.
 
-Run the complete release/acquire handshake:
+Run the recommended typed lifecycle, including a counted child attach and
+drain:
+
+```text
+cargo run --example typed_mapping
+```
+
+The lower-level descriptor/ready-word construction remains available as an
+educational protocol example:
 
 ```text
 cargo run --example layout_handshake
@@ -218,6 +241,11 @@ Both mutex types are non-reentrant, non-fair, non-robust, and not
 async-signal-safe. A process that exits while holding either mutex leaves it
 locked. Futex sleeping reduces wasted CPU; it does not by itself provide
 owner-death recovery.
+
+`ProcessFutexMutex::try_lock_for` bounds waiting but never steals ownership.
+See the [locking and crash-recovery guide](docs/locking.md) for robust-futex
+precedents, fencing requirements, and the supported whole-generation restart
+policy.
 
 The `shared_counters` example runs coarse locking, per-shard locking, and atomic
 fetch-add counters under the same multi-process workload:
