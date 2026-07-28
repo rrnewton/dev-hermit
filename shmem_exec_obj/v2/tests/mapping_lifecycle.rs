@@ -1,8 +1,4 @@
-#![cfg(all(
-    feature = "derive",
-    target_os = "linux",
-    target_has_atomic = "64"
-))]
+#![cfg(all(feature = "derive", target_os = "linux", target_has_atomic = "64"))]
 
 use std::process::{Child, Command, ExitStatus};
 use std::ptr;

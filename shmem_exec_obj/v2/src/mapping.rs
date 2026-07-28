@@ -1189,7 +1189,10 @@ mod tests {
 
         let mut bytes = AlignedBytes([0; 512]);
         let mapping = prepared(&mut bytes);
-        mapping.header().lifecycle.store(u64::MAX, Ordering::Release);
+        mapping
+            .header()
+            .lifecycle
+            .store(u64::MAX, Ordering::Release);
         assert!(matches!(
             mapping.snapshot(),
             Err(MappingError::CorruptLifecycle { .. })
