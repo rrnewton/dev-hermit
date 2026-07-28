@@ -305,8 +305,8 @@ with-proxy gh run rerun --failed -R rrnewton/hermit <run-id>
 # Land (squash + admin override; main is unprotected)
 with-proxy gh pr merge N -R rrnewton/hermit --squash --admin --delete-branch
 
-# All networked git/gh MUST use the proxy; never `gh auth switch`/`gh auth login`.
-# export HTTPS_PROXY=http://fwdproxy:8080   (or prefix with `with-proxy`)
+# In Meta environments, use appropriate proxies for accessing the web.
+# Prefix networked git/gh with `with-proxy`; never `gh auth switch`/`gh auth login`.
 ```
 
 ---
@@ -328,8 +328,8 @@ with-proxy gh pr merge N -R rrnewton/hermit --squash --admin --delete-branch
 - **Policy sources** — `dev-hermit/AGENTS.md` (= `CLAUDE.md` symlink) for
   coordinator rules; `hermit/AGENTS.md` / `reverie/AGENTS.md` for product build,
   test selection, and evidence.
-- **Parent branch** — the parent harness works on shared `main`; `devbig-lead`
-  (+ per-slot `devbig-lead-slotNN`) is this machine's lead pointer, currently an
+- **Parent branch** — the parent harness works on shared `main`; `legacy-lead`
+  (+ per-slot `legacy-lead-slotNN`) is this machine's lead pointer, currently an
   ancestor of `main` (fast-forwardable). Parent commits: small, frequent, pushed
   to `origin` (`rrnewton/dev-hermit`); 2 MiB / no-binaries ceiling applies.
 

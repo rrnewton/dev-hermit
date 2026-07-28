@@ -1,6 +1,6 @@
 ---
 name: validate-sh-cannot-be-green-on-devserver
-description: "./validate.sh never exits 0 on this devserver because baseline main fails host-sensitive detcore tests"
+description: "./validate.sh never exits 0 on this development host because baseline main fails host-sensitive detcore tests"
 ---
 
 The prescribed local-landing gate is: run `./validate.sh` on a PR's rebased SHA,
@@ -14,7 +14,7 @@ per-gate process-tree timeouts (`GATE_TIMEOUT_SECONDS`, `TIMEOUT_KILL_GRACE_SECO
 and adds `--verbose` (command/PID/heartbeat/live output, `VALIDATE_VERBOSE_INTERVAL_SECONDS`).
 So the old "80-minute hang" is bounded now. It still cannot EXIT 0 (see below).
 
-**Trap:** full `./validate.sh` CANNOT exit 0 on the devserver (devbig030), for
+**Trap:** full `./validate.sh` CANNOT exit 0 on this development host, for
 reasons NOT attributable to any PR:
 - baseline `origin/main` itself fails `cargo test -p detcore --test tests_misc ::
   futex_wait_bitset_timeout_is_absolute_and_removes_waiter` ("Guest exited with

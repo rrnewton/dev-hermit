@@ -35,7 +35,7 @@ misses about 60% of the time. Keep at least 100 fixed seeds for sparse races.
 
 | Item | Value |
 | --- | --- |
-| Hermit checkout | /home/newton/work/dev-hermit/hermit |
+| Hermit checkout | `$HOME/<repo>/hermit` |
 | Branch and HEAD | feature/clone-vfork at 592d5c6ccbced0d1240b6562ff87652cb706f142 |
 | Stress guest | tests/stress/concurrency.rs |
 | Stress guest SHA-256 | bb301f3a848f7ffa166bd82708c24362ae0cc42212dfeb2446e0bbb960516fa9 |

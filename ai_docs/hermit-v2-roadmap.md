@@ -121,7 +121,7 @@ cases.
 The CI architecture is correct in principle:
 
 - GitHub-hosted Linux runs ordinary build, tests, clippy, formatting, and docs.
-- `hermit-ci-newton` supplies CPUID and PMU hardware coverage.
+- A self-hosted runner supplies CPUID and PMU hardware coverage.
 - Namespace and schedule-search tests belong on the self-hosted lane.
 
 The remaining infrastructure blocker is deeper than the original user/mount
@@ -140,7 +140,7 @@ The current compatibility audit on Hermit `74324fff` found:
 | Tier | Works | Fails or remains limited |
 | --- | --- | --- |
 | Simple | `ls`, `cat`, `echo`, `grep`, `sed`, `awk` in run and record/verify; output matched native | Host fixture paths require explicit `--bind`, by design |
-| Medium | GCC compile, system Git, Python file/hash/JSON/subprocess under `run` | Record/replay divergence; `ioctl(FIOCLEX)` missing; Meta Git/fbpython hang on `CLONE_VFORK` |
+| Medium | GCC compile, system Git, Python file/hash/JSON/subprocess under `run` | Record/replay divergence; `ioctl(FIOCLEX)` missing; site Git/Python wrappers hang on `CLONE_VFORK` |
 | Complex | Simple pipeline under `run` | rustup proxy FD tracking, direct Cargo/Make `CLONE_VFORK`, pipeline replay and child cleanup |
 | Stress | `curl --network=host`; 4-thread/400-signal test in run and record/verify | blocking connect returns `EINPROGRESS`; external inputs remain nondeterministic |
 

@@ -17,11 +17,11 @@ REPO STRUCTURE GOTCHA (cost real investigation 2026-07-23):
   the parent repo does NOT track the skill. Persisting a skill edit needs a
   hermit-submodule PR, not a parent commit. `git add` of the skill path fails
   with "beyond a symbolic link".
-- Parent `docs/` IS a real parent dir (reports committable to parent devbig-lead).
+- Parent `docs/` IS a real parent dir (reports committable to the parent branch).
 - Parent main working checkout carries concurrent-agent dirt (PROJECT_VISION.md,
   alignment_reminder_prompt.md, hermit+reverie pin bumps, dirty submodule).
   NEVER `git add -A` here — stage exact paths only (skill rule + [[parked-slot-reuse-is-racy]]).
 
-Delivered v4-2026-07-23.md report in parent devbig-lead (commit f6c66fd). A v3
+Delivered v4-2026-07-23.md report in the parent repository (commit f6c66fd). A v3
 for today already existed in the submodule (c88bc0f) — check before creating to
 avoid dupes.

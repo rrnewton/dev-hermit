@@ -89,7 +89,7 @@ in §6. **Takeaway: a one-shot "app passes" does not always hold under repetitio
 
 - **8/8 programs run correctly under `--backend dbi`** with byte-identical stdout and matching
   exit codes vs ptrace (echo, true, false, ls, perl, python3, sqlite3, sort). Verified with a
-  real SDK at `/home/newton/dynamorio/build` + the native reverie-dbi client.
+  real SDK at `$HOME/dynamorio/build` + the native reverie-dbi client.
 - **The execution path** (`run_dbi` in `backends.rs` + `run.rs` `Backend::Dbi` arm) shells to
   `drrun -disable_rseq -c $HERMIT_DBI_CLIENT -- <program> <args>`. Self-contained, no new crate
   deps. **This lives in PR #215, which is NOT yet landed.**
@@ -238,7 +238,7 @@ Two regimes (min-of-N wall-clock, noisy 316-core host under load):
 - **Compute/syscall-heavy**: true steady-state overhead — **python3 ≈ 116×**, **sort ≈ 172×**
   (syscall interception + precise-preemption instruction accounting on tight loops).
 
-Gotchas confirmed: hermit isolates guest `/tmp` (put inputs outside `/tmp`); `/usr/local/bin`
+Gotchas confirmed: hermit isolates guest `/tmp` (put inputs outside `/tmp`); site-provided binaries
 python3/git are Meta wrappers that hang/slow under strict — use stock `/usr/bin` binaries.
 
 ---

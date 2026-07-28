@@ -16,7 +16,7 @@ CentOS installs the restricted QEMU system binary as
 `qemu-kvm` on `PATH`, so expose the conventional name:
 
 ```sh
-sudo ln -s /usr/libexec/qemu-kvm /usr/local/bin/qemu-system-x86_64
+sudo ln -s /usr/libexec/qemu-kvm "$HOME/.local/bin/qemu-system-x86_64"
 ```
 
 Alternatively, pass `--qemu /usr/libexec/qemu-kvm` to every `vng` command.

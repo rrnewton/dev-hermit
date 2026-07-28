@@ -36,7 +36,7 @@ bases (need retarget), NOT by CI.
 python_set_order_...` in `hermit-cli/tests/fail_closed_known_failures.tsv`
 (class `host-pmu-bug`), so the self-hosted fail-closed ratchet skips it and goes
 green fleet-wide. This is a suppression, not a root-cause fix — the reverie
-`clone_with_stack` SIGSEGV is NOT reproducible on a devserver (test passes via
+`clone_with_stack` SIGSEGV is NOT reproducible on a development host (test passes via
 cargo test, 15x standalone `hermit run --strict`, and under CI-like `unshare
 --user --map-root-user --pid --fork --mount`); it only fires on the self-hosted
 runner. No coverage lost: the test is namespace-dependent and never ran on the

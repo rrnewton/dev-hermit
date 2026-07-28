@@ -31,7 +31,7 @@ The more specific `AGENTS.md` files inside `hermit/` and `reverie/` also apply
 when working in those repositories; use them for product architecture, build,
 test, and style rules. The stricter rule wins. The Hermit pull request workflow
 in this file supersedes legacy guidance that routed ordinary Hermit changes
-through a local `devbig-lead` branch.
+through a local legacy lead branch.
 
 ## Role Boundary
 
@@ -76,7 +76,7 @@ The parent harness works directly on shared `main`. Parent-only policy work may
 be committed there when a task explicitly names the parent files and authorizes
 the commit. `worktrees/ACTIVE.md` is ignored machine-local coordination state;
 do not commit or merge it. Confirm the intended destination before publishing
-Reverie work. Stale references to `integration`, `devbig-lead`, or per-machine
+Reverie work. Stale references to `integration`, legacy lead branches, or per-machine
 parent branches do not override this model or the Hermit workflow below.
 
 ## Vocabulary
@@ -384,7 +384,7 @@ Example Hermit-only assignment:
 
 ```bash
 slot=worktrees/slot01
-HTTPS_PROXY=http://fwdproxy:8080 git -C "$slot/hermit" fetch origin main
+git -C "$slot/hermit" fetch origin main
 git -C "$slot/hermit" switch -c codex/<task-name> origin/main
 git -C "$slot/reverie" switch --detach \
   "$(git -C "$slot" rev-parse HEAD:reverie)"
@@ -502,19 +502,20 @@ open a draft pull request against `rrnewton/hermit:main`. Before opening the PR:
 7. Re-read concurrent remote state before pushing.
 
 ```bash
-HTTPS_PROXY=http://fwdproxy:8080 git fetch origin main
-HTTPS_PROXY=http://fwdproxy:8080 \
-  git push origin HEAD:refs/heads/<feature-branch>
-HTTPS_PROXY=http://fwdproxy:8080 gh pr create -R rrnewton/hermit --base main
+with-proxy git fetch origin main
+with-proxy git push origin HEAD:refs/heads/<feature-branch>
+with-proxy gh pr create -R rrnewton/hermit --base main
 ```
+
+In Meta environments, use appropriate proxies for accessing the web.
 
 Require both GitHub Actions jobs to be green at the exact PR head:
 **Regular tests (GitHub-hosted)** and **Host-dependent tests (self-hosted)**.
 A skipped, missing, queued, stale, or cancelled check is not green. Do not
 merge with unresolved review findings or merely because local tests pass.
 Report infrastructure failures explicitly rather than weakening
-hardware-sensitive assertions. Use `HTTPS_PROXY=http://fwdproxy:8080` for all
-networked `git` and `gh` operations, and never use `gh auth switch` because
+hardware-sensitive assertions. Use `with-proxy` for networked `git` and `gh`
+operations, and never use `gh auth switch` because
 authentication is shared machine state.
 
 ### Landing Authorization

@@ -8,7 +8,7 @@
 The DBI (DynamoRIO) observation-tool host in `reverie-dbi/src/tools.rs` runs a
 matrix of example tools end-to-end. Re-validated this session on a **release**
 client build (`PROFILE=release reverie-dbi/scripts/test-example-tools.sh`,
-`DYNAMORIO_HOME=/home/newton/dynamorio/build`), on branch `impl-dbi-ratchet-4`
+`DYNAMORIO_HOME=$HOME/<repo>/dynamorio/build`), on branch `impl-dbi-ratchet-4`
 (reverie PR #161, base `origin/main` c4fccf0):
 
 ```

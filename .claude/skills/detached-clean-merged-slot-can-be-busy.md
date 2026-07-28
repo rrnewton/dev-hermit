@@ -22,12 +22,12 @@ path ends in the slot). Removed slot48/51/89/95 this way; ~14 slots were busy.
 TWO slotNN schemes under `worktrees/` (don't conflate): (a) hermit-submodule
 worktrees (.git→hermit/.git) = the real "hermit slots" the cleanup targets;
 (b) parent-superproject worktrees slot01-12 & slot72-demos (.git→dev-hermit/.git,
-branches devbig-lead-slotNN) = OUT OF SCOPE. `git -C hermit worktree list` only
+branches on the legacy lead namespace) = OUT OF SCOPE. `git -C hermit worktree list` only
 shows (a); `git worktree list` from the parent shows (b).
 
 PROCESS-KILL HAZARD: killing leaked hermit processes by command-pattern is
 dangerous under concurrency — multiple agents run near-identical
-`hermit record ... /usr/local/bin/node -e console.log(42)` commands. Distinguish
+`hermit record ... <site-node> -e console.log(42)` commands. Distinguish
 yours by extra flags (--data-dir/--log-file) and cwd. hermit ptrace tracers
 ignore SIGTERM; need SIGKILL. Only kill trees matching your EXACT signature.
 

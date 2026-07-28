@@ -51,7 +51,7 @@ Full output:
 ```text
 reverie_sha=f0d043620bda85d081306c376e08872e8a7782c0
 hermit_sha=a62258e58544e33c8978f4ae2afa08b80f1dea87
-Linux devbig030.atn3.facebook.com 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64 x86_64 x86_64 GNU/Linux
+Linux development host 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64 x86_64 x86_64 GNU/Linux
 rustc 1.99.0-nightly (be8e82435 2026-07-11)
 cargo 1.99.0-nightly (59800466c 2026-07-07)
 ls: cannot access '/dev/kvm': No such file or directory
@@ -231,9 +231,9 @@ numerically comparable to ptrace startup totals.
 The path helper reported:
 
 ```text
-drrun=/home/newton/work/dev-hermit/worktrees/270/reverie/target/release/build/reverie-dbi-fa86f460bfce05f3/out/dynamorio-install/bin64/drrun
-home=/home/newton/work/dev-hermit/worktrees/270/reverie/target/release/build/reverie-dbi-fa86f460bfce05f3/out/dynamorio-install
-client=/home/newton/work/dev-hermit/worktrees/270/reverie/target/release/reverie-dbi-native/libreverie_dbi_client.so
+drrun=$HOME/work/dev-hermit/worktrees/270/reverie/target/release/build/reverie-dbi-fa86f460bfce05f3/out/dynamorio-install/bin64/drrun
+home=$HOME/work/dev-hermit/worktrees/270/reverie/target/release/build/reverie-dbi-fa86f460bfce05f3/out/dynamorio-install
+client=$HOME/work/dev-hermit/worktrees/270/reverie/target/release/reverie-dbi-native/libreverie_dbi_client.so
 ```
 
 ```text
@@ -744,8 +744,8 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
-reverie = { path = "/home/newton/work/dev-hermit/worktrees/270/reverie/reverie" }
-reverie-rpc-transport = { path = "/home/newton/work/dev-hermit/worktrees/270/reverie/reverie-rpc-transport" }
+reverie = { path = "$HOME/work/dev-hermit/worktrees/270/reverie/reverie" }
+reverie-rpc-transport = { path = "$HOME/work/dev-hermit/worktrees/270/reverie/reverie-rpc-transport" }
 tokio = { version = "1.52.4", features = ["macros", "rt", "time"] }
 
 [workspace]
@@ -804,8 +804,8 @@ Build command and full terminal summary:
 
 ```text
 $ with-proxy cargo build --release
-   Compiling reverie v0.1.0 (/home/newton/work/dev-hermit/worktrees/270/reverie/reverie)
-   Compiling reverie-rpc-transport v0.1.0 (/home/newton/work/dev-hermit/worktrees/270/reverie/reverie-rpc-transport)
+   Compiling reverie v0.1.0 ($HOME/work/dev-hermit/worktrees/270/reverie/reverie)
+   Compiling reverie-rpc-transport v0.1.0 ($HOME/work/dev-hermit/worktrees/270/reverie/reverie-rpc-transport)
    Compiling reverie-rpc-bench v0.1.0 (/tmp/backend-architecture-report/rpc-bench)
     Finished `release` profile [optimized] target(s) in 11.27s
 ```

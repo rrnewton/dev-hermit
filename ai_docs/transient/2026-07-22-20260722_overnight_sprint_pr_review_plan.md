@@ -100,7 +100,7 @@ separate blocker for every item.
 - **Hermit #35:** Decide whether the concurrent wall-clock model and RDTSC
   mapping preserve the intended semantics in both sequential and parallel modes.
 - **Hermit #41:** Review the fail-closed syscall policy, compatibility escape
-  hatch, and corrected `keyctl`/strict-mode behavior before its child `#62`.
+  route, and corrected `keyctl`/strict-mode behavior before its child `#62`.
 - **Hermit #42:** Review `select/pselect6` timeout conversion, guest memory
   writeback, temporary signal masks, and deterministic ready-fd ordering.
 - **Hermit #77:** Confirm the test proves real OpenMP parallelism and compares

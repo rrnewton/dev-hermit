@@ -4,7 +4,7 @@ Task `vision-e9patch-backend` (2026-07-24). Research + initial prototype for a
 6th Hermit/Reverie backend based on **e9patch** static binary rewriting, as an
 alternative/complement to ptrace, DBI (DynamoRIO), KVM, and liteinst.
 
-Evidence for every claim below was gathered on this devserver using the
+Evidence for every claim below was gathered on a development host using the
 **vendored** e9patch already in-house at
 `~/work/rrn_scx_playground/sched-test/scx-sim/third_party/e9patch` (built
 `e9tool` binary present) and the PLDI'20 paper text at

@@ -43,7 +43,7 @@ histogram instead of `GlobalState` RPC (DBI hardwires the global state to `()`).
 
 ```bash
 cd worktrees_reverie/slot80
-export DYNAMORIO_HOME=/home/newton/work/dev-reverie/dynamorio   # source build
+export DYNAMORIO_HOME=$HOME/work/dev-reverie/dynamorio   # source build
 PROFILE=release bash reverie-dbi/scripts/build-client.sh        # RELEASE — see caveat
 DRRUN=$DYNAMORIO_HOME/build/bin64/drrun
 CLIENT=$PWD/target/reverie-dbi-native/libreverie_dbi_client.so

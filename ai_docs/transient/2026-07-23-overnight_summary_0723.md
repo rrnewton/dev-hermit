@@ -42,7 +42,7 @@ Terminology: **L2** = `hermit run --strict --verify`, two runs bitwise-identical
 |---|---|---|
 | Coreutils / text | PASS | true, echo, cat, ls, date, env, wc, head, sort, uniq, cut, seq, tr, sha256sum, base64, tail, grep, sed, awk |
 | Regex | PASS | grep -oE, python re, perl — 3/3 |
-| FP / math | PASS | python math, bc -l, perl atan2, awk trig — 4/4 (fbpython launcher nondet, out of scope) |
+| FP / math | PASS | python math, bc -l, perl atan2, awk trig — 4/4 (site Python wrapper launcher nondet, out of scope) |
 | Shell scripts | PASS | cmd-subst+pipe, here-doc, EXIT trap, functions+args — 4/4 |
 | Process trees / pipes | PASS | fork/exec chains + pipe cascades + `while read` builtin loops — 3/3 |
 | Subprocess | PASS | python `subprocess` fork/exec + pipe/dup2/poll/waitpid — 2/2 |
@@ -50,7 +50,7 @@ Terminology: **L2** = `hermit run --strict --verify`, two runs bitwise-identical
 | Filesystem / symlink | PASS | symlink+readlink, realpath, stat/lstat, hardlink nlink, pathlib; inodes virtualized to small deterministic values |
 | Compression | PARTIAL | gzip ✅, bzip2 ✅; **tar czf FAIL** (multi-proc + NSS getpwuid socket lookup → nondeterministic interleaving) |
 | Database | PASS | sqlite3 `random()` & `datetime('now')` deterministic; redis full SET/GET/SHUTDOWN |
-| Git | PASS (stock) | stock /usr/bin/git 2.52 init/commit/merge/diff L2; **commit hashes deterministic** (reproducibility win). Meta git 2.53 (`git`) times out under --verify (telemetry threads) — use stock git |
+| Git | PASS (stock) | stock /usr/bin/git 2.52 init/commit/merge/diff L2; **commit hashes deterministic** (reproducibility win). site Git 2.53 (`git`) times out under --verify (telemetry threads) — use stock git |
 | Network | PASS | curl, python TCP loopback (single + threaded), bind+getsockname (port virtualized to 32768) — 4/4 |
 | Python stdlib | PASS | json, os.getpid/getuid (virtualized), sys.version, tempfile random name (deterministic), pathlib — 5/5 (stock python3.9) |
 | Multithreaded | MOSTLY | C pthread ✅, Go goroutines ✅, OpenMP ✅, Rust std::thread ✅; **python threading FAIL@L2** (multithreaded wall-clock/virtual-time divergence, intermittent). Thread *scheduling* determinism itself is solid |
@@ -126,7 +126,7 @@ wall-clock time, avoiding the MT virtual-time gap.
    the workdir between runs.
 4. **php** — hangs/timeout under strict and plain (likely preemption single-step
    stall).
-5. **Meta git (2.53)** — telemetry threads make `--verify` time out; stock git is
+5. **site Git (2.53)** — telemetry threads make `--verify` time out; stock git is
    fine and gives deterministic commit hashes.
 6. **record/replay** — find replay panics; gcc/`make -j` record timeout
    (parallel-proc/jobserver limitation).
@@ -222,7 +222,7 @@ is needed.
   `FUTEX_CMD_MASK` fix (PR #216).
 - **CLOCK_MONOTONIC** already deterministic (virtualized epoch + vDSO patched);
   the gcc `--verify` blocker is vfork/unsupported-syscall, **not** the clock.
-- **Meta git wrapper** (`git` = 2.53, 720 futex/39 clone3 + telemetry) ~73s under
+- **site Git wrapper** (`git` = 2.53, 720 futex/39 clone3 + telemetry) ~73s under
   `--strict`, `--verify` times out; stock `/usr/bin/git` is 0.24s and L2-clean —
   use stock git in tests.
 - **`ls -la`** intermittently diverges under `--verify` at `poll()` on an AF_UNIX

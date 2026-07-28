@@ -24,7 +24,7 @@ Recovered from ORC session 4fb50e87-5d91-4294-88b2-afeedf6cc917.
 **All delivered:**
 - ✅ P0 qcow2 nondeterminism FIXED
 - ✅ Demo Python rewrite + banner + victory message
-- ✅ Pastry v2: [P2437376852](https://www.internalfb.com/intern/paste/P2437376852/)
+- ✅ Pastry v2: internal paste P2437376852 (not publicly accessible)
 - ✅ README: maintenance mode text deleted
 - ✅ hermit: 0 open PRs (#1000-#1005 all landed or landing)
 - ✅ reverie: 0 open PRs (#189, #192-#197 all landed)
@@ -198,7 +198,7 @@ Holding dispatch until --verify fix completes (cascading deps handle sequencing)
 
 ## Updated Demo Pastry
 
-[P2437376852](https://www.internalfb.com/intern/paste/P2437376852/)
+Internal paste P2437376852 (not publicly accessible)
 
 Simplified clone, auto-submodule, individual demos, boot log timestamps, no maintenance mode text.
 
@@ -765,9 +765,9 @@ Both chained: integration → gate → report → adversarial review.
 
 ## CPUID Faulting — Investigating
 
-You're right — memory confirms devbig030 has kernel 6.17 with CPUID faulting (CpuidUserDis on Zen5). The PR #1021 claim looks wrong.
+You're right — memory confirms development host has kernel 6.17 with CPUID faulting (CpuidUserDis on Zen5). The PR #1021 claim looks wrong.
 
-[verify-cpuid-faulting-devbig](#task/verify-cpuid-faulting-devbig) assigned to hermit-271 to:
+[verify-cpuid-faulting-development-host](#task/verify-cpuid-faulting-development-host) assigned to hermit-271 to:
 1. Confirm kernel 6.17 + CPUID faulting dmesg
 2. Write simple CPUID test program
 3. Verify hermit --strict works WITHOUT --no-virtualize-cpuid
@@ -819,7 +819,7 @@ The agent likely tested CPUID faulting and got an error, then assumed the host d
 
 1. **Agent ran inside a sandbox** that blocks CPUID faulting (unlikely — we use `--dangerously-enable-internet-mode`)
 2. **Agent tested wrong** — ran hermit without root or with wrong flags, got an error, concluded "no support"
-3. **Stale info** — agent had cached knowledge that devbig030 was kernel 6.13 (pre-upgrade) and didn't check
+3. **Stale info** — agent had cached knowledge that development host was kernel 6.13 (pre-upgrade) and didn't check
 
 Our agents run with codex `--full-access` permissions, so sandbox shouldn't be the issue. More likely the agent just didn't verify and assumed from stale context.
 
@@ -918,7 +918,7 @@ Review task closed. If gaps were found, we'll iterate.
 
 **1. "DBI adapted strace mirror"** — this is poison. DBI must use REAL Reverie tools (counter1, counter2, strace), not fake mirrors. Will be addressed in report iteration.
 
-**2. "/dev/kvm not found"** — devbig030 HAS /dev/kvm. This is likely a sandbox issue with certain agent types.
+**2. "/dev/kvm not found"** — development host HAS /dev/kvm. This is likely a sandbox issue with certain agent types.
 
 [investigate-kvm-sandbox](#task/investigate-kvm-sandbox) filed as P0. Testing /dev/kvm access across claude vs codex agents now.
 
@@ -1070,7 +1070,7 @@ strace exit omission explains ptrace off-by-4 ✅ (special-case in comparisons).
 
 From hermit-274's investigation:
 
-FINDINGS [claude/opus-4.8] — RESOLVED: the "no /dev/kvm" report came from a CODEX-sandboxed agent, not the host. KVM is fully available on this devbig.
+FINDINGS [claude/opus-4.8] — RESOLVED: the "no /dev/kvm" report came from a CODEX-sandboxed agent, not the host. KVM is fully available on this development host.
 
 HOST FACTS: AMD EPYC 9D85 158-Core; kernel 6.17.13-0_fbk0_crackerjackhost; /dev/kvm = crw-rw-rw- root:kvm 10,232 (world-rw).
 

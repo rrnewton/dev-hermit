@@ -333,7 +333,7 @@ This is a multi-quarter parity project, not a small adapter patch.
 
 The exact current-main measurement used these task-local slots:
 
-    cd /home/newton/work/dev-hermit/worktrees_reverie/slot111
+    cd $HOME/work/dev-hermit/worktrees_reverie/slot111
     with-proxy scripts/backend-submodule.sh activate sabre
     cmake -S third-party/sabre -B target/sabre-assessment
     cmake --build target/sabre-assessment -j2
@@ -342,11 +342,11 @@ The exact current-main measurement used these task-local slots:
     with-proxy cargo build -p riptrace -p riptrace-tool
     env SABRE_BINARY=target/sabre-assessment/sabre timeout 180 experimental/reverie-sabre/conformance/run.sh all
 
-    cd /home/newton/work/dev-hermit/worktrees/slot129
+    cd $HOME/work/dev-hermit/worktrees/slot129
     with-proxy cargo build --release -p hermit --bin hermit
-    env HERMIT_SABRE_RUNNER=/home/newton/work/dev-hermit/worktrees_reverie/slot111/target/release/reverie-sabre-strace \
-        HERMIT_SABRE_BINARY=/home/newton/work/dev-hermit/worktrees_reverie/slot111/target/sabre-assessment/sabre \
-        HERMIT_SABRE_PLUGIN=/home/newton/work/dev-hermit/worktrees_reverie/slot111/target/release/libreverie_sabre_strace_plugin.so \
+    env HERMIT_SABRE_RUNNER=$HOME/work/dev-hermit/worktrees_reverie/slot111/target/release/reverie-sabre-strace \
+        HERMIT_SABRE_BINARY=$HOME/work/dev-hermit/worktrees_reverie/slot111/target/sabre-assessment/sabre \
+        HERMIT_SABRE_PLUGIN=$HOME/work/dev-hermit/worktrees_reverie/slot111/target/release/libreverie_sabre_strace_plugin.so \
         VALIDATE_GATE_TIMEOUT_SECONDS=1800 \
         with-proxy ./validate.sh --sabre-compat-only
 

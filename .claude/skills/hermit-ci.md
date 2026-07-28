@@ -34,7 +34,7 @@ infrastructure flakes, and improve the CI configuration and validation harness.
 - There is a single PMU self-hosted runner; serialized PMU is a known bottleneck
   — report queue effects, do not mistake a queued check for a failure.
 - Report infrastructure failures explicitly; never weaken a hardware-sensitive
-  test to make a devserver green.
+  test to make a development host green.
 
 ## Worktree assignment
 

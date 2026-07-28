@@ -72,14 +72,14 @@ Then drain the remaining free PRs respecting their small overlap groups:
   clean, vs. 54 if run as a single chain.
 
 ## 5. Local validation per PR (before/at each land)
-Self-hosted CI is SKIPPED in practice, so validate locally on the devserver.
+Self-hosted CI is SKIPPED in practice, so validate locally on the development host.
 Run the hosted DAG or its targeted subset:
 - Fast gate: `cargo build --workspace && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings`
 - Chain A PRs: `cargo test -p hermit --test procfs_determinism` (+ the PR's added test)
 - Chain B PRs: `cargo test -p hermit --test command_strict_verify -- --ignored`
   and `cargo test -p detcore --lib` (classification)
 - Full hosted parity: `ci/run-dag.sh hosted -v` (reproduces the GitHub gate)
-- Note: `validate.sh` cannot go fully green on a devserver
+- Note: `validate.sh` cannot go fully green on a development host
   (`validate-sh-cannot-be-green-on-devserver`); rely on hosted CI + targeted local tests.
 
 ## 6. CI wall time & test-case counts

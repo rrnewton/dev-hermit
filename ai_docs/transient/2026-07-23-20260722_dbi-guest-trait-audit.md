@@ -140,7 +140,7 @@ is that boundary.
 ## Recommended build/validate path (for the impl task)
 
 - Use the source-built DynamoRIO at
-  `/home/newton/work/dev-reverie/dynamorio/build/bin64/drrun` (prebuilt releases
+  `$HOME/work/dev-reverie/dynamorio/build/bin64/drrun` (prebuilt releases
   fail with `<ERROR: using undefined symbol!>`; see the companion doc).
 - Client rev matters: build from `69f47d9`, **not** `e3e2c965` — the pinned rev's
   client SIGSEGVs on dynamic ELFs (see memory `dbi-client-rev-e3e2c965-broken`).

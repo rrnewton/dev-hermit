@@ -92,9 +92,10 @@ human-review holds even when CI is green.
 
 For GitHub CLI access in this environment:
 
+In Meta environments, use appropriate proxies for accessing the web.
+
 ```bash
-export HTTPS_PROXY=http://fwdproxy:8080
-gh pr list -R rrnewton/hermit
+with-proxy gh pr list -R rrnewton/hermit
 ```
 
 ## Documentation map

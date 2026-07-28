@@ -16,7 +16,7 @@
 
 | role | path |
 |---|---|
-| fbsource (import, reference) | `/home/newton/fbsource/fbcode/hermetic_infra/hermit` (+ `../reverie`) |
+| fbsource (import, reference) | `$HOME/fbsource/fbcode/hermetic_infra/hermit` (+ `../reverie`) |
 | OSS / dev-hermit (active dev) | `~/work/dev-hermit/hermit` (+ `~/work/dev-hermit/reverie`) |
 
 Direction note: fbsource is a copy of `fbcode/hermetic_infra/hermit` (see the
@@ -78,7 +78,7 @@ KVM/DBI/liteinst backend tests.
 ## Method / reproduction
 
 ```bash
-FB=/home/newton/fbsource/fbcode/hermetic_infra/hermit
+FB=$HOME/fbsource/fbcode/hermetic_infra/hermit
 OSS=~/work/dev-hermit/hermit
 # per-location set difference (files only in fbsource):
 comm -23 <(cd $FB/tests && find . -type f|sort) <(cd $OSS/tests && find . -type f|sort) \

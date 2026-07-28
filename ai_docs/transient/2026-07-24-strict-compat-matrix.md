@@ -169,15 +169,15 @@ The results are historical measurements, not claims about an untested branch tip
 | 33 | Rust threads | `./rs_threads` | PASS L2 | 4 | Four threads and `Arc<Mutex>`. |
 | 34 | Go goroutines | `./go_routines` | PASS L2 | 4 | Four goroutines, WaitGroup and mutex. |
 | 35 | CPython threads | `/usr/bin/python3.9 py_threads.py` | PASS L2 | 4 | Four threads and Lock, counter 200000. |
-| 36 | Meta Python threads | `/usr/local/bin/python3 py_threads.py` | FAIL | 4 | Startup reads live `/proc/self` memory statistics; the failure also reproduces single-threaded. |
+| 36 | site Python threads | `<site-python> py_threads.py` | FAIL | 4 | Startup reads live `/proc/self` memory statistics; the failure also reproduces single-threaded. |
 
 ## Database and structured data
 
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
 | 37 | sqlite3 | `sqlite3 :memory: 'CREATE TABLE t(x); INSERT INTO t VALUES(1),(2),(3); SELECT sum(x) FROM t;'` | PASS L2 | 5 | Plain strict output is 6. |
-| 38 | Meta Python JSON | `python3 -c 'import json; print(json.dumps({"a":1,"b":[2,3]}))'` | FAIL | 5 | Meta Python runtime threads diverge despite identical guest stdout. |
-| 39 | Meta Python hashlib | `python3 -c 'import hashlib; print(hashlib.sha256(b"hello").hexdigest())'` | FAIL | 5 | Same Meta Python runtime cause. |
+| 38 | site Python JSON | `python3 -c 'import json; print(json.dumps({"a":1,"b":[2,3]}))'` | FAIL | 5 | site Python runtime threads diverge despite identical guest stdout. |
+| 39 | site Python hashlib | `python3 -c 'import hashlib; print(hashlib.sha256(b"hello").hexdigest())'` | FAIL | 5 | Same site Python runtime cause. |
 | 40 | awk | `awk '{sum+=$1} END{print sum}' nums.txt` | PASS L2 | 5 | Output 100. |
 | 41 | sed | `sed 's/foo/bar/g' text.txt` | PASS L2 | 5 | |
 | 42 | bc | `bc -l pi.bc` | PASS L2 | 5 | File input avoids a pipeline hang; output 3.14159265358979323844. |
@@ -277,9 +277,9 @@ The results are historical measurements, not claims about an untested branch tip
 
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
-| 109 | Git init/add/status | `/bin/sh -c 'rm -rf /tmp/hermit-git-test && /usr/local/bin/git init /tmp/hermit-git-test && cd /tmp/hermit-git-test && /usr/local/bin/git add . && /usr/local/bin/git status'` | FAIL | 11 | Killed with exit 137 in run 1 after producing multi-gigabyte logs. |
-| 110 | Git log | `/usr/local/bin/git log --oneline -5` | FAIL | 11 | A 15-second outer timeout expired in run 1 with exit 124; never reached L2. |
-| 111 | Git diff | `/usr/local/bin/git diff --stat 'HEAD~1'` | FAIL | 11 | A 15-second outer timeout expired in run 1 with exit 124; never reached L2. |
+| 109 | Git init/add/status | `/bin/sh -c 'rm -rf /tmp/hermit-git-test && <site-git> init /tmp/hermit-git-test && cd /tmp/hermit-git-test && <site-git> add . && <site-git> status'` | FAIL | 11 | Killed with exit 137 in run 1 after producing multi-gigabyte logs. |
+| 110 | Git log | `<site-git> log --oneline -5` | FAIL | 11 | A 15-second outer timeout expired in run 1 with exit 124; never reached L2. |
+| 111 | Git diff | `<site-git> diff --stat 'HEAD~1'` | FAIL | 11 | A 15-second outer timeout expired in run 1 with exit 124; never reached L2. |
 | 112 | curl | `/usr/bin/curl --version` | PASS L2 | 11 | 2419/2419 messages. |
 | 113 | wget | `/usr/bin/wget --version` | PASS L2 | 11 | 1674/1674 messages. |
 | 114 | ssh | `/usr/bin/ssh -V` | PASS L2 | 11 | 1406/1406 messages. |
@@ -314,7 +314,7 @@ The results are historical measurements, not claims about an untested branch tip
 | 133 | tr and rev | bash -c 'echo hello world &#124; tr a-z A-Z &#124; rev' | PASS L2 | 13 | |
 | 134 | Shell loop and wc | bash -c 'for f in /etc/hostname /etc/resolv.conf; do wc -l < "$f"; done' | PASS L2 | 13 | |
 | 135 | Named FIFO | bash producer/consumer over mkfifo | FAIL | 13 | Hangs in a single strict run; the peer opener cannot run while the other process blocks. |
-| 136 | Meta Python pipeline | bash -c 'python3 -c "print(42)" &#124; grep 42' | FAIL | 13 | Meta Python startup diverges even without the pipe. |
+| 136 | site Python pipeline | bash -c 'python3 -c "print(42)" &#124; grep 42' | FAIL | 13 | site Python startup diverges even without the pipe. |
 | 137 | Command substitution | bash -c 'A=$(echo hello); echo "$A world"' | PASS L2 | 13 | |
 | 138 | Subshell pipeline | bash -c 'echo start; (echo sub1; echo sub2) &#124; sort; echo end' | PASS L2 | 13 | |
 | 139 | Process substitution | bash -c 'diff <(echo a) <(echo b); true' | PASS L2 | 13 | |
@@ -344,9 +344,9 @@ The results are historical measurements, not claims about an untested branch tip
 | 153 | C Fibonacci | recursive fib(30) | PASS L2 | 15 | Stable 5/5; result 832040. |
 | 154 | Rust parallel sort | four-thread sort and merge | PASS L2 | 15 | Stable 5/5; 10,000 elements. |
 | 155 | Go concurrent word count | four-goroutine map/reduce | PASS L2 | 15 | Stable 5/5. |
-| 156 | Meta Python Fibonacci | python3 recursive fib(30) | FAIL | 15 | Flaky L2: 1/5 pass; interpreter startup race. |
-| 157 | Meta Python sqlite3 | python3 in-memory SQLite aggregate | FAIL | 15 | Flaky L2: 2/5 pass; interpreter startup race. |
-| 158 | Meta Python word count | python3 dictionary and sort workload | FAIL | 15 | Flaky L2: 2/5 pass; interpreter startup race. |
+| 156 | site Python Fibonacci | python3 recursive fib(30) | FAIL | 15 | Flaky L2: 1/5 pass; interpreter startup race. |
+| 157 | site Python sqlite3 | python3 in-memory SQLite aggregate | FAIL | 15 | Flaky L2: 2/5 pass; interpreter startup race. |
+| 158 | site Python word count | python3 dictionary and sort workload | FAIL | 15 | Flaky L2: 2/5 pass; interpreter startup race. |
 | 159 | C SQLite | compile SQLite C workload | NOT RUN | 15 | sqlite3.h development headers were unavailable. |
 
 ## Compilation pipeline
@@ -372,7 +372,7 @@ The results are historical measurements, not claims about an untested branch tip
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
 | 173 | Rust Cargo tests | copy project to isolated /tmp; CARGO_NET_OFFLINE=true cargo test | PASS L2 | 17 | Three unit tests pass in each run with 18,769 matching deterministic messages. |
-| 174 | Meta Python unittest | copy project to isolated /tmp; python3 -m unittest test_file.py | FAIL | 17 | All five tests run, but clone/futex scheduling diverges. |
+| 174 | site Python unittest | copy project to isolated /tmp; python3 -m unittest test_file.py | FAIL | 17 | All five tests run, but clone/futex scheduling diverges. |
 | 175 | Go tests | GOMAXPROCS=1 GOFLAGS='-count=1 -p=1' go test ./... | FAIL | 17 | Run 1 stalls around clone/vfork and nanosleep; no L1 result. |
 
 ## Larger compilation projects
@@ -454,8 +454,8 @@ The results are historical measurements, not claims about an untested branch tip
 | 223 | sed and head | sed substitution over /etc/passwd &#124; head -3 | PASS L2 | 23 | |
 | 224 | comm | comm over two process substitutions | PASS L2 | 23 | |
 | 225 | join | join over two process substitutions | PASS L2 | 23 | |
-| 226 | Meta Python JSON | python3 JSON load/dump | FAIL | 23 | Default Meta runtime diverges after clone3; stock /usr/bin/python3 control passes L2. |
-| 227 | Meta Python CSV | python3 CSV reader | FAIL | 23 | Same Meta runtime scheduling divergence; stock Python control passes L2. |
+| 226 | site Python JSON | python3 JSON load/dump | FAIL | 23 | Default site runtime diverges after clone3; stock /usr/bin/python3 control passes L2. |
+| 227 | site Python CSV | python3 CSV reader | FAIL | 23 | Same site runtime scheduling divergence; stock Python control passes L2. |
 | 228 | paste process substitutions | paste -d, <(seq 1 5) <(seq 6 10) | FAIL | 23 | Run 1 hangs reading one producer while the other writer remains pending. |
 
 ## Archive and packaging
@@ -512,8 +512,8 @@ The results are historical measurements, not claims about an untested branch tip
 | 261 | printf floating point | `printf '%.10f\n' 3.14159265358979` | PASS L2 | 27 | |
 | 262 | expr | `expr 7 '*' 8` | PASS L2 | 27 | |
 | 263 | seq | `seq -f '%.3f' 0 0.1 1.0` | PASS L2 | 27 | |
-| 264 | Meta Python factorial | `python3 -c 'import math; print(math.factorial(20))'` | FAIL | 27 | Both runs finish, but threaded startup RNG-seed and scheduling order diverge before the calculation. |
-| 265 | Meta Python hashlib | `python3 -c 'import hashlib; print(hashlib.sha256(b"hello").hexdigest())'` | FAIL | 27 | Same Meta Python startup divergence. |
+| 264 | site Python factorial | `python3 -c 'import math; print(math.factorial(20))'` | FAIL | 27 | Both runs finish, but threaded startup RNG-seed and scheduling order diverge before the calculation. |
+| 265 | site Python hashlib | `python3 -c 'import hashlib; print(hashlib.sha256(b"hello").hexdigest())'` | FAIL | 27 | Same site Python startup divergence. |
 | 266 | OpenSSL speed | `openssl speed -elapsed -seconds 1 sha256 2>&1 &#124; tail -3` | FAIL | 27 | Scheduler logs match, but measured throughput differs between the two runs; the full verify takes about 147 seconds. |
 
 ## Filesystem, identity, and permissions
@@ -562,7 +562,7 @@ The results are historical measurements, not claims about an untested branch tip
 | 301 | wget external GET | `wget -q -O /tmp/example.html https://example.com` | FAIL | 34 | Run 1 exits 4 after `ENETUNREACH`; external network success is outside scope. |
 | 302 | OpenSSL external TLS | `openssl s_client -connect example.com:443 &#124; head -5` | PASS L2 | 34 | Deterministic DNS failure path; pipeline exits 0 because `head` succeeds, not because TLS connected. |
 | 303 | curl localhost POST | curl POST to `localhost:1` with status capture | PASS L2 | 34 | Deterministic refused-connect exit 7. |
-| 304 | Meta Python urllib | urllib request to `localhost:1` with status capture | FAIL | 34 | Both runs finish, but Meta Python startup scheduling and RNG seed order diverge. |
+| 304 | site Python urllib | urllib request to `localhost:1` with status capture | FAIL | 34 | Both runs finish, but site Python startup scheduling and RNG seed order diverge. |
 | 305 | wget localhost headers | wget `localhost:1` with status capture | PASS L2 | 34 | Deterministic refused-connect exit 4. |
 
 ## Time and process control
@@ -629,8 +629,8 @@ valid target because that package has no library target.
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
 | 345 | sqlite3 larger query | create, insert, select, count, and sum in `:memory:` | PASS L2 | 37 | Output rows 1 through 3, count 3, and sum 6. |
-| 346 | Meta Python JSON | build and pretty-print nested user JSON | FAIL | 37 | L1 output is correct, but the two L2 runs schedule launcher children differently at COMMIT turn 29; stock Python 3.9 control passes. |
-| 347 | Meta Python CSV | write a two-row CSV in memory | FAIL | 37 | Same Meta launcher/runtime scheduling divergence; stock Python 3.9 control passes. |
+| 346 | site Python JSON | build and pretty-print nested user JSON | FAIL | 37 | L1 output is correct, but the two L2 runs schedule launcher children differently at COMMIT turn 29; stock Python 3.9 control passes. |
+| 347 | site Python CSV | write a two-row CSV in memory | FAIL | 37 | Same Meta launcher/runtime scheduling divergence; stock Python 3.9 control passes. |
 | 348 | Node.js JSON | print `{a:1,b:[2,3]}` as JSON | PASS L2 | 37 | |
 | 349 | Node.js array | print squares from 0 through 9 | PASS L2 | 37 | Output 0 through 81. |
 | 350 | Lua loop | print integers 1 through 10 | PASS L2 | 37 | |
@@ -641,7 +641,7 @@ valid target because that package has no library target.
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
 | 352 | sqlite3 sums | create two three-column rows and select `a+b+c` | PASS L2 | 38 | Outputs 6 and 15. |
-| 353 | Meta Python hashlib | SHA-256 of `hermit` | FAIL | 38 | Logical commit time differs by 20ns after startup RNG/gettimeofday ordering swaps; stock Python 3.9 control passes L2. |
+| 353 | site Python hashlib | SHA-256 of `hermit` | FAIL | 38 | Logical commit time differs by 20ns after startup RNG/gettimeofday ordering swaps; stock Python 3.9 control passes L2. |
 | 354 | Perl POSIX date | POSIX `strftime` of local epoch time | PASS L2 | 38 | Output 1969-12-31 in the local timezone. |
 | 355 | awk users | `awk -F: '{print $1}' /etc/passwd &#124; head -5` | PASS L2 | 38 | |
 | 356 | sed lines | `sed -n '1,5p' /etc/passwd` | PASS L2 | 38 | |
@@ -681,13 +681,13 @@ valid target because that package has no library target.
 | 385 | read/write fd | `bash -c 'exec 3<>/tmp/ipc41; echo hello >&3; cat <&3; rm /tmp/ipc41'` | PASS L2 | 41 | |
 | 386 | bc pi | `sh -c "echo 'scale=20; 4*a(1)' &#124; bc -l"` | PASS L2 | 42 | |
 | 387 | dc pi | `dc -e '10 k 355 113 / p'` | PASS L2 | 42 | |
-| 388 | Meta Python math | `python3 -c 'import math; print(math.pi, math.e, math.factorial(20))'` | PASS L2 | 42 | |
-| 389 | Meta Python sum | `python3 -c 'print(sum(range(1000)))'` | FAIL | 42 | Helper-thread startup diverges after clone3: parent futex progress and child RNG initialization occur in different orders. |
+| 388 | site Python math | `python3 -c 'import math; print(math.pi, math.e, math.factorial(20))'` | PASS L2 | 42 | |
+| 389 | site Python sum | `python3 -c 'print(sum(range(1000)))'` | FAIL | 42 | Helper-thread startup diverges after clone3: parent futex progress and child RNG initialization occur in different orders. |
 | 390 | awk sum | `awk 'BEGIN{for(i=1;i<=100;i++) s+=i; print s}'` | PASS L2 | 42 | Output is 5050. |
 | 391 | Perl POSIX math | `perl -e 'use POSIX; print POSIX::ceil(3.14), " ", POSIX::floor(3.14), "\n"'` | PASS L2 | 42 | |
 | 392 | seq and awk sum | `sh -c "seq 1 1000 &#124; awk '{s+=$1} END{print s}'"` | PASS L2 | 42 | |
 | 393 | bc integer power | `sh -c "echo '2^64' &#124; bc"` | PASS L2 | 42 | |
-| 394 | Meta Python seeded RNG | `python3 -c 'import random; random.seed(42); print([random.randint(0,100) for _ in range(10)])'` | FAIL | 42 | Explicit application seeding does not remove the Meta runtime's helper-thread startup scheduling divergence. |
+| 394 | site Python seeded RNG | `python3 -c 'import random; random.seed(42); print([random.randint(0,100) for _ in range(10)])'` | FAIL | 42 | Explicit application seeding does not remove the site runtime's helper-thread startup scheduling divergence. |
 
 ## Extended text, process, filesystem, networking, and archives
 
@@ -760,12 +760,12 @@ valid target because that package has no library target.
 
 | # | Program | Command | Result | Batch | Notes |
 |---:|---|---|---|---:|---|
-| 457 | pthread TID fixture | `/home/newton/impl-strict-compat-batch50/pthread_tid` | PASS L2 | 50 | Four pthreads with deterministic aggregate output. |
-| 458 | pthread mutex counter | `/home/newton/impl-strict-compat-batch50/pthread_counter` | PASS L2 | 50 | Four threads perform 10,000 increments each. |
-| 459 | Rayon sum | `/home/newton/impl-strict-compat-batch50/rayon_sum` | PASS L2 | 50 | |
+| 457 | pthread TID fixture | `$HOME/impl-strict-compat-batch50/pthread_tid` | PASS L2 | 50 | Four pthreads with deterministic aggregate output. |
+| 458 | pthread mutex counter | `$HOME/impl-strict-compat-batch50/pthread_counter` | PASS L2 | 50 | Four threads perform 10,000 increments each. |
+| 459 | Rayon sum | `$HOME/impl-strict-compat-batch50/rayon_sum` | PASS L2 | 50 | |
 | 460 | Bash background jobs | `bash -c 'for i in $(seq 1 5); do echo $i & done; wait'` | PASS L2 | 50 | |
 | 461 | parallel xargs | `bash -c 'seq 1 100 &#124; xargs -P4 -I{} echo {}'` | PASS L2 | 50 | |
-| 462 | parallel make | `make -f /home/newton/impl-strict-compat-batch50/Makefile -j4` | PASS L2 | 50 | Four independent targets. |
+| 462 | parallel make | `make -f $HOME/impl-strict-compat-batch50/Makefile -j4` | PASS L2 | 50 | Four independent targets. |
 | 463 | concurrent file writes | `bash -c 'echo a > /tmp/f1 & echo b > /tmp/f2 & wait; cat /tmp/f1 /tmp/f2; rm /tmp/f1 /tmp/f2'` | PASS L2 | 50 | |
 | 464 | pushd and popd | `bash -c 'pushd /tmp >/dev/null; pwd; popd >/dev/null; pwd'` | PASS L2 | 51 | |
 | 465 | single-line alias | `bash -c 'alias hi="echo hello"; hi'` | FAIL | 51 | Noninteractive Bash parses the alias use before expansion and exits 127 natively; a valid multiline control passes L2. |
@@ -803,12 +803,12 @@ valid target because that package has no library target.
 | 497 | Perl title case | `perl -pe 's/\b(\w)/uc($1)/ge' /etc/hostname` | PASS L2 | 54 | |
 | 498 | Bash regex | `bash -c '[[ "hello123" =~ ([0-9]+) ]] && echo ${BASH_REMATCH[1]}'` | PASS L2 | 54 | |
 | 499 | Bash case | `bash -c 'case hello in h*) echo match;; esac'` | PASS L2 | 54 | |
-| 500 | producer-consumer | `/home/newton/impl-strict-compat-batch55/producer_consumer` | PASS L2 | 55 | Mutex and condvar queue; consumes 100 items with sum 5050. |
-| 501 | pthread barrier | `/home/newton/impl-strict-compat-batch55/barrier` | PASS L2 | 55 | Four threads print in explicit ID order. |
-| 502 | reader-writer lock | `/home/newton/impl-strict-compat-batch55/rwlock` | PASS L2 | 55 | Three readers and one writer. |
-| 503 | thread pool | `/home/newton/impl-strict-compat-batch55/thread_pool` | PASS L2 | 55 | Four workers process 20 tasks. |
-| 504 | Crossbeam channel | `/home/newton/impl-strict-compat-batch55/crossbeam_channel` | PASS L2 | 55 | Sends 100 items. |
-| 505 | Arc Mutex counter | `/home/newton/impl-strict-compat-batch55/arc_mutex` | PASS L2 | 55 | Eight threads produce counter 8000. |
+| 500 | producer-consumer | `$HOME/impl-strict-compat-batch55/producer_consumer` | PASS L2 | 55 | Mutex and condvar queue; consumes 100 items with sum 5050. |
+| 501 | pthread barrier | `$HOME/impl-strict-compat-batch55/barrier` | PASS L2 | 55 | Four threads print in explicit ID order. |
+| 502 | reader-writer lock | `$HOME/impl-strict-compat-batch55/rwlock` | PASS L2 | 55 | Three readers and one writer. |
+| 503 | thread pool | `$HOME/impl-strict-compat-batch55/thread_pool` | PASS L2 | 55 | Four workers process 20 tasks. |
+| 504 | Crossbeam channel | `$HOME/impl-strict-compat-batch55/crossbeam_channel` | PASS L2 | 55 | Sends 100 items. |
+| 505 | Arc Mutex counter | `$HOME/impl-strict-compat-batch55/arc_mutex` | PASS L2 | 55 | Eight threads produce counter 8000. |
 | 506 | multi-file line counts | Bash loop running `wc -l` on passwd, hostname, and resolv.conf | PASS L2 | 56 | |
 | 507 | header count pipeline | `find /usr/include -name "*.h" -type f &#124; head -10 &#124; xargs wc -l &#124; tail -1` | PASS L2 | 56 | Output is `1697 total`. |
 | 508 | passwd CSV | `awk -F: 'BEGIN{OFS=","} {print $1,$3,$6}' /etc/passwd &#124; head -5` | PASS L2 | 56 | |
@@ -888,7 +888,7 @@ assurance dimension from strict L2 and are excluded from the strict summary.
 | Expansion batch 3, pre-fix release binary | 0 | 8 | Every compiler/computation recording completed; every replay failed its first `execve` with the same corrupt envp. |
 | Expansion batch 4, pre-fix release binary | 0 | 9 | All C/C++/Rust guests recorded and exited 0; all replays failed initial `execve` with corrupt envp. |
 | Expansion batch 5, pre-fix release binary | 0 | 10 | Eight replays failed initial `execve`; Node recording hit an unsupported ioctl and javac recording did not complete. |
-| Focused validation after envp fix | 4 | 0 | At PR #238 head, `/bin/echo` matched 3/3 and `java -version` matched 1/1 on a host with `/usr/local/fbcode`. A separate validation also matched `getent hosts localhost`. |
+| Focused validation after envp fix | 4 | 0 | At PR #238 head, `/bin/echo` matched 3/3 and `java -version` matched 1/1 on a host with `<site-toolchain-root>`. A separate validation also matched `getent hosts localhost`. |
 | Post-envp general retest on main | 16 | 4 | Echo, cat, wc, getent, cal, arch, nproc, Perl, awk, Lua, dc, sqlite3, direct gzip/gunzip, factor, and printf match. `hostname -f` hits the recorder NULL-optval panic; date and two gcc cases diverge in replay fd ordering. |
 | Post-envp scripting retest on main | 11 | 1 | Lua, Ruby, Perl, awk, bc, dc, factor, sqlite3, jq, Java, and OpenSSL match. Node recording still panics on unsupported ioctl request 35142 and never reaches replay. |
 | Post-envp compilation and multi-process retest | 4 | 6 | Make, a Bash builtin loop, `sh` cat/echo, and `wc` match. gcc and g++ replay diverge before executing their generated binaries; rustc recording does not complete; three shell pipelines diverge through stdout routing, fd allocation, or SIGCHLD ordering. |
@@ -931,7 +931,7 @@ single-commit PR head, so it was not landed.
 | Batch 1 default tar extract | Guest euid 0 changes tar to same-owner behavior; archived host uid/gid is unmapped in the user namespace. | Yes: `--no-same-owner` passes L2. |
 | Batch 1 differing-file diff | The command deterministically exits 1, but default verification accepts only successful guest exits. | Yes: `--verify-allow both` passes L2. |
 | Batch 3 gcc and rustc | A parent-versus-fork/vfork-child scheduling race changes child start and RNG seed order. | No complete fix in the batch result; PR #221 was only a partial step. |
-| Batches 4 and 5 Meta Python | Meta runtime startup exposes live procfs memory data and adds runtime threads whose virtual-time/RNG ordering diverges. | Workaround: stock `/usr/bin/python3.9` passes the same probes at L2; no product fix was established by these batches. |
+| Batches 4 and 5 site Python | site runtime startup exposes live procfs memory data and adds runtime threads whose virtual-time/RNG ordering diverges. | Workaround: stock `/usr/bin/python3.9` passes the same probes at L2; no product fix was established by these batches. |
 | Batch 6 Ruby | Broken host RubyGems packaging; the same command fails natively. | Workaround: `--disable-gems` passes L2; this is not a Hermit defect. |
 | Batch 7 default tar create | Owner-name resolution enters stateful NSS/nscd AF_UNIX polling; poll readiness differs. | Yes: `--numeric-owner` passes L2. |
 | Batch 10 ps and free | Live procfs memory counters are not virtualized. | No fix recorded in the batch. |
@@ -943,9 +943,9 @@ single-commit PR head, so it was not landed.
 | Batch 10 timeout | Host SIGALRM uses wall time while guest sleep advances on virtual time. | No fix recorded in the batch. |
 | Batch 11 Git | Git startup spins in `sched_yield` under strict sequentialization, generates multi-gigabyte logs, and never completes run 1. | No fix validated by batch 11. |
 | Batch 13 named FIFO | Blocking FIFO open/read waits for a peer process that strict serialization does not schedule. | No fix recorded; requires scheduler awareness of cross-process FIFO rendezvous. |
-| Batch 13 Meta Python pipeline | The Meta Python runtime diverges during threaded startup even without a pipe. | Stock CPython is the established control; the pipeline itself is not the failure. |
+| Batch 13 site Python pipeline | The site Python runtime diverges during threaded startup even without a pipe. | Stock CPython is the established control; the pipeline itself is not the failure. |
 | Batch 14 nslookup and nc | Both commands deterministically exit nonzero under network isolation, so default verify does not start run 2. | Use an expected-exit verification policy when the nonzero result is the intended contract. |
-| Batches 15, 17, 23, 27, 34, 37, and 38 Meta Python | Clone/futex and RNG-seed ordering diverges in the multithreaded Meta runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
+| Batches 15, 17, 23, 27, 34, 37, and 38 site Python | Clone/futex and RNG-seed ordering diverges in the multithreaded site runtime startup. | Stock /usr/bin/python3 controls pass; no Meta-runtime scheduling fix was established. |
 | Batches 16 and 22 compiler outputs | Verify runs share persistent visible filesystem state; run 2 observes artifacts created by run 1. | Put outputs in guest-isolated /tmp, pre-stage identical outputs, or copy the project into per-run /tmp. |
 | Batch 17 Go tests | Go test stalls around clone/vfork, futex, and nanosleep before producing an L1 result. | No fix recorded; single-P and warm-cache controls still stalled. |
 | Batch 18 parallel make | GNU make jobserver pipe rendezvous deadlocks under serialized scheduling. | Use -j1; scheduler support for cross-process blocking pipes is required for -jN. |
@@ -962,7 +962,7 @@ single-commit PR head, so it was not landed.
 | Batch 35 named FIFO | The writer blocks in `openat(O_WRONLY)` while strict serialization prevents the reader from reaching its matching open. | Requires scheduler awareness of cross-process FIFO rendezvous, the same structural class as batches 13 and 18. |
 | Batch 39 live system data | `lscpu`, `free`, and `ps` expose changing host CPU-frequency or memory values. | Virtualize or suppress those live fields; deterministic static topology, mount, disk, kernel, and page-size probes pass. |
 | Batch 41 FIFO and process substitution | A blocking FIFO open or pipe read holds the serialized turn while the peer process that would satisfy it cannot run. | Requires scheduler awareness of cross-process rendezvous; simple pipes, coprocesses, IPC listing, sleeps, and regular-file fd operations pass. |
-| Batch 42 Meta Python | Helper-thread startup orders parent futex progress and child RNG initialization differently; explicit application-level RNG seeding does not control that runtime startup. | Stock Python remains the established control for this failure class; the non-Python math tools pass. |
+| Batch 42 site Python | Helper-thread startup orders parent futex progress and child RNG initialization differently; explicit application-level RNG seeding does not control that runtime startup. | Stock Python remains the established control for this failure class; the non-Python math tools pass. |
 | Batch 43 Perl uppercase | The prescribed `\U$1/e` replacement is invalid Perl and exits 255 identically on the host. | The valid `uc($1)/e` equivalent passes L2; this is a command error, not a Hermit defect. |
 | Batch 45 long listing | Owner/group name lookup enters live nscd AF_UNIX polling, whose readiness differs between runs. | Numeric-owner `ls -lan` avoids NSS and passes L2. |
 | Batch 51 single-line alias | Noninteractive Bash parses the alias definition and use together, so `hi` is not expanded and the exact command exits 127 natively. | A valid multiline `expand_aliases` control passes L2; this is a command-shape error, not a Hermit defect. |

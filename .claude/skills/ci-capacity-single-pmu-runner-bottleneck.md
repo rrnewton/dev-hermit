@@ -7,7 +7,7 @@ Task impl-ci-deep-dive (2026-07-24). Deep dive on the Hermit CI alarm
 ("queue, cancelled runs, no green runs").
 
 UPDATE (research-ci-runner-health, 2026-07-24 ~14:45 UTC): the runner FLEET GREW
-1 → 3 (hermit-ci-newton, -2, -3, all online pmu; 1 busy/2 idle) — the throughput
+1 → 3 (three online PMU runners; 1 busy/2 idle) — the throughput
 fix landed, queue no longer backs up for hours. BUT the self-hosted 'Host-dependent
 tests' job now fails 100% at the **Dependencies step** (exit 100): `apt-get install`
 → `E: Unable to locate package cmake / redis-server / redis-tools / sqlite3 /
@@ -39,8 +39,8 @@ Can't test on facebookexperimental (no write access; bot policy forbids acting
 there) — verified by YAML validity + logic only.
 
 ROOT CAUSE = capacity, not broken tests. Each of `rrnewton/hermit` and
-`rrnewton/reverie` has exactly ONE pmu self-hosted runner (`hermit-ci-newton`,
-`reverie-ci-newton`; labels `self-hosted,Linux,X64,<repo>,pmu`). The `pmu` label
+`rrnewton/reverie` has exactly ONE pmu self-hosted runner (labels
+`self-hosted,Linux,X64,<repo>,pmu`). The `pmu` label
 is required (determinism suite reads hardware RCB/retired-branch counters) so
 these jobs CANNOT fall back to GitHub-hosted runners.
 - **reverie**: Rust job ~2-3 min → runner stays IDLE, queue depth 0, goes green
@@ -62,13 +62,13 @@ This is the documented workaround, consistent with
 [[validate-sh-cannot-be-green-on-devserver]] (main is unprotected; gate =
 GitHub-hosted green + locally-validated).
 
-TOOL BUILT: `~/work/dev-hermit/ci-runner/ci-status.py` (+ README.md) — a
+TOOL BUILT: `$HOME/<repo>/ci-runner/ci-status.py` (+ README.md) — a
 non-mutating status reporter (Python3 stdlib; shells out via `$GH` default
 `with-proxy gh`). `./ci-status.py --all` reports runner health, queue depth,
 last-green-per-workflow, and open-PR label compliance for all 3 repos. Modeled
-on but much smaller than `~/work/dev-deepscry/ci-runner` (a full Hetzner
-fleet/shepherd toolkit — NOT ported; hermit uses host-local PMU runners, not a
-cloud fleet). ci-runner/ is UNTRACKED in the parent superproject (not committed;
+on but much smaller than a full cloud fleet/shepherd toolkit — NOT ported;
+hermit uses host-local PMU runners, not a cloud fleet). ci-runner/ is UNTRACKED
+in the parent superproject (not committed;
 no commit step was in the task).
 
 Remediation for the human: (1) add N>1 pmu runners for hermit, (2) split the

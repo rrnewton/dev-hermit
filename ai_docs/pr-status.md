@@ -7,7 +7,7 @@ review, merge, or release decisions.
 ## Refresh commands
 
 ```bash
-export HTTPS_PROXY=http://fwdproxy:8080
+In Meta environments, use appropriate proxies for accessing the web.
 
 gh pr list -R rrnewton/hermit --state open --limit 100 \
   --json number,title,isDraft,mergeStateStatus,statusCheckRollup,headRefName,url

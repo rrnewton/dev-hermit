@@ -36,7 +36,7 @@ per-syscall cost/behavior comparison current.
   Hermit against that exact Reverie SHA, then let the coordinator pin.
 - The KVM hypercall return register is 32-bit — read results from the frame,
   not the truncated return reg.
-- Do not weaken hardware-sensitive assertions to make a devserver green; report
+- Do not weaken hardware-sensitive assertions to make a development host green; report
   the limitation.
 
 ## Worktree assignment

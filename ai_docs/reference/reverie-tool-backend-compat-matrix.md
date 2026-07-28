@@ -2,7 +2,7 @@
 
 Author: [impl agent, opus-4.8] (task `impl-tool-compat-matrix`), 2026-07-26.
 Measured on `~/work/dev-hermit/reverie` @ main `74d090e`; `/dev/kvm` present;
-host devbig030.
+development host.
 
 ## TL;DR — the crucial architectural finding
 

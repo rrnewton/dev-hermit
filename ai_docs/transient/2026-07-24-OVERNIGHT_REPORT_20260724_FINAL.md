@@ -57,7 +57,7 @@ on one common tip. Each row names its exact evidence boundary.
 
 The landed gate grew through #521, #537, #542, #550, #558, #562, and #563.
 PR #564 then pinned the Node row to `/bin/node`, avoiding the host
-`/usr/local/bin/nodejs-wrapper` telemetry process. At #564's exact head:
+`<site-node-wrapper>` telemetry process. At #564's exact head:
 
 - `./validate.sh --strict-compat-only --verbose`: **119/119 PASS L2**.
 - Direct `/bin/node -e 'console.log(42)'`: **3/3 PASS L2**, each
@@ -69,7 +69,7 @@ This is an L2 gate result, not L4 stress evidence. The excluded
 
 Targeted complex-app checks on `6cea488c` passed SQLite query, GNU Make
 version, and GNU Grep version at L2. The prescribed Meta
-`/usr/local/bin/git --version` diverged, while stock `/usr/bin/git --version`
+`<site-git> --version` diverged, while stock `/usr/bin/git --version`
 passed L2; the failure is therefore not a claim that all Git binaries fail.
 
 ### Record/replay: 95/118 completed baseline

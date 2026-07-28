@@ -32,5 +32,5 @@ Tooling:
   performs the same decisions without writing.
 
 The memory store is file-based Markdown at
-`~/.claude/projects/-home-newton-work-dev-hermit/memory/`, overridable with
+`$HOME/.claude/projects/<workspace-key>/memory/`, overridable with
 `HERMIT_MEMORY_DIR`. After changing a mapped memory, run sync and lint.

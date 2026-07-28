@@ -2,7 +2,7 @@
 
 Author: [impl agent, opus-4.8] (task `impl-unified-backend-runner`), 2026-07-26.
 Investigated on `~/work/dev-hermit/reverie` @ main `74d090e` / `origin/main`
-`0fdf5fda`; `/dev/kvm` present; host devbig.
+`0fdf5fda`; `/dev/kvm` present on the development host.
 
 ## Status: BLOCKED on file-ownership overlap — no code changes made
 
