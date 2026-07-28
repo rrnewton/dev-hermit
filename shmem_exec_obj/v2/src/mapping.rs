@@ -1157,9 +1157,11 @@ mod tests {
         unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).version).write(VERSION + 1) };
         // SAFETY: the test intentionally passes authenticated-but-corrupt bytes.
         assert!(matches!(
-            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
-                .unwrap()
-                .open_existing(BUILD, INSTANCE),
+            unsafe {
+                RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len)
+                    .unwrap()
+                    .open_existing(BUILD, INSTANCE)
+            },
             Err(MappingError::UnsupportedVersion { .. })
         ));
 
@@ -1169,9 +1171,11 @@ mod tests {
         unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).header_len).write(1) };
         // SAFETY: open_existing must reject before typed access.
         assert!(matches!(
-            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
-                .unwrap()
-                .open_existing(BUILD, INSTANCE),
+            unsafe {
+                RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len)
+                    .unwrap()
+                    .open_existing(BUILD, INSTANCE)
+            },
             Err(MappingError::HeaderLength { .. })
         ));
 
@@ -1181,9 +1185,11 @@ mod tests {
         unsafe { ptr::addr_of_mut!((*mapping.header.as_ptr()).mapping_len).write(511) };
         // SAFETY: open_existing must reject before typed access.
         assert!(matches!(
-            unsafe { RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len) }
-                .unwrap()
-                .open_existing(BUILD, INSTANCE),
+            unsafe {
+                RawMapping::from_raw_parts(mapping.base.as_ptr(), mapping.len)
+                    .unwrap()
+                    .open_existing(BUILD, INSTANCE)
+            },
             Err(MappingError::MappingLength { .. })
         ));
 
