@@ -38,5 +38,13 @@
     "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 4 REJECT at 138026e: one Major remains. Lazy pthread_atfork registration can occur after another fork snapshots handlers, so the child inherits the registration/state but skips the callback. READY then hides copied gate state; BUSY recovery can duplicate an inherited handler. Require per-hook PID-epoch recovery, owner-bearing READY, fail-closed ambiguous BUSY, and a deterministic third-party-prepare regression. Minor: clarify -3 vs -6 generation taxonomy. Durable report: ai_docs/reviews/connector-adversarial-round4.md.",
     "created_at": "2026-07-28T19:40:46.231874581Z",
     "updated_at": "2026-07-28T19:40:46.231874581Z"
+  },
+  {
+    "id": "pod-9-cb518e35968",
+    "issue_id": "pod-9",
+    "author": "devbig030",
+    "body": "[impl agent, gpt-5.6-sol] Round-4 fork-snapshot rejection fixed at parent main 89d1e931d3a8f39e940aacf136650b818d6bd9da (pod-9 intentionally remains in_progress). Every admitted exported hook now checks a serialized process PID epoch first. READY atfork claims retain owner PID. A child with foreign READY forcibly resets its private call/fork gate copies under the documented unsafe no-child-token contract, resets attachment/failure state, rebinds READY to the child, and never re-registers. Foreign EMPTY recovers then registers normally; foreign BUSY uses allocation-free static diagnostics and fails closed promptly without wait/reset/registration. The normal child callback rebinds installed BUSY/READY because callback execution proves installation. Deterministic regression pauses fork in a pre-existing third-party prepare handler, registers the shim after the callback snapshot while a phantom parent token is live, and proves child epoch/gate recovery; a second child proves ambiguous BUSY fail-stop. A separate real-fork API test proves force_reset_in_fork_child discards only a vanished parent-thread token. Fixed -3 identity recheck versus -6 operational documentation. Validation: fmt; connector 11 default + 11 no-default; shim 11 serial and parallel; host cleanup 1; no-default check; Rust 1.85 all-target/all-feature; clippy -D warnings; rustdoc -D warnings; C11 ABI; standard preload 7 processes/1407 calls/7 attachments; stress preload 40/320040/40; ptrace 1/1 detached; full 11-probe taxonomy; NODELETE post-dlclose; bash -n; shellcheck.",
+    "created_at": "2026-07-28T20:21:46.041928359Z",
+    "updated_at": "2026-07-28T20:21:46.041928359Z"
   }
 ]
