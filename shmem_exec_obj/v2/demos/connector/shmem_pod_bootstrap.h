@@ -18,6 +18,7 @@ enum shmem_pod_bootstrap_flags {
     SHMEM_POD_BOOTSTRAP_INHERIT_ACROSS_EXEC = 1u << 1,
     SHMEM_POD_BOOTSTRAP_FIXED_CODE_ADDRESS = 1u << 2,
     SHMEM_POD_BOOTSTRAP_FIXED_STATE_ADDRESS = 1u << 3,
+    /* Caller-verified provenance assertion; the context cannot prove receipt. */
     SHMEM_POD_BOOTSTRAP_SCM_RIGHTS_TRANSPORT = 1u << 4,
 };
 

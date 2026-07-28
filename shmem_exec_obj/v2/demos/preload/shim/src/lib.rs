@@ -10,6 +10,7 @@ use shmem_pod::injection::{
 use shmem_pod_runtime::{PodArtifact, PodImage, PodState, hex};
 use std::cell::{Cell, UnsafeCell};
 use std::ffi::c_char;
+use std::fmt;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::panic::{self, AssertUnwindSafe};
@@ -30,8 +31,8 @@ static INIT_STATE: AtomicU8 = AtomicU8::new(INIT_EMPTY);
 static ATTACHED_PID: AtomicI32 = AtomicI32::new(0);
 static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 static FAIL_CLOSED: AtomicBool = AtomicBool::new(false);
-static ATFORK_WAS_DISABLED: AtomicBool = AtomicBool::new(false);
 static CALL_GATE: AdapterCallGate = AdapterCallGate::new();
+static FORK_BARRIER: ForkBarrier = ForkBarrier::new();
 static CONTEXT: ContextCell = ContextCell(UnsafeCell::new(MaybeUninit::uninit()));
 
 thread_local! {
@@ -53,6 +54,112 @@ struct Context {
 }
 
 struct HookGuard;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FailureKind {
+    InvalidContext,
+    InvalidTransport,
+    IncompatibleImage,
+    Initialization,
+}
+
+struct AdapterError {
+    kind: FailureKind,
+    message: String,
+}
+
+impl AdapterError {
+    fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn status(&self) -> BootstrapStatus {
+        match self.kind {
+            FailureKind::InvalidContext => BootstrapStatus::InvalidContext,
+            FailureKind::InvalidTransport => BootstrapStatus::InvalidTransport,
+            FailureKind::IncompatibleImage => BootstrapStatus::IncompatibleImage,
+            FailureKind::Initialization => BootstrapStatus::InitializationFailed,
+        }
+    }
+}
+
+impl fmt::Display for AdapterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+struct InitClaim<'a> {
+    state: &'a AtomicU8,
+    published: bool,
+}
+
+struct ForkBarrier {
+    locked: AtomicBool,
+    reenable: AtomicBool,
+}
+
+impl ForkBarrier {
+    const fn new() -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+            reenable: AtomicBool::new(false),
+        }
+    }
+
+    fn prepare(&self, gate: &AdapterCallGate) {
+        while self
+            .locked
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        self.reenable.store(!gate.is_disabled(), Ordering::Relaxed);
+        let _ = gate.disable();
+        while gate.active_calls() != 0 {
+            std::hint::spin_loop();
+        }
+    }
+
+    fn finish(&self, gate: &AdapterCallGate) -> Result<(), ()> {
+        let reset = if self.reenable.load(Ordering::Relaxed) {
+            // SAFETY: prepare disabled this same gate and waited for the last
+            // token before the fork copied the barrier and gate state.
+            unsafe { gate.reset_after_fork() }.map_err(|_| ())
+        } else {
+            Ok(())
+        };
+        self.reenable.store(false, Ordering::Relaxed);
+        self.locked.store(false, Ordering::Release);
+        reset
+    }
+}
+
+impl<'a> InitClaim<'a> {
+    fn new(state: &'a AtomicU8) -> Self {
+        Self {
+            state,
+            published: false,
+        }
+    }
+
+    fn publish_ready(mut self) {
+        self.state.store(INIT_READY, Ordering::Release);
+        self.published = true;
+    }
+}
+
+impl Drop for InitClaim<'_> {
+    fn drop(&mut self) {
+        if !self.published {
+            self.state.store(INIT_FAILED, Ordering::Release);
+        }
+    }
+}
 
 impl HookGuard {
     fn enter() -> Option<Self> {
@@ -101,7 +208,7 @@ pub unsafe extern "C" fn getuid() -> libc::uid_t {
     let update = panic::catch_unwind(AssertUnwindSafe(|| record_call(None)));
     match update {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => report_failure(&error),
+        Ok(Err(error)) => report_failure(&error.message),
         Err(_) => report_failure("panic while initializing or calling the pod"),
     }
     unsafe { *errno = saved_errno };
@@ -139,40 +246,49 @@ pub unsafe extern "C" fn shmem_pod_bootstrap_v1(context: *const BootstrapContext
     {
         return BootstrapStatus::InvalidContext as i32;
     }
-    FAIL_CLOSED.store(
-        context.bootstrap_flags().contains(BootstrapFlags::REQUIRED),
-        Ordering::Release,
-    );
     match panic::catch_unwind(AssertUnwindSafe(|| record_call(Some(context)))) {
         Ok(Ok(())) => BootstrapStatus::Ok as i32,
-        Ok(Err(_)) => BootstrapStatus::InitializationFailed as i32,
+        Ok(Err(error)) => error.status() as i32,
         Err(_) => BootstrapStatus::InitializationFailed as i32,
     }
 }
 
-fn record_call(provided: Option<BootstrapContext>) -> Result<(), String> {
+fn record_call(provided: Option<BootstrapContext>) -> Result<(), AdapterError> {
     let context = get_or_initialize(provided)?;
     record_attachment(context)?;
     context
         .image
         .upsert(&context.state, CALL_KEY, 1)
-        .map_err(|error| format!("pod call failed: {error}"))
+        .map_err(|error| {
+            AdapterError::new(
+                FailureKind::Initialization,
+                format!("pod call failed: {error}"),
+            )
+        })
 }
 
-fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Context, String> {
+fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Context, AdapterError> {
     let mut busy_observations = 0_u32;
     loop {
         match INIT_STATE.load(Ordering::Acquire) {
             INIT_READY => {
                 let context = unsafe { (&*CONTEXT.0.get()).assume_init_ref() };
-                if let Some(provided) = provided
-                    && context.bootstrap != provided
-                {
-                    return Err("adapter is already bound to a different bootstrap context".into());
+                if let Some(provided) = provided {
+                    if context.bootstrap != provided {
+                        return Err(AdapterError::new(
+                            FailureKind::InvalidContext,
+                            "adapter is already bound to a different bootstrap context",
+                        ));
+                    }
                 }
                 return Ok(context);
             }
-            INIT_FAILED => return Err("an earlier adapter initialization failed".into()),
+            INIT_FAILED => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "an earlier adapter initialization failed",
+                ));
+            }
             INIT_EMPTY => {
                 if INIT_STATE
                     .compare_exchange(INIT_EMPTY, INIT_BUSY, Ordering::Acquire, Ordering::Relaxed)
@@ -180,6 +296,10 @@ fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Cont
                 {
                     continue;
                 }
+                // This guard is intentionally outside catch_unwind. Any future
+                // panic between acquisition and publication leaves FAILED,
+                // never an INIT_BUSY value which would spin every later hook.
+                let claim = InitClaim::new(&INIT_STATE);
                 let initialized = panic::catch_unwind(AssertUnwindSafe(|| match provided {
                     Some(context) => initialize_context(context),
                     None => context_from_environment().and_then(initialize_context),
@@ -187,39 +307,49 @@ fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Cont
                 match initialized {
                     Ok(Ok(context)) => {
                         unsafe { (&mut *CONTEXT.0.get()).write(context) };
-                        INIT_STATE.store(INIT_READY, Ordering::Release);
+                        claim.publish_ready();
                         return Ok(unsafe { (&*CONTEXT.0.get()).assume_init_ref() });
                     }
-                    Ok(Err(error)) => {
-                        INIT_STATE.store(INIT_FAILED, Ordering::Release);
-                        return Err(error);
-                    }
+                    Ok(Err(error)) => return Err(error),
                     Err(_) => {
-                        INIT_STATE.store(INIT_FAILED, Ordering::Release);
-                        return Err("panic during adapter initialization".into());
+                        return Err(AdapterError::new(
+                            FailureKind::Initialization,
+                            "panic during adapter initialization",
+                        ));
                     }
                 }
             }
             INIT_BUSY => {
                 busy_observations = busy_observations.saturating_add(1);
                 if busy_observations == 1_000_000 {
-                    return Err("adapter initialization remained busy".into());
+                    return Err(AdapterError::new(
+                        FailureKind::Initialization,
+                        "adapter initialization remained busy",
+                    ));
                 }
                 std::hint::spin_loop();
                 if busy_observations % 4096 == 0 {
                     std::thread::yield_now();
                 }
             }
-            _ => return Err("adapter initialization state is corrupt".into()),
+            _ => {
+                return Err(AdapterError::new(
+                    FailureKind::Initialization,
+                    "adapter initialization state is corrupt",
+                ));
+            }
         }
     }
 }
 
-fn context_from_environment() -> Result<BootstrapContext, String> {
+fn context_from_environment() -> Result<BootstrapContext, AdapterError> {
     let name = b"SHMEM_POD_BOOTSTRAP_FD\0";
     let pointer = unsafe { libc::getenv(name.as_ptr().cast::<c_char>()) };
     if pointer.is_null() {
-        return Err(format!("{BOOTSTRAP_FD_ENV} is not set"));
+        return Err(AdapterError::new(
+            FailureKind::InvalidTransport,
+            format!("{BOOTSTRAP_FD_ENV} is not set"),
+        ));
     }
     // Presence means this adapter was deliberately configured. A malformed
     // locator is therefore fail-closed even before its context can be read.
@@ -229,28 +359,49 @@ fn context_from_environment() -> Result<BootstrapContext, String> {
         length += 1;
     }
     if length == 0 || length > MAX_ENV_FD_BYTES {
-        return Err(format!("{BOOTSTRAP_FD_ENV} has invalid length"));
+        return Err(AdapterError::new(
+            FailureKind::InvalidTransport,
+            format!("{BOOTSTRAP_FD_ENV} has invalid length"),
+        ));
     }
     let bytes = unsafe { core::slice::from_raw_parts(pointer.cast::<u8>(), length) };
-    let inherited_fd = parse_bootstrap_fd(bytes)
-        .map_err(|error| format!("invalid {BOOTSTRAP_FD_ENV}: {error}"))?;
-    require_inheritable(inherited_fd, "bootstrap")?;
-    require_sealed_file(inherited_fd, BootstrapContext::ENCODED_LEN, "bootstrap")?;
-    let descriptor_fd = duplicate_cloexec(inherited_fd, "bootstrap")?;
+    let inherited_fd = parse_bootstrap_fd(bytes).map_err(|error| {
+        AdapterError::new(
+            FailureKind::InvalidTransport,
+            format!("invalid {BOOTSTRAP_FD_ENV}: {error}"),
+        )
+    })?;
+    require_inheritable(inherited_fd, "bootstrap")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
+    require_sealed_file(inherited_fd, BootstrapContext::ENCODED_LEN, "bootstrap")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
+    let descriptor_fd = duplicate_cloexec(inherited_fd, "bootstrap")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
     let mut encoded = [0_u8; BootstrapContext::ENCODED_LEN];
-    read_exact_at(descriptor_fd.as_raw_fd(), &mut encoded)?;
-    let context = BootstrapContext::decode(&encoded)
-        .map_err(|error| format!("invalid bootstrap context: {error}"))?;
+    read_exact_at(descriptor_fd.as_raw_fd(), &mut encoded)
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
+    let context = BootstrapContext::decode(&encoded).map_err(|error| {
+        AdapterError::new(
+            FailureKind::InvalidContext,
+            format!("invalid bootstrap context: {error}"),
+        )
+    })?;
     if context.connector_kind() != Some(ConnectorKind::Preload) {
-        return Err("inherited environment context is not a preload context".into());
+        return Err(AdapterError::new(
+            FailureKind::InvalidContext,
+            "inherited environment context is not a preload context",
+        ));
     }
     Ok(context)
 }
 
-fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, String> {
-    bootstrap
-        .validate()
-        .map_err(|error| format!("invalid bootstrap context: {error}"))?;
+fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterError> {
+    bootstrap.validate().map_err(|error| {
+        AdapterError::new(
+            FailureKind::InvalidContext,
+            format!("invalid bootstrap context: {error}"),
+        )
+    })?;
     FAIL_CLOSED.store(
         bootstrap
             .bootstrap_flags()
@@ -261,7 +412,10 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, String> {
         .bootstrap_flags()
         .contains(BootstrapFlags::SCM_RIGHTS_TRANSPORT)
     {
-        return Err("this demo adapter does not implement SCM_RIGHTS receipt".into());
+        return Err(AdapterError::new(
+            FailureKind::InvalidTransport,
+            "this demo adapter does not implement SCM_RIGHTS receipt",
+        ));
     }
     for (fd, label) in [
         (bootstrap.artifact_fd, "artifact"),
@@ -272,48 +426,82 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, String> {
             .bootstrap_flags()
             .contains(BootstrapFlags::INHERIT_ACROSS_EXEC)
         {
-            require_inheritable(fd, label)?;
+            require_inheritable(fd, label)
+                .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
         }
     }
-    reject_same_file(&bootstrap)?;
+    reject_same_file(&bootstrap)
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
 
-    let artifact_fd = duplicate_cloexec(bootstrap.artifact_fd, "artifact")?;
-    let code_fd = duplicate_cloexec(bootstrap.code_fd, "code")?;
-    let state_fd = duplicate_cloexec(bootstrap.state_fd, "state")?;
+    let artifact_fd = duplicate_cloexec(bootstrap.artifact_fd, "artifact")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
+    let code_fd = duplicate_cloexec(bootstrap.code_fd, "code")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
+    let state_fd = duplicate_cloexec(bootstrap.state_fd, "state")
+        .map_err(|error| AdapterError::new(FailureKind::InvalidTransport, error))?;
     let digest = hex(&bootstrap.artifact_sha256);
-    let artifact = PodArtifact::open_sealed_fd(artifact_fd.as_raw_fd(), &digest)
-        .map_err(|error| format!("artifact authentication failed: {error}"))?;
+    let artifact =
+        PodArtifact::open_sealed_fd(artifact_fd.as_raw_fd(), &digest).map_err(|error| {
+            AdapterError::new(
+                FailureKind::IncompatibleImage,
+                format!("artifact authentication failed: {error}"),
+            )
+        })?;
     if artifact.len() as u64 != bootstrap.artifact_len {
-        return Err("artifact length differs from bootstrap context".into());
+        return Err(AdapterError::new(
+            FailureKind::IncompatibleImage,
+            "artifact length differs from bootstrap context",
+        ));
     }
     let code_address = optional_address(
         bootstrap.code_address,
         bootstrap
             .bootstrap_flags()
             .contains(BootstrapFlags::FIXED_CODE_ADDRESS),
-    )?;
+    )
+    .map_err(|error| AdapterError::new(FailureKind::InvalidContext, error))?;
     let state_address = optional_address(
         bootstrap.state_address,
         bootstrap
             .bootstrap_flags()
             .contains(BootstrapFlags::FIXED_STATE_ADDRESS),
-    )?;
-    let image = unsafe { PodImage::attach_trusted(&artifact, code_fd, code_address) }
-        .map_err(|error| format!("code attachment failed: {error}"))?;
+    )
+    .map_err(|error| AdapterError::new(FailureKind::InvalidContext, error))?;
+    let image =
+        unsafe { PodImage::attach_trusted(&artifact, code_fd, code_address) }.map_err(|error| {
+            AdapterError::new(
+                FailureKind::Initialization,
+                format!("code attachment failed: {error}"),
+            )
+        })?;
     if image.api_fingerprint() != bootstrap.api_fingerprint()
         || image.state_file_len() != bootstrap.state_len
     {
-        return Err("authenticated image metadata differs from bootstrap context".into());
+        return Err(AdapterError::new(
+            FailureKind::IncompatibleImage,
+            "authenticated image metadata differs from bootstrap context",
+        ));
     }
     let state = image
         .attach_state(state_fd, state_address)
-        .map_err(|error| format!("state attachment failed: {error}"))?;
+        .map_err(|error| {
+            AdapterError::new(
+                FailureKind::Initialization,
+                format!("state attachment failed: {error}"),
+            )
+        })?;
     if state.generation() != bootstrap.generation {
-        return Err("state generation differs from bootstrap context".into());
+        return Err(AdapterError::new(
+            FailureKind::IncompatibleImage,
+            "state generation differs from bootstrap context",
+        ));
     }
-    image
-        .verify_runtime_permissions(&state)
-        .map_err(|error| format!("mapping permission check failed: {error}"))?;
+    image.verify_runtime_permissions(&state).map_err(|error| {
+        AdapterError::new(
+            FailureKind::Initialization,
+            format!("mapping permission check failed: {error}"),
+        )
+    })?;
     Ok(Context {
         bootstrap,
         image,
@@ -321,7 +509,7 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, String> {
     })
 }
 
-fn record_attachment(context: &Context) -> Result<(), String> {
+fn record_attachment(context: &Context) -> Result<(), AdapterError> {
     let pid = raw_getpid();
     loop {
         let attached = ATTACHED_PID.load(Ordering::Acquire);
@@ -339,7 +527,12 @@ fn record_attachment(context: &Context) -> Result<(), String> {
             let result = context
                 .image
                 .upsert(&context.state, ATTACH_KEY, 1)
-                .map_err(|error| format!("attachment record failed: {error}"));
+                .map_err(|error| {
+                    AdapterError::new(
+                        FailureKind::Initialization,
+                        format!("attachment record failed: {error}"),
+                    )
+                });
             ATTACHED_PID.store(if result.is_ok() { pid } else { 0 }, Ordering::Release);
             return result;
         }
@@ -532,29 +725,36 @@ fn raw_getpid() -> libc::pid_t {
 }
 
 unsafe extern "C" fn atfork_child() {
-    // SAFETY: pthread invokes the child handler with only the forking thread.
-    if !ATFORK_WAS_DISABLED.load(Ordering::Acquire) {
-        unsafe { CALL_GATE.reset_after_fork() };
-    }
+    finish_fork_barrier();
     ATTACHED_PID.store(0, Ordering::Release);
-    if INIT_STATE.load(Ordering::Acquire) != INIT_READY {
-        INIT_STATE.store(INIT_EMPTY, Ordering::Release);
+    // A successful prepare drained the initializer before fork. Observing BUSY
+    // here therefore means a caller bypassed the adapter's admission contract;
+    // fail closed instead of publishing an unwritten Context in the child.
+    if INIT_STATE.load(Ordering::Acquire) == INIT_BUSY {
+        INIT_STATE.store(INIT_FAILED, Ordering::Release);
+        FAIL_CLOSED.store(true, Ordering::Release);
+        raw_write(b"shmem-pod injected adapter: copied busy initializer across fork\n");
+        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
     }
     FAILURE_REPORTED.store(false, Ordering::Release);
 }
 
 unsafe extern "C" fn atfork_prepare() {
-    ATFORK_WAS_DISABLED.store(CALL_GATE.is_disabled(), Ordering::Release);
-    let _ = CALL_GATE.disable();
-    while CALL_GATE.active_calls() != 0 {
-        std::hint::spin_loop();
-    }
+    // Multiple application threads may call fork concurrently. Keep one
+    // process-local owner across prepare -> parent/child so their copied state
+    // cannot overwrite another fork's re-enable decision.
+    FORK_BARRIER.prepare(&CALL_GATE);
 }
 
 unsafe extern "C" fn atfork_parent() {
-    // SAFETY: prepare disabled the gate and observed zero active calls.
-    if !ATFORK_WAS_DISABLED.load(Ordering::Acquire) {
-        unsafe { CALL_GATE.reset_after_fork() };
+    finish_fork_barrier();
+}
+
+fn finish_fork_barrier() {
+    if FORK_BARRIER.finish(&CALL_GATE).is_err() {
+        FAIL_CLOSED.store(true, Ordering::Release);
+        raw_write(b"shmem-pod injected adapter: corrupt at-fork gate state\n");
+        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
     }
 }
 
@@ -575,10 +775,13 @@ extern "C" fn initialize_adapter() {
 }
 
 extern "C" fn disable_adapter() {
-    // Do not drop/unmap Context here. Existing hooks might still hold a token,
-    // and process exit will reclaim everything. Explicit dlclose is unsupported
-    // until all external call sites have been removed and calls have drained.
+    // Stop admission and drain existing hooks before the loader may unmap this
+    // DSO's text. Context deliberately remains mapped: dropping it here would
+    // race any external trampoline which was not removed before dlclose.
     let _ = CALL_GATE.disable();
+    while CALL_GATE.active_calls() != 0 {
+        std::hint::spin_loop();
+    }
 }
 
 #[used]
@@ -588,3 +791,61 @@ static INITIALIZER: extern "C" fn() = initialize_adapter;
 #[used]
 #[unsafe(link_section = ".fini_array")]
 static FINALIZER: extern "C" fn() = disable_adapter;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn unpublished_initialization_claim_marks_state_failed_on_panic() {
+        let state = AtomicU8::new(INIT_BUSY);
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _claim = InitClaim::new(&state);
+            panic!("injected initializer panic");
+        }));
+        assert!(result.is_err());
+        assert_eq!(state.load(Ordering::Acquire), INIT_FAILED);
+    }
+
+    #[test]
+    fn published_initialization_claim_marks_state_ready() {
+        let state = AtomicU8::new(INIT_BUSY);
+        InitClaim::new(&state).publish_ready();
+        assert_eq!(state.load(Ordering::Acquire), INIT_READY);
+    }
+
+    #[test]
+    fn hook_guard_rejects_same_thread_reentrancy() {
+        let outer = HookGuard::enter().unwrap();
+        assert!(HookGuard::enter().is_none());
+        drop(outer);
+        assert!(HookGuard::enter().is_some());
+    }
+
+    #[test]
+    fn fork_barrier_disables_drains_and_reenables() {
+        let gate = Arc::new(AdapterCallGate::new());
+        let barrier = Arc::new(ForkBarrier::new());
+        let live = gate.try_enter().unwrap();
+        let worker_gate = Arc::clone(&gate);
+        let worker_barrier = Arc::clone(&barrier);
+        let prepare = std::thread::spawn(move || worker_barrier.prepare(&worker_gate));
+
+        for _ in 0..1_000_000 {
+            if gate.is_disabled() {
+                break;
+            }
+            std::hint::spin_loop();
+        }
+        assert!(gate.is_disabled());
+        assert_eq!(gate.active_calls(), 1);
+        drop(live);
+        prepare.join().unwrap();
+        assert_eq!(gate.active_calls(), 0);
+        assert!(gate.is_disabled());
+        barrier.finish(&gate).unwrap();
+        assert!(!gate.is_disabled());
+        assert!(gate.try_enter().is_some());
+    }
+}

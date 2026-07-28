@@ -15,9 +15,12 @@ const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
 const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
+const PTRACE_READY_ENV: &str = "INJECTION_FIXTURE_READY_FD";
+const PTRACE_RESUME_ENV: &str = "INJECTION_FIXTURE_RESUME_FD";
 
 struct Options {
     mode: Mode,
+    fault: Option<Fault>,
     image: PathBuf,
     sha256: String,
     shim: PathBuf,
@@ -32,6 +35,11 @@ struct Options {
 enum Mode {
     Preload,
     Ptrace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Fault {
+    BadContextDigest,
 }
 
 fn main() {
@@ -61,7 +69,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let state_fd = state.duplicate_fd_for_exec()?;
     let artifact_fd = artifact.duplicate_artifact_fd_for_exec()?;
     let flags = BootstrapFlags::REQUIRED.union(BootstrapFlags::INHERIT_ACROSS_EXEC);
-    let context = BootstrapContext::new(
+    let mut context = BootstrapContext::new(
         match options.mode {
             Mode::Preload => ConnectorKind::Preload,
             Mode::Ptrace => ConnectorKind::Ptrace,
@@ -76,9 +84,22 @@ fn run() -> Result<(), Box<dyn Error>> {
         image.api_fingerprint(),
         artifact.digest(),
         random_nonce()?,
-    );
-    context.validate()?;
+    )?;
+    if options.fault == Some(Fault::BadContextDigest) {
+        context.artifact_sha256[0] ^= 0xff;
+        if context.artifact_sha256.iter().all(|byte| *byte == 0) {
+            context.artifact_sha256[0] = 1;
+        }
+        context.validate()?;
+    }
     let mut command = Command::new(&options.guest);
+    let ptrace_fixture = if options.mode == Mode::Ptrace {
+        let fixture = PtraceFixture::new()?;
+        fixture.configure(&mut command);
+        Some(fixture)
+    } else {
+        None
+    };
     let bootstrap_fd = if options.mode == Mode::Preload {
         let bootstrap_fd = create_bootstrap_fd(&context)?;
         command
@@ -98,6 +119,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     command.process_group(0);
     let mut guest = command.spawn()?;
+    let ptrace_fixture = ptrace_fixture.map(PtraceFixture::into_parent);
     // Keep the descriptor live until every recursively executed preload guest
     // exits. The ptrace connector passes the context directly instead.
     let _bootstrap_fd = bootstrap_fd;
@@ -107,8 +129,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     if options.mode == Mode::Ptrace {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            ptrace::wait_for_fixture_stop(guest_group)?;
+            let fixture = ptrace_fixture
+                .as_ref()
+                .ok_or("ptrace fixture descriptors were not configured")?;
+            fixture.wait_ready()?;
             if let Err(error) = ptrace::inject(guest_group, &options.shim, &context) {
+                unsafe { libc::kill(-guest_group, libc::SIGKILL) };
+                let _ = guest.wait();
+                return Err(error);
+            }
+            if let Err(error) = fixture.resume() {
                 unsafe { libc::kill(-guest_group, libc::SIGKILL) };
                 let _ = guest.wait();
                 return Err(error);
@@ -241,6 +271,152 @@ fn create_bootstrap_fd(context: &BootstrapContext) -> Result<OwnedFd, Box<dyn Er
     Ok(unsafe { OwnedFd::from_raw_fd(inherited) })
 }
 
+struct PtraceFixture {
+    ready_read: OwnedFd,
+    ready_child: OwnedFd,
+    resume_child: OwnedFd,
+    resume_write: OwnedFd,
+}
+
+struct PtraceParent {
+    ready_read: OwnedFd,
+    resume_write: OwnedFd,
+}
+
+impl PtraceFixture {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        let (ready_read, ready_write) = cloexec_pipe()?;
+        let (resume_read, resume_write) = cloexec_pipe()?;
+        let ready_child = duplicate_for_exec(ready_write.as_raw_fd(), "fixture ready")?;
+        let resume_child = duplicate_for_exec(resume_read.as_raw_fd(), "fixture resume")?;
+        Ok(Self {
+            ready_read,
+            ready_child,
+            resume_child,
+            resume_write,
+        })
+    }
+
+    fn configure(&self, command: &mut Command) {
+        command
+            .env(PTRACE_READY_ENV, self.ready_child.as_raw_fd().to_string())
+            .env(PTRACE_RESUME_ENV, self.resume_child.as_raw_fd().to_string());
+    }
+
+    fn into_parent(self) -> PtraceParent {
+        let Self {
+            ready_read,
+            ready_child,
+            resume_child,
+            resume_write,
+        } = self;
+        drop(ready_child);
+        drop(resume_child);
+        PtraceParent {
+            ready_read,
+            resume_write,
+        }
+    }
+}
+
+impl PtraceParent {
+    fn wait_ready(&self) -> Result<(), Box<dyn Error>> {
+        let mut descriptor = libc::pollfd {
+            fd: self.ready_read.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        loop {
+            let result = unsafe { libc::poll(&mut descriptor, 1, 10_000) };
+            if result < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(format!("poll ptrace fixture readiness: {error}").into());
+            }
+            if result == 0 {
+                return Err("ptrace fixture did not reach its safe point within 10 seconds".into());
+            }
+            break;
+        }
+        let mut byte = 0_u8;
+        let read = loop {
+            let read = unsafe {
+                libc::read(
+                    self.ready_read.as_raw_fd(),
+                    (&mut byte as *mut u8).cast(),
+                    1,
+                )
+            };
+            if read < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
+                continue;
+            }
+            break read;
+        };
+        if read != 1 || byte != b'R' {
+            return Err(format!(
+                "ptrace fixture readiness protocol failed: read={read}, byte=0x{byte:02x}"
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn resume(&self) -> Result<(), Box<dyn Error>> {
+        let byte = b'G';
+        let written = loop {
+            let written = unsafe {
+                libc::write(
+                    self.resume_write.as_raw_fd(),
+                    (&byte as *const u8).cast(),
+                    1,
+                )
+            };
+            if written < 0
+                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
+                continue;
+            }
+            break written;
+        };
+        if written != 1 {
+            return Err(format!(
+                "ptrace fixture resume protocol failed: {}",
+                std::io::Error::last_os_error()
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+fn cloexec_pipe() -> Result<(OwnedFd, OwnedFd), Box<dyn Error>> {
+    let mut descriptors = [-1; 2];
+    if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(format!("pipe2: {}", std::io::Error::last_os_error()).into());
+    }
+    Ok(unsafe {
+        (
+            OwnedFd::from_raw_fd(descriptors[0]),
+            OwnedFd::from_raw_fd(descriptors[1]),
+        )
+    })
+}
+
+fn duplicate_for_exec(fd: RawFd, label: &str) -> Result<OwnedFd, Box<dyn Error>> {
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD, 3) };
+    if duplicate < 0 {
+        return Err(format!(
+            "duplicate {label} descriptor: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
+}
+
 fn write_all_at(fd: RawFd, mut bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     let mut offset = 0;
     while !bytes.is_empty() {
@@ -316,11 +492,18 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
     let mut threads = 2;
     let mut calls = 100;
     let mut mode = Mode::Preload;
+    let mut fault = None;
     let mut args = env::args_os().skip(1);
     while let Some(argument) = args.next() {
         let argument = argument
             .into_string()
             .map_err(|_| "arguments must be valid UTF-8")?;
+        if matches!(argument.as_str(), "-h" | "--help") {
+            println!(
+                "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N] [--fault bad-context-digest]"
+            );
+            std::process::exit(0);
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("{argument} requires a value"))?;
@@ -340,17 +523,18 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
                     other => return Err(format!("unknown connector mode {other:?}").into()),
                 }
             }
-            "-h" | "--help" => {
-                println!(
-                    "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N]"
-                );
-                std::process::exit(0);
+            "--fault" => {
+                fault = Some(match utf8_value(value, "--fault")?.as_str() {
+                    "bad-context-digest" => Fault::BadContextDigest,
+                    other => return Err(format!("unknown injected fault {other:?}").into()),
+                })
             }
             _ => return Err(format!("unknown argument {argument:?}").into()),
         }
     }
     Ok(Options {
         mode,
+        fault,
         image: image.ok_or("missing --image")?,
         sha256: sha256.ok_or("missing --sha256")?,
         shim: shim.ok_or("missing --shim")?,

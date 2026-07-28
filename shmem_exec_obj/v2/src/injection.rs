@@ -30,7 +30,9 @@ const ACTIVE_MASK: u32 = DISABLED_BIT - 1;
 ///
 /// Its value is a strict decimal file descriptor number naming a sealed file
 /// that contains one encoded [`BootstrapContext`]. The environment is only a
-/// locator. Trust comes from the descriptor's provenance, seals, and digest.
+/// locator. An external launcher must establish descriptor provenance; seals
+/// prevent mutation and the digest checks artifact identity, but neither can
+/// authenticate an attacker who can replace the complete descriptor set.
 pub const BOOTSTRAP_FD_ENV: &str = "SHMEM_POD_BOOTSTRAP_FD";
 
 /// Lowest supported page size for executable pod artifacts and state files.
@@ -90,9 +92,14 @@ impl BootstrapFlags {
     /// `state_address` is a mandatory page-aligned virtual address.
     pub const FIXED_STATE_ADDRESS: Self = Self(1 << 3);
 
-    /// The optional control descriptor is the authenticated Unix socket for an
-    /// `SCM_RIGHTS` transport. This bit represents a protocol choice; adapters
-    /// which do not implement ancillary-data receipt must reject it.
+    /// The caller asserts that the data descriptors were received over the
+    /// Unix socket named by `control_fd` using `SCM_RIGHTS`.
+    ///
+    /// This is provenance metadata, not proof: [`BootstrapContext::validate`]
+    /// cannot authenticate the peer or reconstruct the `recvmsg` operation.
+    /// The adapter which receives the descriptors must verify the socket, peer,
+    /// message framing, and descriptor roles before setting this bit. Adapters
+    /// which do not implement that protocol must reject it.
     pub const SCM_RIGHTS_TRANSPORT: Self = Self(1 << 4);
 
     /// Every flag understood by this ABI revision.
@@ -162,7 +169,7 @@ pub struct BootstrapContext {
     pub code_fd: i32,
     /// Shared mutable state descriptor.
     pub state_fd: i32,
-    /// Optional authenticated control socket, or `-1`.
+    /// Optional caller-verified `SCM_RIGHTS` control socket, or `-1`.
     pub control_fd: i32,
     /// Exact complete artifact length.
     pub artifact_len: u64,
@@ -194,16 +201,19 @@ impl BootstrapContext {
     /// Exact stable encoded length.
     pub const ENCODED_LEN: usize = 160;
 
-    /// Creates a context with no fixed-address or control-socket fields.
+    /// Creates and validates a context with no fixed-address or control-socket
+    /// fields.
     ///
-    /// Callers should pass only [`BootstrapFlags::REQUIRED`] and
-    /// [`BootstrapFlags::INHERIT_ACROSS_EXEC`] here. Passing a fixed-address or
-    /// SCM_RIGHTS bit intentionally creates an invalid intermediate value until
-    /// the corresponding builder is called; [`validate`](Self::validate)
-    /// enforces coherence before transport.
+    /// Only [`BootstrapFlags::REQUIRED`] and
+    /// [`BootstrapFlags::INHERIT_ACROSS_EXEC`] are accepted here. Use
+    /// [`with_fixed_addresses`](Self::with_fixed_addresses),
+    /// [`with_fixed_code_address`](Self::with_fixed_code_address),
+    /// [`with_fixed_state_address`](Self::with_fixed_state_address), or
+    /// [`with_scm_rights_provenance`](Self::with_scm_rights_provenance) for
+    /// fields whose value and policy bit must change together. This constructor
+    /// never returns an incoherent intermediate context.
     #[allow(clippy::too_many_arguments)]
-    #[must_use]
-    pub const fn new(
+    pub fn new(
         connector: ConnectorKind,
         flags: BootstrapFlags,
         artifact_fd: i32,
@@ -215,8 +225,16 @@ impl BootstrapContext {
         api_fingerprint: u128,
         artifact_sha256: [u8; 32],
         instance_nonce: [u8; 16],
-    ) -> Self {
-        Self {
+    ) -> Result<Self, BootstrapError> {
+        let builder_managed = BootstrapFlags::FIXED_CODE_ADDRESS.bits()
+            | BootstrapFlags::FIXED_STATE_ADDRESS.bits()
+            | BootstrapFlags::SCM_RIGHTS_TRANSPORT.bits();
+        if flags.bits() & builder_managed != 0 {
+            return Err(BootstrapError::BuilderManagedFlags(
+                flags.bits() & builder_managed,
+            ));
+        }
+        let context = Self {
             magic: Self::MAGIC,
             abi_version: Self::ABI_VERSION,
             struct_size: Self::ENCODED_LEN as u16,
@@ -236,25 +254,53 @@ impl BootstrapContext {
             artifact_sha256,
             instance_nonce,
             reserved: [0; 16],
-        }
+        };
+        context.validate()?;
+        Ok(context)
     }
 
-    /// Selects SCM_RIGHTS transport and adds its authenticated Unix socket.
-    #[must_use]
-    pub const fn with_control_fd(mut self, control_fd: i32) -> Self {
+    /// Records caller-verified `SCM_RIGHTS` provenance and its Unix socket.
+    ///
+    /// The caller must have already received `artifact_fd`, `code_fd`, and
+    /// `state_fd` in a single authenticated protocol exchange on `control_fd`.
+    /// This method checks representation coherence only. In particular, it
+    /// cannot prove peer credentials or that those descriptors came from the
+    /// socket. The receiving adapter remains responsible for those checks.
+    pub fn with_scm_rights_provenance(mut self, control_fd: i32) -> Result<Self, BootstrapError> {
         self.flags |= BootstrapFlags::SCM_RIGHTS_TRANSPORT.bits();
         self.control_fd = control_fd;
-        self
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Adds a mandatory code virtual address and its policy bit.
+    pub fn with_fixed_code_address(mut self, code_address: u64) -> Result<Self, BootstrapError> {
+        self.flags |= BootstrapFlags::FIXED_CODE_ADDRESS.bits();
+        self.code_address = code_address;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Adds a mandatory state virtual address and its policy bit.
+    pub fn with_fixed_state_address(mut self, state_address: u64) -> Result<Self, BootstrapError> {
+        self.flags |= BootstrapFlags::FIXED_STATE_ADDRESS.bits();
+        self.state_address = state_address;
+        self.validate()?;
+        Ok(self)
     }
 
     /// Adds mandatory code and state virtual addresses and their policy bits.
-    #[must_use]
-    pub const fn with_fixed_addresses(mut self, code_address: u64, state_address: u64) -> Self {
+    pub fn with_fixed_addresses(
+        mut self,
+        code_address: u64,
+        state_address: u64,
+    ) -> Result<Self, BootstrapError> {
         self.flags |=
             BootstrapFlags::FIXED_CODE_ADDRESS.bits() | BootstrapFlags::FIXED_STATE_ADDRESS.bits();
         self.code_address = code_address;
         self.state_address = state_address;
-        self
+        self.validate()?;
+        Ok(self)
     }
 
     /// Returns the validated connector kind, if known.
@@ -426,6 +472,25 @@ impl BootstrapContext {
 
 const _: () = assert!(core::mem::size_of::<BootstrapContext>() == BootstrapContext::ENCODED_LEN);
 const _: () = assert!(core::mem::align_of::<BootstrapContext>() == 8);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, magic) == 0);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, abi_version) == 8);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, struct_size) == 10);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, flags) == 12);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, connector) == 16);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, reserved_word) == 20);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, artifact_fd) == 24);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, code_fd) == 28);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, state_fd) == 32);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, control_fd) == 36);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, artifact_len) == 40);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, state_len) == 48);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, code_address) == 56);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, state_address) == 64);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, generation) == 72);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, api_fingerprint) == 80);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, artifact_sha256) == 96);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, instance_nonce) == 128);
+const _: () = assert!(core::mem::offset_of!(BootstrapContext, reserved) == 144);
 
 /// Descriptor role used in validation diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -462,6 +527,9 @@ pub enum BootstrapError {
     WrongSize(u16),
     /// At least one unknown policy bit was set.
     UnknownFlags(u32),
+    /// A constructor received a flag whose field must be set by a coherent
+    /// builder method.
+    BuilderManagedFlags(u32),
     /// The connector value is unknown.
     UnknownConnector(u32),
     /// A reserved byte or word was nonzero.
@@ -486,7 +554,7 @@ pub enum BootstrapError {
     ZeroGeneration,
     /// The generated API fingerprint was all zero.
     ZeroApiFingerprint,
-    /// The trusted artifact digest was all zero.
+    /// The expected artifact digest was all zero.
     ZeroArtifactDigest,
     /// The per-launch nonce was all zero.
     ZeroInstanceNonce,
@@ -506,6 +574,10 @@ impl fmt::Display for BootstrapError {
             }
             Self::WrongSize(size) => write!(formatter, "bootstrap struct size is {size}"),
             Self::UnknownFlags(flags) => write!(formatter, "unknown bootstrap flags 0x{flags:x}"),
+            Self::BuilderManagedFlags(flags) => write!(
+                formatter,
+                "bootstrap flags 0x{flags:x} require a coherent builder method"
+            ),
             Self::UnknownConnector(connector) => {
                 write!(formatter, "unknown connector kind {connector}")
             }
@@ -612,9 +684,9 @@ pub enum BootstrapStatus {
     Ok = 0,
     /// The pointer or representation was invalid.
     InvalidContext = -1,
-    /// Descriptor authentication or duplication failed.
+    /// Descriptor provenance, seals, type, length, or duplication failed.
     InvalidTransport = -2,
-    /// Artifact or generated method metadata did not match.
+    /// Artifact digest, header, or generated method metadata did not match.
     IncompatibleImage = -3,
     /// The adapter is already draining or permanently disabled.
     Disabled = -4,
@@ -672,7 +744,11 @@ impl AdapterCallGate {
         }
     }
 
-    /// Permanently prevents new calls and returns the active-call count.
+    /// Prevents new calls and returns the active-call count.
+    ///
+    /// Ordinary lifecycle code treats this as permanent. A serialized at-fork
+    /// handler may reset the disabled, drained copy with
+    /// [`reset_after_fork`](Self::reset_after_fork).
     pub fn disable(&self) -> u32 {
         self.state.fetch_or(DISABLED_BIT, Ordering::AcqRel) & ACTIVE_MASK
     }
@@ -698,10 +774,53 @@ impl AdapterCallGate {
     /// token. Calling this without that prepare-side quiescence can invalidate
     /// a token and underflow the counter when it is dropped. The same barrier
     /// permits the parent handler to re-enable its copied gate.
-    pub unsafe fn reset_after_fork(&self) {
-        self.state.store(0, Ordering::Release);
+    ///
+    /// Even with the safety precondition, this returns an error unless the
+    /// observable state is exactly disabled and quiescent. That fail-closed
+    /// check catches incomplete prepare handlers without erasing a live count.
+    pub unsafe fn reset_after_fork(&self) -> Result<(), GateResetError> {
+        self.state
+            .compare_exchange(DISABLED_BIT, 0, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|state| GateResetError {
+                disabled: state & DISABLED_BIT != 0,
+                active_calls: state & ACTIVE_MASK,
+            })
     }
 }
+
+/// A fork handler attempted to reset a gate that was not disabled and drained.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GateResetError {
+    disabled: bool,
+    active_calls: u32,
+}
+
+impl GateResetError {
+    /// Whether the gate was disabled when reset was attempted.
+    #[must_use]
+    pub const fn was_disabled(self) -> bool {
+        self.disabled
+    }
+
+    /// Number of live admission tokens observed at reset.
+    #[must_use]
+    pub const fn active_calls(self) -> u32 {
+        self.active_calls
+    }
+}
+
+impl fmt::Display for GateResetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "adapter gate reset requires disabled+quiescent state (disabled={}, active_calls={})",
+            self.disabled, self.active_calls
+        )
+    }
+}
+
+impl core::error::Error for GateResetError {}
 
 impl Default for AdapterCallGate {
     fn default() -> Self {

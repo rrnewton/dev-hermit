@@ -6,6 +6,7 @@ cd "$root"
 
 command -v jq >/dev/null || { echo "run-ptrace-demo.sh requires jq" >&2; exit 1; }
 command -v cc >/dev/null || { echo "run-ptrace-demo.sh requires a C compiler" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "run-ptrace-demo.sh requires timeout" >&2; exit 1; }
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo "the ptrace demo currently requires Linux x86-64" >&2
   exit 1
@@ -78,12 +79,18 @@ if [[ ! $artifact_sha256 =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 set +e
-"$host" \
-  --mode ptrace \
-  --image "$artifact_dir/pod.bin" \
-  --sha256 "$artifact_sha256" \
-  --shim "$shim" \
+host_args=(
+  --mode ptrace
+  --image "$artifact_dir/pod.bin"
+  --sha256 "$artifact_sha256"
+  --shim "$shim"
   --guest "$artifact_dir/ptrace-target"
+)
+if [[ -n ${POD_FAULT:-} ]]; then
+  host_args+=(--fault "$POD_FAULT")
+fi
+timeout --foreground --signal=TERM --kill-after=5s "${PTRACE_TIMEOUT:-30}s" \
+  "$host" "${host_args[@]}"
 status=$?
 set -e
 if (( status != 0 )); then

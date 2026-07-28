@@ -10,8 +10,10 @@ The host performs all trusted setup:
 1. Authenticate the pod artifact by a trusted SHA-256 digest.
 2. Create a sealed code memfd and a separate mutable state memfd, then
    initialize the shared state.
-3. Duplicate both descriptors without `FD_CLOEXEC`.
-4. Spawn the guest with `LD_PRELOAD` and a scoped bootstrap environment.
+3. Encode the common `BootstrapContext` in a separate immutable, no-exec
+   memfd.
+4. Duplicate only the inherited descriptors without `FD_CLOEXEC`.
+5. Spawn the guest with `LD_PRELOAD` and a scoped bootstrap environment.
 
 Each injected process lazily consumes the inherited descriptors on its first
 `getuid` call. It independently authenticates the artifact, verifies the memfd
@@ -33,6 +35,9 @@ From the crate root (`jq` is required):
 ./scripts/run-preload-demo.sh
 ```
 
+`./scripts/test-connector-failures.sh` also verifies that this path fails closed
+when the sealed context carries a deliberately incorrect artifact digest.
+
 The workload is configurable:
 
 ```console
@@ -48,19 +53,26 @@ static binaries, direct syscalls, or set-user-ID/set-group-ID programs where
 the loader strips preload configuration. Programs can also bypass this hook
 with symbol binding choices such as deep binding.
 
-The environment variables and inherited descriptor numbers are a demo
-bootstrap protocol, not an authorization boundary. A production launcher
-would pass descriptors over an authenticated Unix socket or a prearranged
-descriptor table, minimize inherited environment, and define explicit policy
-for attach failures. The shim fails the demo process with exit status 125 when
-required setup or a method call fails.
+The environment variable is only a locator for the sealed context FD. Seals
+prevent mutation and the SHA-256 verifies artifact identity, but neither proves
+who selected the complete context and descriptor set. The demo trusts its
+launcher and all writable participants. A production launcher must establish
+provenance through controlled inheritance, an authenticated Unix socket, or a
+prearranged descriptor table. The shim fails the demo process with exit status
+125 when required setup or a method call fails.
 
 Lazy initialization here uses Rust `std`, allocation, TLS, and filesystem I/O.
 The thread-local guard prevents recursive entry through this hook, but it does
 not make initialization safe while the dynamic-loader or allocator lock is
-held, from a signal handler, or in the post-fork window of a multithreaded
-process. A production shim needs an allocation-free early bootstrap or an
-explicit safe-point initializer before enabling its hooks.
+held or from a signal handler. At-fork handlers serialize forks, disable and
+drain hook calls, then reset the exactly quiescent parent/child gates. Raw
+`fork` syscalls, `vfork`, and fork from inside this hook remain unsupported. A
+production shim needs an allocation-free early bootstrap or an explicit
+safe-point initializer before enabling its hooks.
+
+The finalizer disables admission and drains existing calls, but does not drop
+the mapped context. External hooks must be removed before `dlclose`; ptrace
+injection pins the DSO with `RTLD_NODELETE`.
 
 The demo launches the guest tree in its own process group. If the required shim
 terminates any process and the root reports failure, the host kills remaining

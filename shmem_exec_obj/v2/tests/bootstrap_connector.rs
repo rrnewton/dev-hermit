@@ -17,6 +17,7 @@ fn valid_context() -> BootstrapContext {
         [0x5a; 32],
         [0xa5; 16],
     )
+    .unwrap()
 }
 
 #[test]
@@ -112,11 +113,10 @@ fn context_rejects_aliases_bounds_and_flag_address_disagreement() {
         ))
     );
 
-    let context = valid_context().with_fixed_addresses(0x4000_0000, 0x4000_0000);
-    assert_eq!(
-        context.validate(),
-        Err(BootstrapError::AliasedFixedAddresses(0x4000_0000))
-    );
+    let context = valid_context()
+        .with_fixed_addresses(0x4000_0000, 0x4000_0000)
+        .unwrap_err();
+    assert_eq!(context, BootstrapError::AliasedFixedAddresses(0x4000_0000));
 
     let mut context = valid_context();
     context.control_fd = 20;
@@ -132,8 +132,43 @@ fn context_rejects_aliases_bounds_and_flag_address_disagreement() {
         Err(BootstrapError::IncoherentControlTransport)
     );
 
-    let context = valid_context().with_control_fd(20);
+    let context = valid_context().with_scm_rights_provenance(20).unwrap();
     context.validate().unwrap();
+
+    assert_eq!(
+        valid_context().with_scm_rights_provenance(2),
+        Err(BootstrapError::InvalidDescriptor(
+            DescriptorRole::Control,
+            2
+        ))
+    );
+    assert_eq!(
+        valid_context().with_fixed_code_address(1),
+        Err(BootstrapError::InvalidAddress(AddressRole::Code, 1))
+    );
+    assert_eq!(
+        valid_context().with_fixed_state_address(1),
+        Err(BootstrapError::InvalidAddress(AddressRole::State, 1))
+    );
+
+    let managed_flags =
+        BootstrapFlags::FIXED_CODE_ADDRESS.union(BootstrapFlags::SCM_RIGHTS_TRANSPORT);
+    assert_eq!(
+        BootstrapContext::new(
+            ConnectorKind::Preload,
+            managed_flags,
+            10,
+            11,
+            12,
+            BOOTSTRAP_PAGE_SIZE * 2,
+            BOOTSTRAP_PAGE_SIZE * 4,
+            7,
+            0x1234,
+            [0x5a; 32],
+            [0xa5; 16],
+        ),
+        Err(BootstrapError::BuilderManagedFlags(managed_flags.bits()))
+    );
 }
 
 #[test]
@@ -200,8 +235,25 @@ fn post_fork_reset_requires_a_disabled_quiescent_gate() {
     let gate = AdapterCallGate::new();
     assert_eq!(gate.disable(), 0);
     assert!(gate.is_disabled());
-    unsafe { gate.reset_after_fork() };
+    unsafe { gate.reset_after_fork() }.unwrap();
     assert_eq!(gate.active_calls(), 0);
     assert!(!gate.is_disabled());
     assert!(gate.try_enter().is_some());
+}
+
+#[test]
+fn post_fork_reset_fails_closed_on_non_quiescent_state() {
+    let gate = AdapterCallGate::new();
+    let live = gate.try_enter().unwrap();
+    assert_eq!(gate.disable(), 1);
+    let error = unsafe { gate.reset_after_fork() }.unwrap_err();
+    assert!(error.was_disabled());
+    assert_eq!(error.active_calls(), 1);
+    drop(live);
+    unsafe { gate.reset_after_fork() }.unwrap();
+
+    let gate = AdapterCallGate::new();
+    let error = unsafe { gate.reset_after_fork() }.unwrap_err();
+    assert!(!error.was_disabled());
+    assert_eq!(error.active_calls(), 0);
 }

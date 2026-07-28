@@ -13,24 +13,6 @@ use std::ptr;
 
 const SCRATCH_LEN: usize = 4096;
 
-pub fn wait_for_fixture_stop(pid: libc::pid_t) -> Result<(), Box<dyn Error>> {
-    let mut status = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, libc::WUNTRACED) };
-    if waited != pid {
-        return Err(format!(
-            "waitpid for ptrace fixture: {}",
-            std::io::Error::last_os_error()
-        )
-        .into());
-    }
-    if !libc::WIFSTOPPED(status) || libc::WSTOPSIG(status) != libc::SIGSTOP {
-        return Err(
-            format!("ptrace fixture did not stop with SIGSTOP: status=0x{status:x}").into(),
-        );
-    }
-    Ok(())
-}
-
 pub fn inject(
     pid: libc::pid_t,
     shim: &Path,
@@ -48,7 +30,7 @@ pub fn inject(
     )?;
     let mut tracee = AttachedTracee { pid, live: true };
     ptrace_call(libc::PTRACE_INTERRUPT, pid, 0, 0, "PTRACE_INTERRUPT")?;
-    wait_stopped(pid, None)?;
+    wait_stopped(pid, Some(libc::SIGTRAP))?;
 
     let scratch = remote_syscall(
         pid,
@@ -77,7 +59,7 @@ pub fn inject(
         remote_dlopen,
         [
             scratch,
-            (libc::RTLD_NOW | libc::RTLD_LOCAL) as u64,
+            (libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_NODELETE) as u64,
             0,
             0,
             0,
@@ -101,9 +83,12 @@ pub fn inject(
 
     let context_address = align_up(scratch + shim_c.as_bytes_with_nul().len() as u64, 16)?;
     process_write(pid, context_address, &context.encode())?;
-    let status = remote_call(pid, remote_bootstrap, [context_address, 0, 0, 0, 0, 0])? as i64;
+    // SysV integer returns define EAX; writes to EAX zero-extend RAX. Recover
+    // the C `int32_t` sign instead of interpreting the full register as i64.
+    let status =
+        remote_call(pid, remote_bootstrap, [context_address, 0, 0, 0, 0, 0])? as u32 as i32;
     unsafe { libc::dlclose(local_handle) };
-    if status != BootstrapStatus::Ok as i64 {
+    if status != BootstrapStatus::Ok as i32 {
         return Err(format!("remote bootstrap returned status {status}").into());
     }
 
@@ -126,13 +111,7 @@ struct AttachedTracee {
 
 impl AttachedTracee {
     fn detach(&mut self) -> Result<(), Box<dyn Error>> {
-        ptrace_call(
-            libc::PTRACE_DETACH,
-            self.pid,
-            0,
-            libc::SIGCONT as usize,
-            "PTRACE_DETACH",
-        )?;
+        ptrace_call(libc::PTRACE_DETACH, self.pid, 0, 0, "PTRACE_DETACH")?;
         self.live = false;
         Ok(())
     }
@@ -180,8 +159,7 @@ fn remote_syscall(
     registers.r8 = arguments[4];
     registers.r9 = arguments[5];
     set_registers(pid, &registers)?;
-    ptrace_call(libc::PTRACE_CONT, pid, 0, 0, "PTRACE_CONT syscall")?;
-    let stopped = wait_stopped(pid, Some(libc::SIGTRAP));
+    let stopped = continue_until(pid, libc::SIGTRAP, "remote syscall");
     let result = stopped.and_then(|()| get_registers(pid).map(|registers| registers.rax));
 
     // Restore code before registers so any failure leaves the tracee stopped at
@@ -234,8 +212,7 @@ fn remote_call(
     registers.r9 = arguments[5];
     registers.rax = 0;
     set_registers(pid, &registers)?;
-    ptrace_call(libc::PTRACE_CONT, pid, 0, 0, "PTRACE_CONT function")?;
-    let stopped = wait_stopped(pid, Some(libc::SIGSEGV));
+    let stopped = continue_until(pid, libc::SIGSEGV, "remote function");
     let result = stopped.and_then(|()| {
         let registers = get_registers(pid)?;
         if registers.rip != 0 {
@@ -427,16 +404,25 @@ fn wait_stopped(pid: libc::pid_t, signal: Option<libc::c_int>) -> Result<(), Box
     if !libc::WIFSTOPPED(status) {
         return Err(format!("tracee was not stopped: status=0x{status:x}").into());
     }
-    if let Some(expected) = signal
-        && libc::WSTOPSIG(status) != expected
-    {
-        return Err(format!(
-            "tracee stopped with signal {}, expected {expected}",
-            libc::WSTOPSIG(status)
-        )
-        .into());
+    if let Some(expected) = signal {
+        if libc::WSTOPSIG(status) != expected {
+            return Err(format!(
+                "tracee stopped with signal {}, expected {expected}",
+                libc::WSTOPSIG(status)
+            )
+            .into());
+        }
     }
     Ok(())
+}
+
+fn continue_until(
+    pid: libc::pid_t,
+    expected: libc::c_int,
+    operation: &str,
+) -> Result<(), Box<dyn Error>> {
+    ptrace_call(libc::PTRACE_CONT, pid, 0, 0, "PTRACE_CONT")?;
+    wait_stopped(pid, Some(expected)).map_err(|error| format!("{operation}: {error}").into())
 }
 
 fn syscall_pointer(value: u64, operation: &str) -> Result<u64, Box<dyn Error>> {

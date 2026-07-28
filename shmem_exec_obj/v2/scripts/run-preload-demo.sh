@@ -81,12 +81,17 @@ if [[ ! $artifact_sha256 =~ ^[0-9a-f]{64}$ ]]; then
   exit 1
 fi
 
-"$host" \
-  --image "$artifact_dir/pod.bin" \
-  --sha256 "$artifact_sha256" \
-  --shim "$shim" \
-  --guest "$guest" \
-  --depth "${POD_DEPTH:-2}" \
-  --fanout "${POD_FANOUT:-2}" \
-  --threads "${POD_THREADS:-2}" \
+host_args=(
+  --image "$artifact_dir/pod.bin"
+  --sha256 "$artifact_sha256"
+  --shim "$shim"
+  --guest "$guest"
+  --depth "${POD_DEPTH:-2}"
+  --fanout "${POD_FANOUT:-2}"
+  --threads "${POD_THREADS:-2}"
   --calls "${POD_CALLS:-100}"
+)
+if [[ -n ${POD_FAULT:-} ]]; then
+  host_args+=(--fault "$POD_FAULT")
+fi
+"$host" "${host_args[@]}"
