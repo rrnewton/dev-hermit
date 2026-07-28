@@ -592,6 +592,8 @@ pub trait QuiescenceWitness: quiescence_sealed::Sealed {}
 ///
 /// The witness borrows the gate for its lifetime. Once constructed, safe gate
 /// operations cannot admit another participant because `DRAINED` is terminal.
+/// Its optional `Authority` value can consume source handles whose APIs are not
+/// intrinsically coupled to the gate.
 pub struct AdmissionQuiescence<'source, const NODES: usize, Authority = ()> {
     source: &'source CloseableSnzi<NODES>,
     generation: GenerationIdentity,
@@ -623,9 +625,7 @@ impl<'source, const NODES: usize> AdmissionQuiescence<'source, NODES> {
     }
 }
 
-impl<'source, const NODES: usize, Authority>
-    AdmissionQuiescence<'source, NODES, Authority>
-{
+impl<'source, const NODES: usize, Authority> AdmissionQuiescence<'source, NODES, Authority> {
     /// Binds terminal admission while consuming the source access authority.
     ///
     /// The authority remains owned by the migration transaction through commit.
@@ -669,10 +669,20 @@ impl<'source, const NODES: usize, Authority>
     /// the caller must first obtain a matching [`ReclamationPermit`]. Consuming
     /// the witness here prevents retaining quiescence evidence while regaining
     /// the source mutation authority.
-    pub fn into_authority(
-        self,
-        permit: ReclamationPermit,
-    ) -> Result<Authority, MigrationError> {
+    ///
+    /// The live migration types expose no source-capability extraction method:
+    ///
+    /// ```compile_fail
+    /// use shmem_pod::migration::{AdmissionQuiescence, Migration};
+    ///
+    /// fn release_during_copy<'a, A>(
+    ///     migration: Migration<'a, AdmissionQuiescence<'a, 20, A>>,
+    /// ) -> A {
+    ///     let (source, _) = migration.into_capabilities();
+    ///     source.into_authority()
+    /// }
+    /// ```
+    pub fn into_authority(self, permit: ReclamationPermit) -> Result<Authority, MigrationError> {
         if permit.plan.source != self.generation {
             return Err(MigrationError::SourceGenerationMismatch {
                 expected_tag: generation_tag(self.generation),
@@ -767,8 +777,10 @@ impl QuiescenceWitness for MappingQuiescence<'_> {}
 /// - [`Self::recovery_authority`] must name a supervisor which already owns an
 ///   authenticated handle that remains live if the migrator process exits;
 /// - no client can discover or attach the target before commit; and
-/// - moving this value into the library must exclude every safe publication
-///   path until it is returned after commit.
+/// - moving this value into the library must consume every safe target mutation
+///   and publication authority until it is returned after commit; and
+/// - the generation, authority, and privacy answers must remain stable while the
+///   library owns the value.
 pub unsafe trait PrecommitTargetBacking {
     /// Returns the exact target generation represented by this capability.
     fn generation(&self) -> GenerationIdentity;
@@ -1533,7 +1545,9 @@ impl<Q: QuiescenceWitness, B: PrecommitTargetBacking> TargetReadyMigration<'_, Q
     /// Authenticated attach/bootstrap code must consult
     /// [`MigrationControl::authoritative_generation`] and must not cache the
     /// pre-commit route across this transition. The target capability remains
-    /// private until this method returns it inside [`CommittedMigration`].
+    /// private until this method returns it inside [`CommittedMigration`]. Its
+    /// generation and recovery authority are revalidated immediately before the
+    /// commit compare-exchange.
     pub fn commit(mut self) -> Result<CommittedMigration<Q, B>, MigrationError> {
         let target = self
             .target

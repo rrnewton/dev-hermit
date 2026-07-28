@@ -40,9 +40,10 @@ struct LocalTargetBacking<'mapping> {
     authority: AuthorityIdentity,
 }
 
-// SAFETY: this single-process example keeps the page owner alive, treats it as
-// the supervisor's authenticated backing handle, and exposes no attach path.
-// A production host should wrap its owned memfd/shm handle instead.
+// SAFETY: this single-process example moves the complete target region and root
+// authority into the backing and exposes no attach path. It models the named
+// supervisor as retaining the page owner; a production host must instead wrap
+// an independently live authenticated memfd/shm handle.
 #[cfg(all(feature = "derive", target_has_atomic = "64"))]
 unsafe impl PrecommitTargetBacking for LocalTargetBacking<'_> {
     fn generation(&self) -> GenerationIdentity {
@@ -119,11 +120,11 @@ fn main() {
         },
     )
     .unwrap();
-    let old = *source.get(&source_region).unwrap();
 
     let admission = CloseableSnzi::<20>::new();
     assert!(admission.close());
     assert!(admission.is_drained());
+    let old = *source.get(&source_region).unwrap();
 
     let source_generation = GenerationIdentity::for_schema::<CounterV1>(
         SOURCE_REGION,
@@ -147,11 +148,7 @@ fn main() {
     // Moving source_authority consumes the remaining safe allocator and root
     // access paths, so only the staged process-local copy can be read below.
     let source_quiescence = unsafe {
-        AdmissionQuiescence::bind_with_authority(
-            &admission,
-            source_generation,
-            source_authority,
-        )
+        AdmissionQuiescence::bind_with_authority(&admission, source_generation, source_authority)
     }
     .unwrap();
     let migration = control
@@ -188,12 +185,7 @@ fn main() {
     let (source_quiescence, target_backing) = committed.into_capabilities();
     let mut source_authority = source_quiescence.into_authority(permit).unwrap();
     // SAFETY: reclamation was fenced and no other source reference exists.
-    let retired = unsafe {
-        source_authority
-            .root
-            .destroy(&mut source_authority.region)
-    }
-    .unwrap();
+    let retired = unsafe { source_authority.root.destroy(&mut source_authority.region) }.unwrap();
 
     println!(
         "PASS schema_migration attempts={} retired_successes={}",

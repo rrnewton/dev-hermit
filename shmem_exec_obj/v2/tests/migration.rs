@@ -269,8 +269,6 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
         },
     )
     .unwrap();
-    let old = *source.get(&source_region).unwrap();
-
     let (target_mapping, target_alias) = SharedMapping::memfd_pair(MAPPING_LEN);
     let target_region = unsafe { target_mapping.initialize_region::<SLOTS>(TARGET_REGION) };
 
@@ -283,6 +281,7 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     let admission = CloseableSnzi::<20>::new();
     assert!(admission.close());
     assert!(admission.is_drained());
+    let old = *source.get(&source_region).unwrap();
     let plan = migration_plan(0x55, SOURCE_REGION, TARGET_REGION);
     let source_authority = RelocSourceAuthority {
         region: source_region,
@@ -291,11 +290,7 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     // SAFETY: the terminal gate is bound to plan's exact source, and moving the
     // authority consumes the only safe source region/root mutation paths.
     let source_quiescence = unsafe {
-        AdmissionQuiescence::bind_with_authority(
-            &admission,
-            plan.source(),
-            source_authority,
-        )
+        AdmissionQuiescence::bind_with_authority(&admission, plan.source(), source_authority)
     }
     .unwrap();
     let migration = control
@@ -385,12 +380,7 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     // SAFETY: the permit follows terminal drain, and the returned authority owns
     // the only source descriptor and region handle.
     assert_eq!(
-        unsafe {
-            source_authority
-                .root
-                .destroy(&mut source_authority.region)
-        }
-        .unwrap(),
+        unsafe { source_authority.root.destroy(&mut source_authority.region) }.unwrap(),
         AccountV1 {
             account_id: 17,
             balance_cents: 1234,
@@ -823,8 +813,8 @@ fn exercise_target_crash_cut(cut: TargetCrashCut) {
         TargetCrashCut::Committed => {
             // SAFETY: the source gate is still terminal and exactly bound to the
             // committed plan; the parent is the authenticated cleanup authority.
-            let source = unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }
-                .unwrap();
+            let source =
+                unsafe { AdmissionQuiescence::bind(&state.admission, plan.source()) }.unwrap();
             let permit = unsafe { state.control.authorize_reclamation(&source) }.unwrap();
             assert!(!permit.is_resume());
             assert_eq!(

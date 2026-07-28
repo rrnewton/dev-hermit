@@ -66,11 +66,13 @@ metadata.
 
 1. Stop new work and prove source quiescence. Use either a
    `CloseableSnzi` which reached terminal drain, or consume a typed `Mapping`
-   owner through `Draining::try_close`. A typed mapping cannot expose its
-   payload after close: copy the drained payload into process-local staging
-   before `try_close`, then close and bind the resulting capability. The
-   close-first path deliberately trades streaming ergonomics for a type-level
-   guarantee that safe mutation cannot resume.
+   owner through `Draining::try_close`. Copy the drained source into
+   process-local staging before consuming its final access authority. A typed
+   mapping cannot expose its payload after close. For an externally gated
+   allocator or object graph, move its region/root authority into
+   `AdmissionQuiescence::bind_with_authority`. Both paths deliberately trade
+   streaming ergonomics for a type-level guarantee that safe mutation cannot
+   resume during migration.
 2. Allocate a new target generation. Initialize its `RelocAllocator` with a
    new region namespace and a sequence minted by the supervisor's durable
    monotonic counter. Compute/authenticate a digest for the actual backing
@@ -79,33 +81,39 @@ metadata.
    authenticated target backing handle. Clients must not know an attach route.
    Name that supervisor with `AuthorityIdentity`.
 4. Construct `GenerationIdentity` values and a `MigrationPlan`. Unsafely bind
-   the exact source generation to `AdmissionQuiescence`, or consume a
-   `ClosedMapping` into `MappingQuiescence`. This unsafe boundary is where the
-   host attests that the barrier/mapping really guards the named backing.
+   the exact source generation and its remaining safe access authority to
+   `AdmissionQuiescence`, or consume a `ClosedMapping` into
+   `MappingQuiescence`. This unsafe boundary is where the host attests that the
+   barrier/mapping really guards the named backing.
 5. Call `begin_with_quiescent_source`. It consumes the witness and rejects a
    schema, region, sequence, or backing mismatch before claiming the control.
-6. For an admission-gated source, read the now-immutable source; for a typed
-   mapping, use the process-local staging copy made before close. Transform it
-   and populate the target. Resolve every root and validate every descriptor.
+6. Transform the process-local staging copy and populate the target. Resolve
+   every root and validate every descriptor.
 7. Move a host type implementing unsafe `PrecommitTargetBacking` into
    `mark_target_ready`. Its generation and recovery authority must match the
-   plan and `is_private` must remain true while the library owns it. The unsafe
-   call also attests that all target writes happen-before its release CAS and no
-   interior writer or raw mutable alias survives validation.
+   plan and `is_private` must remain true while the library owns it. The backing
+   value must structurally own every safe target mutation and publication
+   authority; do not leave a `RelocRegion`, typed mapping `Owner`, callback, or
+   child writer outside it. The unsafe call also attests that all target writes
+   happen-before its release CAS and no raw mutable alias survives validation.
 8. Call `TargetReadyMigration::commit`. The `TargetReady -> Committed`
    compare-exchange is the route switch. The returned `CommittedMigration`
    still owns both the terminal source proof and target authority. Only now may
    the host extract and publish target attachment material. Attach code must
    acquire-load `authoritative_generation` rather than cache an earlier route.
 9. Pass `committed.source()` to `authorize_reclamation`. It rechecks the exact
-   generation binding and terminal state before recording `Reclaimed`. Only now
-   explicitly destroy source allocations or discard the complete source region.
+   generation binding and terminal state before recording `Reclaimed`. After
+   splitting `CommittedMigration`, pass that permit to
+   `AdmissionQuiescence::into_authority`; this consumes the witness before
+   returning the source handles. Only now explicitly destroy source allocations
+   or discard the complete source region.
 
 The target must not admit callers until commit succeeds. Safe source access
-cannot reopen after the consumed terminal witness. This means the generic protocol has a bounded
-cutover interval; applications that need concurrent snapshot construction must
-provide their own transactional snapshot or copy-on-write consistency scheme
-before entering this protocol.
+cannot reopen after the consumed terminal witness, and owned source handles are
+not returned until the reclamation permit is consumed. This means the generic
+protocol has a bounded cutover interval; applications that need concurrent
+snapshot construction must provide their own transactional snapshot or
+copy-on-write consistency scheme before entering this protocol.
 
 For a rolling executable deployment, first deploy code which can negotiate both
 the old exact schema and the new exact schema. Stop every old-generation writer,
@@ -143,6 +151,13 @@ an external liveness authority such as `pidfd`, stop all affected participants,
 poison the record, and discard the private target. If the migrator dies after
 commit but before publishing its local descriptor, the independently live
 recovery-authority handle named in the plan remains available.
+
+The process tests exercise both sides of that boundary. A child owns and
+release-publishes the only builder mapping while the parent retains a distinct
+mapping of the same memfd. Killing the child at `TargetReady` leaves the source
+authoritative and the private target discardable; killing it immediately after
+`Committed` leaves the target authoritative and readable through the parent's
+recovery mapping.
 
 The metadata checksum catches accidental or torn changes after publication; it
 is not an authenticity mechanism. Authenticate the executable image, control
@@ -230,11 +245,13 @@ not after a timer expires.
   attacker-writable mapped data.
 - Persist and advance the supervisor generation sequence; do not call a region
   ID alone globally unique.
-- Consume a terminal source witness before `begin_with_quiescent_source`.
+- Stage source data, then consume both a terminal witness and every remaining
+  safe source access authority before `begin_with_quiescent_source`.
 - Give the recovery authority an authenticated duplicate target handle before
   commit, and keep every client attach route undiscoverable.
 - Treat `mark_target_ready` as an unsafe exact-generation, happens-before,
-  no-interior-writers, and root-validation boundary.
+  no-interior-writers, and root-validation boundary; the backing value must own
+  the target's safe mutation and publication authorities through commit.
 - Route new attachments by the control record's acquire load.
 - On owner death, prove death externally; never steal a live transaction.
 - Reclaim only after commit and a matching terminal quiescence proof.

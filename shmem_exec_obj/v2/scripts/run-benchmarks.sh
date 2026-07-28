@@ -14,7 +14,7 @@ Options:
   --iterations N       Timed operations per worker (default: 50000; smoke: 64).
   --samples N          Independent timing samples (default: 5; smoke: 1).
   --workers N          Contending threads/processes (default: min(CPUs, 8)).
-  --timeout SECONDS    Whole harness deadline (default: 1800; smoke: 300).
+  --timeout SECONDS    Per build/run deadline (default: 1800; smoke: 300).
   -h, --help           Show this help.
 
 Outputs:
@@ -127,7 +127,11 @@ if ((10#$workers > 64)); then
   exit 2
 fi
 
-target_dir=$(cargo metadata --locked --format-version 1 --no-deps | jq -er .target_directory)
+target_dir=$(
+  timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
+    cargo metadata --locked --format-version 1 --no-deps |
+    jq -er .target_directory
+)
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 if [[ -z $output_dir ]]; then
   output_dir="$target_dir/benchmark-results/$run_id"
@@ -141,10 +145,11 @@ echo "shmem-pod benchmark suite"
 echo "  mode: $mode"
 echo "  output: $output_dir"
 echo "  warmup/iterations/samples/workers: $warmup/$iterations/$samples/$workers"
-echo "  harness timeout: ${run_timeout}s"
+echo "  per-command timeout: ${run_timeout}s"
 
 echo "building executable-pod compiler and runtime"
-cargo build --locked --release \
+timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
+  cargo build --locked --release \
   -p shmem-pod-image-compiler \
   -p shmem-pod-runtime
 compiler="$target_dir/release/shmem-pod-image-compiler"
@@ -164,7 +169,8 @@ compiler_args=(
 if [[ -n ${POD_RUSTC:-} ]]; then
   compiler_args+=(--rustc "$POD_RUSTC")
 fi
-"$compiler" "${compiler_args[@]}"
+timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
+  "$compiler" "${compiler_args[@]}"
 artifact_sha256=$(sed -n 's/^artifact_sha256=//p' "$artifact_dir/pod.manifest")
 if [[ ! $artifact_sha256 =~ ^[0-9a-f]{64}$ ]]; then
   echo "compiler manifest lacks a valid artifact SHA-256" >&2
@@ -208,8 +214,9 @@ export SHMEM_POD_BENCH_CARGO=$(cargo --version --verbose)
 # Cargo prunes workspace-only packages from the copied lockfile. Normalize that
 # temporary lock without network access, then make the measured build immutable.
 CARGO_TARGET_DIR="$target_dir/benchmark-harness" \
+  timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
   cargo metadata --offline --manifest-path "$temporary/Cargo.toml" \
-  --format-version 1 >/dev/null
+    --format-version 1 >/dev/null
 export SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$temporary/Cargo.lock" | awk '{print $1}')
 
 echo "running verified benchmark harness"
@@ -234,13 +241,48 @@ if ((status != 0)); then
   exit "$status"
 fi
 
-jq -e '.schema == "shmem-pod-benchmark-environment-v1"' \
+expected_rows=$((22 * samples))
+jq -e \
+  --argjson warmup "$warmup" \
+  --argjson iterations "$iterations" \
+  --argjson samples "$samples" \
+  --argjson workers "$workers" \
+  '.schema == "shmem-pod-benchmark-environment-v1"
+   and .configuration.warmup_operations_per_worker == $warmup
+   and .configuration.iterations_per_worker == $iterations
+   and .configuration.samples == $samples
+   and .configuration.workers == $workers
+   and (.cargo_lock_sha256 | test("^[0-9a-f]{64}$"))
+   and (.harness_lock_sha256 | test("^[0-9a-f]{64}$"))
+   and (.artifact.sha256 | test("^[0-9a-f]{64}$"))' \
   "$output_dir/environment.json" >/dev/null
-jq -e 'select(.schema == "shmem-pod-benchmark-result-v1" and .verified == true)' \
+jq -s -e --argjson expected "$expected_rows" \
+  'length == $expected
+   and all(.[]; .schema == "shmem-pod-benchmark-result-v1")
+   and all(.[]; .verified == true)
+   and all(.[]; .category == "latency" or .category == "throughput")
+   and all(.[]; .operations > 0 and .elapsed_ns > 0)
+   and ([
+     "direct_rust_atomic_increment",
+     "authenticated_executable_pod_upsert",
+     "gettid_syscall",
+     "unix_stream_8_byte_round_trip",
+     "process_spin_mutex",
+     "process_futex_mutex",
+     "coarse_futex_lock",
+     "fine_grained_futex_locks",
+     "atomic_fetch_add",
+     "snzi",
+     "closeable_snzi",
+     "csnzi",
+     "shared_box_allocate_destroy_pair",
+     "checked_get",
+     "checked_push_pop_pair"
+   ] - (map(.variant) | unique) | length == 0)' \
   "$output_dir/results.jsonl" >/dev/null
-[[ $(wc -l <"$output_dir/results.csv") -gt 1 ]] || {
-  echo "benchmark CSV contains no result rows" >&2
+if [[ $(wc -l <"$output_dir/results.csv") -ne $((expected_rows + 1)) ]]; then
+  echo "benchmark CSV has the wrong result-row count" >&2
   exit 1
-}
+fi
 
 echo "PASS benchmark artifacts validated in $output_dir"

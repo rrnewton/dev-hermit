@@ -226,8 +226,58 @@ fn environment(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| "unknown".to_owned())
 }
 
+fn proc_field(path: &str, field: &str) -> String {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| {
+            contents.lines().find_map(|line| {
+                line.strip_prefix(field)
+                    .map(|value| value.trim().to_owned())
+            })
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn cgroup_metadata() -> (String, String, String, String, String) {
+    let path = fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|contents| {
+            contents
+                .lines()
+                .find_map(|line| line.strip_prefix("0::").map(str::to_owned))
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned());
+    if path == "unknown" {
+        return (
+            path,
+            "unknown".to_owned(),
+            "unknown".to_owned(),
+            "unknown".to_owned(),
+            "unknown".to_owned(),
+        );
+    }
+    let directory = PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+    let read = |name: &str| {
+        fs::read_to_string(directory.join(name))
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_else(|_| "unknown".to_owned())
+    };
+    (
+        path,
+        read("cpu.max"),
+        read("memory.max"),
+        read("memory.swap.max"),
+        read("cpuset.cpus.effective"),
+    )
+}
+
 fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
+    let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
+    let (cgroup_path, cgroup_cpu, cgroup_memory, cgroup_swap, cgroup_cpuset) =
+        cgroup_metadata();
     let path = config.output_dir.join("environment.json");
     let mut output = BufWriter::new(File::create(path)?);
     writeln!(
@@ -240,7 +290,8 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
             "  \"source_dirty\": {},\n",
             "  \"cargo_lock_sha256\": \"{}\",\n",
             "  \"harness_lock_sha256\": \"{}\",\n",
-            "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", \"logical_cpus\": {}, \"os\": \"{}\", \"arch\": \"{}\"}},\n",
+            "  \"host\": {{\"hostname\": \"{}\", \"kernel\": \"{}\", \"cpu_model\": \"{}\", \"available_parallelism\": {}, \"os\": \"{}\", \"arch\": \"{}\"}},\n",
+            "  \"execution_limits\": {{\"cpu_affinity_list\": \"{}\", \"cgroup_v2_path\": \"{}\", \"cgroup_cpu_max\": \"{}\", \"cgroup_memory_max\": \"{}\", \"cgroup_memory_swap_max\": \"{}\", \"cgroup_cpuset_effective\": \"{}\"}},\n",
             "  \"toolchain\": {{\"rustc\": \"{}\", \"cargo\": \"{}\"}},\n",
             "  \"artifact\": {{\"path\": \"{}\", \"sha256\": \"{}\"}},\n",
             "  \"configuration\": {{\"mode\": \"{}\", \"profile\": \"release\", \"warmup_operations_per_worker\": {}, \"iterations_per_worker\": {}, \"samples\": {}, \"workers\": {}, \"timer\": \"std::time::Instant\"}},\n",
@@ -258,6 +309,12 @@ fn write_environment(config: &Config, run_id: &str) -> io::Result<()> {
         available,
         env::consts::OS,
         env::consts::ARCH,
+        json_escape(&affinity),
+        json_escape(&cgroup_path),
+        json_escape(&cgroup_cpu),
+        json_escape(&cgroup_memory),
+        json_escape(&cgroup_swap),
+        json_escape(&cgroup_cpuset),
         json_escape(&environment("SHMEM_POD_BENCH_RUSTC")),
         json_escape(&environment("SHMEM_POD_BENCH_CARGO")),
         json_escape(&config.artifact.display().to_string()),

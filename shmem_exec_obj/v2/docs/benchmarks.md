@@ -1,5 +1,10 @@
 # Reproducible Benchmarks
 
+> **Repository-maintainer evidence:** this suite depends on the repository's
+> private pod compiler and runtime, which are deliberately absent from the
+> crates.io package. This document and its relative commands must remain outside
+> the published package; crate consumers should use the public examples instead.
+
 The benchmark suite measures the costs and contention shapes that matter to a
 shared-memory pod on one controlled host. It is an experiment harness, not a
 leaderboard. Every result is bound to its source revision, Cargo lockfile,
@@ -35,7 +40,8 @@ Make a comparison configuration explicit when collecting evidence:
 `--help` lists all options. Standard defaults are 5,000 untimed operations per
 worker, 50,000 timed operations per worker, five samples, and at most eight
 workers. Smoke defaults are 8, 64, one, and at most two respectively. The
-harness deadline is 30 minutes for a standard run and five minutes for smoke.
+harness per-command deadline is 30 minutes for a standard run and five minutes
+for smoke.
 All counts can be overridden; zero warmup is permitted and recorded.
 
 The current executable-image format and raw process harness are audited only
@@ -48,7 +54,8 @@ Each run creates three text files:
 
 - `environment.json` records the run ID, source SHA and dirty state, workspace
   and normalized harness lockfile SHA-256 values, host/kernel/CPU/toolchain,
-  pod artifact SHA-256, profile, timer, and all workload counts.
+  observed CPU affinity, cgroup-v2 path and CPU/memory/cpuset limits, pod
+  artifact SHA-256, profile, timer, and all workload counts.
 - `results.jsonl` contains one
   `shmem-pod-benchmark-result-v1` object per timing sample.
 - `results.csv` contains the same fields with a header for statistical tools.
