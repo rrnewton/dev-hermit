@@ -1,0 +1,10 @@
+[
+  {
+    "id": "pod-9-ce3f931dfac",
+    "issue_id": "pod-9",
+    "author": "devbig030",
+    "body": "[impl agent, gpt-5.6-sol] ADVERSARIAL REJECT fixes ready for fresh review at parent main 8c758008a977357092f2c62ac479b14dcb4a8c7a (task intentionally remains in_progress). Stable direct status taxonomy now validates artifact/code/state transport as -2, authenticated artifact/code/API/state identity as -3, and trusted runtime mapping failures as -6 without parsing runtime strings; descriptor/static identity checks precede RX mapping. Removed bounded init polling in favor of futex wait/wake with delayed-live-initializer proof; added panic-safe RAII init and attachment claims. Moved pthread_atfork registration out of the ELF constructor to lazy PID-aware publication after hook admission. Closed pre-HookGuard signal reentry. Enforced ELF DF_1_NODELETE in the DSO and proved saved-entry call plus RTLD_NOLOAD residency after dlclose. Added C status constants, direct negative probes, and lifecycle/status docs. Validation: cargo fmt --check; connector tests default/no-default 10 passed each; shim tests 7 passed; no-default check; Rust 1.85 all-target/all-feature check; strict clippy; rustdoc -Dwarnings; C11 ABI layout compile/run; preload demo 7 processes/1407 calls/7 attachments; ptrace demo 1 call/1 attachment/detached; all -2/-3/-6 negative probes; NODELETE unload proof; bash -n and shellcheck.",
+    "created_at": "2026-07-28T12:09:59.050141372Z",
+    "updated_at": "2026-07-28T12:09:59.050141372Z"
+  }
+]
