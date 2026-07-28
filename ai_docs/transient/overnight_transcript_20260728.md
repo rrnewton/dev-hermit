@@ -7,7 +7,7 @@ Recovered from ORC session 4fb50e87-5d91-4294-88b2-afeedf6cc917.
 - Primary source: append-only content_blocks rows with role=notification in ~/.orc/sessions/4fb50e87-5d91-4294-88b2-afeedf6cc917/session.db
 - Cross-check: pushUiNotification entries under ~/.orc/logs/
 - Limitation: /tmp/session_start was absent; retained per-session log shards begin at 08:23 UTC, so the database timestamps define the overnight window.
-- Message bodies below are reproduced verbatim and ordered by database timestamp.
+- Message bodies below preserve the recovered text and database order; trailing line whitespace is normalized.
 
 ## Chronology
 
