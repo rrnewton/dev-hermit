@@ -1040,6 +1040,8 @@ unsafe impl<const NODES: usize> PodSync for Csnzi<NODES> {}
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
 
     #[test]
