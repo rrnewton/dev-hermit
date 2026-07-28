@@ -1,0 +1,3 @@
+# Regenerable compiled guest binaries
+bin/
+corpus-bin/

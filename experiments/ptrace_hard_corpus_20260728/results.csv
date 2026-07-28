@@ -1,0 +1,7 @@
+program,category,witness_key,witness_value,default_test,l2_strict_verify,notes
+mmap_stress_determinism,mmap-heavy,total_pages,2080,pass,pass,64 anon maps + mprotect toggle + mremap grow/shrink + MAP_SHARED msync
+mmap_stress_determinism,mmap-heavy,checksum,37fee76cdf475203,pass,pass,FNV-1a over all touched bytes; identical across 5 runs
+prodcons_determinism,multi-threaded,produced,2000,pass,pass,4 producers x 500 items
+prodcons_determinism,multi-threaded,consumed,2000,pass,pass,3 consumers; blocking mutex + 2 condvars
+prodcons_determinism,multi-threaded,consumed_sum,300499000,pass,pass,order-independent checksum; identical across 5 runs
+io_uring_ring_determinism,io_uring,io_uring_setup,unsupported,pass,pass,io_uring ENOSYS under hermit; deterministic fallback branch taken

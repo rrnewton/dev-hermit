@@ -1,0 +1,54 @@
+{
+  "experiment": "ptrace_hard_corpus",
+  "date": "2026-07-28",
+  "task": "compat-ptrace-expand-corpus",
+  "question": "Which HARD program classes (multi-threaded contention, complex signals, mmap-heavy, epoll/io_uring) pass hermit run --strict --verify at L2 on the ptrace backend, and which expose frontier bugs?",
+  "backend": "ptrace",
+  "determinism_level": "L2 (hermit run --strict --verify, bitwise-identical)",
+  "repo_shas": {
+    "hermit": "6044c2d39ace4bd84f32598a9fde692fcea67b3f",
+    "hermit_branch_base": "origin/main",
+    "feature_branch": "codex/ptrace-corpus-hard-programs"
+  },
+  "hermit_binary": "worktrees/lander/hermit/target/release/hermit",
+  "run_flags": {
+    "l2": "--log=info run --strict --verify --no-virtualize-cpuid --preemption-timeout=disabled",
+    "plain": "run --strict --no-virtualize-cpuid --preemption-timeout=disabled"
+  },
+  "host": {
+    "kernel": "6.17.13",
+    "note": "--no-virtualize-cpuid required on this host (no usable CPUID faulting); orthogonal to scheduling/clock"
+  },
+  "corpus_added_to_hermit": [
+    {
+      "guest": "tests/c/mmap_stress_determinism.c",
+      "harness": "hermit-cli/tests/mmap_stress_determinism.rs",
+      "category": "mmap-heavy",
+      "result": "PASS L2"
+    },
+    {
+      "guest": "tests/c/prodcons_determinism.c",
+      "harness": "hermit-cli/tests/prodcons_determinism.rs",
+      "category": "multi-threaded (blocking mutex + condvars)",
+      "result": "PASS L2"
+    },
+    {
+      "guest": "tests/c/io_uring_ring_determinism.c",
+      "harness": "hermit-cli/tests/io_uring_ring_determinism.rs",
+      "category": "io_uring (deterministic ENOSYS fallback)",
+      "result": "PASS L2"
+    }
+  ],
+  "frontier_bug_found": {
+    "class": "complex signals",
+    "summary": "delivery/consumption of a queued real-time signal (sigqueue/rt_sigqueueinfo) crashes the ptrace backend with 'wait after seccomp resume failed ... EINVAL' in ALL modes (--strict --verify, --strict, plain relaxed run).",
+    "minimal_repro": "src/sig_q_ign.c: signal(SIGRTMIN, SIG_IGN); sigqueue(getpid(), SIGRTMIN, {7});",
+    "ladder": {
+      "sigqueue_then_block_forever": "PASS (send path OK)",
+      "delivery_to_SIG_IGN": "FAIL (EINVAL)",
+      "regular_kill": "PASS"
+    },
+    "note": "contradicts the read that #812 determinized rt_sigqueueinfo at ptrace L2; #812 likely covered send/return, not live same-thread delivery."
+  },
+  "result": "PASS: 3 hard guests (mmap-heavy, blocking multi-threaded producer/consumer, io_uring fallback) added to the hermit corpus, each a C guest + .rs harness pair with a default multi-run determinism test and an #[ignore]'d L2 --strict --verify test. All three reach L2 on the ptrace backend. One frontier signals bug localized and filed (see frontier_bug_found)."
+}
