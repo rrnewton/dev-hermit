@@ -106,10 +106,10 @@ loader lock. The first ordinary `getuid` call registers `pthread_atfork` and
 performs lazy initialization at that admitted safe point. Registration has its
 own PID-tagged publication state: if a process forks in the narrow window before
 the handler is registered, the child detects that the busy owner belonged to
-another PID and retries. The winning `EMPTY -> BUSY` transition uses release
-publication for the separate owner PID; a same-process waiter which acquires
-`BUSY` cannot mistake a live registration for a copied parent claim. It then
-validates and pre-reads each descriptor,
+another PID and retries. State and owner PID occupy one atomic word. Child
+recovery compares the complete inherited `(BUSY, parent_pid)` claim, so a stale
+observer cannot erase a replacement `(BUSY, child_pid)` claim or create a
+second registration owner. It then validates and pre-reads each descriptor,
 authenticates the artifact and code bytes, maps code RX and state shared-RW
 behind guard pages, checks the generated API and state identity envelope, and
 verifies `/proc` permissions before publishing an immutable process-local

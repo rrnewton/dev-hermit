@@ -32,14 +32,15 @@ const INIT_EMPTY: u32 = 0;
 const INIT_BUSY: u32 = 1;
 const INIT_READY: u32 = 2;
 const INIT_FAILED: u32 = 3;
+const ATFORK_STATE_MASK: u32 = 0b11;
+const ATFORK_MAX_OWNER_PID: u32 = u32::MAX >> 2;
 const ATTACH_BUSY: i32 = -1;
 const MAX_ENV_FD_BYTES: usize = 10;
 const F_SEAL_FUTURE_WRITE: libc::c_int = 0x0010;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 static INIT_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
-static ATFORK_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
-static ATFORK_OWNER_PID: AtomicI32 = AtomicI32::new(0);
+static ATFORK_CLAIM: AtomicU32 = AtomicU32::new(INIT_EMPTY);
 static ATTACHED_PID: AtomicI32 = AtomicI32::new(0);
 static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 static FAIL_CLOSED: AtomicBool = AtomicBool::new(false);
@@ -109,6 +110,12 @@ struct InitClaim<'a> {
     published: bool,
 }
 
+struct AtforkRegistrationClaim<'a> {
+    state: &'a AtomicU32,
+    busy_word: u32,
+    published: bool,
+}
+
 struct AttachmentClaim<'a> {
     state: &'a AtomicI32,
     published: bool,
@@ -175,6 +182,53 @@ impl Drop for InitClaim<'_> {
     fn drop(&mut self) {
         if !self.published {
             self.state.store(INIT_FAILED, Ordering::Release);
+            futex_wake_u32(self.state, i32::MAX);
+        }
+    }
+}
+
+impl<'a> AtforkRegistrationClaim<'a> {
+    fn new(state: &'a AtomicU32, busy_word: u32) -> Self {
+        Self {
+            state,
+            busy_word,
+            published: false,
+        }
+    }
+
+    fn publish_ready(mut self) -> Result<(), AdapterError> {
+        self.state
+            .compare_exchange(
+                self.busy_word,
+                INIT_READY,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .map_err(|_| {
+                AdapterError::new(
+                    FailureKind::Initialization,
+                    "pthread_atfork registration claim changed before publication",
+                )
+            })?;
+        self.published = true;
+        futex_wake_u32(self.state, i32::MAX);
+        Ok(())
+    }
+}
+
+impl Drop for AtforkRegistrationClaim<'_> {
+    fn drop(&mut self) {
+        if !self.published
+            && self
+                .state
+                .compare_exchange(
+                    self.busy_word,
+                    INIT_FAILED,
+                    Ordering::Release,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        {
             futex_wake_u32(self.state, i32::MAX);
         }
     }
@@ -1095,32 +1149,56 @@ fn finish_fork_barrier() {
     }
 }
 
-fn try_claim_atfork_registration(state: &AtomicU32, owner_pid: &AtomicI32, pid: i32) -> bool {
-    // The AcqRel state transition release-publishes the separate owner value.
-    // A waiter must acquire BUSY before deciding whether this is a copied
-    // parent claim or a live claim owned by another thread in this process.
-    owner_pid.store(pid, Ordering::Relaxed);
-    state
-        .compare_exchange(INIT_EMPTY, INIT_BUSY, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
+fn atfork_state(word: u32) -> u32 {
+    word & ATFORK_STATE_MASK
 }
 
-fn try_reset_foreign_atfork_registration(
-    state: &AtomicU32,
-    owner_pid: &AtomicI32,
-    pid: i32,
-) -> bool {
-    if state.load(Ordering::Acquire) != INIT_BUSY || owner_pid.load(Ordering::Acquire) == pid {
+fn atfork_owner_pid(word: u32) -> u32 {
+    word >> 2
+}
+
+fn atfork_pid(pid: i32) -> Result<u32, AdapterError> {
+    let pid = u32::try_from(pid).ok();
+    match pid {
+        Some(pid @ 1..=ATFORK_MAX_OWNER_PID) => Ok(pid),
+        _ => Err(AdapterError::new(
+            FailureKind::Initialization,
+            "process ID does not fit the packed pthread_atfork claim",
+        )),
+    }
+}
+
+fn atfork_busy_word(pid: u32) -> u32 {
+    debug_assert!((1..=ATFORK_MAX_OWNER_PID).contains(&pid));
+    (pid << 2) | INIT_BUSY
+}
+
+fn try_claim_atfork_registration(state: &AtomicU32, pid: u32) -> Option<u32> {
+    let busy_word = atfork_busy_word(pid);
+    state
+        .compare_exchange(INIT_EMPTY, busy_word, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| busy_word)
+}
+
+fn try_reset_foreign_atfork_registration(state: &AtomicU32, observed_word: u32, pid: u32) -> bool {
+    if atfork_state(observed_word) != INIT_BUSY || atfork_owner_pid(observed_word) == pid {
         return false;
     }
     state
-        .compare_exchange(INIT_BUSY, INIT_EMPTY, Ordering::AcqRel, Ordering::Acquire)
+        .compare_exchange(
+            observed_word,
+            INIT_EMPTY,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
         .is_ok()
 }
 
 fn ensure_atfork_registered() -> Result<(), AdapterError> {
     loop {
-        match ATFORK_STATE.load(Ordering::Acquire) {
+        let observed = ATFORK_CLAIM.load(Ordering::Acquire);
+        match observed {
             INIT_READY => return Ok(()),
             INIT_FAILED => {
                 return Err(AdapterError::new(
@@ -1129,11 +1207,11 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
                 ));
             }
             INIT_EMPTY => {
-                let pid = raw_getpid();
-                if !try_claim_atfork_registration(&ATFORK_STATE, &ATFORK_OWNER_PID, pid) {
+                let pid = atfork_pid(raw_getpid())?;
+                let Some(busy_word) = try_claim_atfork_registration(&ATFORK_CLAIM, pid) else {
                     continue;
-                }
-                let claim = InitClaim::new(&ATFORK_STATE);
+                };
+                let claim = AtforkRegistrationClaim::new(&ATFORK_CLAIM, busy_word);
                 let result = unsafe {
                     libc::pthread_atfork(
                         Some(atfork_prepare),
@@ -1148,16 +1226,19 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
                         format!("pthread_atfork registration failed with status {result}"),
                     ));
                 }
-                claim.publish_ready();
+                if let Err(error) = claim.publish_ready() {
+                    FAIL_CLOSED.store(true, Ordering::Release);
+                    return Err(error);
+                }
                 return Ok(());
             }
-            INIT_BUSY => {
-                let pid = raw_getpid();
-                if try_reset_foreign_atfork_registration(&ATFORK_STATE, &ATFORK_OWNER_PID, pid) {
-                    futex_wake_u32(&ATFORK_STATE, i32::MAX);
+            word if atfork_state(word) == INIT_BUSY && atfork_owner_pid(word) != 0 => {
+                let pid = atfork_pid(raw_getpid())?;
+                if try_reset_foreign_atfork_registration(&ATFORK_CLAIM, word, pid) {
+                    futex_wake_u32(&ATFORK_CLAIM, i32::MAX);
                     continue;
                 }
-                wait_while_u32(&ATFORK_STATE, INIT_BUSY);
+                wait_while_u32(&ATFORK_CLAIM, word);
             }
             _ => {
                 return Err(AdapterError::new(
@@ -1228,34 +1309,82 @@ mod tests {
 
     #[test]
     fn same_pid_waiter_cannot_reset_live_atfork_registration() {
-        const PID: i32 = 42;
+        const PID: u32 = 42;
         let state = Arc::new(AtomicU32::new(INIT_EMPTY));
-        let owner_pid = Arc::new(AtomicI32::new(0));
         let release = Arc::new(Barrier::new(2));
         let claim_state = Arc::clone(&state);
-        let claim_owner = Arc::clone(&owner_pid);
         let claim_release = Arc::clone(&release);
         let claimant = std::thread::spawn(move || {
-            assert!(try_claim_atfork_registration(
-                &claim_state,
-                &claim_owner,
-                PID
-            ));
+            let busy_word = try_claim_atfork_registration(&claim_state, PID).unwrap();
+            let claim = AtforkRegistrationClaim::new(&claim_state, busy_word);
             claim_release.wait();
-            InitClaim::new(&claim_state).publish_ready();
+            assert!(claim.publish_ready().is_ok());
         });
 
         while state.load(Ordering::Acquire) == INIT_EMPTY {
             std::thread::yield_now();
         }
-        assert_eq!(state.load(Ordering::Acquire), INIT_BUSY);
+        let observed = state.load(Ordering::Acquire);
+        assert_eq!(atfork_state(observed), INIT_BUSY);
+        assert_eq!(atfork_owner_pid(observed), PID);
         assert!(!try_reset_foreign_atfork_registration(
-            &state, &owner_pid, PID
+            &state, observed, PID
         ));
-        assert_eq!(state.load(Ordering::Acquire), INIT_BUSY);
+        assert_eq!(state.load(Ordering::Acquire), observed);
+        assert!(try_claim_atfork_registration(&state, PID).is_none());
         release.wait();
         claimant.join().unwrap();
         assert_eq!(state.load(Ordering::Acquire), INIT_READY);
+    }
+
+    #[test]
+    fn stale_foreign_observer_cannot_erase_replacement_atfork_claim() {
+        const PARENT_PID: u32 = 41;
+        const CHILD_PID: u32 = 42;
+        let parent_busy = atfork_busy_word(PARENT_PID);
+        let state = AtomicU32::new(parent_busy);
+
+        // Caller A pauses after observing the inherited parent claim. Caller B
+        // removes that exact word and wins the one child registration claim.
+        let caller_a_observed = state.load(Ordering::Acquire);
+        assert!(try_reset_foreign_atfork_registration(
+            &state,
+            parent_busy,
+            CHILD_PID
+        ));
+        let caller_b_claim = try_claim_atfork_registration(&state, CHILD_PID);
+        let child_busy = caller_b_claim.unwrap();
+
+        // Caller A resumes with its stale observation. Its full-word CAS must
+        // not match B's BUSY state, and it cannot become a second claimant.
+        assert!(!try_reset_foreign_atfork_registration(
+            &state,
+            caller_a_observed,
+            CHILD_PID
+        ));
+        let caller_a_claim = try_claim_atfork_registration(&state, CHILD_PID);
+        assert!(caller_a_claim.is_none());
+        assert_eq!(state.load(Ordering::Acquire), child_busy);
+        assert_eq!(
+            [caller_a_claim, caller_b_claim]
+                .into_iter()
+                .flatten()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn unpublished_atfork_claim_marks_state_failed_on_unwind() {
+        const PID: u32 = 42;
+        let state = AtomicU32::new(INIT_EMPTY);
+        let busy_word = try_claim_atfork_registration(&state, PID).unwrap();
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _claim = AtforkRegistrationClaim::new(&state, busy_word);
+            panic!("injected pthread_atfork registration panic");
+        }));
+        assert!(result.is_err());
+        assert_eq!(state.load(Ordering::Acquire), INIT_FAILED);
     }
 
     #[test]
