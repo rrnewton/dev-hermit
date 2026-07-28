@@ -38,6 +38,10 @@ expect_failure ptrace-code-transport short-code \
   "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
 expect_failure ptrace-state-transport read-only-state \
   "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-state-write-seal write-sealed-state \
+  "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
+expect_failure ptrace-state-future-write-seal future-write-sealed-state \
+  "remote bootstrap returned status -2" ./scripts/run-ptrace-demo.sh
 expect_failure ptrace-artifact-identity bad-context-digest \
   "remote bootstrap returned status -3" ./scripts/run-ptrace-demo.sh
 expect_failure ptrace-code-identity bad-code-bytes \

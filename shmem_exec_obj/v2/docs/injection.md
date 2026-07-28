@@ -106,7 +106,10 @@ loader lock. The first ordinary `getuid` call registers `pthread_atfork` and
 performs lazy initialization at that admitted safe point. Registration has its
 own PID-tagged publication state: if a process forks in the narrow window before
 the handler is registered, the child detects that the busy owner belonged to
-another PID and retries. It then validates and pre-reads each descriptor,
+another PID and retries. The winning `EMPTY -> BUSY` transition uses release
+publication for the separate owner PID; a same-process waiter which acquires
+`BUSY` cannot mistake a live registration for a copied parent claim. It then
+validates and pre-reads each descriptor,
 authenticates the artifact and code bytes, maps code RX and state shared-RW
 behind guard pages, checks the generated API and state identity envelope, and
 verifies `/proc` permissions before publishing an immutable process-local
@@ -154,7 +157,9 @@ The direct C ABI uses stable numeric classes, also declared in
 
 - `InvalidTransport` (`-2`) means descriptor type, access mode, seal, length,
   duplication, or `pread` validation failed. Artifact, code, and state
-  descriptors are checked independently before mapping.
+  descriptors are checked independently before mapping. Shared mutable state
+  specifically rejects both `F_SEAL_WRITE` and `F_SEAL_FUTURE_WRITE`, even when
+  its descriptor is `O_RDWR`.
 - `IncompatibleImage` (`-3`) means bytes were readable but their authenticated
   digest/header/code hash/API fingerprint or state identity/generation did not
   match.
@@ -189,6 +194,9 @@ The injector then:
 The bootstrap call records one shared pod update. The host waits for the target
 to exit and checks exactly one attachment and one update, so successful output
 proves the target executed independently after the injector detached.
+Any timeout, EOF, or protocol error before the fixture announces readiness
+kills the complete target process group and reaps the direct child before the
+host returns the error.
 
 This is bounded evidence, not a general-purpose injector. The demo supports a
 single stopped thread, matching glibc/module layouts, a dynamically linked
@@ -256,8 +264,9 @@ Run the two unaware-program proofs from the crate root:
 ```
 
 The failure script directly probes all three status boundaries: unsealed
-artifact, short code, and read-only state transports return `-2`; digest, code-
-byte, API-fingerprint, and generation mismatches return `-3`; and a trusted
-fixed-code mapping collision returns `-6`. The unload script checks `DT_FLAGS_1`
-with `readelf`, calls a saved adapter entry after `dlclose`, and confirms the
-object remains resident with `RTLD_NOLOAD`.
+artifact, short code, read-only state, and real READY `O_RDWR` state files with
+`F_SEAL_WRITE` or `F_SEAL_FUTURE_WRITE` return `-2`; digest, code-byte, API-
+fingerprint, and generation mismatches return `-3`; and a trusted fixed-code
+mapping collision returns `-6`. The unload script checks `DT_FLAGS_1` with
+`readelf`, calls a saved adapter entry after `dlclose`, and confirms the object
+remains resident with `RTLD_NOLOAD`.

@@ -7,7 +7,7 @@ use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod ptrace;
@@ -16,6 +16,7 @@ const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
 const MFD_NOEXEC_SEAL: libc::c_uint = 0x0008;
 const MFD_EXEC: libc::c_uint = 0x0010;
+const F_SEAL_FUTURE_WRITE: libc::c_int = 0x0010;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 const PTRACE_READY_ENV: &str = "INJECTION_FIXTURE_READY_FD";
 const PTRACE_RESUME_ENV: &str = "INJECTION_FIXTURE_RESUME_FD";
@@ -46,6 +47,8 @@ enum Fault {
     ShortCode,
     BadCodeBytes,
     ReadOnlyState,
+    WriteSealedState,
+    FutureWriteSealedState,
     BadApiFingerprint,
     BadStateGeneration,
     FixedCodeCollision,
@@ -91,10 +94,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         )?),
         _ => None,
     };
-    let fault_state_fd = if options.fault == Some(Fault::ReadOnlyState) {
-        Some(reopen_read_only_for_exec(state_fd.as_raw_fd())?)
-    } else {
-        None
+    let fault_state_fd = match options.fault {
+        Some(Fault::ReadOnlyState) => Some(reopen_read_only_for_exec(state_fd.as_raw_fd())?),
+        Some(Fault::WriteSealedState) => Some(create_write_sealed_state_fd(
+            state_fd.as_raw_fd(),
+            image.state_file_len(),
+            libc::F_SEAL_WRITE,
+            "write-sealed",
+        )?),
+        Some(Fault::FutureWriteSealedState) => Some(create_write_sealed_state_fd(
+            state_fd.as_raw_fd(),
+            image.state_file_len(),
+            F_SEAL_FUTURE_WRITE,
+            "future-write-sealed",
+        )?),
+        _ => None,
     };
     let flags = BootstrapFlags::REQUIRED.union(BootstrapFlags::INHERIT_ACROSS_EXEC);
     let mut context = BootstrapContext::new(
@@ -174,31 +188,35 @@ fn run() -> Result<(), Box<dyn Error>> {
     if options.mode == Mode::Ptrace {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let fixture = ptrace_fixture
-                .as_ref()
-                .ok_or("ptrace fixture descriptors were not configured")?;
-            fixture.wait_ready()?;
+            let Some(fixture) = ptrace_fixture.as_ref() else {
+                return Err(cleanup_spawned_guest(
+                    &mut guest,
+                    guest_group,
+                    "ptrace fixture descriptors were not configured".into(),
+                ));
+            };
+            if let Err(error) = fixture.wait_ready() {
+                return Err(cleanup_spawned_guest(&mut guest, guest_group, error));
+            }
             if let Err(error) = ptrace::inject(
                 guest_group,
                 &options.shim,
                 &context,
                 options.fault == Some(Fault::FixedCodeCollision),
             ) {
-                unsafe { libc::kill(-guest_group, libc::SIGKILL) };
-                let _ = guest.wait();
-                return Err(error);
+                return Err(cleanup_spawned_guest(&mut guest, guest_group, error));
             }
             if let Err(error) = fixture.resume() {
-                unsafe { libc::kill(-guest_group, libc::SIGKILL) };
-                let _ = guest.wait();
-                return Err(error);
+                return Err(cleanup_spawned_guest(&mut guest, guest_group, error));
             }
         }
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         {
-            unsafe { libc::kill(-guest_group, libc::SIGKILL) };
-            let _ = guest.wait();
-            return Err("ptrace demo supports Linux x86-64 only".into());
+            return Err(cleanup_spawned_guest(
+                &mut guest,
+                guest_group,
+                "ptrace demo supports Linux x86-64 only".into(),
+            ));
         }
     }
     let status = guest.wait()?;
@@ -425,6 +443,50 @@ fn reopen_read_only_for_exec(fd: RawFd) -> Result<OwnedFd, Box<dyn Error>> {
     duplicate_for_exec(read_only.as_raw_fd(), "read-only state probe")
 }
 
+fn create_write_sealed_state_fd(
+    source_fd: RawFd,
+    state_len: u64,
+    write_seal: libc::c_int,
+    label: &str,
+) -> Result<OwnedFd, Box<dyn Error>> {
+    let length = usize::try_from(state_len)?;
+    let mut bytes = vec![0_u8; length];
+    read_exact_at(source_fd, &mut bytes)?;
+    let name = CString::new(format!("shmem-pod-{label}-state-probe"))?;
+    let fd = unsafe {
+        libc::memfd_create(
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "memfd_create {label} state probe: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), length as libc::off_t) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    write_all_at(fd.as_raw_fd(), &bytes)?;
+    let seals = libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL | write_seal;
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return Err(format!(
+            "seal {label} state probe: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let actual = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GET_SEALS) };
+    let expected = seals | F_SEAL_EXEC;
+    if actual < 0 || actual & expected != expected {
+        return Err(format!("{label} state probe lacks requested seals").into());
+    }
+    duplicate_for_exec(fd.as_raw_fd(), label)
+}
+
 struct PtraceFixture {
     ready_read: OwnedFd,
     ready_child: OwnedFd,
@@ -571,6 +633,34 @@ fn duplicate_for_exec(fd: RawFd, label: &str) -> Result<OwnedFd, Box<dyn Error>>
     Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
 }
 
+fn read_exact_at(fd: RawFd, mut bytes: &mut [u8]) -> Result<(), Box<dyn Error>> {
+    let mut offset = 0;
+    while !bytes.is_empty() {
+        let read = unsafe {
+            libc::pread(
+                fd,
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+                offset as libc::off_t,
+            )
+        };
+        if read < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if read == 0 {
+            return Err("pread state probe ended early".into());
+        }
+        let read = read as usize;
+        bytes = &mut bytes[read..];
+        offset += read;
+    }
+    Ok(())
+}
+
 fn write_all_at(fd: RawFd, mut bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     let mut offset = 0;
     while !bytes.is_empty() {
@@ -597,6 +687,35 @@ fn write_all_at(fd: RawFd, mut bytes: &[u8]) -> Result<(), Box<dyn Error>> {
         offset += written;
     }
     Ok(())
+}
+
+fn cleanup_spawned_guest(
+    guest: &mut Child,
+    guest_group: libc::pid_t,
+    cause: Box<dyn Error>,
+) -> Box<dyn Error> {
+    match kill_guest_group_and_reap(guest, guest_group) {
+        Ok(()) => cause,
+        Err(cleanup) => format!("{cause}; guest cleanup also failed: {cleanup}").into(),
+    }
+}
+
+fn kill_guest_group_and_reap(guest: &mut Child, guest_group: libc::pid_t) -> Result<(), String> {
+    let kill_failure = if unsafe { libc::kill(-guest_group, libc::SIGKILL) } == 0 {
+        None
+    } else {
+        let error = std::io::Error::last_os_error();
+        (error.raw_os_error() != Some(libc::ESRCH)).then(|| error.to_string())
+    };
+    let wait_failure = guest.wait().err().map(|error| error.to_string());
+    match (kill_failure, wait_failure) {
+        (None, None) => Ok(()),
+        (Some(kill), None) => Err(format!("process-group kill failed: {kill}")),
+        (None, Some(wait)) => Err(format!("child reap failed: {wait}")),
+        (Some(kill), Some(wait)) => Err(format!(
+            "process-group kill failed: {kill}; child reap failed: {wait}"
+        )),
+    }
 }
 
 fn random_nonce() -> Result<[u8; 16], Box<dyn Error>> {
@@ -654,7 +773,7 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
             .map_err(|_| "arguments must be valid UTF-8")?;
         if matches!(argument.as_str(), "-h" | "--help") {
             println!(
-                "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N] [--fault bad-context-digest|unsealed-artifact|short-code|bad-code-bytes|read-only-state|bad-api-fingerprint|bad-state-generation|fixed-code-collision]"
+                "usage: shmem-pod-preload-host --image FILE --sha256 HEX --shim FILE --guest FILE [--mode preload|ptrace] [--depth N] [--fanout N] [--threads N] [--calls N] [--fault bad-context-digest|unsealed-artifact|short-code|bad-code-bytes|read-only-state|write-sealed-state|future-write-sealed-state|bad-api-fingerprint|bad-state-generation|fixed-code-collision]"
             );
             std::process::exit(0);
         }
@@ -684,6 +803,8 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
                     "short-code" => Fault::ShortCode,
                     "bad-code-bytes" => Fault::BadCodeBytes,
                     "read-only-state" => Fault::ReadOnlyState,
+                    "write-sealed-state" => Fault::WriteSealedState,
+                    "future-write-sealed-state" => Fault::FutureWriteSealedState,
                     "bad-api-fingerprint" => Fault::BadApiFingerprint,
                     "bad-state-generation" => Fault::BadStateGeneration,
                     "fixed-code-collision" => Fault::FixedCodeCollision,
@@ -711,4 +832,26 @@ fn utf8_value(value: std::ffi::OsString, option: &str) -> Result<String, Box<dyn
     value
         .into_string()
         .map_err(|_| format!("{option} must be valid UTF-8").into())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pre_ready_cleanup_kills_group_and_reaps_child() {
+        let mut child = Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = libc::pid_t::try_from(child.id()).unwrap();
+        kill_guest_group_and_reap(&mut child, group).unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+        assert_eq!(unsafe { libc::kill(-group, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
 }

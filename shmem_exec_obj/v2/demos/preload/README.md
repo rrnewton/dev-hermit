@@ -38,8 +38,9 @@ From the crate root (`jq` is required):
 `./scripts/test-connector-failures.sh` verifies stable `-2` transport, `-3`
 identity, and `-6` runtime-initialization failures. The direct probes cover bad
 artifact, code, and state descriptors, code/digest/API/generation mismatches,
-and a fixed-address collision. `./scripts/test-preload-unload.sh` verifies the DSO's
-ELF `NODELETE` flag and actual post-`dlclose` call lifetime.
+including write-sealed READY state files, and a fixed-address collision.
+`./scripts/test-preload-unload.sh` verifies the DSO's ELF `NODELETE` flag and
+actual post-`dlclose` call lifetime.
 
 The workload is configurable:
 

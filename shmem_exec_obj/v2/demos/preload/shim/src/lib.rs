@@ -34,6 +34,7 @@ const INIT_READY: u32 = 2;
 const INIT_FAILED: u32 = 3;
 const ATTACH_BUSY: i32 = -1;
 const MAX_ENV_FD_BYTES: usize = 10;
+const F_SEAL_FUTURE_WRITE: libc::c_int = 0x0010;
 const F_SEAL_EXEC: libc::c_int = 0x0020;
 
 static INIT_STATE: AtomicU32 = AtomicU32::new(INIT_EMPTY);
@@ -485,6 +486,7 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
             | libc::F_SEAL_SHRINK
             | libc::F_SEAL_SEAL
             | F_SEAL_EXEC,
+        0,
         DescriptorAccess::Readable,
         "artifact",
     )?;
@@ -525,6 +527,7 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
         code_fd.as_raw_fd(),
         mapped_code_len,
         libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL,
+        0,
         DescriptorAccess::Readable,
         "code",
     )?;
@@ -555,6 +558,7 @@ fn initialize_context(bootstrap: BootstrapContext) -> Result<Context, AdapterErr
         state_fd.as_raw_fd(),
         state_len,
         libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL | F_SEAL_EXEC,
+        libc::F_SEAL_WRITE | F_SEAL_FUTURE_WRITE,
         DescriptorAccess::ReadWrite,
         "state",
     )?;
@@ -610,10 +614,18 @@ fn read_transport_file(
     fd: RawFd,
     expected_len: usize,
     required_seals: libc::c_int,
+    forbidden_seals: libc::c_int,
     access: DescriptorAccess,
     label: &str,
 ) -> Result<Vec<u8>, AdapterError> {
-    inspect_transport_file(fd, expected_len, required_seals, access, label)?;
+    inspect_transport_file(
+        fd,
+        expected_len,
+        required_seals,
+        forbidden_seals,
+        access,
+        label,
+    )?;
     read_transport_range(fd, expected_len, 0, label)
 }
 
@@ -621,6 +633,7 @@ fn inspect_transport_file(
     fd: RawFd,
     expected_len: usize,
     required_seals: libc::c_int,
+    forbidden_seals: libc::c_int,
     access: DescriptorAccess,
     label: &str,
 ) -> Result<(), AdapterError> {
@@ -643,6 +656,12 @@ fn inspect_transport_file(
         return Err(AdapterError::new(
             FailureKind::InvalidTransport,
             format!("{label} descriptor lacks required seals"),
+        ));
+    }
+    if seals & forbidden_seals != 0 {
+        return Err(AdapterError::new(
+            FailureKind::InvalidTransport,
+            format!("{label} descriptor carries a forbidden write seal"),
         ));
     }
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -1076,6 +1095,29 @@ fn finish_fork_barrier() {
     }
 }
 
+fn try_claim_atfork_registration(state: &AtomicU32, owner_pid: &AtomicI32, pid: i32) -> bool {
+    // The AcqRel state transition release-publishes the separate owner value.
+    // A waiter must acquire BUSY before deciding whether this is a copied
+    // parent claim or a live claim owned by another thread in this process.
+    owner_pid.store(pid, Ordering::Relaxed);
+    state
+        .compare_exchange(INIT_EMPTY, INIT_BUSY, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn try_reset_foreign_atfork_registration(
+    state: &AtomicU32,
+    owner_pid: &AtomicI32,
+    pid: i32,
+) -> bool {
+    if state.load(Ordering::Acquire) != INIT_BUSY || owner_pid.load(Ordering::Acquire) == pid {
+        return false;
+    }
+    state
+        .compare_exchange(INIT_BUSY, INIT_EMPTY, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
 fn ensure_atfork_registered() -> Result<(), AdapterError> {
     loop {
         match ATFORK_STATE.load(Ordering::Acquire) {
@@ -1088,11 +1130,7 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
             }
             INIT_EMPTY => {
                 let pid = raw_getpid();
-                ATFORK_OWNER_PID.store(pid, Ordering::Release);
-                if ATFORK_STATE
-                    .compare_exchange(INIT_EMPTY, INIT_BUSY, Ordering::Acquire, Ordering::Relaxed)
-                    .is_err()
-                {
+                if !try_claim_atfork_registration(&ATFORK_STATE, &ATFORK_OWNER_PID, pid) {
                     continue;
                 }
                 let claim = InitClaim::new(&ATFORK_STATE);
@@ -1115,13 +1153,7 @@ fn ensure_atfork_registered() -> Result<(), AdapterError> {
             }
             INIT_BUSY => {
                 let pid = raw_getpid();
-                if ATFORK_OWNER_PID.load(Ordering::Acquire) != pid {
-                    let _ = ATFORK_STATE.compare_exchange(
-                        INIT_BUSY,
-                        INIT_EMPTY,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    );
+                if try_reset_foreign_atfork_registration(&ATFORK_STATE, &ATFORK_OWNER_PID, pid) {
                     futex_wake_u32(&ATFORK_STATE, i32::MAX);
                     continue;
                 }
@@ -1149,8 +1181,8 @@ pub extern "C" fn shmem_pod_adapter_abi_version_v1() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::mpsc;
+    use std::sync::{Arc, Barrier};
     use std::time::Duration;
 
     #[test]
@@ -1192,6 +1224,38 @@ mod tests {
             INIT_READY
         );
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn same_pid_waiter_cannot_reset_live_atfork_registration() {
+        const PID: i32 = 42;
+        let state = Arc::new(AtomicU32::new(INIT_EMPTY));
+        let owner_pid = Arc::new(AtomicI32::new(0));
+        let release = Arc::new(Barrier::new(2));
+        let claim_state = Arc::clone(&state);
+        let claim_owner = Arc::clone(&owner_pid);
+        let claim_release = Arc::clone(&release);
+        let claimant = std::thread::spawn(move || {
+            assert!(try_claim_atfork_registration(
+                &claim_state,
+                &claim_owner,
+                PID
+            ));
+            claim_release.wait();
+            InitClaim::new(&claim_state).publish_ready();
+        });
+
+        while state.load(Ordering::Acquire) == INIT_EMPTY {
+            std::thread::yield_now();
+        }
+        assert_eq!(state.load(Ordering::Acquire), INIT_BUSY);
+        assert!(!try_reset_foreign_atfork_registration(
+            &state, &owner_pid, PID
+        ));
+        assert_eq!(state.load(Ordering::Acquire), INIT_BUSY);
+        release.wait();
+        claimant.join().unwrap();
+        assert_eq!(state.load(Ordering::Acquire), INIT_READY);
     }
 
     #[test]
