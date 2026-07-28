@@ -1,0 +1,47 @@
+{
+  "experiment": "qemu_strict_l2_boot_20260727",
+  "date": "2026-07-27",
+  "task": "frontier-linux-hermit-next",
+  "milestone": "L2 determinism (--strict --verify, bitwise-identical repeat) for QEMU-Linux boot under Hermit",
+  "result": "PASS",
+  "assurance_level": "L2",
+  "backend": "ptrace",
+  "relaxations": "none",
+  "hermit_sha": "2ac20b725bad7eaa976b7271242b088a96893c97",
+  "hermit_branch": "main",
+  "reverie_sha": "25bcb31e63ac3098ce905fefc496b8f29c8a33eb",
+  "hermit_binary": "hermit/target/release/hermit",
+  "harness": "hermit/tests/qemu-boot/strict_l2_test.sh",
+  "harness_landed_pr": "https://github.com/rrnewton/hermit/pull/992",
+  "guest_init_source": "hermit/tests/shared-futex-verify/qemu_init.c",
+  "kernel_image": "/boot/vmlinuz",
+  "kernel_version": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+  "qemu_bin": "/usr/local/bin/qemu-system-x86_64",
+  "log_level": "info",
+  "host": "linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "guest_command": "qemu-system-x86_64 -nodefaults -nic none -m 256M -accel tcg,thread=single -smp 1 -icount shift=0,sleep=off -rtc base=utc,clock=vm -kernel /boot/vmlinuz -initrd <run>/initramfs.cpio.gz -display none -serial stdio -monitor none -no-reboot -append 'console=ttyS0 panic=-1 rdinit=/init'",
+  "boot_oracle": {
+    "marker": "SHARED_FUTEX_QEMU_KERNEL_OK",
+    "marker_present": true,
+    "power_down": true,
+    "commit_turns": 31353,
+    "virtual_rtc": "2026-01-01T00:00:06 UTC (1767225606)",
+    "clock_failure_lines": 0,
+    "console_sha256": "0ffc11dcf444adc9c9723b055570b36efb40664609bb167f07ab19aff5b7dc18"
+  },
+  "verify": {
+    "messages_total": [517064, 517064],
+    "detcore_messages": [460566, 460566],
+    "info_messages": [183018, 183018],
+    "detlog_commit_messages": [364557, 364557],
+    "substantive_differences": 0,
+    "verdict": "Success: deterministic. Determinism verified."
+  },
+  "scope_notes": "Minimal qemu_init.c guest (kernel boot to userspace marker + poweroff), not full userspace shell; ptrace backend only; not L3 memory determinism.",
+  "committed_evidence": [
+    "boot_oracle_console.stdout",
+    "verify_comparison_summary.txt",
+    "verify_phase_markers.stderr"
+  ],
+  "excluded_evidence": "boot.stderr (28 MB --log info DETLOG dump; >2 MiB, regenerate by rerun)"
+}
