@@ -8,14 +8,15 @@ random data, CPUID results, address layout, and selected file metadata.
 
 The demo materials live entirely in this parent repository. The pinned
 `hermit/` submodule is unmodified: the outer workspace only adds to it. The
-walkthrough covers six working workflows:
+walkthrough covers seven working workflows:
 
 1. repeat an execution with stable guest-visible inputs;
 2. record an execution and replay it, with or without GDB;
 3. search seeded thread schedules for a concurrency failure;
 4. bisect two schedules to identify the events that change the outcome;
 5. boot Linux in QEMU and save a live snapshot under Hermit's strict profile;
-6. resume that snapshot and inject repeatable commands over its serial port.
+6. resume that snapshot and inject repeatable commands over its serial port;
+7. boot Linux twice under `--strict --verify` and compare the Detcore logs.
 
 > [!WARNING]
 >
@@ -48,11 +49,13 @@ hosts. In particular, Hermit's `unwind-sys` build requires the
 Cargo starts and points back to `make install-deps`. Running `make` initializes
 the `hermit/` submodule when needed and builds the release Hermit binary.
 
-The demos use private temporary and ignored build-artifact directories. Demos 5
-and 6 additionally need `qemu-system-x86_64`, `qemu-img`, the Meta `manifold`
-CLI, Ncat (`nc`), static BusyBox, `cpio`, and `gzip`. Demo 5 downloads a fixed
-kernel from Manifold, verifies its SHA-256, and caches it with the generated
-initramfs and qcow2 snapshot disk under `ignored/qemu-linux`.
+The demos use private temporary and ignored build-artifact directories. Demos
+5, 6, and 7 additionally need `qemu-system-x86_64`, `cpio`, GCC, and `gzip`.
+The snapshot pair also needs `qemu-img`, the Meta `manifold` CLI, Ncat (`nc`),
+and static BusyBox. Demo 5 downloads a fixed kernel from Manifold, verifies its
+SHA-256, and caches it with the generated initramfs and qcow2 snapshot disk
+under `ignored/qemu-linux`. Demo 7 defaults to the host's readable
+`/boot/vmlinuz`; set `KERNEL_IMAGE` when the kernel lives elsewhere.
 
 ## Layout
 
@@ -67,6 +70,7 @@ demos/
   04-schedule-bisection.sh  # portable syscall-boundary hermit analyze
   05-qemu-boot.py           # boot, snapshot, metadata, repeat verification
   06-qemu-resume.py         # resume, command snapshot, repeat verification
+  07-qemu-strict-l2.sh      # boot oracle plus strict two-run log verification
   lib/
     demo_common.py          # hashes, metadata, QMP, serial, strict log diff
     qemu_controller.py      # deterministic in-Hermit QEMU serial/QMP controller
@@ -109,10 +113,12 @@ Run each demo individually so its output and result remain easy to inspect:
 ./demos/04-schedule-bisection.sh
 ./demos/05-qemu-boot.py
 ./demos/06-qemu-resume.py 'ls /'
+make qemu-l2
 ```
 
 Demo 4 is intentionally slow. Demo 5 must complete before Demo 6 because it
-creates the baseline QEMU snapshot.
+creates the baseline QEMU snapshot. Demo 7 is independent and intentionally
+boots Linux three times: once for the success oracle and twice for L2.
 
 Set `DEMO_SKIP_BUILD=1` to reuse an existing `hermit/target` build, or export
 `HERMIT`, `HELLO_RACE`, and `HEAP_PTRS` to point at prebuilt binaries.
@@ -230,6 +236,13 @@ enable Detcore INFO logging so the raw log includes syscall entries and results
 as well as scheduler records. Console output remains concise because it prints
 only a timestamp-free tail.
 
+The snapshot files are local evidence, not portable VM images. The demo invokes
+the host's system `qemu-system-x86_64` rather than a repository-pinned QEMU
+build, and QEMU VM-state compatibility is sensitive to QEMU version, machine
+model, CPU model, and devices. Recreate Demo 5's snapshot after moving to a
+different machine or QEMU build; do not use a copied snapshot as cross-machine
+determinism evidence.
+
 ### 6. QEMU Snapshot Resume
 
 Demo 6 starts the same QEMU machine with `-loadvm hermit-boot`, connects to its
@@ -249,6 +262,28 @@ guest-output hash, post-command qcow2 hash, QEMU identity, and raw INFO log.
 Repeating that command compares every field and reports the first log
 divergence after stripping only the wallclock prefix.
 
+### 7. QEMU Linux Strict L2
+
+`make qemu-l2` builds the pinned Hermit release binary and invokes
+`hermit/tests/qemu-boot/strict_l2_test.sh`. The harness builds a minimal static
+initramfs and runs this single-vCPU QEMU/TCG profile with fixed instruction
+counting and an explicit VM-clock RTC:
+
+```text
+-nodefaults -nic none -accel tcg,thread=single -smp 1
+-icount shift=0,sleep=off -rtc base=utc,clock=vm
+```
+
+The first strict run must reach `SHARED_FUTEX_QEMU_KERNEL_OK`, avoid the known
+PIT/TSC/clocksource failures, and power down. Hermit then executes the exact
+boot twice with `run --strict --verify`, compares both Detcore logs, and must
+print `Success: deterministic. Determinism verified.` This is ptrace L2 with
+INFO logging and no scheduling, preemption, CPUID, time, or I/O relaxations.
+
+The verified 2026-07-28 run used QEMU 10.1.0 and Linux 6.17.13. Both verifier
+runs produced 516137 messages, including 459588 Detcore messages and 363693
+DETLOG/scheduler COMMIT messages, with no substantive differences.
+
 ## Scope And Next Steps
 
 - Keep file contents and mount layouts fixed, prefer a minimal environment, and
@@ -259,9 +294,10 @@ divergence after stripping only the wallclock prefix.
   program works.
 - Benchmark the real workload; ptrace overhead varies with syscall frequency,
   thread count, scheduling, and logging.
-- Demos 5 and 6 run inside the strict deterministic boundary and show their
+- Demos 5, 6, and 7 run inside the strict deterministic boundary and show their
   INFO-log evidence. Demo 6 performs the paired comparison for repeated guest
-  commands without paying for a second Linux boot.
+  commands without paying for a second Linux boot. Demo 7 performs Hermit's
+  full built-in two-run L2 comparison of the boot itself.
 
 For full option and troubleshooting coverage, see the Hermit product
 documentation under `hermit/docs/`. Hermit is BSD-licensed; see
