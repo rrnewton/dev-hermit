@@ -1,0 +1,9 @@
+[    1.294358] Run /init as init process
+SHARED_FUTEX_QEMU_KERNEL_OK release=6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 machine=x86_64
+QEMU_NET_SOCKETPAIR_OK bytes=4 data=PING
+QEMU_NET_DNS_OK localhost=127.0.0.1
+QEMU_NET_LO_UP
+QEMU_NET_TCP_OK proto=tcp addr=127.0.0.1:8080
+QEMU_NET_HTTP_OK status=200 body=HELLO
+QEMU_NET_ALL_OK
+[    1.300761] reboot: Power down

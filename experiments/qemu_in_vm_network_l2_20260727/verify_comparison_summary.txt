@@ -1,0 +1,8 @@
+:: Run1...
+:: Run2...
+:: Comparing logs... /tmp/run1_log_VhIyS and /tmp/run2_log_onaxx
+Logs contain 516400 | 516400 messages total
+Logs contain 459540 | 459540 detcore-specific messages
+Logs contain 363689 | 363689 DETLOG & scheduler COMMIT messages
+Done processing logs, no substantive differences found.
+:: Success: deterministic. Determinism verified.

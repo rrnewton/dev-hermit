@@ -1,0 +1,50 @@
+{
+  "experiment": "qemu_in_vm_network_l2_20260727",
+  "date": "2026-07-27",
+  "task": "frontier-linux-hermit-network",
+  "milestone": "L2 determinism (--strict --verify, bitwise-identical repeat) for in-VM networking (DNS, TCP sockets, HTTP) inside a QEMU-Linux VM under Hermit",
+  "result": "PASS",
+  "assurance_level": "L2",
+  "backend": "ptrace",
+  "relaxations": "none",
+  "hermit_sha": "6044c2d39ace4bd84f32598a9fde692fcea67b3f",
+  "hermit_branch": "main (binary); feature branch codex/qemu-in-vm-network-determinism @ ec79be9da47ce8071c082687d57cba5856d03674",
+  "pr": "https://github.com/rrnewton/hermit/pull/1019",
+  "hermit_binary": "hermit/target/release/hermit",
+  "harness": "hermit/tests/qemu-boot/strict_l2_network_test.sh",
+  "guest_init_source": "hermit/tests/shared-futex-verify/qemu_net_init.c",
+  "kernel_image": "/boot/vmlinuz",
+  "kernel_version": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+  "qemu_bin": "/usr/local/bin/qemu-system-x86_64",
+  "log_level": "info",
+  "host": "linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "guest_command": "qemu-system-x86_64 -nodefaults -nic none -m 256M -accel tcg,thread=single -smp 1 -icount shift=0,sleep=off -rtc base=utc,clock=vm -kernel /boot/vmlinuz -initrd <run>/initramfs.cpio.gz -display none -serial stdio -monitor none -no-reboot -append 'console=ttyS0 panic=-1 rdinit=/init'",
+  "networking_scope": "in-guest loopback only (no QEMU NIC; -nic none). DNS via /etc/hosts, TCP+HTTP over 127.0.0.1. External-egress networking intentionally out of scope (not L2-deterministic without record/replay).",
+  "boot_oracle": {
+    "markers": [
+      "SHARED_FUTEX_QEMU_KERNEL_OK",
+      "QEMU_NET_SOCKETPAIR_OK bytes=4 data=PING",
+      "QEMU_NET_DNS_OK localhost=127.0.0.1",
+      "QEMU_NET_LO_UP",
+      "QEMU_NET_TCP_OK proto=tcp addr=127.0.0.1:8080",
+      "QEMU_NET_HTTP_OK status=200 body=HELLO",
+      "QEMU_NET_ALL_OK"
+    ],
+    "power_down": true,
+    "clock_failure_lines": 0,
+    "boot_stdout_sha256": "810200e31341b6914d73dd5d9fdefc231723c55f4b891f822d464eb5a8317d5c"
+  },
+  "verify": {
+    "messages_total": [516400, 516400],
+    "detcore_messages": [459540, 459540],
+    "detlog_commit_messages": [363689, 363689],
+    "substantive_differences": 0,
+    "verdict": "Success: deterministic. Determinism verified.",
+    "harness_verdict": "QEMU strict L2 in-VM network boot passed."
+  },
+  "committed_evidence": [
+    "boot_oracle_console.txt",
+    "verify_comparison_summary.txt"
+  ],
+  "excluded_evidence": "boot.stderr / verifier.stderr (--log info DETLOG dumps, tens of MB; >2 MiB, regenerate by rerun)"
+}
