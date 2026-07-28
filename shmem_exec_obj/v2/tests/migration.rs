@@ -279,7 +279,7 @@ unsafe impl PrecommitTargetBacking for ProcessTargetBacking {
     }
 }
 
-struct PermitSourceAuthority;
+struct PermitSourceAuthority(u64);
 
 // SAFETY: this synthetic authority owns no source bytes or access path, has no
 // destructor, and is safe to leak. It exists only to test permit provenance.
@@ -456,10 +456,12 @@ fn reclamation_permit_must_match_the_complete_bound_plan() {
         bound_plan: MigrationPlan,
         foreign_plan: MigrationPlan,
         expected_transaction_match: bool,
+        expected_target_match: bool,
         expected_authority_match: bool,
     ) {
         assert_eq!(bound_plan.source(), foreign_plan.source());
         assert_ne!(bound_plan, foreign_plan);
+        let authority_marker = bound_plan.transaction_id() ^ 0x5a5a_5a5a_5a5a_5a5a;
 
         let admission = CloseableSnzi::<20>::new();
         assert!(admission.close());
@@ -469,7 +471,11 @@ fn reclamation_permit_must_match_the_complete_bound_plan() {
         // competing controls deliberately violates the documented uniqueness
         // rule so the public API's fail-closed mismatch check can be exercised.
         let bound_source = unsafe {
-            AdmissionQuiescence::bind_with_authority(&admission, bound_plan, PermitSourceAuthority)
+            AdmissionQuiescence::bind_with_authority(
+                &admission,
+                bound_plan,
+                PermitSourceAuthority(authority_marker),
+            )
         }
         .unwrap();
         // SAFETY: as above, this is an effect-free adversarial duplicate witness.
@@ -513,10 +519,11 @@ fn reclamation_permit_must_match_the_complete_bound_plan() {
             MigrationError::SourcePlanMismatch {
                 transaction_matches,
                 source_matches: true,
-                target_matches: false,
+                target_matches,
                 authority_matches,
                 ..
             } if transaction_matches == expected_transaction_match
+                && target_matches == expected_target_match
                 && authority_matches == expected_authority_match
         ));
         assert_eq!(
@@ -537,10 +544,11 @@ fn reclamation_permit_must_match_the_complete_bound_plan() {
                     MigrationError::SourcePlanMismatch {
                         transaction_matches,
                         source_matches: true,
-                        target_matches: false,
+                        target_matches,
                         authority_matches,
                         ..
                     } if transaction_matches == expected_transaction_match
+                        && target_matches == expected_target_match
                         && authority_matches == expected_authority_match
                 ));
                 source
@@ -559,29 +567,80 @@ fn reclamation_permit_must_match_the_complete_bound_plan() {
         let bound_permit = unsafe { bound_control.authorize_reclamation(&bound_source) }.unwrap();
         assert_eq!(bound_permit.plan(), bound_plan);
         match bound_source.into_authority(bound_permit) {
-            Ok(PermitSourceAuthority) => {}
+            Ok(PermitSourceAuthority(returned_marker)) => {
+                assert_eq!(returned_marker, authority_marker)
+            }
             Err((error, _source)) => panic!("matching permit was rejected: {error}"),
         }
     }
 
     let bound_plan = migration_plan(0xa00, 401, 402);
-    let different_transaction = MigrationPlan::new(
+    let transaction_only = MigrationPlan::new(
         0xa01,
+        bound_plan.source(),
+        bound_plan.target(),
+        bound_plan.target_authority(),
+    )
+    .unwrap();
+    exercise(bound_plan, transaction_only, false, true, true);
+
+    let target_only = MigrationPlan::new(
+        bound_plan.transaction_id(),
         bound_plan.source(),
         generation::<AccountV2>(403, 102, 0x43),
         bound_plan.target_authority(),
     )
     .unwrap();
-    exercise(bound_plan, different_transaction, false, true);
+    exercise(bound_plan, target_only, true, false, true);
 
-    let different_target_and_authority = MigrationPlan::new(
+    let authority_only = MigrationPlan::new(
         bound_plan.transaction_id(),
         bound_plan.source(),
-        generation::<AccountV2>(404, 103, 0x44),
+        bound_plan.target(),
         AuthorityIdentity::new([0x99; 16]),
     )
     .unwrap();
-    exercise(bound_plan, different_target_and_authority, true, false);
+    exercise(bound_plan, authority_only, true, true, false);
+}
+
+#[test]
+fn same_source_witness_cannot_be_retargeted_before_control_claim() {
+    let admission = CloseableSnzi::<20>::new();
+    assert!(admission.close());
+    assert!(admission.is_drained());
+
+    let bound_plan = migration_plan(0xb00, 501, 502);
+    let transaction_only = MigrationPlan::new(
+        0xb01,
+        bound_plan.source(),
+        bound_plan.target(),
+        bound_plan.target_authority(),
+    )
+    .unwrap();
+    // SAFETY: this effect-free synthetic source is bound to `bound_plan` and its
+    // unique control. The safe begin call deliberately attempts to retarget it.
+    let witness = unsafe { AdmissionQuiescence::bind(&admission, bound_plan) }.unwrap();
+    let control = MigrationControl::new();
+
+    assert!(matches!(
+        control.begin_with_quiescent_source(witness, transaction_only),
+        Err(MigrationError::SourcePlanMismatch {
+            transaction_matches: false,
+            source_matches: true,
+            target_matches: true,
+            authority_matches: true,
+            ..
+        })
+    ));
+    assert_eq!(
+        control.snapshot().unwrap().phase(),
+        MigrationPhase::Uninitialized,
+        "full-plan mismatch must be rejected before claiming the control"
+    );
+    assert!(
+        admission.try_enter(0).is_err(),
+        "mismatched begin consumes the witness but cannot reopen terminal admission"
+    );
 }
 
 #[test]
