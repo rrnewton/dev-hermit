@@ -1207,10 +1207,7 @@ mod tests {
 
         // One root contribution represents the full leaf; the other models
         // this entrant's already-published parent reservation.
-        barrier
-            .root
-            .value
-            .store(ROOT_OPEN | 2, Ordering::SeqCst);
+        barrier.root.value.store(ROOT_OPEN | 2, Ordering::SeqCst);
         barrier.nodes[leaf]
             .value
             .store(node_state(1, NODE_COUNT_MASK), Ordering::SeqCst);
@@ -1232,10 +1229,7 @@ mod tests {
                     .unwrap();
             });
 
-            assert_eq!(
-                barrier.arrive_node_with_parent_state(leaf, true),
-                Ok(1)
-            );
+            assert_eq!(barrier.arrive_node_with_parent_state(leaf, true), Ok(1));
         });
 
         assert!(CAPACITY_WAIT_OBSERVED.load(Ordering::SeqCst));
