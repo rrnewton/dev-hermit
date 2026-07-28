@@ -1,0 +1,9 @@
+program,category,ptrace,sabre,dbi,liteinst
+awk-compute,compute-locale,L2,L2,L2,L2
+awk-tolower-utf8,compute-locale,L2,L2,L2,L2
+python-threads4,threads,L2,L2,L2,OTHER
+sha256sum,crypto,L2,L2,L2,L2
+openssl-sha256,crypto,L2,L2,L2,L2
+perl-hash,interp,L2,L2,L2,L2
+base32-single,text,L2,L2,L2,L2
+date-fork-wrapper,fork,L2,RPCPANIC,L2,NOFORK

@@ -1,0 +1,42 @@
+{
+  "experiment": "multibackend_compat_20260728",
+  "date": "2026-07-28",
+  "task": "compat push (multi-backend)",
+  "mode": "hermit run --backend <be> --strict --verify (L2)",
+  "backends_tested": ["ptrace", "sabre", "dbi", "liteinst", "kvm"],
+  "hermit": {
+    "checkout": "~/work/dev-hermit/worktrees/275/hermit",
+    "branch": "codex/compat-push-multibackend",
+    "base_sha": "9b4f6896f714b3ba2976dc5eaff7fb304587bda5"
+  },
+  "reverie_pin": "9233c0d099ce3bdc820958aa3071a6c1439bc249",
+  "host": {
+    "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
+    "arch": "x86_64",
+    "hostname": "devbig030.atn3.facebook.com"
+  },
+  "headline": "ptrace L2 frontier is mature; EVERY multi-backend compat gap found routes to the pinned reverie dependency (approval-gated + pin bump). No in-tree hermit code fix was landable this round.",
+  "findings": {
+    "ptrace": "Mature. 20+ harder single-process programs L2 (crypto, interp, compute-locale, mmap/pipe/epoll/signal/ioctl/getrusage/sched_yield). No fresh in-tree gap.",
+    "sabre": {
+      "rdtscp": "RDTSCP (0F 01 F9) not intercepted -> raw host TSC leaks (see sabre_rdtscp_gap_20260728).",
+      "pipe_eagain": "execve'd pipeline children get EAGAIN (#1035).",
+      "rpc_panic_on_fork_wrapper": "date (Meta fork wrapper) aborts: panic at reverie-rpc-transport/src/blocking_client.rs:97 'Socket operation on non-socket' (ENOTSOCK, code 88) -> core dump."
+    },
+    "dbi": {
+      "copied_child_ioctl": "strict copied pre-exec child fail-closes on ioctl/recvmsg/recvmmsg/readlink[at] (detcore-dbi reverie_dbi_runtime_copied_syscall, PR-981 deliberate); breaks bash pipelines like 'echo|base32|base32 -d'. Needs reverie-dbi ABI to pass syscall args (pinned).",
+      "clock": "#705 effectively FIXED: date -u +%Y prints 2026 under dbi (was 1970)."
+    },
+    "liteinst": {
+      "interception_incomplete_nondeterministic": "glibc-internal syscalls (locale file opens) execute natively/untraced; single-proc awk shows 5 committed turns vs ptrace 27. Under --strict --verify the committed syscall sequence VARIES run-to-run: awk-compute flakes 3/30 (~10%) with 'Mismatch between run 1 and run 2' though stdout is stable.",
+      "no_fork_clone": "'reverie-liteinst: clone/fork injection is unsupported' -> any fork (date wrapper) or thread (python threading -> 'can't start new thread') fails.",
+      "no_pmu_timer": "'--backend=liteinst does not implement PMU/RCB timer delivery; continuing with --max-timeslice=disabled.'"
+    },
+    "kvm": "Uses distinct verify (output+exit-status compare, not log). echo L2. Various un-enumerated-syscall gaps in reverie-kvm executor (pinned)."
+  },
+  "in_tree_fix_available": false,
+  "fix_disposition": "All gaps are in the pinned reverie dependency (reverie-sabre / third-party/sabre, reverie-dbi ABI, reverie-liteinst, reverie-kvm, reverie-rpc-transport). Each is an interception-semantics change to a core Reverie contract -> requires user approval + reverie feature branch + parent pin bump per Reverie API Policy. detcore-liteinst/src/lib.rs is a 34-line constructor with no interception lever; detcore-dbi copied-child gate cannot distinguish safe ioctls without args from the pinned ABI.",
+  "issues_filed": ["rrnewton/hermit#1047 (liteinst interception-incompleteness)"],
+  "related_issues": ["#1035 (sabre pipe EAGAIN)", "#705 (dbi clock, now fixed)", "#1039 (timeout timer race)"],
+  "prior_round": "compat_push_survey_20260728 (ptrace, landed draft PR #1041 ivar guard)."
+}
