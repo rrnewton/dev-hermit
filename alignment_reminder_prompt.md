@@ -2,4 +2,6 @@ This is your periodic reminder to make sure your running state is aligned with y
 
 If you've been given a headline goal from the human, keep your main focus on that while keeping all the background prioritise moving.
 
-CURRENTLY: As of the 3pm of July 27, EDT. I want us improving main (stability CI cleanup etc) for a mini "release" and landing quickly. I want a really high quality Linux qemu boot demo and the hermit-linux experimental work to keep pushing forward as planned.
+CURRENTLY: As of the 9pm of July 27, EDT. We have an overaching ci-overhaul goal, and concurrently we are starting a massive compat push wave which has started but will land after the ci-overhaul (rebasing and re-greening as needed). We want to stay as close as possible to zero PRs.
+
+If your agents are idle PUT THEM TO WORK. This deep, ongoing, and broad work. You can push compat in every direction and work on deep debugging of serious apps and reach towards our longer term goals.  File tasks and dispatch to agents.

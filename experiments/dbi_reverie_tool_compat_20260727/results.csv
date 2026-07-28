@@ -1,0 +1,6 @@
+config,backend,tool,observes_all_syscalls,marginal_us_per_syscall,wall_100k_s,per_syscall_incl_startup_us
+native,none,none,no,0.069,0.0115,NA
+ptrace_noop,ptrace,noop,no,0.067,0.0475,0.360
+dbi_noop,dbi,noop,yes,1.969,0.2480,2.365
+ptrace_counter1,ptrace,counter1,yes,26.514,2.5919,25.804
+dbi_counter1,dbi,counter1,yes,2.468,0.2836,2.721

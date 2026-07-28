@@ -1,0 +1,17 @@
+{
+  "experiment": "dbi_reverie_tool_compat_20260727",
+  "date": "2026-07-27",
+  "task": "compat-dbi-reverie-ratchet",
+  "agent": "hermit-274",
+  "reverie_sha": "e4ce514c23415044cccc6ea42dec6a14ef216e3c",
+  "reverie_branch": "codex/reverie-dbi-gap-closure",
+  "hermit_sha": "2ac20b725bad7eaa976b7271242b088a96893c97",
+  "dynamorio_sha": "929840ad9190e5086775e8debc0f0b79b4208d59",
+  "dbi_client_profile": "debug",
+  "guest": "getpid loop, N syscalls via syscall(SYS_getpid)",
+  "method": "min-of-3 wall time; per-syscall = two-point slope (N1=50k,N2=250k) removes fixed startup",
+  "host_note": "shared devserver, ~228G/754G RAM used, many concurrent agents; absolute times noisy, min-of-3 + slope robust; nproc=316",
+  "drrun_flags": "-quiet -disable_rseq -stack_size 2M -c <client>",
+  "marginal_us_per_syscall": {"native":0.069,"ptrace_noop":0.067,"dbi_noop":1.969,"ptrace_counter1":26.514,"dbi_counter1":2.468},
+  "headline": "counter1 (observes every syscall + GlobalState RPC): DBI 2.468 us/syscall vs ptrace 26.514 us/syscall = 10.7x faster"
+}
