@@ -12,6 +12,25 @@ use syn::{
     Data, DeriveInput, Fields, Generics, Index, Member, Type, parse_macro_input, parse_quote,
 };
 
+mod pod;
+
+#[proc_macro_attribute]
+/// Declares a stable, scalar-only native method table for an executable pod.
+///
+/// Apply this macro to an `unsafe extern "C"` declaration block. Every method
+/// needs `#[pod_method(id = N, symbol = "exported_name")]`. The macro removes
+/// the foreign declarations and generates a sorted descriptor plus typed
+/// bindings. It rejects generics, variadics, asynchronous functions, duplicate
+/// IDs or symbols, and types outside the explicitly supported C ABI shapes.
+pub fn pod(arguments: TokenStream, input: TokenStream) -> TokenStream {
+    pod::expand(
+        arguments.into(),
+        parse_macro_input!(input as syn::ItemForeignMod),
+    )
+    .unwrap_or_else(syn::Error::into_compile_error)
+    .into()
+}
+
 #[proc_macro_derive(PodValue)]
 /// Derives the address-independent structural storage tier for a concrete struct.
 ///

@@ -1,14 +1,17 @@
 ---
 title: Add closeable admission and SNZI crash policy
-status: open
+status: in_progress
 priority: 1
 issue_type: feature
+assignee: devbig030/admission
 depends_on:
+  pod-6: blocks
   pod-1: parent-child
   pod-4: blocks
-  pod-6: blocks
 created_at: 2026-07-28T03:39:11.862719796+00:00
-updated_at: 2026-07-28T03:39:55.167348290+00:00
+updated_at: 2026-07-28T04:28:29.916229986+00:00
+claimed_at: 2026-07-28T04:28:29.916229986+00:00
+claimed_until: 2026-07-28T10:28:29.916033700+00:00
 ---
 
 # Description

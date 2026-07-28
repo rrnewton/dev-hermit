@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish = false
+
+[dependencies]
+shmem-pod = { workspace = true, default-features = false }
+shmem-pod-macros = { path = "../../crates/macros" }

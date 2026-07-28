@@ -329,6 +329,10 @@ dependencies = [
 [[package]]
 name = "shmem-pod-image-api"
 version = "0.1.0"
+dependencies = [
+ "shmem-pod",
+ "shmem-pod-macros",
+]
 
 [[package]]
 name = "shmem-pod-image-code"

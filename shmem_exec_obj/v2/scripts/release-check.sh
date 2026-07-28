@@ -263,7 +263,8 @@ if [[ $dry_run == 0 ]]; then
   done
   for required in \
     Cargo.toml Cargo.lock README.md LICENSE-APACHE LICENSE-MIT \
-    src/lib.rs docs/support.md examples/README.md tests/layout.rs; do
+    src/lib.rs src/mapping.rs docs/locking.md docs/support.md \
+    examples/README.md examples/typed_mapping.rs tests/layout.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
       exit 1
@@ -297,7 +298,9 @@ else
     exit 1
   fi
 
-  run_gate long "typed layout publish/attach process smoke" \
+  run_gate long "typed mapping lifecycle process smoke" \
+    cargo run --locked --example typed_mapping
+  run_gate long "low-level layout handshake process smoke" \
     cargo run --locked --example layout_handshake
   run_gate long "coarse/fine/atomic counter process example" \
     cargo run --locked --example shared_counters

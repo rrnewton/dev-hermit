@@ -5,6 +5,8 @@
 
 extern crate self as shmem_pod;
 
+#[cfg(target_has_atomic = "64")]
+pub mod admission;
 #[cfg(feature = "fixed-allocator")]
 pub mod fixed_allocator;
 pub mod injection;
@@ -12,13 +14,14 @@ pub mod layout;
 #[cfg(target_has_atomic = "64")]
 pub mod mapping;
 pub mod offset;
+pub mod pod_api;
 #[cfg(target_has_atomic = "64")]
 pub mod snzi;
 pub mod sync;
 
 #[cfg(feature = "derive")]
 #[doc(inline)]
-pub use shmem_pod_macros::{FixedAddressPodValue, PodSync, PodValue};
+pub use shmem_pod_macros::{FixedAddressPodValue, PodSync, PodValue, pod};
 
 use core::mem::{align_of, needs_drop, size_of};
 

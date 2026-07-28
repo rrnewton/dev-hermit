@@ -60,9 +60,9 @@ fn run_parent(mut options: ParentOptions) -> Result<(), Box<dyn Error>> {
     }
     options.image = options.image.canonicalize()?;
     let artifact = PodArtifact::open(&options.image, &options.sha256)?;
-    let fixed_state = artifact.header().flags & FLAG_REQUIRES_SAME_VA != 0;
+    let fixed_state = artifact.header().flags() & FLAG_REQUIRES_SAME_VA != 0;
     let parent_state_address = if fixed_state {
-        artifact.header().required_state_address as usize
+        artifact.header().required_state_address() as usize
     } else {
         STATE_BASE
     };

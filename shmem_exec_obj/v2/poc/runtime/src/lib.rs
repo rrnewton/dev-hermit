@@ -8,17 +8,16 @@
 
 use sha2::{Digest, Sha256};
 use shmem_pod_image_api::{
-    DEFAULT_STATE_FILE_LEN, ENVELOPE_ARTIFACT_HASH_OFFSET, ENVELOPE_CODE_HASH_OFFSET,
+    BindError, DEFAULT_STATE_FILE_LEN, DEMO_POD_API, DemoPodBindings,
+    ENVELOPE_API_FINGERPRINT_OFFSET, ENVELOPE_ARTIFACT_HASH_OFFSET, ENVELOPE_CODE_HASH_OFFSET,
     ENVELOPE_FAILURE_OFFSET, ENVELOPE_FLAGS_OFFSET, ENVELOPE_GENERATION_OFFSET,
     ENVELOPE_LAYOUT_ALIGN_OFFSET, ENVELOPE_LAYOUT_HASH_OFFSET, ENVELOPE_LAYOUT_SIZE_OFFSET,
     ENVELOPE_MAGIC_OFFSET, ENVELOPE_OWNER_PID_OFFSET, ENVELOPE_PAYLOAD_LEN_OFFSET,
     ENVELOPE_READY_COUNT_OFFSET, ENVELOPE_REQUIRED_ADDRESS_OFFSET, ENVELOPE_START_FLAG_OFFSET,
-    ENVELOPE_STATUS_OFFSET, ENVELOPE_VERSION_OFFSET, FLAG_REQUIRES_SAME_VA, HEADER_SIZE,
-    ImageHeader, METHOD_ALLOCATED, METHOD_CAPACITY, METHOD_GET, METHOD_INIT, METHOD_LAYOUT_ALIGN,
-    METHOD_LAYOUT_HASH, METHOD_LAYOUT_SIZE, METHOD_LEN, METHOD_SNZI_ARRIVE, METHOD_SNZI_DEPART,
-    METHOD_SNZI_LEAF_COUNT, METHOD_SNZI_QUERY, METHOD_SNZI_QUIESCENT, METHOD_UPSERT,
-    METHOD_VALIDATE, PAGE_SIZE, STATE_ENVELOPE_SIZE, STATE_MAGIC, STATE_STATUS_EMPTY,
-    STATE_STATUS_INITIALIZING, STATE_STATUS_POISONED, STATE_STATUS_READY, STATE_VERSION,
+    ENVELOPE_STATE_FINGERPRINT_OFFSET, ENVELOPE_STATUS_OFFSET, ENVELOPE_VERSION_OFFSET,
+    FLAG_REQUIRES_SAME_VA, HEADER_SIZE, ImageHeader, MethodResolver, MethodSignature, PAGE_SIZE,
+    STATE_ENVELOPE_SIZE, STATE_MAGIC, STATE_STATUS_EMPTY, STATE_STATUS_INITIALIZING,
+    STATE_STATUS_POISONED, STATE_STATUS_READY, STATE_VERSION,
 };
 use std::ffi::CString;
 use std::fmt;
@@ -43,14 +42,6 @@ const STATUS_SNZI_POISONED: i32 = -14;
 const SNZI_TOKEN_LEAF_MASK: u64 = (1_u64 << 16) - 1;
 const SNZI_TOKEN_RESERVED_BIT: u64 = 1_u64 << 63;
 const SNZI_TOKEN_GENERATION_SHIFT: u32 = 16;
-
-type LayoutFn = unsafe extern "C" fn() -> u64;
-type StateLenFn = unsafe extern "C" fn(*mut u8, u64) -> i32;
-type UpsertFn = unsafe extern "C" fn(*mut u8, u64, u64) -> i32;
-type GetFn = unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32;
-type StateU64Fn = unsafe extern "C" fn(*mut u8) -> u64;
-type SnziArriveFn = unsafe extern "C" fn(*mut u8, u64, *mut u64) -> i32;
-type SnziDepartFn = unsafe extern "C" fn(*mut u8, u64) -> i32;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -79,6 +70,12 @@ impl From<io::Error> for Error {
 
 impl From<shmem_pod_image_api::HeaderError> for Error {
     fn from(error: shmem_pod_image_api::HeaderError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+impl From<BindError> for Error {
+    fn from(error: BindError) -> Self {
         Self(error.to_string())
     }
 }
@@ -114,6 +111,7 @@ impl PodArtifact {
             return Err(Error::message("pod artifact is shorter than its header"));
         }
         let header = ImageHeader::decode(&bytes[..HEADER_SIZE])?;
+        header.validate_for_host(&DEMO_POD_API)?;
         if usize::try_from(header.image_len).ok() != Some(bytes.len()) {
             return Err(Error::message(
                 "pod artifact length differs from the authenticated header",
@@ -160,11 +158,47 @@ impl PodArtifact {
     }
 }
 
+struct ImageResolver<'a> {
+    header: &'a ImageHeader,
+    code: &'a GuardedMapping,
+}
+
+// SAFETY: PodArtifact validates the complete authenticated descriptor before
+// mapping, ImageHeader binds each ID to its exact signature, and GuardedMapping
+// keeps the immutable executable bytes live for binding creation.
+unsafe impl MethodResolver for ImageResolver<'_> {
+    fn resolve(
+        &self,
+        id: u32,
+        signature: MethodSignature,
+    ) -> std::result::Result<NonNull<()>, BindError> {
+        let method = self
+            .header
+            .method(id)
+            .ok_or(BindError::MissingMethod { id })?;
+        let actual = method
+            .decoded_signature()
+            .expect("authenticated header contains only known signatures");
+        if actual != signature {
+            return Err(BindError::SignatureMismatch {
+                id,
+                expected: signature,
+                actual,
+            });
+        }
+        let relative = usize::try_from(method.offset - self.header.code_offset)
+            .expect("validated method offset fits the mapped image");
+        let entry = unsafe { self.code.data.as_ptr().add(relative).cast::<()>() };
+        Ok(NonNull::new(entry).expect("guarded mappings are nonnull"))
+    }
+}
+
 pub struct PodImage {
     header: ImageHeader,
     artifact_digest: [u8; 32],
     code_fd: OwnedFd,
     code: GuardedMapping,
+    bindings: DemoPodBindings,
     layout_size: u64,
     layout_align: u64,
     layout_hash: u64,
@@ -208,11 +242,15 @@ impl PodImage {
             libc::PROT_READ | libc::PROT_EXEC,
             code_address,
         )?;
-        let layout_size = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_SIZE) };
-        let layout_align = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_ALIGN) };
-        let layout_hash = unsafe { call_layout(&artifact.header, &code, METHOD_LAYOUT_HASH) };
-        let snzi_leaf_count =
-            unsafe { call_layout(&artifact.header, &code, METHOD_SNZI_LEAF_COUNT) };
+        let resolver = ImageResolver {
+            header: &artifact.header,
+            code: &code,
+        };
+        let bindings = unsafe { DemoPodBindings::bind(&resolver) }.map_err(Error::from)?;
+        let layout_size = unsafe { (bindings.layout_size)() };
+        let layout_align = unsafe { (bindings.layout_align)() };
+        let layout_hash = unsafe { (bindings.layout_hash)() };
+        let snzi_leaf_count = unsafe { (bindings.snzi_leaf_count)() };
         if layout_size == 0
             || layout_size > artifact.header.payload_len
             || layout_align == 0
@@ -231,6 +269,7 @@ impl PodImage {
             artifact_digest: artifact.digest,
             code_fd,
             code,
+            bindings,
             layout_size,
             layout_align,
             layout_hash,
@@ -291,23 +330,20 @@ impl PodImage {
 
     pub fn validate(&self, state: &PodState) -> Result<()> {
         self.ensure_pair(state)?;
-        let function: StateLenFn = unsafe { mem::transmute(self.entry(METHOD_VALIDATE)) };
-        let status = unsafe { function(state.payload_ptr(), state.payload_len) };
+        let status = unsafe { (self.bindings.validate)(state.payload_ptr(), state.payload_len) };
         status_result("validate", status)
     }
 
     pub fn upsert(&self, state: &PodState, key: u64, delta: u64) -> Result<()> {
         self.ensure_pair(state)?;
-        let function: UpsertFn = unsafe { mem::transmute(self.entry(METHOD_UPSERT)) };
-        let status = unsafe { function(state.payload_ptr(), key, delta) };
+        let status = unsafe { (self.bindings.upsert)(state.payload_ptr(), key, delta) };
         status_result("upsert", status)
     }
 
     pub fn get(&self, state: &PodState, key: u64) -> Result<Option<u64>> {
         self.ensure_pair(state)?;
-        let function: GetFn = unsafe { mem::transmute(self.entry(METHOD_GET)) };
         let mut output = 0_u64;
-        let status = unsafe { function(state.payload_ptr(), key, &mut output) };
+        let status = unsafe { (self.bindings.get)(state.payload_ptr(), key, &mut output) };
         match status {
             0 => Ok(Some(output)),
             -4 => Ok(None),
@@ -316,15 +352,15 @@ impl PodImage {
     }
 
     pub fn len(&self, state: &PodState) -> Result<u64> {
-        self.read_stat(state, METHOD_LEN, "len")
+        self.read_stat(state, self.bindings.len, "len")
     }
 
     pub fn allocated(&self, state: &PodState) -> Result<u64> {
-        self.read_stat(state, METHOD_ALLOCATED, "allocated")
+        self.read_stat(state, self.bindings.allocated, "allocated")
     }
 
     pub fn capacity(&self, state: &PodState) -> Result<u64> {
-        self.read_stat(state, METHOD_CAPACITY, "capacity")
+        self.read_stat(state, self.bindings.capacity, "capacity")
     }
 
     pub fn snzi_arrive<'image, 'state>(
@@ -339,9 +375,9 @@ impl PodImage {
                 self.snzi_leaf_count
             )));
         }
-        let function: SnziArriveFn = unsafe { mem::transmute(self.entry(METHOD_SNZI_ARRIVE)) };
         let mut raw = INVALID_U64;
-        let status = unsafe { function(state.payload_ptr(), leaf as u64, &mut raw) };
+        let status =
+            unsafe { (self.bindings.snzi_arrive)(state.payload_ptr(), leaf as u64, &mut raw) };
         snzi_status_result("arrive", status)?;
         validate_snzi_token(raw, leaf)?;
         Ok(SnziToken {
@@ -352,11 +388,11 @@ impl PodImage {
     }
 
     pub fn snzi_query(&self, state: &PodState) -> Result<bool> {
-        self.read_snzi_bool(state, METHOD_SNZI_QUERY, "query")
+        self.read_snzi_bool(state, self.bindings.snzi_query, "query")
     }
 
     pub fn snzi_is_quiescent(&self, state: &PodState) -> Result<bool> {
-        self.read_snzi_bool(state, METHOD_SNZI_QUIESCENT, "quiescent")
+        self.read_snzi_bool(state, self.bindings.snzi_quiescent, "quiescent")
     }
 
     pub fn verify_runtime_permissions(&self, state: &PodState) -> Result<()> {
@@ -371,8 +407,8 @@ impl PodImage {
     }
 
     fn map_state(&self, fd: OwnedFd, requested_address: Option<usize>) -> Result<PodState> {
-        let address = if self.header.flags & FLAG_REQUIRES_SAME_VA != 0 {
-            let required = self.header.required_state_address as usize;
+        let address = if self.header.flags() & FLAG_REQUIRES_SAME_VA != 0 {
+            let required = self.header.required_state_address() as usize;
             if let Some(requested) = requested_address {
                 if requested != required {
                     return Err(Error::message(format!(
@@ -436,17 +472,25 @@ impl PodImage {
             state.write_u64(ENVELOPE_GENERATION_OFFSET, 1);
             state.write_u64(ENVELOPE_OWNER_PID_OFFSET, unsafe { libc::getpid() as u64 });
             state.write_bytes(ENVELOPE_ARTIFACT_HASH_OFFSET, &self.artifact_digest);
-            state.write_u64(ENVELOPE_FLAGS_OFFSET, self.header.flags);
+            state.write_u64(ENVELOPE_FLAGS_OFFSET, self.header.flags());
             state.write_u64(
                 ENVELOPE_REQUIRED_ADDRESS_OFFSET,
-                self.header.required_state_address,
+                self.header.required_state_address(),
+            );
+            state.write_u128(
+                ENVELOPE_API_FINGERPRINT_OFFSET,
+                self.header.metadata.api_fingerprint,
+            );
+            state.write_u128(
+                ENVELOPE_STATE_FINGERPRINT_OFFSET,
+                self.header.metadata.state_fingerprint,
             );
 
-            let function: StateLenFn = unsafe { mem::transmute(self.entry(METHOD_INIT)) };
-            let init_status = unsafe { function(state.payload_ptr(), state.payload_len) };
+            let init_status =
+                unsafe { (self.bindings.init)(state.payload_ptr(), state.payload_len) };
             status_result("init", init_status)?;
-            let validate: StateLenFn = unsafe { mem::transmute(self.entry(METHOD_VALIDATE)) };
-            let validate_status = unsafe { validate(state.payload_ptr(), state.payload_len) };
+            let validate_status =
+                unsafe { (self.bindings.validate)(state.payload_ptr(), state.payload_len) };
             status_result("post-init validation", validate_status)
         })();
 
@@ -492,16 +536,20 @@ impl PodImage {
             || state.read_u64(ENVELOPE_GENERATION_OFFSET) == 0
             || state.read_u64(ENVELOPE_OWNER_PID_OFFSET) == 0
             || state.read_bytes::<32>(ENVELOPE_ARTIFACT_HASH_OFFSET) != self.artifact_digest
-            || state.read_u64(ENVELOPE_FLAGS_OFFSET) != self.header.flags
+            || state.read_u64(ENVELOPE_FLAGS_OFFSET) != self.header.flags()
             || state.read_u64(ENVELOPE_REQUIRED_ADDRESS_OFFSET)
-                != self.header.required_state_address
+                != self.header.required_state_address()
+            || state.read_u128(ENVELOPE_API_FINGERPRINT_OFFSET)
+                != self.header.metadata.api_fingerprint
+            || state.read_u128(ENVELOPE_STATE_FINGERPRINT_OFFSET)
+                != self.header.metadata.state_fingerprint
         {
             return Err(Error::message(
                 "state envelope does not match the authenticated pod",
             ));
         }
-        if self.header.flags & FLAG_REQUIRES_SAME_VA != 0
-            && state.map.data_address() != self.header.required_state_address as usize
+        if self.header.flags() & FLAG_REQUIRES_SAME_VA != 0
+            && state.map.data_address() != self.header.required_state_address() as usize
         {
             return Err(Error::message(
                 "state is not mapped at its required address",
@@ -523,15 +571,13 @@ impl PodImage {
         Ok(())
     }
 
-    fn entry(&self, method: usize) -> *const u8 {
-        let entry = &self.header.methods[method];
-        let relative = (entry.offset - self.header.code_offset) as usize;
-        unsafe { self.code.data.as_ptr().add(relative).cast_const() }
-    }
-
-    fn read_stat(&self, state: &PodState, method: usize, name: &str) -> Result<u64> {
+    fn read_stat(
+        &self,
+        state: &PodState,
+        function: unsafe extern "C" fn(*mut u8) -> u64,
+        name: &str,
+    ) -> Result<u64> {
         self.ensure_pair(state)?;
-        let function: StateU64Fn = unsafe { mem::transmute(self.entry(method)) };
         let value = unsafe { function(state.payload_ptr()) };
         if value == INVALID_U64 {
             Err(Error::message(format!("pod {name} method rejected state")))
@@ -540,9 +586,13 @@ impl PodImage {
         }
     }
 
-    fn read_snzi_bool(&self, state: &PodState, method: usize, name: &str) -> Result<bool> {
+    fn read_snzi_bool(
+        &self,
+        state: &PodState,
+        function: unsafe extern "C" fn(*mut u8) -> u64,
+        name: &str,
+    ) -> Result<bool> {
         self.ensure_pair(state)?;
-        let function: StateU64Fn = unsafe { mem::transmute(self.entry(method)) };
         match unsafe { function(state.payload_ptr()) } {
             0 => Ok(false),
             1 => Ok(true),
@@ -582,9 +632,8 @@ pub struct SnziToken<'image, 'state> {
 
 impl SnziToken<'_, '_> {
     pub fn depart(self) -> Result<()> {
-        let function: SnziDepartFn =
-            unsafe { mem::transmute(self.image.entry(METHOD_SNZI_DEPART)) };
-        let status = unsafe { function(self.state.payload_ptr(), self.raw) };
+        let status =
+            unsafe { (self.image.bindings.snzi_depart)(self.state.payload_ptr(), self.raw) };
         snzi_status_result("depart", status)
     }
 }
@@ -701,6 +750,14 @@ impl PodState {
     fn read_u64(&self, offset: usize) -> u64 {
         u64::from_le_bytes(self.read_bytes(offset))
     }
+
+    fn write_u128(&self, offset: usize, value: u128) {
+        self.write_bytes(offset, &value.to_le_bytes());
+    }
+
+    fn read_u128(&self, offset: usize) -> u128 {
+        u128::from_le_bytes(self.read_bytes(offset))
+    }
 }
 
 struct GuardedMapping {
@@ -798,13 +855,6 @@ impl Drop for GuardedMapping {
             libc::munmap(self.reservation.as_ptr().cast(), self.reservation_len);
         }
     }
-}
-
-unsafe fn call_layout(header: &ImageHeader, code: &GuardedMapping, method: usize) -> u64 {
-    let relative = (header.methods[method].offset - header.code_offset) as usize;
-    let entry = unsafe { code.data.as_ptr().add(relative).cast_const() };
-    let function: LayoutFn = unsafe { mem::transmute(entry) };
-    unsafe { function() }
 }
 
 fn create_code_fd(code: &[u8]) -> Result<OwnedFd> {
@@ -1106,21 +1156,45 @@ pub fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shmem_pod_image_api::{FLAG_OFFSET_ARENA, METHOD_SPECS, MethodEntry};
+    use shmem_pod_image_api::{
+        CAP_OFFSET_ARENA, CPU_X86_64_BASELINE, DEMO_POD_API, HARDENING_NX_STATE, HARDENING_W_X,
+        ImageMetadata, MethodEntry,
+    };
 
     fn test_artifact() -> (Vec<u8>, [u8; 32]) {
         let code = vec![0xcc_u8; 1024];
         let code_hash: [u8; 32] = Sha256::digest(&code).into();
-        let mut header = ImageHeader::new(code.len(), code_hash).unwrap();
-        header.flags = FLAG_OFFSET_ARENA;
-        for (index, method) in header.methods.iter_mut().enumerate() {
-            *method = MethodEntry {
+        let methods = DEMO_POD_API
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(index, specification)| MethodEntry {
+                id: specification.id,
                 offset: (HEADER_SIZE + index * 32) as u64,
                 size: 16,
-                signature: METHOD_SPECS[index].1 as u16,
-                reserved: 0,
-            };
-        }
+                signature: specification.signature as u16,
+                alignment: 1,
+                ..MethodEntry::default()
+            })
+            .collect();
+        let header = ImageHeader::new(
+            code.len(),
+            16,
+            code_hash,
+            ImageMetadata {
+                api_fingerprint: DEMO_POD_API.fingerprint,
+                state_fingerprint: 1,
+                build_sha256: [2; 32],
+                provenance_sha256: [3; 32],
+                required_capabilities: CAP_OFFSET_ARENA,
+                optional_capabilities: 0,
+                required_hardening: HARDENING_W_X | HARDENING_NX_STATE,
+                required_cpu_features: CPU_X86_64_BASELINE,
+                required_state_address: 0,
+            },
+            methods,
+        )
+        .unwrap();
         let mut image = header.encode().unwrap().to_vec();
         image.extend_from_slice(&code);
         let digest = Sha256::digest(&image).into();

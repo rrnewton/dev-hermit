@@ -65,6 +65,14 @@ across a process boundary.
 cargo run --example snzi
 ```
 
+`closeable_snzi.rs` adds the lifecycle step required for reclamation: it closes
+the gate while workers race to enter, admits only reservations which linearized
+first, and waits for every accepted token to depart.
+
+```text
+cargo run --example closeable_snzi
+```
+
 ## 6. Fixed-Address Allocation
 
 `fixed_allocator_fork.rs` initializes Talc over caller-selected pages and

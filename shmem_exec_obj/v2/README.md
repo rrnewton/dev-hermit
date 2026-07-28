@@ -282,8 +282,32 @@ lock because there is no lock, but it can leak an unmatched arrival. A false
 query is only a point-in-time observation; close admission before using
 quiescence to reclaim state.
 
+`CloseableSnzi` supplies that missing one-shot admission boundary. An entry
+which reserved the gate before close may finish publishing; every later entry
+is rejected. Drain becomes true only after publication reservations and all
+admitted tokens are gone:
+
+```rust
+use shmem_pod::admission::{CloseableSnzi, TryEnterError};
+
+let active = CloseableSnzi::<84>::new();
+let token = active.try_enter(7)?;
+assert!(active.close());
+assert_eq!(active.try_enter(8), Err(TryEnterError::Closed));
+token.depart()?;
+assert!(active.is_drained());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A crashed participant leaks a reservation or arrival and permanently prevents a
+false drain. Timeouts and leases do not remove it; safe recovery fences and
+replaces the complete mapping generation. The
+[admission guide](docs/admission.md) gives the proof, crash matrix, and
+literature precedents.
+
 ```text
 cargo run --example snzi
+cargo run --example closeable_snzi
 ```
 
 ## Allocate Inside Known Pages

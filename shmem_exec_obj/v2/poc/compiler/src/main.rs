@@ -4,8 +4,8 @@ use object::{
 };
 use sha2::{Digest, Sha256};
 use shmem_pod_image_api::{
-    FLAG_OFFSET_ARENA, HEADER_SIZE, ImageHeader, METHOD_SPECS, MethodEntry, PAGE_SIZE,
-    TARGET_ARCH_X86_64,
+    CAP_OFFSET_ARENA, CPU_X86_64_BASELINE, DEMO_POD_API, HARDENING_NX_STATE, HARDENING_W_X,
+    HEADER_SIZE, ImageHeader, ImageMetadata, MethodEntry, PAGE_SIZE, TARGET_ARCH_X86_64,
 };
 use std::env;
 use std::error::Error;
@@ -130,14 +130,32 @@ fn run() -> Result<(), Box<dyn Error>> {
     let elf = object::File::parse(elf_bytes.as_slice())?;
     let (pod_index, pod_bytes) = audit_linked_elf(&elf)?;
 
+    let rustc_version = command_output(Command::new(&options.rustc).arg("-vV"), "rustc -vV")?;
     let code_hash: [u8; 32] = Sha256::digest(pod_bytes).into();
-    let mut header = ImageHeader::new(pod_bytes.len(), code_hash)?;
-    header.flags = FLAG_OFFSET_ARENA;
+    let provenance_sha256 = tagged_digest(&[
+        (b"sdk-dependencies", &sdk_dependencies.inputs_digest),
+        (b"pod-dependencies", &pod_dependencies.inputs_digest),
+        (b"sdk-manifest", &sdk.manifest.digest),
+        (b"linker-script", &linker_script_input.digest),
+    ]);
+    let build_sha256 = tagged_digest(&[
+        (b"rustc", &rustc_input.digest),
+        (b"rust-lld", &rust_lld_input.digest),
+        (b"sdk-rlib", &sdk_rlib_input.digest),
+        (b"pod-object", &object_input.digest),
+    ]);
+    let state_fingerprint = u128::from_le_bytes(
+        pod_dependencies.inputs_digest[..16]
+            .try_into()
+            .expect("SHA-256 prefix has 16 bytes"),
+    );
     let pod_section = elf.section_by_index(pod_index)?;
-    for (index, (name, signature)) in METHOD_SPECS.iter().enumerate() {
+    let mut methods = Vec::with_capacity(DEMO_POD_API.methods.len());
+    for specification in DEMO_POD_API.methods {
+        let name = specification.symbol;
         let symbol = elf
             .symbols()
-            .find(|symbol| symbol.name().ok() == Some(*name))
+            .find(|symbol| symbol.name().ok() == Some(name))
             .ok_or_else(|| format!("required method symbol {name:?} is absent"))?;
         if symbol.kind() != SymbolKind::Text
             || !symbol.is_global()
@@ -152,13 +170,32 @@ fn run() -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| format!("method {name:?} address underflow"))?;
         let size =
             u32::try_from(symbol.size()).map_err(|_| format!("method {name:?} is too large"))?;
-        header.methods[index] = MethodEntry {
+        methods.push(MethodEntry {
+            id: specification.id,
             offset: HEADER_SIZE as u64 + relative,
             size,
-            signature: *signature as u16,
-            reserved: 0,
-        };
+            signature: specification.signature as u16,
+            alignment: 1,
+            ..MethodEntry::default()
+        });
     }
+    let header = ImageHeader::new(
+        pod_bytes.len(),
+        pod_section.align(),
+        code_hash,
+        ImageMetadata {
+            api_fingerprint: DEMO_POD_API.fingerprint,
+            state_fingerprint,
+            build_sha256,
+            provenance_sha256,
+            required_capabilities: CAP_OFFSET_ARENA,
+            optional_capabilities: 0,
+            required_hardening: HARDENING_W_X | HARDENING_NX_STATE,
+            required_cpu_features: CPU_X86_64_BASELINE,
+            required_state_address: 0,
+        },
+        methods,
+    )?;
     let encoded = header.encode()?;
     let mut image = Vec::with_capacity(encoded.len() + pod_bytes.len());
     image.extend_from_slice(&encoded);
@@ -172,9 +209,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let elf_hash: [u8; 32] = Sha256::digest(&elf_bytes).into();
     let sdk_dep_info_input = hash_file(&sdk_dep_info)?;
     let pod_dep_info_input = hash_file(&pod_dep_info)?;
-    let rustc_version = command_output(Command::new(&options.rustc).arg("-vV"), "rustc -vV")?;
     let mut manifest = format!(
-        "format=shmem-pod-image-v1\nprovenance.scope=rustc-dep-info-plus-explicit-link-inputs\nsource={}\nsource_sha256={}\nobject={}\nobject_sha256={}\nelf={}\nelf_sha256={}\nimage={}\nimage_len={}\ncode_len={}\ncode_sha256={}\nartifact_sha256={}\nstate_file_len={}\npayload_len={}\nlinker_script={}\nlinker_script_sha256={}\nrustc_invocation={}\nrustc_launcher={}\nrustc_launcher_sha256={}\nrustc_binary={}\nrustc_binary_sha256={}\nrust_lld={}\nrust_lld_sha256={}\nsdk.package={}\nsdk.version={}\nsdk.edition={}\nsdk.root={}\nsdk.manifest={}\nsdk.manifest_sha256={}\nsdk.crate_root={}\nsdk.crate_root_sha256={}\nsdk.rlib={}\nsdk.rlib_sha256={}\nsdk.default_features=false\nsdk.features=linux-futex\nsdk.dep_info={}\nsdk.dep_info_sha256={}\nsdk.dependencies_sha256={}\npod.dep_info={}\npod.dep_info_sha256={}\npod.dependencies_sha256={}\nsdk.rustc_args={}\npod.rustc_args={}\nlink.inputs={},{},{}\n",
+        "format=shmem-pod-image-v2\nprovenance.scope=rustc-dep-info-plus-explicit-link-inputs\nsource={}\nsource_sha256={}\nobject={}\nobject_sha256={}\nelf={}\nelf_sha256={}\nimage={}\nimage_len={}\ncode_len={}\ncode_sha256={}\nartifact_sha256={}\napi_fingerprint={:032x}\nstate_fingerprint={:032x}\nbuild_sha256={}\nprovenance_sha256={}\nstate_file_len={}\npayload_len={}\nlinker_script={}\nlinker_script_sha256={}\nrustc_invocation={}\nrustc_launcher={}\nrustc_launcher_sha256={}\nrustc_binary={}\nrustc_binary_sha256={}\nrust_lld={}\nrust_lld_sha256={}\nsdk.package={}\nsdk.version={}\nsdk.edition={}\nsdk.root={}\nsdk.manifest={}\nsdk.manifest_sha256={}\nsdk.crate_root={}\nsdk.crate_root_sha256={}\nsdk.rlib={}\nsdk.rlib_sha256={}\nsdk.default_features=false\nsdk.features=linux-futex\nsdk.dep_info={}\nsdk.dep_info_sha256={}\nsdk.dependencies_sha256={}\npod.dep_info={}\npod.dep_info_sha256={}\npod.dependencies_sha256={}\nsdk.rustc_args={}\npod.rustc_args={}\nlink.inputs={},{},{}\n",
         pod_source_input.path.display(),
         hex(&pod_source_input.digest),
         options.object.display(),
@@ -186,6 +222,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         pod_bytes.len(),
         hex(&code_hash),
         hex(&image_hash),
+        header.metadata.api_fingerprint,
+        header.metadata.state_fingerprint,
+        hex(&header.metadata.build_sha256),
+        hex(&header.metadata.provenance_sha256),
         header.state_file_len,
         header.payload_len,
         linker_script_input.path.display(),
@@ -221,11 +261,17 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
     append_build_inputs(&mut manifest, "sdk.dependency", &sdk_dependencies.inputs);
     append_build_inputs(&mut manifest, "pod.dependency", &pod_dependencies.inputs);
-    for (index, (name, signature)) in METHOD_SPECS.iter().enumerate() {
-        let method = header.methods[index];
+    for (index, specification) in DEMO_POD_API.methods.iter().enumerate() {
+        let method = header
+            .method(specification.id)
+            .expect("compiler emitted every generated API method");
         manifest.push_str(&format!(
-            "method.{index}.name={name}\nmethod.{index}.offset=0x{:x}\nmethod.{index}.size={}\nmethod.{index}.signature={:?}\n",
-            method.offset, method.size, signature
+            "method.{index}.id={}\nmethod.{index}.name={}\nmethod.{index}.offset=0x{:x}\nmethod.{index}.size={}\nmethod.{index}.signature={:?}\n",
+            method.id,
+            specification.symbol,
+            method.offset,
+            method.size,
+            specification.signature
         ));
     }
     manifest.push_str("rustc:\n");
@@ -724,6 +770,18 @@ fn command_output(command: &mut Command, label: &str) -> Result<String, Box<dyn 
         .into());
     }
     Ok(String::from_utf8(output.stdout)?)
+}
+
+fn tagged_digest(parts: &[(&[u8], &[u8])]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"shmem-pod-image-metadata-v2");
+    for (tag, value) in parts {
+        digest.update((tag.len() as u64).to_le_bytes());
+        digest.update(tag);
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value);
+    }
+    digest.finalize().into()
 }
 
 fn hex(bytes: &[u8]) -> String {

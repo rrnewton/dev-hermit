@@ -1,13 +1,16 @@
 ---
 title: Implement relocatable allocator and shared collections
-status: open
+status: in_progress
 priority: 0
 issue_type: feature
+assignee: devbig030/allocator
 depends_on:
-  pod-4: blocks
   pod-1: parent-child
+  pod-4: blocks
 created_at: 2026-07-28T03:39:09.627177172+00:00
-updated_at: 2026-07-28T03:39:52.996337860+00:00
+updated_at: 2026-07-28T04:24:45.486376951+00:00
+claimed_at: 2026-07-28T04:24:45.486376951+00:00
+claimed_until: 2026-07-28T12:24:45.486202398+00:00
 ---
 
 # Description
