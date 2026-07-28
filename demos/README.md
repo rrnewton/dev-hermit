@@ -178,8 +178,10 @@ and records the image hash, raw INFO log, Hermit and QEMU versions, QEMU binary
 SHA-256, and timestamp. The first run becomes
 `ignored/qemu-linux/run-metadata.json`; later runs compare their exact qcow2,
 serial-output, and QEMU binary hashes. INFO logs are compared byte-for-byte
-after removing only each line's leading ISO-8601 wallclock timestamp. No
-address, path, virtual time, scheduler count, or other number is normalized.
+after removing each line's leading ISO-8601 wallclock timestamp and
+canonicalizing the host heap pointer in Detcore's `<ivar 0x...>` diagnostics.
+Guest addresses, paths, virtual times, scheduler counts, and other numbers are
+not normalized.
 
 Both Python QEMU demos keep the QEMU-visible paths fixed at
 `ignored/qemu-linux/qmp.sock`, `serial.sock`, and `hermit-snapshot.qcow2`.
