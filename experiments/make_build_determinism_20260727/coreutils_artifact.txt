@@ -1,0 +1,9 @@
+=== ARTIFACT ===
+== build report ==
+lines: 97
+8e530518ccaa5466d022ffc575e3721a  combined.dat
+      4 9
+      4 7
+      4 6
+      4 33
+      4 3

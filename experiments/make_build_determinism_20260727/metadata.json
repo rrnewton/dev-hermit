@@ -1,0 +1,15 @@
+{
+  "experiment": "make_build_determinism_20260727",
+  "date": "2026-07-27",
+  "task": "continue-compat-expansion-option2-build-system",
+  "agent": "hermit-274",
+  "hermit_sha": "6044c2d39ace4bd84f32598a9fde692fcea67b3f",
+  "backend": "ptrace",
+  "host": "devbig030.atn3.facebook.com",
+  "tools": "GNU make (/usr/bin/make), gcc 11, coreutils",
+  "results": {
+    "coreutils_make": {"L1":"PASS","L2_verify":"PASS","L4":"5/5","artifact_md5":"8e530518ccaa5466d022ffc575e3721a (combined.dat, identical to native, stable across independent runs)"},
+    "make_gcc": {"L1":"PASS","L2_verify":"intermittent ~4/5","artifact_md5":"f47859351db029871524057bfecd4f64 (prog, byte-identical across 3 independent --strict runs)","nondeterminism":"gcc execution (vfork scheduling + runaway mincore GC scan, syscall count ~7e8 on diverging run); NOT the make driver"}
+  },
+  "code_changes": "none - coreutils make determinizes under existing virtualization; gcc execution nondeterminism is the frontier boundary"
+}
