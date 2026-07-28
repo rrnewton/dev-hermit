@@ -339,11 +339,12 @@ impl<T> ProcessFutexMutex<T> {
 impl<T: ?Sized> ProcessFutexMutex<T> {
     /// Acquires the mutex, sleeping in the kernel after bounded spinning.
     ///
-    /// # Panics
+    /// # Fatal system-call failures
     ///
-    /// Panics rather than silently busy-looping if Linux rejects an otherwise
-    /// valid futex wait. Injectors should verify that the guest's seccomp policy
-    /// permits process-shared `futex` operations before calling this method.
+    /// Traps the calling process rather than silently busy-looping if Linux
+    /// rejects an otherwise valid futex wait. Injectors should verify that the
+    /// guest's seccomp policy permits process-shared `futex` operations before
+    /// calling this method.
     #[inline]
     pub fn lock(&self) -> ProcessFutexMutexGuard<'_, T> {
         if let Some(guard) = self.try_lock() {
@@ -594,7 +595,7 @@ fn futex_wait(word: &AtomicU32, expected: u32) {
             // Safe construction rules out EFAULT/EINVAL. EPERM/ENOSYS can
             // still result from sandbox policy; abort this path instead of
             // converting a denied syscall into an unbounded hot loop.
-            result => panic!("unexpected futex wait error: {}", -result),
+            _ => fatal_futex_error(),
         }
     }
 }
@@ -672,7 +673,36 @@ fn futex_wake_one(word: &AtomicU32) {
     // SAFETY: the atomic word is valid and aligned for the futex ABI. Wake has
     // no timeout or secondary pointer argument.
     let result = unsafe { raw_futex(word, FUTEX_WAKE, 1, core::ptr::null(), 0) };
-    assert!(result >= 0, "unexpected futex wake error: {}", -result);
+    if result < 0 {
+        fatal_futex_error();
+    }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "x86_64"))]
+#[cold]
+fn fatal_futex_error() -> ! {
+    // SAFETY: an unexpected futex failure means this mutex can no longer
+    // preserve its blocking contract. Trap rather than consuming a CPU in a
+    // retry loop or returning without mutual exclusion.
+    unsafe { core::arch::asm!("ud2", options(noreturn, nostack)) }
+}
+
+#[cfg(all(feature = "linux-futex", target_os = "linux", target_arch = "aarch64"))]
+#[cold]
+fn fatal_futex_error() -> ! {
+    // SAFETY: see the x86_64 implementation. BRK terminates under the default
+    // signal disposition and requires no process-local runtime dependency.
+    unsafe { core::arch::asm!("brk #0", options(noreturn, nostack)) }
+}
+
+#[cfg(all(
+    feature = "linux-futex",
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+#[cold]
+fn fatal_futex_error() -> ! {
+    panic!("unexpected futex system-call failure")
 }
 
 #[cfg(all(

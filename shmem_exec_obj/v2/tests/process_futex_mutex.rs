@@ -524,7 +524,7 @@ fn signals_do_not_restart_the_timeout_budget() {
         // SAFETY: a zeroed sigaction is a valid starting representation on
         // Linux; the mask is initialized before the action is installed.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-        action.sa_sigaction = no_op_signal_handler as usize;
+        action.sa_sigaction = no_op_signal_handler as *const () as usize;
         action.sa_flags = 0;
         // SAFETY: action and its mask are valid writable objects.
         if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
