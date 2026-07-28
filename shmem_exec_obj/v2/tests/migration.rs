@@ -285,15 +285,6 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     const TARGET_REGION: u64 = 0x1002;
 
     let source_mapping = SharedMapping::anonymous(MAPPING_LEN);
-    let source_region = unsafe { source_mapping.initialize_region::<SLOTS>(SOURCE_REGION) };
-    let source = SharedBox::new(
-        &source_region,
-        AccountV1 {
-            account_id: 17,
-            balance_cents: 1234,
-        },
-    )
-    .unwrap();
     let (target_mapping, target_alias) = SharedMapping::memfd_pair(MAPPING_LEN);
     let target_region = unsafe { target_mapping.initialize_region::<SLOTS>(TARGET_REGION) };
 
@@ -304,10 +295,21 @@ fn migrates_schema_then_reclaims_only_after_commit_and_drain() {
     let control_from_other_address = unsafe { &*control_alias.base.cast::<MigrationControl>() };
 
     let admission = CloseableSnzi::<20>::new();
-    assert!(admission.close());
-    assert!(admission.is_drained());
-    let old = *source.get(&source_region).unwrap();
-    drop(source_region);
+    let (source, old) = {
+        let source_region = unsafe { source_mapping.initialize_region::<SLOTS>(SOURCE_REGION) };
+        let source = SharedBox::new(
+            &source_region,
+            AccountV1 {
+                account_id: 17,
+                balance_cents: 1234,
+            },
+        )
+        .unwrap();
+        assert!(admission.close());
+        assert!(admission.is_drained());
+        let old = *source.get(&source_region).unwrap();
+        (source, old)
+    };
     let plan = migration_plan(0x55, SOURCE_REGION, TARGET_REGION);
     let source_authority = RelocSourceAuthority {
         mapping: ManuallyDrop::new(source_mapping),

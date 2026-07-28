@@ -736,6 +736,9 @@ impl<'source, const NODES: usize, Authority: FailClosedSourceAuthority>
     ///     source.into_authority()
     /// }
     /// ```
+    // The allocation-free error must return the intact witness so a caller can
+    // retry without dropping or reopening its fail-closed authority.
+    #[allow(clippy::result_large_err)]
     pub fn into_authority(
         mut self,
         permit: ReclamationPermit,
@@ -1980,9 +1983,9 @@ mod tests {
         }
     }
 
-    // SAFETY: this deliberately observable test probe owns no real source
-    // access. Its destructor violates the production no-effect rule only so the
-    // test can prove the library never invokes it before permitted extraction.
+    // SAFETY: this deliberately observable test probe owns no source access.
+    // Its destructor only increments a process-local counter and has no source
+    // release, reopen, reclamation, or lifetime effect.
     unsafe impl FailClosedSourceAuthority for DropProbe {}
 
     struct TestTarget {
@@ -2026,10 +2029,10 @@ mod tests {
         .unwrap()
     }
 
-    fn probe_source<'a>(
-        admission: &'a CloseableSnzi<20>,
+    fn probe_source(
+        admission: &CloseableSnzi<20>,
         plan: MigrationPlan,
-    ) -> AdmissionQuiescence<'a, 20, DropProbe> {
+    ) -> AdmissionQuiescence<'_, 20, DropProbe> {
         // SAFETY: the synthetic source has no access path besides this terminal
         // gate; DropProbe exists only to observe accidental destructor calls.
         unsafe { AdmissionQuiescence::bind_with_authority(admission, plan.source(), DropProbe) }

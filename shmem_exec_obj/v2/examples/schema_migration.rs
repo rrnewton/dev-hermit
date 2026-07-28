@@ -140,23 +140,23 @@ fn main() {
 
     let mut source_pages = Box::new(Pages([0; BYTES]));
     let mut target_pages = Pages([0; BYTES]);
-    let source_region = unsafe { initialize_region(&mut source_pages, SOURCE_REGION) };
     let target_region = unsafe { initialize_region(&mut target_pages, TARGET_REGION) };
-
-    let source = SharedBox::new(
-        &source_region,
-        CounterV1 {
-            successes: 90,
-            failures: 10,
-        },
-    )
-    .unwrap();
-
     let admission = CloseableSnzi::<20>::new();
-    assert!(admission.close());
-    assert!(admission.is_drained());
-    let old = *source.get(&source_region).unwrap();
-    drop(source_region);
+    let (source, old) = {
+        let source_region = unsafe { initialize_region(&mut source_pages, SOURCE_REGION) };
+        let source = SharedBox::new(
+            &source_region,
+            CounterV1 {
+                successes: 90,
+                failures: 10,
+            },
+        )
+        .unwrap();
+        assert!(admission.close());
+        assert!(admission.is_drained());
+        let old = *source.get(&source_region).unwrap();
+        (source, old)
+    };
 
     let source_generation = GenerationIdentity::for_schema::<CounterV1>(
         SOURCE_REGION,
