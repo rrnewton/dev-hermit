@@ -5,3 +5,5 @@ If you've been given a headline goal from the human, keep your main focus on tha
 CURRENTLY: As of the 9pm of July 27, EDT. We have an overaching ci-overhaul goal, and concurrently we are starting a massive compat push wave which has started but will land after the ci-overhaul (rebasing and re-greening as needed). We want to stay as close as possible to zero PRs.
 
 If your agents are idle PUT THEM TO WORK. This deep, ongoing, and broad work. You can push compat in every direction and work on deep debugging of serious apps and reach towards our longer term goals.  File tasks and dispatch to agents.
+
+Don't fall into a trance either of just shuffling around 
