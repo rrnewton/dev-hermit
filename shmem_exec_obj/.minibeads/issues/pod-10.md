@@ -1,19 +1,22 @@
 ---
 title: Add model, fuzz, sanitizer, and fault-injection validation
-status: open
+status: in_progress
 priority: 1
 issue_type: task
+assignee: devbig030/validation
 depends_on:
-  pod-4: blocks
-  pod-1: parent-child
   pod-9: blocks
   pod-7: blocks
+  pod-4: blocks
+  pod-1: parent-child
   pod-6: blocks
   pod-5: blocks
-  pod-8: blocks
   pod-17: blocks
+  pod-8: blocks
 created_at: 2026-07-28T03:39:15.028398087+00:00
-updated_at: 2026-07-28T04:45:21.050770224+00:00
+updated_at: 2026-07-28T12:56:15.305052172+00:00
+claimed_at: 2026-07-28T12:56:15.305052172+00:00
+claimed_until: 2026-07-30T12:56:15.304817016+00:00
 ---
 
 # Description
