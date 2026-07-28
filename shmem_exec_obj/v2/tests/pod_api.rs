@@ -35,6 +35,22 @@ mod second_order {
     }
 }
 
+mod changed_signature {
+    #[shmem_pod::pod(
+        namespace = "tests.counter.v1",
+        bindings = Bindings,
+        descriptor = API
+    )]
+    unsafe extern "C" {
+        #[pod_method(id = 2, symbol = "test_layout")]
+        pub fn layout() -> u64;
+        #[pod_method(id = 7, symbol = "test_add")]
+        pub fn add(state: *mut u8) -> u64;
+        #[pod_method(id = 9, symbol = "test_read")]
+        pub fn read(state: *mut u8) -> u64;
+    }
+}
+
 unsafe extern "C" fn layout_entry() -> u64 {
     64
 }
@@ -93,6 +109,10 @@ unsafe impl MethodResolver for TestResolver {
 #[test]
 fn fingerprint_and_method_order_depend_on_ids_not_source_order() {
     assert_eq!(first_order::API.fingerprint, second_order::API.fingerprint);
+    assert_ne!(
+        first_order::API.fingerprint,
+        changed_signature::API.fingerprint
+    );
     assert_eq!(
         first_order::API
             .methods

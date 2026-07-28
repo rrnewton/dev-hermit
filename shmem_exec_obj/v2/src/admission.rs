@@ -29,6 +29,7 @@ const POISONED_BIT: u64 = 1_u64 << 62;
 const CHECKING_BIT: u64 = 1_u64 << 61;
 const DRAINED_BIT: u64 = 1_u64 << 60;
 const RESERVATION_MASK: u64 = DRAINED_BIT - 1;
+const TERMINAL_DRAINED: u64 = CLOSED_BIT | DRAINED_BIT;
 
 #[repr(align(64))]
 struct CacheAlignedGate {
@@ -151,6 +152,11 @@ impl AdmissionSnapshot {
 /// `fork`, cancellation, or panic cannot decide which process owns the logical
 /// departure. Dropping or losing a token leaks presence and makes teardown fail
 /// closed.
+///
+/// `fork` physically duplicates a live token without creating another SNZI
+/// arrival. Exactly one process may consume it. Fork only after draining tokens,
+/// or guarantee that the child never uses an inherited token and proceeds
+/// directly to `exec` or `_exit` without unwinding.
 #[must_use = "an admitted participant must eventually depart"]
 pub struct AdmissionToken<'a, const NODES: usize> {
     issuer: &'a CloseableSnzi<NODES>,
@@ -328,7 +334,7 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
         let mut gate = self.gate.value.load(Ordering::SeqCst);
         loop {
             if gate & DRAINED_BIT != 0 {
-                return true;
+                return gate == TERMINAL_DRAINED;
             }
             if gate & (CLOSED_BIT | POISONED_BIT | CHECKING_BIT) != CLOSED_BIT
                 || gate & RESERVATION_MASK != 0
@@ -606,5 +612,19 @@ mod tests {
         barrier.close();
         assert!(!barrier.is_drained());
         assert!(barrier.debug_snapshot().poisoned);
+    }
+
+    #[test]
+    fn mixed_drained_and_poison_encoding_fails_closed() {
+        let barrier = CloseableSnzi::<4>::new();
+        barrier.close();
+        assert!(barrier.is_drained());
+
+        // Safe operations cannot mutate a sealed barrier, but corrupted bytes
+        // or a violated unsafe raw-token/fork contract must not preserve a true
+        // result merely because DRAINED remains set.
+        barrier.poison_gate();
+        assert!(!barrier.is_drained());
+        assert!(!barrier.debug_snapshot().appears_drained());
     }
 }

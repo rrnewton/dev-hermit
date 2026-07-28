@@ -4,15 +4,16 @@ status: open
 priority: 2
 issue_type: task
 depends_on:
-  pod-7: blocks
   pod-4: blocks
-  pod-1: parent-child
-  pod-5: blocks
-  pod-8: blocks
   pod-6: blocks
+  pod-8: blocks
+  pod-5: blocks
+  pod-1: parent-child
   pod-9: blocks
+  pod-17: blocks
+  pod-7: blocks
 created_at: 2026-07-28T03:39:16.035270684+00:00
-updated_at: 2026-07-28T03:40:10.753910464+00:00
+updated_at: 2026-07-28T04:45:16.510783753+00:00
 ---
 
 # Description

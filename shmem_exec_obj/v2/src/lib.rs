@@ -7,6 +7,8 @@ extern crate self as shmem_pod;
 
 #[cfg(target_has_atomic = "64")]
 pub mod admission;
+#[cfg(target_has_atomic = "64")]
+pub mod collections;
 #[cfg(feature = "fixed-allocator")]
 pub mod fixed_allocator;
 pub mod injection;
@@ -15,6 +17,8 @@ pub mod layout;
 pub mod mapping;
 pub mod offset;
 pub mod pod_api;
+#[cfg(target_has_atomic = "64")]
+pub mod reloc_allocator;
 #[cfg(target_has_atomic = "64")]
 pub mod snzi;
 pub mod sync;

@@ -4,6 +4,8 @@ pub use shmem_pod::pod_api::{
 use shmem_pod_macros::pod;
 use std::fmt;
 
+mod demo_methods;
+
 pub const IMAGE_MAGIC: [u8; 8] = *b"SHPODI2\0";
 pub const IMAGE_VERSION: u16 = 2;
 pub const IMAGE_ABI_REVISION: u32 = 2;
@@ -62,43 +64,23 @@ pub const ENVELOPE_REQUIRED_ADDRESS_OFFSET: usize = 152;
 pub const ENVELOPE_API_FINGERPRINT_OFFSET: usize = 160;
 pub const ENVELOPE_STATE_FINGERPRINT_OFFSET: usize = 176;
 
-#[pod(
-    namespace = "shmem-pod.example.offset-table.v2",
-    bindings = DemoPodBindings,
-    descriptor = DEMO_POD_API
-)]
-unsafe extern "C" {
-    #[pod_method(id = 1, symbol = "shmem_pod_layout_size")]
-    pub fn layout_size() -> u64;
-    #[pod_method(id = 2, symbol = "shmem_pod_layout_align")]
-    pub fn layout_align() -> u64;
-    #[pod_method(id = 3, symbol = "shmem_pod_layout_hash")]
-    pub fn layout_hash() -> u64;
-    #[pod_method(id = 10, symbol = "shmem_pod_init")]
-    pub fn init(state: *mut u8, region_len: u64) -> i32;
-    #[pod_method(id = 11, symbol = "shmem_pod_validate")]
-    pub fn validate(state: *mut u8, region_len: u64) -> i32;
-    #[pod_method(id = 20, symbol = "shmem_pod_upsert")]
-    pub fn upsert(state: *mut u8, key: u64, delta: u64) -> i32;
-    #[pod_method(id = 21, symbol = "shmem_pod_get")]
-    pub fn get(state: *mut u8, key: u64, output: *mut u64) -> i32;
-    #[pod_method(id = 22, symbol = "shmem_pod_len")]
-    pub fn len(state: *mut u8) -> u64;
-    #[pod_method(id = 23, symbol = "shmem_pod_allocated")]
-    pub fn allocated(state: *mut u8) -> u64;
-    #[pod_method(id = 24, symbol = "shmem_pod_capacity")]
-    pub fn capacity(state: *mut u8) -> u64;
-    #[pod_method(id = 30, symbol = "shmem_pod_snzi_leaf_count")]
-    pub fn snzi_leaf_count() -> u64;
-    #[pod_method(id = 31, symbol = "shmem_pod_snzi_arrive")]
-    pub fn snzi_arrive(state: *mut u8, leaf: u64, output: *mut u64) -> i32;
-    #[pod_method(id = 32, symbol = "shmem_pod_snzi_depart")]
-    pub fn snzi_depart(state: *mut u8, token: u64) -> i32;
-    #[pod_method(id = 33, symbol = "shmem_pod_snzi_query")]
-    pub fn snzi_query(state: *mut u8) -> u64;
-    #[pod_method(id = 34, symbol = "shmem_pod_snzi_quiescent")]
-    pub fn snzi_quiescent(state: *mut u8) -> u64;
+macro_rules! declare_demo_api {
+    ($(($binding:ident, $export:ident, $id:literal, $symbol:literal, ($($argument:ident: $argument_type:ty),*) -> $output:ty)),* $(,)?) => {
+        #[pod(
+            namespace = "shmem-pod.example.offset-table.v2",
+            bindings = DemoPodBindings,
+            descriptor = DEMO_POD_API
+        )]
+        unsafe extern "C" {
+            $(
+                #[pod_method(id = $id, symbol = $symbol)]
+                pub fn $binding($($argument: $argument_type),*) -> $output;
+            )*
+        }
+    };
 }
+
+shmem_pod_demo_methods!(declare_demo_api);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ImageMetadata {
@@ -408,6 +390,8 @@ impl ImageHeader {
         let capabilities =
             self.metadata.required_capabilities | self.metadata.optional_capabilities;
         if self.metadata.required_capabilities == 0
+            || self.metadata.required_capabilities & self.metadata.optional_capabilities != 0
+            || self.metadata.optional_capabilities & CAP_REQUIRES_SAME_VA != 0
             || capabilities & !KNOWN_CAPABILITIES != 0
             || self.metadata.required_hardening == 0
             || self.metadata.required_hardening & !KNOWN_HARDENING != 0
@@ -584,6 +568,8 @@ mod tests {
 
     #[test]
     fn rejects_target_identity_and_method_corruption() {
+        assert!(ImageHeader::decode(&header().encode().unwrap()[..HEADER_SIZE - 1]).is_err());
+
         let mut encoded = header().encode().unwrap();
         encoded[10] = 2;
         assert!(ImageHeader::decode(&encoded).is_err());
@@ -599,6 +585,38 @@ mod tests {
         let mut encoded = header().encode().unwrap();
         encoded[HEADER_SIZE - 1] = 1;
         assert!(ImageHeader::decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn rejects_overflow_duplicate_ids_and_unknown_requirements() {
+        let mut malformed = header();
+        malformed.methods[1].id = malformed.methods[0].id;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.methods[0].offset = u64::MAX;
+        malformed.methods[0].size = 2;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.metadata.required_capabilities |= 1 << 63;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.metadata.optional_capabilities = CAP_OFFSET_ARENA;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.metadata.optional_capabilities = CAP_REQUIRES_SAME_VA;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.metadata.required_hardening |= 1 << 63;
+        assert!(malformed.validate().is_err());
+
+        let mut malformed = header();
+        malformed.metadata.build_sha256 = [0; 32];
+        assert!(malformed.validate().is_err());
     }
 
     #[test]

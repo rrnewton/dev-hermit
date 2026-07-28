@@ -263,8 +263,10 @@ if [[ $dry_run == 0 ]]; then
   done
   for required in \
     Cargo.toml Cargo.lock README.md LICENSE-APACHE LICENSE-MIT \
-    src/lib.rs src/mapping.rs docs/locking.md docs/support.md \
-    examples/README.md examples/typed_mapping.rs tests/layout.rs; do
+    src/lib.rs src/mapping.rs src/admission.rs \
+    docs/locking.md docs/admission.md docs/support.md \
+    examples/README.md examples/typed_mapping.rs examples/closeable_snzi.rs \
+    tests/layout.rs tests/closeable_snzi.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
       exit 1
@@ -308,6 +310,8 @@ else
     cargo run --locked --features linux-futex --example futex_mutex
   run_gate long "SNZI process example" \
     cargo run --locked --example snzi
+  run_gate long "closeable SNZI admission process example" \
+    cargo run --locked --example closeable_snzi
 
   if [[ $mode == quick ]]; then
     run_gate long "executable pod process smoke" \

@@ -68,6 +68,12 @@ cannot decide that a cross-process operation is complete. Explicit consumption
 makes ownership visible. Losing a token leaks presence and is safe for memory
 reclamation because it fails closed.
 
+Fork only after operations and tokens are quiescent. If a live token is
+inherited, exactly one process may consume it; the other must leave it untouched
+and proceed directly to `exec` or `_exit` without unwinding. Re-entering pod
+methods from a signal handler which interrupts an entry or departure is not
+supported. A copied Rust value is not another logical reservation.
+
 The current implementation does not identify or remove a dead participant. A
 drain-checking process which dies leaves `CHECKING` set and departures waiting;
 this is also intentionally fail closed. The scan is bounded by the configured
@@ -113,7 +119,10 @@ full robust-mutex, lease, clock-domain, and fencing analysis.
 ## References
 
 - Ellen et al., "SNZI: Scalable NonZero Indicators", PODC 2007:
-  <https://doi.org/10.1145/1281100.1281136>
+  <https://doi.org/10.1145/1281100.1281106>
+- Lev, Luchangco, and Olszewski, "Scalable Reader-Writer Locks", SPAA 2009
+  (introduces the closeable C-SNZI variant):
+  <https://doi.org/10.1145/1583991.1584020>
 - Linux `percpu_ref` API: <https://docs.kernel.org/core-api/percpu-refcount.html>
 - Linux RCU concepts: <https://docs.kernel.org/RCU/whatisRCU.html>
 - Linux SRCU API: <https://docs.kernel.org/RCU/Design/Requirements/Requirements.html>

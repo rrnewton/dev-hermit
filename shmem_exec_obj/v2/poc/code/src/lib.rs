@@ -6,6 +6,9 @@ use shmem_pod::FixedAddressPodValue;
 use shmem_pod::snzi::{Snzi, SnziError};
 use shmem_pod::sync::ProcessFutexMutex;
 
+#[path = "../../api/src/demo_methods.rs"]
+mod demo_methods;
+
 const STATE_MAGIC: u64 = u64::from_le_bytes(*b"POD2RUST");
 const STATUS_OK: i32 = 0;
 const STATUS_NULL: i32 = -1;
@@ -29,6 +32,16 @@ const SNZI_TOKEN_GENERATION_SHIFT: u32 = 16;
 static LAYOUT_TAG: [u8; 16] = *b"offset-snzi-v1!!";
 
 type SharedSnzi = Snzi<SNZI_NODES>;
+
+macro_rules! assert_demo_api_signatures {
+    ($(($binding:ident, $export:ident, $id:literal, $symbol:literal, ($($argument:ident: $argument_type:ty),*) -> $output:ty)),* $(,)?) => {
+        $(
+            const _: unsafe extern "C" fn($($argument_type),*) -> $output = $export;
+        )*
+    };
+}
+
+shmem_pod_demo_methods!(assert_demo_api_signatures);
 
 // Deliberately repr(Rust). Only this exact linked code image interprets it.
 struct State {

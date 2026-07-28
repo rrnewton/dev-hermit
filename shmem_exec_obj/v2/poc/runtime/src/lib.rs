@@ -1270,6 +1270,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_generated_api_mismatch_before_mapping_or_binding() {
+        let (mut image, _) = test_artifact();
+        let mut header = ImageHeader::decode(&image[..HEADER_SIZE]).unwrap();
+        header.metadata.api_fingerprint ^= 1;
+        image[..HEADER_SIZE].copy_from_slice(&header.encode().unwrap());
+        let digest = Sha256::digest(&image).into();
+        assert!(PodArtifact::from_bytes(image, digest).is_err());
+
+        let (mut image, _) = test_artifact();
+        let mut header = ImageHeader::decode(&image[..HEADER_SIZE]).unwrap();
+        header.methods[0].signature = MethodSignature::StateU64 as u16;
+        image[..HEADER_SIZE].copy_from_slice(&header.encode().unwrap());
+        let digest = Sha256::digest(&image).into();
+        assert!(PodArtifact::from_bytes(image, digest).is_err());
+    }
+
+    #[test]
     fn rejects_an_unsealed_code_fd() {
         let fd = memfd(
             "shmem-pod-unsealed-test",

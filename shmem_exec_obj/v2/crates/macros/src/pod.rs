@@ -405,6 +405,8 @@ fn classify_signature(function: &ForeignItemFn) -> syn::Result<Signature> {
 
 fn scalar_type(ty: &Type) -> syn::Result<ScalarType> {
     match ty {
+        Type::Group(group) => scalar_type(&group.elem),
+        Type::Paren(parenthesized) => scalar_type(&parenthesized.elem),
         Type::Path(path) if simple_path(path, "u64") => Ok(ScalarType::U64),
         Type::Path(path) if simple_path(path, "i32") => Ok(ScalarType::I32),
         Type::Ptr(pointer)
