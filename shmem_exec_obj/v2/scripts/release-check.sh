@@ -265,12 +265,15 @@ if [[ $dry_run == 0 ]]; then
     Cargo.toml Cargo.lock README.md LICENSE-APACHE LICENSE-MIT \
     src/lib.rs src/mapping.rs src/admission.rs src/csnzi.rs src/pod_api.rs \
     src/collections.rs src/reloc_allocator.rs \
-    docs/locking.md docs/admission.md docs/csnzi.md docs/relocatable-allocation.md docs/support.md \
+    src/injection.rs src/migration.rs \
+    docs/locking.md docs/admission.md docs/csnzi.md docs/injection.md \
+    docs/migration-and-reclamation.md docs/relocatable-allocation.md docs/support.md \
     examples/README.md examples/typed_mapping.rs examples/closeable_snzi.rs \
     examples/csnzi.rs examples/csnzi_comparison.rs \
-    examples/relocatable_collections.rs \
+    examples/relocatable_collections.rs examples/schema_migration.rs \
     tests/layout.rs tests/closeable_snzi.rs tests/csnzi.rs tests/pod_api.rs \
-    tests/reloc_allocator.rs tests/shared_collections.rs; do
+    tests/bootstrap_connector.rs tests/migration.rs tests/reloc_allocator.rs \
+    tests/shared_collections.rs; do
     grep -Fxq "$required" "$main_list" || {
       echo "main package is missing $required" >&2
       exit 1
@@ -282,6 +285,10 @@ if [[ $dry_run == 0 ]]; then
       "$main_list" >&2
     exit 1
   fi
+  if grep -Fxq "docs/benchmarks.md" "$main_list"; then
+    echo "main package contains repository-only benchmark documentation" >&2
+    exit 1
+  fi
   if ! jq -e '
     [.packages[] | select(.publish != []) | .name] | sort
       == ["shmem-pod", "shmem-pod-macros"]
@@ -290,7 +297,7 @@ if [[ $dry_run == 0 ]]; then
     jq -r '.packages[] | "\(.name): publish=\(.publish)"' "$metadata" >&2
     exit 1
   fi
-  echo "PASS package contents: private POC, injection, build, and project paths excluded"
+  echo "PASS package contents: private POC, demo, build, and project paths excluded"
 fi
 
 if [[ $skip_process == 1 ]]; then
@@ -322,6 +329,10 @@ else
     cargo run --locked --release --example csnzi_comparison -- 2 2000
   run_gate long "relocatable allocator and collections process example" \
     cargo run --locked --example relocatable_collections
+  run_gate long "schema migration and reclamation process example" \
+    cargo run --locked --example schema_migration
+  run_gate long "reproducible benchmark matrix smoke" \
+    ./scripts/run-benchmarks.sh --smoke --output "$tmpdir/benchmark-smoke"
 
   if [[ $mode == quick ]]; then
     run_gate long "executable pod process smoke" \
@@ -343,6 +354,10 @@ else
     run_gate long "LD_PRELOAD unaware-guest process suite" \
       env POD_DEPTH=2 POD_FANOUT=2 POD_THREADS=2 POD_CALLS=100 \
       ./scripts/run-preload-demo.sh
+    run_gate long "ptrace bootstrap and detach process suite" \
+      ./scripts/run-ptrace-demo.sh
+    run_gate long "connector fail-closed negative suite" \
+      ./scripts/test-connector-failures.sh
   fi
 fi
 

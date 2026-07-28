@@ -9,7 +9,15 @@ documentation = "https://docs.rs/shmem-pod"
 readme = "README.md"
 keywords = ["shared-memory", "ipc", "no-std", "allocator"]
 categories = ["concurrency", "memory-management", "no-std"]
-include = ["/src/**", "/examples/**", "/tests/**", "/docs/**", "/README.md", "/LICENSE-*"]
+include = [
+    "/src/**",
+    "/examples/**",
+    "/tests/**",
+    "/docs/**",
+    "!/docs/benchmarks.md",
+    "/README.md",
+    "/LICENSE-*",
+]
 
 [workspace]
 resolver = "2"
