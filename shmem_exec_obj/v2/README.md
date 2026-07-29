@@ -446,6 +446,15 @@ Repository checkouts provide one bounded release command:
 ./scripts/release-check.sh full
 ```
 
+The release gate invokes the production-linked adversarial suite when process
+evidence is enabled. It can also be run directly for explicit per-gate
+`PASS`/`FAIL`/`UNAVAILABLE`/`UNSUPPORTED` results:
+
+```text
+./scripts/adversarial-check.sh quick
+./scripts/adversarial-check.sh full
+```
+
 The [support and release matrix](docs/support.md) defines the exact gate,
 current platform evidence, kernel requirements, package boundary, and the
 macros-first crates.io publication sequence.

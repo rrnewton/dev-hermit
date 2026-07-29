@@ -1432,6 +1432,7 @@ impl MigrationControl {
         resumed: bool,
     ) -> Result<ReclamationPermit, MigrationError> {
         self.transition(plan, MigrationPhase::Committed, COMMITTED, RECLAIMED)?;
+        test_fault!(MigrationReclaimed, resumed as usize);
         Ok(ReclamationPermit { plan, resumed })
     }
 

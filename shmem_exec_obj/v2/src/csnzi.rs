@@ -41,14 +41,17 @@
 
 use core::fmt;
 use core::hint::spin_loop;
+#[cfg(not(shmem_pod_loom))]
 use core::mem::{align_of, needs_drop, offset_of, size_of};
-#[cfg(test)]
+#[cfg(all(test, not(shmem_pod_loom)))]
 use core::sync::atomic::AtomicBool;
-use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::model_atomic::{AtomicU64, Ordering};
+#[cfg(not(shmem_pod_loom))]
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
 
 const FANOUT: usize = 4;
+#[cfg(not(shmem_pod_loom))]
 const CACHE_LINE: usize = 64;
 
 const NODE_COUNT_BITS: u32 = 16;
@@ -79,20 +82,29 @@ const POISON_INVARIANT: u64 = 1;
 const POISON_COMPENSATION: u64 = 2;
 const POISON_ROOT_STATE: u64 = 3;
 
-#[cfg(test)]
+#[cfg(all(test, not(shmem_pod_loom)))]
 static CAPACITY_WAIT_OBSERVED: AtomicBool = AtomicBool::new(false);
 
-#[repr(align(64))]
+#[cfg_attr(not(shmem_pod_loom), repr(align(64)))]
 struct CacheAlignedAtomicU64 {
     value: AtomicU64,
+    #[cfg(not(shmem_pod_loom))]
     _padding: [u8; CACHE_LINE - size_of::<AtomicU64>()],
 }
 
 impl CacheAlignedAtomicU64 {
+    #[cfg(not(shmem_pod_loom))]
     const fn new(value: u64) -> Self {
         Self {
             value: AtomicU64::new(value),
             _padding: [0; CACHE_LINE - size_of::<AtomicU64>()],
+        }
+    }
+
+    #[cfg(shmem_pod_loom)]
+    fn new(value: u64) -> Self {
+        Self {
+            value: AtomicU64::new(value),
         }
     }
 }
@@ -418,6 +430,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     /// # Panics
     ///
     /// Panics if `NODES` is not a supported complete four-way tree.
+    #[cfg(not(shmem_pod_loom))]
     pub const fn new() -> Self {
         assert!(
             Self::is_valid_node_count(),
@@ -427,6 +440,20 @@ impl<const NODES: usize> Csnzi<NODES> {
             root: CacheAlignedAtomicU64::new(ROOT_OPEN),
             poison: CacheAlignedAtomicU64::new(POISON_NONE),
             nodes: [const { CacheAlignedAtomicU64::new(0) }; NODES],
+        }
+    }
+
+    /// Creates an empty C-SNZI for the dedicated Loom model build.
+    #[cfg(shmem_pod_loom)]
+    pub fn new() -> Self {
+        assert!(
+            Self::is_valid_node_count(),
+            "C-SNZI node count must describe complete 4-ary levels with at most 65,536 leaves"
+        );
+        Self {
+            root: CacheAlignedAtomicU64::new(ROOT_OPEN),
+            poison: CacheAlignedAtomicU64::new(POISON_NONE),
+            nodes: core::array::from_fn(|_| CacheAlignedAtomicU64::new(0)),
         }
     }
 
@@ -444,6 +471,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     /// generation which no process can access. `NODES` must pass
     /// [`Self::is_valid_node_count`].
     #[inline]
+    #[cfg(not(shmem_pod_loom))]
     pub unsafe fn initialize_at(destination: *mut Self) {
         assert!(
             Self::is_valid_node_count(),
@@ -518,6 +546,7 @@ impl<const NODES: usize> Csnzi<NODES> {
                         Ordering::SeqCst,
                     ) {
                         Ok(_) => {
+                            test_fault!(CsnziCloseClaimedEmpty, 0);
                             self.verify_nodes_idle()?;
                             match self.root.value.compare_exchange(
                                 ROOT_CLOSING,
@@ -527,7 +556,10 @@ impl<const NODES: usize> Csnzi<NODES> {
                             ) {
                                 // The final CAS is the close operation's last
                                 // shared-memory access.
-                                Ok(_) => return Ok(CloseOutcome::Drained),
+                                Ok(_) => {
+                                    test_fault!(CsnziCloseSealed, 0);
+                                    return Ok(CloseOutcome::Drained);
+                                }
                                 Err(_) => {
                                     return Err(
                                         self.poison_with(CsnziPoisonReason::RootStateCorrupt)
@@ -546,7 +578,10 @@ impl<const NODES: usize> Csnzi<NODES> {
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        Ok(_) => return Ok(CloseOutcome::Pending),
+                        Ok(_) => {
+                            test_fault!(CsnziCloseMarkedNonempty, count as usize);
+                            return Ok(CloseOutcome::Pending);
+                        }
                         Err(observed) => root = observed,
                     }
                 }
@@ -556,7 +591,10 @@ impl<const NODES: usize> Csnzi<NODES> {
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                 ) {
-                    Ok(_) => return Ok(CloseOutcome::Pending),
+                    Ok(_) => {
+                        test_fault!(CsnziCloseConvertedTail, 0);
+                        return Ok(CloseOutcome::Pending);
+                    }
                     Err(observed) => root = observed,
                 },
                 RootPhase::Closed
@@ -732,7 +770,7 @@ impl<const NODES: usize> Csnzi<NODES> {
                     // This entry is already represented at its parent and may
                     // have been observed by query/close. It must eventually
                     // publish a token rather than complete as a failed no-op.
-                    #[cfg(test)]
+                    #[cfg(all(test, not(shmem_pod_loom)))]
                     CAPACITY_WAIT_OBSERVED.store(true, Ordering::SeqCst);
                     spin_loop();
                     continue;
@@ -756,11 +794,14 @@ impl<const NODES: usize> Csnzi<NODES> {
                 Ordering::SeqCst,
             ) {
                 Ok(_) => {
-                    if arrived_at_parent
-                        && count != 0
-                        && self.depart_parent(node)? == TreeDepart::Tail
-                    {
-                        return Err(self.poison_with(CsnziPoisonReason::CompensationSelectedTail));
+                    test_fault!(CsnziNodeArrived, node);
+                    if arrived_at_parent && count != 0 {
+                        test_fault!(CsnziBeforeCompensation, node);
+                        if self.depart_parent(node)? == TreeDepart::Tail {
+                            return Err(
+                                self.poison_with(CsnziPoisonReason::CompensationSelectedTail)
+                            );
+                        }
                     }
                     return Ok(next_generation);
                 }
@@ -818,8 +859,14 @@ impl<const NODES: usize> Csnzi<NODES> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) if count == 1 => return self.depart_parent(node),
-                Ok(_) => return Ok(TreeDepart::Active),
+                Ok(_) if count == 1 => {
+                    test_fault!(CsnziNodeDeparted, node);
+                    return self.depart_parent(node);
+                }
+                Ok(_) => {
+                    test_fault!(CsnziNodeDeparted, node);
+                    return Ok(TreeDepart::Active);
+                }
                 Err(_) => continue,
             }
         }
@@ -866,7 +913,10 @@ impl<const NODES: usize> Csnzi<NODES> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    test_fault!(CsnziRootArrived, 0);
+                    return Ok(());
+                }
                 Err(observed) => root = observed,
             }
         }
@@ -895,8 +945,14 @@ impl<const NODES: usize> Csnzi<NODES> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) if count == 1 => return Ok(TreeDepart::Tail),
-                Ok(_) => return Ok(TreeDepart::Active),
+                Ok(_) if count == 1 => {
+                    test_fault!(CsnziRootDeparted, 1);
+                    return Ok(TreeDepart::Tail);
+                }
+                Ok(_) => {
+                    test_fault!(CsnziRootDeparted, count as usize);
+                    return Ok(TreeDepart::Active);
+                }
                 Err(observed) => root = observed,
             }
         }
@@ -924,7 +980,13 @@ impl<const NODES: usize> Csnzi<NODES> {
             ) {
                 // This CAS is intentionally the operation's final access to
                 // shared state. Only stack/register work remains on return.
-                Ok(_) => return Ok(outcome),
+                Ok(_) => {
+                    test_fault!(
+                        CsnziDepartureTailSealed,
+                        matches!(outcome, DepartOutcome::Drained) as usize
+                    );
+                    return Ok(outcome);
+                }
                 Err(observed) => root = observed,
             }
         }
@@ -983,6 +1045,7 @@ impl<const NODES: usize> Csnzi<NODES> {
     }
 }
 
+#[cfg(not(shmem_pod_loom))]
 impl<const NODES: usize> Default for Csnzi<NODES> {
     fn default() -> Self {
         Self::new()
@@ -1002,6 +1065,7 @@ const fn node_state(generation: u64, count: u64) -> u64 {
 }
 
 #[inline(always)]
+#[cfg(not(shmem_pod_loom))]
 unsafe fn initialize_cacheline(destination: *mut CacheAlignedAtomicU64, value: u64) {
     // SAFETY: The caller provides one exclusive, aligned cache-line object.
     unsafe {
@@ -1017,6 +1081,7 @@ unsafe fn initialize_cacheline(destination: *mut CacheAlignedAtomicU64, value: u
 
 // SAFETY: Csnzi contains only aligned atomic integers and byte padding. It has
 // no destructor, allocation, process-local resource, or stored address.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> FixedAddressPodValue for Csnzi<NODES> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "pod values must not need drop");
@@ -1033,12 +1098,14 @@ unsafe impl<const NODES: usize> FixedAddressPodValue for Csnzi<NODES> {
 }
 
 // SAFETY: Every persisted field is an address-independent integer or padding.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodValue for Csnzi<NODES> {}
 
 // SAFETY: The shared API mutates persisted state only with 64-bit atomics.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodSync for Csnzi<NODES> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(shmem_pod_loom)))]
 mod tests {
     extern crate std;
 

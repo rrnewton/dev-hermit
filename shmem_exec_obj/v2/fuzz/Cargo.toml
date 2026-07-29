@@ -1,0 +1,62 @@
+[package]
+name = "shmem-pod-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+rust-version = "1.85"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+sha2 = "=0.10.9"
+shmem-pod = { path = "..", default-features = false }
+shmem-pod-image-api = { path = "../poc/api" }
+shmem-pod-runtime = { path = "../poc/runtime" }
+
+[[bin]]
+name = "image_header"
+path = "fuzz_targets/image_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pod_artifact"
+path = "fuzz_targets/pod_artifact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bootstrap_context"
+path = "fuzz_targets/bootstrap_context.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "layout_descriptor"
+path = "fuzz_targets/layout_descriptor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "offset_resolution"
+path = "fuzz_targets/offset_resolution.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "generate-corpus"
+path = "src/bin/generate-corpus.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "2"

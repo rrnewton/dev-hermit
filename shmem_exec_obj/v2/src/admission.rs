@@ -17,12 +17,15 @@
 //! supervisor and fencing protocol.
 
 use core::fmt;
+#[cfg(not(shmem_pod_loom))]
 use core::mem::{align_of, needs_drop, offset_of, size_of};
-use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::model_atomic::{AtomicU64, Ordering};
 use crate::snzi::{ArrivalToken, PoisonReason, Snzi, SnziError, SnziSnapshot};
+#[cfg(not(shmem_pod_loom))]
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
 
+#[cfg(not(shmem_pod_loom))]
 const CACHE_LINE: usize = 64;
 const CLOSED_BIT: u64 = 1_u64 << 63;
 const POISONED_BIT: u64 = 1_u64 << 62;
@@ -31,17 +34,26 @@ const DRAINED_BIT: u64 = 1_u64 << 60;
 const RESERVATION_MASK: u64 = DRAINED_BIT - 1;
 const TERMINAL_DRAINED: u64 = CLOSED_BIT | DRAINED_BIT;
 
-#[repr(align(64))]
+#[cfg_attr(not(shmem_pod_loom), repr(align(64)))]
 struct CacheAlignedGate {
     value: AtomicU64,
+    #[cfg(not(shmem_pod_loom))]
     _padding: [u8; CACHE_LINE - size_of::<AtomicU64>()],
 }
 
 impl CacheAlignedGate {
+    #[cfg(not(shmem_pod_loom))]
     const fn new() -> Self {
         Self {
             value: AtomicU64::new(0),
             _padding: [0; CACHE_LINE - size_of::<AtomicU64>()],
+        }
+    }
+
+    #[cfg(shmem_pod_loom)]
+    fn new() -> Self {
+        Self {
+            value: AtomicU64::new(0),
         }
     }
 }
@@ -234,7 +246,17 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
     /// # Panics
     ///
     /// Panics if `NODES` is not a supported [`Snzi`] tree size.
+    #[cfg(not(shmem_pod_loom))]
     pub const fn new() -> Self {
+        Self {
+            gate: CacheAlignedGate::new(),
+            snzi: Snzi::new(),
+        }
+    }
+
+    /// Creates an open barrier for the dedicated Loom model build.
+    #[cfg(shmem_pod_loom)]
+    pub fn new() -> Self {
         Self {
             gate: CacheAlignedGate::new(),
             snzi: Snzi::new(),
@@ -254,6 +276,7 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
     /// must be uninitialized or belong to an old generation which no process can
     /// still access.
     #[inline]
+    #[cfg(not(shmem_pod_loom))]
     pub unsafe fn initialize_at(destination: *mut Self) {
         assert!(
             Snzi::<NODES>::is_valid_node_count(),
@@ -291,6 +314,7 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
                 return Err(TryEnterError::Snzi(error));
             }
         };
+        test_fault!(CloseableArrivalPublished, leaf);
 
         // Releasing the transient reservation only after `arrive` returns is
         // the publication edge used by `is_drained`.
@@ -358,7 +382,9 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
                 Ordering::SeqCst,
             ) {
                 Ok(_) => {
+                    test_fault!(CloseableCheckingPublished, 0);
                     let quiescent = self.snzi.is_quiescent();
+                    test_fault!(CloseableDrainScanned, quiescent as usize);
                     let next = if quiescent {
                         (checking & !CHECKING_BIT) | DRAINED_BIT
                     } else {
@@ -374,6 +400,9 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
                         // private checking state. Preserve every other bit.
                         self.gate.value.fetch_and(!CHECKING_BIT, Ordering::SeqCst);
                         return false;
+                    }
+                    if quiescent {
+                        test_fault!(CloseableDrainSealed, 0);
                     }
                     return quiescent;
                 }
@@ -447,7 +476,10 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return Ok(Reservation { owner: self }),
+                Ok(_) => {
+                    test_fault!(CloseableEntryReserved, 0);
+                    return Ok(Reservation { owner: self });
+                }
                 Err(observed) => state = observed,
             }
         }
@@ -481,7 +513,10 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return Ok(Reservation { owner: self }),
+                Ok(_) => {
+                    test_fault!(CloseableDepartureReserved, 0);
+                    return Ok(Reservation { owner: self });
+                }
                 Err(observed) => state = observed,
             }
         }
@@ -514,6 +549,7 @@ impl<const NODES: usize> CloseableSnzi<NODES> {
     }
 }
 
+#[cfg(not(shmem_pod_loom))]
 impl<const NODES: usize> Default for CloseableSnzi<NODES> {
     fn default() -> Self {
         Self::new()
@@ -531,6 +567,7 @@ impl<const NODES: usize> Drop for Reservation<'_, NODES> {
 }
 
 #[inline(always)]
+#[cfg(not(shmem_pod_loom))]
 unsafe fn initialize_gate(destination: *mut CacheAlignedGate) {
     // SAFETY: The caller provides one exclusive, aligned cache-line object. The
     // volatile byte loop prevents lowering to a freestanding-hostile memset.
@@ -547,6 +584,7 @@ unsafe fn initialize_gate(destination: *mut CacheAlignedGate) {
 
 // SAFETY: The type contains only an atomic scalar, byte padding, and a
 // pointer-free Snzi. Its native Rust field layout is captured by the fingerprint.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> FixedAddressPodValue for CloseableSnzi<NODES> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "pod values must not need drop");
@@ -565,12 +603,14 @@ unsafe impl<const NODES: usize> FixedAddressPodValue for CloseableSnzi<NODES> {
 
 // SAFETY: All persisted fields are address-independent counters, flags, and
 // byte padding.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodValue for CloseableSnzi<NODES> {}
 
 // SAFETY: The safe shared API mutates persisted state only with 64-bit atomics.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodSync for CloseableSnzi<NODES> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(shmem_pod_loom)))]
 mod tests {
     use super::*;
 
