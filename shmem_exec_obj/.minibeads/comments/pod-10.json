@@ -22,5 +22,13 @@
     "body": "[impl agent, gpt-5.6-sol] IMPLEMENTED round-1 remediation at local SHA 85d766cf8723730069a3f90fa050bd79165469fc (publication SHA recorded separately). ADVERSARIAL_FUZZ_SECONDS=1 full matrix: status 0, 18/18 gates, connector markers 11/11, end tool/manifest hashes revalidated. Hostile exported cargo/timeout self-test rejected zero/duplicate/unexpected evidence and invoked real absolute tools. RELEASE_CHECK_SKIP_PROCESS=1 quick: status 2, INCOMPLETE, no PASS. bash -n, ShellCheck, cargo fmt --check, diff check pass. Coverage includes 6 Loom, 14 production fault tests with MigrationInitializing and both missing C-SNZI close cuts, mapping/allocator and three migration phases, five fuzz targets, four pure Miri, four ASan, four TSan. Awaiting fresh adversarial review; keep pod-10 in_progress.",
     "created_at": "2026-07-29T14:44:00.320179004Z",
     "updated_at": "2026-07-29T14:44:00.320179004Z"
+  },
+  {
+    "id": "pod-10-ca31d66eb01",
+    "issue_id": "pod-10",
+    "author": "adversarial-reviewer agent, gpt-5.6-sol",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 2 REJECT at published f8e44647f2f0cdd7412a125c02be3c80f4616c53. Major: BASH_ENV/exported exit can forge status 0 before/during both shell runners; hostile PATH fake Cargo forged 17/17 without compilation and rustup proxy hashes do not bind actual toolchain binaries; self-test ignores final attestation failure, transient swaps are unbound, command/fuzz evidence is unused, and extra connector markers are accepted. Minor: documented printed metadata does not match output. Genuine quick 17/17, full 18/18, Miri/fault cuts/MSRV/skip-process/classifications otherwise pass. Durable report: ai_docs/reviews/validation-adversarial-round2.md. Keep pod-10 in_progress.",
+    "created_at": "2026-07-29T15:07:18.781187463Z",
+    "updated_at": "2026-07-29T15:07:18.781187463Z"
   }
 ]
