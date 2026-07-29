@@ -53,6 +53,16 @@ The current executable-image format and raw process harness are audited only
 for Linux x86-64, so the runner rejects other targets rather than silently
 substituting a different workload.
 
+`RUSTUP_TOOLCHAIN` is the only inherited build selector. For example, the MSRV
+smoke is `RUSTUP_TOOLCHAIN=1.85.0 ./scripts/run-benchmarks.sh --smoke`.
+The runner rejects inherited Cargo, rustc/rustdoc, wrapper, target, compiler,
+linker, and compiler-flag controls before it claims an output directory. This
+includes target-specific variables such as
+`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS` and
+`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER`. Do not use `RUSTC_WRAPPER`,
+`RUSTC_WORKSPACE_WRAPPER`, `CC`, `RUSTFLAGS`, or `CARGO_HOME` for an evidence
+run; they are intentionally unsupported rather than incompletely recorded.
+
 ## Outputs
 
 Each successful run creates one self-contained, run-owned bundle:
@@ -79,6 +89,22 @@ Each successful run creates one self-contained, run-owned bundle:
   records those fields again for the retained read-only snapshot.
 - `provenance/compiler-crosscheck.json`, the harness manifest/lockfile, and
   `harness-report.json` retain the independent build and execution evidence.
+- `provenance/host-linker-manifest.tsv` records canonical paths and digests for
+  the explicitly selected host linker driver, its `collect2`, `ld`, assembler,
+  LTO/plugin executables, selected startup/library inputs, and the dynamic
+  libraries observed for Cargo, rustc, rust-lld, and the linker tools.
+  `provenance/host-linker-config.txt` records the driver's specs probe, built-in
+  specs, target, version, and search directories. The runner re-resolves and
+  revalidates this host evidence through completion.
+- `provenance/control-tools.tsv` records and revalidates `/bin/bash` plus every
+  root-owned `/usr/bin` executable used to discover sources, hash files, parse
+  JSON, build inventories, and publish completion. The runner rejects exported
+  shell functions with those names before its first external command and does
+  not use the caller's PATH for integrity decisions.
+- `provenance/vendor/` retains the exact registry package trees used by every
+  successful Cargo compilation. `provenance/vendor-manifest.tsv` binds every
+  vendored file's type, mode, size, and digest, and is revalidated through
+  completion.
 - `bundle-inventory.tsv` records the type, exact mode, size, SHA-256, and
   hex-encoded path of every retained file except itself and the self-describing
   `environment.json` completion marker. The environment binds its digest and
@@ -95,6 +121,41 @@ than discovering configuration from the live checkout. The retained snapshot
 is re-manifested after hardening and checked throughout the run. Source
 symlinks are rejected: retaining only link text would not bind bytes read from
 an external target by Cargo, rustc, or an `include_*` macro.
+
+All Cargo and direct compiler executions run under `env -i`, not the calling
+shell's environment. They receive direct, hashed rustc and Cargo paths, a
+direct, hashed target linker, a controlled PATH containing only the bound
+linker, assembler, and `uname` queried by Cargo's version reporting, fixed
+locale/time/source-date settings, a run-private
+HOME/TMPDIR, and offline/incremental-disabled Cargo settings. Cargo uses a
+run-private vendor-only `CARGO_HOME` which exposes the local registry/git cache
+only while `cargo vendor` copies it into the retained bundle. Compilation uses
+a separate empty `CARGO_HOME` and command-line source replacement pointing at
+that read-only vendor tree; it cannot see user config, credentials, aliases,
+wrappers, or mutable registry sources. Cargo.lock authenticates registry
+packages, and the runner verifies
+that the temporary working directory and every ancestor have no `.cargo/config`
+or `.cargo/config.toml`. Cargo configuration discovery starts from that
+temporary working directory, not from the retained manifest's directory.
+The harness itself receives the same stripped environment.
+
+The runner's own control plane is separate from the build environment. Its
+interpreter is `/bin/bash`; after resolving the selected rustup launchers it
+sets PATH to `/usr/bin:/bin`, fixes locale/timezone, and gives Git an empty HOME
+with global and system configuration disabled. Exported `cargo`, `rustc`,
+`git`, `jq`, `sha256sum`, `timeout`, or other required-tool shell functions are
+rejected. Thus a caller cannot make the verifier bless a bundle by interposing
+a wrapper through PATH or an exported Bash function. The root-owned control
+binaries remain host evidence; their retained path/digest manifest is included
+in the bundle inventory and completion bindings.
+
+This is hermetic against inherited build variables, Cargo configuration, and
+mutable registry-source discovery; it is not a relocatable Linux sysroot or a
+container image. The selected GCC driver, system startup objects, dynamic
+loader, shared libraries, rustup toolchain and kernel remain host inputs. Their
+observed paths/configuration and bytes are hashed and revalidated, but they are
+not copied and executed from the bundle. A rebuild-independent compiler/sysroot
+closure would require a pinned toolchain image or a fully retained sysroot.
 
 The harness cannot create completion metadata. It requires the exact run ID,
 runner-owner token, canonical bundle and artifact paths, the retained harness
@@ -135,11 +196,15 @@ jq -s 'group_by(.variant) | map({variant: .[0].variant, samples: length})' \
   target/my-benchmark-run/results.jsonl
 ```
 
-Before reporting `PASS`, the runner requires exactly 22 unique rows for every
+Before reporting `PASS`, the runner first applies jq's streaming parser to each
+physical JSONL line. Streaming events preserve repeated object members, so the
+runner rejects duplicate keys before jq's ordinary object representation can
+discard them; it also requires the exact flat 12-key schema with no extra,
+missing, or nested member. It then requires exactly 22 unique rows for every
 sample, the one expected run ID, exact sample indices, variants, topologies,
-worker counts and operation denominators, an exactly recomputed rate, full field
-equality between every JSONL and CSV row, and unchanged compiler and bundle
-evidence.
+worker counts and operation denominators, an exactly recomputed rate, full
+field equality between every JSONL and CSV row, and unchanged compiler and
+bundle evidence.
 
 ## What Is Measured
 
