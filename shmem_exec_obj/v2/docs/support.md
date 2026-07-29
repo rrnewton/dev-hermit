@@ -84,7 +84,8 @@ RELEASE_CHECK_TOTAL_TIMEOUT=7200 \
 ```
 
 `RELEASE_CHECK_SKIP_PROCESS=1` permits compile and package checks on another
-host, but such a run is explicitly not release-green. Set
+host, but such a run exits 2 with `INCOMPLETE` and is explicitly not
+release-green. It never prints the final release `PASS`. Set
 `RELEASE_CHECK_REQUIRE_CLEAN=1` for the final candidate. Use
 `RELEASE_CHECK_DRY_RUN=1` to inspect the selected commands.
 
@@ -112,27 +113,39 @@ adversarial suite:
 ```
 
 The adversarial suite runs production-linked Loom models, serial Linux
-SIGSTOP/SIGKILL cuts immediately after selected atomic transitions, existing
+SIGSTOP/SIGKILL cuts at selected transition boundaries, existing
 mapping/allocator/migration crash regressions, five parser and offset fuzz
-targets, a Miri parser/offset subset, and thread-only ASan/TSan tests. `full`
-increases the Loom and fuzz bounds and adds connector fail-closed recovery.
-Its default whole-run deadlines are 20 minutes for `quick` and 90 minutes for
-`full`.
+targets, a dedicated fork-, thread-, FFI-, and mmap-free Miri target, and
+thread-only ASan/TSan tests. `full` increases the Loom and fuzz bounds and adds
+connector fail-closed recovery. Its default whole-run deadlines are 20 minutes
+for `quick` and 90 minutes for `full`.
 
-Each selected gate ends in `PASS`, `FAIL`, `UNAVAILABLE`, or `UNSUPPORTED`.
+Each selected gate, including an unavailable or unsupported gate, receives a
+stable ID and ordinal and ends in `PASS`, `FAIL`, `UNAVAILABLE`, or
+`UNSUPPORTED`.
 The script exits 0 only when every selected gate passes, 1 for a product or
 test failure, 2 when required tooling/platform support is unavailable, and 124
 for a deadline. Missing `cargo-fuzz`, the pinned nightly, Miri, rust-src, or a
 supported sanitizer host is therefore visible and never release-green.
 
+The runner resolves every directly invoked validation tool to a canonical
+absolute executable, records its SHA-256 digest, and revalidates every digest
+plus the gate manifest before reporting the final result. Test gates must emit
+the exact test names and count in `scripts/adversarial-gates.tsv`; a successful
+Cargo invocation with zero matching tests fails. Nested script gates likewise
+must emit their manifest markers. `./scripts/adversarial-check.sh self-test`
+probes zero, duplicate, and unexpected evidence and remains valid when exported
+shell functions named `cargo` and `timeout` are present.
+
 These checks have deliberate limits. A bounded Loom search is not a proof over
-all executions. Crash cuts verify fail-stop states at named production RMWs but
-do not add leases or owner-death recovery. Miri checks parser, layout, and
-provenance-sensitive offset code rather than cross-process behavior. ASan and
-TSan use threads because sanitizers do not model shared mappings across exec;
-TSan also validates the implementation's atomic synchronization, not kernel
-or hardware conformance. Fuzzing is time-bounded and its generated corpus and
-artifacts are disposable.
+all executions. Most crash cuts stop immediately after a named production RMW;
+`CloseableDrainScanned` instead stops after the read-only drain scan and before
+the terminal seal. These cuts verify fail-stop states, not leases or owner-death
+recovery. Miri checks parser, layout, and provenance-sensitive offset code
+rather than cross-process behavior. ASan and TSan use threads because sanitizers
+do not model shared mappings across exec; TSan also validates the
+implementation's atomic synchronization, not kernel or hardware conformance.
+Fuzzing is time-bounded and its generated corpus and artifacts are disposable.
 
 Loom is a dev-dependency and the fuzz harness is a separate unpublished
 workspace. Neither changes the library's `no_std` surface or Rust 1.85 MSRV;
@@ -140,8 +153,10 @@ the ordinary current/MSRV release matrix remains authoritative for those
 contracts.
 
 The script prints the source revision, host kernel and architecture, tool
-versions, every command, its timeout, and a final gate count. A timeout or
-skipped process suite is never reported as a passing full release gate.
+versions and hashes, every command, its timeout, and a final gate count. Exit
+124 is a confirmed deadline; status 137 is reported as ambiguous `SIGKILL`
+rather than assumed to be a timeout. A timeout or skipped process suite is never
+reported as a passing full release gate.
 
 ## Crates.io package boundary
 

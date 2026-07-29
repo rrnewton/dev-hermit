@@ -1,0 +1,68 @@
+# Stable gate ID|evidence kind|required evidence. Test rows name every test
+# which must execute exactly once; artifact rows name every generated seed.
+self-attestation|test|sentinel::executes
+loom|test|model_checks::closeable_entry_close_depart_executes_production_protocol
+loom|test|model_checks::closeable_same_leaf_help_and_compensation_execute_production_protocol
+loom|test|model_checks::csnzi_entry_close_depart_executes_production_protocol
+loom|test|model_checks::csnzi_same_leaf_compensation_executes_production_protocol
+loom|test|model_checks::futex_contended_mark_or_unlock_requires_a_wake
+loom|test|model_checks::futex_word_acquisition_executes_production_transitions
+fault-cuts|test|fault_checks::closeable_death_after_terminal_seal_preserves_drain
+fault-cuts|test|fault_checks::closeable_publication_departure_and_post_scan_death_fail_closed
+fault-cuts|test|fault_checks::closeable_reservation_and_checker_death_fail_closed
+fault-cuts|test|fault_checks::csnzi_arrival_cuts_at_root_parent_and_leaf_fail_closed
+fault-cuts|test|fault_checks::csnzi_close_and_departure_tail_cuts_distinguish_wedge_from_commit
+fault-cuts|test|fault_checks::csnzi_departure_cuts_at_leaf_parent_and_root_fail_closed
+fault-cuts|test|fault_checks::csnzi_redundant_parent_compensation_cut_is_an_actual_rmw_path
+fault-cuts|test|fault_checks::futex_owner_and_waiter_death_never_transfer_ownership
+fault-cuts|test|fault_checks::futex_releaser_death_after_unlock_can_leave_known_waiter_asleep
+fault-cuts|test|fault_checks::migration_initializing_owner_death_is_visible_and_not_stealable
+fault-cuts|test|fault_checks::migration_reclaimed_death_resumes_idempotent_cleanup
+fault-cuts|test|fault_checks::standalone_snzi_half_root_and_helper_publication_cuts_are_observable
+fault-cuts|test|fault_checks::standalone_snzi_increment_and_compensation_cuts_leak_presence
+fault-cuts|test|fault_checks::standalone_snzi_local_and_root_departure_cuts_show_commit_boundary
+mapping-crash|test|killed_initializer_and_admitted_process_fail_stuck_until_supervisor_poison
+allocator-crash|test|killed_transaction_stays_bounded_until_supervisor_poison
+migration-copying|test|killed_migrator_leaves_copying_state_and_never_steals_transaction
+migration-target-ready|test|killed_target_ready_migrator_leaves_source_authoritative
+migration-committed|test|killed_post_commit_migrator_leaves_recovery_backing_available
+fuzz-build|command|locked standalone fuzz workspace compilation
+corpus|artifact|image_header/valid-header
+corpus|artifact|image_header/truncated
+corpus|artifact|pod_artifact/valid-digest-artifact
+corpus|artifact|pod_artifact/wrong-digest-artifact
+corpus|artifact|pod_artifact/digest-only
+corpus|artifact|bootstrap_context/valid-context
+corpus|artifact|bootstrap_context/short-context
+corpus|artifact|layout_descriptor/u64-layout
+corpus|artifact|layout_descriptor/empty
+corpus|artifact|offset_resolution/aligned-slice
+corpus|artifact|offset_resolution/max-fields
+fuzz-image-header|fuzz|image_header
+fuzz-pod-artifact|fuzz|pod_artifact
+fuzz-bootstrap-context|fuzz|bootstrap_context
+fuzz-layout-descriptor|fuzz|layout_descriptor
+fuzz-offset-resolution|fuzz|offset_resolution
+miri-pure|test|bootstrap_context_rejects_corrupt_bytes
+miri-pure|test|bootstrap_context_round_trip_is_pure
+miri-pure|test|checked_offsets_preserve_strict_provenance
+miri-pure|test|layout_descriptor_round_trip_and_rejection_are_pure
+asan|test|closeable_snzi_drains_after_inflight_threads_depart
+asan|test|csnzi_drains_after_inflight_threads_depart
+asan|test|spin_mutex_serializes_thread_updates
+asan|test|standalone_snzi_balances_contended_leaf_activity
+tsan|test|closeable_snzi_drains_after_inflight_threads_depart
+tsan|test|csnzi_drains_after_inflight_threads_depart
+tsan|test|spin_mutex_serializes_thread_updates
+tsan|test|standalone_snzi_balances_contended_leaf_activity
+connector-recovery|script|preload rejected bad-context-digest as expected: artifact authentication failed
+connector-recovery|script|ptrace-artifact-transport rejected unsealed-artifact as expected: remote bootstrap returned status -2
+connector-recovery|script|ptrace-code-transport rejected short-code as expected: remote bootstrap returned status -2
+connector-recovery|script|ptrace-state-transport rejected read-only-state as expected: remote bootstrap returned status -2
+connector-recovery|script|ptrace-state-write-seal rejected write-sealed-state as expected: remote bootstrap returned status -2
+connector-recovery|script|ptrace-state-future-write-seal rejected future-write-sealed-state as expected: remote bootstrap returned status -2
+connector-recovery|script|ptrace-artifact-identity rejected bad-context-digest as expected: remote bootstrap returned status -3
+connector-recovery|script|ptrace-code-identity rejected bad-code-bytes as expected: remote bootstrap returned status -3
+connector-recovery|script|ptrace-api-identity rejected bad-api-fingerprint as expected: remote bootstrap returned status -3
+connector-recovery|script|ptrace-state-identity rejected bad-state-generation as expected: remote bootstrap returned status -3
+connector-recovery|script|ptrace-runtime-mapping rejected fixed-code-collision as expected: remote bootstrap returned status -6
