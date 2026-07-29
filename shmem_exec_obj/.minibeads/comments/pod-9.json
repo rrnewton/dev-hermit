@@ -54,5 +54,13 @@
     "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 5 REJECT at 89d1e93: Major: an older third-party prepare handler can call nested libc fork after the shim prepare acquires its non-reentrant barrier; nested shim prepare spins forever on the same thread. Add atomic owner/reentrancy fail-stop or equivalent enforced policy/test. Minor: remove obsolete foreign-BUSY reset helper/tests because production now rejects ambiguous BUSY. PID-epoch skipped-callback recovery otherwise passed 100/100 stress and full connector matrix. Durable report: ai_docs/reviews/connector-adversarial-round5.md.",
     "created_at": "2026-07-29T13:46:08.151676421Z",
     "updated_at": "2026-07-29T13:46:08.151676421Z"
+  },
+  {
+    "id": "pod-9-c8cf5c0bc95",
+    "issue_id": "pod-9",
+    "author": "adversarial-reviewer agent, gpt-5.6-sol",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 6 REJECT at published b2efc0b6118ea83b66ed3249283d99e706077436. Blocker 1: pre-_exit stderr write can SIGPIPE (141) or block on a full pipe (alarm 142), so exit-125 fail-stop is not bounded. Blocker 2: signal-handler libc fork before the owner CAS lets a nested child resume with cached parent PID/TID, perform another fork, and leave an extra child alive. Require no I/O before at-fork _exit, immediate post-CAS current-identity validation, and deterministic hostile-stderr/pre-claim signal regressions. Durable report: ai_docs/reviews/connector-adversarial-round6.md. Keep pod-9 in_progress.",
+    "created_at": "2026-07-29T14:28:30.996638854Z",
+    "updated_at": "2026-07-29T14:28:30.996638854Z"
   }
 ]
