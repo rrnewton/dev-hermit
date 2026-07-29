@@ -32,7 +32,7 @@ build-hermit: init-hermit
 		echo "ERROR: cargo is required to build Hermit." >&2; \
 		exit 1; \
 	}
-	cd hermit && cargo build --release -p hermit --bin hermit
+	cd hermit && cargo build --release -p hermit --bin hermit --no-default-features
 
 check-deps:
 	@set -eu; \
