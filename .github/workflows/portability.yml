@@ -17,5 +17,5 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - name: Check parent build/run files
+      - name: Check parent and product build/run files
         run: make check-portability
