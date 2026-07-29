@@ -26,7 +26,7 @@ allocator-crash|test|killed_transaction_stays_bounded_until_supervisor_poison
 migration-copying|test|killed_migrator_leaves_copying_state_and_never_steals_transaction
 migration-target-ready|test|killed_target_ready_migrator_leaves_source_authoritative
 migration-committed|test|killed_post_commit_migrator_leaves_recovery_backing_available
-fuzz-build|command|locked standalone fuzz workspace compilation
+fuzz-build|command|cargo check --locked --manifest-path fuzz/Cargo.toml --bins
 corpus|artifact|image_header/valid-header
 corpus|artifact|image_header/truncated
 corpus|artifact|pod_artifact/valid-digest-artifact
