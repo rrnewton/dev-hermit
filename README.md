@@ -20,6 +20,10 @@ cd dev-hermit
 git submodule update --init --recursive
 ```
 
+All three submodules use public HTTPS URLs, so this path does not require a
+GitHub SSH key. Existing clones can adopt the recorded URLs with
+`git submodule sync --recursive` before updating.
+
 Read `AGENTS.md` and `WORKTREES.md` before creating a feature worktree. Do not
 develop in the primary `hermit/` or `reverie/` checkout.
 
