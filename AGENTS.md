@@ -497,8 +497,11 @@ open a draft pull request against `rrnewton/hermit:main`. Before opening the PR:
 3. Run focused tests and the repository-level validation required by the task.
 4. Inspect status, the complete diff, and the staged/committed paths.
 5. Confirm the tested SHA is the feature branch tip.
-6. Build a PR description with exact tests, failures, hardware limitations,
-   and cross-repository dependency SHAs.
+6. Build the PR description with the mandatory sections defined below:
+   `Summary`, `Determinism`, `Validation`, `Relationship to gVisor` for KVM
+   changes, and `Human Review Required` whenever the post-facto label applies.
+   Include exact tests, failures, hardware limitations, and cross-repository
+   dependency SHAs.
 7. Re-read concurrent remote state before pushing.
 
 ```bash
@@ -528,13 +531,51 @@ review is resolved and the authoritative CI gate is green, land the authorized
 change without waiting for human-owner review. The human reviews after landing
 and corrections fix forward.
 
-- Apply exactly one human follow-up label: `post-facto-human-review`. It is
-  informational and never a landing blocker.
+Apply the single `post-facto-human-review` label if and only if a PR contains at
+least one of these four triggers:
+
+1. **New syscall support.** Verify that the in-code determinization audit tags
+   are present: `AUTONOMOUS-BOT-IMPLEMENTED` at the new dispatch/classification
+   entry and `TODO-HUMAN-REVIEW(PR-id)` at the implementation or determinization
+   block.
+2. **A Reverie API or core-abstraction change**, including the `Tool`, `Guest`,
+   `Backend`, or syscall-interception model.
+3. **A new determinization strategy**, rather than an implementation of an
+   already established strategy.
+4. **A core DetCore scheduling change**: anything that affects how programs are
+   scheduled, especially race-search behavior. This trigger is always labeled.
+   [Hermit PR #1151](https://github.com/rrnewton/hermit/pull/1151), which moved
+   slowdown into virtual-time/epoch scheduling, is the canonical good example.
+
+Routine backend-parity work toward the golden ptrace reference implementation
+does **not** trigger human review merely because it changes KVM, DBI, SaBRe,
+LiteInst, or another non-ptrace backend. Apply the label only when that work also
+meets one of the four triggers above; "backend parity change" is not a valid
+review rationale by itself.
+
+Every PR description must contain these sections:
+
+- **Summary**.
+- **Determinism** — mandatory for every PR; explain why the change is
+  deterministic and give the logic or informal proof, not only test results.
+- **Validation** — exact commands, outcomes, limitations, and relaxations.
+- **Relationship to gVisor** — required for KVM changes; state the relevant
+  comparison or explicitly explain why none applies.
+- **Human Review Required** — mandatory whenever
+  `post-facto-human-review` is applied. Name the specific numbered trigger(s)
+  above; vague prose such as "backend change" is insufficient.
+
+- The label is informational and never a landing blocker.
 - Keep `pre-land-human-review` defined as a notional opposite, but **never apply
   it** under the canonical protocol.
 - Never apply, remove, or otherwise alter `human-approved`; it is owner-only.
 - Never recreate or apply the obsolete `human-review` or `post-facto-review`
   labels.
+
+The syscall audit tags are a verification mechanism for trigger 1, not blanket
+markers for bot-authored code or backend-parity work. Keep them at the smallest
+new syscall entry and implementation region; only a human reviewer removes
+them.
 
 ### Landing Authorization
 
