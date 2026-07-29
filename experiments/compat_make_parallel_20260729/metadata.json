@@ -1,0 +1,20 @@
+{
+  "date": "2026-07-29",
+  "task": "compat-deep-app-make-parallel",
+  "backend": "ptrace",
+  "assurance": "L1 pass; L2 divergence",
+  "log_level": "default",
+  "relaxations": [],
+  "hermit_sha": "291679b9ec7cb37a147589d40e5f174c4b40f9f9",
+  "hermit_binary_sha256": "88ae2b2abe5b2508af2bbaad60ed457809de71b5cb8f2d954a55bd1081038484",
+  "fixture_sha256": "d1c0e46e32edc2f179cb10520cbbf1fc2071d15cb36ad8288ba3188a0002ef74",
+  "host_kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "architecture": "x86_64",
+  "make_version": "GNU Make 4.3",
+  "gcc_version": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)",
+  "parallel_jobs": 4,
+  "verify_invocations": 2,
+  "verify_exit_codes": [1, 1],
+  "strict_output_sha256": "59a8ccd3cc4708cfe6009d0babd4d1ec6a96157d649474f6c09eb7318c41b184",
+  "program_sha256": "1dbc8b22ebb98a8f30f217c3563b7edc4e506269c5313de9dcb55a7112f3db41"
+}

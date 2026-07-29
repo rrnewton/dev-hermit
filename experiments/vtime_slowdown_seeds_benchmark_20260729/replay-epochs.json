@@ -1,0 +1,30 @@
+[
+  {
+    "config": "slowdown_constant",
+    "threads": [
+      {"tid": "3", "preemptions": 0, "epochs": [{"logical_time": 1767225600000000000, "epoch": 0, "factor": 4919407278}]},
+      {"tid": "5", "preemptions": 0, "epochs": [{"logical_time": 1767225600003937265, "epoch": 0, "factor": 1427416597}]}
+    ]
+  },
+  {
+    "config": "slowdown_epoch_100us",
+    "threads": [
+      {"tid": "3", "preemptions": 0, "epochs": [{"logical_time": 1767225600000000000, "epoch": 0, "factor": 4919407278}]},
+      {"tid": "5", "preemptions": 0, "epochs": [{"logical_time": 1767225600003937265, "epoch": 39, "factor": 36706911814}]}
+    ]
+  },
+  {
+    "config": "slowdown_epoch_10us",
+    "threads": [
+      {"tid": "3", "preemptions": 0, "epochs": [{"logical_time": 1767225600000000000, "epoch": 0, "factor": 4919407278}]},
+      {"tid": "5", "preemptions": 0, "epochs": [{"logical_time": 1767225600003937265, "epoch": 393, "factor": 511896302}]}
+    ]
+  },
+  {
+    "config": "slowdown_epoch_1us",
+    "threads": [
+      {"tid": "3", "preemptions": 0, "epochs": [{"logical_time": 1767225600000000000, "epoch": 0, "factor": 4919407278}]},
+      {"tid": "5", "preemptions": 0, "epochs": [{"logical_time": 1767225600003937265, "epoch": 3937, "factor": 2144000776}]}
+    ]
+  }
+]

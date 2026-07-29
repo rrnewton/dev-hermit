@@ -1,0 +1,54 @@
+{
+  "experiment": "btrfs_seeds_to_reproduce_benchmark",
+  "date": "2026-07-28",
+  "question": "How many random seeds / runs does each hermit scheduling strategy need to reproduce a target execution, per bug class? Does race-targeted chaos beat blind fuzzing?",
+  "bug_classes": {
+    "chunk_recover": {
+      "class": "scheduling-dependent (multithreaded), benign progress-thread race",
+      "program": "btrfs-progs v7.1 `rescue chunk-recover -y -v <dev>` (scan worker + progress-reporter thread)",
+      "oracle": "2-state interleaving on the intermediate progress tick: sigA='Scanning: 0 in dev0  Scanning: DONE' (tick emitted) vs sigB='Scanning: DONE' (tick lost); signature = sha256 of hermit-filtered guest output",
+      "baseline": "signature of `--strict --seed 1` (a non-exploring run)",
+      "target": "observe any signature != baseline (a distinct thread interleaving)",
+      "images": [
+        {"name": "bko-161811", "bytes": 16777216, "sha256": "2884afdc8d4d451c418d9b4a3585e0b321c4049f44b0fd6ff645a79c4367c4b7", "results": "results.tsv (bug=chunk_recover)"},
+        {"name": "bko-154021-invalid-drop-level", "bytes": 16777216, "sha256": "af6c34ff343579a8b74e77addcc0f7d38d6ff313fe633ca344fbeb211e111714", "results": "results_img2.tsv (bug=chunk_recover_img2)"}
+      ]
+    },
+    "demo08_check": {
+      "class": "deterministic single-threaded logic bug (control)",
+      "program": "btrfs-progs v5.4 buggy `btrfs check <crash.btrfs>` -> BUG_ON('eb->refs < 0') SIGABRT",
+      "oracle": "abort transcript signature (exit 134)",
+      "target": "reproduce the abort",
+      "provenance": "demo08 (issue #207); buggy=3dcce48f, image sha256 9a2e5191..., abort guest sig 59610be8d8ba"
+    }
+  },
+  "strategies": {
+    "plain":  "run --seed N",
+    "strict": "run --strict --seed N",
+    "chaos":  "run --chaos --seed N",
+    "ctr":    "run --chaos --chaos-target-races --seed N",
+    "ctr_ts": "run --chaos --chaos-target-races --seed N --target-timeslice 100000 --max-timeslice 1000000000"
+  },
+  "sweep": {"chunk_recover_seeds": 60, "control_seeds": 10, "runs_total": 660, "scratch_path": "PINNED constant per image (chunk-recover interleaving is device-path-string sensitive)"},
+  "stats": {"model": "each strategy deterministic per seed; random seed selection = shuffle of the fixed sample; seeds-to-first-repro bootstrapped over 5000 shuffles, censored at pool size N", "geometric_note": "E[seeds]~1/p; matches bootstrap"},
+  "binaries": {
+    "hermit_sha256": "30998d5aa7f059439115d59512cabf58e16510f9fa0c61e98b0fca217c5eeda4",
+    "hermit_git_head": "c1019c4ae7f109ec9fdad7a31781300bbbb25946",
+    "hermit_git_built_at": "967abd99bdc453e9ab9b6f118faaf5f9195bd12b (per demo08; identical binary sha256)",
+    "btrfs_box_sha256": "ed9a8815d12e40d2bf413d1259133a6727106715a2e5d8095179439b5d3f1467",
+    "btrfs_box_version": "v7.1 static multicall box",
+    "buggy_btrfs": "ignored/bp-buggy/btrfs (v5.4, 3dcce48f)"
+  },
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "toolchain": "gcc 11.5.0 (Red Hat 11.5.0-15)",
+  "scoped_kills": "experiments/btrfs_userspace_logic_20260728/run_scoped.sh (pgid-scoped; no broad pkill)",
+  "files": {
+    "bench.sh": "sweep driver (plain/strict/chaos/ctr/ctr_ts x seeds x bugs)",
+    "stats.py": "bootstrap seeds-to-first-repro + hit-rate + coverage + cover-both",
+    "results.tsv": "img1 + control raw per-run signatures",
+    "results_img2.tsv": "img2 generality-check raw per-run signatures",
+    "summary.tsv": "machine-readable per-(bug,strategy) stats",
+    "TABLE.txt": "rendered comparison table",
+    "outputs/": "one representative guest transcript per (bug,strategy)"
+  }
+}

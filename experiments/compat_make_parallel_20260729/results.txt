@@ -1,0 +1,23 @@
+ptrace backend; default log level; no relaxations
+
+strict run 1 exit: 0
+strict run 2 exit: 0
+strict outputs bitwise identical: yes
+strict output SHA-256: 59a8ccd3cc4708cfe6009d0babd4d1ec6a96157d649474f6c09eb7318c41b184
+program SHA-256: 1dbc8b22ebb98a8f30f217c3563b7edc4e506269c5313de9dcb55a7112f3db41
+
+verify invocation 1 exit: 1
+logs: 68304 run 1, 68309 run 2
+DETLOG/scheduler COMMIT messages: 48421 each
+first mismatch: log message 26553, scheduler turn 680
+run 1: dtid 21 BlockedExternalContinue after pselect6/wait4(WNOHANG)
+run 2: dtid 33 InboundSignal(SIGCHLD) after compiler-child vfork
+
+verify invocation 2 exit: 1
+logs: 68304 run 1, 68304 run 2
+DETLOG/scheduler COMMIT messages: 48421 each
+first mismatch: log message 26553, scheduler turn 680
+run 1: dtid 21 BlockedExternalContinue after pselect6/wait4(WNOHANG)
+run 2: dtid 33 InboundSignal(SIGCHLD) after compiler-child vfork
+
+conclusion: L1 passes; L2 diverges reproducibly at make/compiler child scheduling.

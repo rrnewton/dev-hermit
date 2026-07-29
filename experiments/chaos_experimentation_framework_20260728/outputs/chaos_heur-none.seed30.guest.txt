@@ -1,0 +1,78 @@
+All Devices:
+	Device: id = 1, name = /home/newton/work/dev-hermit/ignored/bench-seeds/framework.scratch
+
+Scanning: 0 in dev0                Scanning: DONE in dev0                
+DEVICE SCAN RESULT:
+Filesystem Information:
+	sectorsize: 4096
+	nodesize: 4096
+	tree root generation: 15
+	chunk root generation: 6
+
+All Devices:
+	Device: id = 1, name = /home/newton/work/dev-hermit/ignored/bench-seeds/framework.scratch
+
+All Block Groups:
+	Block Group: start = 0, len = 4194304, flag = 2
+	Block Group: start = 4194304, len = 1638400, flag = 5
+	Block Group: start = 5832704, len = 1638400, flag = 5
+	Block Group: start = 7471104, len = 9306112, flag = 5
+
+All Chunks:
+	Chunk: start = 0, len = 4194304, type = 2, num_stripes = 1
+	    Stripes list:
+	    [ 0] Stripe: devid = 1, offset = 0
+	Chunk: start = 4194304, len = 1638400, type = 5, num_stripes = 1
+	    Stripes list:
+	    [ 0] Stripe: devid = 1, offset = 4194304
+	Chunk: start = 5832704, len = 1638400, type = 5, num_stripes = 1
+	    Stripes list:
+	    [ 0] Stripe: devid = 1, offset = 5832704
+	Chunk: start = 7471104, len = 9306112, type = 5, num_stripes = 1
+	    Stripes list:
+	    [ 0] Stripe: devid = 1, offset = 7471104
+
+All Device Extents:
+	Device extent: devid = 1, start = 0, len = 4194304, chunk offset = 0
+	Device extent: devid = 1, start = 4194304, len = 1638400, chunk offset = 4194304
+	Device extent: devid = 1, start = 5832704, len = 1638400, chunk offset = 5832704
+	Device extent: devid = 1, start = 7471104, len = 9306112, chunk offset = 7471104
+
+CHECK RESULT:
+Recoverable Chunks:
+  Chunk: start = 0, len = 4194304, type = 2, num_stripes = 1
+      Stripes list:
+      [ 0] Stripe: devid = 1, offset = 0
+      Block Group: start = 0, len = 4194304, flag = 2
+      Device extent list:
+          [ 0]Device extent: devid = 1, start = 0, len = 4194304, chunk offset = 0
+  Chunk: start = 4194304, len = 1638400, type = 5, num_stripes = 1
+      Stripes list:
+      [ 0] Stripe: devid = 1, offset = 4194304
+      Block Group: start = 4194304, len = 1638400, flag = 5
+      Device extent list:
+          [ 0]Device extent: devid = 1, start = 4194304, len = 1638400, chunk offset = 4194304
+  Chunk: start = 5832704, len = 1638400, type = 5, num_stripes = 1
+      Stripes list:
+      [ 0] Stripe: devid = 1, offset = 5832704
+      Block Group: start = 5832704, len = 1638400, flag = 5
+      Device extent list:
+          [ 0]Device extent: devid = 1, start = 5832704, len = 1638400, chunk offset = 5832704
+  Chunk: start = 7471104, len = 9306112, type = 5, num_stripes = 1
+      Stripes list:
+      [ 0] Stripe: devid = 1, offset = 7471104
+      Block Group: start = 7471104, len = 9306112, flag = 5
+      Device extent list:
+          [ 0]Device extent: devid = 1, start = 7471104, len = 9306112, chunk offset = 7471104
+Unrecoverable Chunks:
+
+Total Chunks:		4
+  Recoverable:		4
+  Unrecoverable:	0
+
+Orphan Block Groups:
+
+Orphan Device Extents:
+
+Check chunks successfully with no orphans
+Chunk tree recovered successfully

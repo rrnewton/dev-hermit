@@ -1,0 +1,48 @@
+{
+  "demo": "08-btrfs-userspace-archeology-repro",
+  "date": "2026-07-28",
+  "bug": {
+    "summary": "BUG_ON('eb->refs < 0') abort in extent_io.c during open_ctree(): double-free of a cached extent buffer driven by a fuzzed log_root bytenr (61440) overlapping the primary superblock range [61440,77824)",
+    "class": "userspace FS logic (btree / disk-io / extent-buffer cache); no kernel/mount/QEMU",
+    "found_by": "fuzzer (crafted/minimal crashing image)",
+    "provenance": "kdave/btrfs-progs GitHub issue #207",
+    "reporter_tested_versions": ["v5.2.1 (Arch)", "v5.2.2 (55a8c962)"],
+    "fix_commit": "6a061158617f3aa670df861c912ef76d11aa69e4",
+    "fix_title": "btrfs-progs: disk-io: Verify the bytenr passed in is mapped for read_tree_block()",
+    "fix_author": "Qu Wenruo",
+    "fix_date": "2020-01-09",
+    "first_fixed_release": "v5.4.1",
+    "buggy_commit": "3dcce48fd7038efbf0c40707d3ff26c1c080ae50",
+    "buggy_commit_note": "immediate parent of fix; btrfs-progs v5.4"
+  },
+  "reproducer_image": {
+    "path": "ignored/demo08-repro/crash.btrfs",
+    "sha256": "9a2e51910bfcb0c98817e4db8081477688ea26e6af75ac076769a0820f3b51ee",
+    "bytes": 114294784,
+    "source_url": "https://github.com/kdave/btrfs-progs/files/3639876/crash.zip",
+    "committed": false,
+    "note": "binary, gitignored; re-fetch via source_url"
+  },
+  "binaries": {
+    "buggy_btrfs_sha256": "e8141864f4e3aec77d677fd75a26ec442a1181893ad2041d0b475e01968ab13e",
+    "fixed_btrfs_sha256": "3857b7a73d35eda36c19863d66c7454f52363dd90492b46a70abc8bab7fece4d",
+    "btrfs_progs_version_string": "v5.4",
+    "hermit_sha256": "30998d5aa7f059439115d59512cabf58e16510f9fa0c61e98b0fca217c5eeda4",
+    "hermit_git_sha": "967abd99bdc453e9ab9b6f118faaf5f9195bd12b"
+  },
+  "hermit_configs": {
+    "strict": "run --strict --seed 1",
+    "chaos": "run --chaos --chaos-target-races --sched-seed 1 --rng-seed 1 --target-timeslice 100000 --max-timeslice 1000000000"
+  },
+  "results": {
+    "buggy_strict":  {"exit": 134, "signal": "SIGABRT", "guest_sha256_32": "59610be8d8ba911e250b6c069f7ff971", "bitwise_reproducible": true},
+    "buggy_chaos":   {"exit": 134, "signal": "SIGABRT", "guest_sha256_32": "59610be8d8ba911e250b6c069f7ff971", "bitwise_reproducible": true},
+    "fixed_strict":  {"exit": 1, "guest_sha256_32": "641cd8d6f21ead2d56977ef7be355e68", "message": "cannot open file system"},
+    "fixed_chaos":   {"exit": 1, "guest_sha256_32": "641cd8d6f21ead2d56977ef7be355e68", "message": "cannot open file system"}
+  },
+  "scope_note": "Deterministic single-threaded logic bug: chaos/seed/timeslice do not change the outcome (buggy strict==chaos transcript). hermit contribution = bitwise-faithful deterministic reproduction (pinned ASLR, stable backtrace incl. libc frame) + live differential vs fix.",
+  "build_deps": ["autoconf", "automake", "libtool", "libblkid-devel", "libuuid-devel", "zlib-devel", "lzo-devel", "e2fsprogs-devel"],
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "toolchain": "gcc 11.5.0 (Red Hat 11.5.0-15)",
+  "scoped_kills": "experiments/btrfs_userspace_logic_20260728/run_scoped.sh (pgid-scoped, no broad pkill)"
+}

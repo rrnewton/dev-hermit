@@ -1,0 +1,7 @@
+Invalid mapping for 61440-77824, got 13631488-22020096
+Couldn't map the block 61440
+Couldn't map the block 61440
+bad tree block 61440, bytenr mismatch, want=61440, have=0
+Couldn't setup log root tree
+ERROR: cannot open file system
+Opening filesystem to check...

@@ -1,0 +1,26 @@
+name	hermit_args
+plain	run
+strict	run --strict
+chaos_ts-default	run --chaos
+chaos_ts-1e6	run --chaos --target-timeslice 1000000
+chaos_ts-1e5	run --chaos --target-timeslice 100000
+chaos_ts-1e4	run --chaos --target-timeslice 10000
+chaos_ts-1e3	run --chaos --target-timeslice 1000
+chaos_ts-1e2	run --chaos --target-timeslice 100
+ctr_ts-default	run --chaos --chaos-target-races
+ctr_ts-1e6	run --chaos --chaos-target-races --target-timeslice 1000000
+ctr_ts-1e5	run --chaos --chaos-target-races --target-timeslice 100000
+ctr_ts-1e4	run --chaos --chaos-target-races --target-timeslice 10000
+ctr_ts-1e3	run --chaos --chaos-target-races --target-timeslice 1000
+ctr_ts-1e2	run --chaos --chaos-target-races --target-timeslice 100
+chaos_maxts-1e6	run --chaos --max-timeslice 1000000
+chaos_maxts-1e5	run --chaos --max-timeslice 100000
+chaos_heur-none	run --chaos --sched-heuristic none
+chaos_heur-random	run --chaos --sched-heuristic random
+chaos_heur-sticky0.1	run --chaos --sched-heuristic stickyrandom --sched-sticky-random-param 0.1
+chaos_heur-sticky0.5	run --chaos --sched-heuristic stickyrandom --sched-sticky-random-param 0.5
+chaos_heur-sticky0.9	run --chaos --sched-heuristic stickyrandom --sched-sticky-random-param 0.9
+chaos_heur-connectbind	run --chaos --sched-heuristic connectbind
+chaos_futex-on	run --chaos --fuzz-futexes
+chaos_futex-on_ts-1e3	run --chaos --fuzz-futexes --target-timeslice 1000
+chaos_heurrandom_ts-1e3	run --chaos --sched-heuristic random --target-timeslice 1000

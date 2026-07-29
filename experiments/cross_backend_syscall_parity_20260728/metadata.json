@@ -1,0 +1,17 @@
+{
+  "task": "impl-cross-backend-syscall-parity",
+  "date": "2026-07-28",
+  "author": "impl agent, opus-4.8",
+  "hermit_repo": "rrnewton/hermit",
+  "hermit_branch": "codex/impl-cross-backend-syscall-parity",
+  "hermit_sha": "a97b28989bf22a2218b15e9bd321aefc94242f3d",
+  "hermit_base": "origin/main a97b28989bf22a2218b15e9bd321aefc94242f3d",
+  "binary": "worktrees/274/hermit/target/release/hermit (built 2026-07-28 11:03, 55987728 bytes)",
+  "clients_rebuilt": ["detcore-dbi", "detcore-sabre", "detcore-liteinst", "hermit-install", "hermit"],
+  "workload": "/bin/echo hello",
+  "run_command": "hermit --log info run --strict --backend <BK> -- /bin/echo hello",
+  "verify_command": "hermit run --strict --verify --backend <BK> -- /bin/echo hello",
+  "measurement": "grep -oE 'inbound syscall: [a-z0-9_]+' from DETLOG (guest_past_first_execve gated, lib.rs:1369)",
+  "host": "devserver linux 6.17.13",
+  "backends": ["ptrace", "dbi", "sabre", "liteinst", "kvm"]
+}

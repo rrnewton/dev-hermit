@@ -1,0 +1,28 @@
+
+seeds-to-reproduce benchmark  (TRIALS=5000 shuffles; '>N'/never = censored at pool size N)
+
+### chunk_recover   (N=60 seeds/strategy; target: sigB = interleaving != baseline(strict/seed1))
+strategy covrg  hit-rate  stf_mean  stf_med  stf_p90  exit(s)
+plain        1      0.0%     never    never    never  0:60
+strict       1      0.0%     never    never    never  0:60
+chaos        2     50.0%      1.94     1.00        4  0:60        cover-both~2 seeds
+ctr          2     35.0%      2.80     2.00        6  0:60        cover-both~3 seeds
+ctr_ts       1      0.0%     never    never    never  0:60
+
+### chunk_recover_img2   (N=60 seeds/strategy; target: sigB = interleaving != baseline(strict/seed1))
+strategy covrg  hit-rate  stf_mean  stf_med  stf_p90  exit(s)
+plain        1      0.0%     never    never    never  0:60
+strict       1      0.0%     never    never    never  0:60
+chaos        2     50.0%      1.97     1.00        4  0:60        cover-both~2 seeds
+ctr          2     35.0%      2.78     2.00        6  0:60        cover-both~3 seeds
+ctr_ts       1      0.0%     never    never    never  0:60
+
+### demo08_check   (N=10 seeds/strategy; target: BUG_ON abort sig 59610be8d8ba)
+strategy covrg  hit-rate  stf_mean  stf_med  stf_p90  exit(s)
+plain        1    100.0%         1     1.00        1  134:10
+strict       1    100.0%         1     1.00        1  134:10
+chaos        1    100.0%         1     1.00        1  134:10
+ctr          1    100.0%         1     1.00        1  134:10
+ctr_ts       1    100.0%         1     1.00        1  134:10
+
+summary -> /home/newton/work/dev-hermit/experiments/btrfs_seeds_to_reproduce_benchmark_20260728/summary.tsv

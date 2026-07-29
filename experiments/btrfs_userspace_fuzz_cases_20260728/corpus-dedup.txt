@@ -1,0 +1,6 @@
+DUP up__bko-104131-fsck-oob-read.raw == craft__bko-104131-fsck-oob-read.raw
+DUP up__bko-154961-heap-overflow-chunk-items.raw == craft__bko-154961-heap-overflow-chunk-items.raw
+DUP up__bko-155181-unaligned-extent-item.raw == up__bko-155181-bad-backref.raw
+DUP up__bko-156471-ubsan-trigger-crc32c-unaligned.raw == craft__bko-156471-ubsan-trigger-crc32c-unaligned.raw
+DUP up__bko-199839.raw == craft__bko-199839.raw
+DUP up__superblock-total-bytes-0.raw == craft__superblock-total-bytes-0.raw

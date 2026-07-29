@@ -1,0 +1,48 @@
+# btrfs-userspace chaos divergence case library
+
+38 reproducible schedule-divergence cases. Each is a `btrfs rescue chunk-recover -y -v` run whose output DIVERGES between two hermit chaos seeds (scan-thread/progress-thread interleaving) yet is BITWISE-STABLE per seed. Semantic content (device scan result + recovered chunk items + recovery verdict) is identical across seeds; only the progress-tick output (`Scanning: N in dev0`) differs.
+
+**Reproduction is path-pinned.** The exposed interleaving is sensitive to the scratch device-path string (its length/content perturbs memory layout and instruction timing, which changes chaos scheduling decisions). Use the EXACT `pinned_scratch_path` below or the shas will differ AND the seed pair may stop diverging. Binaries under `hermit/target/release/` and `ignored/btrfs-progs-v7.1-bin/`.
+
+sha16 = first 16 hex of sha256(stdout+stderr). Verified: seed A and seed B give distinct, bitwise-stable outputs (seed-1 repeat == seed-1).
+
+| case | image | seed A | sha16 A | seed B | sha16 B | repro | pinned scratch path |
+|---|---|---|---|---|---|---|---|
+| CR01 | craft__bko-154961-heap-overflow-chunk-items.raw | 1 | `32cb2f29b07ae76d` | 2 | `58927644ccac5373` | YES | `runs/sweep_chunkrec/craft__bko-154961-heap-overflow-chunk-items.raw.scratch` |
+| CR02 | craft__bko-156471-ubsan-trigger-crc32c-unaligned.raw | 1 | `e0b140308a7a7ed1` | 2 | `7451fe1804051f65` | YES | `runs/sweep_chunkrec/craft__bko-156471-ubsan-trigger-crc32c-unaligned.raw.scratch` |
+| CR03 | craft__bko-199839.raw | 1 | `d2b59c4a20c40caa` | 2 | `0d64aaf9473d08db` | YES | `runs/sweep_chunkrec/craft__bko-199839.raw.scratch` |
+| CR04 | craft__superblock-total-bytes-0.raw | 1 | `99ed3cdaff46679a` | 2 | `bc0621c0c188edb4` | YES | `runs/sweep_chunkrec/craft__superblock-total-bytes-0.raw.scratch` |
+| CR05 | up__bko-153641-unaligned-tree-block-bytenr.raw | 1 | `5f2800a083a21198` | 2 | `27b28605b25addea` | YES | `runs/sweep_chunkrec/up__bko-153641-unaligned-tree-block-bytenr.raw.scratch` |
+| CR06 | up__bko-154021-invalid-drop-level.raw | 1 | `b16cb824e6b4c6fc` | 2 | `43ab644967917880` | YES | `runs/sweep_chunkrec/up__bko-154021-invalid-drop-level.raw.scratch` |
+| CR07 | up__bko-155151-bad-block-group-offset.raw | 1 | `3b63b22c5cc8d887` | 2 | `56511a30689b9f58` | YES | `runs/sweep_chunkrec/up__bko-155151-bad-block-group-offset.raw.scratch` |
+| CR08 | up__bko-155181-bad-backref.raw | 1 | `8dd6c615cc63ec7f` | 2 | `b1273b60a35838d5` | YES | `runs/sweep_chunkrec/up__bko-155181-bad-backref.raw.scratch` |
+| CR09 | up__bko-155201-wrong-chunk-item-in-root-tree.raw | 1 | `40cf651aa3b53cef` | 2 | `4c8311ae0477126d` | YES | `runs/sweep_chunkrec/up__bko-155201-wrong-chunk-item-in-root-tree.raw.scratch` |
+| CR10 | up__bko-155551-unaligned-tree-block.raw | 1 | `600ead7ec7dbb862` | 2 | `3bfb476b3a27d2db` | YES | `runs/sweep_chunkrec/up__bko-155551-unaligned-tree-block.raw.scratch` |
+| CR11 | up__bko-155621-bad-block-group-offset.raw | 1 | `2bb03f6948e79af8` | 2 | `6508c9fe9d1fba56` | YES | `runs/sweep_chunkrec/up__bko-155621-bad-block-group-offset.raw.scratch` |
+| CR12 | up__bko-156731.raw | 1 | `c47009525b97f739` | 2 | `f6ddcb13e43086a7` | YES | `runs/sweep_chunkrec/up__bko-156731.raw.scratch` |
+| CR13 | up__bko-156741.raw | 1 | `c1ff38f7c53374e3` | 2 | `3104b86d2390e9cd` | YES | `runs/sweep_chunkrec/up__bko-156741.raw.scratch` |
+| CR14 | up__bko-156811-bad-parent-ref-qgroup-verify.raw | 1 | `b2aecfac5be9a49c` | 2 | `8a0144e381c0f635` | YES | `runs/sweep_chunkrec/up__bko-156811-bad-parent-ref-qgroup-verify.raw.scratch` |
+| CR15 | up__bko-161811.raw | 1 | `d4f744c45fe67b46` | 2 | `6bbb3b11344bfdd3` | YES | `runs/sweep_chunkrec/up__bko-161811.raw.scratch` |
+| CR16 | up__bko-161821.raw | 1 | `1383273a239ce2c4` | 2 | `699da3eadb9190e1` | YES | `runs/sweep_chunkrec/up__bko-161821.raw.scratch` |
+| CR17 | up__bko-166361-blocksize-zero.raw | 1 | `36304464ef25673f` | 2 | `7644d2ea1c0b369d` | YES | `runs/sweep_chunkrec/up__bko-166361-blocksize-zero.raw.scratch` |
+| CR18 | up__bko-167551.raw | 1 | `72129ae95d4f2837` | 2 | `b2b76bfe961a44ed` | YES | `runs/sweep_chunkrec/up__bko-167551.raw.scratch` |
+| CR19 | up__bko-167781.raw | 1 | `8bd0e952a2ffabc5` | 2 | `ac722d11ccc7b7a5` | YES | `runs/sweep_chunkrec/up__bko-167781.raw.scratch` |
+| CR20 | up__bko-167921.raw | 1 | `e48948af2f0adaba` | 2 | `09ed5851de66bc99` | YES | `runs/sweep_chunkrec/up__bko-167921.raw.scratch` |
+| CR21 | up__bko-168301.raw | 1 | `6c4cbbc308d24088` | 2 | `9c5edec866f08190` | YES | `runs/sweep_chunkrec/up__bko-168301.raw.scratch` |
+| CR22 | up__bko-169301-1-blocksize-zero.raw | 1 | `3ad3ca89871652b3` | 2 | `8d95a6b647e1bce0` | YES | `runs/sweep_chunkrec/up__bko-169301-1-blocksize-zero.raw.scratch` |
+| CR23 | up__bko-169301-2-blocksize-zero.raw | 1 | `950911614f2c772e` | 2 | `45136574c499a387` | YES | `runs/sweep_chunkrec/up__bko-169301-2-blocksize-zero.raw.scratch` |
+| CR24 | up__bko-169311-blocksize-zero-qgroup-verify.raw | 1 | `23e1b793002a12f7` | 2 | `982ac8a3fbe0b417` | YES | `runs/sweep_chunkrec/up__bko-169311-blocksize-zero-qgroup-verify.raw.scratch` |
+| CR25 | up__bko-172811.raw | 1 | `0adf6e81204439d0` | 2 | `8fb4d3b599665b01` | YES | `runs/sweep_chunkrec/up__bko-172811.raw.scratch` |
+| CR26 | up__bko-172861.raw | 1 | `8543d8f629632691` | 2 | `c23b2e871cfe9b0a` | YES | `runs/sweep_chunkrec/up__bko-172861.raw.scratch` |
+| CR27 | up__bko-199833-reloc-recovery-crash.raw | 1 | `ceaa59d932a5f02d` | 2 | `304db56686a2f6a0` | YES | `runs/sweep_chunkrec/up__bko-199833-reloc-recovery-crash.raw.scratch` |
+| CR28 | up__bko-200403.raw | 1 | `1e273fc49edc92d6` | 2 | `e9a6c3f347a3138e` | YES | `runs/sweep_chunkrec/up__bko-200403.raw.scratch` |
+| CR29 | up__bko-200409.raw | 1 | `533da4891ee65e4c` | 2 | `6c80189d0b8187fd` | YES | `runs/sweep_chunkrec/up__bko-200409.raw.scratch` |
+| CR30 | up__bko-97031-invalid-stripe-len-sys-array.raw | 1 | `1aba17109dcb5304` | 2 | `9000efd1a7afdaf3` | YES | `runs/sweep_chunkrec/up__bko-97031-invalid-stripe-len-sys-array.raw.scratch` |
+| CR31 | up__bko-97041-invalid-sub-stripes-zero-FPE.raw | 1 | `2b88570baab25c36` | 2 | `f345f2e13c4b53a3` | YES | `runs/sweep_chunkrec/up__bko-97041-invalid-sub-stripes-zero-FPE.raw.scratch` |
+| CR32 | up__bko-97171-btrfs-image.raw | 1 | `68cd9c40cb7890ee` | 2 | `b7627af4cc9d82db` | YES | `runs/sweep_chunkrec/up__bko-97171-btrfs-image.raw.scratch` |
+| CR33 | up__bko-97191-btrfs-image.raw | 1 | `307575f08347b5cc` | 2 | `c1acec1b60399e4d` | YES | `runs/sweep_chunkrec/up__bko-97191-btrfs-image.raw.scratch` |
+| CR34 | up__bko-97271-btrfs-image.raw | 1 | `22843d38f26e7983` | 2 | `0b64017fca08b848` | YES | `runs/sweep_chunkrec/up__bko-97271-btrfs-image.raw.scratch` |
+| CR35 | up__superblock-stripsize-bogus.raw | 1 | `db13cd5e84689a77` | 2 | `8deff062c91f352a` | YES | `runs/sweep_chunkrec/up__superblock-stripsize-bogus.raw.scratch` |
+| CR36 | up__sys-array-num-stripes-0.raw | 1 | `519f37f687713f3f` | 2 | `2532d1631a27d67f` | YES | `runs/sweep_chunkrec/up__sys-array-num-stripes-0.raw.scratch` |
+| CR37 | up__sys-chunk-stripe-len-bogus.raw | 1 | `090bac0ef3733cf7` | 2 | `4bcf3b1ac4e14207` | YES | `runs/sweep_chunkrec/up__sys-chunk-stripe-len-bogus.raw.scratch` |
+| CR38 | up__sys-chunk-type-bogus.raw | 1 | `fd26bbc23536dbb3` | 2 | `adc5a69ce7cf6200` | YES | `runs/sweep_chunkrec/up__sys-chunk-type-bogus.raw.scratch` |

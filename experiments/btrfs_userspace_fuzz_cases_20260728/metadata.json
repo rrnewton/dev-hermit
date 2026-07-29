@@ -1,0 +1,22 @@
+{
+  "experiment": "btrfs_userspace_fuzz_cases_20260728",
+  "task": "btrfs-userspace-fuzz-cases",
+  "date": "2026-07-28",
+  "hermit_sha": "967abd99bdc453e9ab9b6f118faaf5f9195bd12b",
+  "hermit_flags": "run --strict --chaos --chaos-target-races --seed <N>",
+  "btrfs_progs": "v7.1 static multicall box",
+  "btrfs_box_sha256": "ed9a8815d12e40d2bf413d1259133a6727106715a2e5d8095179439b5d3f1467",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "corpus_source": "ignored/btrfs-progs-v7.1/tests/fuzz-tests/images/*.raw.xz + experiments/btrfs_userspace_logic_20260728/corpus/*.raw",
+  "corpus_unique_images": 45,
+  "corpus_crafted_all_dup_of_upstream": true,
+  "seeds_per_image": [1, 2, 3, "1-repeat"],
+  "subcommands_swept": ["rescue chunk-recover -y -v", "check", "rescue super-recover -y -v", "inspect-internal dump-super -Ffa"],
+  "total_hermit_runs": 720,
+  "per_seed_repro_failures": 0,
+  "chunkrec_divergent_images": 38,
+  "single_threaded_divergent_images": 0,
+  "crashes_hangs_aborts_fpe": 0,
+  "divergence_class": "scan-thread/progress-thread interleaving (semantically benign progress ticks)",
+  "wide_sweep_distinct_signatures_seeds_1_to_12": 2
+}

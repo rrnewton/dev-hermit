@@ -1,0 +1,51 @@
+{
+  "task": "chaos-experimentation-framework",
+  "date": "2026-07-28",
+  "kind": "research-only",
+  "extends": "experiments/btrfs_seeds_to_reproduce_benchmark_20260728",
+  "question": "which hermit chaos parameters minimize seeds-to-reproduce a scheduling interleaving",
+  "hermit": {
+    "head": "c1019c4ae7f109ec9fdad7a31781300bbbb25946",
+    "binary_sha256_prefix": "30998d5aa7f05943",
+    "path": "hermit/target/release/hermit"
+  },
+  "workload": {
+    "box": "ignored/btrfs-progs-v7.1-bin/btrfs.box.static",
+    "box_sha256_prefix": "ed9a8815d12e40d2",
+    "command": "btrfs rescue chunk-recover -y -v <pinned-scratch-dev>",
+    "image": "ignored/bench-seeds/bko-161811.raw",
+    "image_sha256_prefix": "2884afdc8d4d451c",
+    "oracle": "sha256 of hermit-filtered guest output; distinct sigs = distinct benign progress-tick interleavings",
+    "race_class": "benign multithreaded progress-tick (proxy for schedule-exploration power)"
+  },
+  "grid": {
+    "configs": 25,
+    "seeds_per_config": 30,
+    "total_runs": 750,
+    "pinned_scratch_path": true,
+    "per_run_timeout_s": 300,
+    "process_kills": "scoped-pgid via run_scoped.sh"
+  },
+  "knobs_swept": [
+    "--target-timeslice {1e6,1e5,1e4,1e3,1e2}",
+    "--max-timeslice {1e6,1e5}",
+    "--sched-heuristic {none,random,stickyrandom,connectbind}",
+    "--sched-sticky-random-param {0.1,0.5,0.9}",
+    "--chaos-target-races",
+    "--fuzz-futexes"
+  ],
+  "knobs_absent_upstream": [
+    "RR-style stable per-thread slowdown factors",
+    "scheduler epochs / phase-based factor changes"
+  ],
+  "headline": "--target-timeslice is the dominant knob; threshold between 1e5 (2-state binary, ~15 seeds/never) and 1e4 (28-30/30 distinct, 100% hit, first seed). --max-timeslice neither sufficient nor cheap; sticky-random suppresses diversity as param rises.",
+  "best_params": "run --chaos --target-timeslice 1000 (stf median 1, p90 1, 30/30 distinct)",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
+  "stats": {"bootstrap_trials": 5000, "seed_selection_model": "shuffle without replacement, censored > N"},
+  "related_memories": [
+    "benchmark-seeds-to-reproduce-chaos-vs-blind",
+    "btrfs-progs-chunk-recover-only-multithreaded-benign-race",
+    "hermit-chaos-sched-seed-reaches-guest-under-icount",
+    "never-broad-pkill-shared-machine"
+  ]
+}

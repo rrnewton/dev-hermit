@@ -1,0 +1,58 @@
+{
+  "task": "benchmark-rerun-with-vtime-slowdown",
+  "date": "2026-07-29",
+  "kind": "research-only benchmark",
+  "premise_correction": {
+    "task_claim": "PR #1151 merged",
+    "observed_state": "PR #1151 open and draft; mergedAt null",
+    "main_sha": "291679b9ec7cb37a147589d40e5f174c4b40f9f9",
+    "benchmark_sha": "0a8a6a02ca8970322afb37ae9a7f092d29c074df"
+  },
+  "binary": {
+    "path": "worktrees/274/hermit/target/release/hermit",
+    "sha256": "a74c248279ca8dfe0e59b52c781583992acf36fcdc9735005366ed15f6681998",
+    "backend": "ptrace"
+  },
+  "workload": {
+    "program": "btrfs-progs v7.1 rescue chunk-recover -y -v",
+    "box_sha256": "ed9a8815d12e40d2bf413d1259133a6727106715a2e5d8095179439b5d3f1467",
+    "image": "ignored/bench-seeds/bko-161811.raw",
+    "image_sha256": "2884afdc8d4d451c418d9b4a3585e0b321c4049f44b0fd6ff645a79c4367c4b7",
+    "scratch_path": "ignored/bench-seeds/pts_bench.scratch",
+    "oracle": "sha256 prefix of Hermit-filtered guest output",
+    "baseline_signature": "a45095499c2b",
+    "alternate_signature": "231ff295a410"
+  },
+  "grid": {
+    "seeds_per_strategy": 60,
+    "strategies": 5,
+    "total_runs": 300,
+    "per_run_timeout_seconds": 120,
+    "process_scope": "run_scoped.sh process group"
+  },
+  "strategies": {
+    "blind": "run --seed N",
+    "chaos": "run --chaos --seed N",
+    "target_races": "run --chaos --chaos-target-races --seed N",
+    "slowdown_constant": "run --chaos --chaos-per-thread-slowdown --chaos-slowdown-max-factor 10 --seed N",
+    "slowdown_epoch_100us": "run --chaos --chaos-per-thread-slowdown --chaos-slowdown-max-factor 10 --chaos-epoch-length-ns 100000 --seed N"
+  },
+  "statistics": {
+    "bootstrap_trials": 5000,
+    "model": "shuffle the fixed 60-seed pool without replacement; report first non-baseline signature",
+    "random_seed": 1234
+  },
+  "replay_proof": {
+    "seed": 1,
+    "configs": ["slowdown_constant", "slowdown_epoch_100us", "slowdown_epoch_10us", "slowdown_epoch_1us"],
+    "result": "all record and replay exits 0; all filtered outputs byte-identical"
+  },
+  "artifact_sha256": {
+    "results.tsv": "0b4c88f041a8e941b175a3e4f9436f93bf68f41ad245bcf9a0cdf8a6bb2cf352",
+    "summary.tsv": "95ec0cc97d6d24aea542674d117e1eefff9000e3a09fc4e61ec099a716497f44",
+    "TABLE.md": "5dc66e3297c00d2ca786ca287a822dbcb1936a0ba3970e468885b5edd419c425",
+    "replay-proof.tsv": "c6931f85f67029752a4e3d7dba13267fed0e33dbf18e234bbfaa34569ecc62ee"
+  },
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+  "rustc": "1.97.1 (8bab26f4f 2026-07-14)"
+}

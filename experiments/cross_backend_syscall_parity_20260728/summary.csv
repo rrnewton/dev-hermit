@@ -1,0 +1,6 @@
+backend,total_inbound,distinct_types,strict_verify_rc,observable
+ptrace,113,19,0,yes(DETLOG)
+dbi,113,19,0,yes(DETLOG via DbiSubscriber/Emitter)
+kvm,110,18,0,yes(DETLOG)
+sabre,unobservable,unobservable,0,no(no in-guest subscriber; M1 strace runner not built)
+liteinst,unobservable,unobservable,0,no(no in-guest subscriber)

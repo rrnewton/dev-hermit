@@ -70,6 +70,12 @@
 **/__pycache__/
 /debug/
 *.perf.data
+*.log
+
+# High-volume per-run transcripts stay local.  Compact, durable tables are
+# promoted to each experiment's results directory before publication.
+/experiments/btrfs_userspace_fuzz_cases_20260728/runs/
+/experiments/btrfs_userspace_logic_20260728/runs/
 
 # ai_docs contains durable text, not binary or archive attachments.
 /ai_docs/**/*.a

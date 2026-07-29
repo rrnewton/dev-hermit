@@ -1,0 +1,5 @@
+config	record_exit	replay_exit	record_sig	replay_sig	match	epoch_transitions
+slowdown_constant	0	0	231ff295a410	231ff295a410	yes	2
+slowdown_epoch_100us	0	0	231ff295a410	231ff295a410	yes	2
+slowdown_epoch_10us	0	0	231ff295a410	231ff295a410	yes	2
+slowdown_epoch_1us	0	0	231ff295a410	231ff295a410	yes	2

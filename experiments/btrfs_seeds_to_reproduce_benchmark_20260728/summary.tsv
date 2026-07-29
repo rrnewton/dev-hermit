@@ -1,0 +1,16 @@
+bug	strategy	n	coverage_sigs	target	hit_rate	stf_mean	stf_median	stf_p90	cover_both_mean
+chunk_recover	plain	60	1	sigB	0.000	never	never	never	n/a
+chunk_recover	strict	60	1	sigB	0.000	never	never	never	n/a
+chunk_recover	chaos	60	2	sigB	0.500	1.94	1.00	4	2.95
+chunk_recover	ctr	60	2	sigB	0.350	2.80	2.00	6	3.30
+chunk_recover	ctr_ts	60	1	sigB	0.000	never	never	never	n/a
+chunk_recover_img2	plain	60	1	sigB	0.000	never	never	never	n/a
+chunk_recover_img2	strict	60	1	sigB	0.000	never	never	never	n/a
+chunk_recover_img2	chaos	60	2	sigB	0.500	1.97	1.00	4	2.93
+chunk_recover_img2	ctr	60	2	sigB	0.350	2.78	2.00	6	3.28
+chunk_recover_img2	ctr_ts	60	1	sigB	0.000	never	never	never	n/a
+demo08_check	plain	10	1	abort	1.000	1	1.00	1	n/a
+demo08_check	strict	10	1	abort	1.000	1	1.00	1	n/a
+demo08_check	chaos	10	1	abort	1.000	1	1.00	1	n/a
+demo08_check	ctr	10	1	abort	1.000	1	1.00	1	n/a
+demo08_check	ctr_ts	10	1	abort	1.000	1	1.00	1	n/a
