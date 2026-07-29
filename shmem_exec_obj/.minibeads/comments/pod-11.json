@@ -1,0 +1,10 @@
+[
+  {
+    "id": "pod-11-cb5cd30d75e",
+    "issue_id": "pod-11",
+    "author": "devbig030",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 3 REJECT at bb6ee4d: Major: target-specific Cargo build variables and mutable RUSTC_WRAPPER affected successful builds without being captured/hashed in environment provenance. Minor: result JSON validation projected known fields and accepted extra/duplicate members. Current/MSRV, compiler closure, ownership, symlink, reuse, and standalone-completion attacks otherwise passed. Durable report: ai_docs/reviews/benchmark-adversarial-round3.md. pod-11 remains in_progress.",
+    "created_at": "2026-07-29T13:40:31.670907205Z",
+    "updated_at": "2026-07-29T13:40:31.670907205Z"
+  }
+]
