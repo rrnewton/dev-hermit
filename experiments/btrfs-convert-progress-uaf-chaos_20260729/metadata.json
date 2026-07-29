@@ -1,0 +1,47 @@
+{
+  "experiment": "btrfs-convert-progress-uaf-chaos",
+  "date": "2026-07-29",
+  "agent": "hermit-227",
+  "task": "btrfs-schedule-dependent-userspace-bug",
+  "question": "Can hermit --chaos deterministically surface a schedule-dependent USERSPACE btrfs-progs use-after-free that native/blind execution misses?",
+  "target_bug": {
+    "component": "btrfs-progs btrfs-convert progress subthread (common/task-utils.c)",
+    "class": "heap-use-after-free (concurrency / thread-teardown race)",
+    "historical_fix_commit": "73e211a7",
+    "root_cause": "task_start() pthread_detach()s the progress subthread and task_stop() does not pthread_join() it, so task_deinit() frees the shared 'info' object while the subthread is still dereferencing it. The fix is: do not detach, and pthread_join() before task_deinit()."
+  },
+  "hermit": {
+    "primary_checkout_sha": "103657d48a991d556afe7e563537e000e74aef76",
+    "binary": "reflink copy of the primary release build (hermit 0.1)",
+    "note": "hermit binary was reflinked from the primary hermit checkout release build; SHA above is the primary checkout HEAD at experiment time"
+  },
+  "btrfs_progs": {
+    "version": "v7.1",
+    "modifications": "See fix-73e211a7-buggy-vs-fixed.diff and demos/08-btrfs-convert-uaf.md. Two variants (buggy/fixed) built from btrfs-progs v7.1 with an observability harness common to both.",
+    "build": "make EXTRA_CFLAGS='-fsanitize=address -fno-omit-frame-pointer -g -O1 -D_FORTIFY_SOURCE=0' EXTRA_LDFLAGS='-fsanitize=address' btrfs-convert",
+    "asan_options_baked_in": "detect_leaks=0:disable_coredump=0:abort_on_error=1:handle_segv=1:allocator_may_return_null=1"
+  },
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "nproc": 316,
+    "gcc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-14)",
+    "ld": "GNU ld 2.35.2-72.el9"
+  },
+  "input": {
+    "image": "pop-tiny.img",
+    "recipe": "mkfs.ext4 -F -q -b 4096 -N <inodes> -d <populated-dir> pop-tiny.img (256 MiB, ~100 files / 111 inodes)",
+    "note": "block size must be >= 4096 or btrfs-convert rejects the image; each run converts a fresh reflink copy of the image"
+  },
+  "command": {
+    "chaos": "hermit run --chaos --sched-seed <S> --no-virtualize-cpuid -- <variant>/btrfs-convert <fresh-image>",
+    "native": "<variant>/btrfs-convert <fresh-image>",
+    "per_run_timeout_s": 70
+  },
+  "results_summary": {
+    "native_buggy": "0 crashes / 40 runs, 0 timeouts (bug dormant under blind execution)",
+    "native_fixed": "0 crashes / 20 runs",
+    "chaos_buggy_seeds_0_31": "crashes on seeds 15 and 19 (2/32); 2 pathologically-slow schedules (seeds 5, 30) hit the 70s timeout unrelated to the bug",
+    "chaos_fixed_seeds_0_31": "see results.csv (differential: no use-after-free)",
+    "deterministic_replay": "buggy seed 15 replayed 3x produced byte-identical guest ASAN reports (heap addr 0x606000000330, PC 0x52793b, SUMMARY at common/task-utils.c:154); only hermit host-side reverie log timestamps differ"
+  }
+}
