@@ -458,6 +458,38 @@ fn csnzi_close_and_departure_tail_cuts_distinguish_wedge_from_commit() {
     wait_for_stop(child);
     kill_stopped(child);
     assert!(shared.get().is_drained());
+
+    let shared = Shared::new(Csnzi::<4>::new());
+    let raw = shared.get().try_enter(0).unwrap().into_raw();
+    let child = spawn_armed(FaultPoint::CsnziCloseMarkedNonempty, 1, || {
+        let _ = shared.get().close();
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    assert!(shared.get().is_closed());
+    assert!(!shared.get().is_drained());
+    // SAFETY: `raw` is the sole token from this exact shared object. Completing
+    // its departure proves the committed nonempty-close state remains usable.
+    assert_eq!(
+        unsafe { shared.get().depart_raw(raw) }.unwrap(),
+        crate::csnzi::DepartOutcome::Drained
+    );
+
+    let shared = Shared::new(Csnzi::<4>::new());
+    let raw = shared.get().try_enter(0).unwrap().into_raw();
+    let departing = spawn_armed(FaultPoint::CsnziRootDeparted, 1, || {
+        // SAFETY: `raw` is the sole token from this exact shared object.
+        let _ = unsafe { shared.get().depart_raw(raw) };
+    });
+    wait_for_stop(departing);
+    let closer = spawn_armed(FaultPoint::CsnziCloseConvertedTail, 0, || {
+        let _ = shared.get().close();
+    });
+    wait_for_stop(closer);
+    kill_stopped(closer);
+    kill_stopped(departing);
+    assert!(shared.get().is_closed());
+    assert!(!shared.get().is_drained());
 }
 
 #[cfg(feature = "linux-futex")]
@@ -531,6 +563,72 @@ fn futex_releaser_death_after_unlock_can_leave_known_waiter_asleep() {
 struct CrashTarget {
     generation: GenerationIdentity,
     authority: AuthorityIdentity,
+}
+
+#[test]
+fn migration_initializing_owner_death_is_visible_and_not_stealable() {
+    struct Fixture {
+        control: MigrationControl,
+        admission: CloseableSnzi<20>,
+    }
+
+    let shared = Shared::new(Fixture {
+        control: MigrationControl::new(),
+        admission: CloseableSnzi::new(),
+    });
+    assert!(shared.get().admission.close());
+    assert!(shared.get().admission.is_drained());
+
+    let authority = AuthorityIdentity::new([0x65; 16]);
+    let plan = MigrationPlan::new(
+        0x1a17,
+        GenerationIdentity::new(
+            SchemaIdentity::new(1, 0x11),
+            51,
+            110,
+            BackingIdentity::new([0x51; 32]),
+        ),
+        GenerationIdentity::new(
+            SchemaIdentity::new(2, 0x22),
+            52,
+            111,
+            BackingIdentity::new([0x52; 32]),
+        ),
+        authority,
+    )
+    .unwrap();
+
+    let child = spawn_armed(FaultPoint::MigrationInitializing, 0, || {
+        // SAFETY: this synthetic terminal gate is the only source access path
+        // and is bound to this fixture's unique control and complete plan.
+        let source = unsafe { AdmissionQuiescence::bind(&shared.get().admission, plan) }.unwrap();
+        let _ = shared
+            .get()
+            .control
+            .begin_with_quiescent_source(source, plan);
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+
+    assert_eq!(
+        shared.get().control.snapshot().unwrap().phase(),
+        MigrationPhase::Initializing
+    );
+    // SAFETY: the test controls the sole terminal admission gate. The second
+    // witness demonstrates that owner death never transfers the transaction.
+    let source = unsafe { AdmissionQuiescence::bind(&shared.get().admission, plan) }.unwrap();
+    assert!(
+        shared
+            .get()
+            .control
+            .begin_with_quiescent_source(source, plan)
+            .is_err()
+    );
+    shared.get().control.poison();
+    assert_eq!(
+        shared.get().control.snapshot().unwrap().phase(),
+        MigrationPhase::Poisoned
+    );
 }
 
 // SAFETY: this synthetic target has no payload, aliases, destructor, or
