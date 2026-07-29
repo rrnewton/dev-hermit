@@ -77,9 +77,10 @@ for `full`. They can be adjusted without editing the script:
 
 ```text
 RELEASE_CHECK_TOTAL_TIMEOUT=7200 \
-RELEASE_CHECK_COMMAND_TIMEOUT=600 \
-RELEASE_CHECK_LONG_TIMEOUT=1800 \
-./scripts/release-check.sh quick
+  RELEASE_CHECK_COMMAND_TIMEOUT=600 \
+  RELEASE_CHECK_LONG_TIMEOUT=1800 \
+  RELEASE_CHECK_ADVERSARIAL_TIMEOUT=1200 \
+  ./scripts/release-check.sh quick
 ```
 
 `RELEASE_CHECK_SKIP_PROCESS=1` permits compile and package checks on another
@@ -102,6 +103,42 @@ The gate covers:
   closeable admission, offset-remapping, and allocator evidence according to
   the selected mode.
 
+When process evidence is enabled, the release gate also invokes the bounded
+adversarial suite:
+
+```text
+./scripts/adversarial-check.sh quick
+./scripts/adversarial-check.sh full
+```
+
+The adversarial suite runs production-linked Loom models, serial Linux
+SIGSTOP/SIGKILL cuts immediately after selected atomic transitions, existing
+mapping/allocator/migration crash regressions, five parser and offset fuzz
+targets, a Miri parser/offset subset, and thread-only ASan/TSan tests. `full`
+increases the Loom and fuzz bounds and adds connector fail-closed recovery.
+Its default whole-run deadlines are 20 minutes for `quick` and 90 minutes for
+`full`.
+
+Each selected gate ends in `PASS`, `FAIL`, `UNAVAILABLE`, or `UNSUPPORTED`.
+The script exits 0 only when every selected gate passes, 1 for a product or
+test failure, 2 when required tooling/platform support is unavailable, and 124
+for a deadline. Missing `cargo-fuzz`, the pinned nightly, Miri, rust-src, or a
+supported sanitizer host is therefore visible and never release-green.
+
+These checks have deliberate limits. A bounded Loom search is not a proof over
+all executions. Crash cuts verify fail-stop states at named production RMWs but
+do not add leases or owner-death recovery. Miri checks parser, layout, and
+provenance-sensitive offset code rather than cross-process behavior. ASan and
+TSan use threads because sanitizers do not model shared mappings across exec;
+TSan also validates the implementation's atomic synchronization, not kernel
+or hardware conformance. Fuzzing is time-bounded and its generated corpus and
+artifacts are disposable.
+
+Loom is a dev-dependency and the fuzz harness is a separate unpublished
+workspace. Neither changes the library's `no_std` surface or Rust 1.85 MSRV;
+the ordinary current/MSRV release matrix remains authoritative for those
+contracts.
+
 The script prints the source revision, host kernel and architecture, tool
 versions, every command, its timeout, and a final gate count. A timeout or
 skipped process suite is never reported as a passing full release gate.
@@ -120,7 +157,8 @@ a local crates.io patch for the not-yet-published macro version.
 
 The public library package contains its source, examples, tests, documentation,
 README, licenses, and lockfile. It must not contain the private `poc/`,
-`demos/`, `scripts/`, `target/`, `crates/`, `ai_docs/`, or `.minibeads/` trees.
+`demos/`, `fuzz/`, `scripts/`, `target/`, `crates/`, `ai_docs/`, or `.minibeads/`
+trees.
 The release gate fails if one of those paths enters the main package.
 
 The executable image harness, preload guest/shim/host, and release automation

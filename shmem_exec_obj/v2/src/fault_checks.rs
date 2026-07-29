@@ -122,6 +122,7 @@ fn wait_for_success(child: libc::pid_t) {
     assert_eq!(libc::WEXITSTATUS(status), 0);
 }
 
+#[cfg(feature = "linux-futex")]
 fn kill_running(child: libc::pid_t) {
     // SAFETY: child is a direct child owned by this test.
     assert_eq!(unsafe { libc::kill(child, libc::SIGKILL) }, 0);

@@ -34,6 +34,7 @@ struct SharedMapping {
     descriptor: Option<libc::c_int>,
 }
 
+#[cfg(feature = "derive")]
 #[repr(align(128))]
 #[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
 struct OverAligned;
@@ -294,7 +295,7 @@ fn initialization_and_request_geometry_are_checked_before_mutation() {
         Err(RelocError::GeometryOverflow)
     ));
     // SAFETY: prior validation failures did not claim initialization.
-    let region = unsafe {
+    let _region = unsafe {
         allocator
             .initialize(
                 mapping.base,
@@ -305,8 +306,9 @@ fn initialization_and_request_geometry_are_checked_before_mutation() {
             )
             .unwrap()
     };
+    #[cfg(feature = "derive")]
     assert!(matches!(
-        SharedBox::new(&region, OverAligned),
+        SharedBox::new(&_region, OverAligned),
         Err(RelocError::UnsupportedAlignment { .. })
     ));
     assert_eq!(allocator.snapshot().allocated(), 0);

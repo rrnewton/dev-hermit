@@ -28,8 +28,11 @@ pub(crate) enum FaultPoint {
     CsnziCloseConvertedTail = 21,
     CsnziCloseSealed = 22,
     CsnziDepartureTailSealed = 23,
+    #[cfg(feature = "linux-futex")]
     FutexAcquired = 24,
+    #[cfg(feature = "linux-futex")]
     FutexContended = 25,
+    #[cfg(feature = "linux-futex")]
     FutexReleased = 26,
     MigrationReclaimed = 27,
 }

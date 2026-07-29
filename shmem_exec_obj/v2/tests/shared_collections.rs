@@ -12,6 +12,7 @@ const REGION_ID: u64 = 0x51a7_edc0_11ec_7101;
 const SLOT_SIZE: usize = 256;
 type Allocator = RelocAllocator<8>;
 
+#[cfg(feature = "derive")]
 #[repr(C)]
 #[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
 struct NarrowThenWide {
@@ -19,6 +20,7 @@ struct NarrowThenWide {
     wide: u64,
 }
 
+#[cfg(feature = "derive")]
 #[repr(C)]
 #[derive(shmem_pod::PodValue, shmem_pod::PodSync)]
 struct WideThenNarrow {
@@ -75,23 +77,26 @@ impl Drop for Fixture {
 
 #[test]
 fn fingerprints_bind_field_order_transitive_type_and_slot_count() {
-    assert_eq!(
-        std::mem::size_of::<NarrowThenWide>(),
-        std::mem::size_of::<WideThenNarrow>()
-    );
-    assert_eq!(
-        std::mem::align_of::<NarrowThenWide>(),
-        std::mem::align_of::<WideThenNarrow>()
-    );
-    assert_ne!(NarrowThenWide::FINGERPRINT, WideThenNarrow::FINGERPRINT);
-    assert_ne!(
-        SharedBox::<NarrowThenWide>::FINGERPRINT,
-        SharedBox::<WideThenNarrow>::FINGERPRINT
-    );
-    assert_ne!(
-        SharedVec::<NarrowThenWide>::FINGERPRINT,
-        SharedVec::<WideThenNarrow>::FINGERPRINT
-    );
+    #[cfg(feature = "derive")]
+    {
+        assert_eq!(
+            std::mem::size_of::<NarrowThenWide>(),
+            std::mem::size_of::<WideThenNarrow>()
+        );
+        assert_eq!(
+            std::mem::align_of::<NarrowThenWide>(),
+            std::mem::align_of::<WideThenNarrow>()
+        );
+        assert_ne!(NarrowThenWide::FINGERPRINT, WideThenNarrow::FINGERPRINT);
+        assert_ne!(
+            SharedBox::<NarrowThenWide>::FINGERPRINT,
+            SharedBox::<WideThenNarrow>::FINGERPRINT
+        );
+        assert_ne!(
+            SharedVec::<NarrowThenWide>::FINGERPRINT,
+            SharedVec::<WideThenNarrow>::FINGERPRINT
+        );
+    }
     assert_ne!(
         RelocAllocator::<7>::FINGERPRINT,
         RelocAllocator::<8>::FINGERPRINT
