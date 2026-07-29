@@ -95,12 +95,18 @@ Each successful run creates one self-contained, run-owned bundle:
   libraries observed for Cargo, rustc, rust-lld, and the linker tools.
   `provenance/host-linker-config.txt` records the driver's specs probe, built-in
   specs, target, version, and search directories. The runner re-resolves and
-  revalidates this host evidence through completion.
+  revalidates this host evidence through completion. Every GCC probe runs under
+  the same `env -i` array as the Cargo link, so ambient `GCC_EXEC_PREFIX`,
+  `COMPILER_PATH`, plugin, and search-path variables cannot alter only the
+  evidence side of the comparison.
 - `provenance/control-tools.tsv` records and revalidates `/bin/bash` plus every
   root-owned `/usr/bin` executable used to discover sources, hash files, parse
-  JSON, build inventories, and publish completion. The runner rejects exported
-  shell functions with those names before its first external command and does
-  not use the caller's PATH for integrity decisions.
+  JSON, build inventories, and publish completion. Privileged Bash ignores
+  exported functions, and the body also rejects any required-tool function
+  present before its first external command. The runner does not use the
+  caller's PATH for integrity decisions. It records each tool's
+  owner, mode and digest and rejects a tool not owned by UID 0 or writable by
+  group/other.
 - `provenance/vendor/` retains the exact registry package trees used by every
   successful Cargo compilation. `provenance/vendor-manifest.tsv` binds every
   vendored file's type, mode, size, and digest, and is revalidated through
@@ -139,15 +145,18 @@ or `.cargo/config.toml`. Cargo configuration discovery starts from that
 temporary working directory, not from the retained manifest's directory.
 The harness itself receives the same stripped environment.
 
-The runner's own control plane is separate from the build environment. Its
-interpreter is `/bin/bash`; after resolving the selected rustup launchers it
-sets PATH to `/usr/bin:/bin`, fixes locale/timezone, and gives Git an empty HOME
-with global and system configuration disabled. Exported `cargo`, `rustc`,
+The runner's own control plane is separate from the build environment. It must
+be executed directly: its `#!/bin/bash -p` interpreter ignores `BASH_ENV`,
+inherited shell options, and exported functions before the first body line; an
+explicit `bash scripts/run-benchmarks.sh` invocation is rejected. After
+resolving the selected rustup launchers it sets PATH to `/usr/bin:/bin`, fixes
+locale/timezone, and gives Git an empty HOME with global and system
+configuration disabled. Exported `cargo`, `rustc`,
 `git`, `jq`, `sha256sum`, `timeout`, or other required-tool shell functions are
 rejected. Thus a caller cannot make the verifier bless a bundle by interposing
 a wrapper through PATH or an exported Bash function. The root-owned control
-binaries remain host evidence; their retained path/digest manifest is included
-in the bundle inventory and completion bindings.
+binaries remain host evidence; their retained path/owner/mode/digest manifest
+is included in the bundle inventory and completion bindings.
 
 This is hermetic against inherited build variables, Cargo configuration, and
 mutable registry-source discovery; it is not a relocatable Linux sysroot or a

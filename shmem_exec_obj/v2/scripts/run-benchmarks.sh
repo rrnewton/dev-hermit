@@ -1,5 +1,10 @@
-#!/bin/bash
+#!/bin/bash -p
 set -Eeuo pipefail
+
+if [[ $- != *p* ]]; then
+  echo "run-benchmarks.sh must be executed directly so /bin/bash -p can ignore pre-body environment hooks" >&2
+  exit 1
+fi
 
 required_control_tools=(
   as awk cat chmod cmp cp date diff env find gcc git jq ld ldd ln mkdir mktemp
@@ -16,13 +21,25 @@ launch_rustc=$(type -P rustc) || { echo "run-benchmarks.sh requires rustc" >&2; 
 launch_cargo=$(type -P cargo) || { echo "run-benchmarks.sh requires cargo" >&2; exit 1; }
 export PATH=/usr/bin:/bin
 export LC_ALL=C LANG=C TZ=UTC
+[[ -x /usr/bin/stat ]] || { echo "run-benchmarks.sh requires /usr/bin/stat" >&2; exit 1; }
 for control_tool in "${required_control_tools[@]}"; do
-  [[ -x /usr/bin/$control_tool ]] || {
-    echo "run-benchmarks.sh requires root-owned /usr/bin/$control_tool" >&2
+  control_path="/usr/bin/$control_tool"
+  control_uid=$(/usr/bin/stat -Lc %u -- "$control_path" 2>/dev/null || printf invalid)
+  control_mode=$(/usr/bin/stat -Lc %a -- "$control_path" 2>/dev/null || printf invalid)
+  if [[ ! -x $control_path || ! $control_uid =~ ^[0-9]+$ ||
+        ! $control_mode =~ ^[0-7]+$ ]] ||
+     ((10#$control_uid != 0 || (8#$control_mode & 8#022) != 0)); then
+    echo "run-benchmarks.sh requires a root-owned, non-writable control executable: $control_path" >&2
     exit 1
-  }
+  fi
 done
-[[ -x /bin/bash ]] || { echo "run-benchmarks.sh requires /bin/bash" >&2; exit 1; }
+bash_uid=$(/usr/bin/stat -Lc %u -- /bin/bash 2>/dev/null || printf invalid)
+bash_mode=$(/usr/bin/stat -Lc %a -- /bin/bash 2>/dev/null || printf invalid)
+if [[ ! -x /bin/bash || ! $bash_uid =~ ^[0-9]+$ || ! $bash_mode =~ ^[0-7]+$ ]] ||
+   ((10#$bash_uid != 0 || (8#$bash_mode & 8#022) != 0)); then
+  echo "run-benchmarks.sh requires root-owned, non-writable /bin/bash" >&2
+  exit 1
+fi
 
 usage() {
   cat <<'EOF'
@@ -113,7 +130,10 @@ reject_ambient_build_controls() {
         *_OBJDUMP | CFLAGS | CFLAGS_* | *_CFLAGS | CXXFLAGS | CXXFLAGS_* | \
         *_CXXFLAGS | CPPFLAGS | CPPFLAGS_* | *_CPPFLAGS | LDFLAGS | LDFLAGS_* | \
         *_LDFLAGS | LIBRARY_PATH | CPATH | C_INCLUDE_PATH | CPLUS_INCLUDE_PATH | \
-        OBJC_INCLUDE_PATH | PKG_CONFIG* | BINDGEN* | LIBCLANG* | CLANG* | LLVM* | \
+        OBJC_INCLUDE_PATH | GCC_EXEC_PREFIX | GCC_COMPARE_DEBUG | COMPILER_PATH | \
+        COLLECT_GCC | COLLECT_GCC_OPTIONS | COLLECT_LTO_WRAPPER | \
+        DEPENDENCIES_OUTPUT | SUNPRO_DEPENDENCIES | PKG_CONFIG* | BINDGEN* | \
+        LIBCLANG* | CLANG* | LLVM* | \
         SCCACHE* | CACHEPOT* | DISTCC* | ICECC* | MAKEFLAGS | MFLAGS | NUM_JOBS | \
         HOST | TARGET | OUT_DIR | OPT_LEVEL | DEBUG | PROFILE | DEP_* | \
         SOURCE_DATE_EPOCH)
@@ -174,15 +194,23 @@ write_host_linker_manifest() {
 
 write_control_tool_manifest() {
   local output=$1
-  local label path digest
+  local label path uid mode digest
   : >"$output"
   while IFS=$'\t' read -r label path; do
     if [[ ! -f $path || -L $path || ! -x $path ]]; then
       echo "benchmark control tool is not a canonical executable: $label -> $path" >&2
       return 1
     fi
+    uid=$(stat -Lc %u -- "$path")
+    mode=$(stat -Lc %a -- "$path")
+    if [[ $uid != 0 || ! $mode =~ ^[0-7]+$ ]] ||
+       ((8#$mode & 8#022)); then
+      echo "benchmark control tool is not root-owned and non-writable: $label -> $path" >&2
+      return 1
+    fi
     digest=$(sha256sum -- "$path" | awk '{print $1}')
-    printf '%s\t%s\t%s\n' "$label" "$path" "$digest" >>"$output"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$label" "$path" "$uid" "$mode" "$digest" >>"$output"
   done <"$control_tool_paths"
 }
 
@@ -228,13 +256,13 @@ write_host_linker_config() {
   local output=$1
   {
     printf 'driver=%s\n' "$host_linker_path"
-    printf 'specs_probe=%s\n' "$("$host_linker_path" -print-file-name=specs)"
-    printf 'dumpmachine=%s\n' "$("$host_linker_path" -dumpmachine)"
-    printf 'dumpversion=%s\n' "$("$host_linker_path" -dumpversion)"
+    printf 'specs_probe=%s\n' "$(gcc_control -print-file-name=specs)"
+    printf 'dumpmachine=%s\n' "$(gcc_control -dumpmachine)"
+    printf 'dumpversion=%s\n' "$(gcc_control -dumpversion)"
     printf '%s\n' '--- search-dirs ---'
-    "$host_linker_path" -print-search-dirs
+    gcc_control -print-search-dirs
     printf '%s\n' '--- built-in-specs ---'
-    "$host_linker_path" -dumpspecs
+    gcc_control -dumpspecs
   } >"$output"
 }
 
@@ -294,6 +322,10 @@ git_control() {
     GIT_CONFIG_GLOBAL=/dev/null \
     GIT_OPTIONAL_LOCKS=0 \
     /usr/bin/git "$@"
+}
+
+gcc_control() {
+  /usr/bin/env -i "${hermetic_env[@]}" "$host_linker_path" "$@"
 }
 
 status_fingerprint() {
@@ -1416,8 +1448,24 @@ ln -s -- "$host_ld_path" "$build_tool_bin/ld"
 ln -s -- "$host_as_path" "$build_tool_bin/as"
 ln -s -- "$uname_path" "$build_tool_bin/uname"
 
-rust_sysroot=$("$env_path" -i HOME="$build_home" PATH="$build_tool_bin" \
-  LC_ALL=C LANG=C "$rustc_path" --print sysroot)
+hermetic_env=(
+  "HOME=$build_home"
+  "CARGO_HOME=$build_cargo_home"
+  "CARGO_NET_OFFLINE=true"
+  "CARGO_INCREMENTAL=0"
+  "RUSTC=$rustc_path"
+  "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$host_linker_path"
+  "PATH=$build_tool_bin"
+  "TMPDIR=$build_tmp"
+  "LC_ALL=C"
+  "LANG=C"
+  "TZ=UTC"
+  "SOURCE_DATE_EPOCH=0"
+)
+vendor_env=("${hermetic_env[@]}")
+vendor_env[1]="CARGO_HOME=$vendor_cargo_home"
+
+rust_sysroot=$("$env_path" -i "${hermetic_env[@]}" "$rustc_path" --print sysroot)
 rust_lld_path=$(readlink -f -- \
   "$rust_sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld")
 if [[ ! -f $rust_lld_path || ! -x $rust_lld_path ]]; then
@@ -1439,16 +1487,16 @@ fi
 
 host_linker_paths="$temporary/host-linker-paths.tsv"
 dynamic_executables="$temporary/host-dynamic-executables.tsv"
-collect2_path=$("$host_linker_path" -print-prog-name=collect2)
-lto_wrapper_path=$("$host_linker_path" -print-prog-name=lto-wrapper)
-liblto_plugin_path=$("$host_linker_path" -print-prog-name=liblto_plugin.so)
-lto1_path=$("$host_linker_path" -print-prog-name=lto1)
-gcc_specs_path=$("$host_linker_path" -print-file-name=specs)
-[[ $collect2_path == /* ]] || collect2_path=$(resolve_program "$collect2_path")
-[[ $lto_wrapper_path == /* ]] || lto_wrapper_path=$(resolve_program "$lto_wrapper_path")
-if [[ $liblto_plugin_path != /* || ! -f $liblto_plugin_path ||
+collect2_path=$(gcc_control -print-prog-name=collect2)
+lto_wrapper_path=$(gcc_control -print-prog-name=lto-wrapper)
+liblto_plugin_path=$(gcc_control -print-prog-name=liblto_plugin.so)
+lto1_path=$(gcc_control -print-prog-name=lto1)
+gcc_specs_path=$(gcc_control -print-file-name=specs)
+if [[ $collect2_path != /* || ! -f $collect2_path ||
+      $lto_wrapper_path != /* || ! -f $lto_wrapper_path ||
+      $liblto_plugin_path != /* || ! -f $liblto_plugin_path ||
       $lto1_path != /* || ! -f $lto1_path ]]; then
-  echo "GCC cannot resolve its LTO plugin/compiler components" >&2
+  echo "GCC cannot resolve absolute collect2/LTO component paths" >&2
   exit 1
 fi
 {
@@ -1470,7 +1518,7 @@ fi
     Scrt1.o crti.o crtbeginS.o crtendS.o crtn.o \
     libgcc_s.so libgcc_s.so.1 libgcc.a \
     libc.so libc.so.6 libm.so libm.so.6 libdl.a libpthread.a librt.a libutil.a; do
-    input_path=$("$host_linker_path" -print-file-name="$link_input")
+    input_path=$(gcc_control -print-file-name="$link_input")
     if [[ $input_path == "$link_input" || ! -f $input_path ]]; then
       echo "host linker cannot resolve required input: $link_input" >&2
       exit 1
@@ -1503,23 +1551,6 @@ host_linker_manifest_sha256=$(sha256sum "$host_linker_manifest" | awk '{print $1
 host_linker_config="$provenance_dir/host-linker-config.txt"
 write_host_linker_config "$host_linker_config"
 host_linker_config_sha256=$(sha256sum "$host_linker_config" | awk '{print $1}')
-
-hermetic_env=(
-  "HOME=$build_home"
-  "CARGO_HOME=$build_cargo_home"
-  "CARGO_NET_OFFLINE=true"
-  "CARGO_INCREMENTAL=0"
-  "RUSTC=$rustc_path"
-  "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$host_linker_path"
-  "PATH=$build_tool_bin"
-  "TMPDIR=$build_tmp"
-  "LC_ALL=C"
-  "LANG=C"
-  "TZ=UTC"
-  "SOURCE_DATE_EPOCH=0"
-)
-vendor_env=("${hermetic_env[@]}")
-vendor_env[1]="CARGO_HOME=$vendor_cargo_home"
 
 SHMEM_POD_BENCH_RUSTC=$(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --version --verbose)
 SHMEM_POD_BENCH_CARGO=$(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" "$cargo_path" --version --verbose)
