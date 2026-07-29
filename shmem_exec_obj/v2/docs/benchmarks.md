@@ -111,6 +111,10 @@ Each successful run creates one self-contained, run-owned bundle:
   successful Cargo compilation. `provenance/vendor-manifest.tsv` binds every
   vendored file's type, mode, size, and digest, and is revalidated through
   completion.
+- `provenance/rust-sysroot/` retains the selected `rustc`, compiler support
+  libraries, target libraries, and `rust-lld` actually used by every build.
+  `provenance/rust-sysroot-manifest.tsv` binds every retained file and is
+  revalidated throughout the run.
 - `bundle-inventory.tsv` records the type, exact mode, size, SHA-256, and
   hex-encoded path of every retained file except itself and the self-describing
   `environment.json` completion marker. The environment binds its digest and
@@ -122,8 +126,8 @@ Each successful run creates one self-contained, run-owned bundle:
 The runner first manifests the live v2 tree, copies that exact path set, proves
 that the snapshot equals the initial manifest and that the live tree did not
 drift during the copy, and makes the snapshot read-only. All four builds then
-consume only snapshot paths; Cargo also runs from a temporary directory rather
-than discovering configuration from the live checkout. The retained snapshot
+consume only snapshot paths; Cargo runs from `/` rather than discovering
+configuration from the live checkout. The retained snapshot
 is re-manifested after hardening and checked throughout the run. Source
 symlinks are rejected: retaining only link text would not bind bytes read from
 an external target by Cargo, rustc, or an `include_*` macro.
@@ -136,19 +140,21 @@ locale/time/source-date settings, a run-private
 HOME/TMPDIR, and offline/incremental-disabled Cargo settings. Cargo uses a
 run-private vendor-only `CARGO_HOME` which exposes the local registry/git cache
 only while `cargo vendor` copies it into the retained bundle. Compilation uses
-a separate empty `CARGO_HOME` and command-line source replacement pointing at
-that read-only vendor tree; it cannot see user config, credentials, aliases,
-wrappers, or mutable registry sources. Cargo.lock authenticates registry
-packages, and the runner verifies
-that the temporary working directory and every ancestor have no `.cargo/config`
-or `.cargo/config.toml`. Cargo configuration discovery starts from that
-temporary working directory, not from the retained manifest's directory.
+the root-owned, non-writable, empty `/usr/share/empty` as `CARGO_HOME` and
+command-line source replacement pointing at that read-only vendor tree; it
+cannot see user config, credentials, aliases, wrappers, or mutable registry
+sources. Cargo.lock authenticates registry packages. Every Cargo compilation
+runs with `/` as its working directory, so configuration discovery is rooted
+only in root-owned, non-writable paths. The runner revalidates both discovery
+roots through completion; Cargo does not search from the retained manifest's
+directory.
 The harness itself receives the same stripped environment.
 
 The runner's own control plane is separate from the build environment. It must
-be executed directly: its `#!/bin/bash -p` interpreter ignores `BASH_ENV`,
-inherited shell options, and exported functions before the first body line; an
-explicit `bash scripts/run-benchmarks.sh` invocation is rejected. After
+run under `/bin/bash -p`: its shebang ignores `BASH_ENV`, inherited shell
+options, and exported functions before the first body line. A syntax-level
+guard rejects sourcing even from another privileged Bash, before a caller's
+functions can interpose on control operations. After
 resolving the selected rustup launchers it sets PATH to `/usr/bin:/bin`, fixes
 locale/timezone, and gives Git an empty HOME with global and system
 configuration disabled. Exported `cargo`, `rustc`,
@@ -159,20 +165,27 @@ binaries remain host evidence; their retained path/owner/mode/digest manifest
 is included in the bundle inventory and completion bindings.
 
 This is hermetic against inherited build variables, Cargo configuration, and
-mutable registry-source discovery; it is not a relocatable Linux sysroot or a
-container image. The selected GCC driver, system startup objects, dynamic
-loader, shared libraries, rustup toolchain and kernel remain host inputs. Their
-observed paths/configuration and bytes are hashed and revalidated, but they are
-not copied and executed from the bundle. A rebuild-independent compiler/sysroot
-closure would require a pinned toolchain image or a fully retained sysroot.
+mutable registry-source discovery; it is not a relocatable Linux container
+image. The selected Rust compiler and its Rust target sysroot are copied,
+manifested, made read-only, and executed from the bundle. The GCC driver,
+system startup objects, dynamic loader, host shared libraries, rustup selector,
+C library/sysroot, and kernel remain host inputs. Their observed
+paths/configuration and bytes are hashed and revalidated, but those host pieces
+are not copied into a relocatable rebuild environment.
 
 The harness cannot create completion metadata. It requires the exact run ID,
 runner-owner token, canonical bundle and artifact paths, the retained harness
 executable, and `--defer-completion 1`; it emits only synchronized results and a
-report of its own runtime observations. The runner independently observes and
-requires the exact same runtime/configuration object, cross-checks every path
-and file digest pair in the compiler manifest, validates its dependency
-closures and the exact result matrix and byte-equivalent CSV/JSON rows, freezes
+report of its own runtime observations. While writing JSONL and CSV, the
+harness incrementally hashes the exact bytes accepted by each file writer. It
+syncs the files and returns both intended digests over captured stdout; the
+runner compares those digests immediately, after semantic validation, after
+freezing the files, and immediately before completion. This prevents a
+same-UID process from replacing plausible rows during a long validation pass
+and having the runner bless the substituted bytes. The runner independently
+observes and requires the exact same runtime/configuration object, cross-checks
+every path and file digest pair in the compiler manifest, validates its
+dependency closures and the exact result matrix and byte-equivalent CSV/JSON rows, freezes
 every payload file, and inventories the whole bundle. It regenerates the
 canonical environment deterministically and rechecks the immutable snapshot
 and inventory immediately before atomically publishing `environment.json`. A

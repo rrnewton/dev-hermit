@@ -1,8 +1,14 @@
 #!/bin/bash -p
 set -Eeuo pipefail
 
+# Returning from a subshell succeeds only when this file was sourced. Reject it
+# before a caller-defined function can interpose on any control operation.
+if (return 0 2>/dev/null); then
+  return 1
+fi
+
 if [[ $- != *p* ]]; then
-  echo "run-benchmarks.sh must be executed directly so /bin/bash -p can ignore pre-body environment hooks" >&2
+  echo "run-benchmarks.sh requires a privileged /bin/bash -p interpreter" >&2
   exit 1
 fi
 
@@ -162,6 +168,26 @@ assert_no_cargo_config_ancestors() {
   done
 }
 
+verify_cargo_discovery_roots() {
+  local directory uid mode unexpected
+  for directory in / /usr /usr/share "$build_cargo_home"; do
+    uid=$(stat -Lc %u -- "$directory" 2>/dev/null || printf invalid)
+    mode=$(stat -Lc %a -- "$directory" 2>/dev/null || printf invalid)
+    if [[ ! -d $directory || -L $directory || ! $uid =~ ^[0-9]+$ ||
+          ! $mode =~ ^[0-7]+$ ]] ||
+       ((10#$uid != 0 || (8#$mode & 8#022) != 0)); then
+      echo "Cargo discovery root is not a root-owned, non-writable directory: $directory" >&2
+      return 1
+    fi
+  done
+  unexpected=$(find "$build_cargo_home" -mindepth 1 -print -quit)
+  if [[ -n $unexpected ]]; then
+    echo "Cargo build home is not empty: $unexpected" >&2
+    return 1
+  fi
+  assert_no_cargo_config_ancestors /
+}
+
 resolve_program() {
   local program=$1
   local candidate
@@ -303,6 +329,59 @@ verify_vendor_stable() {
   if ! cmp -s -- "$vendor_manifest" "$current"; then
     echo "retained Cargo vendor input tree changed during the benchmark run" >&2
     diff -u -- "$vendor_manifest" "$current" >&2 || true
+    return 1
+  fi
+}
+
+retain_rust_sysroot() {
+  local source=$1
+  local destination=$2
+  local paths before copied after symlink
+  paths="$temporary/rust-sysroot-paths.z"
+  before="$temporary/rust-sysroot-source-before.tsv"
+  copied="$temporary/rust-sysroot-copy.tsv"
+  after="$temporary/rust-sysroot-source-after.tsv"
+
+  if [[ ! -f $source/bin/rustc || -L $source/bin/rustc ]]; then
+    echo "selected Rust sysroot lacks a regular bin/rustc: $source" >&2
+    return 1
+  fi
+  symlink=$(find "$source/lib" -type l -print -quit)
+  if [[ -n $symlink ]]; then
+    echo "selected Rust sysroot contains a symlink whose target escapes retention: $symlink" >&2
+    return 1
+  fi
+  {
+    printf 'bin/rustc\0'
+    (cd "$source" && find lib -type f -printf '%P\0' | sed -z 's!^!lib/!' | LC_ALL=C sort -z)
+  } >"$paths"
+  write_manifest_from_paths "$source" "$paths" "$before"
+
+  mkdir -p "$destination/bin"
+  cp -a --reflink=auto -- "$source/bin/rustc" "$destination/bin/rustc"
+  cp -a --reflink=auto -- "$source/lib" "$destination/lib"
+  write_manifest_from_paths "$destination" "$paths" "$copied"
+  write_manifest_from_paths "$source" "$paths" "$after"
+  if ! cmp -s -- "$before" "$copied" || ! cmp -s -- "$before" "$after"; then
+    echo "selected Rust sysroot changed or was copied inconsistently" >&2
+    diff -u -- "$before" "$copied" >&2 || true
+    diff -u -- "$before" "$after" >&2 || true
+    return 1
+  fi
+
+  chmod -R a-w -- "$destination"
+  rust_sysroot_manifest="$provenance_dir/rust-sysroot-manifest.tsv"
+  write_directory_manifest "$destination" "$rust_sysroot_manifest"
+  rust_sysroot_manifest_sha256=$(sha256sum "$rust_sysroot_manifest" | awk '{print $1}')
+  rust_sysroot_file_count=$(wc -l <"$rust_sysroot_manifest")
+}
+
+verify_retained_sysroot_stable() {
+  local current="$temporary/rust-sysroot-current.tsv"
+  write_directory_manifest "$retained_rust_sysroot" "$current"
+  if ! cmp -s -- "$rust_sysroot_manifest" "$current"; then
+    echo "retained Rust compiler/sysroot changed during the benchmark run" >&2
+    diff -u -- "$rust_sysroot_manifest" "$current" >&2 || true
     return 1
   fi
 }
@@ -460,7 +539,13 @@ verify_sha256() {
   fi
 }
 
+verify_harness_result_bytes() {
+  verify_sha256 "$output_dir/results.jsonl" "$harness_results_jsonl_sha256"
+  verify_sha256 "$output_dir/results.csv" "$harness_results_csv_sha256"
+}
+
 verify_toolchain_stable() {
+  verify_cargo_discovery_roots
   verify_control_tool_manifest
   verify_sha256 "$rustc_launcher_path" "$rustc_launcher_sha256"
   verify_sha256 "$cargo_launcher_path" "$cargo_launcher_sha256"
@@ -475,10 +560,11 @@ verify_toolchain_stable() {
   verify_sha256 "$host_as_path" "$host_as_sha256"
   verify_host_linker_manifest "$host_linker_manifest"
   verify_vendor_stable
-  if [[ $(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" \
+  verify_retained_sysroot_stable
+  if [[ $(cd / && "$env_path" -i "${hermetic_env[@]}" \
             "$rustc_path" --version --verbose) != \
           "$SHMEM_POD_BENCH_RUSTC" ||
-        $(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" \
+        $(cd / && "$env_path" -i "${hermetic_env[@]}" \
             "$cargo_path" --version --verbose) != \
           "$SHMEM_POD_BENCH_CARGO" ]]; then
     echo "Rust toolchain identity changed during the benchmark run" >&2
@@ -814,6 +900,8 @@ write_canonical_environment() {
     --arg control_tool_manifest_sha256 "$control_tool_manifest_sha256" \
     --arg host_linker_manifest_sha256 "$host_linker_manifest_sha256" \
     --arg vendor_manifest_sha256 "$vendor_manifest_sha256" \
+    --arg rust_sysroot_manifest_sha256 "$rust_sysroot_manifest_sha256" \
+    --argjson rust_sysroot_file_count "$rust_sysroot_file_count" \
     --arg results_jsonl_sha256 "$results_jsonl_sha256" \
     --arg results_csv_sha256 "$results_csv_sha256" \
     --arg hostname "$SHMEM_POD_BENCH_HOSTNAME" \
@@ -824,6 +912,10 @@ write_canonical_environment() {
     --arg rustc_launcher_sha256 "$rustc_launcher_sha256" \
     --arg rustc_path "$rustc_path" \
     --arg rustc_sha256 "$rustc_sha256" \
+    --arg selected_rustc_path "$selected_rustc_path" \
+    --arg selected_rustc_sha256 "$selected_rustc_sha256" \
+    --arg selected_rust_sysroot "$selected_rust_sysroot" \
+    --arg retained_rust_sysroot "$retained_rust_sysroot" \
     --arg cargo "$SHMEM_POD_BENCH_CARGO" \
     --arg cargo_launcher_path "$cargo_launcher_path" \
     --arg cargo_launcher_sha256 "$cargo_launcher_sha256" \
@@ -911,6 +1003,7 @@ write_canonical_environment() {
         host_linker_manifest: {bundle_path: "provenance/host-linker-manifest.tsv", sha256: $host_linker_manifest_sha256},
         host_linker_config: {bundle_path: "provenance/host-linker-config.txt", sha256: $host_linker_config_sha256},
         vendor_manifest: {bundle_path: "provenance/vendor-manifest.tsv", sha256: $vendor_manifest_sha256},
+        rust_sysroot_manifest: {bundle_path: "provenance/rust-sysroot-manifest.tsv", sha256: $rust_sysroot_manifest_sha256},
         results_jsonl: {bundle_path: "results.jsonl", sha256: $results_jsonl_sha256},
         results_csv: {bundle_path: "results.csv", sha256: $results_csv_sha256}
       },
@@ -946,6 +1039,15 @@ write_canonical_environment() {
         rustc_launcher_sha256: $rustc_launcher_sha256,
         rustc_path: $rustc_path,
         rustc_sha256: $rustc_sha256,
+        selected_rustc_path: $selected_rustc_path,
+        selected_rustc_sha256: $selected_rustc_sha256,
+        selected_rust_sysroot: $selected_rust_sysroot,
+        retained_rust_sysroot: $retained_rust_sysroot,
+        retained_rust_sysroot_manifest: {
+          bundle_path: "provenance/rust-sysroot-manifest.tsv",
+          sha256: $rust_sysroot_manifest_sha256,
+          files: $rust_sysroot_file_count
+        },
         cargo: $cargo,
         cargo_launcher_path: $cargo_launcher_path,
         cargo_launcher_sha256: $cargo_launcher_sha256,
@@ -967,7 +1069,7 @@ write_canonical_environment() {
         tmpdir: $build_tmp,
         locale: {lc_all: "C", lang: "C", tz: "UTC"},
         source_date_epoch: "0",
-        cargo_config_discovery: "sanitized CARGO_HOME and verified config-free build-working-directory ancestors",
+        cargo_config_discovery: "root-owned empty /usr/share/empty CARGO_HOME and root-directory working directory, both revalidated before completion",
         target: "x86_64-unknown-linux-gnu",
         rustc: $rustc_path,
         target_linker: $host_linker_path,
@@ -990,7 +1092,7 @@ write_canonical_environment() {
           observed_input_manifest_sha256: $host_linker_manifest_sha256,
           specs_and_search_config_bundle_path: "provenance/host-linker-config.txt",
           specs_and_search_config_sha256: $host_linker_config_sha256,
-          boundary: "hashed and revalidated host evidence; system executables, shared libraries, loader and sysroot inputs are not copied into a relocatable rebuild environment"
+          boundary: "hashed and revalidated host evidence; system executables, shared libraries, loader and C startup/sysroot inputs are not copied into a relocatable rebuild environment; the Rust compiler/sysroot is retained separately"
         },
         vendor: {
           bundle_path: "provenance/vendor",
@@ -1029,6 +1131,7 @@ verify_owner_files() {
     echo "benchmark runner ownership record changed" >&2
     return 1
   fi
+  validate_json_unique_paths "$output_dir/harness-owner.json"
   if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
     '. == {
       schema: "shmem-pod-benchmark-owner-v2",
@@ -1036,6 +1139,17 @@ verify_owner_files() {
       runner_owner_token: $token
     }' "$output_dir/harness-owner.json" >/dev/null; then
     echo "benchmark harness ownership validation failed" >&2
+    return 1
+  fi
+}
+
+validate_json_unique_paths() {
+  local input=$1
+  if ! jq --stream -n -e '
+    [inputs | select(length == 2) | (.[0] | @json)] as $paths
+    | ($paths | length) == ($paths | unique | length)
+  ' <"$input" >/dev/null; then
+    echo "JSON document contains duplicate object paths: $input" >&2
     return 1
   fi
 }
@@ -1075,7 +1189,7 @@ verify_environment_bindings() {
     jq -er '.provenance | to_entries[] | [.value.bundle_path, .value.sha256] | @tsv' \
       "$environment"
   )
-  if ((binding_count != 19)); then
+  if ((binding_count != 20)); then
     echo "canonical environment has the wrong provenance binding count: $binding_count" >&2
     return 1
   fi
@@ -1094,12 +1208,16 @@ verify_environment_bindings() {
     "$(jq -er '.build_environment.integrity_control_manifest.sha256' "$environment")"
   verify_sha256 "$vendor_manifest" \
     "$(jq -er '.build_environment.vendor.manifest_sha256' "$environment")"
+  verify_sha256 "$rust_sysroot_manifest" \
+    "$(jq -er '.toolchain.retained_rust_sysroot_manifest.sha256' "$environment")"
   verify_sha256 "$artifact_dir/pod.bin" \
     "$(jq -er '.artifact.sha256' "$environment")"
   if [[ $(jq -er '.source.initial_manifest.files' "$environment") != \
           "$(wc -l <"$provenance_dir/source-live-manifest.tsv")" ||
         $(jq -er '.source.manifest.files' "$environment") != \
-          "$(wc -l <"$provenance_dir/source-manifest.tsv")" ]]; then
+          "$(wc -l <"$provenance_dir/source-manifest.tsv")" ||
+        $(jq -er '.toolchain.retained_rust_sysroot_manifest.files' "$environment") != \
+          "$(wc -l <"$rust_sysroot_manifest")" ]]; then
     echo "canonical environment has the wrong source manifest file count" >&2
     return 1
   fi
@@ -1403,12 +1521,12 @@ rustup_toolchain=${RUSTUP_TOOLCHAIN:-<default>}
 rustc_launcher_path=$(readlink -f -- "$launch_rustc")
 cargo_launcher_path=$(readlink -f -- "$launch_cargo")
 if [[ ${rustc_launcher_path##*/} == rustup ]]; then
-  rustc_path=$(cd "$temporary" && HOME="$launch_home" "$rustc_launcher_path" which rustc)
+  rustc_path=$(cd / && HOME="$launch_home" "$rustc_launcher_path" which rustc)
 else
   rustc_path=$rustc_launcher_path
 fi
 if [[ ${cargo_launcher_path##*/} == rustup ]]; then
-  cargo_path=$(cd "$temporary" && HOME="$launch_home" "$cargo_launcher_path" which cargo)
+  cargo_path=$(cd / && HOME="$launch_home" "$cargo_launcher_path" which cargo)
 else
   cargo_path=$cargo_launcher_path
 fi
@@ -1428,7 +1546,8 @@ host_as_path=$(resolve_program as)
 
 rustc_launcher_sha256=$(sha256sum "$rustc_launcher_path" | awk '{print $1}')
 cargo_launcher_sha256=$(sha256sum "$cargo_launcher_path" | awk '{print $1}')
-rustc_sha256=$(sha256sum "$rustc_path" | awk '{print $1}')
+selected_rustc_path=$rustc_path
+selected_rustc_sha256=$(sha256sum "$selected_rustc_path" | awk '{print $1}')
 cargo_sha256=$(sha256sum "$cargo_path" | awk '{print $1}')
 env_sha256=$(sha256sum "$env_path" | awk '{print $1}')
 timeout_sha256=$(sha256sum "$timeout_path" | awk '{print $1}')
@@ -1441,12 +1560,36 @@ host_as_sha256=$(sha256sum "$host_as_path" | awk '{print $1}')
 build_home="$temporary/build-home"
 build_tmp="$temporary/build-tmp"
 build_tool_bin="$temporary/build-tool-bin"
-build_cargo_home="$temporary/cargo-home"
+build_cargo_home=/usr/share/empty
 vendor_cargo_home="$temporary/vendor-cargo-home"
-mkdir "$build_home" "$build_tmp" "$build_tool_bin" "$build_cargo_home" "$vendor_cargo_home"
+mkdir "$build_home" "$build_tmp" "$build_tool_bin" "$vendor_cargo_home"
 ln -s -- "$host_ld_path" "$build_tool_bin/ld"
 ln -s -- "$host_as_path" "$build_tool_bin/as"
 ln -s -- "$uname_path" "$build_tool_bin/uname"
+
+selection_env=(
+  "HOME=$build_home"
+  "PATH=$build_tool_bin"
+  "TMPDIR=$build_tmp"
+  "LC_ALL=C"
+  "LANG=C"
+  "TZ=UTC"
+)
+selected_rust_sysroot=$(cd / && "$env_path" -i "${selection_env[@]}" \
+  "$selected_rustc_path" --print sysroot)
+selected_rust_sysroot=$(readlink -f -- "$selected_rust_sysroot")
+rust_host_target=$(cd / && "$env_path" -i "${selection_env[@]}" \
+  "$selected_rustc_path" --version --verbose | sed -n 's/^host: //p')
+if [[ -z $rust_host_target || ! -d $selected_rust_sysroot/lib/rustlib/$rust_host_target/lib ]]; then
+  echo "selected Rust compiler returned an invalid sysroot or host target" >&2
+  exit 1
+fi
+echo "retaining exact Rust compiler and sysroot inputs"
+retained_rust_sysroot="$provenance_dir/rust-sysroot"
+mkdir "$retained_rust_sysroot"
+retain_rust_sysroot "$selected_rust_sysroot" "$retained_rust_sysroot"
+rustc_path="$retained_rust_sysroot/bin/rustc"
+rustc_sha256=$(sha256sum "$rustc_path" | awk '{print $1}')
 
 hermetic_env=(
   "HOME=$build_home"
@@ -1465,9 +1608,14 @@ hermetic_env=(
 vendor_env=("${hermetic_env[@]}")
 vendor_env[1]="CARGO_HOME=$vendor_cargo_home"
 
-rust_sysroot=$("$env_path" -i "${hermetic_env[@]}" "$rustc_path" --print sysroot)
+verify_cargo_discovery_roots
+rust_sysroot=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --print sysroot)
+if [[ $rust_sysroot != "$retained_rust_sysroot" ]]; then
+  echo "retained rustc did not resolve its retained sysroot: $rust_sysroot" >&2
+  exit 1
+fi
 rust_lld_path=$(readlink -f -- \
-  "$rust_sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld")
+  "$rust_sysroot/lib/rustlib/$rust_host_target/bin/rust-lld")
 if [[ ! -f $rust_lld_path || ! -x $rust_lld_path ]]; then
   echo "selected Rust toolchain does not contain rust-lld: $rust_lld_path" >&2
   exit 1
@@ -1552,8 +1700,8 @@ host_linker_config="$provenance_dir/host-linker-config.txt"
 write_host_linker_config "$host_linker_config"
 host_linker_config_sha256=$(sha256sum "$host_linker_config" | awk '{print $1}')
 
-SHMEM_POD_BENCH_RUSTC=$(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --version --verbose)
-SHMEM_POD_BENCH_CARGO=$(cd "$temporary" && "$env_path" -i "${hermetic_env[@]}" "$cargo_path" --version --verbose)
+SHMEM_POD_BENCH_RUSTC=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --version --verbose)
+SHMEM_POD_BENCH_CARGO=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$cargo_path" --version --verbose)
 SHMEM_POD_BENCH_POD_RUSTC_VERSION=$SHMEM_POD_BENCH_RUSTC
 SHMEM_POD_BENCH_WORKSPACE_PROFILE='release: opt-level=3, debug=false, strip=none, debug-assertions=false, overflow-checks=false, lto=thin, panic=abort, incremental=false, codegen-units=1, rpath=false'
 SHMEM_POD_BENCH_HARNESS_PROFILE=$SHMEM_POD_BENCH_WORKSPACE_PROFILE
@@ -1561,7 +1709,7 @@ SHMEM_POD_BENCH_HARNESS_PROFILE=$SHMEM_POD_BENCH_WORKSPACE_PROFILE
 echo "retaining exact Cargo registry inputs"
 vendor_dir="$provenance_dir/vendor"
 (
-  cd "$temporary"
+  cd /
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${vendor_env[@]}" "$cargo_path" vendor \
       --locked --offline --versioned-dirs \
@@ -1585,7 +1733,7 @@ cargo_source_config=(
 echo "building executable-pod compiler and runtime"
 compiler_target="$temporary/compiler-target"
 (
-  cd "$temporary"
+  cd /
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$compiler_target" \
     "$cargo_path" "${cargo_source_config[@]}" build \
@@ -1721,6 +1869,7 @@ publish = false
 [dependencies]
 shmem-pod = { path = "$source_snapshot", default-features = false, features = ["linux-futex"] }
 shmem-pod-runtime = { path = "$source_snapshot/poc/runtime" }
+sha2 = "=0.10.9"
 
 [workspace]
 
@@ -1746,7 +1895,7 @@ SHMEM_POD_BENCH_CPU_MODEL=${cpu_model:-unknown}
 # temporary lock without network access, then make the measured build immutable.
 harness_target="$temporary/harness-target"
 (
-  cd "$temporary"
+  cd /
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
     "$cargo_path" "${cargo_source_config[@]}" metadata \
@@ -1760,7 +1909,7 @@ SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256=$(sha256sum "$provenance_dir/harness-Car
 
 echo "building exact benchmark harness"
 (
-  cd "$temporary"
+  cd /
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
     "$cargo_path" "${cargo_source_config[@]}" build \
@@ -1777,7 +1926,7 @@ collect_runtime_context "$runtime_context"
 
 echo "running verified benchmark harness"
 set +e
-"$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+harness_stdout=$("$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
   "$env_path" -i "${hermetic_env[@]}" "$harness" \
     --run-id "$run_id" \
     --runner-owner-token "$runner_owner_token" \
@@ -1790,15 +1939,27 @@ set +e
     --workers "$workers" \
     --mode "$mode" \
     --timeout-seconds "$run_timeout" \
-    --defer-completion 1
+    --defer-completion 1)
 status=$?
 set -e
+printf '%s\n' "$harness_stdout"
 if ((status != 0)); then
   if ((status == 124 || status == 137)); then
     echo "benchmark harness exceeded its ${run_timeout}s deadline" >&2
   fi
   exit "$status"
 fi
+mapfile -t harness_auth_lines < <(
+  printf '%s\n' "$harness_stdout" | sed -n '/^benchmark-result-auth-v1 /p'
+)
+if ((${#harness_auth_lines[@]} != 1)) ||
+   [[ ! ${harness_auth_lines[0]} =~ ^benchmark-result-auth-v1\ results_jsonl_sha256=([0-9a-f]{64})\ results_csv_sha256=([0-9a-f]{64})$ ]]; then
+  echo "benchmark harness did not emit exactly one valid result authentication record" >&2
+  exit 1
+fi
+harness_results_jsonl_sha256=${BASH_REMATCH[1]}
+harness_results_csv_sha256=${BASH_REMATCH[2]}
+verify_harness_result_bytes
 
 verify_source_stable
 verify_sha256 "$artifact_dir/pod.bin" "$artifact_sha256"
@@ -1813,6 +1974,7 @@ verify_sha256 "$provenance_dir/source-live-manifest.tsv" "$source_manifest_sha25
 verify_sha256 "$provenance_dir/source-manifest.tsv" "$source_snapshot_manifest_sha256"
 verify_sha256 "$provenance_dir/harness-Cargo.toml" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
 verify_sha256 "$provenance_dir/harness-Cargo.lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
+validate_json_unique_paths "$output_dir/harness-owner.json"
 if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
   '. == {
     schema: "shmem-pod-benchmark-owner-v2",
@@ -1831,6 +1993,7 @@ if [[ -e $output_dir/environment.json ||
   exit 1
 fi
 expected_harness_report="$temporary/expected-harness-report.json"
+validate_json_unique_paths "$output_dir/harness-report.json"
 jq -n \
   --slurpfile runtime "$runtime_context" \
   --arg run_id "$run_id" \
@@ -1840,10 +2003,13 @@ jq -n \
   --argjson samples "$samples" \
   --argjson workers "$workers" \
   --argjson timeout "$run_timeout" \
+  --arg jsonl_sha256 "$harness_results_jsonl_sha256" \
+  --arg csv_sha256 "$harness_results_csv_sha256" \
   '{
     schema: "shmem-pod-benchmark-harness-report-v1",
     run_id: $run_id,
     result_rows: ($samples * 22),
+    results: {jsonl_sha256: $jsonl_sha256, csv_sha256: $csv_sha256},
     runtime_context: $runtime[0],
     configuration: {
       mode: $mode,
@@ -1973,10 +2139,16 @@ harness_owner_sha256=$(sha256sum "$output_dir/harness-owner.json" | awk '{print 
 harness_report_sha256=$(sha256sum "$output_dir/harness-report.json" | awk '{print $1}')
 results_jsonl_sha256=$(sha256sum "$output_dir/results.jsonl" | awk '{print $1}')
 results_csv_sha256=$(sha256sum "$output_dir/results.csv" | awk '{print $1}')
+if [[ $results_jsonl_sha256 != "$harness_results_jsonl_sha256" ||
+      $results_csv_sha256 != "$harness_results_csv_sha256" ]]; then
+  echo "benchmark results changed after harness-authenticated emission" >&2
+  exit 1
+fi
 
 # Freeze every payload file before inventorying it. The inventory and canonical
 # completion marker are the only self-describing control files excluded.
 find "$output_dir" -type f -exec chmod a-w -- {} +
+verify_harness_result_bytes
 inventory_staging="$temporary/bundle-inventory.tsv"
 write_directory_manifest "$output_dir" "$inventory_staging"
 mv -- "$inventory_staging" "$output_dir/bundle-inventory.tsv"
@@ -2020,6 +2192,7 @@ sync -f "$environment_staging"
 # publishes the completion marker.
 verify_source_stable
 verify_toolchain_stable
+verify_harness_result_bytes
 verify_bundle_inventory
 verify_environment_bindings "$environment_staging"
 if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; then

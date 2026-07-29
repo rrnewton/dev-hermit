@@ -6,6 +6,7 @@
 
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
+use sha2::{Digest, Sha256};
 use shmem_pod::admission::CloseableSnzi;
 use shmem_pod::collections::{SharedBox, SharedVec};
 use shmem_pod::csnzi::{CloseOutcome, Csnzi, CsnziError};
@@ -201,11 +202,47 @@ impl Config {
     }
 }
 
+struct HashingWriter<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W> HashingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn finish(self) -> (W, String) {
+        (self.inner, format!("{:x}", self.hasher.finalize()))
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.hasher.update(&buffer[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 struct ResultWriter {
-    json: BufWriter<File>,
-    csv: BufWriter<File>,
+    json: HashingWriter<BufWriter<File>>,
+    csv: HashingWriter<BufWriter<File>>,
     run_id: String,
     rows: usize,
+}
+
+struct FinishedResults {
+    rows: usize,
+    jsonl_sha256: String,
+    csv_sha256: String,
 }
 
 struct Measurement<'a> {
@@ -320,18 +357,18 @@ impl ResultWriter {
         )?;
         owner.flush()?;
         owner.sync_all()?;
-        let json = BufWriter::new(
+        let json = HashingWriter::new(BufWriter::new(
             OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(output_dir.join("results.jsonl"))?,
-        );
-        let mut csv = BufWriter::new(
+        ));
+        let mut csv = HashingWriter::new(BufWriter::new(
             OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(output_dir.join("results.csv"))?,
-        );
+        ));
         writeln!(
             csv,
             "schema,run_id,category,benchmark,variant,topology,workers,sample,operations,elapsed_ns,operations_per_second,verified"
@@ -380,12 +417,18 @@ impl ResultWriter {
         Ok(())
     }
 
-    fn finish(mut self) -> io::Result<usize> {
+    fn finish(mut self) -> io::Result<FinishedResults> {
         self.json.flush()?;
         self.csv.flush()?;
-        self.json.get_ref().sync_all()?;
-        self.csv.get_ref().sync_all()?;
-        Ok(self.rows)
+        self.json.inner.get_ref().sync_all()?;
+        self.csv.inner.get_ref().sync_all()?;
+        let (_, jsonl_sha256) = self.json.finish();
+        let (_, csv_sha256) = self.csv.finish();
+        Ok(FinishedResults {
+            rows: self.rows,
+            jsonl_sha256,
+            csv_sha256,
+        })
     }
 }
 
@@ -564,7 +607,7 @@ fn cgroup_metadata() -> CgroupMetadata {
     }
 }
 
-fn write_harness_report(config: &Config, result_rows: usize) -> io::Result<()> {
+fn write_harness_report(config: &Config, results: &FinishedResults) -> io::Result<()> {
     let available = thread::available_parallelism().map_or(1, usize::from);
     let affinity = proc_field("/proc/self/status", "Cpus_allowed_list:");
     let memory_affinity = proc_field("/proc/self/status", "Mems_allowed_list:");
@@ -590,7 +633,12 @@ fn write_harness_report(config: &Config, result_rows: usize) -> io::Result<()> {
         "  \"schema\": \"shmem-pod-benchmark-harness-report-v1\","
     )?;
     writeln!(output, "  \"run_id\": \"{}\",", json_escape(&config.run_id))?;
-    writeln!(output, "  \"result_rows\": {result_rows},")?;
+    writeln!(output, "  \"result_rows\": {},", results.rows)?;
+    writeln!(
+        output,
+        "  \"results\": {{\"jsonl_sha256\": \"{}\", \"csv_sha256\": \"{}\"}},",
+        results.jsonl_sha256, results.csv_sha256,
+    )?;
     writeln!(
         output,
         concat!(
@@ -1517,14 +1565,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     benchmark_presence(&config, &mut writer)?;
     benchmark_relocatable(&config, &mut writer)?;
 
-    let rows = writer.finish()?;
+    let results = writer.finish()?;
     // The environment file is also the completion marker. A failed run may
     // leave individually verified rows, but never metadata claiming the whole
     // configured matrix succeeded.
-    write_harness_report(&config, rows)?;
+    write_harness_report(&config, &results)?;
     println!(
-        "benchmark-ok run_id={} rows={rows} output={} warmup={} iterations={} samples={} workers={} verified=true completion=deferred",
+        "benchmark-result-auth-v1 results_jsonl_sha256={} results_csv_sha256={}",
+        results.jsonl_sha256, results.csv_sha256,
+    );
+    println!(
+        "benchmark-ok run_id={} rows={} output={} warmup={} iterations={} samples={} workers={} verified=true completion=deferred",
         config.run_id,
+        results.rows,
         config.output_dir.display(),
         config.warmup,
         config.iterations,
