@@ -2,13 +2,22 @@
 
 extern crate std;
 
+#[cfg(feature = "linux-futex")]
+use core::mem::ManuallyDrop;
 use core::mem::size_of;
 use core::ptr;
+#[cfg(feature = "linux-futex")]
+use std::format;
 use std::time::{Duration, Instant};
 
 use crate::admission::CloseableSnzi;
 use crate::csnzi::Csnzi;
 use crate::fault_injection::{FaultPoint, any_detail, arm, arm_sequence};
+use crate::migration::{
+    AdmissionQuiescence, AuthorityIdentity, BackingIdentity, GenerationIdentity, MigrationControl,
+    MigrationPhase, MigrationPlan, PrecommitTargetBacking, SchemaIdentity,
+};
+use crate::snzi::Snzi;
 
 struct Shared<T> {
     pointer: *mut T,
@@ -113,6 +122,33 @@ fn wait_for_success(child: libc::pid_t) {
     assert_eq!(libc::WEXITSTATUS(status), 0);
 }
 
+fn kill_running(child: libc::pid_t) {
+    // SAFETY: child is a direct child owned by this test.
+    assert_eq!(unsafe { libc::kill(child, libc::SIGKILL) }, 0);
+    let mut status = 0;
+    // SAFETY: reap the direct child exactly once.
+    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
+}
+
+#[cfg(feature = "linux-futex")]
+fn wait_for_futex_sleep(child: libc::pid_t) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let path = format!("/proc/{child}/wchan");
+    loop {
+        let wait_channel = std::fs::read_to_string(&path).unwrap_or_default();
+        if wait_channel.contains("futex") {
+            return;
+        }
+        if Instant::now() >= deadline {
+            kill_running(child);
+            panic!("child never entered a kernel futex wait; last wchan={wait_channel:?}");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn closeable_reservation_and_checker_death_fail_closed() {
     let shared = Shared::new(CloseableSnzi::<4>::new());
@@ -146,6 +182,165 @@ fn closeable_death_after_terminal_seal_preserves_drain() {
     wait_for_stop(child);
     kill_stopped(child);
     assert!(shared.get().is_drained());
+}
+
+#[test]
+fn closeable_publication_departure_and_post_scan_death_fail_closed() {
+    let shared = Shared::new(CloseableSnzi::<4>::new());
+    let child = spawn_armed(FaultPoint::CloseableArrivalPublished, 0, || {
+        let _ = shared.get().try_enter(0);
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.transient_reservations, 1);
+    assert_eq!(snapshot.snzi.root_count, 1);
+    assert!(shared.get().close());
+    assert!(!shared.get().is_drained());
+
+    let shared = Shared::new(CloseableSnzi::<4>::new());
+    let raw = shared.get().try_enter(0).unwrap().into_raw();
+    assert!(shared.get().close());
+    let child = spawn_armed(FaultPoint::CloseableDepartureReserved, 0, || {
+        // SAFETY: raw is the sole token from this exact shared object.
+        let _ = unsafe { shared.get().depart_raw(raw) };
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.transient_reservations, 1);
+    assert_eq!(snapshot.snzi.root_count, 1);
+    assert!(!shared.get().is_drained());
+
+    let shared = Shared::new(CloseableSnzi::<4>::new());
+    assert!(shared.get().close());
+    let child = spawn_armed(FaultPoint::CloseableDrainScanned, 1, || {
+        let _ = shared.get().is_drained();
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    assert!(shared.get().debug_snapshot().checking_drain);
+    assert!(!shared.get().is_drained());
+}
+
+#[test]
+fn standalone_snzi_half_root_and_helper_publication_cuts_are_observable() {
+    const LEAF: usize = 4;
+
+    let shared = Shared::new(Snzi::<20>::new());
+    let child = spawn_armed(FaultPoint::SnziHalfPublished, LEAF, || {
+        let _ = shared.get().arrive(0);
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.half_nodes, 1);
+    assert_eq!(snapshot.root_count, 0);
+    assert!(!snapshot.is_quiescent());
+
+    let shared = Shared::new(Snzi::<20>::new());
+    let initiator = spawn_armed(FaultPoint::SnziHalfPublished, LEAF, || {
+        let _ = shared.get().arrive(0);
+    });
+    wait_for_stop(initiator);
+    let helper = spawn_armed(FaultPoint::SnziNodePublished, LEAF, || {
+        let _ = shared.get().arrive(0);
+    });
+    wait_for_stop(helper);
+    kill_stopped(helper);
+    kill_stopped(initiator);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.root_count, 1);
+    assert!(snapshot.active_nodes >= 2);
+    assert!(shared.get().query());
+
+    let shared = Shared::new(Snzi::<20>::new());
+    let child = spawn_armed(FaultPoint::SnziRootArrived, 0, || {
+        let _ = shared.get().arrive(0);
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.root_count, 1);
+    assert!(snapshot.half_nodes >= 1);
+    assert!(shared.get().query());
+}
+
+#[test]
+fn standalone_snzi_increment_and_compensation_cuts_leak_presence() {
+    const INTERNAL: usize = 0;
+    const LEAF: usize = 4;
+
+    let shared = Shared::new(Snzi::<20>::new());
+    let _raw = shared.get().arrive(0).unwrap().into_raw();
+    let child = spawn_armed(FaultPoint::SnziNodeIncremented, LEAF, || {
+        let _ = shared.get().arrive(0);
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.root_count, 1);
+    assert!(snapshot.local_count_sum >= 3);
+    assert!(shared.get().query());
+
+    let shared = Shared::new(Snzi::<20>::new());
+    // SAFETY: this child deliberately has a two-stage production-path stop.
+    let first = unsafe { libc::fork() };
+    assert!(first >= 0);
+    if first == 0 {
+        arm_sequence(
+            FaultPoint::SnziRootArrived,
+            0,
+            FaultPoint::SnziBeforeCompensation,
+            INTERNAL,
+        );
+        let _ = shared.get().arrive(0);
+        unsafe { libc::_exit(91) };
+    }
+    wait_for_stop(first);
+    let second = unsafe { libc::fork() };
+    assert!(second >= 0);
+    if second == 0 {
+        let _raw = shared.get().arrive(0).unwrap().into_raw();
+        unsafe { libc::_exit(0) };
+    }
+    wait_for_success(second);
+    // SAFETY: the helper has published the same path, forcing the resumed
+    // initiator through the redundant-parent compensation branch.
+    assert_eq!(unsafe { libc::kill(first, libc::SIGCONT) }, 0);
+    wait_for_stop(first);
+    kill_stopped(first);
+    let snapshot = shared.get().debug_snapshot();
+    assert!(snapshot.root_count >= 2);
+    assert!(shared.get().query());
+}
+
+#[test]
+fn standalone_snzi_local_and_root_departure_cuts_show_commit_boundary() {
+    const LEAF: usize = 4;
+
+    let shared = Shared::new(Snzi::<20>::new());
+    let raw = shared.get().arrive(0).unwrap().into_raw();
+    let child = spawn_armed(FaultPoint::SnziNodeDecremented, LEAF, || {
+        // SAFETY: raw is the sole token from this exact shared object.
+        let _ = unsafe { shared.get().depart_raw(raw) };
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    let snapshot = shared.get().debug_snapshot();
+    assert_eq!(snapshot.root_count, 1);
+    assert!(shared.get().query());
+
+    let shared = Shared::new(Snzi::<4>::new());
+    let raw = shared.get().arrive(0).unwrap().into_raw();
+    let child = spawn_armed(FaultPoint::SnziRootDeparted, 0, || {
+        // SAFETY: raw is the sole token from this exact shared object.
+        let _ = unsafe { shared.get().depart_raw(raw) };
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+    assert!(!shared.get().query());
+    assert!(shared.get().is_quiescent());
 }
 
 #[test]
@@ -286,4 +481,142 @@ fn futex_owner_and_waiter_death_never_transfer_ownership() {
     kill_stopped(child);
     drop(guard);
     assert!(shared.get().try_lock().is_some());
+}
+
+#[cfg(feature = "linux-futex")]
+#[test]
+fn futex_releaser_death_after_unlock_can_leave_known_waiter_asleep() {
+    use crate::sync::ProcessFutexMutex;
+
+    let shared = Shared::new(ProcessFutexMutex::new(0_u32));
+    let mut owner = ManuallyDrop::new(shared.get().lock());
+
+    // SAFETY: the child enters the actual slow path, stops after changing the
+    // word to CONTENDED, then continues into the kernel futex wait.
+    let waiter = unsafe { libc::fork() };
+    assert!(waiter >= 0);
+    if waiter == 0 {
+        arm_sequence(FaultPoint::FutexContended, 1, FaultPoint::FutexContended, 0);
+        let _guard = shared.get().lock_fallible().unwrap();
+        unsafe { libc::_exit(92) };
+    }
+    wait_for_stop(waiter);
+    // SAFETY: advance the waiter from its observed contended swap to FUTEX_WAIT.
+    assert_eq!(unsafe { libc::kill(waiter, libc::SIGCONT) }, 0);
+    wait_for_futex_sleep(waiter);
+
+    // SAFETY: fork duplicates the guard into the child. ManuallyDrop prevents
+    // the parent copy from issuing a second unlock.
+    let releaser = unsafe { libc::fork() };
+    assert!(releaser >= 0);
+    if releaser == 0 {
+        arm(FaultPoint::FutexReleased, 2, 1);
+        let inherited = unsafe { ManuallyDrop::take(&mut owner) };
+        drop(inherited);
+        unsafe { libc::_exit(93) };
+    }
+    wait_for_stop(releaser);
+
+    // The release swap is committed, but the stopped process has not executed
+    // FUTEX_WAKE. Another process can acquire the unlocked word while the known
+    // kernel waiter remains asleep. This is fail-stop, not ownership transfer.
+    let replacement = shared.get().try_lock().expect("word was not unlocked");
+    wait_for_futex_sleep(waiter);
+    kill_stopped(releaser);
+    kill_running(waiter);
+    drop(replacement);
+}
+
+struct CrashTarget {
+    generation: GenerationIdentity,
+    authority: AuthorityIdentity,
+}
+
+// SAFETY: this synthetic target has no payload, aliases, destructor, or
+// publication path. It only drives the shared migration phase machine.
+unsafe impl PrecommitTargetBacking for CrashTarget {
+    fn generation(&self) -> GenerationIdentity {
+        self.generation
+    }
+
+    fn recovery_authority(&self) -> AuthorityIdentity {
+        self.authority
+    }
+
+    fn is_private(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn migration_reclaimed_death_resumes_idempotent_cleanup() {
+    struct Fixture {
+        control: MigrationControl,
+        admission: CloseableSnzi<20>,
+    }
+
+    let shared = Shared::new(Fixture {
+        control: MigrationControl::new(),
+        admission: CloseableSnzi::new(),
+    });
+    assert!(shared.get().admission.close());
+    assert!(shared.get().admission.is_drained());
+
+    let authority = AuthorityIdentity::new([0x55; 16]);
+    let plan = MigrationPlan::new(
+        0xfeed,
+        GenerationIdentity::new(
+            SchemaIdentity::new(1, 0x11),
+            41,
+            100,
+            BackingIdentity::new([0x41; 32]),
+        ),
+        GenerationIdentity::new(
+            SchemaIdentity::new(2, 0x22),
+            42,
+            101,
+            BackingIdentity::new([0x42; 32]),
+        ),
+        authority,
+    )
+    .unwrap();
+
+    let child = spawn_armed(FaultPoint::MigrationReclaimed, 0, || {
+        // SAFETY: the shared terminal gate is the only synthetic source path
+        // and is bound to this fixture's unique control and complete plan.
+        let source = unsafe { AdmissionQuiescence::bind(&shared.get().admission, plan) }.unwrap();
+        let migration = shared
+            .get()
+            .control
+            .begin_with_quiescent_source(source, plan)
+            .unwrap();
+        let target = CrashTarget {
+            generation: plan.target(),
+            authority,
+        };
+        // SAFETY: CrashTarget satisfies the private precommit contract above.
+        let ready = unsafe { migration.mark_target_ready(target) }.unwrap();
+        let committed = ready.commit().unwrap();
+        // SAFETY: committed.source() is the exact terminal witness retained by
+        // this transaction and the fixture has no uncounted access paths.
+        let _ = unsafe {
+            shared
+                .get()
+                .control
+                .authorize_reclamation(committed.source())
+        }
+        .unwrap();
+    });
+    wait_for_stop(child);
+    kill_stopped(child);
+
+    assert_eq!(
+        shared.get().control.snapshot().unwrap().phase(),
+        MigrationPhase::Reclaimed
+    );
+    // SAFETY: the test owns and authenticates the unique shared control record;
+    // no source bytes or external cleanup exist in this synthetic fixture.
+    let resumed = unsafe { shared.get().control.resume_reclamation() }.unwrap();
+    assert_eq!(resumed.plan(), plan);
+    assert!(resumed.is_resume());
 }

@@ -31,6 +31,7 @@ pub(crate) enum FaultPoint {
     FutexAcquired = 24,
     FutexContended = 25,
     FutexReleased = 26,
+    MigrationReclaimed = 27,
 }
 
 const ANY_DETAIL: usize = usize::MAX;
