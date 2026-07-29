@@ -46,6 +46,14 @@ is the operational summary of the coordinator role.
 - **Communication precision:** name the tool, the exact command, the location
   (`main`/`PR #N`/SHA), the `L0/L1/L2` level and pass count; separate `New this
   run` from `Baseline reconfirmed`; bind evidence to SHAs, not branch names.
+- **Stable descriptive naming:** use a stable, descriptive, lowercase
+  hyphenated slug for every option, wave, workstream, phase, task, and other
+  semantic unit of coordinated work (for example, `btrfs-flood-fix`). Never
+  use a bare identifier such as `Option-A`, `phase-1`, `round-N`, or `wave-X`.
+  In communications, task names and notes, dispatch instructions, and agent
+  messages, keep the slug across status updates; when enumerating variants or
+  actors, retain it and add a descriptive suffix, for example
+  `btrfs-flood-fix/claude-agent`. Infrastructure IDs do not replace the slug.
 - Use `with-proxy` for all networked git/gh operations. Every PR comment starts
   with `[coordinator, <model>]`.
 

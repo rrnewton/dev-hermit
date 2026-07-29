@@ -111,6 +111,22 @@ parent branches do not override this model or the Hermit workflow below.
 - **Handoff SHA**: the exact commit tested and offered for integration. Branch
   names alone are not sufficient evidence.
 
+## Stable Descriptive Naming
+
+Use a stable, descriptive, lowercase hyphenated slug for every option, wave,
+workstream, phase, task, and other semantic unit of coordinated work. Name the
+work or outcome, as task slugs do (for example, `btrfs-flood-fix`), and keep
+that slug unchanged across status updates.
+
+Never use a bare ordinal or placeholder such as `Option-A`, `phase-1`,
+`round-N`, or `wave-X` as an identifier. This applies to coordinator
+communications, task names and notes, dispatch instructions, and agent
+messages. When enumerating variants, actors, or implementations, retain the
+stable slug and add a descriptive suffix, for example
+`btrfs-flood-fix/claude-agent`. Existing infrastructure identifiers such as PR
+numbers, slot numbers, and canonical agent names remain valid; they do not
+replace the descriptive work slug.
+
 ## Canonical Layout
 
 The intended parent layout is:
