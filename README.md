@@ -24,6 +24,34 @@ All three submodules use public HTTPS URLs, so this path does not require a
 GitHub SSH key. Existing clones can adopt the recorded URLs with
 `git submodule sync --recursive` before updating.
 
+### Optional backend source submodules
+
+Reverie's pinned e9patch and SaBRe source trees use `update = none`, so a
+normal recursive initialization intentionally skips them; `--force` does not
+override that update policy. Check out only the source you need, or both:
+
+```bash
+make checkout-e9patch
+make checkout-sabre
+make checkout-optional-submodules
+```
+
+These targets initialize the pinned Reverie checkout if needed, temporarily
+override the selected nested submodule's update policy, recursively check it
+out, and verify its HEAD against Reverie's gitlink. They do not persist a Git
+configuration change or advance a submodule branch. The underlying commands
+for e9patch (SaBRe substitutes `third-party/sabre`) are:
+
+```bash
+git -c submodule.reverie.update=checkout \
+  submodule update --init --checkout -- reverie
+git -C reverie -c submodule.third-party/e9patch.update=checkout \
+  submodule update --init --checkout --recursive -- third-party/e9patch
+```
+
+The helper uses `with-proxy` automatically when that wrapper is installed and
+falls back to plain `git` elsewhere.
+
 Read `AGENTS.md` and `WORKTREES.md` before creating a feature worktree. Do not
 develop in the primary `hermit/` or `reverie/` checkout.
 

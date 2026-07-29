@@ -4,6 +4,7 @@ PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
+	checkout-e9patch checkout-optional-submodules checkout-sabre \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
 	install-deps-core install-deps-full install-deps-qemu
@@ -41,6 +42,15 @@ init-hermit:
 		echo "Hermit submodule is not initialized; checking it out..."; \
 		git submodule update --init hermit; \
 	fi
+
+checkout-e9patch:
+	@scripts/checkout-optional-submodules.rs e9patch
+
+checkout-sabre:
+	@scripts/checkout-optional-submodules.rs sabre
+
+checkout-optional-submodules:
+	@scripts/checkout-optional-submodules.rs all
 
 build-hermit: init-hermit
 	@if [ ! -f hermit/Cargo.toml ]; then \
@@ -122,6 +132,9 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
+	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
+	@echo "make checkout-optional-submodules  Check out both optional sources"
 	@echo "make / make build         Build lightweight ptrace Hermit"
 	@echo "make build-full           Build default features including DBI"
 	@echo "make demo1 .. demo7       Run one dependency-aware demo"
