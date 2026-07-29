@@ -591,3 +591,45 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | --- | --- | --- | --- | --- |
 | `worktrees/272` | hermit-272 / impl-landing-272-to-zero | Hermit `2b88c095408b2fa11e80a00b82fd994dee9ded55`; Reverie `043aa00d9ea2dc27fa0e9e887c14f47de486bc68`; LiteInst2 `261671a655086c0d3f4642b24718bb64586c1384` | Hermit tip is reachable from pushed `origin/codex/skid-margin-cli-override`; all three children were clean; feature refs remain in their owning repositories. | Released slot removed through `scripts/release-worktree.rs --slot 272 --clean` so a clean current-main slot could be allocated for `impl-ci-timeout-layers`. |
 | `worktrees/slot01` | hermit-ci-timeout / impl-ci-timeout-layers | Hermit `fe38f05a4c5b6173ee150572f72bfeee3914ec6f` | Draft PR https://github.com/rrnewton/hermit/pull/1004 squash-merged as main `5d8ce33f01de3925d6f420a145bc5f57e1eb09db`; pushed feature branch retained; worktree clean. | Slot reclaimed through `scripts/release-worktree.rs --slot slot01 --clean` for isolated `impl-ci-add-examples` work because the named CI slot still contains unrelated dirty coordinator integration. |
+
+### Demo07 option-3 research release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / demo07-drgn-deterministic-kernel | Hermit `f06e576493596429a21489c406cb7398f56bb189`; Reverie `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Research-only; all children remained detached and clean, with no product branch, commit, or PR. Durable result: `ai_docs/2026-07-29-demo07-option3-drgn-task-struct.md`. | Two exact-tracer runs read `init_task` and the same 16-task prefix through drgn external physical-memory callbacks; each held tracer `T`, QEMU `t`, made 1,742 reads/3,341,514 bytes, and observed zero serial-byte change. Task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Portable QEMU demo publication release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / publish_portable_qemu_demo | Hermit `eef2d7d073d08f26318b1fb30fa1a8c990d50915`; Reverie `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Parent-only change; all product children remained detached and clean, with no product branch, commit, or PR. Parent edits were deliberately left uncommitted per task protocol. | Published SHA-addressed public kernel release `qemu-kernel-e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2`; added aggregate zero-build preflight, pre-build Demo 5 invocation, public default URL, and distro package documentation. Focused validation passed; task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Build and dependency profiles release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / add_build_full_and | Hermit `eef2d7d073d08f26318b1fb30fa1a8c990d50915`; Reverie `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Parent-only change landed as `fe118aaa8e4d6f7d06ac4159532464635e85cf5d`; all product children remained detached and clean, with no product branch or PR. | Added core/full/QEMU provisioning profiles, host doctor, and `build-full`; empty-cache core and full/DBI builds passed. Task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Recursive-clone portability release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / make_recursive_clone_and | Hermit `168842d55d6f402a8bef9767724f20e0420392d9`; Reverie `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Parent-only change landed as `0febe6ba15a3f6654dea3e6d70377714c6b5f9d7`; all product children remained detached and clean, with no product branch or PR. | Public recursive clone initialized all three top-level HTTPS submodules at the published SHA; stale demo branch instructions removed and nested-slot documentation updated. Task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Demo07 drgn demo release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / demo07-drgn-demoify | Hermit `291679b9ec7cb37a147589d40e5f174c4b40f9f9`; Reverie `fb62ebec767539e363d6819dbe9481e1a45ddbef`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Parent-only uncommitted handoff in `demos/07-drgn-kernel.{sh,py,md}` and `demos/lib/drgn_hermit.py`; source hashes and validation are recorded in the task note because SCM commit was not authorized. All product children remained detached and clean. | Two independent public-kernel observations produced the same 16-task SHA-256; QEMU stayed `t`, exact tracer stayed `T`, and serial delta was zero. Task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Parallel make compatibility release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / compat-deep-app-make-parallel | Hermit `291679b9ec7cb37a147589d40e5f174c4b40f9f9`; Reverie `fb62ebec767539e363d6819dbe9481e1a45ddbef`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Research-only, no product branch or commit. Uncommitted durable handoff: `experiments/compat_make_parallel_20260729/`. All product children remained clean. | Ptrace L1 produced identical visible output; two required L2 verify invocations diverged at make/compiler `vfork` plus `SIGCHLD` scheduler ordering. Divergence documented instead of adding a known-failing CI row. Task closed; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
+
+### Small SQLite compatibility release (2026-07-29)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/220` | hermit-220 / compat-deep-app-sqlite-small | Hermit `523238af82766cd05b06d60270e9f2f47b161e60`; Reverie `cb2c8846ae08f772489dad34ab5fce8b4ead70bd`; LiteInst2 `b21b248294e6cbed1dd4a7ff01e7264c06741882` | Hermit branch `codex/compat-sqlite-small`, pushed at exact SHA; draft PR `https://github.com/rrnewton/hermit/pull/1153`. All product children clean. | Small on-disk SQLite regression extended with transactions, covering index, mmap, full-sync journaling, and pinned queries; two independent no-relaxation ptrace L2 invocations passed. Task self-closed per explicit protocol while PR remains unmerged; slot removed through `scripts/release-worktree.rs --slot 220 --clean`. |
