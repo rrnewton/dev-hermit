@@ -1,0 +1,36 @@
+{
+  "experiment": "redis_small_strict_verify_20260729",
+  "date": "2026-07-29",
+  "task": "compat-deep-app-redis-small",
+  "agent": "hermit-227",
+  "slot": "worktrees/227",
+  "hermit_binary": "hermit/target/release/hermit built 2026-07-29 07:37:34 -0700",
+  "hermit_binary_md5": "cc0ac0ea4266553c43a7139cc333e86f",
+  "hermit_head_at_runtime": "103657d48a991d556afe7e563537e000e74aef76",
+  "hermit_head_note": "primary hermit/ HEAD observed 103657d at --version check just before runs; main concurrently advanced to eb76b3a0ab2f56fbe516730bbbbd1e875be47ad0 afterward by another agent. The release binary was unchanged (same mtime/md5) across the whole session, so all evidence used one consistent binary.",
+  "backend": "ptrace",
+  "redis": "redis-server v=6.2.22 sha=00000000:0 malloc=jemalloc-5.1.0 bits=64 build=5d43f02b8d896191, package redis-6.2.22-2.el9",
+  "redis_cli": "redis-cli 6.2.22",
+  "host": "devbig014.atn7.facebook.com",
+  "nproc": 316,
+  "question": "Is a real Redis server + small client workload (SET/GET/INCR + small pipeline, TCP loopback, epoll/serverCron timer) bitwise-deterministic under hermit run --strict --verify, and does it hold across two fully independent hermit invocations?",
+  "workload": "scratch/redis-small-227/redis_small.sh (copied here): redis-server on 127.0.0.1:6399 persistence-off; poll ping->PONG; SET/GET/INCR/INCRBY; small pipeline (SET p:a/p:b/p:c, INCR, APPEND, MGET via redis-cli --pipe); shutdown nosave; exit 0",
+  "wrapper": "scripts/detached-verify.rs verify-twice (flood-safe: detaches all child output to logs, compares combined logs byte-for-byte, normalizes only hermit's random /tmp run-log filenames)",
+  "commands": {
+    "verify_twice_L2": "scripts/detached-verify.rs verify-twice --name redis-small -- hermit/target/release/hermit --log info run --strict --verify -- /bin/sh <script-outside-/tmp>",
+    "strict_twice_L1": "scripts/detached-verify.rs verify-twice --name redis-small-strict -- hermit/target/release/hermit --log warn run --strict -- /bin/sh <script-outside-/tmp>"
+  },
+  "results": {
+    "L2_strict_verify_twice": "PASS: both invocations exit 0, 'Determinism verified'; internal DETLOG compare 88671/77303/64103 (total/detcore/DETLOG+COMMIT) run1==run2 'no substantive differences found'; cross-invocation compare IDENTICAL after normalizing only hermit's random /tmp/runN_log_* temp filenames (the sole raw diff, line 3)",
+    "L1_strict_twice": "PASS: guest stdout byte-identical across two independent invocations (1120 bytes each, comparison: identical)",
+    "virtualization_observed": "PID->9; wall time->hermit epoch 31 Dec 2025 16:00:00; readiness 'ready after 1 poll(s)'; pipeline 'errors: 0, replies: 6'; values counter->42, p:a->2, p:b->2XY, p:c->3, dbsize->5",
+    "divergence": "none (only hermit's own random scratch-log filenames differ between invocations)"
+  },
+  "code_changes": "none - redis is deterministic under hermit's existing virtualization (PID/time/getrandom/epoll+timer event loop/loopback TCP). No Hermit or Reverie change required; this task yields evidence, not a product PR.",
+  "harness_gotchas": [
+    "guest script must live OUTSIDE /tmp (hermit gives the guest a private /tmp; a host-/tmp script is invisible -> openat ENOENT, exit 127); redis rundir in the private /tmp is ideal",
+    "hermit --verify on this build requires --log=info (rejects --log=warn); the verbose DETLOG stream is detached to log files by the wrapper so nothing floods the agent",
+    "hermit --log-file <path> panics in the container clone callback; not used here"
+  ],
+  "relationship_to_prior": "reconfirms and strengthens experiments/redis_determinism_20260727 (hermit-274, host devbig030, exact-same redis build 5d43f02b8d896191) by adding a byte-for-byte comparison of two fully independent --strict --verify invocations"
+}
