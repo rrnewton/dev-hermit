@@ -2,9 +2,11 @@
 
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
+SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
+SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
-	checkout-e9patch checkout-optional-submodules checkout-sabre \
+	checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
 	install-deps-core install-deps-full install-deps-qemu
@@ -51,6 +53,11 @@ checkout-sabre:
 
 checkout-optional-submodules:
 	@scripts/checkout-optional-submodules.rs all
+
+checkout-all:
+	@$(SUBMODULE_GIT) submodule update --init --recursive
+	@$(MAKE) -C hermit --no-print-directory checkout-all
+	@$(MAKE) -C reverie --no-print-directory checkout-all
 
 build-hermit: init-hermit
 	@if [ ! -f hermit/Cargo.toml ]; then \
@@ -132,6 +139,7 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make checkout-all       Check out every standard and optional submodule"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
 	@echo "make checkout-optional-submodules  Check out both optional sources"
