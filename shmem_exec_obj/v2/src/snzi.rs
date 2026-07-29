@@ -33,12 +33,15 @@
 //! memory protected by an SNZI.
 
 use core::fmt;
+#[cfg(not(shmem_pod_loom))]
 use core::mem::{align_of, needs_drop, offset_of, size_of};
-use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::model_atomic::{AtomicU64, Ordering};
+#[cfg(not(shmem_pod_loom))]
 use crate::{__private, FixedAddressPodValue, PodSync, PodValue};
 
 const FANOUT: usize = 4;
+#[cfg(not(shmem_pod_loom))]
 const CACHE_LINE: usize = 64;
 
 const COUNT_BITS: u32 = 16;
@@ -281,17 +284,26 @@ impl SnziSnapshot {
     }
 }
 
-#[repr(align(64))]
+#[cfg_attr(not(shmem_pod_loom), repr(align(64)))]
 struct CacheAlignedAtomicU64 {
     value: AtomicU64,
+    #[cfg(not(shmem_pod_loom))]
     _padding: [u8; CACHE_LINE - size_of::<AtomicU64>()],
 }
 
 impl CacheAlignedAtomicU64 {
+    #[cfg(not(shmem_pod_loom))]
     const fn new(value: u64) -> Self {
         Self {
             value: AtomicU64::new(value),
             _padding: [0; CACHE_LINE - size_of::<AtomicU64>()],
+        }
+    }
+
+    #[cfg(shmem_pod_loom)]
+    fn new(value: u64) -> Self {
+        Self {
+            value: AtomicU64::new(value),
         }
     }
 }
@@ -349,6 +361,7 @@ impl<const NODES: usize> Snzi<NODES> {
     ///
     /// Panics if `NODES` does not describe complete breadth-first four-way
     /// levels or if its last level has more than 65,536 leaves.
+    #[cfg(not(shmem_pod_loom))]
     pub const fn new() -> Self {
         assert!(
             Self::is_valid_node_count(),
@@ -359,6 +372,21 @@ impl<const NODES: usize> Snzi<NODES> {
             root: CacheAlignedAtomicU64::new(0),
             poison: CacheAlignedAtomicU64::new(POISON_NONE),
             nodes: [const { CacheAlignedAtomicU64::new(0) }; NODES],
+        }
+    }
+
+    /// Creates an empty SNZI for the dedicated Loom model build.
+    #[cfg(shmem_pod_loom)]
+    pub fn new() -> Self {
+        assert!(
+            Self::is_valid_node_count(),
+            "SNZI node count must describe complete 4-ary levels with at most 65,536 leaves"
+        );
+
+        Self {
+            root: CacheAlignedAtomicU64::new(0),
+            poison: CacheAlignedAtomicU64::new(POISON_NONE),
+            nodes: core::array::from_fn(|_| CacheAlignedAtomicU64::new(0)),
         }
     }
 
@@ -378,6 +406,7 @@ impl<const NODES: usize> Snzi<NODES> {
     /// must be uninitialized or contain an old `Snzi` that no process can still
     /// access. On return it contains a fully initialized, empty instance.
     #[inline]
+    #[cfg(not(shmem_pod_loom))]
     pub unsafe fn initialize_at(destination: *mut Self) {
         // SAFETY: The caller provides complete exclusive storage. Every field is
         // written exactly once before the initialized object can be observed.
@@ -543,14 +572,18 @@ impl<const NODES: usize> Snzi<NODES> {
 
                 self.arrive_parent(node)?;
                 let active = state_with_count(generation, 1);
-                if self.nodes[node]
-                    .value
-                    .compare_exchange(state, active, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_err()
-                {
-                    redundant_parent_arrivals = redundant_parent_arrivals
-                        .checked_add(1)
-                        .ok_or_else(|| self.poison_with(PoisonReason::CompensationOverflow))?;
+                match self.nodes[node].value.compare_exchange(
+                    state,
+                    active,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => test_fault!(SnziNodePublished, node),
+                    Err(_) => {
+                        redundant_parent_arrivals = redundant_parent_arrivals
+                            .checked_add(1)
+                            .ok_or_else(|| self.poison_with(PoisonReason::CompensationOverflow))?;
+                    }
                 }
                 continue;
             }
@@ -567,17 +600,23 @@ impl<const NODES: usize> Snzi<NODES> {
                     .compare_exchange(state, half, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
+                    test_fault!(SnziHalfPublished, node);
                     arrived_generation = Some(next_generation);
                     self.arrive_parent(node)?;
                     let active = state_with_count(next_generation, 1);
-                    if self.nodes[node]
-                        .value
-                        .compare_exchange(half, active, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_err()
-                    {
-                        redundant_parent_arrivals = redundant_parent_arrivals
-                            .checked_add(1)
-                            .ok_or_else(|| self.poison_with(PoisonReason::CompensationOverflow))?;
+                    match self.nodes[node].value.compare_exchange(
+                        half,
+                        active,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => test_fault!(SnziNodePublished, node),
+                        Err(_) => {
+                            redundant_parent_arrivals =
+                                redundant_parent_arrivals.checked_add(1).ok_or_else(|| {
+                                    self.poison_with(PoisonReason::CompensationOverflow)
+                                })?;
+                        }
                     }
                 }
                 continue;
@@ -593,11 +632,13 @@ impl<const NODES: usize> Snzi<NODES> {
                 .compare_exchange(state, incremented, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                test_fault!(SnziNodeIncremented, node);
                 arrived_generation = Some(generation);
             }
         }
 
         while redundant_parent_arrivals != 0 {
+            test_fault!(SnziBeforeCompensation, node);
             self.depart_parent(node)?;
             redundant_parent_arrivals -= 1;
         }
@@ -644,6 +685,7 @@ impl<const NODES: usize> Snzi<NODES> {
                 .compare_exchange(state, decremented, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                test_fault!(SnziNodeDecremented, node);
                 if count == 1 {
                     self.depart_parent(node)?;
                 }
@@ -683,6 +725,7 @@ impl<const NODES: usize> Snzi<NODES> {
                 .compare_exchange(count, count + 1, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                test_fault!(SnziRootArrived, 0);
                 return Ok(());
             }
         }
@@ -701,6 +744,7 @@ impl<const NODES: usize> Snzi<NODES> {
                 .compare_exchange(count, count - 1, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                test_fault!(SnziRootDeparted, 0);
                 return Ok(());
             }
         }
@@ -725,6 +769,7 @@ impl<const NODES: usize> Snzi<NODES> {
     }
 }
 
+#[cfg(not(shmem_pod_loom))]
 impl<const NODES: usize> Default for Snzi<NODES> {
     fn default() -> Self {
         Self::new()
@@ -752,6 +797,7 @@ const fn state_half(generation: u64) -> u64 {
 }
 
 #[inline(always)]
+#[cfg(not(shmem_pod_loom))]
 unsafe fn initialize_cacheline(destination: *mut CacheAlignedAtomicU64, value: u64) {
     // SAFETY: The caller provides one exclusive, aligned cacheline object. The
     // volatile byte loop deliberately prevents LLVM from replacing it with a
@@ -769,6 +815,7 @@ unsafe fn initialize_cacheline(destination: *mut CacheAlignedAtomicU64, value: u
 
 // SAFETY: Snzi contains only aligned AtomicU64 values and byte padding.  It has
 // no destructor, allocation, process-local resource, or stored address.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> FixedAddressPodValue for Snzi<NODES> {
     const FINGERPRINT: u128 = {
         assert!(!needs_drop::<Self>(), "pod values must not need drop");
@@ -789,13 +836,15 @@ unsafe impl<const NODES: usize> FixedAddressPodValue for Snzi<NODES> {
 
 // SAFETY: Snzi's integers are counters and indices, never addresses, and its
 // atomics and padding contain no pointers.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodValue for Snzi<NODES> {}
 
 // SAFETY: Every shared mutation performed by the safe API is a 64-bit atomic
 // operation.  Padding is initialized once and never mutated.
+#[cfg(not(shmem_pod_loom))]
 unsafe impl<const NODES: usize> PodSync for Snzi<NODES> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(shmem_pod_loom)))]
 mod tests {
     use super::*;
 

@@ -5,6 +5,24 @@
 
 extern crate self as shmem_pod;
 
+#[cfg(all(test, not(shmem_pod_loom), target_os = "linux"))]
+macro_rules! test_fault {
+    ($point:ident, $detail:expr) => {
+        crate::fault_injection::hit(crate::fault_injection::FaultPoint::$point, $detail)
+    };
+}
+
+#[cfg(not(all(test, not(shmem_pod_loom), target_os = "linux")))]
+macro_rules! test_fault {
+    ($point:ident, $detail:expr) => {{}};
+}
+
+#[cfg(all(test, not(shmem_pod_loom), target_os = "linux"))]
+mod fault_injection;
+
+#[cfg(target_has_atomic = "64")]
+mod model_atomic;
+
 #[cfg(target_has_atomic = "64")]
 pub mod admission;
 #[cfg(target_has_atomic = "64")]
@@ -26,6 +44,17 @@ pub mod reloc_allocator;
 #[cfg(target_has_atomic = "64")]
 pub mod snzi;
 pub mod sync;
+
+#[cfg(all(test, shmem_pod_loom, target_has_atomic = "64"))]
+mod model_checks;
+
+#[cfg(all(
+    test,
+    not(shmem_pod_loom),
+    target_os = "linux",
+    target_has_atomic = "64"
+))]
+mod fault_checks;
 
 #[cfg(feature = "derive")]
 #[doc(inline)]
