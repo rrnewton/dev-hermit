@@ -4,8 +4,9 @@ PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
-	distclean doctor doctor-core doctor-full doctor-qemu help init-hermit \
-	install-deps install-deps-core install-deps-full install-deps-qemu
+	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
+	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
+	install-deps-core install-deps-full install-deps-qemu
 
 build: init-hermit
 	@$(MAKE) --no-print-directory doctor-core
@@ -25,6 +26,14 @@ clean:
 
 distclean:
 	@demos/clean.sh --distclean
+
+# Keep the repository-root entry points thin: demos/Makefile owns the artifact
+# graph, including the phase-5 snapshot consumed by demos 6 and 7.
+demo1 demo2 demo3 demo4 demo5 demo6 demo7:
+	@$(MAKE) -C demos --no-print-directory $@
+
+demos:
+	@$(MAKE) -C demos --no-print-directory all
 
 init-hermit:
 	@set -eu; \
@@ -115,5 +124,7 @@ help:
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
 	@echo "make / make build         Build lightweight ptrace Hermit"
 	@echo "make build-full           Build default features including DBI"
+	@echo "make demo1 .. demo7       Run one dependency-aware demo"
+	@echo "make demos                Run every checked-in demo in order"
 	@echo "make clean         Wipe stale QEMU/Linux demo results (fresh start)"
 	@echo "make distclean     Also remove the demo kernel download + initramfs"
