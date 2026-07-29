@@ -2179,8 +2179,8 @@ if [[ $results_jsonl_sha256 != "$harness_results_jsonl_sha256" ||
   exit 1
 fi
 
-# Freeze every payload file before inventorying it. The inventory and canonical
-# completion marker are the only self-describing control files excluded.
+# Freeze every payload file before inventorying it. The inventory, canonical
+# completion marker, and its transient pending name are excluded.
 find "$output_dir" -type f -exec chmod a-w -- {} +
 verify_harness_result_bytes
 inventory_staging="$temporary/bundle-inventory.tsv"
