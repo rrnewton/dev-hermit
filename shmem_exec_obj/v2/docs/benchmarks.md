@@ -12,6 +12,16 @@ non-ignored v2 input, the Cargo lockfile, toolchain and build flags, kernel, CPU
 model, exact harness/compiler binaries, compiler evidence, executable-pod
 digest, and explicit workload counts.
 
+The evidence model assumes a controlled host with no actively malicious
+process running under the benchmark owner's UID. Such a process can stop or
+ptrace the runner, rewrite its memory, or race build outputs between Cargo and
+the runner; ordinary user-space checks cannot establish causal build
+attestation against that peer. Use a separate build credential, a container or
+VM boundary, or a remote attestation service when that is part of the threat
+model. Within the controlled-host model, the suite rejects ambient build
+controls, detects persistent input/output drift, and makes every retained byte
+independently auditable.
+
 ## Run It
 
 Run every workload with tiny counts as a build and correctness smoke test:
@@ -118,9 +128,10 @@ Each successful run creates one self-contained, run-owned bundle:
   `provenance/rust-sysroot-manifest.tsv` binds every retained file and is
   revalidated throughout the run.
 - `bundle-inventory.tsv` records the type, exact mode, size, SHA-256, and
-  hex-encoded path of every retained file except itself and the self-describing
-  `environment.json` completion marker. The environment binds its digest and
-  entry count.
+  hex-encoded path of every retained file except itself, the self-describing
+  `environment.json` completion marker, and its transient
+  `environment.json.pending` staging name. The environment binds its digest
+  and entry count.
 - `runner-owner` and `harness-owner.json` bind the directory and result files to
   this run and its random owner token. Both the runner and direct harness
   reject reuse independently.
@@ -186,21 +197,19 @@ report of its own runtime observations. While writing JSONL and CSV, the
 harness incrementally hashes the exact bytes accepted by each file writer. It
 syncs the files and returns both intended digests over captured stdout; the
 runner compares those digests immediately, after semantic validation, after
-freezing the files, and immediately before completion. This prevents a
-same-UID process from replacing plausible rows during a long validation pass
-and having the runner bless the substituted bytes. The runner independently
+freezing the files, and immediately before completion. This detects persistent
+or accidental replacement during the validation pass; it is not a defense
+against the active same-UID peer excluded above. The runner independently
 observes and requires the exact same runtime/configuration object, cross-checks
 every path and file digest pair in the compiler manifest, validates its
 dependency closures and the exact result matrix and byte-equivalent CSV/JSON
 rows, freezes every payload file, and inventories the whole bundle. It
 regenerates the canonical environment deterministically and rechecks the
 immutable snapshot and inventory immediately before publishing
-`environment.json`. The temporary
-directory is created beside the output, the runner verifies both are on the
-same filesystem, syncs the complete staging file, renames it atomically, then
-syncs the final file and containing directory. A failure removes only the
-directory claimed by that run. A directory without `environment.json` is not a
-completed bundle.
+`environment.json`. It writes and syncs `environment.json.pending` inside the
+output directory, renames that complete file atomically, then syncs the final
+file and containing filesystem. A failure removes only the directory claimed
+by that run. A directory without `environment.json` is not a completed bundle.
 
 Read-only file modes are accidental-mutation hardening, not an adversarial
 immutability boundary. A process running as the bundle owner can restore write

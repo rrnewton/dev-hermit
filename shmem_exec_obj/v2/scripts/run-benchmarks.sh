@@ -697,6 +697,7 @@ write_directory_manifest() {
     find . -mindepth 1 \( -type f -o -type l \) \
       ! -path './bundle-inventory.tsv' \
       ! -path './environment.json' \
+      ! -path './environment.json.pending' \
       -printf '%P\0' | LC_ALL=C sort -z
   ) >"$paths"
   write_manifest_from_paths "$base" "$paths" "$output"
@@ -971,13 +972,18 @@ write_canonical_environment() {
       complete: true,
       run_id: $run_id,
       result_rows: $result_rows,
+      trust_model: {
+        name: "controlled-host-v1",
+        excludes_active_same_uid_adversary: true,
+        boundary: "checksums and manifests provide reproducibility evidence, not causal build attestation against a peer that can ptrace or race build outputs"
+      },
       bundle: {
         absolute_path: $bundle_path,
         inventory: {
           bundle_path: "bundle-inventory.tsv",
           sha256: $inventory_sha256,
           entries: $inventory_entries,
-          excludes: ["bundle-inventory.tsv", "environment.json"]
+          excludes: ["bundle-inventory.tsv", "environment.json", "environment.json.pending"]
         }
       },
       source: {
@@ -1453,13 +1459,7 @@ if ((iterations > max_rate_operations / workers ||
 fi
 
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
-if [[ -z $output_dir ]]; then
-  output_dir="$root/target/benchmark-results/$run_id"
-fi
-output_parent=$(dirname "$output_dir")
-mkdir -p -- "$output_parent"
-output_parent=$(cd "$output_parent" && pwd -P)
-temporary=$(mktemp -d --tmpdir="$output_parent" ".shmem-pod-benchmark-$run_id.XXXXXX")
+temporary=$(mktemp -d)
 assert_no_cargo_config_ancestors "$temporary"
 self_test_result_jsonl_schema
 control_home="$temporary/control-home"
@@ -1483,16 +1483,17 @@ if [[ -n $(git_control status --porcelain --untracked-files=all -- .) ]]; then
 else
   source_dirty=false
 fi
+if [[ -z $output_dir ]]; then
+  output_dir="$root/target/benchmark-results/$run_id"
+fi
+output_parent=$(dirname "$output_dir")
+mkdir -p -- "$output_parent"
 if ! mkdir -- "$output_dir"; then
   echo "--output must name a new directory: $output_dir" >&2
   exit 1
 fi
 output_claimed=1
 output_dir=$(cd "$output_dir" && pwd -P)
-if [[ $(stat -c %d -- "$temporary") != "$(stat -c %d -- "$output_dir")" ]]; then
-  echo "benchmark temporary and output directories must share one filesystem" >&2
-  exit 1
-fi
 runner_owner_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 if [[ ! $runner_owner_token =~ ^[0-9a-f]{64}$ ]]; then
   echo "failed to generate a runner owner token" >&2
@@ -2190,8 +2191,12 @@ bundle_inventory_sha256=$(sha256sum "$output_dir/bundle-inventory.tsv" | awk '{p
 bundle_inventory_entries=$(wc -l <"$output_dir/bundle-inventory.tsv")
 verify_bundle_inventory
 
-environment_staging="$temporary/environment.json"
+environment_staging="$output_dir/environment.json.pending"
 environment_check="$temporary/environment-check.json"
+if [[ -e $environment_staging || -L $environment_staging ]]; then
+  echo "refusing to replace an existing benchmark completion staging file" >&2
+  exit 1
+fi
 write_canonical_environment "$environment_staging"
 write_canonical_environment "$environment_check"
 if ! cmp -s "$environment_staging" "$environment_check"; then
@@ -2207,6 +2212,8 @@ if ! jq -e \
   --argjson rows "$expected_rows" \
   '.schema == "shmem-pod-benchmark-environment-v2"
    and .complete == true
+   and .trust_model.name == "controlled-host-v1"
+   and .trust_model.excludes_active_same_uid_adversary == true
    and .run_id == $run_id
    and .result_rows == $rows
    and .bundle.absolute_path == $bundle_path
@@ -2230,10 +2237,6 @@ verify_bundle_inventory
 verify_environment_bindings "$environment_staging"
 if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; then
   echo "refusing to replace an existing benchmark completion marker" >&2
-  exit 1
-fi
-if [[ $(stat -c %d -- "$environment_staging") != "$(stat -c %d -- "$output_dir")" ]]; then
-  echo "refusing non-atomic cross-filesystem completion publication" >&2
   exit 1
 fi
 mv -- "$environment_staging" "$output_dir/environment.json"
