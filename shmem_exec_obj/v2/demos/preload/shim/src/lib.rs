@@ -54,6 +54,18 @@ static CONTEXT: ContextCell = ContextCell(UnsafeCell::new(MaybeUninit::uninit())
 
 #[cfg(test)]
 static TEST_PRE_CLAIM_SIGNAL_CUT: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static TEST_CHILD_CALLBACK_SIGNAL_CUT: AtomicU32 = AtomicU32::new(0);
+#[cfg(test)]
+static TEST_REPORT_FAILURE_CALLS: AtomicU32 = AtomicU32::new(0);
+
+const CHILD_CUT_OWNER_REBOUND: u32 = 1;
+const CHILD_CUT_ATFORK_PUBLISHED: u32 = 2;
+const CHILD_CUT_ATTACHMENT_CLEARED: u32 = 3;
+const CHILD_CUT_INIT_VALIDATED: u32 = 4;
+const CHILD_CUT_FAILURE_CLEARED: u32 = 5;
+const CHILD_CUT_EPOCH_PUBLISHED: u32 = 6;
+const CHILD_CUT_GATE_RESET: u32 = 7;
 
 thread_local! {
     // High bit means this thread is in the hook; low bits cache its PID. PID
@@ -217,19 +229,42 @@ impl ForkBarrier {
             .map_err(|_| ())
     }
 
-    fn finish_child(&self, gate: &AdapterCallGate) -> Result<(), ()> {
+    #[inline(always)]
+    fn begin_child(&self, gate: &AdapterCallGate) -> Result<u64, ()> {
         // The child is a private address-space copy with a new Linux PID/TID.
-        // Rebind the complete identity before touching the gate. A signal at
-        // any earlier point sees a foreign PID and fails stop rather than
-        // spinning on the one surviving thread.
+        // Rebind the complete identity before touching adapter publications.
+        // Keep both the identity and disabled gate until complete_child: they
+        // prevent signal reentry from attempting skipped-callback recovery
+        // against a deliberately half-published child epoch.
         let child_identity = self.rebind_child_owner()?;
+        if !gate.is_disabled() || gate.active_calls() != 0 {
+            return Err(());
+        }
+        Ok(child_identity)
+    }
+
+    #[inline(always)]
+    fn complete_child(&self, gate: &AdapterCallGate, child_identity: u64) -> Result<(), ()> {
+        // Re-read the kernel identities immediately before releasing the last
+        // child-callback exclusion. The gate is reset first while the exact
+        // owner remains visible, so a signal in that tiny window still bypasses
+        // hook recovery and its nested fork fails stop on this owner.
+        if fork_barrier_identity() != Some(child_identity)
+            || self.owner.load(Ordering::Acquire) != child_identity
+            || !gate.is_disabled()
+            || gate.active_calls() != 0
+        {
+            return Err(());
+        }
         self.reset_gate(gate)?;
+        child_callback_test_cut(CHILD_CUT_GATE_RESET);
         self.owner
             .compare_exchange(child_identity, 0, Ordering::Release, Ordering::Relaxed)
             .map(|_| ())
             .map_err(|_| ())
     }
 
+    #[inline(always)]
     fn rebind_child_owner(&self) -> Result<u64, ()> {
         let child_identity = fork_barrier_identity().ok_or(())?;
         let inherited_owner = self.owner.load(Ordering::Acquire);
@@ -273,6 +308,24 @@ impl ForkBarrier {
     unsafe fn force_reset_in_fork_child(&self) {
         self.reenable.store(false, Ordering::Relaxed);
         self.owner.store(0, Ordering::Release);
+    }
+
+    /// Returns true while this thread is inside a copied or rebound fork
+    /// callback and must not attempt PID-epoch recovery.
+    #[inline(always)]
+    fn blocks_current_hook(&self) -> bool {
+        let owner = self.owner.load(Ordering::Acquire);
+        if owner == 0 {
+            return false;
+        }
+        if fork_barrier_pid(owner) == 0 || fork_barrier_tid(owner) == 0 {
+            atfork_fail_stop();
+        }
+        let identity = match fork_barrier_identity() {
+            Some(identity) => identity,
+            None => atfork_fail_stop(),
+        };
+        owner == identity || fork_barrier_pid(owner) != fork_barrier_pid(identity)
     }
 }
 
@@ -350,6 +403,19 @@ fn fork_barrier_pre_claim_test_cut() {}
 fn fork_barrier_pre_claim_test_cut() {
     if TEST_PRE_CLAIM_SIGNAL_CUT.swap(false, Ordering::AcqRel)
         && unsafe { libc::raise(libc::SIGUSR1) } != 0
+    {
+        raw_exit_group(96)
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn child_callback_test_cut(_boundary: u32) {}
+
+#[cfg(test)]
+fn child_callback_test_cut(boundary: u32) {
+    if TEST_CHILD_CALLBACK_SIGNAL_CUT.load(Ordering::Acquire) == boundary
+        && unsafe { libc::raise(libc::SIGUSR2) } != 0
     {
         raw_exit_group(96)
     }
@@ -611,7 +677,7 @@ fn recover_skipped_atfork_child(parent_pid: i32, child_pid: i32) -> Result<(), A
     match INIT_STATE.load(Ordering::Acquire) {
         INIT_EMPTY => FAIL_CLOSED.store(false, Ordering::Release),
         INIT_READY => {
-            let context = unsafe { (&*CONTEXT.0.get()).assume_init_ref() };
+            let context = unsafe { (*CONTEXT.0.get()).assume_init_ref() };
             FAIL_CLOSED.store(
                 context
                     .bootstrap
@@ -673,6 +739,13 @@ pub unsafe extern "C" fn getuid() -> libc::uid_t {
         return raw_getuid();
     };
     let result = raw_getuid();
+    // A signal can enter this hook while the post-fork child callback has a
+    // deliberately mixed parent/child publication snapshot. Do not run PID
+    // recovery in that window. The real syscall remains available, while a
+    // nested libc fork is rejected by the still-published barrier owner.
+    if FORK_BARRIER.blocks_current_hook() {
+        return result;
+    }
     let errno = unsafe { libc::__errno_location() };
     let saved_errno = unsafe { *errno };
     if let Err(error) = ensure_process_epoch() {
@@ -711,6 +784,9 @@ pub unsafe extern "C" fn shmem_pod_bootstrap_v1(context: *const BootstrapContext
     let Some(_hook) = HookGuard::enter() else {
         return BootstrapStatus::Reentrant as i32;
     };
+    if FORK_BARRIER.blocks_current_hook() {
+        return BootstrapStatus::Disabled as i32;
+    }
     if let Err(error) = ensure_process_epoch() {
         return error.status() as i32;
     }
@@ -755,7 +831,7 @@ fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Cont
     loop {
         match INIT_STATE.load(Ordering::Acquire) {
             INIT_READY => {
-                let context = unsafe { (&*CONTEXT.0.get()).assume_init_ref() };
+                let context = unsafe { (*CONTEXT.0.get()).assume_init_ref() };
                 if let Some(provided) = provided {
                     if context.bootstrap != provided {
                         return Err(AdapterError::new(
@@ -789,9 +865,9 @@ fn get_or_initialize(provided: Option<BootstrapContext>) -> Result<&'static Cont
                 }));
                 match initialized {
                     Ok(Ok(context)) => {
-                        unsafe { (&mut *CONTEXT.0.get()).write(context) };
+                        unsafe { (*CONTEXT.0.get()).write(context) };
                         claim.publish_ready();
-                        return Ok(unsafe { (&*CONTEXT.0.get()).assume_init_ref() });
+                        return Ok(unsafe { (*CONTEXT.0.get()).assume_init_ref() });
                     }
                     Ok(Err(error)) => return Err(error),
                     Err(_) => {
@@ -1425,6 +1501,8 @@ fn optional_address(address: u64, required: bool) -> Result<Option<usize>, Strin
 }
 
 fn report_failure(error: &str) {
+    #[cfg(test)]
+    TEST_REPORT_FAILURE_CALLS.fetch_add(1, Ordering::Relaxed);
     if !FAILURE_REPORTED.swap(true, Ordering::AcqRel) {
         raw_write(b"shmem-pod injected adapter: ");
         raw_write(error.as_bytes());
@@ -1560,12 +1638,14 @@ fn raw_gettid() -> libc::pid_t {
 }
 
 unsafe extern "C" fn atfork_child() {
-    finish_fork_barrier_child();
-    let pid = raw_getpid();
-    let pid_word = match u32::try_from(pid) {
-        Ok(pid @ 1..=ATFORK_MAX_OWNER_PID) => pid,
+    let child_identity = begin_fork_barrier_child();
+    child_callback_test_cut(CHILD_CUT_OWNER_REBOUND);
+
+    let pid_word = match fork_barrier_pid(child_identity) {
+        pid @ 1..=ATFORK_MAX_OWNER_PID => pid,
         _ => atfork_fail_stop(),
     };
+    let pid = pid_word as i32;
     let registration = ATFORK_CLAIM.load(Ordering::Acquire);
     if !matches!(atfork_state(registration), INIT_BUSY | INIT_READY)
         || atfork_owner_pid(registration) == 0
@@ -1576,19 +1656,29 @@ unsafe extern "C" fn atfork_child() {
     // before this fork's callback snapshot. It may therefore promote either a
     // published or still-BUSY registration claim without registering again.
     ATFORK_CLAIM.store((pid_word << 2) | INIT_READY, Ordering::Release);
-    futex_wake_u32(&ATFORK_CLAIM, i32::MAX);
+    child_callback_test_cut(CHILD_CUT_ATFORK_PUBLISHED);
+
     ATTACHED_PID.store(0, Ordering::Release);
+    child_callback_test_cut(CHILD_CUT_ATTACHMENT_CLEARED);
+
     // A successful prepare drained the initializer before fork. Observing BUSY
     // here therefore means a caller bypassed the adapter's admission contract;
     // fail closed instead of publishing an unwritten Context in the child.
     if INIT_STATE.load(Ordering::Acquire) == INIT_BUSY {
         INIT_STATE.store(INIT_FAILED, Ordering::Release);
         FAIL_CLOSED.store(true, Ordering::Release);
+        child_callback_test_cut(CHILD_CUT_INIT_VALIDATED);
         atfork_fail_stop();
     }
+    child_callback_test_cut(CHILD_CUT_INIT_VALIDATED);
+
     FAILURE_REPORTED.store(false, Ordering::Release);
+    child_callback_test_cut(CHILD_CUT_FAILURE_CLEARED);
+
     PROCESS_EPOCH.store(pid, Ordering::Release);
-    futex_wake_i32(&PROCESS_EPOCH, i32::MAX);
+    child_callback_test_cut(CHILD_CUT_EPOCH_PUBLISHED);
+
+    complete_fork_barrier_child(child_identity);
 }
 
 unsafe extern "C" fn atfork_prepare() {
@@ -1609,8 +1699,23 @@ fn finish_fork_barrier_parent() {
     }
 }
 
-fn finish_fork_barrier_child() {
-    if FORK_BARRIER.finish_child(&CALL_GATE).is_err() {
+#[inline(always)]
+fn begin_fork_barrier_child() -> u64 {
+    match FORK_BARRIER.begin_child(&CALL_GATE) {
+        Ok(identity) => identity,
+        Err(()) => {
+            FAIL_CLOSED.store(true, Ordering::Release);
+            atfork_fail_stop();
+        }
+    }
+}
+
+#[inline(always)]
+fn complete_fork_barrier_child(child_identity: u64) {
+    if FORK_BARRIER
+        .complete_child(&CALL_GATE, child_identity)
+        .is_err()
+    {
         FAIL_CLOSED.store(true, Ordering::Release);
         atfork_fail_stop();
     }
@@ -1729,7 +1834,6 @@ pub extern "C" fn shmem_pod_adapter_abi_version_v1() -> u16 {
 mod tests {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::os::unix::process::CommandExt;
     use std::process::{Child, Command, Stdio};
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -1743,6 +1847,7 @@ mod tests {
     const FOREIGN_OWNER_HELPER_ENV: &str = "SHMEM_POD_FOREIGN_OWNER_HELPER";
     const PRE_CLAIM_SIGNAL_HELPER_ENV: &str = "SHMEM_POD_PRE_CLAIM_SIGNAL_HELPER";
     const SNAPSHOT_RECOVERY_HELPER_ENV: &str = "SHMEM_POD_SNAPSHOT_RECOVERY_HELPER";
+    const CHILD_CALLBACK_CUT_HELPER_ENV: &str = "SHMEM_POD_CHILD_CALLBACK_CUT_HELPER";
 
     fn foreign_owner_for(identity: u64) -> u64 {
         let pid = fork_barrier_pid(identity);
@@ -1751,25 +1856,23 @@ mod tests {
     }
 
     fn spawn_helper(test_name: &str, environment: &str, stderr: Stdio) -> Child {
+        spawn_helper_with_value(test_name, environment, "1", stderr)
+    }
+
+    fn spawn_helper_with_value(
+        test_name: &str,
+        environment: &str,
+        value: &str,
+        stderr: Stdio,
+    ) -> Child {
         let executable = std::env::current_exe().expect("resolve test executable");
         let mut command = Command::new(executable);
         command
             .arg("--exact")
             .arg(test_name)
             .arg("--nocapture")
-            .env(environment, "1")
+            .env(environment, value)
             .stderr(stderr);
-        // A pre-exec write to a broken stderr must terminate the helper. Rust
-        // processes normally ignore SIGPIPE, so restore the process default
-        // to make this regression sensitive to any accidental diagnostic.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::signal(libc::SIGPIPE, libc::SIG_DFL) == libc::SIG_ERR {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
         command.spawn().expect("spawn isolated connector helper")
     }
 
@@ -1893,6 +1996,76 @@ mod tests {
         }
     }
 
+    fn child_callback_publications() -> (u32, i32, u32, bool, bool, i32) {
+        (
+            ATFORK_CLAIM.load(Ordering::Acquire),
+            ATTACHED_PID.load(Ordering::Acquire),
+            INIT_STATE.load(Ordering::Acquire),
+            FAIL_CLOSED.load(Ordering::Acquire),
+            FAILURE_REPORTED.load(Ordering::Acquire),
+            PROCESS_EPOCH.load(Ordering::Acquire),
+        )
+    }
+
+    unsafe extern "C" fn child_callback_signal_handler(_signal: libc::c_int) {
+        let boundary = TEST_CHILD_CALLBACK_SIGNAL_CUT.load(Ordering::Acquire);
+        let identity = match fork_barrier_identity() {
+            Some(identity) => identity,
+            None => raw_exit_group(80),
+        };
+        let child_pid = fork_barrier_pid(identity);
+        let gate_state_is_expected = if boundary == CHILD_CUT_GATE_RESET {
+            !CALL_GATE.is_disabled()
+        } else {
+            CALL_GATE.is_disabled()
+        };
+        if FORK_BARRIER.owner.load(Ordering::Acquire) != identity
+            || !gate_state_is_expected
+            || CALL_GATE.active_calls() != 0
+        {
+            raw_exit_group(81)
+        }
+
+        let before = child_callback_publications();
+        let (claim, attachment, init, fail_closed, failure_reported, epoch) = before;
+        let claim_is_child =
+            atfork_state(claim) == INIT_READY && atfork_owner_pid(claim) == child_pid;
+        let claim_is_parent = atfork_state(claim) == INIT_READY
+            && atfork_owner_pid(claim) != 0
+            && atfork_owner_pid(claim) != child_pid;
+        if (boundary == CHILD_CUT_OWNER_REBOUND && !claim_is_parent)
+            || (boundary >= CHILD_CUT_ATFORK_PUBLISHED && !claim_is_child)
+            || (boundary < CHILD_CUT_ATTACHMENT_CLEARED && attachment == 0)
+            || (boundary >= CHILD_CUT_ATTACHMENT_CLEARED && attachment != 0)
+            || (boundary == CHILD_CUT_INIT_VALIDATED && (init != INIT_FAILED || !fail_closed))
+            || (boundary != CHILD_CUT_INIT_VALIDATED && (init != INIT_EMPTY || fail_closed))
+            || (boundary < CHILD_CUT_FAILURE_CLEARED && !failure_reported)
+            || (boundary >= CHILD_CUT_FAILURE_CLEARED && failure_reported)
+            || (boundary < CHILD_CUT_EPOCH_PUBLISHED && (epoch <= 0 || epoch as u32 == child_pid))
+            || (boundary >= CHILD_CUT_EPOCH_PUBLISHED && epoch as u32 != child_pid)
+        {
+            raw_exit_group(82)
+        }
+
+        let reports_before = TEST_REPORT_FAILURE_CALLS.load(Ordering::Acquire);
+        let expected_uid = raw_getuid();
+        let observed_uid = unsafe { getuid() };
+        let bootstrap_status = unsafe { shmem_pod_bootstrap_v1(std::ptr::null()) };
+        if observed_uid != expected_uid
+            || bootstrap_status != BootstrapStatus::Disabled as i32
+            || TEST_REPORT_FAILURE_CALLS.load(Ordering::Acquire) != reports_before
+            || child_callback_publications() != before
+        {
+            raw_exit_group(83)
+        }
+
+        // The hook bypassed the mixed child snapshot without recovering it.
+        // A nested libc fork must now hit the exact PID/TID owner and terminate
+        // through the raw fail-stop path before the syscall can return.
+        let _ = unsafe { libc::fork() };
+        raw_exit_group(84)
+    }
+
     #[test]
     fn older_prepare_nested_libc_fork_fails_stop_without_hanging() {
         if std::env::var_os(NESTED_FORK_HELPER_ENV).is_some() {
@@ -1921,6 +2094,12 @@ mod tests {
     #[test]
     fn copied_foreign_owner_fails_stop_without_hanging() {
         if std::env::var_os(FOREIGN_OWNER_HELPER_ENV).is_some() {
+            // Rust startup installs SIG_IGN after exec, so reset SIGPIPE here,
+            // immediately before the violation under test. This makes a
+            // diagnostic write to broken stderr observably fatal.
+            if unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) } == libc::SIG_ERR {
+                raw_exit_group(91)
+            }
             let identity = fork_barrier_identity().unwrap();
             FORK_BARRIER
                 .owner
@@ -2027,6 +2206,70 @@ mod tests {
             Stdio::null(),
         );
         assert_helper_exit(child, 0, "pre-claim signal/fork regression");
+    }
+
+    #[test]
+    fn child_callback_publications_remain_barrier_protected() {
+        if let Some(boundary) = std::env::var_os(CHILD_CALLBACK_CUT_HELPER_ENV) {
+            let boundary = boundary
+                .to_str()
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or_else(|| raw_exit_group(85));
+            if !(CHILD_CUT_OWNER_REBOUND..=CHILD_CUT_GATE_RESET).contains(&boundary) {
+                raw_exit_group(86)
+            }
+
+            assert!(ensure_process_epoch().is_ok());
+            assert!(ensure_atfork_registered().is_ok());
+            ATTACHED_PID.store(raw_getpid(), Ordering::Release);
+            FAILURE_REPORTED.store(true, Ordering::Release);
+            FAIL_CLOSED.store(false, Ordering::Release);
+            TEST_REPORT_FAILURE_CALLS.store(0, Ordering::Release);
+            if boundary == CHILD_CUT_INIT_VALIDATED {
+                INIT_STATE.store(INIT_BUSY, Ordering::Release);
+            } else {
+                INIT_STATE.store(INIT_EMPTY, Ordering::Release);
+            }
+
+            let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+            action.sa_sigaction = child_callback_signal_handler as *const () as usize;
+            assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+            action.sa_flags = libc::SA_RESTART;
+            assert_eq!(
+                unsafe { libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut()) },
+                0
+            );
+            TEST_CHILD_CALLBACK_SIGNAL_CUT.store(boundary, Ordering::Release);
+
+            let child = unsafe { libc::fork() };
+            if child == 0 {
+                raw_exit_group(87)
+            }
+            if child < 0 {
+                raw_exit_group(88)
+            }
+            let mut status = 0;
+            if unsafe { libc::waitpid(child, &mut status, 0) } != child
+                || !libc::WIFEXITED(status)
+                || libc::WEXITSTATUS(status) != FAILURE_EXIT_CODE
+            {
+                raw_exit_group(89)
+            }
+            raw_exit_group(0)
+        }
+
+        for boundary in CHILD_CUT_OWNER_REBOUND..=CHILD_CUT_GATE_RESET {
+            for _attempt in 0..8 {
+                let value = boundary.to_string();
+                let child = spawn_helper_with_value(
+                    "tests::child_callback_publications_remain_barrier_protected",
+                    CHILD_CALLBACK_CUT_HELPER_ENV,
+                    &value,
+                    Stdio::null(),
+                );
+                assert_helper_exit(child, 0, "child callback publication cut");
+            }
+        }
     }
 
     #[test]

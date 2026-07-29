@@ -132,11 +132,18 @@ entries, and waits for admitted calls to drain. Immediately after winning the
 claim and before touching the gate, prepare re-reads both identities from the
 kernel. This rejects a nested-fork child which resumes the interrupted outer
 prepare with a cached parent identity. Parent completion verifies and releases
-that exact identity. Child completion atomically rebinds the private copied
-parent identity to its new PID/TID before resetting the gate, then releases the
-child identity. Publishing and revalidating the owner before any gate mutation,
-and distinguishing a copied foreign PID, close the parent and child
-signal/preemption windows. If an older third-party prepare callback recursively
+that exact identity. Child completion is deliberately split: it first
+atomically rebinds the private copied parent identity to its new PID/TID, then
+keeps that owner and the disabled gate across every child-local registration,
+attachment, initialization, failure, and PID-epoch publication. Only after the
+complete snapshot is coherent does it reset the gate and release the child
+identity. The identity remains published during the reset-before-release
+window. A hook which interrupts the owning callback bypasses PID-epoch recovery
+and returns only its raw operation (or `Disabled` for direct bootstrap); a
+nested libc `fork` then fails stop on the owner. Publishing and revalidating the
+owner before any gate mutation, and distinguishing a copied foreign PID, close
+the parent and child signal/preemption windows. If an older third-party prepare
+callback recursively
 invokes libc `fork` on the owner thread, the nested prepare detects the same
 identity and exits with status 125 rather than spinning indefinitely. A nested
 prepare during the child handoff likewise sees either the foreign parent PID or
@@ -154,6 +161,15 @@ handler installation, so it may promote an installed `BUSY` registration
 directly to child-owned `READY`. An impossible copied `INIT_BUSY` context value
 is converted to `INIT_FAILED`, never retried against potentially unwritten
 context bytes.
+
+The child callback does not wake private futexes after publishing its
+registration or PID epoch. `fork` leaves exactly one child thread, so no child
+waiter can exist during the callback; parent waiters observe different private
+pages and cannot be woken through the child's copy. Removing those ineffective
+wakes also keeps the supported optimized child path free of interposable PLT
+calls, allocation, locks, diagnostic writes, and blocking syscalls. Its only
+syscalls are inline PID/TID reads and the bounded inline `exit_group` failure
+path on x86-64 and AArch64 Linux.
 
 The skipped-callback recovery uses
 [`AdapterCallGate::force_reset_in_fork_child`] under its unsafe contract: the

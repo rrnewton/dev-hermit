@@ -79,13 +79,20 @@ positive Linux PID/TID owner identity before changing the call gate, then
 immediately re-reads the kernel identities. The re-read rejects a nested-fork
 child which resumed with a cached parent identity in the pre-claim window.
 Distinct fork threads in one process serialize. A child callback rebinds the
-copied parent identity to its own PID/TID before resetting the gate; a nested
-prepare which interrupts before or after that rebind therefore fails stop
-instead of waiting on the only surviving thread. If an older third-party
-prepare callback recursively invokes libc `fork` on the owner thread, the
-nested shim prepare exits with status 125 immediately. At-fork failures do not
-attempt diagnostics: even an allocation-free `write` could block on a full
-pipe or raise `SIGPIPE`, so status 125 is their only promised signal. On
+copied parent identity to its own PID/TID, keeps that exact owner and the
+disabled gate while publishing the child-owned registration, attachment,
+initialization, failure, and process-epoch fields, and only then resets the gate
+and releases the owner. A hook interrupted into any partial publication window
+returns only its raw libc result without attempting epoch recovery; a nested
+libc `fork` fails stop on the published owner. The owner remains published even
+through the final gate-reset window. Child stores do not issue private-futex
+wakes: the fork child has one surviving thread, while parent waiters and their
+futex words remain in the parent's private address space. If an older
+third-party prepare callback recursively invokes libc `fork` on the owner
+thread, the nested shim prepare exits with status 125 immediately. At-fork
+failures do not attempt diagnostics: even an allocation-free `write` could
+block on a full pipe or raise `SIGPIPE`, so status 125 is their only promised
+signal. On
 x86-64 and AArch64 Linux, the exit itself is a non-interposable inline
 `exit_group` syscall. Other Linux architectures use a compile-only libc
 fallback and do not carry this bounded fail-stop guarantee. Raw `fork`
