@@ -87,7 +87,8 @@ Each successful run creates one self-contained, run-owned bundle:
 - `provenance/source-live-manifest.tsv` records the initial live file type,
   mode, size, SHA-256, and hex-encoded path. `provenance/source-manifest.tsv`
   records those fields again for the retained read-only snapshot.
-- `provenance/compiler-crosscheck.json`, the harness manifest/lockfile, and
+- `provenance/compiler-crosscheck.json`, the authenticated
+  `provenance/harness-package/{Cargo.toml,Cargo.lock}`, and
   `harness-report.json` retain the independent build and execution evidence.
 - `provenance/host-linker-manifest.tsv` records canonical paths and digests for
   the explicitly selected host linker driver, its `collect2`, `ld`, assembler,
@@ -132,6 +133,10 @@ configuration from the live checkout. The retained snapshot
 is re-manifested after hardening and checked throughout the run. Source
 symlinks are rejected: retaining only link text would not bind bytes read from
 an external target by Cargo, rustc, or an `include_*` macro.
+The harness package names the retained `benchmarks/harness.rs` directly; no
+second mutable source copy participates in its build. Its normalized manifest
+and lockfile are made read-only, hashed before and after compilation, retained,
+and bound by completion provenance.
 
 All Cargo and direct compiler executions run under `env -i`, not the calling
 shell's environment. They receive direct, hashed rustc and Cargo paths, a
@@ -186,12 +191,16 @@ same-UID process from replacing plausible rows during a long validation pass
 and having the runner bless the substituted bytes. The runner independently
 observes and requires the exact same runtime/configuration object, cross-checks
 every path and file digest pair in the compiler manifest, validates its
-dependency closures and the exact result matrix and byte-equivalent CSV/JSON rows, freezes
-every payload file, and inventories the whole bundle. It regenerates the
-canonical environment deterministically and rechecks the immutable snapshot
-and inventory immediately before atomically publishing `environment.json`. A
-failure removes only the directory claimed by that run. A directory without
-`environment.json` is not a completed bundle.
+dependency closures and the exact result matrix and byte-equivalent CSV/JSON
+rows, freezes every payload file, and inventories the whole bundle. It
+regenerates the canonical environment deterministically and rechecks the
+immutable snapshot and inventory immediately before publishing
+`environment.json`. The temporary
+directory is created beside the output, the runner verifies both are on the
+same filesystem, syncs the complete staging file, renames it atomically, then
+syncs the final file and containing directory. A failure removes only the
+directory claimed by that run. A directory without `environment.json` is not a
+completed bundle.
 
 Read-only file modes are accidental-mutation hardening, not an adversarial
 immutability boundary. A process running as the bundle owner can restore write

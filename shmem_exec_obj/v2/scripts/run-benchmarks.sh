@@ -13,7 +13,7 @@ if [[ $- != *p* ]]; then
 fi
 
 required_control_tools=(
-  as awk cat chmod cmp cp date diff env find gcc git jq ld ldd ln mkdir mktemp
+  as awk cat chmod cmp cp date diff dirname env find gcc git jq ld ldd ln mkdir mktemp
   mv nproc od readlink rm sed sha256sum sort stat sync tail timeout tr uname wc
 )
 for control_tool in "${required_control_tools[@]}" cargo rustc; do
@@ -1004,8 +1004,8 @@ write_canonical_environment() {
         runner_owner: {bundle_path: "runner-owner", sha256: $runner_owner_sha256},
         harness_owner: {bundle_path: "harness-owner.json", sha256: $harness_owner_sha256},
         harness_source: {bundle_path: "provenance/source/benchmarks/harness.rs", sha256: $harness_source_sha256},
-        harness_manifest: {bundle_path: "provenance/harness-Cargo.toml", sha256: $harness_manifest_sha256},
-        harness_lock: {bundle_path: "provenance/harness-Cargo.lock", sha256: $harness_lock_sha256},
+        harness_manifest: {bundle_path: "provenance/harness-package/Cargo.toml", sha256: $harness_manifest_sha256},
+        harness_lock: {bundle_path: "provenance/harness-package/Cargo.lock", sha256: $harness_lock_sha256},
         harness_binary: {bundle_path: "bin/shmem-pod-benchmark-harness", sha256: $harness_binary_sha256},
         harness_report: {bundle_path: "harness-report.json", sha256: $harness_report_sha256},
         compiler_binary: {bundle_path: "bin/shmem-pod-image-compiler", sha256: $compiler_binary_sha256},
@@ -1453,7 +1453,13 @@ if ((iterations > max_rate_operations / workers ||
 fi
 
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
-temporary=$(mktemp -d)
+if [[ -z $output_dir ]]; then
+  output_dir="$root/target/benchmark-results/$run_id"
+fi
+output_parent=$(dirname "$output_dir")
+mkdir -p -- "$output_parent"
+output_parent=$(cd "$output_parent" && pwd -P)
+temporary=$(mktemp -d --tmpdir="$output_parent" ".shmem-pod-benchmark-$run_id.XXXXXX")
 assert_no_cargo_config_ancestors "$temporary"
 self_test_result_jsonl_schema
 control_home="$temporary/control-home"
@@ -1477,17 +1483,16 @@ if [[ -n $(git_control status --porcelain --untracked-files=all -- .) ]]; then
 else
   source_dirty=false
 fi
-if [[ -z $output_dir ]]; then
-  output_dir="$root/target/benchmark-results/$run_id"
-fi
-output_parent=$(dirname "$output_dir")
-mkdir -p -- "$output_parent"
 if ! mkdir -- "$output_dir"; then
   echo "--output must name a new directory: $output_dir" >&2
   exit 1
 fi
 output_claimed=1
 output_dir=$(cd "$output_dir" && pwd -P)
+if [[ $(stat -c %d -- "$temporary") != "$(stat -c %d -- "$output_dir")" ]]; then
+  echo "benchmark temporary and output directories must share one filesystem" >&2
+  exit 1
+fi
 runner_owner_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 if [[ ! $runner_owner_token =~ ^[0-9a-f]{64}$ ]]; then
   echo "failed to generate a runner owner token" >&2
@@ -1872,11 +1877,13 @@ jq -n \
   }' >"$provenance_dir/compiler-crosscheck.json"
 verify_compiler_crosscheck
 
-mkdir -p "$temporary/src"
-cp "$source_snapshot/benchmarks/harness.rs" "$temporary/src/main.rs"
-cp "$source_snapshot/Cargo.lock" "$temporary/Cargo.lock"
-chmod u+w "$temporary/Cargo.lock"
-cat >"$temporary/Cargo.toml" <<EOF
+harness_package="$provenance_dir/harness-package"
+mkdir "$harness_package"
+harness_manifest="$harness_package/Cargo.toml"
+harness_lock="$harness_package/Cargo.lock"
+cp "$source_snapshot/Cargo.lock" "$harness_lock"
+chmod u+w "$harness_lock"
+cat >"$harness_manifest" <<EOF
 [package]
 name = "shmem-pod-benchmark-harness"
 version = "0.0.0"
@@ -1887,6 +1894,10 @@ publish = false
 shmem-pod = { path = "$source_snapshot", default-features = false, features = ["linux-futex"] }
 shmem-pod-runtime = { path = "$source_snapshot/poc/runtime" }
 sha2 = "=0.10.9"
+
+[[bin]]
+name = "shmem-pod-benchmark-harness"
+path = "$source_snapshot/benchmarks/harness.rs"
 
 [workspace]
 
@@ -1916,22 +1927,27 @@ harness_target="$temporary/harness-target"
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
     "$cargo_path" "${cargo_source_config[@]}" metadata \
-    --offline --manifest-path "$temporary/Cargo.toml" \
+    --offline --manifest-path "$harness_manifest" \
       --format-version 1 >/dev/null
 )
-SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$temporary/Cargo.lock" | awk '{print $1}')
-cp "$temporary/Cargo.toml" "$provenance_dir/harness-Cargo.toml"
-cp "$temporary/Cargo.lock" "$provenance_dir/harness-Cargo.lock"
-SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256=$(sha256sum "$provenance_dir/harness-Cargo.toml" | awk '{print $1}')
+chmod a-w "$harness_manifest" "$harness_lock"
+SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$harness_lock" | awk '{print $1}')
+SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256=$(sha256sum "$harness_manifest" | awk '{print $1}')
 
 echo "building exact benchmark harness"
+verify_sha256 "$source_snapshot/benchmarks/harness.rs" "$harness_source_sha256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
 (
   cd /
   "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
     "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
     "$cargo_path" "${cargo_source_config[@]}" build \
-    --locked --offline --release --manifest-path "$temporary/Cargo.toml"
+    --locked --offline --release --manifest-path "$harness_manifest"
 )
+verify_sha256 "$source_snapshot/benchmarks/harness.rs" "$harness_source_sha256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
 harness_build="$harness_target/release/shmem-pod-benchmark-harness"
 [[ -x $harness_build ]] || { echo "benchmark harness executable is missing: $harness_build" >&2; exit 1; }
 harness="$binary_dir/shmem-pod-benchmark-harness"
@@ -1989,8 +2005,8 @@ verify_sha256 "$source_snapshot/Cargo.toml" "$workspace_manifest_sha256"
 verify_sha256 "$source_snapshot/Cargo.lock" "$workspace_lock_sha256"
 verify_sha256 "$provenance_dir/source-live-manifest.tsv" "$source_manifest_sha256"
 verify_sha256 "$provenance_dir/source-manifest.tsv" "$source_snapshot_manifest_sha256"
-verify_sha256 "$provenance_dir/harness-Cargo.toml" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
-verify_sha256 "$provenance_dir/harness-Cargo.lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
 validate_json_unique_paths "$output_dir/harness-owner.json"
 if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
   '. == {
@@ -2216,9 +2232,14 @@ if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; the
   echo "refusing to replace an existing benchmark completion marker" >&2
   exit 1
 fi
+if [[ $(stat -c %d -- "$environment_staging") != "$(stat -c %d -- "$output_dir")" ]]; then
+  echo "refusing non-atomic cross-filesystem completion publication" >&2
+  exit 1
+fi
 mv -- "$environment_staging" "$output_dir/environment.json"
-sync -f "$output_dir/environment.json"
 chmod a-w "$output_dir/environment.json"
+sync -f "$output_dir/environment.json"
+sync -f "$output_dir"
 run_succeeded=1
 output_claimed=0
 
