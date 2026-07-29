@@ -126,14 +126,25 @@ initialization deadlock and is intentionally not counted.
 
 ### Fork behavior
 
-The at-fork prepare handler serializes concurrent forks, disables new hook
-entries, and waits for admitted calls to drain. Parent and child handlers reset
-only an exactly disabled, quiescent gate. The child keeps a fully published
-mapping, clears its per-process attachment marker, and records itself on its
-next hook call. Running the child callback proves handler installation, so it
-may promote an installed `BUSY` registration directly to child-owned `READY`.
-An impossible copied `INIT_BUSY` context value is converted to `INIT_FAILED`,
-never retried against potentially unwritten context bytes.
+The at-fork prepare handler publishes one packed, positive Linux PID/TID owner
+identity with an atomic claim, serializes concurrent forks, disables new hook
+entries, and waits for admitted calls to drain. Parent completion verifies and
+releases that exact identity. Child completion atomically rebinds the private
+copied parent identity to its new PID/TID before resetting the gate, then
+releases the child identity. Publishing the owner before any gate mutation and
+distinguishing a copied foreign PID closes both parent and child
+signal/preemption windows. If an older third-party prepare callback recursively
+invokes libc `fork` on the owner thread, the nested prepare detects the same
+identity and fails stop with an allocation-free diagnostic and exit status 125
+rather than spinning indefinitely. A nested prepare during the child handoff
+likewise sees either the foreign parent PID or its exact child identity and
+fails stop. Parent and child handlers reset only an exactly disabled,
+quiescent gate. The child keeps a fully published mapping, clears its per-
+process attachment marker, and records itself on its next hook call. Running
+the child callback proves handler installation, so it may promote an installed
+`BUSY` registration directly to child-owned `READY`. An impossible copied
+`INIT_BUSY` context value is converted to `INIT_FAILED`, never retried against
+potentially unwritten context bytes.
 
 The skipped-callback recovery uses
 [`AdapterCallGate::force_reset_in_fork_child`] under its unsafe contract: the

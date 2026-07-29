@@ -24,7 +24,7 @@ use std::fmt;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 const CALL_KEY: u64 = 0x7072_656c_6f61_6401;
 const ATTACH_KEY: u64 = 0x7072_656c_6f61_6402;
@@ -131,26 +131,66 @@ struct AttachmentClaim<'a> {
 }
 
 struct ForkBarrier {
-    locked: AtomicBool,
+    owner: AtomicU64,
     reenable: AtomicBool,
 }
 
 impl ForkBarrier {
     const fn new() -> Self {
         Self {
-            locked: AtomicBool::new(false),
+            owner: AtomicU64::new(0),
             reenable: AtomicBool::new(false),
         }
     }
 
     fn prepare(&self, gate: &AdapterCallGate) {
-        while self
-            .locked
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        let identity = match fork_barrier_identity() {
+            Some(identity) => identity,
+            None => {
+                fork_barrier_fail_stop(
+                    b"shmem-pod injected adapter: invalid process/thread identity in at-fork prepare\n",
+                );
+            }
+        };
+        let pid = fork_barrier_pid(identity);
+
+        let mut observed = self.owner.load(Ordering::Acquire);
+        loop {
+            if observed == identity {
+                fork_barrier_fail_stop(
+                    b"shmem-pod injected adapter: nested libc fork on at-fork owner thread\n",
+                );
+            }
+            if observed != 0 && (fork_barrier_pid(observed) == 0 || fork_barrier_tid(observed) == 0)
+            {
+                fork_barrier_fail_stop(
+                    b"shmem-pod injected adapter: corrupt at-fork barrier owner\n",
+                );
+            }
+            if observed != 0 && fork_barrier_pid(observed) != pid {
+                fork_barrier_fail_stop(
+                    b"shmem-pod injected adapter: inherited at-fork barrier owner\n",
+                );
+            }
+            if observed == 0 {
+                match self.owner.compare_exchange_weak(
+                    0,
+                    identity,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => observed = current,
+                }
+                continue;
+            }
             std::hint::spin_loop();
+            observed = self.owner.load(Ordering::Acquire);
         }
+
+        // The atomic PID/TID claim is published before any gate state changes.
+        // A signal which recursively calls libc fork can therefore identify
+        // this same thread and fail stop instead of waiting on itself.
         self.reenable.store(!gate.is_disabled(), Ordering::Relaxed);
         let _ = gate.disable();
         while gate.active_calls() != 0 {
@@ -158,7 +198,53 @@ impl ForkBarrier {
         }
     }
 
-    fn finish(&self, gate: &AdapterCallGate) -> Result<(), ()> {
+    fn finish_parent(&self, gate: &AdapterCallGate) -> Result<(), ()> {
+        let identity = fork_barrier_identity().ok_or(())?;
+        if self.owner.load(Ordering::Acquire) != identity {
+            return Err(());
+        }
+        self.reset_gate(gate)?;
+        self.owner
+            .compare_exchange(identity, 0, Ordering::Release, Ordering::Relaxed)
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn finish_child(&self, gate: &AdapterCallGate) -> Result<(), ()> {
+        // The child is a private address-space copy with a new Linux PID/TID.
+        // Rebind the complete identity before touching the gate. A signal at
+        // any earlier point sees a foreign PID and fails stop rather than
+        // spinning on the one surviving thread.
+        let child_identity = self.rebind_child_owner()?;
+        self.reset_gate(gate)?;
+        self.owner
+            .compare_exchange(child_identity, 0, Ordering::Release, Ordering::Relaxed)
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn rebind_child_owner(&self) -> Result<u64, ()> {
+        let child_identity = fork_barrier_identity().ok_or(())?;
+        let inherited_owner = self.owner.load(Ordering::Acquire);
+        if inherited_owner == 0
+            || fork_barrier_pid(inherited_owner) == 0
+            || fork_barrier_tid(inherited_owner) == 0
+            || fork_barrier_pid(inherited_owner) == fork_barrier_pid(child_identity)
+        {
+            return Err(());
+        }
+        self.owner
+            .compare_exchange(
+                inherited_owner,
+                child_identity,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map(|_| child_identity)
+            .map_err(|_| ())
+    }
+
+    fn reset_gate(&self, gate: &AdapterCallGate) -> Result<(), ()> {
         let reset = if self.reenable.load(Ordering::Relaxed) {
             // SAFETY: prepare disabled this same gate and waited for the last
             // token before the fork copied the barrier and gate state.
@@ -167,7 +253,6 @@ impl ForkBarrier {
             Ok(())
         };
         self.reenable.store(false, Ordering::Relaxed);
-        self.locked.store(false, Ordering::Release);
         reset
     }
 
@@ -180,8 +265,27 @@ impl ForkBarrier {
     /// own this barrier. Parent owners cannot observe these private stores.
     unsafe fn force_reset_in_fork_child(&self) {
         self.reenable.store(false, Ordering::Relaxed);
-        self.locked.store(false, Ordering::Release);
+        self.owner.store(0, Ordering::Release);
     }
+}
+
+fn fork_barrier_identity() -> Option<u64> {
+    let pid = u32::try_from(raw_getpid()).ok().filter(|pid| *pid != 0)?;
+    let tid = u32::try_from(raw_gettid()).ok().filter(|tid| *tid != 0)?;
+    Some((u64::from(pid) << 32) | u64::from(tid))
+}
+
+fn fork_barrier_pid(identity: u64) -> u32 {
+    (identity >> 32) as u32
+}
+
+fn fork_barrier_tid(identity: u64) -> u32 {
+    identity as u32
+}
+
+fn fork_barrier_fail_stop(message: &'static [u8]) -> ! {
+    raw_write(message);
+    unsafe { libc::_exit(FAILURE_EXIT_CODE) }
 }
 
 impl<'a> InitClaim<'a> {
@@ -1330,8 +1434,13 @@ fn raw_getpid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_getpid) as libc::pid_t }
 }
 
+#[inline]
+fn raw_gettid() -> libc::pid_t {
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
+
 unsafe extern "C" fn atfork_child() {
-    finish_fork_barrier();
+    finish_fork_barrier_child();
     let pid = raw_getpid();
     let pid_word = match u32::try_from(pid) {
         Ok(pid @ 1..=ATFORK_MAX_OWNER_PID) => pid,
@@ -1375,13 +1484,21 @@ unsafe extern "C" fn atfork_prepare() {
 }
 
 unsafe extern "C" fn atfork_parent() {
-    finish_fork_barrier();
+    finish_fork_barrier_parent();
 }
 
-fn finish_fork_barrier() {
-    if FORK_BARRIER.finish(&CALL_GATE).is_err() {
+fn finish_fork_barrier_parent() {
+    if FORK_BARRIER.finish_parent(&CALL_GATE).is_err() {
         FAIL_CLOSED.store(true, Ordering::Release);
-        raw_write(b"shmem-pod injected adapter: corrupt at-fork gate state\n");
+        raw_write(b"shmem-pod injected adapter: corrupt parent at-fork gate state\n");
+        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+    }
+}
+
+fn finish_fork_barrier_child() {
+    if FORK_BARRIER.finish_child(&CALL_GATE).is_err() {
+        FAIL_CLOSED.store(true, Ordering::Release);
+        raw_write(b"shmem-pod injected adapter: corrupt child at-fork gate state\n");
         unsafe { libc::_exit(FAILURE_EXIT_CODE) }
     }
 }
@@ -1416,21 +1533,6 @@ fn try_claim_atfork_registration(state: &AtomicU32, pid: u32) -> Option<u32> {
         .compare_exchange(INIT_EMPTY, busy_word, Ordering::AcqRel, Ordering::Acquire)
         .ok()
         .map(|_| busy_word)
-}
-
-#[cfg(test)]
-fn try_reset_foreign_atfork_registration(state: &AtomicU32, observed_word: u32, pid: u32) -> bool {
-    if atfork_state(observed_word) != INIT_BUSY || atfork_owner_pid(observed_word) == pid {
-        return false;
-    }
-    state
-        .compare_exchange(
-            observed_word,
-            INIT_EMPTY,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .is_ok()
 }
 
 fn ensure_atfork_registered() -> Result<(), AdapterError> {
@@ -1513,18 +1615,124 @@ pub extern "C" fn shmem_pod_adapter_abi_version_v1() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    use std::process::Command;
+    use std::process::Stdio;
+    use std::sync::Arc;
     use std::sync::mpsc;
-    use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
 
     static THIRD_PARTY_PREPARE_ENTERED: AtomicBool = AtomicBool::new(false);
     static THIRD_PARTY_PREPARE_RELEASE: AtomicBool = AtomicBool::new(false);
+    static NESTED_FORK_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+    const NESTED_FORK_HELPER_ENV: &str = "SHMEM_POD_NESTED_FORK_HELPER";
+    const FOREIGN_OWNER_HELPER_ENV: &str = "SHMEM_POD_FOREIGN_OWNER_HELPER";
+
+    fn foreign_owner_for(identity: u64) -> u64 {
+        let pid = fork_barrier_pid(identity);
+        let foreign_pid = if pid == u32::MAX { pid - 1 } else { pid + 1 };
+        (u64::from(foreign_pid) << 32) | u64::from(fork_barrier_tid(identity))
+    }
+
+    fn assert_fail_stop_helper(test_name: &str, environment: &str, expected: &str) {
+        let executable = std::env::current_exe().expect("resolve test executable");
+        let mut child = Command::new(executable)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(environment, "1")
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn fail-stop helper");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll fail-stop helper") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("fail-stop helper hung in at-fork prepare");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            status.code(),
+            Some(FAILURE_EXIT_CODE),
+            "at-fork violation must fail stop with the adapter status"
+        );
+        let mut diagnostic = String::new();
+        child
+            .stderr
+            .take()
+            .expect("capture fail-stop helper stderr")
+            .read_to_string(&mut diagnostic)
+            .expect("read fail-stop helper stderr");
+        assert!(
+            diagnostic.contains(expected),
+            "at-fork violation must report {expected:?}: {diagnostic:?}"
+        );
+    }
 
     unsafe extern "C" fn paused_third_party_prepare() {
         THIRD_PARTY_PREPARE_ENTERED.store(true, Ordering::Release);
         while !THIRD_PARTY_PREPARE_RELEASE.load(Ordering::Acquire) {
             std::hint::spin_loop();
         }
+    }
+
+    unsafe extern "C" fn nested_fork_third_party_prepare() {
+        if !NESTED_FORK_ATTEMPTED.swap(true, Ordering::AcqRel) {
+            // This older handler runs after the newer shim prepare has claimed
+            // its barrier. The nested prepare must fail stop before fork can
+            // return. Any return is an explicit regression failure.
+            let _ = unsafe { libc::fork() };
+            unsafe { libc::_exit(92) }
+        }
+    }
+
+    #[test]
+    fn older_prepare_nested_libc_fork_fails_stop_without_hanging() {
+        if std::env::var_os(NESTED_FORK_HELPER_ENV).is_some() {
+            if ATFORK_CLAIM.load(Ordering::Acquire) != INIT_EMPTY {
+                unsafe { libc::_exit(93) }
+            }
+            assert!(ensure_process_epoch().is_ok());
+            assert_eq!(
+                unsafe { libc::pthread_atfork(Some(nested_fork_third_party_prepare), None, None) },
+                0
+            );
+            assert!(ensure_atfork_registered().is_ok());
+
+            // Prepare callbacks run in reverse registration order: the shim
+            // owns its barrier before the older handler attempts this fork.
+            let _ = unsafe { libc::fork() };
+            unsafe { libc::_exit(94) }
+        }
+
+        assert_fail_stop_helper(
+            "tests::older_prepare_nested_libc_fork_fails_stop_without_hanging",
+            NESTED_FORK_HELPER_ENV,
+            "nested libc fork on at-fork owner thread",
+        );
+    }
+
+    #[test]
+    fn copied_foreign_owner_fails_stop_without_hanging() {
+        if std::env::var_os(FOREIGN_OWNER_HELPER_ENV).is_some() {
+            let identity = fork_barrier_identity().unwrap();
+            FORK_BARRIER
+                .owner
+                .store(foreign_owner_for(identity), Ordering::Release);
+            FORK_BARRIER.prepare(&CALL_GATE);
+            unsafe { libc::_exit(95) }
+        }
+
+        assert_fail_stop_helper(
+            "tests::copied_foreign_owner_fails_stop_without_hanging",
+            FOREIGN_OWNER_HELPER_ENV,
+            "inherited at-fork barrier owner",
+        );
     }
 
     #[test]
@@ -1666,75 +1874,6 @@ mod tests {
     }
 
     #[test]
-    fn same_pid_waiter_cannot_reset_live_atfork_registration() {
-        const PID: u32 = 42;
-        let state = Arc::new(AtomicU32::new(INIT_EMPTY));
-        let release = Arc::new(Barrier::new(2));
-        let claim_state = Arc::clone(&state);
-        let claim_release = Arc::clone(&release);
-        let claimant = std::thread::spawn(move || {
-            let busy_word = try_claim_atfork_registration(&claim_state, PID).unwrap();
-            let claim = AtforkRegistrationClaim::new(&claim_state, busy_word);
-            claim_release.wait();
-            assert!(claim.publish_ready().is_ok());
-        });
-
-        while state.load(Ordering::Acquire) == INIT_EMPTY {
-            std::thread::yield_now();
-        }
-        let observed = state.load(Ordering::Acquire);
-        assert_eq!(atfork_state(observed), INIT_BUSY);
-        assert_eq!(atfork_owner_pid(observed), PID);
-        assert!(!try_reset_foreign_atfork_registration(
-            &state, observed, PID
-        ));
-        assert_eq!(state.load(Ordering::Acquire), observed);
-        assert!(try_claim_atfork_registration(&state, PID).is_none());
-        release.wait();
-        claimant.join().unwrap();
-        let ready = state.load(Ordering::Acquire);
-        assert_eq!(atfork_state(ready), INIT_READY);
-        assert_eq!(atfork_owner_pid(ready), PID);
-    }
-
-    #[test]
-    fn stale_foreign_observer_cannot_erase_replacement_atfork_claim() {
-        const PARENT_PID: u32 = 41;
-        const CHILD_PID: u32 = 42;
-        let parent_busy = atfork_busy_word(PARENT_PID);
-        let state = AtomicU32::new(parent_busy);
-
-        // Caller A pauses after observing the inherited parent claim. Caller B
-        // removes that exact word and wins the one child registration claim.
-        let caller_a_observed = state.load(Ordering::Acquire);
-        assert!(try_reset_foreign_atfork_registration(
-            &state,
-            parent_busy,
-            CHILD_PID
-        ));
-        let caller_b_claim = try_claim_atfork_registration(&state, CHILD_PID);
-        let child_busy = caller_b_claim.unwrap();
-
-        // Caller A resumes with its stale observation. Its full-word CAS must
-        // not match B's BUSY state, and it cannot become a second claimant.
-        assert!(!try_reset_foreign_atfork_registration(
-            &state,
-            caller_a_observed,
-            CHILD_PID
-        ));
-        let caller_a_claim = try_claim_atfork_registration(&state, CHILD_PID);
-        assert!(caller_a_claim.is_none());
-        assert_eq!(state.load(Ordering::Acquire), child_busy);
-        assert_eq!(
-            [caller_a_claim, caller_b_claim]
-                .into_iter()
-                .flatten()
-                .count(),
-            1
-        );
-    }
-
-    #[test]
     fn unpublished_atfork_claim_marks_state_failed_on_unwind() {
         const PID: u32 = 42;
         let state = AtomicU32::new(INIT_EMPTY);
@@ -1778,9 +1917,16 @@ mod tests {
         let gate = Arc::new(AdapterCallGate::new());
         let barrier = Arc::new(ForkBarrier::new());
         let live = gate.try_enter().unwrap();
+        let (prepared_tx, prepared_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
         let worker_gate = Arc::clone(&gate);
         let worker_barrier = Arc::clone(&barrier);
-        let prepare = std::thread::spawn(move || worker_barrier.prepare(&worker_gate));
+        let prepare = std::thread::spawn(move || {
+            worker_barrier.prepare(&worker_gate);
+            prepared_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            worker_barrier.finish_parent(&worker_gate).unwrap();
+        });
 
         for _ in 0..1_000_000 {
             if gate.is_disabled() {
@@ -1791,11 +1937,30 @@ mod tests {
         assert!(gate.is_disabled());
         assert_eq!(gate.active_calls(), 1);
         drop(live);
-        prepare.join().unwrap();
+        prepared_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(gate.active_calls(), 0);
         assert!(gate.is_disabled());
-        barrier.finish(&gate).unwrap();
+        finish_tx.send(()).unwrap();
+        prepare.join().unwrap();
         assert!(!gate.is_disabled());
         assert!(gate.try_enter().is_some());
+    }
+
+    #[test]
+    fn fork_child_rebinds_inherited_owner_before_gate_reset() {
+        let barrier = ForkBarrier::new();
+        let child_identity = fork_barrier_identity().unwrap();
+        let inherited_parent_identity = foreign_owner_for(child_identity);
+        barrier
+            .owner
+            .store(inherited_parent_identity, Ordering::Release);
+
+        let rebound = barrier.rebind_child_owner().unwrap();
+        assert_eq!(rebound, child_identity);
+        assert_eq!(barrier.owner.load(Ordering::Acquire), child_identity);
+        barrier
+            .owner
+            .compare_exchange(child_identity, 0, Ordering::Release, Ordering::Relaxed)
+            .unwrap();
     }
 }

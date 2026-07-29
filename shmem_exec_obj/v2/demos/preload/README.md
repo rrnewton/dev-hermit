@@ -74,9 +74,17 @@ handlers serialize forks, disable and drain hook calls, then reset the exactly
 quiescent parent/child gates. A pre-admission PID epoch also detects a child
 whose fork snapshot omitted a concurrently registered shim callback; installed
 `READY` state is rebound without duplicate registration, while ambiguous
-`BUSY` state fails closed. Raw `fork` syscalls, `vfork`, and fork from inside
-this hook remain unsupported. A production shim needs an allocation-free early
-bootstrap or an explicit safe-point initializer before enabling its hooks.
+`BUSY` state fails closed. The fork barrier atomically publishes one packed,
+positive Linux PID/TID owner identity before changing the call gate. Distinct
+fork threads in one process serialize. A child callback rebinds the copied
+parent identity to its own PID/TID before resetting the gate; a nested prepare
+which interrupts before or after that rebind therefore fails stop instead of
+waiting on the only surviving thread. If an older third-party prepare callback
+recursively invokes libc `fork` on the owner thread, the nested shim prepare
+writes an allocation-free diagnostic and exits with status 125 immediately.
+Raw `fork` syscalls, `vfork`, and fork from inside this hook remain unsupported.
+A production shim needs an allocation-free early bootstrap or an explicit
+safe-point initializer before enabling its hooks.
 
 The DSO is linked with ELF `DF_1_NODELETE`. Every load path, including
 `LD_PRELOAD` and callers which omit `RTLD_NODELETE`, keeps its text, TLS, and
