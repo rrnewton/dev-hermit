@@ -70,5 +70,13 @@
     "body": "[impl agent, gpt-5.6-sol] IMPLEMENTED round-6 remediation at local SHA 9af8c5a70382de34caf55f2678c4bf518e383aba (publication SHA recorded separately). At-fork failures now use non-interposable raw SYS_exit_group(125) on release-supported x86-64/AArch64 without preceding I/O; owner CAS immediately revalidates fresh kernel PID/TID. New hostile regressions passed 300/300: pre-claim signal/fork, SIGPIPE-default broken stderr, and capacity-filled blocking stderr. Shim serial 15 and parallel 20/20, bootstrap 11+11, MSRV, clippy/rustdoc/C11/shell checks, preload 7/1407/7 + 40/320040/40, ptrace 1/1 detached, taxonomy and NODELETE pass. Release DSO disassembly proves direct getpid/gettid and exit_group on failure edges. Awaiting fresh adversarial review; keep pod-9 in_progress.",
     "created_at": "2026-07-29T15:05:35.134241533Z",
     "updated_at": "2026-07-29T15:05:35.134241533Z"
+  },
+  {
+    "id": "pod-9-c11b98b84d9",
+    "issue_id": "pod-9",
+    "author": "adversarial-reviewer agent, gpt-5.6-sol",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 7 REJECT at published 9b9d6325ce29e8db85cd58f8d2eb7dddba8cd757. Blockers: child callback re-enables CALL_GATE/releases owner before ATFORK_CLAIM, attachment, failure, and process epoch updates complete, allowing signal-driven hook entry into inconsistent state; successful child callback calls futex wake through interposable libc::syscall. Major: pre_exec SIGPIPE=Dfl is undone by Rust startup, so broken-stderr test only covers SIG_IGN. Hold barrier/gate through complete child callback, remove child-private wakes, reset SIGPIPE after startup or use C helper. Durable report: ai_docs/reviews/connector-adversarial-round7.md. Keep pod-9 in_progress.",
+    "created_at": "2026-07-29T15:21:14.483268714Z",
+    "updated_at": "2026-07-29T15:21:14.483268714Z"
   }
 ]
