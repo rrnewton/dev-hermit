@@ -3,9 +3,19 @@
 PKG_CONFIG ?= pkg-config
 PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 
-.PHONY: build build-hermit check-deps check-portability init-hermit install-deps clean distclean help
+.PHONY: build build-full build-hermit check-deps check-portability clean \
+	distclean doctor doctor-core doctor-full doctor-qemu help init-hermit \
+	install-deps install-deps-core install-deps-full install-deps-qemu
 
-build: check-deps build-hermit
+build: init-hermit
+	@$(MAKE) --no-print-directory doctor-core
+	@$(MAKE) --no-print-directory build-hermit
+
+# Build the default Hermit feature set, including the DBI backend. This is
+# intentionally separate from the lightweight ptrace/default demo build.
+build-full: init-hermit
+	@$(MAKE) --no-print-directory doctor-full
+	cd hermit && cargo build --release -p hermit --bin hermit
 
 # Wipe stale QEMU/Linux demo results (anchors, run history, snapshots) so the
 # next demo run starts fresh. distclean also removes the kernel download and
@@ -67,48 +77,43 @@ check-deps:
 check-portability:
 	@scripts/check-portable-paths.sh
 
-install-deps:
-	@set -eu; \
-	echo "WARNING: install-deps installs system packages and may invoke sudo."; \
-	if [ ! -r /etc/os-release ]; then \
-		echo "ERROR: cannot detect the operating system (/etc/os-release is missing)." >&2; \
-		exit 1; \
-	fi; \
-	. /etc/os-release; \
-	if [ "$$(id -u)" -eq 0 ]; then \
-		sudo_cmd=""; \
-	elif command -v sudo >/dev/null 2>&1; then \
-		sudo_cmd="sudo"; \
-	else \
-		echo "ERROR: sudo is required when make is not running as root." >&2; \
-		exit 1; \
-	fi; \
-	distro="$${ID:-} $${ID_LIKE:-}"; \
-	case "$$distro" in \
-		*debian*|*ubuntu*) \
-			$$sudo_cmd apt install -y \
-				libunwind-dev liblzma-dev pkg-config \
-			;; \
-		*rhel*|*fedora*|*centos*) \
-			if ! command -v dnf >/dev/null 2>&1; then \
-				echo "ERROR: dnf is required on CentOS/RHEL/Fedora." >&2; \
-				exit 1; \
-			fi; \
-			$$sudo_cmd dnf install -y \
-				libunwind-devel xz-devel pkgconf \
-			;; \
-		*) \
-			echo "ERROR: unsupported distribution: $${PRETTY_NAME:-unknown}." >&2; \
-			echo "Install pkg-config, libunwind-ptrace.pc, and liblzma.pc, then run make check-deps." >&2; \
-			exit 1 \
-			;; \
-	esac
-	@$(MAKE) --no-print-directory check-deps
+doctor:
+	@scripts/doctor.sh all
+
+doctor-core:
+	@scripts/doctor.sh core
+
+doctor-full:
+	@scripts/doctor.sh full
+
+doctor-qemu:
+	@scripts/doctor.sh qemu
+
+# Backwards-compatible alias: the historical install-deps target is the
+# lightweight core ptrace profile.
+install-deps: install-deps-core
+
+install-deps-core:
+	@scripts/install-deps.sh core
+	@$(MAKE) --no-print-directory doctor-core
+
+install-deps-full:
+	@scripts/install-deps.sh full
+	@$(MAKE) --no-print-directory doctor-full
+
+install-deps-qemu:
+	@scripts/install-deps.sh qemu
+	@$(MAKE) --no-print-directory doctor-qemu
 
 help:
-	@echo "make install-deps  Install native Hermit build dependencies"
-	@echo "make check-deps    Verify required pkg-config modules"
+	@echo "make install-deps[-core]  Install the lightweight ptrace profile"
+	@echo "make install-deps-full    Install core + DBI/CMake dependencies"
+	@echo "make install-deps-qemu    Install core + QEMU demo dependencies"
+	@echo "make doctor               Check every profile without modifying the host"
+	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
+	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
-	@echo "make / make build  Initialize and build Hermit in release mode"
+	@echo "make / make build         Build lightweight ptrace Hermit"
+	@echo "make build-full           Build default features including DBI"
 	@echo "make clean         Wipe stale QEMU/Linux demo results (fresh start)"
 	@echo "make distclean     Also remove the demo kernel download + initramfs"

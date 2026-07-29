@@ -23,6 +23,43 @@ git submodule update --init --recursive
 Read `AGENTS.md` and `WORKTREES.md` before creating a feature worktree. Do not
 develop in the primary `hermit/` or `reverie/` checkout.
 
+## Workspace dependency profiles
+
+The parent Makefile separates the lightweight ptrace build from optional
+full-backend and QEMU demo dependencies. Each installer may invoke `sudo` and
+is followed by the corresponding non-mutating doctor:
+
+```bash
+make install-deps-core   # compiler, native libraries, Rust, Python/GDB
+make install-deps-full   # core + CMake/Perl/Ninja for the default DBI feature
+make install-deps-qemu   # core + QEMU, qemu-img, and static BusyBox
+```
+
+On CentOS/RHEL, enable EPEL for the static `busybox` package. The distro QEMU
+binary may be `/usr/libexec/qemu-kvm` and BusyBox may be
+`/usr/sbin/busybox`; in that case export those paths as `QEMU_BIN` and
+`BUSYBOX` for `doctor-qemu` and the QEMU demos.
+
+`make install-deps` remains an alias for `install-deps-core`. Rust is managed
+by rustup rather than distro packages. If rustup is absent, install it from
+<https://rustup.rs>, reload the shell, and rerun the installer; it installs the
+channel selected by `hermit/rust-toolchain.toml` with rustfmt and Clippy.
+
+Run `make doctor` for one aggregated, zero-build report covering all profiles,
+or select `doctor-core`, `doctor-full`, or `doctor-qemu`. The doctor verifies
+the selected Rust nightly and components, compilers/native libraries, CMake and
+Perl, Python/GDB, QEMU/static BusyBox, user/PID namespaces, parent-child ptrace,
+seccomp, and PMU availability. PMU and Ninja are warnings because compilation
+does not require them; missing required tools or runtime capabilities fail the
+selected profile.
+
+Build the lightweight ptrace binary or the full default feature set with:
+
+```bash
+make                 # release Hermit without optional DBI dependencies
+make build-full      # release Hermit with default features, including DBI
+```
+
 ## Build Hermit directly
 
 For a standalone product checkout:
