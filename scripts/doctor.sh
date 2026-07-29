@@ -72,8 +72,16 @@ check_core() {
   require_command make "install make/build-essential"
   require_command gcc "install GCC/build-essential"
   require_command g++ "install G++/build-essential"
+  require_command clang "install Clang with make install-deps-core"
+  if [ -x /usr/bin/clang ]; then
+    pass "Rust linker:clang" "/usr/bin/clang"
+  else
+    fail_check "Rust linker:clang" "install /usr/bin/clang with make install-deps-core"
+  fi
   require_command curl "install curl (needed for rustup and public assets)"
+  require_command lua "install Lua with make install-deps-core"
   require_command python3 "install Python 3"
+  require_command ruby "install Ruby with make install-deps-core"
 
   pkg_config="$(find_command pkg-config)"
   [ -n "$pkg_config" ] || pkg_config="$(find_command pkgconf)"

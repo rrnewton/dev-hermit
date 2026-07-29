@@ -30,7 +30,7 @@ packages=()
 case "$distro" in
   *debian*|*ubuntu*)
     manager=apt-get
-    packages=(build-essential git curl python3 gdb pkg-config libunwind-dev liblzma-dev)
+    packages=(build-essential clang git curl lua5.4 python3 ruby gdb pkg-config libunwind-dev liblzma-dev)
     if [ "$PROFILE" = full ]; then
       packages+=(cmake ninja-build perl)
     elif [ "$PROFILE" = qemu ]; then
@@ -39,7 +39,7 @@ case "$distro" in
     ;;
   *rhel*|*fedora*|*centos*)
     manager=dnf
-    packages=(gcc gcc-c++ git curl make python3 gdb libunwind-devel xz-devel pkgconf)
+    packages=(gcc gcc-c++ clang git curl lua make python3 ruby gdb libunwind-devel xz-devel pkgconf)
     if [ "$PROFILE" = full ]; then
       packages+=(cmake ninja-build perl)
     elif [ "$PROFILE" = qemu ]; then
