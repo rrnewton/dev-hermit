@@ -111,8 +111,9 @@ Each successful run creates one self-contained, run-owned bundle:
   successful Cargo compilation. `provenance/vendor-manifest.tsv` binds every
   vendored file's type, mode, size, and digest, and is revalidated through
   completion.
-- `provenance/rust-sysroot/` retains the selected `rustc`, compiler support
-  libraries, target libraries, and `rust-lld` actually used by every build.
+- `provenance/rust-sysroot/` retains the selected Cargo and `rustc` binaries,
+  compiler support libraries, target libraries, and `rust-lld` actually used
+  by every build.
   `provenance/rust-sysroot-manifest.tsv` binds every retained file and is
   revalidated throughout the run.
 - `bundle-inventory.tsv` records the type, exact mode, size, SHA-256, and
@@ -166,7 +167,7 @@ is included in the bundle inventory and completion bindings.
 
 This is hermetic against inherited build variables, Cargo configuration, and
 mutable registry-source discovery; it is not a relocatable Linux container
-image. The selected Rust compiler and its Rust target sysroot are copied,
+image. The selected Cargo, Rust compiler, and Rust target sysroot are copied,
 manifested, made read-only, and executed from the bundle. The GCC driver,
 system startup objects, dynamic loader, host shared libraries, rustup selector,
 C library/sysroot, and kernel remain host inputs. Their observed

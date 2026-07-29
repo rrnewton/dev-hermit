@@ -336,7 +336,8 @@ verify_vendor_stable() {
 retain_rust_sysroot() {
   local source=$1
   local destination=$2
-  local paths before copied after symlink
+  local cargo_source=$3
+  local paths before copied after symlink cargo_before cargo_copied cargo_after
   paths="$temporary/rust-sysroot-paths.z"
   before="$temporary/rust-sysroot-source-before.tsv"
   copied="$temporary/rust-sysroot-copy.tsv"
@@ -344,6 +345,10 @@ retain_rust_sysroot() {
 
   if [[ ! -f $source/bin/rustc || -L $source/bin/rustc ]]; then
     echo "selected Rust sysroot lacks a regular bin/rustc: $source" >&2
+    return 1
+  fi
+  if [[ ! -f $cargo_source || -L $cargo_source ]]; then
+    echo "selected Cargo is not a regular file: $cargo_source" >&2
     return 1
   fi
   symlink=$(find "$source/lib" -type l -print -quit)
@@ -356,13 +361,18 @@ retain_rust_sysroot() {
     (cd "$source" && find lib -type f -printf '%P\0' | sed -z 's!^!lib/!' | LC_ALL=C sort -z)
   } >"$paths"
   write_manifest_from_paths "$source" "$paths" "$before"
+  cargo_before="$(stat -c '%a:%s' -- "$cargo_source"):$(sha256sum "$cargo_source" | awk '{print $1}')"
 
   mkdir -p "$destination/bin"
   cp -a --reflink=auto -- "$source/bin/rustc" "$destination/bin/rustc"
+  cp -a --reflink=auto -- "$cargo_source" "$destination/bin/cargo"
   cp -a --reflink=auto -- "$source/lib" "$destination/lib"
   write_manifest_from_paths "$destination" "$paths" "$copied"
   write_manifest_from_paths "$source" "$paths" "$after"
-  if ! cmp -s -- "$before" "$copied" || ! cmp -s -- "$before" "$after"; then
+  cargo_copied="$(stat -c '%a:%s' -- "$destination/bin/cargo"):$(sha256sum "$destination/bin/cargo" | awk '{print $1}')"
+  cargo_after="$(stat -c '%a:%s' -- "$cargo_source"):$(sha256sum "$cargo_source" | awk '{print $1}')"
+  if ! cmp -s -- "$before" "$copied" || ! cmp -s -- "$before" "$after" ||
+     ! [[ $cargo_before == "$cargo_copied" && $cargo_before == "$cargo_after" ]]; then
     echo "selected Rust sysroot changed or was copied inconsistently" >&2
     diff -u -- "$before" "$copied" >&2 || true
     diff -u -- "$before" "$after" >&2 || true
@@ -921,6 +931,8 @@ write_canonical_environment() {
     --arg cargo_launcher_sha256 "$cargo_launcher_sha256" \
     --arg cargo_path "$cargo_path" \
     --arg cargo_sha256 "$cargo_sha256" \
+    --arg selected_cargo_path "$selected_cargo_path" \
+    --arg selected_cargo_sha256 "$selected_cargo_sha256" \
     --arg pod_rustc "$SHMEM_POD_BENCH_POD_RUSTC_VERSION" \
     --arg rustup_toolchain "$rustup_toolchain" \
     --arg env_path "$env_path" \
@@ -1053,6 +1065,8 @@ write_canonical_environment() {
         cargo_launcher_sha256: $cargo_launcher_sha256,
         cargo_path: $cargo_path,
         cargo_sha256: $cargo_sha256,
+        selected_cargo_path: $selected_cargo_path,
+        selected_cargo_sha256: $selected_cargo_sha256,
         pod_rustc: $pod_rustc
       },
       build_environment: {
@@ -1547,8 +1561,9 @@ host_as_path=$(resolve_program as)
 rustc_launcher_sha256=$(sha256sum "$rustc_launcher_path" | awk '{print $1}')
 cargo_launcher_sha256=$(sha256sum "$cargo_launcher_path" | awk '{print $1}')
 selected_rustc_path=$rustc_path
+selected_cargo_path=$cargo_path
 selected_rustc_sha256=$(sha256sum "$selected_rustc_path" | awk '{print $1}')
-cargo_sha256=$(sha256sum "$cargo_path" | awk '{print $1}')
+selected_cargo_sha256=$(sha256sum "$selected_cargo_path" | awk '{print $1}')
 env_sha256=$(sha256sum "$env_path" | awk '{print $1}')
 timeout_sha256=$(sha256sum "$timeout_path" | awk '{print $1}')
 uname_sha256=$(sha256sum "$uname_path" | awk '{print $1}')
@@ -1587,9 +1602,11 @@ fi
 echo "retaining exact Rust compiler and sysroot inputs"
 retained_rust_sysroot="$provenance_dir/rust-sysroot"
 mkdir "$retained_rust_sysroot"
-retain_rust_sysroot "$selected_rust_sysroot" "$retained_rust_sysroot"
+retain_rust_sysroot "$selected_rust_sysroot" "$retained_rust_sysroot" "$selected_cargo_path"
 rustc_path="$retained_rust_sysroot/bin/rustc"
+cargo_path="$retained_rust_sysroot/bin/cargo"
 rustc_sha256=$(sha256sum "$rustc_path" | awk '{print $1}')
+cargo_sha256=$(sha256sum "$cargo_path" | awk '{print $1}')
 
 hermetic_env=(
   "HOME=$build_home"
