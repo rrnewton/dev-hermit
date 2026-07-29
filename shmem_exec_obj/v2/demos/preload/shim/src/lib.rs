@@ -52,6 +52,9 @@ static CALL_GATE: AdapterCallGate = AdapterCallGate::new();
 static FORK_BARRIER: ForkBarrier = ForkBarrier::new();
 static CONTEXT: ContextCell = ContextCell(UnsafeCell::new(MaybeUninit::uninit()));
 
+#[cfg(test)]
+static TEST_PRE_CLAIM_SIGNAL_CUT: AtomicBool = AtomicBool::new(false);
+
 thread_local! {
     // High bit means this thread is in the hook; low bits cache its PID. PID
     // mismatch clears inherited TLS automatically after fork.
@@ -146,31 +149,25 @@ impl ForkBarrier {
     fn prepare(&self, gate: &AdapterCallGate) {
         let identity = match fork_barrier_identity() {
             Some(identity) => identity,
-            None => {
-                fork_barrier_fail_stop(
-                    b"shmem-pod injected adapter: invalid process/thread identity in at-fork prepare\n",
-                );
-            }
+            None => atfork_fail_stop(),
         };
         let pid = fork_barrier_pid(identity);
+
+        // Test-only fault injection delivers a signal in the exact window
+        // which used to let a nested fork child retain this cached identity.
+        fork_barrier_pre_claim_test_cut();
 
         let mut observed = self.owner.load(Ordering::Acquire);
         loop {
             if observed == identity {
-                fork_barrier_fail_stop(
-                    b"shmem-pod injected adapter: nested libc fork on at-fork owner thread\n",
-                );
+                atfork_fail_stop();
             }
             if observed != 0 && (fork_barrier_pid(observed) == 0 || fork_barrier_tid(observed) == 0)
             {
-                fork_barrier_fail_stop(
-                    b"shmem-pod injected adapter: corrupt at-fork barrier owner\n",
-                );
+                atfork_fail_stop();
             }
             if observed != 0 && fork_barrier_pid(observed) != pid {
-                fork_barrier_fail_stop(
-                    b"shmem-pod injected adapter: inherited at-fork barrier owner\n",
-                );
+                atfork_fail_stop();
             }
             if observed == 0 {
                 match self.owner.compare_exchange_weak(
@@ -179,7 +176,17 @@ impl ForkBarrier {
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 ) {
-                    Ok(_) => break,
+                    Ok(_) => {
+                        // A signal handler can fork after `identity` was read
+                        // but before this CAS. Its nested child resumes here
+                        // with the parent's cached identity and a private zero
+                        // owner. Re-read both kernel identities immediately
+                        // after publication and before touching the call gate.
+                        if fork_barrier_identity() != Some(identity) {
+                            atfork_fail_stop();
+                        }
+                        break;
+                    }
                     Err(current) => observed = current,
                 }
                 continue;
@@ -283,9 +290,69 @@ fn fork_barrier_tid(identity: u64) -> u32 {
     identity as u32
 }
 
-fn fork_barrier_fail_stop(message: &'static [u8]) -> ! {
-    raw_write(message);
-    unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+fn atfork_fail_stop() -> ! {
+    // File descriptor 2 is hostile process state: it can be a broken pipe or
+    // a full blocking pipe. An at-fork callback must not touch it before the
+    // one bounded failure action available here.
+    raw_exit_group(FAILURE_EXIT_CODE)
+}
+
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_pointer_width = "64"
+))]
+#[inline]
+fn raw_exit_group(status: libc::c_int) -> ! {
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") libc::SYS_exit_group,
+            in("rdi") status,
+            options(noreturn, nostack),
+        )
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[inline]
+fn raw_exit_group(status: libc::c_int) -> ! {
+    unsafe {
+        core::arch::asm!(
+            "svc 0",
+            in("x0") status as usize,
+            in("x8") libc::SYS_exit_group as usize,
+            options(noreturn, nostack),
+        )
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    not(any(
+        all(target_arch = "x86_64", target_pointer_width = "64"),
+        target_arch = "aarch64"
+    ))
+))]
+#[inline]
+fn raw_exit_group(status: libc::c_int) -> ! {
+    // The shim is not release-supported on this fallback set. In particular,
+    // libc `_exit` may be interposed, so it does not carry the bounded at-fork
+    // fail-stop guarantee documented for x86-64 and AArch64 Linux.
+    unsafe { libc::_exit(status) }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn fork_barrier_pre_claim_test_cut() {}
+
+#[cfg(test)]
+fn fork_barrier_pre_claim_test_cut() {
+    if TEST_PRE_CLAIM_SIGNAL_CUT.swap(false, Ordering::AcqRel)
+        && unsafe { libc::raise(libc::SIGUSR1) } != 0
+    {
+        raw_exit_group(96)
+    }
 }
 
 impl<'a> InitClaim<'a> {
@@ -1429,14 +1496,67 @@ fn raw_getuid() -> libc::uid_t {
     unsafe { libc::syscall(libc::SYS_getuid) as libc::uid_t }
 }
 
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_pointer_width = "64"
+))]
+#[inline]
+fn raw_identity_syscall(number: libc::c_long) -> libc::pid_t {
+    // Keep the at-fork identity boundary independent of interposable libc
+    // state on the two Linux architectures for which this path is audited.
+    let mut result = number as usize;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") result,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result as libc::pid_t
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[inline]
+fn raw_identity_syscall(number: libc::c_long) -> libc::pid_t {
+    // Keep the at-fork identity boundary independent of interposable libc
+    // state on the two Linux architectures for which this path is audited.
+    let mut result = 0_usize;
+    unsafe {
+        core::arch::asm!(
+            "svc 0",
+            inlateout("x0") result,
+            in("x8") number as usize,
+            options(nostack),
+        );
+    }
+    result as libc::pid_t
+}
+
+#[cfg(all(
+    target_os = "linux",
+    not(any(
+        all(target_arch = "x86_64", target_pointer_width = "64"),
+        target_arch = "aarch64"
+    ))
+))]
+#[inline]
+fn raw_identity_syscall(number: libc::c_long) -> libc::pid_t {
+    // Other Linux targets are compile-time fallbacks, not release-tested
+    // connector targets; docs/support.md records that narrower evidence.
+    unsafe { libc::syscall(number) as libc::pid_t }
+}
+
 #[inline]
 fn raw_getpid() -> libc::pid_t {
-    unsafe { libc::syscall(libc::SYS_getpid) as libc::pid_t }
+    raw_identity_syscall(libc::SYS_getpid)
 }
 
 #[inline]
 fn raw_gettid() -> libc::pid_t {
-    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+    raw_identity_syscall(libc::SYS_gettid)
 }
 
 unsafe extern "C" fn atfork_child() {
@@ -1444,17 +1564,13 @@ unsafe extern "C" fn atfork_child() {
     let pid = raw_getpid();
     let pid_word = match u32::try_from(pid) {
         Ok(pid @ 1..=ATFORK_MAX_OWNER_PID) => pid,
-        _ => {
-            raw_write(b"shmem-pod injected adapter: child PID does not fit claim\n");
-            unsafe { libc::_exit(FAILURE_EXIT_CODE) }
-        }
+        _ => atfork_fail_stop(),
     };
     let registration = ATFORK_CLAIM.load(Ordering::Acquire);
     if !matches!(atfork_state(registration), INIT_BUSY | INIT_READY)
         || atfork_owner_pid(registration) == 0
     {
-        raw_write(b"shmem-pod injected adapter: corrupt child at-fork claim\n");
-        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+        atfork_fail_stop();
     }
     // Running this callback proves that pthread_atfork installed the handler
     // before this fork's callback snapshot. It may therefore promote either a
@@ -1468,8 +1584,7 @@ unsafe extern "C" fn atfork_child() {
     if INIT_STATE.load(Ordering::Acquire) == INIT_BUSY {
         INIT_STATE.store(INIT_FAILED, Ordering::Release);
         FAIL_CLOSED.store(true, Ordering::Release);
-        raw_write(b"shmem-pod injected adapter: copied busy initializer across fork\n");
-        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+        atfork_fail_stop();
     }
     FAILURE_REPORTED.store(false, Ordering::Release);
     PROCESS_EPOCH.store(pid, Ordering::Release);
@@ -1490,16 +1605,14 @@ unsafe extern "C" fn atfork_parent() {
 fn finish_fork_barrier_parent() {
     if FORK_BARRIER.finish_parent(&CALL_GATE).is_err() {
         FAIL_CLOSED.store(true, Ordering::Release);
-        raw_write(b"shmem-pod injected adapter: corrupt parent at-fork gate state\n");
-        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+        atfork_fail_stop();
     }
 }
 
 fn finish_fork_barrier_child() {
     if FORK_BARRIER.finish_child(&CALL_GATE).is_err() {
         FAIL_CLOSED.store(true, Ordering::Release);
-        raw_write(b"shmem-pod injected adapter: corrupt child at-fork gate state\n");
-        unsafe { libc::_exit(FAILURE_EXIT_CODE) }
+        atfork_fail_stop();
     }
 }
 
@@ -1615,9 +1728,9 @@ pub extern "C" fn shmem_pod_adapter_abi_version_v1() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
-    use std::process::Command;
-    use std::process::Stdio;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
     use std::sync::Arc;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -1625,8 +1738,11 @@ mod tests {
     static THIRD_PARTY_PREPARE_ENTERED: AtomicBool = AtomicBool::new(false);
     static THIRD_PARTY_PREPARE_RELEASE: AtomicBool = AtomicBool::new(false);
     static NESTED_FORK_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+    static PRE_CLAIM_NESTED_CHILD_PID: AtomicI32 = AtomicI32::new(0);
     const NESTED_FORK_HELPER_ENV: &str = "SHMEM_POD_NESTED_FORK_HELPER";
     const FOREIGN_OWNER_HELPER_ENV: &str = "SHMEM_POD_FOREIGN_OWNER_HELPER";
+    const PRE_CLAIM_SIGNAL_HELPER_ENV: &str = "SHMEM_POD_PRE_CLAIM_SIGNAL_HELPER";
+    const SNAPSHOT_RECOVERY_HELPER_ENV: &str = "SHMEM_POD_SNAPSHOT_RECOVERY_HELPER";
 
     fn foreign_owner_for(identity: u64) -> u64 {
         let pid = fork_barrier_pid(identity);
@@ -1634,16 +1750,30 @@ mod tests {
         (u64::from(foreign_pid) << 32) | u64::from(fork_barrier_tid(identity))
     }
 
-    fn assert_fail_stop_helper(test_name: &str, environment: &str, expected: &str) {
+    fn spawn_helper(test_name: &str, environment: &str, stderr: Stdio) -> Child {
         let executable = std::env::current_exe().expect("resolve test executable");
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        command
             .arg("--exact")
             .arg(test_name)
             .arg("--nocapture")
             .env(environment, "1")
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn fail-stop helper");
+            .stderr(stderr);
+        // A pre-exec write to a broken stderr must terminate the helper. Rust
+        // processes normally ignore SIGPIPE, so restore the process default
+        // to make this regression sensitive to any accidental diagnostic.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::signal(libc::SIGPIPE, libc::SIG_DFL) == libc::SIG_ERR {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        command.spawn().expect("spawn isolated connector helper")
+    }
+
+    fn assert_helper_exit(mut child: Child, expected: i32, purpose: &str) {
         let deadline = Instant::now() + Duration::from_secs(3);
         let status = loop {
             if let Some(status) = child.try_wait().expect("poll fail-stop helper") {
@@ -1652,25 +1782,87 @@ mod tests {
             if Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("fail-stop helper hung in at-fork prepare");
+                panic!("{purpose} helper did not terminate promptly");
             }
             std::thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(
             status.code(),
-            Some(FAILURE_EXIT_CODE),
-            "at-fork violation must fail stop with the adapter status"
+            Some(expected),
+            "{purpose} helper returned the wrong status: {status}"
         );
-        let mut diagnostic = String::new();
-        child
-            .stderr
-            .take()
-            .expect("capture fail-stop helper stderr")
-            .read_to_string(&mut diagnostic)
-            .expect("read fail-stop helper stderr");
-        assert!(
-            diagnostic.contains(expected),
-            "at-fork violation must report {expected:?}: {diagnostic:?}"
+    }
+
+    fn assert_fail_stop_helper(test_name: &str, environment: &str) {
+        let child = spawn_helper(test_name, environment, Stdio::null());
+        assert_helper_exit(child, FAILURE_EXIT_CODE, "at-fork fail-stop");
+    }
+
+    fn pipe_pair() -> (OwnedFd, OwnedFd) {
+        let mut descriptors = [-1; 2];
+        assert_eq!(
+            unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) },
+            0,
+            "create hostile stderr pipe: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: pipe2 initialized two distinct owned descriptors.
+        unsafe {
+            (
+                OwnedFd::from_raw_fd(descriptors[0]),
+                OwnedFd::from_raw_fd(descriptors[1]),
+            )
+        }
+    }
+
+    fn fill_pipe(write_end: &OwnedFd) {
+        let descriptor = write_end.as_raw_fd();
+        let capacity = unsafe { libc::fcntl(descriptor, libc::F_GETPIPE_SZ) };
+        assert!(capacity > 0, "query pipe capacity");
+        let original_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+        assert!(original_flags >= 0, "query pipe flags");
+        assert_eq!(original_flags & libc::O_NONBLOCK, 0);
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_SETFL, original_flags | libc::O_NONBLOCK,) },
+            0,
+            "make pipe nonblocking while filling"
+        );
+
+        let bytes = [0_u8; 4096];
+        let mut filled = 0_usize;
+        while filled < capacity as usize {
+            let requested = (capacity as usize - filled).min(bytes.len());
+            let result = unsafe { libc::write(descriptor, bytes.as_ptr().cast(), requested) };
+            if result > 0 {
+                filled += result as usize;
+            } else if result < 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+            {
+                continue;
+            } else {
+                panic!(
+                    "fill hostile stderr pipe at {filled}/{capacity}: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        assert_eq!(filled, capacity as usize);
+        let probe = unsafe { libc::write(descriptor, bytes.as_ptr().cast(), 1) };
+        assert_eq!(probe, -1, "full pipe unexpectedly accepted another byte");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EAGAIN),
+            "full nonblocking pipe did not report EAGAIN"
+        );
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_SETFL, original_flags) },
+            0,
+            "restore blocking pipe mode"
+        );
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_GETFL) } & libc::O_NONBLOCK,
+            0,
+            "hostile stderr pipe must block"
         );
     }
 
@@ -1687,7 +1879,17 @@ mod tests {
             // its barrier. The nested prepare must fail stop before fork can
             // return. Any return is an explicit regression failure.
             let _ = unsafe { libc::fork() };
-            unsafe { libc::_exit(92) }
+            raw_exit_group(92)
+        }
+    }
+
+    unsafe extern "C" fn pre_claim_signal_handler(_signal: libc::c_int) {
+        let nested_child = unsafe { libc::fork() };
+        if nested_child < 0 {
+            raw_exit_group(97)
+        }
+        if nested_child > 0 {
+            PRE_CLAIM_NESTED_CHILD_PID.store(nested_child, Ordering::Release);
         }
     }
 
@@ -1695,7 +1897,7 @@ mod tests {
     fn older_prepare_nested_libc_fork_fails_stop_without_hanging() {
         if std::env::var_os(NESTED_FORK_HELPER_ENV).is_some() {
             if ATFORK_CLAIM.load(Ordering::Acquire) != INIT_EMPTY {
-                unsafe { libc::_exit(93) }
+                raw_exit_group(93)
             }
             assert!(ensure_process_epoch().is_ok());
             assert_eq!(
@@ -1707,13 +1909,12 @@ mod tests {
             // Prepare callbacks run in reverse registration order: the shim
             // owns its barrier before the older handler attempts this fork.
             let _ = unsafe { libc::fork() };
-            unsafe { libc::_exit(94) }
+            raw_exit_group(94)
         }
 
         assert_fail_stop_helper(
             "tests::older_prepare_nested_libc_fork_fails_stop_without_hanging",
             NESTED_FORK_HELPER_ENV,
-            "nested libc fork on at-fork owner thread",
         );
     }
 
@@ -1725,18 +1926,121 @@ mod tests {
                 .owner
                 .store(foreign_owner_for(identity), Ordering::Release);
             FORK_BARRIER.prepare(&CALL_GATE);
-            unsafe { libc::_exit(95) }
+            raw_exit_group(95)
         }
 
         assert_fail_stop_helper(
             "tests::copied_foreign_owner_fails_stop_without_hanging",
             FOREIGN_OWNER_HELPER_ENV,
-            "inherited at-fork barrier owner",
         );
     }
 
     #[test]
+    fn atfork_fail_stop_does_not_write_to_broken_stderr() {
+        let (read_end, write_end) = pipe_pair();
+        drop(read_end);
+        let child = spawn_helper(
+            "tests::copied_foreign_owner_fails_stop_without_hanging",
+            FOREIGN_OWNER_HELPER_ENV,
+            Stdio::from(write_end),
+        );
+        assert_helper_exit(
+            child,
+            FAILURE_EXIT_CODE,
+            "at-fork fail-stop with broken stderr",
+        );
+    }
+
+    #[test]
+    fn atfork_fail_stop_does_not_block_on_full_stderr() {
+        let (read_end, write_end) = pipe_pair();
+        fill_pipe(&write_end);
+        let child = spawn_helper(
+            "tests::copied_foreign_owner_fails_stop_without_hanging",
+            FOREIGN_OWNER_HELPER_ENV,
+            Stdio::from(write_end),
+        );
+        assert_helper_exit(
+            child,
+            FAILURE_EXIT_CODE,
+            "at-fork fail-stop with full blocking stderr",
+        );
+        drop(read_end);
+    }
+
+    #[test]
+    fn pre_claim_signal_fork_child_cannot_resume_outer_fork() {
+        if std::env::var_os(PRE_CLAIM_SIGNAL_HELPER_ENV).is_some() {
+            assert_eq!(ATFORK_CLAIM.load(Ordering::Acquire), INIT_EMPTY);
+            assert!(ensure_process_epoch().is_ok());
+            assert!(ensure_atfork_registered().is_ok());
+
+            let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+            action.sa_sigaction = pre_claim_signal_handler as *const () as usize;
+            assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+            action.sa_flags = libc::SA_RESTART;
+            assert_eq!(
+                unsafe { libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()) },
+                0
+            );
+
+            PRE_CLAIM_NESTED_CHILD_PID.store(0, Ordering::Release);
+            TEST_PRE_CLAIM_SIGNAL_CUT.store(true, Ordering::Release);
+            let ordinary_child = unsafe { libc::fork() };
+            if ordinary_child == 0 {
+                raw_exit_group(0)
+            }
+            assert!(ordinary_child > 0, "outer fork failed");
+
+            let nested_child = PRE_CLAIM_NESTED_CHILD_PID.load(Ordering::Acquire);
+            assert!(
+                nested_child > 0,
+                "signal handler did not create nested child"
+            );
+            assert_ne!(nested_child, ordinary_child);
+
+            let mut nested_status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(nested_child, &mut nested_status, 0) },
+                nested_child
+            );
+            assert!(libc::WIFEXITED(nested_status));
+            assert_eq!(
+                libc::WEXITSTATUS(nested_status),
+                FAILURE_EXIT_CODE,
+                "nested child resumed the outer prepare with a stale identity"
+            );
+
+            let mut ordinary_status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(ordinary_child, &mut ordinary_status, 0) },
+                ordinary_child
+            );
+            assert!(libc::WIFEXITED(ordinary_status));
+            assert_eq!(libc::WEXITSTATUS(ordinary_status), 0);
+            return;
+        }
+
+        let child = spawn_helper(
+            "tests::pre_claim_signal_fork_child_cannot_resume_outer_fork",
+            PRE_CLAIM_SIGNAL_HELPER_ENV,
+            Stdio::null(),
+        );
+        assert_helper_exit(child, 0, "pre-claim signal/fork regression");
+    }
+
+    #[test]
     fn registration_added_after_fork_snapshot_recovers_child_epoch() {
+        if std::env::var_os(SNAPSHOT_RECOVERY_HELPER_ENV).is_none() {
+            let child = spawn_helper(
+                "tests::registration_added_after_fork_snapshot_recovers_child_epoch",
+                SNAPSHOT_RECOVERY_HELPER_ENV,
+                Stdio::null(),
+            );
+            assert_helper_exit(child, 0, "skipped-callback snapshot recovery");
+            return;
+        }
+
         assert_eq!(ATFORK_CLAIM.load(Ordering::Acquire), INIT_EMPTY);
         assert!(ensure_process_epoch().is_ok());
         let parent_pid = raw_getpid();
@@ -1759,7 +2063,7 @@ mod tests {
                     && !CALL_GATE.is_disabled()
                     && atfork_state(registration) == INIT_READY
                     && atfork_owner_pid(registration) == child_pid as u32;
-                unsafe { libc::_exit(if valid { 0 } else { 90 }) }
+                raw_exit_group(if valid { 0 } else { 90 })
             }
             forked_tx.send(fork_result).unwrap();
         });
@@ -1820,7 +2124,7 @@ mod tests {
             let valid = rejected
                 && PROCESS_EPOCH.load(Ordering::Acquire) == PROCESS_EPOCH_FAILED
                 && ATFORK_CLAIM.load(Ordering::Acquire) == inherited_busy;
-            unsafe { libc::_exit(if valid { 0 } else { 91 }) }
+            raw_exit_group(if valid { 0 } else { 91 })
         }
         assert!(ambiguous_child > 0);
         let mut ambiguous_status = 0;

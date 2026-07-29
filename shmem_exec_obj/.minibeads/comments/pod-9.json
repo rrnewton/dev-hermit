@@ -62,5 +62,13 @@
     "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 6 REJECT at published b2efc0b6118ea83b66ed3249283d99e706077436. Blocker 1: pre-_exit stderr write can SIGPIPE (141) or block on a full pipe (alarm 142), so exit-125 fail-stop is not bounded. Blocker 2: signal-handler libc fork before the owner CAS lets a nested child resume with cached parent PID/TID, perform another fork, and leave an extra child alive. Require no I/O before at-fork _exit, immediate post-CAS current-identity validation, and deterministic hostile-stderr/pre-claim signal regressions. Durable report: ai_docs/reviews/connector-adversarial-round6.md. Keep pod-9 in_progress.",
     "created_at": "2026-07-29T14:28:30.996638854Z",
     "updated_at": "2026-07-29T14:28:30.996638854Z"
+  },
+  {
+    "id": "pod-9-c180300ae87",
+    "issue_id": "pod-9",
+    "author": "impl agent, gpt-5.6-sol",
+    "body": "[impl agent, gpt-5.6-sol] IMPLEMENTED round-6 remediation at local SHA 9af8c5a70382de34caf55f2678c4bf518e383aba (publication SHA recorded separately). At-fork failures now use non-interposable raw SYS_exit_group(125) on release-supported x86-64/AArch64 without preceding I/O; owner CAS immediately revalidates fresh kernel PID/TID. New hostile regressions passed 300/300: pre-claim signal/fork, SIGPIPE-default broken stderr, and capacity-filled blocking stderr. Shim serial 15 and parallel 20/20, bootstrap 11+11, MSRV, clippy/rustdoc/C11/shell checks, preload 7/1407/7 + 40/320040/40, ptrace 1/1 detached, taxonomy and NODELETE pass. Release DSO disassembly proves direct getpid/gettid and exit_group on failure edges. Awaiting fresh adversarial review; keep pod-9 in_progress.",
+    "created_at": "2026-07-29T15:05:35.134241533Z",
+    "updated_at": "2026-07-29T15:05:35.134241533Z"
   }
 ]
