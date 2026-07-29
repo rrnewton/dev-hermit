@@ -35,10 +35,14 @@ is the operational summary of the coordinator role.
 - **Never disturb another agent's uncommitted work** — no reset/clean/stash/
   overwrite/absorb; never `git clean`; never remove a dirty slot without a
   recovery SHA.
-- **Landing:** `human-review` label and draft status are NOT landing blockers;
-  land green PRs (authoritative gate green) via post-facto label + role-tagged
-  comment + `gh pr merge --squash --admin`. Never force-push shared branches or
-  `main`. Bot issues only on `rrnewton` forks, never `facebookexperimental`.
+- **Landing:** human-owner review and draft status are not landing blockers;
+  after required adversarial review and the authoritative gate are green, add
+  the single `post-facto-human-review` label, post a role-tagged evidence
+  comment, and land the authorized PR. Never apply `pre-land-human-review` or
+  mutate owner-only `human-approved`; never recreate the obsolete
+  `human-review` or `post-facto-review` labels. Never force-push shared branches
+  or `main`. Bot issues only on `rrnewton` forks, never
+  `facebookexperimental`.
 - **Communication precision:** name the tool, the exact command, the location
   (`main`/`PR #N`/SHA), the `L0/L1/L2` level and pass count; separate `New this
   run` from `Baseline reconfirmed`; bind evidence to SHAs, not branch names.

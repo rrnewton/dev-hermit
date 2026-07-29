@@ -93,8 +93,8 @@ export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
     await orc.sendWakeup(
       [],
       "PR health heartbeat",
-      "Run " + PR_STATUS_COMMAND + ". Review human-review blockers, CI failures, " +
-        "and the free-to-land backlog before opening more PRs.",
+      "Run " + PR_STATUS_COMMAND + ". Review post-facto-human-review follow-ups, " +
+        "CI failures, and the free-to-land backlog before opening more PRs.",
     );
   });
 }

@@ -35,13 +35,14 @@ integration starts clean.
 - **Know the real gates.** Hermit: `Regular tests (GitHub-hosted)` (authoritative
   after the CI split); `PMU and CPUID (self-hosted)` non-blocking (main
   unprotected); `merge-gate` is a re-fire placeholder. Reverie: `Regular tests`
-  + `Host-dependent tests` both SUCCESS. `human-review` label and draft status
+  + `Host-dependent tests` both SUCCESS. Human-owner review and draft status
   are NOT blockers. Never land on `mergeStateStatus=UNKNOWN` (re-poll) or
   `DIRTY` (conflict — needs owner rebase).
-- **Post-facto landing protocol:** add `post-facto-review` label, post a
+- **Post-facto landing protocol:** add only `post-facto-human-review`, post a
   `[coordinator, <model>]` / role-tagged comment stating the gate evidence, then
-  squash-merge with `--admin`. Record the **merge commit SHA** and confirm it is
-  reachable from `origin/main`.
+  squash-merge with `--admin`. Never apply `pre-land-human-review` or mutate
+  owner-only `human-approved`. Record the **merge commit SHA** and confirm it
+  is reachable from `origin/main`.
 - **Cross-repo ordering:** land the lower-level Reverie dependency first, then
   validate and land the dependent Hermit PR against that exact SHA.
 - **Landing ≠ closing.** Report the landed SHA; the coordinator closes the task.

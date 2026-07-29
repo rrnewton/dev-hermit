@@ -1,9 +1,14 @@
 ---
 name: human-review-first
-description: "Gate key Hermit changes on adversarial review and explicit human approval. Use only when the user explicitly requests human-review-first mode."
+description: "Archived historical pre-land protocol; never activate under the canonical post-facto policy."
 ---
 
 # Human-Review-First Mode
+
+> **ARCHIVED AND RETIRED.** This document preserves the former pre-land
+> protocol for historical context only. It is not an activation path. Under
+> the canonical policy, never apply `pre-land-human-review`; follow
+> [post-facto-review](../../skills/post-facto-review.md) instead.
 
 ## PR Comment Convention
 
@@ -21,22 +26,19 @@ Examples: `[impl agent, gpt-5.6-sol]`,
 A landing discipline for autonomous multi-agent work in which **no KEY
 change reaches `main` until a human has approved it.** (Key changes
 defined below.) This is the *cautious* counterpart to
-[post-facto-review](../../skills/post-facto-review/SKILL.md), which is the
+[post-facto-review](../../skills/post-facto-review.md), which is the
 currently-active default.
 
-> **Status: OFF by default.** This mode is dormant institutional knowledge.
-> Only activate it when a human explicitly asks for it (see below). While it is
-> off, the repository runs under [post-facto-review](../../skills/post-facto-review/SKILL.md).
+> **Historical status: retired.** The repository runs only under
+> [post-facto-review](../../skills/post-facto-review.md).
 
-## When to activate
+## Former activation rule (retired)
 
-Activate **only** when the user explicitly says something equivalent to
+This section records the old rule and must not be executed. It formerly said to
+activate only when the user explicitly said something equivalent to
 **"human review first mode"** (e.g. "turn on human-review-first", "gate landings
 on my review", "nothing lands without me"). Do not infer it from caution, risk,
 or the nature of a change. It is a deliberate, human-thrown switch.
-
-On activation, announce the switch, and from that point apply the protocol below
-to every PR that touches a **key change** (defined next).
 
 ## What counts as a "key change"
 
@@ -73,7 +75,7 @@ order:
 2. **Human approval.** Present the diff, the adversarial-review findings, and
    local test evidence to the human. Landing waits for an explicit human
    approval. Apply the `human-approved` label **only when the human has actually
-   approved** — never self-apply it (see [post-facto-review](../../skills/post-facto-review/SKILL.md)).
+   approved** — never self-apply it (see [post-facto-review](../../skills/post-facto-review.md)).
 3. **Land.** Only after 1 and 2, land the PR (squash), then rebase dependents
    (see PR DAG below).
 
@@ -114,7 +116,7 @@ feature branch depends on it). Managing it:
 
 ## Deactivation
 
-Switch back to [post-facto-review](../../skills/post-facto-review/SKILL.md) when the user says so
+Switch back to [post-facto-review](../../skills/post-facto-review.md) when the user says so
 (e.g. "back to post-facto", "autonomous landing on"). Announce the switch. From
 that point, key changes still get adversarial review but land immediately after
 review + CI green, with post-facto human review and fix-forward.

@@ -509,22 +509,41 @@ with-proxy gh pr create -R rrnewton/hermit --base main
 
 In Meta environments, use appropriate proxies for accessing the web.
 
-Require both GitHub Actions jobs to be green at the exact PR head:
-**Regular tests (GitHub-hosted)** and **Host-dependent tests (self-hosted)**.
-A skipped, missing, queued, stale, or cancelled check is not green. Do not
-merge with unresolved review findings or merely because local tests pass.
-Report infrastructure failures explicitly rather than weakening
+Require the repository-defined authoritative gates to be green at the exact PR
+head. For Hermit, `Regular tests (GitHub-hosted)` is authoritative; handle a
+known-environmental self-hosted failure according to the current documented
+repository policy and never bypass a genuine product failure. For Reverie,
+both `Regular tests` and `Host-dependent tests` are authoritative. A skipped,
+missing, queued, stale, or cancelled authoritative check is not green. Do not
+merge with unresolved adversarial-review findings or merely because local
+tests pass. Report infrastructure failures explicitly rather than weakening
 hardware-sensitive assertions. Use `with-proxy` for networked `git` and `gh`
-operations, and never use `gh auth switch` because
-authentication is shared machine state.
+operations, and never use `gh auth switch` because authentication is shared
+machine state.
+
+### Post-Facto Human Review
+
+The canonical coordinator protocol is post-facto: once required adversarial
+review is resolved and the authoritative CI gate is green, land the authorized
+change without waiting for human-owner review. The human reviews after landing
+and corrections fix forward.
+
+- Apply exactly one human follow-up label: `post-facto-human-review`. It is
+  informational and never a landing blocker.
+- Keep `pre-land-human-review` defined as a notional opposite, but **never apply
+  it** under the canonical protocol.
+- Never apply, remove, or otherwise alter `human-approved`; it is owner-only.
+- Never recreate or apply the obsolete `human-review` or `post-facto-review`
+  labels.
 
 ### Landing Authorization
 
-Merge only when the task explicitly authorizes landing, review is resolved,
-and both required checks are green at the current head SHA. After landing,
-verify the resulting `main` workflow when the task requires it. Never push
-directly to Hermit `main`, force-push shared branches, or use a local primary
-checkout to bypass the pull request controls.
+Merge only when the task explicitly authorizes landing, required adversarial
+review is resolved, and the authoritative checks are green at the current head
+SHA. Human-owner review is post-facto and does not block landing. After
+landing, verify the resulting `main` workflow when the task requires it. Never
+push directly to Hermit `main`, force-push shared branches, or use a local
+primary checkout to bypass the pull request controls.
 
 Parent-only policy and gitlink changes are committed to shared `main` when the
 task explicitly authorizes them. `worktrees/ACTIVE.md` is ignored local state

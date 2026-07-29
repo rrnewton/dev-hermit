@@ -55,8 +55,8 @@ these jobs CANNOT fall back to GitHub-hosted runners.
 
 Because self-hosted Rust CI can't reliably go green, landing uses the
 post-facto-review discipline: run checks locally, apply **`locally-validated`**
-label, merge on Docs-hosted green. Merged PRs #250-#261 correctly carry
-`locally-validated`+`post-facto-review`; open PRs mostly unlabeled (awaiting).
+label, merge on Docs-hosted green. Merged PRs #250-#261 now carry
+`locally-validated`+`post-facto-human-review`; open PRs mostly await review.
 This is the documented workaround, consistent with
 [[self-hosted-ci-sigsegv-blocks-all-prs]] and
 [[validate-sh-cannot-be-green-on-devserver]] (main is unprotected; gate =
