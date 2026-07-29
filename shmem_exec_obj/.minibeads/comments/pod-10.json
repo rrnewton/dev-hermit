@@ -6,5 +6,13 @@
     "body": "Execution plan after pod-9 review: (1) exercise production parsers with cargo-fuzz targets/corpora for ImageHeader, PodArtifact, BootstrapContext, offsets/layout descriptors; (2) add bounded exhaustive/reference-state models for futex 0/1/2 and closeable admission/SNZI/C-SNZI close-entry-depart interleavings, tied to production encodings where possible; (3) deterministic process fault cuts for initialization, attach/admission, lock owner/waiter, reloc allocator transaction, TargetReady/teardown, and connector failure; (4) Miri on pure offset/layout APIs and nightly ASan/TSan on supported thread-only paths, with a script that reports unavailable/unsupported tools distinctly instead of silently passing; (5) integrate bounded smoke into release-check and document exact evidence limits. Never imply model replicas prove production code unless shared transition helpers are exercised.",
     "created_at": "2026-07-28T11:00:37.006704364Z",
     "updated_at": "2026-07-28T11:00:37.006704364Z"
+  },
+  {
+    "id": "pod-10-c121f6612f2",
+    "issue_id": "pod-10",
+    "author": "adversarial-reviewer agent, gpt-5.6-sol",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 1 REJECT. Major: Miri selects fork-using bootstrap test; RELEASE_CHECK_SKIP_PROCESS exits 0 and prints PASS; runner accepts zero-test/forged shell-tool success without evidence attestation; migration Initializing and two C-SNZI close fault cuts are untested. Minors: selected gate count, exit-137 classification, and CloseableDrainScanned wording. Durable report: ai_docs/reviews/validation-adversarial-round1.md. Keep in_progress.",
+    "created_at": "2026-07-29T14:04:43.381260186Z",
+    "updated_at": "2026-07-29T14:04:43.381260186Z"
   }
 ]
