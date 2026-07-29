@@ -94,6 +94,11 @@ for tool in cargo git jq rustc timeout uname; do
     exit 1
   }
 done
+timeout_bin=$(type -P timeout)
+if [[ $timeout_bin != /* || ! -f $timeout_bin || ! -x $timeout_bin ]]; then
+  echo "release-check requires timeout to resolve to an absolute executable" >&2
+  exit 1
+fi
 
 if [[ $require_clean == 1 ]] && [[ -n $(git status --porcelain -- .) ]]; then
   echo "release-check requires a clean v2 tree:" >&2
@@ -146,12 +151,14 @@ run_gate() {
   fi
 
   set +e
-  timeout --signal=TERM --kill-after=30s "${limit}s" "$@"
+  "$timeout_bin" --signal=TERM --kill-after=30s "${limit}s" "$@"
   local status=$?
   set -e
   if ((status != 0)); then
-    if ((status == 124 || status == 137)); then
+    if ((status == 124)); then
       echo "FAIL: $label exceeded its ${limit}s deadline" >&2
+    elif ((status == 137)); then
+      echo "FAIL: $label exited with SIGKILL status 137; cause may be OOM, supervisor, or timeout escalation" >&2
     else
       echo "FAIL: $label exited with status $status" >&2
     fi
@@ -174,7 +181,7 @@ run_capture() {
   fi
 
   set +e
-  timeout --signal=TERM --kill-after=30s "${limit}s" "$@" >"$output"
+  "$timeout_bin" --signal=TERM --kill-after=30s "${limit}s" "$@" >"$output"
   local status=$?
   set -e
   if ((status != 0)); then
@@ -278,6 +285,7 @@ if [[ $dry_run == 0 ]]; then
     examples/relocatable_collections.rs examples/schema_migration.rs \
     tests/layout.rs tests/closeable_snzi.rs tests/csnzi.rs tests/pod_api.rs \
     tests/bootstrap_connector.rs tests/dynamic_analysis.rs tests/migration.rs \
+    tests/miri_pure.rs \
     tests/reloc_allocator.rs \
     tests/shared_collections.rs; do
     grep -Fxq "$required" "$main_list" || {
@@ -303,7 +311,7 @@ if [[ $dry_run == 0 ]]; then
     jq -r '.packages[] | "\(.name): publish=\(.publish)"' "$metadata" >&2
     exit 1
   fi
-  echo "PASS package contents: private POC, demo, build, and project paths excluded"
+  echo "VERIFIED package contents: private POC, demo, build, and project paths excluded"
 fi
 
 if [[ $skip_process == 1 ]]; then
@@ -374,6 +382,9 @@ elapsed=$((SECONDS - started))
 echo
 if [[ $dry_run == 1 ]]; then
   echo "PLAN shmem-pod release check mode=$mode gates=$gate_number"
+elif [[ $skip_process == 1 ]]; then
+  echo "INCOMPLETE shmem-pod release check: required process evidence was skipped"
+  exit 2
 else
   echo "PASS shmem-pod release check mode=$mode gates=$gate_number elapsed=${elapsed}s"
 fi

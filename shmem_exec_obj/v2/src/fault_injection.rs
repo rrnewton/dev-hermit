@@ -35,6 +35,7 @@ pub(crate) enum FaultPoint {
     #[cfg(feature = "linux-futex")]
     FutexReleased = 26,
     MigrationReclaimed = 27,
+    MigrationInitializing = 28,
 }
 
 const ANY_DETAIL: usize = usize::MAX;

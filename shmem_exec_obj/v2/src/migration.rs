@@ -1266,6 +1266,7 @@ impl MigrationControl {
                 actual,
             });
         }
+        test_fault!(MigrationInitializing, 0);
 
         let mut poison = InitializationPoison {
             control: self,
