@@ -13,9 +13,14 @@ pure synchronous methods can execute from the authenticated pod image.
 
 Assessed revisions:
 
-- Hermit: `2477d9d7969eb370526e9051af5fa6b9d1039fea`
-- Reverie: `dc39d5dcac457ba3d7f8f9ca8e12cf572d330d73`
-- shmem-pod validation integration: `cf7c44eef5e25f001c29d5a023cb7e226cf883dc`
+- Hermit: `e3067d69f972a57247a72c3cfa2624691e8439a7`
+- Reverie: `f237446733dd646e0a0c582e922b1b914971bb2e`
+- Published shmem-pod connector baseline: `9b9d6325ce29e8db85cd58f8d2eb7dddba8cd757`
+- Published shmem-pod validation baseline: `f8e44647f2f0cdd7412a125c02be3c80f4616c53`
+
+The shmem-pod baselines above were still undergoing adversarial remediation at
+the time of this refresh. They identify the concrete API and implementation
+reviewed here, not a release-acceptance claim.
 
 ## Current Detcore graph
 
@@ -45,6 +50,15 @@ All scheduling, resource, lifecycle, futex, time, timer, signal, port,
 reporting, and shutdown operations currently funnel through `GlobalRPC`
 (`hermit/detcore/src/tool_global.rs`). Every request also updates a vector
 clock backed by a `HashMap` (`hermit/detcore-model/src/time.rs`).
+
+The latest SaBRe lifecycle work makes the scheduler boundary more explicit,
+not easier to map wholesale. `receive_rpc` now holds scheduler admission while
+accounting clock state, permanently tombstones logical threads, rejects raw TID
+reuse, rechecks tombstones after awaited operations, and makes asynchronous
+deregistration accounting idempotent. These invariants span the scheduler,
+global clock, run queue, `Ivar` responses, and backend RPC lifetime. A shared
+fast path therefore needs generation-tagged thread slots and cancellation
+epochs; a plain shared request queue keyed by Linux TID would be incorrect.
 
 ## Representation classification
 
@@ -103,6 +117,21 @@ hooks for shared-global export/attach, fork/exec and abnormal-exit lifecycle,
 and a backend-local attachment context that is not serialized into
 `ThreadState`.
 
+On the Detcore side, the first credible internal interface is narrower than
+`GlobalRequest`:
+
+```text
+ThreadSlot = { logical_tid, generation, lifecycle_epoch, clock, seq }
+FastRequest = { slot_handle, expected_epoch, opcode, bounded payload }
+FastResponse = { seq, status, bounded payload }
+```
+
+The host must allocate and tombstone slots, validate every generation/epoch,
+and retain the authoritative fallback RPC. Scheduler grants, thread creation
+and teardown, futex queues, signal targeting, and any operation that can await
+an `Ivar` remain host operations. This avoids creating a second scheduler whose
+linearization rules merely resemble Detcore's current one.
+
 The pod ABI also needs to grow beyond the current scalar demonstration
 signatures. Production Detcore calls need stable request/response records,
 status codes, size/version checks, and an authenticated allowlisted host-import
@@ -117,8 +146,11 @@ ownership cannot cross that ABI.
    retaining a complete host fallback.
 3. Move bounded inode/device/port metadata after deterministic capacity,
    transaction, and owner-death semantics exist.
-4. Replace `Ivar` transport with generation-tagged request/response sequence
-   slots. Keep process-local futures which wait on shared futex words.
+4. Add generation-tagged request/response sequence slots for selected
+   non-scheduler operations. Keep process-local futures which wait on shared
+   futex words, and make tombstone/cancellation epochs part of every completion.
+   Do not replace scheduler `Ivar`s until equivalent teardown and wakeup
+   linearization has been specified and model-checked.
 5. Compile only pure synchronous fast-path methods into the RX pod image.
 6. Reconsider scheduler storage only after measurement. Moving run-queue
    authority and complete `ThreadState` is a separate project, not phase-one
@@ -147,13 +179,20 @@ repair. A timeout must never steal a mutex or allocator lock.
 
 | Scope | Estimate | Risk |
 | --- | --- | --- |
-| Relocatable scalar clock/counter fast path | 2-4 engineer-months | Medium-high |
+| Backend attachment, schema handshake, and scalar clock/counter fast path | 3-5 engineer-months | Medium-high |
 | Shared bounded tables and scheduler mailboxes | Additional 4-8 months | High |
 | Whole global/thread-state and scheduler conversion | 12-24 months | Very high |
 
+The 3-5 month first stage includes Detcore work, backend lifecycle integration,
+fallback/rollback, and correctness/performance evaluation; it is not remaining
+work in the shmem-pod crate alone. A focused prototype behind the existing RPC
+surface could be demonstrated in roughly 4-8 weeks, but would not yet be a
+production Detcore state model.
+
 The credible win is removing bincode plus Unix-socket request/response overhead
-for LiteInst and SaBRe, and making clock/counter operations lock-free. Ptrace
-and current KVM already call the global tool directly, so shared mapping alone
-offers little there. Scheduler grants remain serialized and often require a
-wakeup; large end-to-end gains must be demonstrated rather than inferred from
-the atomic-counter microbenchmarks.
+for LiteInst, SaBRe, and the newer generic e9patch coordinator path, and making
+clock/counter operations lock-free. DBI socket-coordinator mode may benefit as
+well; in-process DBI, ptrace, and current KVM already call the global tool
+directly, so shared mapping alone offers little there. Scheduler grants remain
+serialized and often require a wakeup. Large end-to-end gains must be measured
+per backend rather than inferred from atomic-counter microbenchmarks.
