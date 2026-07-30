@@ -1,0 +1,199 @@
+name: P0 demo regression gate + nightly super backstop
+
+# The demos are expensive, so commits and pull requests run them only when a
+# demo-relevant parent path changes. `hermit` and `reverie` are gitlinks: a pin
+# update covers inner Detcore, scheduler, timer, and instrumentation changes.
+# The nightly schedule remains the unconditional backstop and additionally runs
+# Hermit's full super stress profile.
+on:
+  schedule:
+    - cron: "17 08 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/nightly-demo-sweep.yml"
+      - ".gitmodules"
+      - "Makefile"
+      - "demos/**"
+      - "experiments/btrfs-convert-progress-uaf-chaos_20260729/**"
+      - "hermit"
+      - "reverie"
+      - "scripts/prepare-demo08-assets.sh"
+      - "scripts/super-validate.sh"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/nightly-demo-sweep.yml"
+      - ".gitmodules"
+      - "Makefile"
+      - "demos/**"
+      - "experiments/btrfs-convert-progress-uaf-chaos_20260729/**"
+      - "hermit"
+      - "reverie"
+      - "scripts/prepare-demo08-assets.sh"
+      - "scripts/super-validate.sh"
+
+concurrency:
+  # Preserve every main-push run for exact culprit attribution. Pull requests
+  # share a group so a superseded head does not consume the scarce serial host.
+  group: demo-sweep-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings -C link-arg=-llzma
+  RUSTDOCFLAGS: -D warnings
+  DETCORE_TEST_RUST_LOG: "off"
+  SUPER_REPETITIONS: "20"
+  VALIDATE_GATE_TIMEOUT_SECONDS: "7200"
+  DEMO08_REQUIRE_ASSETS: "1"
+
+jobs:
+  super-and-demos:
+    name: P0 demo gate (demos 1-8; nightly also runs super)
+    # The serial PMU runner is privileged; fork-authored PR code must not run
+    # there. rrnewton branches (including drafts) are the trusted PR surface.
+    if: >-
+      ${{
+        github.repository == 'rrnewton/dev-hermit' &&
+        (
+          github.event_name == 'pull_request' ||
+          github.event_name == 'workflow_dispatch' ||
+          github.ref == 'refs/heads/main'
+        )
+        &&
+        (
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.user.login == 'rrnewton'
+        )
+      }}
+    runs-on: [Linux, X64, hermit, pmu, pmu-serial]
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hermit -> target
+          shared-key: nightly-super-validation
+          cache-on-failure: true
+
+      - name: Install host dependencies (Debian/Ubuntu or Fedora/RHEL)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v dnf >/dev/null; then
+            sudo dnf makecache || echo "::notice::dnf makecache failed; using existing metadata"
+            sudo dnf install -y \
+              autoconf automake binutils busybox cpio e2fsprogs e2fsprogs-devel \
+              cmake elfutils-libelf-devel file gcc gcc-c++ gzip java-latest-openjdk-devel \
+              libblkid-devel libunwind-devel libuuid-devel libzstd-devel \
+              lzo-devel make patch pkgconf-pkg-config python3 python3-devel \
+              python3-pip qemu-img qemu-kvm-core tcl-devel xz-devel zlib-devel
+          elif command -v apt-get >/dev/null; then
+            sudo apt-get update || echo "::notice::apt-get update failed; using existing metadata"
+            sudo apt-get install -y \
+              autoconf automake binutils build-essential busybox-static cpio \
+              cmake default-jdk-headless e2fsprogs file gzip libblkid-dev \
+              libdw-dev libelf-dev libext2fs-dev liblzo2-dev liblzma-dev \
+              libunwind-dev libzstd-dev patch pkg-config python3 python3-dev \
+              python3-pip qemu-system-x86 qemu-utils tcl-dev uuid-dev zlib1g-dev
+          else
+            echo "::error::Unsupported package manager"
+            exit 1
+          fi
+
+          if ! command -v drgn >/dev/null 2>&1; then
+            if command -v with-proxy >/dev/null 2>&1; then
+              with-proxy python3 -m pip install --user drgn || \
+                with-proxy python3 -m pip install --user --break-system-packages drgn
+            else
+              python3 -m pip install --user drgn || \
+                python3 -m pip install --user --break-system-packages drgn
+            fi
+            echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          fi
+
+      - name: Heavy-demo preflight
+        run: |
+          set -euo pipefail
+          make doctor-qemu
+          command -v drgn readelf mkfs.ext4 patch
+          test -r /proc/sys/kernel/perf_event_paranoid
+          unshare --user --map-root-user --pid --fork true
+
+      - name: Restore pinned heavy-demo assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ignored/demo08-btrfs
+            ignored/demo08-build/btrfs-progs-v7.1
+          key: nightly-demo-assets-v1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Prepare pinned Demo 8 btrfs/ASAN assets
+        run: scripts/prepare-demo08-assets.sh
+
+      - name: Run hot-path demo gate or nightly super profile
+        run: |
+          set -euo pipefail
+          scope=()
+          if [[ "${{ github.event_name }}" == push || \
+                "${{ github.event_name }}" == pull_request ]]; then
+            scope+=(--demos-only)
+            echo "Hot-path ${{ github.event_name }}: running demos 1-8."
+          else
+            echo "Nightly/manual backstop: running Hermit super + demos 1-8."
+          fi
+          if command -v with-proxy >/dev/null 2>&1; then
+            with-proxy scripts/super-validate.sh "${scope[@]}" \
+              2>&1 | tee demo-sweep-validation.log
+          else
+            scripts/super-validate.sh "${scope[@]}" \
+              2>&1 | tee demo-sweep-validation.log
+          fi
+
+      - name: Upload per-demo and validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-sweep-${{ github.event_name }}-${{ github.run_id }}
+          path: |
+            demo-sweep-validation.log
+            target/demo-sweep/
+            ignored/qemu-linux/boot-anchor/run-metadata.json
+            ignored/qemu-linux/run-history/*/run-metadata.json
+            ignored/demo07-drgn/
+            ignored/demo08-run/*.txt
+            ignored/demo08-run/*.out
+            hermit/target/validate-results.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Escalate every demo red as P0
+        if: failure()
+        run: |
+          echo "::error title=P0 Hermit demo regression::Demos 1-8 or the nightly super profile failed at ${{ github.event.pull_request.head.sha || github.sha }}. Treat this red as P0; inspect the per-demo summary and uploaded logs."
+          {
+            echo
+            echo "## P0 demo-regression escalation"
+            echo "**Owner policy: any demo-sweep red is P0.**"
+            echo
+            echo "- Event: \`${{ github.event_name }}\`"
+            echo "- Commit: \`${{ github.event.pull_request.head.sha || github.sha }}\`"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "Review the failed per-demo row and artifact logs immediately;"
+            echo "the path-filtered run identifies the parent commit/PR that introduced it."
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit 1

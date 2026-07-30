@@ -1,3 +1,4 @@
 experiments/**/*.log -whitespace
 experiments/**/*.patch -whitespace
 experiments/**/stdout -whitespace
+demos/fixtures/*.patch -whitespace
