@@ -1,0 +1,15 @@
+{
+  "question": "For a small serial nix build (nix -j1 --cores 1) run under hermit in rootless podman, what is the MINIMUM hermit relaxation/determinization dose that ROBUSTLY reproduces byte-identical output?",
+  "date": "2026-07-30",
+  "host": "devbig014.atn7.facebook.com",
+  "podman": "5.8.3 (rootless)",
+  "image": "docker.io/nixos/nix:2.3.16 (sha 3a207e2ae0d1; pre-pidfd; avoids the pidfd_send_signal --strict blocker)",
+  "hermit_binary": "hermit/target/release/hermit built 2026-07-30 03:36 (~main 0321a015-era)",
+  "reverie_pin": "4cee948e35ae5561f44f21be3a6e1bbc653058c0",
+  "container_recipe": "experiments/nix-hermit-container-approach_20260730/recipe (hostlibs loader + seccomp=unconfined + --no-namespace)",
+  "probe": "nix derivation whose builder writes hermit-determinized nondeterminism sources via bash builtins only (2x read /proc/sys/kernel/random/uuid + read /proc/uptime); $RANDOM deliberately excluded (getpid-leak under --no-namespace)",
+  "witness": "sha256 of the built output content, compared across N=3 runs per dose; each podman run --rm has a fresh /nix/store so identical hash == genuine determinization, not caching",
+  "runs_per_dose": 3,
+  "scripts": ["dose-run.sh", "dose-matrix.sh"],
+  "results": "results.csv"
+}

@@ -1,0 +1,7 @@
+dose,run_hashes,reproducible,times_s
+"native","660b27c2c532 4a81f26c79e2 2f154dfd6c64",NO,"10 11 10"
+"--no-namespace --strict --sequentialize-threads","0a4943cfb295 0a4943cfb295 0a4943cfb295",YES,"3 2 3"
+"--no-namespace --strict","0a4943cfb295 0a4943cfb295 0a4943cfb295",YES,"2 3 2"
+"--no-namespace","0a4943cfb295 0a4943cfb295 0a4943cfb295",YES,"3 2 3"
+"--no-namespace --no-sequentialize-threads","abce6b2d6ef5 abce6b2d6ef5 abce6b2d6ef5",YES,"13 14 13"
+"--no-namespace --no-sequentialize-threads --no-rcb-time --no-deterministic-io","abce6b2d6ef5 abce6b2d6ef5 abce6b2d6ef5",YES,"13 13 13"

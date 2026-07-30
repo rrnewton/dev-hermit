@@ -1,0 +1,28 @@
+# Per-build "hermit dose" manifest (proposal) — records the minimum hermit
+# relaxation/determinization flag-set that robustly reproduces a given nix build,
+# plus the determinism level achieved (labeled honestly) and the witness.
+#
+# One [[build]] entry per nix build (keyed by the .drv / attr path). An outer
+# "minimum-dose finder" fills this in; the reproducer just replays `dose`.
+
+schema = "hermit-dose/v1"
+
+[defaults]
+# Container path used for all builds unless overridden (validated rootless recipe).
+runner        = "experiments/nix-hermit-container-approach_20260730/recipe/nix-under-hermit.sh"
+image         = "docker.io/nixos/nix:2.3.16"
+nix_flags     = ["--cores", "1", "--max-jobs", "1"]   # serialize nix to shrink the dose
+seccomp       = "unconfined"                            # required (personality(2) for ASLR off)
+
+[[build]]
+attr          = "hermit-dose-probe"                     # nix attr / derivation name
+drv           = "hermit-dose-probe.drv"
+# MINIMUM dose: the lightest hermit flag-set that reproduced across N runs.
+dose          = ["--no-namespace"]                      # default determinization; no --strict, no --no-sequentialize-threads
+# Honest determinism label (NOT a strict-sandbox victory):
+determinism   = "reproducible-output-under-no-namespace"  # podman provides isolation; hermit determinizes; output byte-identical
+strict        = false                                   # --strict works here but is NOT required for reproducibility
+sequentialize = "default"                               # default deterministic scheduling; --no-sequentialize-threads is SLOWER (RCB) for serial builds
+witness_sha256 = "0a4943cfb295..."                      # output hash under this dose (equivalence class; changes if the dose changes)
+runs_verified = 3
+notes         = "getpid-seeded $RANDOM stays nondeterministic under --no-namespace; excluded from the witness."
