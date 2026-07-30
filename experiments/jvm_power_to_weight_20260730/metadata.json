@@ -1,0 +1,24 @@
+{
+  "question": "Which small JVM programs give the most syscall + JIT coverage per wall-second under `hermit run --strict --verify`, so we can keep meaningful JVM validation on every commit without javac's cost?",
+  "date": "2026-07-30",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "cores": 316,
+  "host_load_caveat": "The host ran many concurrent Hermit workloads from other agents during the hermit pass; absolute wall times are inflated upper bounds. Relative ranking is the reliable signal.",
+  "jdk": "OpenJDK 1.8.0_492 (Temurin), 64-Bit Server VM, tiered compilation ON",
+  "strace": "6.12",
+  "hermit_binary": "hermit/target/release/hermit (built 2026-07-29 19:02)",
+  "hermit_primary_sha": "9c964fce16ab60c3eadecc557fa2844399854f06",
+  "parent_sha": "1165fc948eee008f7bb641dd25845b5b270ad4c5",
+  "native_pass": {
+    "syscalls": "strace -f -c java <args>  (unique = distinct syscall rows, total = sum of calls column, threads followed)",
+    "jit": "java -XX:+PrintCompilation <args>  (tier 4 = C2, tiers 1-3 = C1)",
+    "wall": "min of 3 native runs, JIT ON"
+  },
+  "hermit_pass": {
+    "invocation": "hermit --log=info run --strict --verify --no-virtualize-cpuid -- java <args>",
+    "preemption": "RCB preemption DEFAULT ON (NO --max-timeslice=disabled) — required so JIT-on compute threads are preempted; --max-timeslice=disabled livelocks compute-bound JVMs",
+    "jit": "ON (no -Xint) for realistic runtime + JIT surface",
+    "timeout": "120s wall per two-run --verify (kill-after 10s)"
+  }
+}

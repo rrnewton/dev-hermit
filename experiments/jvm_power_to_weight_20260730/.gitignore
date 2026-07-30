@@ -1,0 +1,2 @@
+# Compiled bytecode — regenerate with `javac -d classes src/*.java` (no binaries in git).
+classes/

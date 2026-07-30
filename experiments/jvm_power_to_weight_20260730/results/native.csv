@@ -1,0 +1,9 @@
+program,native_wall_s,unique_syscalls,total_syscalls,jit_total,jit_c1,jit_c2
+java-version,0.053,52,10345,0,0,0
+Hello,0.056,51,11221,11,10,0
+JitHotLoop,0.104,51,11492,19,15,3
+ThreadCounter,0.091,51,14836,248,183,5
+GcStress,0.061,51,11253,11,10,0
+HashMapString,0.120,51,16385,363,260,43
+NioFile,0.092,55,13943,87,80,4
+NioSocket,0.094,60,15719,247,183,5

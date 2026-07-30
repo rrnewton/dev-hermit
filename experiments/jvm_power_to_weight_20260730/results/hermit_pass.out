@@ -1,0 +1,9 @@
+java-version,2.071,L2-verified
+Hello,8.681,L2-verified
+JitHotLoop,5.960,L2-verified
+ThreadCounter,23.192,L2-verified
+GcStress,12.122,L2-verified
+HashMapString,19.520,L2-verified
+NioFile,75.780,L2-verified
+NioSocket,120.109,TIMEOUT/livelock(rc=124)
+=== hermit pass done ===

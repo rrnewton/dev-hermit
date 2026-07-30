@@ -1,0 +1,9 @@
+program,hermit_verify_wall_s,verdict,native_wall_s,uniq_sys,total_sys,jit_total,jit_c1,jit_c2,jit_per_hermit_s,totalsys_per_hermit_s
+java-version,2.1,L2-verified,0.053,52,10345,0,0,0,0.0,4995
+Hello,8.7,L2-verified,0.056,51,11221,11,10,0,1.3,1293
+JitHotLoop,6.0,L2-verified,0.104,51,11492,19,15,3,3.2,1928
+GcStress,12.1,L2-verified,0.061,51,11253,11,10,0,0.9,928
+HashMapString,19.5,L2-verified,0.120,51,16385,363,260,43,18.6,839
+ThreadCounter,23.2,L2-verified,0.091,51,14836,248,183,5,10.7,640
+NioFile,75.8,L2-verified,0.092,55,13943,87,80,4,1.1,184
+NioSocket,120.1,TIMEOUT/livelock(rc=124),0.094,60,15719,247,183,5,2.1,131

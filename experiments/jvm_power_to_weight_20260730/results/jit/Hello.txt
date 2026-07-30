@@ -1,0 +1,12 @@
+     48    1       3       java.lang.String::hashCode (55 bytes)
+     49    4     n 0       java.lang.System::arraycopy (native)   (static)
+     49    2       3       java.lang.String::charAt (29 bytes)
+     49    3       3       java.lang.String::indexOf (70 bytes)
+     49    6       3       java.lang.String::length (6 bytes)
+     50    5       3       java.lang.Math::min (11 bytes)
+     50    7       3       java.lang.Object::<init> (1 bytes)
+     50    8       3       java.lang.AbstractStringBuilder::ensureCapacityInternal (27 bytes)
+     52    9       3       java.lang.String::equals (81 bytes)
+     53   10       1       java.lang.ref.Reference::get (5 bytes)
+     54   11       1       java.lang.ThreadLocal::access$400 (5 bytes)
+hello

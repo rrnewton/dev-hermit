@@ -1,0 +1,20 @@
+     43    1       3       java.lang.String::hashCode (55 bytes)
+     44    4     n 0       java.lang.System::arraycopy (native)   (static)
+     44    3       3       java.lang.String::indexOf (70 bytes)
+     44    5       3       java.lang.Math::min (11 bytes)
+     44    6       3       java.lang.String::length (6 bytes)
+     44    2       3       java.lang.String::charAt (29 bytes)
+     44    7       3       java.lang.Object::<init> (1 bytes)
+     44    8       3       java.lang.AbstractStringBuilder::ensureCapacityInternal (27 bytes)
+     46    9       3       java.lang.String::equals (81 bytes)
+     47   10       1       java.lang.ref.Reference::get (5 bytes)
+     48   11       1       java.lang.ThreadLocal::access$400 (5 bytes)
+     48   12       3       JitHotLoop::step (22 bytes)
+     49   13       4       JitHotLoop::step (22 bytes)
+     49   12       3       JitHotLoop::step (22 bytes)   made not entrant
+     51   14 %     3       JitHotLoop::main @ 18 (85 bytes)
+     51   15       3       JitHotLoop::main (85 bytes)
+     52   16 %     4       JitHotLoop::main @ 18 (85 bytes)
+     53   14 %     3       JitHotLoop::main @ -2 (85 bytes)   made not entrant
+     92   16 %     4       JitHotLoop::main @ -2 (85 bytes)   made not entrant
+jit collatz total=22938602
