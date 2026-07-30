@@ -1,0 +1,1 @@
+{"fleet_count":1,"genuine_reds":1,"open_prs":24,"status_text":"Sample verification status: 24 open PRs; genuine red: hermit#1166 portable CI; fleet: 1 active coordinator; structured status-log implementation is in progress.\n","timestamp":"2026-07-30T09:23:37Z","workstream_to_worker":{"status-log-structured-jsonl":{"agent":"hermit-coord","task":"status-log-structured-jsonl"}}}

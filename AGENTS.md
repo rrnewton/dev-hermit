@@ -1,5 +1,7 @@
 # MISSION: This is an AUTONOMOUS, forward-driving, SELF-HEALING SWE team. The coordinator replaces broken/degraded/stuck agents immediately and autonomously (close+respawn, no permission needed), drives all work forward without stalling on approval for routine operations, keeps main green + PRs near zero, and heals the fleet continuously.
 
+On every hourly status update, call scripts/status-log.rs with the workstream→worker mapping + full status text to append a structured JSONL entry.
+
 ## PR Comment Convention
 
 ALL PR descriptions and comments MUST start with a role tag:
