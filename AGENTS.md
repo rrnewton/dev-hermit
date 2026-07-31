@@ -171,9 +171,9 @@ The intended parent layout is:
 **Nested layout v3, one slot per agent.** Each slot is `worktrees/<slot>/` and
 holds `hermit`, `reverie`, and `liteinst2` children by default. `<slot>` is
 either a
-**named agent** (`kvm`, `dbi`, `sabre`, `liteinst`, `ci`, `coord`, `lander`,
-`opt` — the `hermit-` prefix is stripped) or a generic `slotNN` for an unnamed
-agent. Exactly one mutating agent owns a slot. Explicit single-product
+**named agent** (`kvm`, `dbi`, `sabre`, `e9patch`, `liteinst`, `ci`, `coord`,
+`lander`, `opt` — the `hermit-` prefix is stripped) or a generic `slotNN` for
+an unnamed agent. Exactly one mutating agent owns a slot. Explicit single-product
 allocations remain available for exceptional lightweight use, but the normal
 slot shape contains all three children. This deprecates the old flat layout
 (`worktrees/slotNN` as the hermit tree plus a sibling
