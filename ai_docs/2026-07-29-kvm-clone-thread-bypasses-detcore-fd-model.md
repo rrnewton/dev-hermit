@@ -82,6 +82,61 @@ entering the shared Detcore global scheduler), so it needs careful validation
 against detcore's scheduler and should be checked for deadlock/ordering under
 `--strict --verify`, not just the single reproducer.
 
+## Confirmed implementation plan (Option A — user-approved 2026-07-29)
+
+Coordinated Hermit+Reverie change making KVM consistent with the existing
+multi-backend contract (ptrace/sabre already set
+`backend_dispatches_thread_tools = true`).
+
+**Critical ordering mechanism (verified by cross-crate trace):** For the WORKING
+Fork path, the child is spawned *synchronously inside* `guest.inject(clone)`
+(detcore threads.rs:325), via `KvmGuest::inject` → `complete_injection`
+(reverie-kvm runtime.rs:437 → 249) → `run_process_action_with_tool` →
+`init_thread_state` — all nested inside the `.await` at threads.rs:325, i.e.
+BEFORE `ts.clone_flags = None` at threads.rs:342. That is why
+`init_thread_state`'s `clone_flags.expect(...)` (detcore lib.rs:1069) sees
+`Some`. The outer-loop `take_process_action`/`run_process_action_with_tool`
+(runtime.rs:1408/1424) is a SEPARATE path used only for the direct
+(unsubscribed) executor — which is how thread-clones flow today (no Tool init,
+no clone_flags dependency).
+
+Consequences for the Thread fix — BOTH must change together:
+1. **Subscription:** remove `|| is_thread_clone_request(&request, &memory)` from
+   the `backend_owned` computation (reverie-kvm runtime.rs:1319-1321) so a
+   `CLONE_THREAD` clone/clone3 IS subscribed → reaches `handle_clone_family` →
+   sets clone_flags (281) and, with `backend_dispatches_thread_tools=true`,
+   `!backend_uninstrumented_thread` so `create_child_thread` (threads.rs:366-367)
+   registers the child in the scheduler.
+2. **Tool-instrumented Thread spawn nested in inject:** add a
+   `ProcessAction::Thread` arm to `run_process_action_with_tool`
+   (reverie-kvm vm.rs:874, currently Fork-only at 887-897) that builds the child
+   via `init_thread_state(child_tid, Some((context.pid, context.thread_state)))`
+   (clone_flags still Some because we're inside inject) and runs it via
+   `run_static_elf_process_with_tool` (issues `handle_thread_start` → scheduler
+   participation, consuming the child's turn). Merge with the existing Thread
+   register/TLS/stack setup from `run_process_action` (vm.rs:736-830):
+   thread_child executor (shares fd table Arc), set_thread_context, TLS/segment
+   bases, syscall-frame copy, clear_child_tid, clear_tid_and_wake on exit. Must
+   ensure the Thread spawn happens via the `complete_injection` path (inside
+   inject) so clone_flags visibility holds — NOT the outer-loop path.
+3. **detcore Config:** `hermit-cli/src/lib.rs:1304`
+   `backend_dispatches_thread_tools = backend != Backend::Kvm` → `true` for KVM;
+   flip assert at lib.rs:1854 (`assert!(kvm.backend_dispatches_thread_tools)`).
+
+CLONE_FILES fd sharing then works automatically: `init_thread_state` Arc-clones
+`file_metadata` when CLONE_FILES (detcore lib.rs:1109-1110), so the worker's
+`eventfd2` `add_fd` lands in the shared table and the main thread's `write(4)`
+resolves. This resolves the documented prior deadlock (runtime.rs:1314-1318),
+which was the half-done state (parent through detcore, child still direct →
+scheduler turn never consumed). Determinism-critical: validate `evt_thread`,
+frozen corpus, python3 at `--strict` and `--strict --verify` (deadlock/order).
+
+Option B (`discover_live_file_metadata`, SaBRe-only) was RULED OUT: KVM allocates
+guest fd = lowest-free number (executor.rs:3113 `insert_file_with_flags`), not
+the host fd, so `discover_fd_from_current_process`'s `fcntl(guest_fd)` on the
+host process (tool_local.rs:420) would target an unrelated reverie fd. It would
+also leave workers outside detcore scheduling/time/RNG (L2/B3 still divergent).
+
 ## Repro harness
 
 ```
