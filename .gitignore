@@ -21,6 +21,7 @@
 /main/
 /scratch/
 /targets/
+/target/
 /ignored/
 
 # Retained machine-local archives from the 2026-07-23 parent cleanup.
