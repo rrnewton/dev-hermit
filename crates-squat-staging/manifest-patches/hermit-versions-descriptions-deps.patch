@@ -1,0 +1,378 @@
+From 11403089e90f2358702fc6bc0f6218d39a209e79 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@users.noreply.github.com>
+Date: Fri, 31 Jul 2026 08:21:02 -0700
+Subject: [PATCH] Stage crates.io publish-readiness: bump 0.0.0->0.2.0 + add
+ descriptions
+
+Refreshed onto current main (post PR #1196 hermit-cli 0.2.0 + third-party-
+backends feature gate + reverie->reverie-core rename on the reverie side).
+
+- Bump every workspace crate version 0.0.0 -> 0.2.0 (package versions and
+  internal path-dep requirements); hermit-cli already 0.2.0 via #1196, only its
+  internal dep reqs bumped here.
+- Add crates.io 'description' to the 11 publishable crates that lacked one.
+
+Deliberately NOT included: the reverie git->version->registry dep rewrite. On
+main those deps are already dual {version, git, rev}; the real-publish rewrite
+(strip git+rev, point at published reverie-core via a package alias) is an
+owner step documented in crates-squat-staging/REAL-PUBLISH-ORDER.md, because it
+cannot dry-run clean until reverie is on a registry.
+
+Validation (cargo 1.97.1, dry-run --no-verify): hermit leaves
+test-allocator/hermit-resources/digest/edit-distance package clean (digest name
+collides with RustCrypto -> rename); reverie-dependent crates gate solely on
+'no matching package named reverie-syscalls found' (reverie not yet published).
+This is a staging validation vehicle, not for direct merge.
+---
+ common/digest/Cargo.toml                  |  3 ++-
+ common/edit-distance/Cargo.toml           |  3 ++-
+ common/test-allocator/Cargo.toml          |  3 ++-
+ detcore-dbi/Cargo.toml                    |  7 ++++---
+ detcore-liteinst/Cargo.toml               |  5 +++--
+ detcore-model/Cargo.toml                  |  3 ++-
+ detcore-sabre/Cargo.toml                  |  5 +++--
+ detcore/Cargo.toml                        | 11 ++++++-----
+ detcore/tests/testutils/Cargo.toml        |  6 +++---
+ flaky-tests/Cargo.toml                    |  2 +-
+ hermit-cli/Cargo.toml                     | 11 ++++++-----
+ hermit-install/Cargo.toml                 |  2 +-
+ hermit-resources/Cargo.toml               |  3 ++-
+ hermit-verify/Cargo.toml                  |  9 +++++----
+ liteinst-runtime-build/Cargo.toml         |  2 +-
+ liteinst-runtime-build/runtime/Cargo.toml |  2 +-
+ tests/Cargo.toml                          |  4 ++--
+ 17 files changed, 46 insertions(+), 35 deletions(-)
+
+diff --git a/common/digest/Cargo.toml b/common/digest/Cargo.toml
+index 115c9f71..6a714554 100644
+--- a/common/digest/Cargo.toml
++++ b/common/digest/Cargo.toml
+@@ -2,7 +2,8 @@
+
+ [package]
+ name = "digest"
+-version = "0.0.0"
++description = "Deterministic content digest and hashing helper for the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+diff --git a/common/edit-distance/Cargo.toml b/common/edit-distance/Cargo.toml
+index 495e290d..1ce43030 100644
+--- a/common/edit-distance/Cargo.toml
++++ b/common/edit-distance/Cargo.toml
+@@ -2,7 +2,8 @@
+
+ [package]
+ name = "edit-distance"
+-version = "0.0.0"
++description = "String edit-distance helper used by the Hermit deterministic execution engine for diagnostics."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+diff --git a/common/test-allocator/Cargo.toml b/common/test-allocator/Cargo.toml
+index d81a57d9..fabd5799 100644
+--- a/common/test-allocator/Cargo.toml
++++ b/common/test-allocator/Cargo.toml
+@@ -2,7 +2,8 @@
+
+ [package]
+ name = "test-allocator"
+-version = "0.0.0"
++description = "Test-only allocator utilities for the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+diff --git a/detcore-dbi/Cargo.toml b/detcore-dbi/Cargo.toml
+index 121938e6..47031a36 100644
+--- a/detcore-dbi/Cargo.toml
++++ b/detcore-dbi/Cargo.toml
+@@ -1,6 +1,7 @@
+ [package]
+ name = "detcore-dbi"
+-version = "0.0.0"
++description = "DynamoRIO DBI backend glue for Detcore, the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ license = "BSD-3-Clause"
+ repository = "https://github.com/facebookexperimental/hermit"
+@@ -9,8 +10,8 @@ repository = "https://github.com/facebookexperimental/hermit"
+ crate-type = ["cdylib", "rlib"]
+
+ [dependencies]
+-detcore = { version = "0.0.0", path = "../detcore" }
+-hermit-resources = { version = "0.0.0", path = "../hermit-resources" }
++detcore = { version = "0.2.0", path = "../detcore" }
++hermit-resources = { version = "0.2.0", path = "../hermit-resources" }
+ libc = "0.2.186"
+ rand = "0.10.2"
+ reverie = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+diff --git a/detcore-liteinst/Cargo.toml b/detcore-liteinst/Cargo.toml
+index bb47ce7a..5a72f481 100644
+--- a/detcore-liteinst/Cargo.toml
++++ b/detcore-liteinst/Cargo.toml
+@@ -1,6 +1,7 @@
+ [package]
+ name = "detcore-liteinst"
+-version = "0.0.0"
++description = "LiteInst backend glue for Detcore, the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ license = "BSD-3-Clause"
+ repository = "https://github.com/facebookexperimental/hermit"
+@@ -16,6 +17,6 @@ test = false
+ doctest = false
+
+ [dependencies]
+-detcore = { version = "0.0.0", path = "../detcore" }
++detcore = { version = "0.2.0", path = "../detcore" }
+ libc = "0.2.186"
+ reverie-liteinst = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b", default-features = false }
+diff --git a/detcore-model/Cargo.toml b/detcore-model/Cargo.toml
+index b13d20d4..d500525d 100644
+--- a/detcore-model/Cargo.toml
++++ b/detcore-model/Cargo.toml
+@@ -2,7 +2,8 @@
+
+ [package]
+ name = "detcore-model"
+-version = "0.0.0"
++description = "Core data model and types for Detcore, the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+diff --git a/detcore-sabre/Cargo.toml b/detcore-sabre/Cargo.toml
+index 90dd21f4..c848e6d2 100644
+--- a/detcore-sabre/Cargo.toml
++++ b/detcore-sabre/Cargo.toml
+@@ -1,6 +1,7 @@
+ [package]
+ name = "detcore-sabre"
+-version = "0.0.0"
++description = "SaBRe backend glue for Detcore, the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ license = "BSD-3-Clause"
+ repository = "https://github.com/facebookexperimental/hermit"
+@@ -9,7 +10,7 @@ repository = "https://github.com/facebookexperimental/hermit"
+ crate-type = ["cdylib", "rlib"]
+
+ [dependencies]
+-detcore = { version = "0.0.0", path = "../detcore" }
++detcore = { version = "0.2.0", path = "../detcore" }
+ libc = "0.2.186"
+ reverie = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+ reverie-memory = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+diff --git a/detcore/Cargo.toml b/detcore/Cargo.toml
+index 25405794..143d6d80 100644
+--- a/detcore/Cargo.toml
++++ b/detcore/Cargo.toml
+@@ -23,7 +23,8 @@
+
+ [package]
+ name = "detcore"
+-version = "0.0.0"
++description = "Detcore: the deterministic scheduler and syscall determinization core of the Hermit execution engine."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+@@ -50,8 +51,8 @@ async-trait = "0.1.86"
+ bitflags = { version = "2.13.1", features = ["serde"], default-features = false }
+ chrono = { version = "0.4.45", features = ["clock", "serde", "std"], default-features = false }
+ clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+-detcore-model = { version = "0.0.0", path = "../detcore-model" }
+-digest = { version = "0.0.0", path = "../common/digest" }
++detcore-model = { version = "0.2.0", path = "../detcore-model" }
++digest = { version = "0.2.0", path = "../common/digest" }
+ futures = { version = "0.3.31", features = ["async-await", "compat"] }
+ libc = "0.2.186"
+ nix = { version = "0.30.1", features = ["dir", "event", "hostname", "inotify", "ioctl", "mman", "mount", "net", "poll", "ptrace", "reboot", "resource", "sched", "signal", "term", "time", "user", "zerocopy"] }
+@@ -73,10 +74,10 @@ tokio = { version = "1.52.4", features = ["full", "test-util", "tracing"] }
+ tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
+
+ [dev-dependencies]
+-detcore-testutils = { version = "0.0.0", path = "tests/testutils" }
++detcore-testutils = { version = "0.2.0", path = "tests/testutils" }
+ # ALLOWED test-only backend: detcore's integration tests drive a real tracer to
+ # exercise the tool. This is a dev-dependency and never reaches the shipped
+ # `detcore` rlib. It is the ONLY backend crate permitted in this manifest.
+ reverie-ptrace = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+-test-allocator = { version = "0.0.0", path = "../common/test-allocator" }
++test-allocator = { version = "0.2.0", path = "../common/test-allocator" }
+ test-case = "3.3.1"
+diff --git a/detcore/tests/testutils/Cargo.toml b/detcore/tests/testutils/Cargo.toml
+index ffc48a17..6d417bc6 100644
+--- a/detcore/tests/testutils/Cargo.toml
++++ b/detcore/tests/testutils/Cargo.toml
+@@ -2,17 +2,17 @@
+
+ [package]
+ name = "detcore-testutils"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+
+ [dependencies]
+-detcore = { version = "0.0.0", path = "../.." }
++detcore = { version = "0.2.0", path = "../.." }
+ pretty_assertions = { version = "1.4.1", features = ["alloc"], default-features = false }
+ reverie = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+ reverie-ptrace = { version = "0.1.0", git = "https://github.com/rrnewton/reverie.git", rev = "adc147342f34754b449b9a24174aca3ac3a2e16b" }
+-test-allocator = { version = "0.0.0", path = "../../../common/test-allocator" }
++test-allocator = { version = "0.2.0", path = "../../../common/test-allocator" }
+ tokio = { version = "1.52.4", features = ["full", "test-util", "tracing"] }
+ tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
+ tracing-subscriber = { version = "0.3.23", features = ["chrono", "env-filter", "json", "local-time", "parking_lot", "registry"] }
+diff --git a/flaky-tests/Cargo.toml b/flaky-tests/Cargo.toml
+index 806e8dfd..f34e5d44 100644
+--- a/flaky-tests/Cargo.toml
++++ b/flaky-tests/Cargo.toml
+@@ -2,7 +2,7 @@
+
+ [package]
+ name = "hermetic_infra_hermit_flaky-tests"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+diff --git a/hermit-cli/Cargo.toml b/hermit-cli/Cargo.toml
+index 14db789a..99cd89e2 100644
+--- a/hermit-cli/Cargo.toml
++++ b/hermit-cli/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "hermit"
++description = "Hermit: a deterministic Linux execution engine for reproducible runs, record and replay, and concurrency-race search."
+ version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+@@ -29,15 +30,15 @@ anyhow = "1.0.103"
+ bincode = { version = "2", features = ["serde"] }
+ clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+ colored = "2.1.0"
+-detcore = { version = "0.0.0", path = "../detcore" }
+-detcore-dbi = { version = "0.0.0", path = "../detcore-dbi", optional = true }
++detcore = { version = "0.2.0", path = "../detcore" }
++detcore-dbi = { version = "0.2.0", path = "../detcore-dbi", optional = true }
+ diff = "0.1.13"
+-digest = { version = "0.0.0", path = "../common/digest" }
++digest = { version = "0.2.0", path = "../common/digest" }
+ dirs = "6.0"
+-edit-distance = { version = "0.0.0", path = "../common/edit-distance" }
++edit-distance = { version = "0.2.0", path = "../common/edit-distance" }
+ fbinit = { version = "0.2.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
+ goblin = { version = "0.10.7", features = ["elf32", "elf64", "endian_fd"] }
+-hermit-resources = { version = "0.0.0", path = "../hermit-resources" }
++hermit-resources = { version = "0.2.0", path = "../hermit-resources" }
+ iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder"] }
+ libc = "0.2.186"
+ nix = { version = "0.30.1", features = ["dir", "event", "hostname", "inotify", "ioctl", "mman", "mount", "net", "poll", "ptrace", "reboot", "resource", "sched", "signal", "term", "time", "user", "zerocopy"] }
+diff --git a/hermit-install/Cargo.toml b/hermit-install/Cargo.toml
+index 7326f7be..b81134c6 100644
+--- a/hermit-install/Cargo.toml
++++ b/hermit-install/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hermit-install"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ license = "BSD-3-Clause"
+ repository = "https://github.com/facebookexperimental/hermit"
+diff --git a/hermit-resources/Cargo.toml b/hermit-resources/Cargo.toml
+index af91bf61..2759ce9c 100644
+--- a/hermit-resources/Cargo.toml
++++ b/hermit-resources/Cargo.toml
+@@ -1,6 +1,7 @@
+ [package]
+ name = "hermit-resources"
+-version = "0.0.0"
++description = "Resource accounting and limit types for the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ license = "BSD-3-Clause"
+ repository = "https://github.com/facebookexperimental/hermit"
+diff --git a/hermit-verify/Cargo.toml b/hermit-verify/Cargo.toml
+index 1b83cdf6..82e59646 100644
+--- a/hermit-verify/Cargo.toml
++++ b/hermit-verify/Cargo.toml
+@@ -2,7 +2,8 @@
+
+ [package]
+ name = "hermit-verify"
+-version = "0.0.0"
++description = "Run-to-run verification harness for the Hermit deterministic execution engine."
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+@@ -11,9 +12,9 @@ license = "BSD-3-Clause"
+ anyhow = "1.0.103"
+ clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+ colored = "2.1.0"
+-detcore = { version = "0.0.0", path = "../detcore" }
+-detcore-model = { version = "0.0.0", path = "../detcore-model" }
+-edit-distance = { version = "0.0.0", path = "../common/edit-distance" }
++detcore = { version = "0.2.0", path = "../detcore" }
++detcore-model = { version = "0.2.0", path = "../detcore-model" }
++edit-distance = { version = "0.2.0", path = "../common/edit-distance" }
+ fbinit = { version = "0.2.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
+ rand = "0.10.2"
+ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+diff --git a/liteinst-runtime-build/Cargo.toml b/liteinst-runtime-build/Cargo.toml
+index b7baf09e..0df45c51 100644
+--- a/liteinst-runtime-build/Cargo.toml
++++ b/liteinst-runtime-build/Cargo.toml
+@@ -5,7 +5,7 @@ default-members = ["."]
+
+ [package]
+ name = "hermit-liteinst-runtime-build"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ publish = false
+
+diff --git a/liteinst-runtime-build/runtime/Cargo.toml b/liteinst-runtime-build/runtime/Cargo.toml
+index f0440081..3496a61f 100644
+--- a/liteinst-runtime-build/runtime/Cargo.toml
++++ b/liteinst-runtime-build/runtime/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hermit-liteinst-runtime-artifact"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ publish = false
+
+diff --git a/tests/Cargo.toml b/tests/Cargo.toml
+index 4dcdd08c..3aa771a2 100644
+--- a/tests/Cargo.toml
++++ b/tests/Cargo.toml
+@@ -2,7 +2,7 @@
+
+ [package]
+ name = "hermetic_infra_hermit_tests"
+-version = "0.0.0"
++version = "0.2.0"
+ edition = "2024"
+ repository = "https://github.com/facebookexperimental/hermit"
+ license = "BSD-3-Clause"
+@@ -187,7 +187,7 @@ path = "standalone/stacktrace_events.rs"
+
+ [dependencies]
+ close-err = "1.0.2"
+-detcore = { version = "0.0.0", path = "../detcore" }
++detcore = { version = "0.2.0", path = "../detcore" }
+ libc = "0.2.186"
+ nix = { version = "0.30.1", features = ["dir", "event", "hostname", "inotify", "ioctl", "mman", "mount", "net", "poll", "ptrace", "reboot", "resource", "sched", "signal", "term", "time", "user", "zerocopy"] }
+ regex = "1.13.1"
+--
+2.53.0-Meta

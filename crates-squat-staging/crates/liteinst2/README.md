@@ -1,0 +1,1 @@
+Name reservation placeholder for `liteinst2` — the lightweight dynamic binary instrumentation runtime used by the Hermit/Reverie deterministic execution project (<https://github.com/rrnewton/liteinst2>). Required dependency of `reverie-liteinst`. Real functionality will follow.

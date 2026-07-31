@@ -1,0 +1,148 @@
+From 275edf4032b0206cddf42b2921402118503c970d Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Fri, 31 Jul 2026 00:22:34 -0700
+Subject: [PATCH] Add crate descriptions for crates.io publish-readiness
+
+Adds a `description` field (required by crates.io) to the publishable reverie
+crates so the workspace passes `cargo publish --dry-run` cleanly:
+reverie, reverie-util, reverie-syscalls, reverie-ptrace, reverie-kvm,
+reverie-dbi, reverie-process, reverie-memory, reverie-e9patch, safeptrace.
+
+reverie-liteinst is excluded from the clean publish set: it depends on the
+external `liteinst2` crate (git dep, not yet on crates.io), which must be
+published before reverie-liteinst can publish.
+
+Internal deps are already `{ version, path }`, so `cargo publish` in workspace
+mode packages the set leaves-first with no further manifest surgery.
+---
+ reverie-dbi/Cargo.toml      | 1 +
+ reverie-e9patch/Cargo.toml  | 1 +
+ reverie-kvm/Cargo.toml      | 1 +
+ reverie-memory/Cargo.toml   | 1 +
+ reverie-process/Cargo.toml  | 1 +
+ reverie-ptrace/Cargo.toml   | 1 +
+ reverie-syscalls/Cargo.toml | 1 +
+ reverie-util/Cargo.toml     | 1 +
+ reverie/Cargo.toml          | 1 +
+ safeptrace/Cargo.toml       | 1 +
+ 10 files changed, 10 insertions(+)
+
+diff --git a/reverie-dbi/Cargo.toml b/reverie-dbi/Cargo.toml
+index d35aefb..4e8e974 100644
+--- a/reverie-dbi/Cargo.toml
++++ b/reverie-dbi/Cargo.toml
+@@ -1,5 +1,6 @@
+ [package]
+ name = "reverie-dbi"
++description = "Dynamic binary instrumentation (DBI) execution backend for the Reverie framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-e9patch/Cargo.toml b/reverie-e9patch/Cargo.toml
+index c998b5b..e8d6366 100644
+--- a/reverie-e9patch/Cargo.toml
++++ b/reverie-e9patch/Cargo.toml
+@@ -1,5 +1,6 @@
+ [package]
+ name = "reverie-e9patch"
++description = "e9patch-based static binary-rewriting backend for the Reverie framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-kvm/Cargo.toml b/reverie-kvm/Cargo.toml
+index aef8afb..7392719 100644
+--- a/reverie-kvm/Cargo.toml
++++ b/reverie-kvm/Cargo.toml
+@@ -1,5 +1,6 @@
+ [package]
+ name = "reverie-kvm"
++description = "KVM-based execution backend for the Reverie instrumentation framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-memory/Cargo.toml b/reverie-memory/Cargo.toml
+index dc64ffc..dddd030 100644
+--- a/reverie-memory/Cargo.toml
++++ b/reverie-memory/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-memory"
++description = "Guest-memory access primitives for the Reverie instrumentation framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-process/Cargo.toml b/reverie-process/Cargo.toml
+index 0178d44..e14da97 100644
+--- a/reverie-process/Cargo.toml
++++ b/reverie-process/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-process"
++description = "Deterministic async process spawning and management for the Reverie framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-ptrace/Cargo.toml b/reverie-ptrace/Cargo.toml
+index 72f3a3a..dc156db 100644
+--- a/reverie-ptrace/Cargo.toml
++++ b/reverie-ptrace/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-ptrace"
++description = "ptrace-based execution backend for the Reverie instrumentation framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-syscalls/Cargo.toml b/reverie-syscalls/Cargo.toml
+index 7b83896..bef678c 100644
+--- a/reverie-syscalls/Cargo.toml
++++ b/reverie-syscalls/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-syscalls"
++description = "Strongly-typed Linux syscall representations and (de)serialization for the Reverie framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie-util/Cargo.toml b/reverie-util/Cargo.toml
+index ea2cbea..86ab5fd 100644
+--- a/reverie-util/Cargo.toml
++++ b/reverie-util/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-util"
++description = "Shared utility helpers for the Reverie instrumentation framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/reverie/Cargo.toml b/reverie/Cargo.toml
+index 8ffc1fe..5dec4f7 100644
+--- a/reverie/Cargo.toml
++++ b/reverie/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "reverie-core"
++description = "Deterministic user-space syscall and signal interception runtime — the core Reverie process-instrumentation framework."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+diff --git a/safeptrace/Cargo.toml b/safeptrace/Cargo.toml
+index b6242be..3eb1740 100644
+--- a/safeptrace/Cargo.toml
++++ b/safeptrace/Cargo.toml
+@@ -2,6 +2,7 @@
+
+ [package]
+ name = "safeptrace"
++description = "Safe, ergonomic Rust wrappers around the Linux ptrace(2) API."
+ version = "0.1.0"
+ authors = ["Meta Platforms"]
+ edition = "2024"
+--
+2.53.0-Meta

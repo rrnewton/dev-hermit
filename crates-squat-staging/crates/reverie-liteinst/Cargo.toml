@@ -1,0 +1,14 @@
+[package]
+name = "reverie-liteinst"
+version = "0.0.1"
+edition = "2021"
+description = "LiteInst dynamic-instrumentation backend for the Reverie runtime (name reservation for the Hermit/Reverie project)."
+license = "BSD-3-Clause"
+repository = "https://github.com/rrnewton/reverie"
+homepage = "https://github.com/rrnewton/reverie"
+authors = ["Hermit/Reverie maintainers <hermit@rrnewton.github.io>"]
+readme = "README.md"
+keywords = ["deterministic", "reproducible"]
+categories = ["development-tools"]
+
+[dependencies]

@@ -1,0 +1,14 @@
+[package]
+name = "liteinst2"
+version = "0.0.1"
+edition = "2021"
+description = "Lightweight dynamic binary instrumentation (probe/trampoline) runtime used by the Hermit/Reverie deterministic execution project (name reservation)."
+license = "BSD-3-Clause"
+repository = "https://github.com/rrnewton/liteinst2"
+homepage = "https://github.com/rrnewton/liteinst2"
+authors = ["Hermit/Reverie maintainers <hermit@rrnewton.github.io>"]
+readme = "README.md"
+keywords = ["instrumentation", "dbi"]
+categories = ["development-tools"]
+
+[dependencies]
