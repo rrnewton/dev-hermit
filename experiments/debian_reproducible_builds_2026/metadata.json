@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-07-29",
+  "task": "rb-drb-asplos20-eval-point",
+  "paper": {
+    "title": "Reproducible Containers",
+    "doi": "10.1145/3373376.3378519",
+    "author_pdf": "https://krs85.github.io/dettrace.pdf",
+    "author_pdf_sha256": "6346dfa0e5ea193fb975d5330da80d030f2a7641d95c7063069c8f8d7d875539"
+  },
+  "experiments": {
+    "repository": "https://github.com/upenn-acg/dettrace-experiments",
+    "requested_checkout": "e6fd33c5865fc65d2551c379493e1ae1d7f9c96e",
+    "config_tag": "ASPLOS2020Submission",
+    "config_tag_object": "01f257228cde62ce9f6068e62f6371ce6c772e41",
+    "config_commit": "1fa20374c1390ebd9440c599d39774e53f3ada41",
+    "baseline_latest_commit_before_run": "d3072e12f168d490965ec35554e636be974b98b5",
+    "dettrace_latest_commit_before_run": "745dca81d0c1d2bf54756fee6ec1142ecdc51e5f",
+    "baseline_matrix_commit": "0330527e6d6e68cb34650fe94c7e3e2c49b2cfce",
+    "baseline_matrix_sha256": "ece5e5d76c3055b00aef82c7a6d5a14505781b4925af4302a0c115ad5f09bf68",
+    "dettrace_matrix_commit": "501e8e6b645f8f7ad5168657ea536652a8a3cd44",
+    "dettrace_matrix_sha256": "43aff3231ada47be34b8f01116fe2234e143756fccd837c37d91c52f4261f9ea"
+  },
+  "dettrace": {
+    "repository": "https://github.com/dettrace/dettrace",
+    "tag": "ASPLOS2020Submission",
+    "tag_object": "4038b0edd5fb5210d6a20bffdfd89f79de58caa3",
+    "commit": "3c27bce648fecc1495721d30bd35030df6743e3d",
+    "flags": [
+      "--print-statistics",
+      "--currentAsChroot",
+      "--timeoutSeconds",
+      "7200"
+    ]
+  },
+  "reprotest": {
+    "repository": "https://github.com/upenn-acg/reprotest",
+    "version": "0.7.8",
+    "commit": "0386340dc7580539df46430b43d4833d964a7aa1",
+    "seed": 1234567890,
+    "variations": "+all,-domain_host,-kernel,-fileordering,-umask"
+  },
+  "debian": {
+    "suite": "wheezy",
+    "snapshot_timestamp": null,
+    "snapshot_status": "not recorded in public artifact; external /datasets/WheezyRepoMirror",
+    "source_versions_status": "not recoverable from CSV VERSION field",
+    "baseline_run_directory_timestamp": "2019-04-05T10:01:08",
+    "dettrace_run_directory_timestamps": [
+      "2019-04-20T21:09:52",
+      "2019-04-21T10:08:23"
+    ]
+  },
+  "published_environment": {
+    "host_os": "Ubuntu 18.04 LTS",
+    "host_kernel": "Linux 4.15",
+    "host": "CloudLab c220g5, 2x Intel Xeon Silver 4114, 192 GiB RAM",
+    "paper_initial_buildability_timeout_seconds": 1800,
+    "final_baseline_launcher_timeout_seconds": 14400,
+    "dettrace_timeout_seconds": 7200
+  },
+  "package_sets": {
+    "all": {
+      "path": "asplos20_all_packages.txt",
+      "count": 17145,
+      "sha256": "8a3ca4ba7f76921f08549437d067f79c41e7792a8f768bc9d70dae87eadd8bf7"
+    },
+    "baseline_irreproducible": {
+      "path": "asplos20_baseline_irreproducible.txt",
+      "count": 11958,
+      "sha256": "0c03193042caaf8bf9b709ceb9af207967fed83c41b902a05d3112c4e48e5874"
+    },
+    "dettrace_reproduced_target": {
+      "path": "asplos20_dettrace_reproduced_target.txt",
+      "count": 8688,
+      "sha256": "8ea518b8b4cb49b21821860b107aab09a4a46f0ad897b5a090ac270efbf0df1c"
+    }
+  },
+  "published_counts": {
+    "baseline_buildable": 15761,
+    "baseline_reproducible": 3803,
+    "baseline_irreproducible": 11958,
+    "dettrace_reproducible": 12130,
+    "dettrace_timeout": 1582,
+    "dettracefailed": 708,
+    "buildfailed": 1341,
+    "unsupported_aggregate": 2049
+  },
+  "remaining_exactness_blockers": [
+    "mirror timestamp and Release/Sources hashes",
+    "source package version/checksum manifest",
+    "wheezy.tar.gz hash and APT configuration"
+  ]
+}

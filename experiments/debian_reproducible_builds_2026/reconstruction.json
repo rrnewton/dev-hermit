@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "classification": "wheezy-reconstruction",
+  "selected_snapshot": {
+    "timestamp": "20190301T000000Z",
+    "base_url": "https://snapshot.debian.org/archive/debian/20190301T000000Z/",
+    "release_sha256": "bf3b1df44c6b8a752c270c22b0057af6fcb301b814f9c594e249f86ccaec6a63",
+    "sources_gz_sha256": "33ebf8db73b8859173b1c6a5d5d5d466e5f23a4f241fe7b0fd440ca8fa3c008b",
+    "source_stanzas": 17175,
+    "target_names": 8688,
+    "target_names_resolved": 8688
+  },
+  "builder_image": "docker.io/library/debian@sha256:41a613df4beca480a97c22b1f6837f7502cb95206e2cc2daf1ea3cb28f8755ab",
+  "hermit_baseline": {
+    "pull_request": "https://github.com/rrnewton/hermit/pull/1160",
+    "commit": "91bf22088c5665ffe632768136ea8f16cbcab90b"
+  },
+  "pilot": {
+    "package": "hello",
+    "version": "2.8-2",
+    "directory": "pool/main/h/hello",
+    "source_files_sha256": {
+      "hello_2.8-2.dsc": "150993d6d9c65a78d447e0e138d04b465d0f8fe8d814bad116fc87c4d1af404c",
+      "hello_2.8.orig.tar.gz": "e6b77f81f7cf7daefad4a9f5b65de6cae9c3f13b8cfbaea8cb53bb5ea5460d73",
+      "hello_2.8-2.debian.tar.gz": "f5d003db24d35d4f96b916eb8264c5111dc14875c7cba8c4dd09464a48573cb2"
+    }
+  }
+}
