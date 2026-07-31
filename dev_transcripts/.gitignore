@@ -1,0 +1,4 @@
+# Generated cultivated transcripts + stats + model cache are machine-local.
+# Only the scripts (lib_transcript.py, prompt_wordcount.py,
+# gen_daily_transcripts.py) and this dir's README are version-controlled.
+daily/
