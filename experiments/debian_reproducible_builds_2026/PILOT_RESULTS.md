@@ -361,6 +361,83 @@ not new root causes. The full sweep remains gated on the calibrated
 parallel-experiment runner (which would also remove the host-contention
 confound behind the skid crashes) and the #1160/#287/#1168 dependency chain.
 
+## 2026-07-31 reconfirm (light-host) — DRB report v0.2
+
+This round revisits batch 3's two load-confounded findings on a **lighter host**
+(load ~45–56, versus batch 3's ~90) with the same source binary but pinned
+immutable for provenance (`ignored/workahead-bin/hermit-f3b29a1f-4d91bf4d`,
+sha256 `4d91bf4d…`; Hermit [#1168](https://github.com/rrnewton/hermit/pull/1168)
+tip `f3b29a1f`, git-pinning Reverie
+[#287](https://github.com/rrnewton/reverie/pull/287) `@8d3a041`). Builds use a
+new timeout-bounded, pgid-reaping harness (`ignored/two_root_hermit_timed.sh`,
+`timeout -k 60 900` per root plus a guest proc-tree snapshot 30 s before the
+hard timeout), so a wedge is classified `HANG` instead of blocking the driver.
+
+### Reconfirm 1 — the PMU skid is NOT load-gated; it reproduces at load ~50
+
+`3depict 2.0.1-1` under `hermit run --strict` (ptrace) panicked **identically**
+at the lighter load:
+
+```
+thread 'main' panicked at reverie-ptrace/src/timer.rs:809:9:
+Clock perf counter exceeds target value at start of attempted single-step:
+  batch 3 (load ~90):   766814174 > 766813944   (overshoot   230 RCB)
+  reconfirm (load ~50): 886805639 > 886796944   (overshoot 8 695 RCB)
+```
+
+It built **further** before skidding (886 M vs 766 M RCB, deep into the
+wxWidgets/OpenMP C++ compile), and the RCB value at which the skid is *caught*
+differs run-to-run because the overshoot is a **host-physical PMU event**, not a
+virtual-time one — so where it trips varies. Load amplifies the *frequency* of
+skids; it does not *gate* them. This **corrects** batch 3's "reconfirm under a
+quiet host (might clear it)" caveat: the skid is a genuine hardware/PMU
+robustness gap that survives a quiet host. (`7kaa` was not re-run — one
+light-host reproduction is sufficient; it is presumed the same class.)
+
+### Reconfirm 2 (new) — a skid panic is a panic-*then-hang*, not a clean crash
+
+The `timer.rs:809` panic is on `thread 'main'`, but the hermit **process does
+not exit**. A forked supervisor child survives (reparents to init) still holding
+the whole guest tree **ptrace-stopped**. The pre-timeout `.tree` snapshot (every
+guest process in state `t`):
+
+```
+hermit-supervisor(Sl) → dpkg-buildpackage(t) → make -f debian/rules build(t)
+  → make(t) → make all-recursive(t) → make all(t) → make all-am(t)
+```
+
+Only the 900 s `timeout` freed root A, and even then **SIGTERM was ignored** (the
+guest is `t`-stopped); the orphaned supervisor group required **SIGKILL**
+(`kill -KILL -- -PGID`). So a PMU skid **leaks an orphaned frozen guest tree**: a
+plain `timeout` on the direct child reaps hermit-main but not the forked
+supervisor + guest. Unattended sweeps therefore **must** use pgid-based reaping
+(now baked into `two_root_hermit_timed.sh`). This is the same teardown-contract
+class as the DBI `exit_group` sibling-reap gap and the `389-adminutil` post-build
+wedge: hermit trusts the kernel/timeout to reap a tree it still holds
+ptrace-stopped.
+
+### Cumulative (through v0.2, unchanged count, sharpened taxonomy)
+
+- **Fully byte-identical reproduced:** **37 of 8,688** (unchanged).
+- **Shallow ±1 s tar-mtime (metadata only, payload identical):** 5
+  (`a52dec`, `bdfresize`, `bible-kjv`, `binfmtc`, `bison++`).
+- **Real shipped-byte divergence (P0 content class):** `389-adminutil`
+  (`libadminutil-dev` `.a`, ar-embedded mtime) = 1. *On the pinned binary this
+  host also reproduced a **post-build wedge** on `389-adminutil` — same
+  frozen-guest-tree teardown class as reconfirm 2 above.*
+- **Crash → hang (P0):** `3depict` (PMU skid, **confirmed at light load**) = 1
+  confirmed + `7kaa` presumed = 2.
+- **Harness-skip (not a hermit verdict):** `a56` (unprivileged chown/uid).
+- **46 of 8,688 attempted end-to-end.**
+
+Net: **no content-determinism regressions** in 46 packages built under the
+work-ahead binary; all non-reproductions trace to two already-tracked
+foundations — the scheduler/virtual-time host-timing channel (mtime/ar-mtime
+divergences + the post-build wedges) and the PMU single-step skid (crash→hang) —
+neither a new root cause. dettrace determinizes all of these (branch-count
+virtual time, no PMU single-step). The full 8,688 sweep remains gated on the
+calibrated parallel-experiment runner and the #1160 → #287 → #1168 landing chain.
+
 ### Methodology note: in-process `--verify` is unusable for full package builds
 
 `rebuild.sh hermit <pkg>` uses one shared root and runs `dpkg-buildpackage`
