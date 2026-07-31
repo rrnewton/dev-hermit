@@ -33,8 +33,30 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# --------------------------------------------------------------------------- #
+# Eastern-time rendering (the owner works US/Eastern; transcripts show EDT/EST) #
+# --------------------------------------------------------------------------- #
+# All displayed clock times are rendered in America/New_York. For the July data
+# this yields EDT (UTC-4); zoneinfo keeps it correct year-round (EST in winter).
+try:
+    from zoneinfo import ZoneInfo
+
+    EASTERN = ZoneInfo("America/New_York")
+except Exception:  # pragma: no cover - zoneinfo always present on py3.9+
+    EASTERN = timezone(timedelta(hours=-4), "EDT")
+
+
+def eastern_dt(created_at_ms: int) -> datetime:
+    """UTC epoch-ms -> aware datetime in America/New_York (EDT/EST)."""
+    return datetime.fromtimestamp(created_at_ms / 1000, tz=timezone.utc).astimezone(EASTERN)
+
+
+def weekday_abbr(date_str: str) -> str:
+    """'2026-07-20' -> 'Mon'."""
+    return datetime.strptime(date_str, "%Y-%m-%d").strftime("%a")
 
 ORC_HOME = Path(os.environ.get("ORC_HOME", Path.home() / ".orc"))
 INDEX_DB = ORC_HOME / "index.db"

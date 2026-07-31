@@ -29,16 +29,19 @@ import subprocess
 import sys
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_transcript import (  # noqa: E402
+    EASTERN,
     Turn,
+    eastern_dt,
     group_turns,
     iso_week,
     load_blocks,
     resolve_session,
+    weekday_abbr,
     word_count,
 )
 
@@ -225,7 +228,7 @@ def day_titles(date: str, groups: dict[str, list[Turn]], summaries: dict[str, st
 # --------------------------------------------------------------------------- #
 def render_day(date: str, groups: dict[str, list[Turn]], summaries: dict[str, str],
                day_summary: str, titles: dict[str, str]) -> str:
-    title = f"{date} Daily dev-hermit dev team transcript"
+    title = f"{date} {weekday_abbr(date)} Daily dev-hermit dev team transcript"
     out = [title, "=" * len(title), "", f"> {day_summary}", ""]
 
     # Main Chat first, then threads in chronological order of first message.
@@ -245,9 +248,11 @@ def render_day(date: str, groups: dict[str, list[Turn]], summaries: dict[str, st
         out.append("-" * len(header))
         out.append("")
         for idx, t in enumerate(turns):
-            ts = datetime.fromtimestamp(t.first_ms / 1000, tz=timezone.utc).strftime("%H:%M")
+            edt = eastern_dt(t.first_ms)
+            ts = edt.strftime("%H:%M")
+            tzlabel = edt.strftime("%Z")  # EDT for the summer data, EST in winter
             ch = t.channel
-            out.append(f"**[{ts} UTC · {ch}]**")
+            out.append(f"**[{ts} {tzlabel} · {ch}]**")
             out.append("")
             out.append(t.prompt_text())          # VERBATIM owner prompt
             out.append("")
@@ -294,7 +299,7 @@ def build_session_stats(blocks: list[Block], ref, tg_stats: dict) -> dict:  # no
             models[b.model] += 1
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(EASTERN).isoformat(),
         "session": {
             "id": ref.session_id, "name": ref.name, "cwd": ref.cwd,
             "created_at": ref.created_at, "updated_at": ref.updated_at,
@@ -388,6 +393,9 @@ def main() -> None:
     ap.add_argument("--days", nargs="*", help="only these YYYY-MM-DD days")
     ap.add_argument("--no-model", action="store_true", help="skeleton only (no LLM)")
     ap.add_argument("--stats-only", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="regenerate days whose transcript already exists "
+                         "(default: idempotent — only MISSING days are generated)")
     args = ap.parse_args()
 
     ref = resolve_session(session_id=args.session, db_path=args.db)
@@ -412,10 +420,19 @@ def main() -> None:
     use_model = not args.no_model
     cache = load_cache()
 
+    generated = skipped = 0
     for date in target_days:
         day_turns = by_day.get(date, [])
         if not day_turns:
             print(f"{date}: no owner turns, skipping", file=sys.stderr)
+            continue
+        # IDEMPOTENCY: leave an already-generated day untouched unless --force,
+        # so a re-run only fills MISSING days (near-instant no-op otherwise).
+        out_path = DAILY / f"{date}-dev-hermit-daily.md"
+        if out_path.exists() and not args.force:
+            print(f"{date}: transcript exists, skipping (use --force to regenerate)",
+                  file=sys.stderr)
+            skipped += 1
             continue
         print(f"{date}: {len(day_turns)} owner turns", file=sys.stderr)
         summaries = abridge_turns(day_turns, cache, args.model, args.agent, use_model)
@@ -425,11 +442,12 @@ def main() -> None:
         day_summary, titles = day_titles(date, groups, summaries,
                                          args.model, args.agent, use_model)
         md = render_day(date, groups, summaries, day_summary, titles)
-        out_path = DAILY / f"{date}-dev-hermit-daily.md"
         out_path.write_text(md)
+        generated += 1
         print(f"  wrote {out_path}", file=sys.stderr)
 
-    print("done", file=sys.stderr)
+    print(f"done: {generated} generated, {skipped} skipped (already existed)",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":

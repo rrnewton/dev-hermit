@@ -76,13 +76,15 @@ The expensive coordinator model is never used. Summaries are cached per turn
 ## Generated outputs (in gitignored `daily/`)
 
 - `YYYY-MM-DD-dev-hermit-daily.md` — one cultivated transcript per day:
-  - `# YYYY-MM-DD Daily dev-hermit dev team transcript` + `===` underline
+  - `YYYY-MM-DD <Wkd> Daily dev-hermit dev team transcript` + `===` underline
+    (the abbreviated weekday, e.g. `Mon`, follows the date)
   - one-paragraph day summary in a `>` block quote
   - `Main Chat: <topic keywords>` then `Thread N: <topic keywords>` sections
     (each `---` underlined)
   - within each: the owner's **verbatim** prompt, then an `AI response:` label
     above an **abridged** summary in a ` ```markdown ` fence; turns separated by
-    `----`
+    `----`. Each turn is timestamped in **Eastern time** (`[HH:MM EDT · channel]`,
+    via `America/New_York`, so it stays correct year-round).
 - `session-stats.json` — cumulative machine-readable stats for the whole session:
   block/word/token counts (user vs AI), response counts, per-day breakdown,
   per-channel breakdown, models seen, and taskgraph totals (total / by-status /
@@ -99,6 +101,8 @@ gen_daily_transcripts.py
   --days YYYY-MM-DD ...          only these days
   --no-model                     skeleton only (verbatim prompts, naive summary)
   --stats-only                   only (re)write session-stats.json
+  --force                        regenerate days whose transcript already exists
+                                 (default is idempotent: only MISSING days are built)
 ```
 
 ## Notes / limitations
@@ -106,6 +110,15 @@ gen_daily_transcripts.py
 - `token_count` is populated only for user-input blocks in this schema;
   assistant-block token counts read as 0, so the JSON reports token totals only
   where the store records them (word counts cover all roles).
-- The generator is idempotent per day and safe to re-run; only new/uncached
-  turns hit the model.
+- **Idempotency**: a re-run detects each already-generated
+  `daily/YYYY-MM-DD-dev-hermit-daily.md` and skips it, so a second run only fills
+  **missing** days (a full-history re-run with every day present is a ~1s no-op
+  that makes zero model calls; it still refreshes the fast, pure-code
+  `session-stats.json`). Pass `--force` to deliberately regenerate existing days.
+- **Timestamps are Eastern (EDT/EST)** and **titles carry the weekday**. Days are
+  bucketed by the block's UTC calendar date (unchanged) but every clock time is
+  displayed in `America/New_York`; near the UTC-midnight boundary a turn can show
+  an evening EDT time from the prior calendar day while still living in its
+  UTC-dated file. A one-time in-place migration converted the pre-existing
+  transcripts to this format without resummarizing.
 - All network calls (the model) go through `with-proxy`.
