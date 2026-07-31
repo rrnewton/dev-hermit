@@ -1,0 +1,9 @@
+variant,run,concurrency,timeout_s,verdict,exit_status,wall_s,last_guest_serial_ts,pass_marker,commit_turns,step2d_time_jumps,host_load_1min,notes
+off,1,alone,300,TIMEOUT,124,300,1.529765,no,,0,~40,under-budgeted (needs ~323s); crawling not wedged
+on,1,alone,300,TIMEOUT,124,300,1.480644,no,,0,~40,under-budgeted (needs ~323s); crawling not wedged
+on,2,concurrent,1200,DISCARDED,137,321,none,no,,0,~40,confounded by concurrent run; CPU-starvation artifact; excluded
+on,3,alone,1500,PASS,0,325,1.905795,yes,39803,0,~40,clean boot to power down
+on,4,alone,700,PASS,0,323,1.905795,yes,,0,~44,clean boot to power down
+on,5,alone,700,PASS,0,323,1.905795,yes,,0,~41,clean boot to power down
+off,3,alone,1500,PASS,0,323,1.903274,yes,41043,0,37-54,clean boot to power down; booted under higher load than on-run3/4/5
+off,4,alone,700,PASS,0,328,1.903274,yes,,0,46-58,clean boot to power down; booted under rising load ~50

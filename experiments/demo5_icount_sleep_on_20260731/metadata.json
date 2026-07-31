@@ -1,0 +1,16 @@
+{
+  "task": "demo5-fix-qemu-icount-idlewarp",
+  "agent": "hermit-226",
+  "date": "2026-07-31",
+  "hermit_binary": "hermit/target/release/hermit @ origin/main 0ca0dec256fd484e238b475a031a5c2d482eeba8",
+  "backend": "ptrace",
+  "hermit_mode": "run --strict (RCB-time ON), plain, no --no-rcb-time",
+  "guest": "bare QEMU busybox boot (demos/boot_qemu.sh), -serial stdio, NO python controller / QMP",
+  "qemu": "qemu-system-x86_64 10.1.2 (qemu-10.1.2-1.4.hs+fb.el9)",
+  "kernel": "ignored/qemu-linux/bzImage sha256 e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2 (Linux 6.17.13)",
+  "busybox_sha256": "e35db14651077c08598fbc3259609b2db398e5b7dcf07b28f1f3156118bcc081",
+  "host": "devserver, 316 cores, load average ~34-40 during runs (heavily shared)",
+  "variants": {"baseline": "-icount shift=0,sleep=off", "treatment": "-icount shift=0,sleep=on"},
+  "branch": "codex/demo5-icount-sleep-on-speculative @ 1da347e1e440f211e3b6411c6059f3461c1dd2ef",
+  "pr": "https://github.com/rrnewton/hermit/pull/1215 (draft, speculative, do-not-land)"
+}
