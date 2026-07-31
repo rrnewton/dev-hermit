@@ -4,30 +4,31 @@
 
 ## Mission
 
-Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, DBI, KVM, experimental patching backends, etc) that all produce identical behavior/logs/memory, plus record/replay and chaos concurrency testing that is equally broadly-compatible with arbitrary guest programs.
+Aggressively drive hermit toward its final form: a production-grade deterministic execution engine with multiple backends (ptrace, KVM, Liteinst first party, plus DBI, e9patch, sabre with 3rd party deps) that all produce identical behavior/logs/memory, i.e. PARITY, plus record/replay and chaos concurrency testing that is equally broadly-compatible with arbitrary guest programs.
 
 Don't forget your general princples around CLEAR and SPECIFIC communication (which programs ran what under what mode and which branch/version was experimented with?) and presenting EVIDENCE for claims, including wherever possible reproducer commands.
 
 ## Priorities
 
-We expand compatibility across a set of tracked programs, most of which are part of the CI suite (but we can do periodic testing outside of it).
+We expand compatibility across a set of tracked programs, most of which are part of the CI suite (but we can do periodic testing outside of it). We have have a common denominator for ALL tests in our CI manifests, and terminology for "cells" (mode x backend x test) which should monotonically increase in total coverage, both for DETERMINISM and for the stronger PARITY level of achievement (i.e. backend X runs program Y deterministically AND bitwise identical to the ptrace reference impl).
+
 Hermit has a series of modes:
 
-0. **Smoke test** -- running through hermit at all, with enforcement less than --strict, is a good first step on a new application but is not something we track regularly in CI.
+0. **Smoke test** -- running through hermit at all, with enforcement less than --strict, is a good first step on a new application but is not something we use as a goal (though "minimal dosing" of hermit is useful for reproducible builds).
 1. **Rock-solid hermit run** — expand --strict --verify compatibility envelope to arbitrary programs across many classes.
-3. **KVM backend** — gvisor-model syscall interception through KvmGuest
-3. **DBI, Sabre, liteinst, epatch backends** — binary instrumentation with Reverie running the local tool in the guest address space.
-4. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks), perodically compare against mature "rr"
+2. **Record/replay** — expand R/R to match --verify coverage (e.g. fix pipe deadlocks), perodically compare against mature "rr"
+3. Chaos mode and hermit analyze for concurency testing and race localization.
+
+Then the above modes can run in each of the backends, with running in non-ptrace backends being the expanding frontier that we need to drive.
 
 ## Mode Expansion Mandate
 
-Every mode must catch up to the one before it:
+Every mode must catch up to the one before it, and advanced, higher-perf backends must catch up with the reference one:
 - Example: 300 programs in --strict --verify → same 300 in record/replay → same in DBI → same in KVM, and the denominator are always the e2e tests we planned in the overhaul.
 - There is NO stopping while trailing modes are weaker
 - Always add NEW programs to coverage even as trailing modes catch up
 
 Agents will constantly try to put up fake results that mislead you, where they have mocked up something partial that is NOT the real thing we want. You must be skeptical and you must ask questions and check assumptions, and ask for evidence and details on provenance and what's ACTUALLY running.
-
 
 ## Operations and Regulation
 
@@ -106,5 +107,5 @@ Another binary patching backend, but at startup time it scans all application co
 ### e9patch Backend
 Based on instruction punning like LiteInst but at startup time.  We pair this with our own scanning for nondet instructions (CFG reconstruction), very similar to Sabre. But we try to share the same LD_PRELOAD injection method making this a close counterpart to the LiteInst backend.
 
-### Done = Identical
+### Done = Identical (Parity)
 A backend is done when ALL programs produce bitwise-identical output across all hermit reverie backends (ptrace/KVM/Liteinst/etc). Same memory hashes, same guest output, same exit codes.
