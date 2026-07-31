@@ -9,12 +9,24 @@ Agents launched from `dev-hermit/` discover this real directory through
 `.llms/skills -> ../.claude/skills` and the workspace skill hook. The parent
 does not currently carry an `.agents/skills` link.
 
+**Always-load contract for purpose-fixed roles.** Every fixed-function worker
+(`hermit-ci`, `hermit-coord`, `hermit-dbi`, `hermit-e9patch`, `hermit-kvm`,
+`hermit-lander`, `hermit-liteinst`, `hermit-sabre`, plus `hermit-linux` /
+`hermit-opt`) has a same-named role charter here. Each charter's `description`
+frontmatter ends with "Load when acting as `hermit-<name>` or dispatching
+`<name>` work", which is the reminder hook the skill-evaluation step reads to
+surface and load the charter **every time** that agent is engaged or that lane
+is dispatched. Keeping the `Load when acting as …` clause in every role
+`description` is what makes the always-load behavior automatic — do not drop it.
+This is portable across clients (Claude/codex) because it rides the skill
+`description`, not a client-specific `agents` definition.
+
 The active set is:
 
 - Purpose-fixed roles: `hermit-ci.md`, `hermit-coord.md`,
-  `hermit-dbi.md`, `hermit-kvm.md`, `hermit-lander.md`,
-  `hermit-linux.md`, `hermit-liteinst.md`, `hermit-opt.md`, and
-  `hermit-sabre.md`.
+  `hermit-dbi.md`, `hermit-e9patch.md`, `hermit-kvm.md`,
+  `hermit-lander.md`, `hermit-linux.md`, `hermit-liteinst.md`,
+  `hermit-opt.md`, and `hermit-sabre.md`.
 - Coordinator review and reporting:
   `backend-reality-reviewer.md`, `post-facto-review.md`, and
   `progress-rubric.md`.

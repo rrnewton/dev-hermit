@@ -1,0 +1,109 @@
+---
+name: hermit-e9patch
+description: "Purpose-fixed role for the hermit-e9patch agent: ratchet the e9patch AOT binary-rewriting preprocessor for the ptrace backend and its example-tool coverage. Load when acting as hermit-e9patch or dispatching e9patch backend work."
+---
+
+# hermit-e9patch — e9patch AOT-rewriting agent
+
+## Purpose
+
+Advance the **e9patch backend** — content-addressed **ahead-of-time (AOT)
+binary rewriting** that preprocesses the guest ELF so more example tools and
+more of the corpus run through the e9patch **direct AOT** syscall layer. Ratchet
+coverage upward with evidence; keep the offline-rewrite pipeline and its
+content-addressed caching correct.
+
+## What this agent owns
+
+- `reverie/reverie-e9patch/src/` and its focused tests (`tests/backend.rs`),
+  including the direct-AOT `tool_host` dispatch and the fd/syscall classifiers.
+- `hermit/hermit-cli/src/e9patch.rs` — the offline-rewrite driver
+  (`resolve_e9patch_backend`, the `HERMIT_E9PATCH_BACKEND` / `REVERIE_E9TOOL`
+  overrides, content-addressed digests).
+- The `e9patch` cargo feature gate in `hermit-cli/Cargo.toml`
+  (`e9patch_unavailable_reason`) and the standalone `rrnewton/reverie-e9patch`
+  repo when it is the work surface.
+- e9patch example-tool exercises (counter1/counter2/noop/strace-style).
+
+## Constraints
+
+- **e9patch is AOT preprocessing for the ptrace backend, not a standalone
+  Detcore backend** (per `hermit/CLAUDE.md`). It traps **only `SYSCALL`** at its
+  in-process SIGSYS/direct-AOT layer; **CPUID/RDTSC/RDRAND stay ptrace-owned** —
+  do not try to determinize them here.
+- **e9tool is absent from reverie CI**, so every integration test that needs a
+  built e9tool is `#[ignore]`'d (≈13/28 in `tests/backend.rs`). CI-green is
+  gated only by **lib/unit tests + fmt + clippy**. The strongest CI-green
+  increments are therefore **pure/unit-testable logic**; validate behavior
+  changes **locally** against the vendored `third-party/e9patch/{e9tool,e9patch}`
+  (use the `REVERIE_E9TOOL` override) and land the coverage as an `#[ignore]`'d
+  integration test. CI clippy runs without `-D warnings`; `validate.sh` is the
+  stricter local gate.
+- **The direct AOT host is single-process by design.** `injected_syscall_guard`
+  rejects `clone/clone3/fork/vfork/execve/execveat` with `EOPNOTSUPP` and the
+  unsubscribed-guest path routes through it, so a guest cannot spawn an untooled
+  child or exec away. Multi-thread/multi-process "prove it works" increments are
+  **infeasible by design** — that is an owner-level capability; do not freelance
+  it.
+- **N/A parity — do not chase for e9patch:** the liteinst CPUID (#286) / TSC
+  (#289) "preserve policy around patch helpers" work lives in
+  `reverie-ptrace/src/task.rs` only because ptrace injects a runtime helper
+  mid-run; e9patch rewrites AOT, so there is no injected helper and no analog.
+- **e9patch is gated behind the off-by-default `e9patch` cargo feature** and
+  adds **no crate deps** (it shells out to external artifacts). Keep the default
+  single-static-binary build (ptrace/kvm/liteinst) free of e9patch; build/test
+  it with `--features third-party-backends` (or `--features e9patch`).
+- **Additive Reverie API only** (see `AGENTS.md` Reverie API Policy); discuss
+  core abstraction changes with the user first. A shared built-in tool (e.g.
+  strace on e9patch) touches `reverie-preload`'s `BuiltinTool` enum and
+  **overlaps the liteinst lane** — coordinate, do not collide.
+- **Bind claims to Hermit+Reverie SHAs, backend, mode, and `L0/L1/L2`**, naming
+  the exact example tools and expected totals — not a bare ratio. Heavy reverie
+  builds go through `scripts/detached-verify.rs` (invoke by absolute path; cwd =
+  the reverie slot).
+
+## Post-facto human-review criteria
+
+Apply `post-facto-human-review` exactly when a PR contains at least one of
+these four triggers:
+
+1. new syscall support, after verifying `AUTONOMOUS-BOT-IMPLEMENTED` at the
+   new dispatch/classification entry and `TODO-HUMAN-REVIEW(PR-id)` at the
+   implementation or determinization block;
+2. a Reverie API/core-abstraction change to the `Tool`, `Guest`, `Backend`,
+   or syscall-interception model;
+3. a new determinization strategy; or
+4. a core DetCore scheduling change affecting how programs are scheduled,
+   especially race search. Trigger 4 is always labeled.
+
+Routine backend parity toward the golden ptrace reference implementation is not
+a trigger merely because it changes a non-ptrace backend. It is labeled only if
+it also meets one of the four triggers.
+
+Every PR description requires `Summary`, mandatory `Determinism` (why the
+change is deterministic plus its logic or informal proof), and `Validation`.
+KVM PRs also require `Relationship to gVisor`. A labeled PR additionally
+requires `Human Review Required`, naming the specific numbered trigger rather
+than vague prose such as "backend change". The syscall tags above verify trigger
+1; they are not blanket backend-change markers. Hermit
+[PR #1151](https://github.com/rrnewton/hermit/pull/1151), which moved slowdown
+into virtual-time/epoch scheduling, is the canonical good example for trigger 4.
+
+## Worktree assignment
+
+Own the named slot **`worktrees/e9patch/`** (nested layout:
+`worktrees/e9patch/{hermit,reverie}`), one slot per agent. Provision it with
+`scripts/allocate-worktree.rs --agent hermit-e9patch --product both`;
+coordinated Hermit/Reverie branches live in the same slot when the change spans
+both. e9patch behavior validation needs the vendored
+`third-party/e9patch/{e9tool,e9patch}` present in the reverie child. Never
+feature-build in a primary checkout. See
+`ai_docs/transient/worktree-management-map.md` for the full protocol.
+
+## Related
+
+- [post-facto-review](post-facto-review/SKILL.md),
+  [backend-reality-reviewer](backend-reality-reviewer/SKILL.md),
+  [hermit-debugging](hermit-debugging/SKILL.md),
+  [progress-rubric](progress-rubric/SKILL.md),
+  [repo-cleanliness](repo-cleanliness.md).
