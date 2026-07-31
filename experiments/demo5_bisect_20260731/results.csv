@@ -1,0 +1,6 @@
+binary,hermit_sha,window_position,timeout_s,outcome,wedge_point,serial_lines,qmp_socket,evidence
+bare-qemu-10.1.2,none,control,60(wall),GREEN,none-reaches-shell,380,n/a,"rtc 2022-01-01T00:00:07Z; past hpet0; Interactive busybox shell"
+hermit,f6c836b18dac,window-start(tag demo-20260729 last-known-green),300,HANG,qemu-startup,0,never-created,"dtid9 execve qemu then brk(NULL) then no more syscalls; wait_for_socket timeout; SIGKILL tid9"
+hermit,f6c836b18dac,window-start,600,HANG,qemu-startup,0,never-created,"same signature; 915s virtual burned; reproducible 2/2"
+hermit,61d8df393b88,mid-window(#1190 clock fix),300,HANG,hpet,250,created,"frozen at hpet0 [0.724]; 223008 SleepUntil(LogicalTime(0)) commits"
+hermit,ae2565be5697,window-end(220 0/3 broken),300,HANG,hpet,250,created,"frozen at hpet0 [0.724]; COMMIT turn 636946 dettid17 SleepUntil(0) committed_time frozen 1767227900.362250000s"

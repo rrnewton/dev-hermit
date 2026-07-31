@@ -1,0 +1,7 @@
+mode,backend,jobs,sample,builds_in_command,exit_code,wall_ms,artifact_bytes_identical,execution_verify,log
+native,native,8,1,1,0,720,true,not_applicable,ignored/logs/build-job-native-j8-1785341428-533-2171729-run1.log
+native,native,8,2,1,0,681,true,not_applicable,ignored/logs/build-job-native-j8-1785341428-533-2171729-run2.log
+strict,ptrace,8,1,1,0,13164,true,not_requested,ignored/logs/build-job-ptrace-j8-evidence-1785341281-564-2077917.log
+strict,ptrace,8,2,1,0,13089,true,not_requested,ignored/logs/build-job-ptrace-j8-evidence-1785341400-100-2144751.log
+strict-verify,ptrace,8,1,2,1,32888,not-observed,divergent-turn-8249,ignored/logs/build-job-ptrace-j8-verify-1785341309-347-2090831-run1.log
+strict-verify,ptrace,8,2,2,1,38817,not-observed,divergent-turn-5637,ignored/logs/build-job-ptrace-j8-verify-1785341309-347-2090831-run2.log

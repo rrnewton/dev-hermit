@@ -1,0 +1,22 @@
+{
+  "date": "2026-07-30",
+  "question": "Does KVM frozen-corpus ptrace-stdout parity move after the ThreadOwnership merge, and does it cross the >=50% target?",
+  "hermit_sha": "9cd955f9ae5e71e861f5fa779d6235d6eb946718",
+  "reverie_pin": "89388d7428da600f4dd280467048dd900e44ff30",
+  "reverie_268_path_resolve": "514c58349baee389537a2bd07fad102bfe05708b",
+  "baseline_scorecard": "ai_docs/transient/2026-07-28-examples-cross-backend-scorecard.md",
+  "baseline_hermit_sha": "adbfaca337c7b404c772573b327a4e739212f89d",
+  "baseline_reverie_sha": "f93bad17213609c85429613802ff367a2dd1f801",
+  "baseline_kvm_parity": "2/5",
+  "measured_kvm_parity": "5/5",
+  "host_kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "host_cpu": "AMD EPYC 9D85 158-Core Processor",
+  "kvm_device": "/dev/kvm mode 0666",
+  "binary": "target/debug/hermit",
+  "level": "L0 execution + backend-local L2 (--strict --verify) + ptrace guest-stdout parity",
+  "logging": "default",
+  "relaxations": "none",
+  "bound_seconds": 60,
+  "passes": 2,
+  "backend_activation_proof": "INFO hermit::kvm: launching guest through reverie-kvm; KVM ~596ms vs ptrace ~268ms on date.sh"
+}

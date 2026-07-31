@@ -1,0 +1,6 @@
+example,ptrace_exit,kvm_exit,ptrace_stdout_sha256_12,kvm_stdout_sha256_12,parity,kvm_strict_verify
+date.sh,0,0,ded910b908b9,ded910b908b9,MATCH,pass
+devrand.sh,0,0,f5edcf77a864,f5edcf77a864,MATCH,pass
+race.sh,0,0,44f4a9c58373,44f4a9c58373,MATCH,pass
+rand.py,0,0,e1b8db378cfd,e1b8db378cfd,MATCH,not_rerun_baseline_pass
+timed-progress-bar.py,0,0,d8778ce33675,d8778ce33675,MATCH,not_rerun_baseline_pass

@@ -1,0 +1,11 @@
+=== JVM livelock root-cause matrix (JIT threads vs preemption) ===
+program/mode                                   verdict            wall
+Hello -Xint  + --max-timeslice=disabled        LIVELOCK(rc=124)     70.0s
+Hello -Xint  + RCB-preempt-on                  LIVELOCK(rc=124)     70.0s
+Hello JIT-on + --max-timeslice=disabled        LIVELOCK(rc=124)     70.0s
+Hello JIT-on + RCB-preempt-on                  LIVELOCK(rc=124)     70.0s
+Threads -Xint  + --max-timeslice=disabled      LIVELOCK(rc=124)     70.0s
+Threads -Xint  + RCB-preempt-on                LIVELOCK(rc=124)     70.0s
+Threads JIT-on + --max-timeslice=disabled      LIVELOCK(rc=124)     70.0s
+Threads JIT-on + RCB-preempt-on                LIVELOCK(rc=124)     70.0s
+=== done ===

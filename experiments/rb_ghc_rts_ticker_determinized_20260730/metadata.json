@@ -1,0 +1,73 @@
+{
+  "task": "determinize-ghc-rts-ticker",
+  "date": "2026-07-30",
+  "agent": "hermit-227 (impl, opus-4.8)",
+  "hermit_pr": "https://github.com/rrnewton/hermit/pull/1169",
+  "hermit_branch": "codex/timerfd-virtual-time",
+  "hermit_pr_head_sha": "71105cb8",
+  "hermit_validation_binary_sha": "86736b54",
+  "note_on_binary_sha": "release binary built at 86736b54 (core impl); later commits 98883069 (lit un-XFAIL) and 71105cb8 (comment/tag-only) are behavior-identical",
+  "base_branch": "claude/fix-clock-getres-null-res",
+  "base_sha": "32f004cd63f0942d05818d900af2ea5780b9f87d",
+  "prereq_pr": "https://github.com/rrnewton/hermit/pull/1164",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "container": "ghcbw (haskell:9.8.4)",
+  "ghc_version": "9.8.4",
+  "workload": "46-module package, ghc --make -j8 -O0, RTS ticker ON (no +RTS -C0), fixed canonical output path",
+  "hermit_command": "hermit run --strict -- ghc --make -j8 -O0 -outputdir <fixed> -o <fixed> Main.hs",
+  "metric": "aggregate SHA-256 over sorted .o files + final binary",
+  "runs_per_variant": 3,
+  "integration_reconfirmation_20260730": {
+    "by": "re-dispatch cycle (impl, opus-4.8)",
+    "event": "PR #1169 was merged into the prereq branch claude/fix-clock-getres-null-res; PR #1164 head is now 76c624bf and carries BOTH commits (32f004cd clock_getres NULL-res fix + 76c624bf timerfd virtualization).",
+    "witness_binary_sha": "71105cb8 (slot03 release binary; differs from merged head 76c624bf only by a 2-line rustdoc-comment reformat in files.rs, behavior-identical)",
+    "reconfirmed_with_change_aggregate": "0855e32c1d8abf38ee9059a9072fdbb317432b5c91dee357ffa52d06f44cef1c (3/3 identical, fresh runs reconf1/2/3) — matches originally recorded with_change hash",
+    "ci_state_1164": "Regular tests (GitHub-managed portable)=PASS (authoritative); merge-gate=PASS (re-fired after stale in-progress read); privileged/self-hosted=skipping (expected); label post-facto-human-review applied (trigger #3).",
+    "remaining_landing_blocker": "PR #1164 is CONFLICTING with current origin/main (9cd955f9): #1175 (pidfd determinization) edited detcore/src/syscalls/files.rs and detcore-model/src/time.rs, overlapping the timerfd additions (3 conflict markers). Branch claude/fix-clock-getres-null-res is owned by slot 230 / flagship task rb-drb-haskell-determinize; conflict resolution + mark-ready + merge are coordinator/flagship-owner actions."
+  },
+  "integration_reconfirmation_on_current_main_20260731": {
+    "by": "hermit-243 (impl, opus-4.8), fresh re-dispatch",
+    "origin_main_at_test": "aa5258b650307a03448eb7ea7e02d3731f5ec51b",
+    "event": "origin/main advanced to aa5258b6 (Pin Reverie to landed main tip #1186, + loopback_peer socket work). Re-validated the deliverable on THIS main. Merging origin/main + origin/claude/fix-clock-getres-null-res now yields a SINGLE conflict in detcore/src/fd.rs (files.rs auto-merges clean); the conflict is purely additive (main added a loopback_peer OFD field + accessors; flagship added a timerfd OFD field + accessors) — resolved keep-both.",
+    "integration_branch": "codex/ticker-integration-check",
+    "integration_sha": "307d620e0effd40f9288919aeafd4f446e852237",
+    "integration_binary_sha256": "64661f45922fa8fb3ab5dc71584ebd5df0b92e5a5bb34ee3879a17995148d81e",
+    "reverie_pin": "2afd1ecc576085332f71f02dfcea0de635d7026b (current main pin)",
+    "build": "cargo build --workspace (debug) exit 0; cargo build --release --bin hermit exit 0",
+    "focused_tests": "detcore tests_time 16/16 (incl timerfd_periodic_virtual_time); detcore tests_parallelism 16 tests exit 0; cargo fmt --all --check clean; cargo clippy -p detcore clean",
+    "flagship_L2_repro_with_change": "10e379234dde63585dd49988c43d3305eeb2073d33d4267624a685f5a82ba0de (3/3 identical: int1/int2/int3) — stock hermit run --strict -- ghc --make -j8 -O0, RTS ticker ON, NO +RTS -C0 => REPRODUCIBLE on current main",
+    "hash_delta_note": "aggregate hash is 10e37923 here vs 0855e32c at the prior main; EXPECTED and not a regression — a different reverie/main version shifts the (still-deterministic) virtual schedule, which permutes genSym/Unique assignment to a different-but-stable set of info-table symbols. Determinism is per-configuration; the deliverable claim is run-to-run bitwise reproducibility, which holds (3/3).",
+    "control": "The isolation control remains the existing oldstock runs (same clock_getres fix, WITHOUT timerfd virtualization) = 3/3 distinct (2d38213e/fbe6573d/9577c519). Base hermit passes timerfd through to the host kernel, so reproducibility REQUIRES the virtualization; the fix is the cause.",
+    "landing_handoff": "Pushed conflict-resolved landing-preview ref origin/codex/ticker-integration-check @ 307d620e (NOT a new PR). Coordinator/flagship-owner path to land: on claude/fix-clock-getres-null-res run `git merge origin/main` and resolve detcore/src/fd.rs keep-both (loopback_peer + timerfd), or fast-forward from this ref's tree; then mark #1164 ready, re-run authoritative gate, merge to main."
+  },
+  "landing_pr_and_multicap_20260731": {
+    "by": "hermit-243 (impl, opus-4.8), re-dispatch cycle 3",
+    "landing_pr": "https://github.com/rrnewton/hermit/pull/1187 (DRAFT, from codex/ticker-integration-check @ 307d620e -> main, supersedes stuck draft #1164; label post-facto-human-review trigger #3)",
+    "reason": "flagship draft #1164 remained CONFLICTING+isDraft and its slot 230 was stale (worktree still at old base 32f004cd); opened a real reviewable PR from my own validated conflict-free branch so CI runs and it is a one-click merge. Invariant #2 respected (own branch, flagship branch untouched).",
+    "multi_capability_finding": {
+      "claim_upgraded": "Prior cycles labeled multi-capability -N>1 a known separate gap / out-of-scope. Empirically, under `hermit run --strict` it is ALSO reproducible with the timerfd virtualization.",
+      "results_integration_binary_64661f45": {
+        "N1_x3": "10e379234dde63585dd49988c43d3305eeb2073d33d4267624a685f5a82ba0de (3/3 identical)",
+        "N2_x3": "24e3631998fc37c36f8903e5fc518148f8eaaed73753e8e5f578dc054388fece (3/3 identical)",
+        "N4_x3": "ca1d82e6a2e530d19e37a7ef6ae0e6364917901f022f03d582996ce098b02fc1 (3/3 identical)"
+      },
+      "mechanism": "`--strict` implies sequentialize_threads, so Detcore deterministically serializes all RTS capabilities onto the single virtual CPU; with the ticker virtualized the entire schedule (and genSym/Unique order) is a pure function of virtual time regardless of -N. Different -N values give different-but-stable aggregate hashes (a different but deterministic schedule).",
+      "true_gap": "A genuine multi-capability parallel-genSym nondeterminism gap would only appear under `--no-sequentialize-threads` (true parallel execution), which is a separate future backend goal, not the stock `--strict` path.",
+      "control_caveat": "The -N1 no-timerfd-virtualization control was 3/3 distinct (oldstock). A direct -N>1 no-fix control was not re-run (that binary is not staged), but the host-timed-ticker nondeterminism mechanism applies identically across -N, so the fix is the enabler."
+    }
+  },
+  "clean_timerfd_only_on_current_main_20260731": {
+    "by": "hermit-243 (impl, opus-4.8), re-dispatch after clock_getres landed",
+    "context": "clock_getres NULL-res prereq landed independently on main via PR #1208 (main tip 0ca0dec2), so the old bundling PRs #1187/#1164 became redundant on that commit. Rebuilt the deliverable as a CLEAN timerfd-ONLY change: cherry-picked the timerfd commit 76c624bf onto origin/main 0ca0dec2. Single additive keep-both conflict in detcore/src/fd.rs (main-side loopback_peer OFD field/accessors vs timerfd OFD field/accessors) resolved keep-both; files.rs + tests auto-merged.",
+    "origin_main_at_test": "0ca0dec256fd484e238b475a031a5c2d482eeba8",
+    "branch": "codex/timerfd-virtual-time-on-main",
+    "integration_sha": "c76195b1",
+    "with_change_binary_sha256": "257a69452ca78dd102d18d7c317ad329072b8dc5d6d0d893fb2aeffee151b9b5",
+    "focused_tests": "cargo test -p detcore --test tests_time = 16/16 PASS (incl timerfd_periodic_virtual_time + clock_getres_null_res_is_ok); cargo fmt --all --check clean; cargo clippy -p detcore --all-targets -D warnings clean; cargo build --release -p hermit exit 0.",
+    "flagship_L2_repro_with_change": "7dac90c7efc5c990c11dd77be41f22ebc319080de05fa743a0ee4776378359a9 (3/3 identical: main1/main2/main3) — stock hermit run --strict -- ghc --make -j8 -O0, RTS ticker ON, NO +RTS -C0, GHC 9.8.4, container ghcbw => REPRODUCIBLE on current main.",
+    "control_no_fix_on_current_main": "main-only binary (0ca0dec2, clock_getres present, NO timerfd virtualization), same host/container/harness = 3/3 DISTINCT: 9327e1272dcc37c1c91605d6fcd2d37af555c8d50183abc84b9e4e5aeab972fc / 0c8c572856ed891257e58015ebd55324a3b23398d07cef7e16620d54b6c459e0 / 1a805f5ced988ac31e0db8c622aa2847f802793d1294de28dc2802e2617ae16b. This is a fresh, self-contained control on current main: with-fix reproducible vs without-fix non-reproducible isolates the timerfd virtualization as the cause.",
+    "backend": "ptrace",
+    "assurance_level": "L2 (hermit run --strict, bitwise-identical repeat runs)"
+  }
+}

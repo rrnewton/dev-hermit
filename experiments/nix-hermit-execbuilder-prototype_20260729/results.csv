@@ -1,0 +1,12 @@
+label,drv,out_narhash,check_narhash,check_exit,verdict
+demofast-native,/nix/store/vx85jhya4klm0rx3imh5y67nwd6p4cpn-nondet-demo.drv,1ai4yba6wh4jham9wjf73rs55cs321b9zkig8w87fypkgpp6icim,0gf6z92mqfsqcsxzbqfwlpsf926srp79sxlgx7jaxggpiw9zasmm,104,NONDETERMINISTIC
+demofast-hermit,/nix/store/3ia5zahjk3zk7dq6kc50fg7kbln8w252-nondet-demo.drv,1h3jaichrdwqx2rrlf9s4y8xl0rx20646672qqrb5r4bz04byyxg,05cfwr7gkrb25nivrlhn7fz5wjkpdjbhnaq1qcj3q7gk9jqhb58q,104,NONDETERMINISTIC
+nftables-native,/nix/store/8pjxc7kggwmidmzm4ghh453xilnfbiki-nftables-1.1.6.drv,1g08s4j4g43h3a99yf0jf51cs096wx1wrhsf1bmbk4ja7rizsi6j,00dqa7irv8gfr1kx5h6d1gpzbay4z5kawmlvbaa8c72bb678x443,104,NONDETERMINISTIC
+nondettime-native,/nix/store/klff850mkv8zgc43v0xqc49dsqshb751-nondet-time.drv,1pjwrly0qy22p21p5d36nfnvj1caqafgh858hcr5ckzxmby001nv,144pdp8qhkrq1a0xsnv2xvk96mhhazflcyyb02iyqn10i35znykw,104,NONDETERMINISTIC
+nondettime-hermit,/nix/store/z3wj18d4m1bvma3vybs2k9kmafwbiri6-nondet-time.drv,163lw6199z6gi7v4ixc4z9mw6sz9lmysj2nyd510fmar1sgixld6,163lw6199z6gi7v4ixc4z9mw6sz9lmysj2nyd510fmar1sgixld6,0,reproducible
+nftables-native-canonical,/nix/store/8pjxc7kggwmidmzm4ghh453xilnfbiki-nftables-1.1.6.drv,1g08s4j4g43h3a99yf0jf51cs096wx1wrhsf1bmbk4ja7rizsi6j,1g08s4j4g43h3a99yf0jf51cs096wx1wrhsf1bmbk4ja7rizsi6j,reproducible
+nondettime-hermit-canonical,/nix/store/z3wj18d4m1bvma3vybs2k9kmafwbiri6-nondet-time.drv,163lw6199z6gi7v4ixc4z9mw6sz9lmysj2nyd510fmar1sgixld6,163lw6199z6gi7v4ixc4z9mw6sz9lmysj2nyd510fmar1sgixld6,reproducible
+nftables-hermit,/nix/store/l8prv25g5xmvmh1fm8ijg7ybspi1ym6z-nftables-1.1.6.drv,,,,not-completed-slow(>23min hermit sequentialized; confirmatory only)
+nftables-hermit-canonical,/nix/store/l8prv25g5xmvmh1fm8ijg7ybspi1ym6z-nftables-1.1.6.drv,,,,not-completed-slow(nix build-lock serialized behind --check run)
+nftables-hermit,/nix/store/l8prv25g5xmvmh1fm8ijg7ybspi1ym6z-nftables-1.1.6.drv,BUILD_FAIL,,,error
+nftables-hermit-canonical,/nix/store/l8prv25g5xmvmh1fm8ijg7ybspi1ym6z-nftables-1.1.6.drv,BUILD_FAIL,,error

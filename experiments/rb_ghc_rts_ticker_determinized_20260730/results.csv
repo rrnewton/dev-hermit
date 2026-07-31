@@ -1,0 +1,12 @@
+hermit_variant,run,rts_flags,aggregate_sha256,verdict
+without_change,1,stock(ticker on),2d38213ec4a4daf8b9cf718d849a89d7d8a062174c3e1ab0569ac342a58c1d04,nonreproducible
+without_change,2,stock(ticker on),fbe6573d3745126cf5cd237cdb9f998797aa7785b8639c248349b0e98d4296a7,nonreproducible
+without_change,3,stock(ticker on),9577c519453e64c802e9728e1fc97942421628c7d2f65ed67855bc64ba5e8f6c,nonreproducible
+with_change,1,stock(ticker on),0855e32c1d8abf38ee9059a9072fdbb317432b5c91dee357ffa52d06f44cef1c,reproducible
+with_change,2,stock(ticker on),0855e32c1d8abf38ee9059a9072fdbb317432b5c91dee357ffa52d06f44cef1c,reproducible
+with_change,3,stock(ticker on),0855e32c1d8abf38ee9059a9072fdbb317432b5c91dee357ffa52d06f44cef1c,reproducible
+# multi-capability probe (hermit-243, 2026-07-31, integration binary 64661f45 @ 307d620e, hermit run --strict)
+variant,run,aggregate_sha256,verdict
+ncap-N1,x3,10e379234dde63585dd49988c43d3305eeb2073d33d4267624a685f5a82ba0de,reproducible-3of3
+ncap-N2,x3,24e3631998fc37c36f8903e5fc518148f8eaaed73753e8e5f578dc054388fece,reproducible-3of3
+ncap-N4,x3,ca1d82e6a2e530d19e37a7ef6ae0e6364917901f022f03d582996ce098b02fc1,reproducible-3of3

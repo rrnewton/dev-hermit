@@ -1,0 +1,6 @@
+example,ptrace_sha12,kvm_sha12,parity,baseline_20260730_parity
+date.sh,5112c2c91f0d,ef5c29fdee2d,DIFF,MATCH
+devrand.sh,f5edcf77a864,f5edcf77a864,MATCH,MATCH
+race.sh,44f4a9c58373,44f4a9c58373,MATCH,MATCH
+rand.py,e1b8db378cfd,e1b8db378cfd,MATCH,MATCH
+timed-progress-bar.py,d8778ce33675,d8778ce33675,MATCH,MATCH

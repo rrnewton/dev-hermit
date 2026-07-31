@@ -1,0 +1,40 @@
+{
+  "experiment": "nix-hermit-execbuilder-prototype",
+  "date_utc": "2026-07-29",
+  "task": "rb-nix-execbuilder-prototype",
+  "epic": "epic-nix-reprobuild",
+  "question": "Can wrapping the Nix builder exec under `hermit run` determinize a non-reproducible Nix build? Prototype the execBuilder seam and a rebuild-and-compare-hash harness on the research targets.",
+  "host": {
+    "hostname": "devbig014.atn7.facebook.com",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": 316,
+    "arch": "x86_64"
+  },
+  "toolchain": {
+    "nix": "2.35.1 (single-user, no daemon, sandbox=false)",
+    "nix_install": "official installer, --no-daemon --no-modify-profile, /nix owned by newton",
+    "nixpkgs_channel": "nixpkgs-unstable",
+    "nixpkgs_revision": "9bc02893134c733dd85de46ee4fb2fac696b5529",
+    "nixpkgs_lib_version": "26.11pre1043539.9bc02893134c",
+    "hermit_repo_sha": "f6c836b18dac01a7dc632449d5069ffeb6a3efdc",
+    "hermit_binary": "hermit/target/release/hermit"
+  },
+  "targets": {
+    "nftables": "1.1.6 (exact match to rb-nix-reprobuild-research Lila target)",
+    "bcachefs-tools": "1.38.8 (drifted from research target 1.34.0 in this nixpkgs pin; not exercised)"
+  },
+  "wrap_mechanism": {
+    "seam": "stdenv.mkDerivation realBuilder (the exec'd builder binary; the `builder` attr is the phase script)",
+    "override": "drv.overrideAttrs (_: { realBuilder = <store wrapper>; })",
+    "wrapper_cmd": "exec /usr/bin/setarch x86_64 -R <hermit> run --no-namespace -- <stdenv.shell> \"$@\"",
+    "why_no_namespace": "Hermit's default private mount namespace discards the builder's writes to the /nix/store output path; --no-namespace lets $out persist.",
+    "why_setarch_R": "Under --no-namespace Hermit cannot control ASLR; setarch -R (ADDR_NO_RANDOMIZE) pins it at the host level."
+  },
+  "hermit_determinism_coverage_under_no_namespace": {
+    "virtualized_identical": ["gettimeofday/date wall-clock", "/dev/urandom reads"],
+    "NOT_virtualized": [
+      "AT_RANDOM-seeded userspace PRNG (bash $RANDOM) - setarch -R does not zero AT_RANDOM",
+      "/proc/sys/kernel/random/uuid - shared host procfs read under --no-namespace"
+    ]
+  }
+}

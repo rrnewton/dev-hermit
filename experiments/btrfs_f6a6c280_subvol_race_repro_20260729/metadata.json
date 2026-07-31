@@ -1,0 +1,62 @@
+{
+  "task": "goal-repro-btrfs-f6a6c280",
+  "date": "2026-07-29",
+  "kind": "research",
+  "question": "Can Hermit deterministic chaos scheduling reproduce the btrfs subvolume-deletion inodes-xarray race (f6a6c280 / CVE-2025-39884) with QEMU-under-Hermit and yield a bitwise witness seed?",
+  "bug": {
+    "id": "9786531",
+    "cve": "CVE-2025-39884",
+    "fix_commit": "f6a6c280059c4ddc23e12e3de1b01098e240036f",
+    "buggy_commit": "9786531399a679fc2f4630d2c0a186205282ab2f",
+    "subsystem": "fs/btrfs/inode.c",
+    "fix_diffstat": "+11/-1",
+    "mechanism": "evict()/remove_inode_hash then __xa_erase(key) races btrfs_iget btrfs_add_inode_to_root; buggy erases by key losing a live inode; fix uses __xa_cmpxchg identity check",
+    "failure_mode": "lost inode with delayed_node -> btrfs_kill_all_delayed_nodes infinite loop -> cleaner soft lockup during subvolume cleanup"
+  },
+  "kernels": {
+    "buggy": {
+      "file": "ignored/btrfs-kernel-build/artifacts/bzImage-btrfs-buggy-9786531",
+      "commit": "9786531399a679fc2f4630d2c0a186205282ab2f",
+      "describe": "6.16.0-rc7-00239-g9786531399a6",
+      "md5": "8615440722b02318e92df9c4523c003b"
+    },
+    "fix": {
+      "file": "ignored/btrfs-kernel-build/artifacts/bzImage-btrfs-fix-f6a6c280",
+      "commit": "f6a6c280059c4ddc23e12e3de1b01098e240036f",
+      "describe": "6.16.0-rc7-00240-gf6a6c280059c",
+      "md5": "4bc5f1a869c26b60b114fbe6096c0ce8"
+    },
+    "config_md5": "7d39f6ac67317130800a76624da814e3",
+    "config_key": ["CONFIG_PREEMPT_NONE=y", "CONFIG_BTRFS_FS=y", "CONFIG_BLK_DEV_RAM=y", "CONFIG_DETECT_HUNG_TASK=y", "CONFIG_SOFTLOCKUP_DETECTOR=y"]
+  },
+  "hermit": {
+    "primary_checkout_sha": "103657d48a991d556afe7e563537e000e74aef76",
+    "binary": "hermit/target/release/hermit"
+  },
+  "reproducer": {
+    "source": "ignored/btrfs-f6a6c280-repro_20260729/subvol-race.c",
+    "upstream_reference": "https://www.spinics.net/lists/linux-btrfs/msg157605.html",
+    "oracle_markers": ["BTRFS_F6A6C280_ORACLE_ARMED", "BTRFS_F6A6C280_ORACLE_PASS", "BTRFS_F6A6C280_ORACLE_FAIL"],
+    "cmdline_tunables": ["race.iters", "race.budget", "race.nlinks", "race.ndrops", "race.onedir"]
+  },
+  "qemu_profile": {
+    "machine": "q35",
+    "accel": "tcg",
+    "cpu": "max",
+    "mem": "512M",
+    "icount": "shift=0,sleep=off",
+    "rtc": "base=2022-01-01T00:00:00,clock=vm",
+    "note": "-icount required for hermit host-time virtualization; native smoke uses -accel kvm -cpu host without icount"
+  },
+  "sweeps": [
+    {"name": "sweep1", "smp": 2, "target_timeslice": 100000, "nlinks": 4, "ndrops": 8, "slowdown_factor": 100, "epoch_ns": 2000000, "onedir": 0, "points": 15, "iters_each": 24, "attempts_approx": 360, "result": "all PASS; 1 boot-livelock->OTHER"},
+    {"name": "sweep2", "smp": 2, "target_timeslice": 10000, "nlinks": 16, "ndrops": 16, "slowdown_factor": 12, "epoch_ns": 1000000, "onedir": 0, "points": 12, "iters_each": 24, "attempts_approx": 288, "result": "all PASS"},
+    {"name": "sweep3", "smp": 4, "target_timeslice": 4000, "nlinks": 32, "ndrops": 32, "slowdown_factor": 12, "epoch_ns": 1000000, "onedir": 0, "points": 4, "iters_each": 200, "attempts_approx": 800, "result": "all PASS"},
+    {"name": "sweep4", "smp": 4, "target_timeslice": 4000, "nlinks": 32, "ndrops": 32, "slowdown_factor": 12, "epoch_ns": 1000000, "onedir": 1, "points": 6, "iters_each": 500, "attempts_approx": 3000, "result": "all PASS"}
+  ],
+  "total_attempts_approx": 4448,
+  "reproductions": 0,
+  "verdict": "NEGATIVE_RESULT_NO_REPRO",
+  "strategic_note": "Blind chaos seed-sweeping cannot localize a race this narrow; the intended lever is happens-before edges (RFC #1146, unlanded). Upstream reproducer loops unbounded.",
+  "github_issue": "rrnewton/hermit#1130"
+}

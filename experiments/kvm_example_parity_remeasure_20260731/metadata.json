@@ -1,0 +1,17 @@
+{
+  "date": "2026-07-31",
+  "question": "Does KVM 5/5 frozen-example parity vs ptrace still hold on landed main 0ca0dec2?",
+  "hermit_sha": "0ca0dec256fd484e238b475a031a5c2d482eeba8",
+  "reverie_pin": "adc147342f34754b449b9a24174aca3ac3a2e16b",
+  "baseline_hermit_sha": "9cd955f9ae5e71e861f5fa779d6235d6eb946718",
+  "baseline_reverie_pin": "89388d7428da600f4dd280467048dd900e44ff30",
+  "host": "Linux 6.18.39 x86_64 AMD EPYC 9D85, /dev/kvm mode 0666",
+  "binary": "target/debug/hermit",
+  "level": "L0 + ptrace guest-stdout parity",
+  "result": "4/5 (regressed from 5/5)",
+  "diverging_cell": "date.sh",
+  "root_cause_commit": "cc3730fd Track committed logical time in the guest clock",
+  "root_cause": "removed per-backend GuestClockCalibration; guest CLOCK_REALTIME now tracks scheduler committed logical time, which differs per backend (ptrace RCB vs KVM progress metric); KVM also microsecond-quantized",
+  "attribution_evidence": "ptrace date.sh output ALSO changed since baseline (ded910b908b9 -> 5112c2c91f0d), so the cause is hermit-side detcore shared by all backends, not the reverie KVM pin",
+  "classification": "trigger#4 core DetCore scheduling/time; owner-owned design tension; not freelance-fixable"
+}

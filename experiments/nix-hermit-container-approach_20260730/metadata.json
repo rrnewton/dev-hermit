@@ -1,0 +1,55 @@
+{
+  "experiment": "nix-hermit-container-approach",
+  "date_utc": "2026-07-30",
+  "task": "nix-without-host-install-container-approach",
+  "epic": "epic-nix-reprobuild",
+  "question": "Can nix builds run under `hermit run --strict` WITHOUT a host nix-install and WITHOUT host-root, by running hermit inside a nixos/nix OCI image in rootless podman? Does ptrace work in the rootless-podman userns?",
+  "option_evaluated": "Option 1 — hermit-inside-rootless-podman (near-term unblock for rb-nix track)",
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "user": "newton (non-root, euid 212630)",
+    "podman": "5.8.3 rootless",
+    "subuid_subgid": "configured (newton:1879048192:65536)",
+    "no_host_nix_used": "container builds use ONLY the image's nix; the host /nix present is a leftover from the prior rb-nix task and was NOT mounted into the winning build (TEST H/recipe run --rm, no /nix bind)"
+  },
+  "toolchain": {
+    "hermit_repo_sha": "9c964fce16ab60c3eadecc557fa2844399854f06",
+    "reverie_repo_sha": "4555a14e26f83951a0444d9ffa19e10746f1b982",
+    "hermit_binary": "hermit/target/release/hermit (dynamic, interp /lib64/ld-linux-x86-64.so.2)",
+    "images": {
+      "nixos/nix:latest": "nix 2.35.1, digest sha256:377d4887aca98f0dfa12971c1ea6d6a625a435d8b610d4c95a436843da6fbfd1",
+      "nixos/nix:2.3.16": "nix 2.3.16 (pre-pidfd), digest sha256:1e19753e8150c11afb8327d47595e41707c23cb36907539bb48cfa703821a2a8"
+    }
+  },
+  "recipe": {
+    "script": "recipe/nix-under-hermit.sh",
+    "podman_flags": "--rm --security-opt seccomp=unconfined -v <hermit>:/hermit:ro -v <hostlibs>:/hostlibs:ro",
+    "hermit_invocation": "/hostlibs/ld-linux-x86-64.so.2 --library-path /hostlibs /hermit/hermit run --strict --no-namespace -- nix-build ...",
+    "why_hostlibs_loader": "nixos/nix image has no /lib64/ld-linux-x86-64.so.2; run hermit via explicit host loader + host libs from ldd(hermit)",
+    "why_seccomp_unconfined": "default podman seccomp ENOSYS's personality(2); reverie needs it to disable ASLR",
+    "why_no_namespace": "full-namespace hermit needs mount/UTS caps rootless podman can't grant (Hostname/Mount EPERM); podman already provides the container",
+    "why_old_nix": "modern nix (2.35) signals the builder via pidfd_send_signal (nr 424); detcore classifies it Unsupported (fails closed under --strict); nix 2.3.16 uses plain kill()"
+  },
+  "results": {
+    "image_pull_via_proxy": "PASS (with-proxy, IPv6-only fwdproxy)",
+    "ptrace_in_rootless_userns": "PASS (hermit run --strict --no-namespace traces guest, virtualized pids) — the core task question, answered YES",
+    "full_namespace_hermit_rootless": "FAIL (Hostname EPERM; +SYS_ADMIN -> Mount EPERM)",
+    "nix_build_under_strict_old_nix": "PASS (nixos/nix:2.3.16): /nix/store/...-hermit-strict-hello built, rc=0, NO host nix, NO host-root",
+    "nix_build_modern_nix_2_35": "FAIL under --strict AND non-strict: pidfd_send_signal blocks builder management ('killing process N: Function not implemented', hangs)"
+  },
+  "root_cause_modern_nix": {
+    "syscall": "pidfd_send_signal (nr 424); pidfd_getfd (nr 438) also Unsupported",
+    "detcore_refs": [
+      "hermit/detcore/src/syscall_classification.rs:784-785 (pidfd_getfd|pidfd_send_signal => Unsupported)",
+      "hermit/detcore/src/lib.rs:284-309 (handle_unsupported_syscall: --strict fails closed; else host passthrough)",
+      "hermit/detcore/src/syscall_classification.rs:551,614 + lib.rs:1959 + syscalls/files.rs:2357 (pidfd_open IS Determinized/implemented)"
+    ],
+    "minimal_probe": "recipe/pidfd_probe.c: native-in-container OK; under hermit pidfd_open=fd3 OK but pidfd_send_signal -> detcore ERROR + sandbox abort"
+  },
+  "recommendations": [
+    "Implement pidfd_send_signal (and pidfd_getfd) in detcore: translate the FdType::Pidfd target to the virtual pid and deliver the signal deterministically. Unblocks modern nix (2.35) under --strict.",
+    "Until then, the container recipe works today with pre-pidfd nix (2.3.16) under --strict.",
+    "Option 2 (hermit-as-container-runtime via containers/storage) remains the cleaner long-term seam; Option 1 is validated as the immediate unblock."
+  ]
+}

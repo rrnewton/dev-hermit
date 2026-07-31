@@ -1,0 +1,25 @@
+{
+  "question": "What fraction of the 183-row frozen ptrace verify corpus does the KVM backend match, and which cells can be enabled?",
+  "date": "2026-07-30",
+  "host": "AMD EPYC 9D85, kernel 6.18.39-0_fbk0_hardened_0_ga43d5727b443, /dev/kvm 0666",
+  "hermit_feature_sha": "0c8429e735adc5cbc2c9485af9bf71033249e65c",
+  "hermit_base": "origin/main 9cd955f9ae5e71e861f5fa779d6235d6eb946718",
+  "reverie_sha": "2afd1ecc576085332f71f02dfcea0de635d7026b",
+  "method": "compile each verify-mode C guest with its manifest cflags; run 'hermit run --strict' (ptrace) vs 'hermit run --backend kvm --strict'; compare exit + stdout SHA-256; then 'hermit run --backend kvm --strict --verify' (L2) under the exact e2e harness env (LC_ALL=C TZ=UTC per-cell HOME/XDG/TMPDIR, --log=info)",
+  "results": {
+    "total_verify_c_cells": 183,
+    "kvm_eq_ptrace_exit0_stdout": 105,
+    "raw_parity_pct": 57.4,
+    "fair_parity_pct_excluding_ptrace_side_failures": 63.3,
+    "ptrace_side_failures_excluded": 17,
+    "guest_args_corrected_estimate": "~108/183 (~59%)",
+    "newly_enableable_candidates_all": 102,
+    "landed_increment_ci_false": 93,
+    "kvm_enabled_verify_before": 7,
+    "kvm_enabled_verify_after": 100,
+    "faithful_harness_L2_pass": "93/93",
+    "real_harness_spotcheck_pass": "16/16"
+  },
+  "pr": "https://github.com/rrnewton/hermit/pull/1188",
+  "scope_caveat": "exit+stdout + backend-local L2 dimension only; NOT full cross-backend detlog/stderr/semantic (formal B3 needs L3)"
+}
