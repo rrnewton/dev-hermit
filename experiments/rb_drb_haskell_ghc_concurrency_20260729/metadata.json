@@ -1,0 +1,58 @@
+{
+  "experiment": "rb_drb_haskell_ghc_concurrency",
+  "date": "2026-07-29",
+  "task": "rb-drb-haskell-determinize",
+  "question": "Can Hermit deterministically build a Haskell package whose native parallel GHC build is non-reproducible due to GHC's concurrency-enabled nondeterminism (the DRB 2024 unsolved frontier class)?",
+  "answer": "Yes, for the concurrency Hermit determinizes: `ghc --make -j8 +RTS -C0` is non-reproducible natively (3/3 distinct aggregate hashes) but bitwise-reproducible under `hermit run --strict` (3/3 identical). GHC's own RTS context-switch ticker (`-C`) and multi-capability (`-N>1`) scheduling remain open Hermit determinization gaps.",
+  "hermit": {
+    "repo": "rrnewton/hermit",
+    "branch": "claude/fix-clock-getres-null-res",
+    "sha": "32f004cd63f0942d05818d900af2ea5780b9f87d",
+    "pr": "https://github.com/rrnewton/hermit/pull/1164",
+    "binary_sha256_prefix": "2f12670af6e26231",
+    "product_fix": "detcore clock_getres now accepts a NULL res pointer (kernel-faithful), unblocking GHC RTS getCurrentThreadCPUTime probe under hermit"
+  },
+  "reverie": {
+    "state": "unchanged (Hermit-only change); reverie not checked out in slot 230"
+  },
+  "toolchain": {
+    "ghc": "9.8.4 (The Glorious Glasgow Haskell Compilation System)",
+    "ghc_rts": "threaded",
+    "os_image": "docker.io/library/haskell:9.8.4",
+    "distro": "Debian 11.11 (bullseye)",
+    "glibc": "2.31 (Debian GLIBC 2.31-13+deb11u14)",
+    "container_runtime": "podman --privileged container 'ghcbw'"
+  },
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "cpu": "AMD EPYC 9D85 158-Core Processor",
+    "note": "Host-built hermit binary runs inside the container via ld-linux + host glibc staged in /work/hostlibs (harness/hermit.sh); HERMIT_BIN points at the staged binary."
+  },
+  "workload": {
+    "generator": "harness/gen_pkg.sh",
+    "modules": 46,
+    "shape": "40 leaf modules + 5 group aggregators + Main; wide independent module graph to maximize -jN scheduling divergence",
+    "objects_per_build": 46,
+    "compile_flags": "ghc --make -j8 -O0"
+  },
+  "method": {
+    "canonical_path": "/work/out (fixed every run; eliminates GHC's -o path hashing confound)",
+    "fingerprint": "sha256 over (all .o sorted by name) + final binary, hashed OUTSIDE the hermit boundary from the persistent /work bind mount",
+    "runs_per_config": 3,
+    "harness": "harness/results_csv.sh (authoritative matrix), harness/repro_matrix.sh (per-file manifest variant)"
+  },
+  "key_results": {
+    "native_-j8_default":  "NON-REPRODUCIBLE (3 distinct)",
+    "native_-j8_+RTS_-C0": "NON-REPRODUCIBLE (3 distinct)",
+    "native_-j8_+RTS_-N8": "NON-REPRODUCIBLE (3 distinct)",
+    "hermit_strict_-j8_default":  "NON-REPRODUCIBLE (3 distinct) -- RTS ticker still fires",
+    "hermit_strict_-j8_+RTS_-C0": "REPRODUCIBLE (1 distinct, aggregate e6037a6c158a39bd0ca90587e864fba22a7440d4c67dfc4e549ba1279797589f)",
+    "hermit_strict_-j8_+RTS_-N8": "NON-REPRODUCIBLE (3 distinct) -- multi-capability genSym ordering not determinized"
+  },
+  "mechanism": "GHC's global Unique supply (genSym atomic counter) is consumed in thread-interleaving order under concurrency; the order leaks into local info-table symbol names of the form c<base62>_str. symbol_nondeterminism_sample.txt shows 20 such names differing in a single leaf .o across two native -C0 runs.",
+  "residual_gaps": [
+    "GHC RTS context-switch ticker (-C, default 20ms) is a green-thread preemption timer hermit does not yet determinize; disable with the semantics-preserving +RTS -C0 to expose the concurrency hermit does determinize.",
+    "Multi-capability RTS (-N>1) parallel genSym ordering is not determinized even under --strict -C0.",
+    "hermit run --strict --sequentialize-threads with the GHC threaded RTS livelocks/hangs (consistent with the min-vtime blocking-via-polling livelock)."
+  ]
+}

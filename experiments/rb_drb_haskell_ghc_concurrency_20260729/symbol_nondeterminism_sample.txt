@@ -1,0 +1,29 @@
+# GHC concurrency nondeterminism: Unique-derived local symbol names
+# Two native -j8 -O0 +RTS -C0 builds of the same source (Leaf10.hs).
+# Object bytes differ; the c<base62>_str info-table names below are the leak.
+
+Leaf10.o sha256 (run A vs run B):
+dc9fb8501a9710aa267f354cfe0fe3a5fdcfc48fc9c6f501317ff9381f577e37  /work/symA/Leaf10.o
+181b0d4bdac50e0a9859ce59dd90ed00efff782577f711bef66d46df1b15e721  /work/symB/Leaf10.o
+
+Symbol names present in exactly one of the two runs (20 total):
+  c7hN_str
+  c7jE_str
+  c7m1_str
+  c7nu_str
+  c7of_str
+  c7pF_str
+  c7sg_str
+  c7ua_str
+  c7wP_str
+  c7xM_str
+  c8vA_str
+  c8vF_str
+  c8vK_str
+  c8vt_str
+  c8yF_str
+  c8yM_str
+  c8yS_str
+  c8yX_str
+  i8Pu_str
+  i8SZ_str

@@ -1,0 +1,51 @@
+{
+  "task": "confirm-ghc-j1-determinism",
+  "date": "2026-07-30",
+  "agent": "impl, opus-4.8",
+  "question": "Is `ghc --make -j1` bitwise-reproducible under hermit --strict (3 runs) and relaxed? Does the -C RTS ticker still cause nondeterminism at -j1, or is -j1 clean by default (no +RTS -C0, no timerfd fix)?",
+  "motivation": "hermit sequentializes threads (zero parallelism benefit), so -j8 under hermit only wastes memory + context switches. The realistic actionable target is -j1. Confirm whether -j1 already reproduces before investing in ticker determinization for -j8.",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "container": "ghcbw (haskell:9.8.4)",
+  "ghc_version": "9.8.4",
+  "workload": "46-module Haskell package (/work/pkg/src/Main.hs), ghc --make -jN -O0, fixed canonical output path",
+  "fingerprint": "aggregate SHA-256 over sorted *.o files + final linked binary, computed OUTSIDE hermit",
+  "runs_per_variant": 3,
+  "binaries": {
+    "unfixed_379feaac": {
+      "sha256": "379feaac60be76a80033d33ccd39919e539982bd1a898cf9b4ba527032495a4f",
+      "source_sha": "32f004cd63f0942d05818d900af2ea5780b9f87d",
+      "description": "clock_getres NULL-res fix ONLY (required for GHC to start under hermit); NO timerfd virtualization -> RTS -C ticker reads host time. Represents current default/main ticker behavior. Built for this experiment in scratch/ghc-j1-unfixed."
+    },
+    "fixed_64661f45": {
+      "sha256": "64661f45922fa8fb3ab5dc71584ebd5df0b92e5a5bb34ee3879a17995148d81e",
+      "source_sha": "307d620e (codex/ticker-integration-check; PR #1187)",
+      "description": "clock_getres fix + timerfd virtualization (the -C ticker determinization). slot03 release binary."
+    }
+  },
+  "results_j1": {
+    "aggregate_hash_all_configs": "0010dfe3840dd6e07ebd1309e80d5a51ed89a06f537ee3ba4d1b26b152294122",
+    "native_no_hermit": "3/3 identical",
+    "unfixed_strict": "3/3 identical",
+    "unfixed_relaxed": "3/3 identical",
+    "unfixed_strict_RTS_C0": "3/3 identical",
+    "fixed_strict": "3/3 identical",
+    "fixed_relaxed": "3/3 identical",
+    "cross_config": "ALL six -j1 configurations produce the SAME hash, and it equals the native baseline. At -j1 hermit output is byte-identical to native."
+  },
+  "probe_sensitivity_check": "The -j8 aggregate hash differs (fixed -j8 = 10e379234dde6358; unfixed/oldstock -j8 = 3/3 DISTINCT), confirming the fingerprint detects real ordering differences; the uniform -j1 hash is a genuine finding, not a stuck probe.",
+  "conclusion": {
+    "j1_reproducible": true,
+    "j1_clean_by_default": true,
+    "C0_needed_at_j1": false,
+    "timerfd_fix_needed_at_j1": false,
+    "clock_getres_fix_needed": "YES to run GHC under hermit at all (both modes); still not on origin/main.",
+    "mechanism": "GHC info-table symbol (genSym/Unique) nondeterminism arises only from CONCURRENT symbol generation across multiple parallel compile workers (-j>1). At -j1 a single worker compiles modules sequentially, so symbol order is deterministic regardless of when the -C ticker fires. The ticker perturbs order only when threads race.",
+    "implication": "The realistic hermit target (-j1) is ALREADY bitwise-reproducible with stock/default hermit today (only the clock_getres NULL fix is required for startup). The -C ticker determinization (PR #1187) is NOT needed for -j1; it only matters if one insists on parallel -j>1 builds under hermit, which hermit gains no speed from anyway."
+  },
+  "honest_caveats": [
+    "For THIS workload native -j1 is already reproducible, so hermit adds nothing for reproducibility at -j1 here. Hermit's -j1 value would be for OTHER host-dependent nondeterminism sources (timestamps, absolute paths, /proc, RNG) not exercised by this -O0 fixed-output-path pure-compile workload.",
+    "clock_getres NULL-res fix (32f004cd / PR #1164 / #1187 lineage) is still required for any GHC-under-hermit run and is not yet on origin/main.",
+    "Scope: single 46-module package, GHC 9.8.4, -O0, one host. Larger/-O2 builds or workloads with TH/plugins may exercise additional nondeterminism; not tested here."
+  ]
+}

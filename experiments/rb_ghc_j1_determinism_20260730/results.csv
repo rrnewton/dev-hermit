@@ -1,0 +1,9 @@
+binary,binary_sha256_16,timerfd_fix,mode,jobs,rts_ticker,runs,aggregate_sha256_16,reproducible
+native,none,n/a,native,1,on,3,0010dfe3840dd6e0,yes
+unfixed,379feaac60be76a8,no,strict,1,on,3,0010dfe3840dd6e0,yes
+unfixed,379feaac60be76a8,no,relaxed,1,on,3,0010dfe3840dd6e0,yes
+unfixed,379feaac60be76a8,no,strict,1,off(+RTS -C0),3,0010dfe3840dd6e0,yes
+fixed,64661f45922fa8fb,yes,strict,1,on,3,0010dfe3840dd6e0,yes
+fixed,64661f45922fa8fb,yes,relaxed,1,on,3,0010dfe3840dd6e0,yes
+fixed(-j8 reference),64661f45922fa8fb,yes,strict,8,on,3,10e379234dde6358,yes
+unfixed(-j8 reference/oldstock),prior-run,no,strict,8,on,3,distinct-2d38213e/fbe6573d/9577c519,no
