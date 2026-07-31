@@ -1,0 +1,4 @@
+baseline_status,baseline_count,dettrace_reproducible,dettrace_irreproducible,dettrace_buildfailed,dettracefailed,dettrace_timeout,unsupported_aggregate
+irreproducible,11958,8688,0,1260,652,1358,1912
+reproducible,3803,3442,0,81,56,224,137
+all_baseline_buildable,15761,12130,0,1341,708,1582,2049
