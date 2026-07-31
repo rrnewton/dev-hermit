@@ -67,9 +67,12 @@ feature checks, MSRV checks, clippy, rustdoc, and package verification.
 `full` is the release-candidate gate. It adds the full MSRV all-feature test and
 feature matrix, MSRV rustdoc, every public process example, and larger pod and
 preload workloads. The script requires Rust 1.85.0 to be installed as the
-`1.85.0` rustup toolchain. It also requires Bash, GNU `timeout`, Cargo, rustc,
-and `jq`; the image scripts require the ordinary LLVM/binutils tools used by the
-pod compiler.
+`1.85.0` rustup toolchain. It also requires Bash, GNU `timeout`, rustup, and
+`jq`; the image scripts require the ordinary LLVM/binutils tools used by the pod
+compiler. Invoke both check scripts directly so their `#!/bin/bash -p` shebang
+can reject `BASH_ENV` startup files and imported shell functions before line 1.
+Invoking them as `bash scripts/...` selects the caller's interpreter instead and
+is not a validated entry path.
 
 Every build, test, package, and process command has a deadline, and the complete
 run has an overall deadline. Defaults are one hour for `quick` and three hours
@@ -128,14 +131,40 @@ test failure, 2 when required tooling/platform support is unavailable, and 124
 for a deadline. Missing `cargo-fuzz`, the pinned nightly, Miri, rust-src, or a
 supported sanitizer host is therefore visible and never release-green.
 
-The runner resolves every directly invoked validation tool to a canonical
-absolute executable, records its SHA-256 digest, and revalidates every digest
-plus the gate manifest before reporting the final result. Test gates must emit
-the exact test names and count in `scripts/adversarial-gates.tsv`; a successful
-Cargo invocation with zero matching tests fails. Nested script gates likewise
-must emit their manifest markers. `./scripts/adversarial-check.sh self-test`
-probes zero, duplicate, and unexpected evidence and remains valid when exported
-shell functions named `cargo` and `timeout` are present.
+The runners use literal, root-owned, non-group/other-writable `/usr/bin`
+executables as their control-tool trust root. They do not discover Cargo or
+rustc through `PATH`. Instead, they find rustup at the account database's home
+directory (`.cargo/bin/rustup`, with `/usr/bin` and `/usr/local/bin` fallbacks),
+ask it for each toolchain's actual Cargo, rustc, rustdoc, Miri, rustfmt, and
+Clippy executables, canonicalize those paths, and invoke the actual binaries.
+Every selected binary is owner/mode checked, SHA-256 recorded, and revalidated
+before success. A mutable rustup proxy hash is not used as a substitute for the
+dispatched toolchain hashes.
+
+Portable installations can set `SHMEM_POD_RUSTUP_BIN` to a trusted absolute
+rustup path, `SHMEM_POD_RUSTUP_HOME` to an absolute toolchain store,
+`SHMEM_POD_CURRENT_TOOLCHAIN` and `SHMEM_POD_MSRV_TOOLCHAIN` to installed
+toolchain names, and `SHMEM_POD_CARGO_FUZZ_BIN` to a trusted absolute
+`cargo-fuzz`. `SHMEM_POD_CARGO_HOME` names a cache source only. Each run creates
+a private, config-free active Cargo home and exposes only the source's
+`registry/` and `git/` cache directories. Cargo runs from a private source view
+whose ancestors are checked for `.cargo/config{,.toml}`, so user or repository
+configs cannot inject wrappers, rustflags, linkers, or runners. Validation Cargo
+commands are offline; a missing locked dependency is an explicit prerequisite
+failure rather than an opportunity to consult ambient network configuration.
+
+The adversarial gate manifest is opened once into a private snapshot, hashed,
+validated, and parsed into read-only in-memory tables. All gates use that
+snapshot; a transient manifest rename cannot change later evidence, while a
+persistent change fails final revalidation. Test gates must emit the exact test
+names and count in `scripts/adversarial-gates.tsv`; a successful Cargo
+invocation with zero matching tests fails. Command descriptors and fuzz target
+names are checked against their manifest fields. Nested connector scripts must
+emit every expected marker exactly once and no additional marker-shaped line.
+`./scripts/adversarial-check.sh self-test` attacks both entry points with
+`BASH_ENV`, an exported `exit` function, hostile `PATH` Cargo/rustc/timeout
+binaries, and a cache-side `rustc-wrapper` config, in addition to probing zero,
+duplicate, missing, and unexpected gate evidence.
 
 These checks have deliberate limits. A bounded Loom search is not a proof over
 all executions. Most crash cuts stop immediately after a named production RMW;
@@ -152,11 +181,11 @@ workspace. Neither changes the library's `no_std` surface or Rust 1.85 MSRV;
 the ordinary current/MSRV release matrix remains authoritative for those
 contracts.
 
-The script prints the source revision, host kernel and architecture, tool
-versions and hashes, every command, its timeout, and a final gate count. Exit
-124 is a confirmed deadline; status 137 is reported as ambiguous `SIGKILL`
-rather than assumed to be a timeout. A timeout or skipped process suite is never
-reported as a passing full release gate.
+Both scripts print the source revision, host kernel and architecture, selected
+toolchain versions and actual executable hashes, every command, its timeout,
+and a final gate count. Exit 124 is a confirmed deadline; status 137 is reported
+as ambiguous `SIGKILL` rather than assumed to be a timeout. A timeout or skipped
+process suite is never reported as a passing full release gate.
 
 ## Crates.io package boundary
 

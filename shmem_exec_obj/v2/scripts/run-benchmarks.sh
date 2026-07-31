@@ -1,5 +1,51 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
+
+# Returning from a subshell succeeds only when this file was sourced. Reject it
+# before a caller-defined function can interpose on any control operation.
+if (return 0 2>/dev/null); then
+  return 1
+fi
+
+if [[ $- != *p* ]]; then
+  echo "run-benchmarks.sh requires a privileged /bin/bash -p interpreter" >&2
+  exit 1
+fi
+
+required_control_tools=(
+  as awk cat chmod cmp cp date diff dirname env find gcc git jq ld ldd ln mkdir mktemp
+  mv nproc od readlink rm sed sha256sum sort stat sync tail timeout tr uname wc
+)
+for control_tool in "${required_control_tools[@]}" cargo rustc; do
+  if declare -F "$control_tool" >/dev/null; then
+    echo "benchmark control executable is shadowed by a shell function: $control_tool" >&2
+    exit 1
+  fi
+done
+launch_home=${HOME:?HOME is required}
+launch_rustc=$(type -P rustc) || { echo "run-benchmarks.sh requires rustc" >&2; exit 1; }
+launch_cargo=$(type -P cargo) || { echo "run-benchmarks.sh requires cargo" >&2; exit 1; }
+export PATH=/usr/bin:/bin
+export LC_ALL=C LANG=C TZ=UTC
+[[ -x /usr/bin/stat ]] || { echo "run-benchmarks.sh requires /usr/bin/stat" >&2; exit 1; }
+for control_tool in "${required_control_tools[@]}"; do
+  control_path="/usr/bin/$control_tool"
+  control_uid=$(/usr/bin/stat -Lc %u -- "$control_path" 2>/dev/null || printf invalid)
+  control_mode=$(/usr/bin/stat -Lc %a -- "$control_path" 2>/dev/null || printf invalid)
+  if [[ ! -x $control_path || ! $control_uid =~ ^[0-9]+$ ||
+        ! $control_mode =~ ^[0-7]+$ ]] ||
+     ((10#$control_uid != 0 || (8#$control_mode & 8#022) != 0)); then
+    echo "run-benchmarks.sh requires a root-owned, non-writable control executable: $control_path" >&2
+    exit 1
+  fi
+done
+bash_uid=$(/usr/bin/stat -Lc %u -- /bin/bash 2>/dev/null || printf invalid)
+bash_mode=$(/usr/bin/stat -Lc %a -- /bin/bash 2>/dev/null || printf invalid)
+if [[ ! -x /bin/bash || ! $bash_uid =~ ^[0-9]+$ || ! $bash_mode =~ ^[0-7]+$ ]] ||
+   ((10#$bash_uid != 0 || (8#$bash_mode & 8#022) != 0)); then
+  echo "run-benchmarks.sh requires root-owned, non-writable /bin/bash" >&2
+  exit 1
+fi
 
 usage() {
   cat <<'EOF'
@@ -31,7 +77,9 @@ the suite deliberately makes no portable performance claim.
 EOF
 }
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+script_directory=${BASH_SOURCE[0]%/*}
+[[ $script_directory != "${BASH_SOURCE[0]}" ]] || script_directory=.
+root=$(cd "$script_directory/.." && pwd -P)
 cd "$root"
 
 mode=standard
@@ -73,12 +121,278 @@ cleanup() {
 }
 trap cleanup EXIT
 
-environment_value() {
-  local name=$1
-  if [[ -v $name ]]; then
-    printf '%s' "${!name}"
-  else
-    printf '<unset>'
+reject_ambient_build_controls() {
+  local name
+  local -a rejected=()
+  while IFS= read -r name; do
+    [[ $name == RUSTUP_TOOLCHAIN ]] && continue
+    case "$name" in
+      CARGO_* | RUSTC | RUSTC_* | RUSTDOC | RUSTDOC_* | RUSTFLAGS | \
+        RUSTDOCFLAGS | RUST_BACKTRACE | RUSTUP_HOME | RUSTUP_DIST_SERVER | \
+        RUSTUP_UPDATE_ROOT | POD_RUSTC | CC | CC_* | *_CC | CXX | CXX_* | *_CXX | \
+        CPP | CPP_* | *_CPP | AR | AR_* | *_AR | AS | AS_* | *_AS | LD | LD_* | \
+        *_LD | NM | NM_* | *_NM | RANLIB | RANLIB_* | *_RANLIB | STRIP | STRIP_* | \
+        *_STRIP | OBJCOPY | OBJCOPY_* | *_OBJCOPY | OBJDUMP | OBJDUMP_* | \
+        *_OBJDUMP | CFLAGS | CFLAGS_* | *_CFLAGS | CXXFLAGS | CXXFLAGS_* | \
+        *_CXXFLAGS | CPPFLAGS | CPPFLAGS_* | *_CPPFLAGS | LDFLAGS | LDFLAGS_* | \
+        *_LDFLAGS | LIBRARY_PATH | CPATH | C_INCLUDE_PATH | CPLUS_INCLUDE_PATH | \
+        OBJC_INCLUDE_PATH | GCC_EXEC_PREFIX | GCC_COMPARE_DEBUG | COMPILER_PATH | \
+        COLLECT_GCC | COLLECT_GCC_OPTIONS | COLLECT_LTO_WRAPPER | \
+        DEPENDENCIES_OUTPUT | SUNPRO_DEPENDENCIES | PKG_CONFIG* | BINDGEN* | \
+        LIBCLANG* | CLANG* | LLVM* | \
+        SCCACHE* | CACHEPOT* | DISTCC* | ICECC* | MAKEFLAGS | MFLAGS | NUM_JOBS | \
+        HOST | TARGET | OUT_DIR | OPT_LEVEL | DEBUG | PROFILE | DEP_* | \
+        SOURCE_DATE_EPOCH)
+        rejected+=("$name")
+        ;;
+    esac
+  done < <(compgen -e | LC_ALL=C sort -u)
+  if ((${#rejected[@]} != 0)); then
+    echo "benchmark builds reject inherited build controls; use RUSTUP_TOOLCHAIN to select a toolchain" >&2
+    printf '  rejected: %s\n' "${rejected[@]}" >&2
+    return 1
+  fi
+}
+
+assert_no_cargo_config_ancestors() {
+  local directory=$1
+  while :; do
+    if [[ -e $directory/.cargo/config || -L $directory/.cargo/config ||
+          -e $directory/.cargo/config.toml || -L $directory/.cargo/config.toml ]]; then
+      echo "Cargo configuration escapes the hermetic benchmark environment: $directory/.cargo" >&2
+      return 1
+    fi
+    [[ $directory == / ]] && break
+    directory=${directory%/*}
+    [[ -n $directory ]] || directory=/
+  done
+}
+
+verify_cargo_discovery_roots() {
+  local directory uid mode unexpected
+  for directory in / /usr /usr/share "$build_cargo_home"; do
+    uid=$(stat -Lc %u -- "$directory" 2>/dev/null || printf invalid)
+    mode=$(stat -Lc %a -- "$directory" 2>/dev/null || printf invalid)
+    if [[ ! -d $directory || -L $directory || ! $uid =~ ^[0-9]+$ ||
+          ! $mode =~ ^[0-7]+$ ]] ||
+       ((10#$uid != 0 || (8#$mode & 8#022) != 0)); then
+      echo "Cargo discovery root is not a root-owned, non-writable directory: $directory" >&2
+      return 1
+    fi
+  done
+  unexpected=$(find "$build_cargo_home" -mindepth 1 -print -quit)
+  if [[ -n $unexpected ]]; then
+    echo "Cargo build home is not empty: $unexpected" >&2
+    return 1
+  fi
+  assert_no_cargo_config_ancestors /
+}
+
+resolve_program() {
+  local program=$1
+  local candidate
+  candidate=$(command -v -- "$program") || {
+    echo "cannot resolve required executable through PATH: $program" >&2
+    return 1
+  }
+  candidate=$(readlink -f -- "$candidate")
+  if [[ ! -f $candidate || ! -x $candidate ]]; then
+    echo "resolved executable is not a regular executable file: $program -> $candidate" >&2
+    return 1
+  fi
+  printf '%s' "$candidate"
+}
+
+write_host_linker_manifest() {
+  local output=$1
+  local label path digest
+  : >"$output"
+  while IFS=$'\t' read -r label path; do
+    if [[ ! -f $path || -L $path ]]; then
+      echo "host linker closure member is not a regular file: $label -> $path" >&2
+      return 1
+    fi
+    path=$(readlink -f -- "$path")
+    digest=$(sha256sum -- "$path" | awk '{print $1}')
+    printf '%s\t%s\t%s\n' "$label" "$path" "$digest" >>"$output"
+  done <"$host_linker_paths"
+}
+
+write_control_tool_manifest() {
+  local output=$1
+  local label path uid mode digest
+  : >"$output"
+  while IFS=$'\t' read -r label path; do
+    if [[ ! -f $path || -L $path || ! -x $path ]]; then
+      echo "benchmark control tool is not a canonical executable: $label -> $path" >&2
+      return 1
+    fi
+    uid=$(stat -Lc %u -- "$path")
+    mode=$(stat -Lc %a -- "$path")
+    if [[ $uid != 0 || ! $mode =~ ^[0-7]+$ ]] ||
+       ((8#$mode & 8#022)); then
+      echo "benchmark control tool is not root-owned and non-writable: $label -> $path" >&2
+      return 1
+    fi
+    digest=$(sha256sum -- "$path" | awk '{print $1}')
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$label" "$path" "$uid" "$mode" "$digest" >>"$output"
+  done <"$control_tool_paths"
+}
+
+verify_control_tool_manifest() {
+  local current="$temporary/control-tools-current.tsv"
+  write_control_tool_manifest "$current"
+  if ! cmp -s -- "$control_tool_manifest" "$current"; then
+    echo "benchmark integrity-control executable set changed during the run" >&2
+    diff -u -- "$control_tool_manifest" "$current" >&2 || true
+    return 1
+  fi
+}
+
+append_dynamic_dependency_paths() {
+  local label=$1
+  local executable=$2
+  local destination=$3
+  local output="$temporary/ldd-$label.txt"
+  local path index=0
+  if ! "$env_path" -i LC_ALL=C LANG=C "$ldd_path" "$executable" >"$output" 2>&1; then
+    echo "cannot resolve dynamic-library evidence for $label: $executable" >&2
+    sed -n '1,40p' "$output" >&2
+    return 1
+  fi
+  if awk '/not found/ { found = 1 } END { exit !found }' "$output"; then
+    echo "dynamic-library evidence contains an unresolved dependency for $label" >&2
+    sed -n '1,40p' "$output" >&2
+    return 1
+  fi
+  while IFS= read -r path; do
+    path=$(readlink -f -- "$path")
+    printf 'dynamic.%s.%s\t%s\n' "$label" "$index" "$path" >>"$destination"
+    index=$((index + 1))
+  done < <(
+    awk '
+      /=>/ && $3 ~ /^\// { print $3 }
+      /^[[:space:]]*\// { print $1 }
+    ' "$output" | LC_ALL=C sort -u
+  )
+}
+
+write_host_linker_config() {
+  local output=$1
+  {
+    printf 'driver=%s\n' "$host_linker_path"
+    printf 'specs_probe=%s\n' "$(gcc_control -print-file-name=specs)"
+    printf 'dumpmachine=%s\n' "$(gcc_control -dumpmachine)"
+    printf 'dumpversion=%s\n' "$(gcc_control -dumpversion)"
+    printf '%s\n' '--- search-dirs ---'
+    gcc_control -print-search-dirs
+    printf '%s\n' '--- built-in-specs ---'
+    gcc_control -dumpspecs
+  } >"$output"
+}
+
+verify_host_linker_manifest() {
+  local manifest=$1
+  local current="$temporary/host-linker-current.tsv"
+  local dynamic_current="$temporary/host-linker-dynamic-current.tsv"
+  local dynamic_initial="$temporary/host-linker-dynamic-initial.tsv"
+  local label executable
+  write_host_linker_manifest "$current"
+  if ! cmp -s -- "$manifest" "$current"; then
+    echo "host linker executable/input closure changed during the benchmark run" >&2
+    diff -u -- "$manifest" "$current" >&2 || true
+    return 1
+  fi
+  : >"$dynamic_current"
+  while IFS=$'\t' read -r label executable; do
+    append_dynamic_dependency_paths "$label" "$executable" "$dynamic_current"
+  done <"$dynamic_executables"
+  awk -F '\t' '$1 ~ /^dynamic\./ { print }' "$host_linker_paths" >"$dynamic_initial"
+  if ! cmp -s -- "$dynamic_initial" "$dynamic_current"; then
+    echo "host executable dynamic-library path closure changed during the benchmark run" >&2
+    diff -u -- "$dynamic_initial" "$dynamic_current" >&2 || true
+    return 1
+  fi
+  current="$temporary/host-linker-config-current.txt"
+  write_host_linker_config "$current"
+  if ! cmp -s -- "$host_linker_config" "$current"; then
+    echo "host linker specs/search configuration changed during the benchmark run" >&2
+    diff -u -- "$host_linker_config" "$current" >&2 || true
+    return 1
+  fi
+}
+
+verify_vendor_stable() {
+  local current="$temporary/vendor-current.tsv"
+  write_directory_manifest "$vendor_dir" "$current"
+  if ! cmp -s -- "$vendor_manifest" "$current"; then
+    echo "retained Cargo vendor input tree changed during the benchmark run" >&2
+    diff -u -- "$vendor_manifest" "$current" >&2 || true
+    return 1
+  fi
+}
+
+retain_rust_sysroot() {
+  local source=$1
+  local destination=$2
+  local cargo_source=$3
+  local paths before copied after symlink cargo_before cargo_copied cargo_after
+  paths="$temporary/rust-sysroot-paths.z"
+  before="$temporary/rust-sysroot-source-before.tsv"
+  copied="$temporary/rust-sysroot-copy.tsv"
+  after="$temporary/rust-sysroot-source-after.tsv"
+
+  if [[ ! -f $source/bin/rustc || -L $source/bin/rustc ]]; then
+    echo "selected Rust sysroot lacks a regular bin/rustc: $source" >&2
+    return 1
+  fi
+  if [[ ! -f $cargo_source || -L $cargo_source ]]; then
+    echo "selected Cargo is not a regular file: $cargo_source" >&2
+    return 1
+  fi
+  symlink=$(find "$source/lib" -type l -print -quit)
+  if [[ -n $symlink ]]; then
+    echo "selected Rust sysroot contains a symlink whose target escapes retention: $symlink" >&2
+    return 1
+  fi
+  {
+    printf 'bin/rustc\0'
+    (cd "$source" && find lib -type f -printf '%P\0' | sed -z 's!^!lib/!' | LC_ALL=C sort -z)
+  } >"$paths"
+  write_manifest_from_paths "$source" "$paths" "$before"
+  cargo_before="$(stat -c '%a:%s' -- "$cargo_source"):$(sha256sum "$cargo_source" | awk '{print $1}')"
+
+  mkdir -p "$destination/bin"
+  cp -a --reflink=auto -- "$source/bin/rustc" "$destination/bin/rustc"
+  cp -a --reflink=auto -- "$cargo_source" "$destination/bin/cargo"
+  cp -a --reflink=auto -- "$source/lib" "$destination/lib"
+  write_manifest_from_paths "$destination" "$paths" "$copied"
+  write_manifest_from_paths "$source" "$paths" "$after"
+  cargo_copied="$(stat -c '%a:%s' -- "$destination/bin/cargo"):$(sha256sum "$destination/bin/cargo" | awk '{print $1}')"
+  cargo_after="$(stat -c '%a:%s' -- "$cargo_source"):$(sha256sum "$cargo_source" | awk '{print $1}')"
+  if ! cmp -s -- "$before" "$copied" || ! cmp -s -- "$before" "$after" ||
+     ! [[ $cargo_before == "$cargo_copied" && $cargo_before == "$cargo_after" ]]; then
+    echo "selected Rust sysroot changed or was copied inconsistently" >&2
+    diff -u -- "$before" "$copied" >&2 || true
+    diff -u -- "$before" "$after" >&2 || true
+    return 1
+  fi
+
+  chmod -R a-w -- "$destination"
+  rust_sysroot_manifest="$provenance_dir/rust-sysroot-manifest.tsv"
+  write_directory_manifest "$destination" "$rust_sysroot_manifest"
+  rust_sysroot_manifest_sha256=$(sha256sum "$rust_sysroot_manifest" | awk '{print $1}')
+  rust_sysroot_file_count=$(wc -l <"$rust_sysroot_manifest")
+}
+
+verify_retained_sysroot_stable() {
+  local current="$temporary/rust-sysroot-current.tsv"
+  write_directory_manifest "$retained_rust_sysroot" "$current"
+  if ! cmp -s -- "$rust_sysroot_manifest" "$current"; then
+    echo "retained Rust compiler/sysroot changed during the benchmark run" >&2
+    diff -u -- "$rust_sysroot_manifest" "$current" >&2 || true
+    return 1
   fi
 }
 
@@ -87,13 +401,29 @@ runner_owner_contents() {
     "$run_id" "$runner_owner_token"
 }
 
+git_control() {
+  /usr/bin/env -i \
+    HOME="$control_home" \
+    XDG_CONFIG_HOME="$control_home/.config" \
+    PATH=/usr/bin:/bin \
+    LC_ALL=C LANG=C TZ=UTC \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_OPTIONAL_LOCKS=0 \
+    /usr/bin/git "$@"
+}
+
+gcc_control() {
+  /usr/bin/env -i "${hermetic_env[@]}" "$host_linker_path" "$@"
+}
+
 status_fingerprint() {
-  git status --porcelain=v2 --untracked-files=all -- . |
+  git_control status --porcelain=v2 --untracked-files=all -- . |
     sha256sum | awk '{print $1}'
 }
 
 enumerate_source_paths() {
-  git ls-files -co --exclude-standard -z -- . | LC_ALL=C sort -z
+  git_control ls-files -co --exclude-standard -z -- . | LC_ALL=C sort -z
 }
 
 path_hex() {
@@ -219,29 +549,42 @@ verify_sha256() {
   fi
 }
 
+verify_harness_result_bytes() {
+  verify_sha256 "$output_dir/results.jsonl" "$harness_results_jsonl_sha256"
+  verify_sha256 "$output_dir/results.csv" "$harness_results_csv_sha256"
+}
+
 verify_toolchain_stable() {
+  verify_cargo_discovery_roots
+  verify_control_tool_manifest
   verify_sha256 "$rustc_launcher_path" "$rustc_launcher_sha256"
   verify_sha256 "$cargo_launcher_path" "$cargo_launcher_sha256"
   verify_sha256 "$rustc_path" "$rustc_sha256"
   verify_sha256 "$cargo_path" "$cargo_sha256"
-  if [[ $(cd "$temporary" && "$rustc_executable" --version --verbose) != \
+  verify_sha256 "$env_path" "$env_sha256"
+  verify_sha256 "$timeout_path" "$timeout_sha256"
+  verify_sha256 "$uname_path" "$uname_sha256"
+  verify_sha256 "$ldd_path" "$ldd_sha256"
+  verify_sha256 "$host_linker_path" "$host_linker_sha256"
+  verify_sha256 "$host_ld_path" "$host_ld_sha256"
+  verify_sha256 "$host_as_path" "$host_as_sha256"
+  verify_host_linker_manifest "$host_linker_manifest"
+  verify_vendor_stable
+  verify_retained_sysroot_stable
+  if [[ $(cd / && "$env_path" -i "${hermetic_env[@]}" \
+            "$rustc_path" --version --verbose) != \
           "$SHMEM_POD_BENCH_RUSTC" ||
-        $(cd "$temporary" && cargo --version --verbose) != \
+        $(cd / && "$env_path" -i "${hermetic_env[@]}" \
+            "$cargo_path" --version --verbose) != \
           "$SHMEM_POD_BENCH_CARGO" ]]; then
     echo "Rust toolchain identity changed during the benchmark run" >&2
-    return 1
-  fi
-  if [[ -n ${POD_RUSTC:-} &&
-        $("$POD_RUSTC" --version --verbose) != \
-          "$SHMEM_POD_BENCH_POD_RUSTC_VERSION" ]]; then
-    echo "pod compiler rustc identity changed during the benchmark run" >&2
     return 1
   fi
 }
 
 verify_source_stable() {
   local revision status_sha256 tree_sha256
-  revision=$(git rev-parse HEAD)
+  revision=$(git_control rev-parse HEAD)
   status_sha256=$(status_fingerprint)
   tree_sha256=$(source_tree_fingerprint)
   if [[ $revision != "$source_revision_before" ||
@@ -354,6 +697,7 @@ write_directory_manifest() {
     find . -mindepth 1 \( -type f -o -type l \) \
       ! -path './bundle-inventory.tsv' \
       ! -path './environment.json' \
+      ! -path './environment.json.pending' \
       -printf '%P\0' | LC_ALL=C sort -z
   ) >"$paths"
   write_manifest_from_paths "$base" "$paths" "$output"
@@ -564,6 +908,11 @@ write_canonical_environment() {
     --arg compiler_binary_sha256 "$compiler_sha256" \
     --arg compiler_manifest_sha256 "$compiler_manifest_sha256" \
     --arg compiler_crosscheck_sha256 "$compiler_crosscheck_sha256" \
+    --arg control_tool_manifest_sha256 "$control_tool_manifest_sha256" \
+    --arg host_linker_manifest_sha256 "$host_linker_manifest_sha256" \
+    --arg vendor_manifest_sha256 "$vendor_manifest_sha256" \
+    --arg rust_sysroot_manifest_sha256 "$rust_sysroot_manifest_sha256" \
+    --argjson rust_sysroot_file_count "$rust_sysroot_file_count" \
     --arg results_jsonl_sha256 "$results_jsonl_sha256" \
     --arg results_csv_sha256 "$results_csv_sha256" \
     --arg hostname "$SHMEM_POD_BENCH_HOSTNAME" \
@@ -574,32 +923,42 @@ write_canonical_environment() {
     --arg rustc_launcher_sha256 "$rustc_launcher_sha256" \
     --arg rustc_path "$rustc_path" \
     --arg rustc_sha256 "$rustc_sha256" \
+    --arg selected_rustc_path "$selected_rustc_path" \
+    --arg selected_rustc_sha256 "$selected_rustc_sha256" \
+    --arg selected_rust_sysroot "$selected_rust_sysroot" \
+    --arg retained_rust_sysroot "$retained_rust_sysroot" \
     --arg cargo "$SHMEM_POD_BENCH_CARGO" \
     --arg cargo_launcher_path "$cargo_launcher_path" \
     --arg cargo_launcher_sha256 "$cargo_launcher_sha256" \
     --arg cargo_path "$cargo_path" \
     --arg cargo_sha256 "$cargo_sha256" \
+    --arg selected_cargo_path "$selected_cargo_path" \
+    --arg selected_cargo_sha256 "$selected_cargo_sha256" \
     --arg pod_rustc "$SHMEM_POD_BENCH_POD_RUSTC_VERSION" \
-    --arg rustflags "$SHMEM_POD_BENCH_RUSTFLAGS" \
-    --arg encoded_rustflags "$SHMEM_POD_BENCH_CARGO_ENCODED_RUSTFLAGS" \
-    --arg rustc_override "$SHMEM_POD_BENCH_RUSTC_OVERRIDE" \
-    --arg pod_rustc_override "$SHMEM_POD_BENCH_POD_RUSTC" \
-    --arg rustc_wrapper "$SHMEM_POD_BENCH_RUSTC_WRAPPER" \
-    --arg workspace_wrapper "$SHMEM_POD_BENCH_RUSTC_WORKSPACE_WRAPPER" \
-    --arg cargo_home "$SHMEM_POD_BENCH_CARGO_HOME" \
-    --arg cargo_target "$SHMEM_POD_BENCH_CARGO_BUILD_TARGET" \
+    --arg rustup_toolchain "$rustup_toolchain" \
+    --arg env_path "$env_path" \
+    --arg env_sha256 "$env_sha256" \
+    --arg timeout_path "$timeout_path" \
+    --arg timeout_sha256 "$timeout_sha256" \
+    --arg uname_path "$uname_path" \
+    --arg uname_sha256 "$uname_sha256" \
+    --arg ldd_path "$ldd_path" \
+    --arg ldd_sha256 "$ldd_sha256" \
+    --arg host_linker_path "$host_linker_path" \
+    --arg host_linker_sha256 "$host_linker_sha256" \
+    --arg host_ld_path "$host_ld_path" \
+    --arg host_ld_sha256 "$host_ld_sha256" \
+    --arg host_as_path "$host_as_path" \
+    --arg host_as_sha256 "$host_as_sha256" \
+    --arg host_linker_config_sha256 "$host_linker_config_sha256" \
+    --arg cargo_cache "$ambient_cargo_home" \
+    --arg build_home "$build_home" \
+    --arg build_cargo_home "$build_cargo_home" \
+    --arg vendor_cargo_home "$vendor_cargo_home" \
+    --arg build_path "$build_tool_bin" \
+    --arg build_tmp "$build_tmp" \
     --arg workspace_profile "$SHMEM_POD_BENCH_WORKSPACE_PROFILE" \
     --arg harness_profile "$SHMEM_POD_BENCH_HARNESS_PROFILE" \
-    --arg profile_opt "$SHMEM_POD_BENCH_PROFILE_OPT_LEVEL" \
-    --arg profile_debug "$SHMEM_POD_BENCH_PROFILE_DEBUG" \
-    --arg profile_strip "$SHMEM_POD_BENCH_PROFILE_STRIP" \
-    --arg profile_assertions "$SHMEM_POD_BENCH_PROFILE_DEBUG_ASSERTIONS" \
-    --arg profile_overflow "$SHMEM_POD_BENCH_PROFILE_OVERFLOW_CHECKS" \
-    --arg profile_lto "$SHMEM_POD_BENCH_PROFILE_LTO" \
-    --arg profile_panic "$SHMEM_POD_BENCH_PROFILE_PANIC" \
-    --arg profile_incremental "$SHMEM_POD_BENCH_PROFILE_INCREMENTAL" \
-    --arg profile_units "$SHMEM_POD_BENCH_PROFILE_CODEGEN_UNITS" \
-    --arg profile_rpath "$SHMEM_POD_BENCH_PROFILE_RPATH" \
     --arg artifact_sha256 "$artifact_sha256" \
     --arg mode "$mode" \
     --argjson warmup "$warmup" \
@@ -613,13 +972,18 @@ write_canonical_environment() {
       complete: true,
       run_id: $run_id,
       result_rows: $result_rows,
+      trust_model: {
+        name: "controlled-host-v1",
+        excludes_active_same_uid_adversary: true,
+        boundary: "checksums and manifests provide reproducibility evidence, not causal build attestation against a peer that can ptrace or race build outputs"
+      },
       bundle: {
         absolute_path: $bundle_path,
         inventory: {
           bundle_path: "bundle-inventory.tsv",
           sha256: $inventory_sha256,
           entries: $inventory_entries,
-          excludes: ["bundle-inventory.tsv", "environment.json"]
+          excludes: ["bundle-inventory.tsv", "environment.json", "environment.json.pending"]
         }
       },
       source: {
@@ -646,13 +1010,18 @@ write_canonical_environment() {
         runner_owner: {bundle_path: "runner-owner", sha256: $runner_owner_sha256},
         harness_owner: {bundle_path: "harness-owner.json", sha256: $harness_owner_sha256},
         harness_source: {bundle_path: "provenance/source/benchmarks/harness.rs", sha256: $harness_source_sha256},
-        harness_manifest: {bundle_path: "provenance/harness-Cargo.toml", sha256: $harness_manifest_sha256},
-        harness_lock: {bundle_path: "provenance/harness-Cargo.lock", sha256: $harness_lock_sha256},
+        harness_manifest: {bundle_path: "provenance/harness-package/Cargo.toml", sha256: $harness_manifest_sha256},
+        harness_lock: {bundle_path: "provenance/harness-package/Cargo.lock", sha256: $harness_lock_sha256},
         harness_binary: {bundle_path: "bin/shmem-pod-benchmark-harness", sha256: $harness_binary_sha256},
         harness_report: {bundle_path: "harness-report.json", sha256: $harness_report_sha256},
         compiler_binary: {bundle_path: "bin/shmem-pod-image-compiler", sha256: $compiler_binary_sha256},
         compiler_manifest: {bundle_path: "artifacts/pod.manifest", sha256: $compiler_manifest_sha256},
         compiler_crosscheck: {bundle_path: "provenance/compiler-crosscheck.json", sha256: $compiler_crosscheck_sha256},
+        control_tools: {bundle_path: "provenance/control-tools.tsv", sha256: $control_tool_manifest_sha256},
+        host_linker_manifest: {bundle_path: "provenance/host-linker-manifest.tsv", sha256: $host_linker_manifest_sha256},
+        host_linker_config: {bundle_path: "provenance/host-linker-config.txt", sha256: $host_linker_config_sha256},
+        vendor_manifest: {bundle_path: "provenance/vendor-manifest.tsv", sha256: $vendor_manifest_sha256},
+        rust_sysroot_manifest: {bundle_path: "provenance/rust-sysroot-manifest.tsv", sha256: $rust_sysroot_manifest_sha256},
         results_jsonl: {bundle_path: "results.jsonl", sha256: $results_jsonl_sha256},
         results_csv: {bundle_path: "results.csv", sha256: $results_csv_sha256}
       },
@@ -688,36 +1057,71 @@ write_canonical_environment() {
         rustc_launcher_sha256: $rustc_launcher_sha256,
         rustc_path: $rustc_path,
         rustc_sha256: $rustc_sha256,
+        selected_rustc_path: $selected_rustc_path,
+        selected_rustc_sha256: $selected_rustc_sha256,
+        selected_rust_sysroot: $selected_rust_sysroot,
+        retained_rust_sysroot: $retained_rust_sysroot,
+        retained_rust_sysroot_manifest: {
+          bundle_path: "provenance/rust-sysroot-manifest.tsv",
+          sha256: $rust_sysroot_manifest_sha256,
+          files: $rust_sysroot_file_count
+        },
         cargo: $cargo,
         cargo_launcher_path: $cargo_launcher_path,
         cargo_launcher_sha256: $cargo_launcher_sha256,
         cargo_path: $cargo_path,
         cargo_sha256: $cargo_sha256,
+        selected_cargo_path: $selected_cargo_path,
+        selected_cargo_sha256: $selected_cargo_sha256,
         pod_rustc: $pod_rustc
       },
       build_environment: {
-        rustflags: $rustflags,
-        cargo_encoded_rustflags: $encoded_rustflags,
-        rustc_override: $rustc_override,
-        pod_rustc: $pod_rustc_override,
-        rustc_wrapper: $rustc_wrapper,
-        rustc_workspace_wrapper: $workspace_wrapper,
-        cargo_home: $cargo_home,
-        cargo_build_target: $cargo_target,
+        policy: "env-i-v1",
+        inherited_policy: "RUSTUP_TOOLCHAIN is the only inherited build selector; known Cargo/rustc/compiler/linker controls are rejected and every other inherited variable is stripped",
+        rustup_toolchain: $rustup_toolchain,
+        cargo_offline: true,
+        cargo_incremental: "0",
+        cargo_registry_cache: $cargo_cache,
+        cargo_vendor_home: $vendor_cargo_home,
+        cargo_home: $build_cargo_home,
+        home: $build_home,
+        path: $build_path,
+        tmpdir: $build_tmp,
+        locale: {lc_all: "C", lang: "C", tz: "UTC"},
+        source_date_epoch: "0",
+        cargo_config_discovery: "root-owned empty /usr/share/empty CARGO_HOME and root-directory working directory, both revalidated before completion",
+        target: "x86_64-unknown-linux-gnu",
+        rustc: $rustc_path,
+        target_linker: $host_linker_path,
+        control_executables: {
+          env: {path: $env_path, sha256: $env_sha256},
+          timeout: {path: $timeout_path, sha256: $timeout_sha256},
+          uname: {path: $uname_path, sha256: $uname_sha256},
+          ldd: {path: $ldd_path, sha256: $ldd_sha256}
+        },
+        integrity_control_manifest: {
+          bundle_path: "provenance/control-tools.tsv",
+          sha256: $control_tool_manifest_sha256,
+          path_policy: "fixed root-owned /usr/bin:/bin; shell-function shadowing rejected before external commands"
+        },
+        host_linker: {
+          driver: {path: $host_linker_path, sha256: $host_linker_sha256},
+          ld: {path: $host_ld_path, sha256: $host_ld_sha256},
+          assembler: {path: $host_as_path, sha256: $host_as_sha256},
+          observed_input_manifest_bundle_path: "provenance/host-linker-manifest.tsv",
+          observed_input_manifest_sha256: $host_linker_manifest_sha256,
+          specs_and_search_config_bundle_path: "provenance/host-linker-config.txt",
+          specs_and_search_config_sha256: $host_linker_config_sha256,
+          boundary: "hashed and revalidated host evidence; system executables, shared libraries, loader and C startup/sysroot inputs are not copied into a relocatable rebuild environment; the Rust compiler/sysroot is retained separately"
+        },
+        vendor: {
+          bundle_path: "provenance/vendor",
+          manifest_bundle_path: "provenance/vendor-manifest.tsv",
+          manifest_sha256: $vendor_manifest_sha256,
+          policy: "registry cache is used only by cargo vendor; all compilation replaces crates.io with this read-only retained tree"
+        },
         workspace_profile: $workspace_profile,
-        harness_profile: $harness_profile,
-        profile_overrides: {
-          opt_level: $profile_opt,
-          debug: $profile_debug,
-          strip: $profile_strip,
-          debug_assertions: $profile_assertions,
-          overflow_checks: $profile_overflow,
-          lto: $profile_lto,
-          panic: $profile_panic,
-          incremental: $profile_incremental,
-          codegen_units: $profile_units,
-          rpath: $profile_rpath
-        }
+        harness_profile: $harness_profile
       },
       artifact: {
         absolute_path: ($bundle_path + "/artifacts/pod.bin"),
@@ -747,6 +1151,7 @@ verify_owner_files() {
     echo "benchmark runner ownership record changed" >&2
     return 1
   fi
+  validate_json_unique_paths "$output_dir/harness-owner.json"
   if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
     '. == {
       schema: "shmem-pod-benchmark-owner-v2",
@@ -754,6 +1159,17 @@ verify_owner_files() {
       runner_owner_token: $token
     }' "$output_dir/harness-owner.json" >/dev/null; then
     echo "benchmark harness ownership validation failed" >&2
+    return 1
+  fi
+}
+
+validate_json_unique_paths() {
+  local input=$1
+  if ! jq --stream -n -e '
+    [inputs | select(length == 2) | (.[0] | @json)] as $paths
+    | ($paths | length) == ($paths | unique | length)
+  ' <"$input" >/dev/null; then
+    echo "JSON document contains duplicate object paths: $input" >&2
     return 1
   fi
 }
@@ -793,7 +1209,7 @@ verify_environment_bindings() {
     jq -er '.provenance | to_entries[] | [.value.bundle_path, .value.sha256] | @tsv' \
       "$environment"
   )
-  if ((binding_count != 15)); then
+  if ((binding_count != 20)); then
     echo "canonical environment has the wrong provenance binding count: $binding_count" >&2
     return 1
   fi
@@ -804,12 +1220,24 @@ verify_environment_bindings() {
     "$(jq -er '.source.initial_manifest.sha256' "$environment")"
   verify_sha256 "$provenance_dir/source-manifest.tsv" \
     "$(jq -er '.source.manifest.sha256' "$environment")"
+  verify_sha256 "$host_linker_manifest" \
+    "$(jq -er '.build_environment.host_linker.observed_input_manifest_sha256' "$environment")"
+  verify_sha256 "$host_linker_config" \
+    "$(jq -er '.build_environment.host_linker.specs_and_search_config_sha256' "$environment")"
+  verify_sha256 "$control_tool_manifest" \
+    "$(jq -er '.build_environment.integrity_control_manifest.sha256' "$environment")"
+  verify_sha256 "$vendor_manifest" \
+    "$(jq -er '.build_environment.vendor.manifest_sha256' "$environment")"
+  verify_sha256 "$rust_sysroot_manifest" \
+    "$(jq -er '.toolchain.retained_rust_sysroot_manifest.sha256' "$environment")"
   verify_sha256 "$artifact_dir/pod.bin" \
     "$(jq -er '.artifact.sha256' "$environment")"
   if [[ $(jq -er '.source.initial_manifest.files' "$environment") != \
           "$(wc -l <"$provenance_dir/source-live-manifest.tsv")" ||
         $(jq -er '.source.manifest.files' "$environment") != \
-          "$(wc -l <"$provenance_dir/source-manifest.tsv")" ]]; then
+          "$(wc -l <"$provenance_dir/source-manifest.tsv")" ||
+        $(jq -er '.toolchain.retained_rust_sysroot_manifest.files' "$environment") != \
+          "$(wc -l <"$rust_sysroot_manifest")" ]]; then
     echo "canonical environment has the wrong source manifest file count" >&2
     return 1
   fi
@@ -853,6 +1281,65 @@ verify_compiler_crosscheck() {
   fi
 }
 
+validate_result_jsonl_schema() {
+  local input=$1
+  local expected_count=$2
+  local line row=0
+  local expected_keys='["schema","run_id","category","benchmark","variant","topology","workers","sample","operations","elapsed_ns","operations_per_second","verified"]'
+
+  # jq's ordinary object representation discards earlier duplicate keys. Its
+  # streaming parser exposes each occurrence, so validate each physical JSONL
+  # line before any normal parse or field projection can hide one.
+  while IFS= read -r line || [[ -n $line ]]; do
+    row=$((row + 1))
+    if [[ -z $line ]] || ! printf '%s\n' "$line" | jq --stream -n -e \
+      --argjson expected "$expected_keys" \
+      '
+        [inputs
+         | select(length == 2)
+         | .[0]
+         | if (length == 1 and (.[0] | type) == "string")
+           then .[0]
+           else error("result row is not a flat object")
+           end] as $keys
+        | ($keys | sort) == ($expected | sort)
+          and ($keys | length) == ($expected | length)
+          and ($keys | length) == ($keys | unique | length)
+      ' >/dev/null; then
+      echo "benchmark JSONL row $row has duplicate, missing, extra, or nested keys" >&2
+      return 1
+    fi
+  done <"$input"
+  if ((row != expected_count)); then
+    echo "benchmark JSONL has $row physical rows, expected $expected_count" >&2
+    return 1
+  fi
+}
+
+self_test_result_jsonl_schema() {
+  local valid="$temporary/result-schema-valid.jsonl"
+  local invalid="$temporary/result-schema-invalid.jsonl"
+  local row='{"schema":"shmem-pod-benchmark-result-v1","run_id":"self-test","category":"latency","benchmark":"call","variant":"self_test","topology":"single_thread","workers":1,"sample":0,"operations":1,"elapsed_ns":1,"operations_per_second":1,"verified":true}'
+  printf '%s\n' "$row" >"$valid"
+  validate_result_jsonl_schema "$valid" 1
+
+  printf '%s\n' "${row/\{\"schema\"/\{\"schema\":\"shadowed\",\"schema\"}" >"$invalid"
+  if validate_result_jsonl_schema "$invalid" 1 >/dev/null 2>&1; then
+    echo "result-schema self-test accepted a duplicate JSON key" >&2
+    return 1
+  fi
+  printf '%s\n' "${row/\{\"schema\"/\{\"extra\":0,\"schema\"}" >"$invalid"
+  if validate_result_jsonl_schema "$invalid" 1 >/dev/null 2>&1; then
+    echo "result-schema self-test accepted an extra JSON key" >&2
+    return 1
+  fi
+  printf '%s\n' "${row/\"verified\":true/\"verified\":\{\"nested\":true\}}" >"$invalid"
+  if validate_result_jsonl_schema "$invalid" 1 >/dev/null 2>&1; then
+    echo "result-schema self-test accepted a nested JSON member" >&2
+    return 1
+  fi
+}
+
 while (($#)); do
   case "$1" in
     --smoke)
@@ -885,13 +1372,11 @@ while (($#)); do
   esac
 done
 
-for tool in awk cargo cat chmod cmp cp date diff dirname find git jq mkdir mktemp mv nproc od readlink rm rustc sed sha256sum sort stat sync tail timeout tr uname wc; do
-  command -v "$tool" >/dev/null || { echo "run-benchmarks.sh requires $tool" >&2; exit 1; }
-done
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo "the executable-image benchmark currently requires Linux x86-64" >&2
   exit 1
 fi
+reject_ambient_build_controls
 
 available_cpus=$(nproc 2>/dev/null || echo 1)
 if [[ ! $available_cpus =~ ^[1-9][0-9]*$ ]]; then
@@ -975,16 +1460,25 @@ fi
 
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 temporary=$(mktemp -d)
-source_revision_before=$(git rev-parse HEAD)
+assert_no_cargo_config_ancestors "$temporary"
+self_test_result_jsonl_schema
+control_home="$temporary/control-home"
+mkdir "$control_home"
+export HOME="$control_home"
+export XDG_CONFIG_HOME="$control_home/.config"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_OPTIONAL_LOCKS=0
+source_revision_before=$(git_control rev-parse HEAD)
 source_status_file="$temporary/live-source-status.txt"
-git status --porcelain=v2 --untracked-files=all -- . >"$source_status_file"
+git_control status --porcelain=v2 --untracked-files=all -- . >"$source_status_file"
 source_status_sha256_before=$(sha256sum "$source_status_file" | awk '{print $1}')
 source_paths_file="$temporary/live-source-paths.z"
 source_manifest="$temporary/live-source-manifest.tsv"
 write_live_manifest "$source_paths_file" "$source_manifest"
 source_manifest_sha256=$(sha256sum "$source_manifest" | awk '{print $1}')
 source_file_count=$(wc -l <"$source_manifest")
-if [[ -n $(git status --porcelain --untracked-files=all -- .) ]]; then
+if [[ -n $(git_control status --porcelain --untracked-files=all -- .) ]]; then
   source_dirty=true
 else
   source_dirty=false
@@ -1010,6 +1504,16 @@ artifact_dir="$output_dir/artifacts"
 binary_dir="$output_dir/bin"
 provenance_dir="$output_dir/provenance"
 mkdir "$artifact_dir" "$binary_dir" "$provenance_dir"
+control_tool_paths="$temporary/control-tool-paths.tsv"
+{
+  printf 'bash\t%s\n' "$(readlink -f -- /bin/bash)"
+  for control_tool in "${required_control_tools[@]}"; do
+    printf '%s\t%s\n' "$control_tool" "$(readlink -f -- "/usr/bin/$control_tool")"
+  done
+} >"$control_tool_paths"
+control_tool_manifest="$provenance_dir/control-tools.tsv"
+write_control_tool_manifest "$control_tool_manifest"
+control_tool_manifest_sha256=$(sha256sum "$control_tool_manifest" | awk '{print $1}')
 source_snapshot="$provenance_dir/source"
 mkdir "$source_snapshot"
 snapshot_source
@@ -1030,56 +1534,233 @@ echo "  output: $output_dir"
 echo "  warmup/iterations/samples/workers: $warmup/$iterations/$samples/$workers"
 echo "  per-command timeout: ${run_timeout}s"
 
-# Capture the exact launchers, resolved toolchain binaries, versions, and build
-# controls before any measured binary is compiled.
-rustc_executable=${RUSTC:-rustc}
-rustc_launcher_path=$(readlink -f -- "$(command -v "$rustc_executable")")
-cargo_launcher_path=$(readlink -f -- "$(command -v cargo)")
+# Resolve every executable that can affect compilation before any measured
+# binary is built. RUSTUP_TOOLCHAIN is the only inherited build selector; all
+# build children receive an env -i environment and direct executable paths.
+rustup_toolchain=${RUSTUP_TOOLCHAIN:-<default>}
+rustc_launcher_path=$(readlink -f -- "$launch_rustc")
+cargo_launcher_path=$(readlink -f -- "$launch_cargo")
 if [[ ${rustc_launcher_path##*/} == rustup ]]; then
-  rustc_path=$(cd "$temporary" && "$rustc_launcher_path" which rustc)
+  rustc_path=$(cd / && HOME="$launch_home" "$rustc_launcher_path" which rustc)
 else
   rustc_path=$rustc_launcher_path
 fi
 if [[ ${cargo_launcher_path##*/} == rustup ]]; then
-  cargo_path=$(cd "$temporary" && "$cargo_launcher_path" which cargo)
+  cargo_path=$(cd / && HOME="$launch_home" "$cargo_launcher_path" which cargo)
 else
   cargo_path=$cargo_launcher_path
 fi
 rustc_path=$(readlink -f -- "$rustc_path")
 cargo_path=$(readlink -f -- "$cargo_path")
+if [[ ! -x $rustc_path || ! -f $rustc_path || ! -x $cargo_path || ! -f $cargo_path ]]; then
+  echo "resolved Rust toolchain paths are not regular executables" >&2
+  exit 1
+fi
+env_path=$(resolve_program env)
+timeout_path=$(resolve_program timeout)
+uname_path=$(resolve_program uname)
+ldd_path=$(resolve_program ldd)
+host_linker_path=$(resolve_program gcc)
+host_ld_path=$(resolve_program ld)
+host_as_path=$(resolve_program as)
+
 rustc_launcher_sha256=$(sha256sum "$rustc_launcher_path" | awk '{print $1}')
 cargo_launcher_sha256=$(sha256sum "$cargo_launcher_path" | awk '{print $1}')
+selected_rustc_path=$rustc_path
+selected_cargo_path=$cargo_path
+selected_rustc_sha256=$(sha256sum "$selected_rustc_path" | awk '{print $1}')
+selected_cargo_sha256=$(sha256sum "$selected_cargo_path" | awk '{print $1}')
+env_sha256=$(sha256sum "$env_path" | awk '{print $1}')
+timeout_sha256=$(sha256sum "$timeout_path" | awk '{print $1}')
+uname_sha256=$(sha256sum "$uname_path" | awk '{print $1}')
+ldd_sha256=$(sha256sum "$ldd_path" | awk '{print $1}')
+host_linker_sha256=$(sha256sum "$host_linker_path" | awk '{print $1}')
+host_ld_sha256=$(sha256sum "$host_ld_path" | awk '{print $1}')
+host_as_sha256=$(sha256sum "$host_as_path" | awk '{print $1}')
+
+build_home="$temporary/build-home"
+build_tmp="$temporary/build-tmp"
+build_tool_bin="$temporary/build-tool-bin"
+build_cargo_home=/usr/share/empty
+vendor_cargo_home="$temporary/vendor-cargo-home"
+mkdir "$build_home" "$build_tmp" "$build_tool_bin" "$vendor_cargo_home"
+ln -s -- "$host_ld_path" "$build_tool_bin/ld"
+ln -s -- "$host_as_path" "$build_tool_bin/as"
+ln -s -- "$uname_path" "$build_tool_bin/uname"
+
+selection_env=(
+  "HOME=$build_home"
+  "PATH=$build_tool_bin"
+  "TMPDIR=$build_tmp"
+  "LC_ALL=C"
+  "LANG=C"
+  "TZ=UTC"
+)
+selected_rust_sysroot=$(cd / && "$env_path" -i "${selection_env[@]}" \
+  "$selected_rustc_path" --print sysroot)
+selected_rust_sysroot=$(readlink -f -- "$selected_rust_sysroot")
+rust_host_target=$(cd / && "$env_path" -i "${selection_env[@]}" \
+  "$selected_rustc_path" --version --verbose | sed -n 's/^host: //p')
+if [[ -z $rust_host_target || ! -d $selected_rust_sysroot/lib/rustlib/$rust_host_target/lib ]]; then
+  echo "selected Rust compiler returned an invalid sysroot or host target" >&2
+  exit 1
+fi
+echo "retaining exact Rust compiler and sysroot inputs"
+retained_rust_sysroot="$provenance_dir/rust-sysroot"
+mkdir "$retained_rust_sysroot"
+retain_rust_sysroot "$selected_rust_sysroot" "$retained_rust_sysroot" "$selected_cargo_path"
+rustc_path="$retained_rust_sysroot/bin/rustc"
+cargo_path="$retained_rust_sysroot/bin/cargo"
 rustc_sha256=$(sha256sum "$rustc_path" | awk '{print $1}')
 cargo_sha256=$(sha256sum "$cargo_path" | awk '{print $1}')
-SHMEM_POD_BENCH_RUSTC=$(cd "$temporary" && "$rustc_executable" --version --verbose)
-SHMEM_POD_BENCH_CARGO=$(cd "$temporary" && cargo --version --verbose)
-SHMEM_POD_BENCH_RUSTFLAGS=$(environment_value RUSTFLAGS)
-SHMEM_POD_BENCH_CARGO_ENCODED_RUSTFLAGS=$(environment_value CARGO_ENCODED_RUSTFLAGS)
-SHMEM_POD_BENCH_RUSTC_OVERRIDE=$(environment_value RUSTC)
-SHMEM_POD_BENCH_POD_RUSTC=$(environment_value POD_RUSTC)
-SHMEM_POD_BENCH_RUSTC_WRAPPER=$(environment_value RUSTC_WRAPPER)
-SHMEM_POD_BENCH_RUSTC_WORKSPACE_WRAPPER=$(environment_value RUSTC_WORKSPACE_WRAPPER)
-SHMEM_POD_BENCH_CARGO_HOME=$(environment_value CARGO_HOME)
-SHMEM_POD_BENCH_CARGO_BUILD_TARGET=$(environment_value CARGO_BUILD_TARGET)
-if [[ -n ${POD_RUSTC:-} ]]; then
-  SHMEM_POD_BENCH_POD_RUSTC_VERSION=$("$POD_RUSTC" --version --verbose)
-else
-  SHMEM_POD_BENCH_POD_RUSTC_VERSION='<unset>'
+
+hermetic_env=(
+  "HOME=$build_home"
+  "CARGO_HOME=$build_cargo_home"
+  "CARGO_NET_OFFLINE=true"
+  "CARGO_INCREMENTAL=0"
+  "RUSTC=$rustc_path"
+  "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$host_linker_path"
+  "PATH=$build_tool_bin"
+  "TMPDIR=$build_tmp"
+  "LC_ALL=C"
+  "LANG=C"
+  "TZ=UTC"
+  "SOURCE_DATE_EPOCH=0"
+)
+vendor_env=("${hermetic_env[@]}")
+vendor_env[1]="CARGO_HOME=$vendor_cargo_home"
+
+verify_cargo_discovery_roots
+rust_sysroot=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --print sysroot)
+if [[ $rust_sysroot != "$retained_rust_sysroot" ]]; then
+  echo "retained rustc did not resolve its retained sysroot: $rust_sysroot" >&2
+  exit 1
 fi
+rust_lld_path=$(readlink -f -- \
+  "$rust_sysroot/lib/rustlib/$rust_host_target/bin/rust-lld")
+if [[ ! -f $rust_lld_path || ! -x $rust_lld_path ]]; then
+  echo "selected Rust toolchain does not contain rust-lld: $rust_lld_path" >&2
+  exit 1
+fi
+
+# Cargo needs its content-addressed offline registry cache but must not load
+# user config, credentials, aliases, wrappers, or network policy from it.
+ambient_cargo_home=$(readlink -f -- "$launch_home/.cargo")
+if [[ ! -d $ambient_cargo_home/registry ]]; then
+  echo "the hermetic benchmark requires a populated offline Cargo registry cache" >&2
+  exit 1
+fi
+ln -s -- "$ambient_cargo_home/registry" "$vendor_cargo_home/registry"
+if [[ -d $ambient_cargo_home/git ]]; then
+  ln -s -- "$ambient_cargo_home/git" "$vendor_cargo_home/git"
+fi
+
+host_linker_paths="$temporary/host-linker-paths.tsv"
+dynamic_executables="$temporary/host-dynamic-executables.tsv"
+collect2_path=$(gcc_control -print-prog-name=collect2)
+lto_wrapper_path=$(gcc_control -print-prog-name=lto-wrapper)
+liblto_plugin_path=$(gcc_control -print-prog-name=liblto_plugin.so)
+lto1_path=$(gcc_control -print-prog-name=lto1)
+gcc_specs_path=$(gcc_control -print-file-name=specs)
+if [[ $collect2_path != /* || ! -f $collect2_path ||
+      $lto_wrapper_path != /* || ! -f $lto_wrapper_path ||
+      $liblto_plugin_path != /* || ! -f $liblto_plugin_path ||
+      $lto1_path != /* || ! -f $lto1_path ]]; then
+  echo "GCC cannot resolve absolute collect2/LTO component paths" >&2
+  exit 1
+fi
+{
+  printf 'driver\t%s\n' "$host_linker_path"
+  printf 'collect2\t%s\n' "$(readlink -f -- "$collect2_path")"
+  printf 'ld\t%s\n' "$host_ld_path"
+  printf 'as\t%s\n' "$host_as_path"
+  printf 'lto-wrapper\t%s\n' "$(readlink -f -- "$lto_wrapper_path")"
+  printf 'liblto-plugin\t%s\n' "$(readlink -f -- "$liblto_plugin_path")"
+  printf 'lto1\t%s\n' "$(readlink -f -- "$lto1_path")"
+  if [[ $gcc_specs_path != specs ]]; then
+    [[ -f $gcc_specs_path ]] || {
+      echo "GCC specs probe returned a missing file: $gcc_specs_path" >&2
+      exit 1
+    }
+    printf 'gcc-specs\t%s\n' "$(readlink -f -- "$gcc_specs_path")"
+  fi
+  for link_input in \
+    Scrt1.o crti.o crtbeginS.o crtendS.o crtn.o \
+    libgcc_s.so libgcc_s.so.1 libgcc.a \
+    libc.so libc.so.6 libm.so libm.so.6 libdl.a libpthread.a librt.a libutil.a; do
+    input_path=$(gcc_control -print-file-name="$link_input")
+    if [[ $input_path == "$link_input" || ! -f $input_path ]]; then
+      echo "host linker cannot resolve required input: $link_input" >&2
+      exit 1
+    fi
+    printf '%s\t%s\n' "$link_input" "$(readlink -f -- "$input_path")"
+  done
+} >"$host_linker_paths"
+{
+  printf 'rustc\t%s\n' "$rustc_path"
+  printf 'cargo\t%s\n' "$cargo_path"
+  printf 'rust-lld\t%s\n' "$rust_lld_path"
+  printf 'env\t%s\n' "$env_path"
+  printf 'timeout\t%s\n' "$timeout_path"
+  printf 'uname\t%s\n' "$uname_path"
+  printf 'gcc\t%s\n' "$host_linker_path"
+  printf 'collect2\t%s\n' "$(readlink -f -- "$collect2_path")"
+  printf 'ld\t%s\n' "$host_ld_path"
+  printf 'as\t%s\n' "$host_as_path"
+  printf 'lto-wrapper\t%s\n' "$(readlink -f -- "$lto_wrapper_path")"
+  printf 'liblto-plugin\t%s\n' "$(readlink -f -- "$liblto_plugin_path")"
+  printf 'lto1\t%s\n' "$(readlink -f -- "$lto1_path")"
+} >"$dynamic_executables"
+while IFS=$'\t' read -r dynamic_label dynamic_executable; do
+  append_dynamic_dependency_paths \
+    "$dynamic_label" "$dynamic_executable" "$host_linker_paths"
+done <"$dynamic_executables"
+host_linker_manifest="$provenance_dir/host-linker-manifest.tsv"
+write_host_linker_manifest "$host_linker_manifest"
+host_linker_manifest_sha256=$(sha256sum "$host_linker_manifest" | awk '{print $1}')
+host_linker_config="$provenance_dir/host-linker-config.txt"
+write_host_linker_config "$host_linker_config"
+host_linker_config_sha256=$(sha256sum "$host_linker_config" | awk '{print $1}')
+
+SHMEM_POD_BENCH_RUSTC=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$rustc_path" --version --verbose)
+SHMEM_POD_BENCH_CARGO=$(cd / && "$env_path" -i "${hermetic_env[@]}" "$cargo_path" --version --verbose)
+SHMEM_POD_BENCH_POD_RUSTC_VERSION=$SHMEM_POD_BENCH_RUSTC
 SHMEM_POD_BENCH_WORKSPACE_PROFILE='release: opt-level=3, debug=false, strip=none, debug-assertions=false, overflow-checks=false, lto=thin, panic=abort, incremental=false, codegen-units=1, rpath=false'
 SHMEM_POD_BENCH_HARNESS_PROFILE=$SHMEM_POD_BENCH_WORKSPACE_PROFILE
-for profile_key in OPT_LEVEL DEBUG STRIP DEBUG_ASSERTIONS OVERFLOW_CHECKS LTO PANIC INCREMENTAL CODEGEN_UNITS RPATH; do
-  profile_variable="CARGO_PROFILE_RELEASE_${profile_key}"
-  printf -v "SHMEM_POD_BENCH_PROFILE_${profile_key}" '%s' "$(environment_value "$profile_variable")"
-done
+
+echo "retaining exact Cargo registry inputs"
+vendor_dir="$provenance_dir/vendor"
+(
+  cd /
+  "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$env_path" -i "${vendor_env[@]}" "$cargo_path" vendor \
+      --locked --offline --versioned-dirs \
+      --manifest-path "$source_snapshot/Cargo.toml" "$vendor_dir" >/dev/null
+)
+vendor_symlink=$(find "$vendor_dir" -type l -print -quit)
+if [[ -n $vendor_symlink ]]; then
+  echo "Cargo vendor input contains a symlink whose target escapes byte retention: $vendor_symlink" >&2
+  exit 1
+fi
+chmod -R a-w -- "$vendor_dir"
+vendor_manifest="$provenance_dir/vendor-manifest.tsv"
+write_directory_manifest "$vendor_dir" "$vendor_manifest"
+vendor_manifest_sha256=$(sha256sum "$vendor_manifest" | awk '{print $1}')
+verify_vendor_stable
+cargo_source_config=(
+  --config 'source.crates-io.replace-with="vendored-sources"'
+  --config "source.vendored-sources.directory=\"$vendor_dir\""
+)
 
 echo "building executable-pod compiler and runtime"
 compiler_target="$temporary/compiler-target"
 (
-  cd "$temporary"
-  CARGO_TARGET_DIR="$compiler_target" \
-    timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-    cargo build --locked --release --manifest-path "$source_snapshot/Cargo.toml" \
+  cd /
+  "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$compiler_target" \
+    "$cargo_path" "${cargo_source_config[@]}" build \
+    --locked --offline --release --manifest-path "$source_snapshot/Cargo.toml" \
     -p shmem-pod-image-compiler \
     -p shmem-pod-runtime
 )
@@ -1100,15 +1781,13 @@ compiler_args=(
   --elf "$artifact_dir/pod.elf"
   --manifest "$artifact_dir/pod.manifest"
 )
-if [[ -n ${POD_RUSTC:-} ]]; then
-  compiler_args+=(--rustc "$POD_RUSTC")
-fi
+compiler_args+=(--rustc "$rustc_path")
 compiler_work="$temporary/compiler-work"
 mkdir "$compiler_work"
 (
   cd "$compiler_work"
-  timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-    "$compiler" "${compiler_args[@]}"
+  "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$env_path" -i "${hermetic_env[@]}" "$compiler" "${compiler_args[@]}"
 )
 artifact_sha256=$(sed -n 's/^artifact_sha256=//p' "$artifact_dir/pod.manifest")
 if [[ ! $artifact_sha256 =~ ^[0-9a-f]{64}$ ]]; then
@@ -1149,11 +1828,11 @@ verify_compiler_manifest_file "$compiler_manifest" sdk.dep_info sdk.dep_info_sha
 verify_compiler_manifest_file "$compiler_manifest" pod.dep_info pod.dep_info_sha256 \
   "$artifact_dir/pod.o.d"
 verify_compiler_manifest_file "$compiler_manifest" rustc_launcher rustc_launcher_sha256 \
-  "$(manifest_value "$compiler_manifest" rustc_launcher)"
+  "$rustc_path"
 verify_compiler_manifest_file "$compiler_manifest" rustc_binary rustc_binary_sha256 \
-  "$(manifest_value "$compiler_manifest" rustc_binary)"
+  "$rustc_path"
 verify_compiler_manifest_file "$compiler_manifest" rust_lld rust_lld_sha256 \
-  "$(manifest_value "$compiler_manifest" rust_lld)"
+  "$rust_lld_path"
 verify_compiler_dependencies "$compiler_manifest" sdk
 verify_compiler_dependencies "$compiler_manifest" pod
 if [[ $(manifest_value "$compiler_manifest" sdk.root) != "$source_snapshot" ||
@@ -1199,11 +1878,13 @@ jq -n \
   }' >"$provenance_dir/compiler-crosscheck.json"
 verify_compiler_crosscheck
 
-mkdir -p "$temporary/src"
-cp "$source_snapshot/benchmarks/harness.rs" "$temporary/src/main.rs"
-cp "$source_snapshot/Cargo.lock" "$temporary/Cargo.lock"
-chmod u+w "$temporary/Cargo.lock"
-cat >"$temporary/Cargo.toml" <<EOF
+harness_package="$provenance_dir/harness-package"
+mkdir "$harness_package"
+harness_manifest="$harness_package/Cargo.toml"
+harness_lock="$harness_package/Cargo.lock"
+cp "$source_snapshot/Cargo.lock" "$harness_lock"
+chmod u+w "$harness_lock"
+cat >"$harness_manifest" <<EOF
 [package]
 name = "shmem-pod-benchmark-harness"
 version = "0.0.0"
@@ -1213,6 +1894,11 @@ publish = false
 [dependencies]
 shmem-pod = { path = "$source_snapshot", default-features = false, features = ["linux-futex"] }
 shmem-pod-runtime = { path = "$source_snapshot/poc/runtime" }
+sha2 = "=0.10.9"
+
+[[bin]]
+name = "shmem-pod-benchmark-harness"
+path = "$source_snapshot/benchmarks/harness.rs"
 
 [workspace]
 
@@ -1238,24 +1924,31 @@ SHMEM_POD_BENCH_CPU_MODEL=${cpu_model:-unknown}
 # temporary lock without network access, then make the measured build immutable.
 harness_target="$temporary/harness-target"
 (
-  cd "$temporary"
-  CARGO_TARGET_DIR="$harness_target" \
-    timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-    cargo metadata --offline --manifest-path "$temporary/Cargo.toml" \
+  cd /
+  "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
+    "$cargo_path" "${cargo_source_config[@]}" metadata \
+    --offline --manifest-path "$harness_manifest" \
       --format-version 1 >/dev/null
 )
-SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$temporary/Cargo.lock" | awk '{print $1}')
-cp "$temporary/Cargo.toml" "$provenance_dir/harness-Cargo.toml"
-cp "$temporary/Cargo.lock" "$provenance_dir/harness-Cargo.lock"
-SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256=$(sha256sum "$provenance_dir/harness-Cargo.toml" | awk '{print $1}')
+chmod a-w "$harness_manifest" "$harness_lock"
+SHMEM_POD_BENCH_HARNESS_LOCK_SHA256=$(sha256sum "$harness_lock" | awk '{print $1}')
+SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256=$(sha256sum "$harness_manifest" | awk '{print $1}')
 
 echo "building exact benchmark harness"
+verify_sha256 "$source_snapshot/benchmarks/harness.rs" "$harness_source_sha256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
 (
-  cd "$temporary"
-  CARGO_TARGET_DIR="$harness_target" \
-    timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-    cargo build --locked --offline --release --manifest-path "$temporary/Cargo.toml"
+  cd /
+  "$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+    "$env_path" -i "${hermetic_env[@]}" CARGO_TARGET_DIR="$harness_target" \
+    "$cargo_path" "${cargo_source_config[@]}" build \
+    --locked --offline --release --manifest-path "$harness_manifest"
 )
+verify_sha256 "$source_snapshot/benchmarks/harness.rs" "$harness_source_sha256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
 harness_build="$harness_target/release/shmem-pod-benchmark-harness"
 [[ -x $harness_build ]] || { echo "benchmark harness executable is missing: $harness_build" >&2; exit 1; }
 harness="$binary_dir/shmem-pod-benchmark-harness"
@@ -1267,8 +1960,8 @@ collect_runtime_context "$runtime_context"
 
 echo "running verified benchmark harness"
 set +e
-timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
-  "$harness" \
+harness_stdout=$("$timeout_path" --signal=TERM --kill-after=15s "${run_timeout}s" \
+  "$env_path" -i "${hermetic_env[@]}" "$harness" \
     --run-id "$run_id" \
     --runner-owner-token "$runner_owner_token" \
     --artifact "$artifact_dir/pod.bin" \
@@ -1280,15 +1973,27 @@ timeout --signal=TERM --kill-after=15s "${run_timeout}s" \
     --workers "$workers" \
     --mode "$mode" \
     --timeout-seconds "$run_timeout" \
-    --defer-completion 1
+    --defer-completion 1)
 status=$?
 set -e
+printf '%s\n' "$harness_stdout"
 if ((status != 0)); then
   if ((status == 124 || status == 137)); then
     echo "benchmark harness exceeded its ${run_timeout}s deadline" >&2
   fi
   exit "$status"
 fi
+mapfile -t harness_auth_lines < <(
+  printf '%s\n' "$harness_stdout" | sed -n '/^benchmark-result-auth-v1 /p'
+)
+if ((${#harness_auth_lines[@]} != 1)) ||
+   [[ ! ${harness_auth_lines[0]} =~ ^benchmark-result-auth-v1\ results_jsonl_sha256=([0-9a-f]{64})\ results_csv_sha256=([0-9a-f]{64})$ ]]; then
+  echo "benchmark harness did not emit exactly one valid result authentication record" >&2
+  exit 1
+fi
+harness_results_jsonl_sha256=${BASH_REMATCH[1]}
+harness_results_csv_sha256=${BASH_REMATCH[2]}
+verify_harness_result_bytes
 
 verify_source_stable
 verify_sha256 "$artifact_dir/pod.bin" "$artifact_sha256"
@@ -1301,8 +2006,9 @@ verify_sha256 "$source_snapshot/Cargo.toml" "$workspace_manifest_sha256"
 verify_sha256 "$source_snapshot/Cargo.lock" "$workspace_lock_sha256"
 verify_sha256 "$provenance_dir/source-live-manifest.tsv" "$source_manifest_sha256"
 verify_sha256 "$provenance_dir/source-manifest.tsv" "$source_snapshot_manifest_sha256"
-verify_sha256 "$provenance_dir/harness-Cargo.toml" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
-verify_sha256 "$provenance_dir/harness-Cargo.lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
+verify_sha256 "$harness_manifest" "$SHMEM_POD_BENCH_HARNESS_MANIFEST_SHA256"
+verify_sha256 "$harness_lock" "$SHMEM_POD_BENCH_HARNESS_LOCK_SHA256"
+validate_json_unique_paths "$output_dir/harness-owner.json"
 if ! jq -e --arg run_id "$run_id" --arg token "$runner_owner_token" \
   '. == {
     schema: "shmem-pod-benchmark-owner-v2",
@@ -1321,6 +2027,7 @@ if [[ -e $output_dir/environment.json ||
   exit 1
 fi
 expected_harness_report="$temporary/expected-harness-report.json"
+validate_json_unique_paths "$output_dir/harness-report.json"
 jq -n \
   --slurpfile runtime "$runtime_context" \
   --arg run_id "$run_id" \
@@ -1330,10 +2037,13 @@ jq -n \
   --argjson samples "$samples" \
   --argjson workers "$workers" \
   --argjson timeout "$run_timeout" \
+  --arg jsonl_sha256 "$harness_results_jsonl_sha256" \
+  --arg csv_sha256 "$harness_results_csv_sha256" \
   '{
     schema: "shmem-pod-benchmark-harness-report-v1",
     run_id: $run_id,
     result_rows: ($samples * 22),
+    results: {jsonl_sha256: $jsonl_sha256, csv_sha256: $csv_sha256},
     runtime_context: $runtime[0],
     configuration: {
       mode: $mode,
@@ -1355,6 +2065,7 @@ if ! diff -u \
   echo "benchmark harness report differs from the runner's independent observations" >&2
   exit 1
 fi
+validate_result_jsonl_schema "$output_dir/results.jsonl" "$expected_rows"
 if ! jq -s -e \
   --arg run_id "$run_id" \
   --argjson iterations "$iterations" \
@@ -1462,10 +2173,16 @@ harness_owner_sha256=$(sha256sum "$output_dir/harness-owner.json" | awk '{print 
 harness_report_sha256=$(sha256sum "$output_dir/harness-report.json" | awk '{print $1}')
 results_jsonl_sha256=$(sha256sum "$output_dir/results.jsonl" | awk '{print $1}')
 results_csv_sha256=$(sha256sum "$output_dir/results.csv" | awk '{print $1}')
+if [[ $results_jsonl_sha256 != "$harness_results_jsonl_sha256" ||
+      $results_csv_sha256 != "$harness_results_csv_sha256" ]]; then
+  echo "benchmark results changed after harness-authenticated emission" >&2
+  exit 1
+fi
 
-# Freeze every payload file before inventorying it. The inventory and canonical
-# completion marker are the only self-describing control files excluded.
+# Freeze every payload file before inventorying it. The inventory, canonical
+# completion marker, and its transient pending name are excluded.
 find "$output_dir" -type f -exec chmod a-w -- {} +
+verify_harness_result_bytes
 inventory_staging="$temporary/bundle-inventory.tsv"
 write_directory_manifest "$output_dir" "$inventory_staging"
 mv -- "$inventory_staging" "$output_dir/bundle-inventory.tsv"
@@ -1474,8 +2191,12 @@ bundle_inventory_sha256=$(sha256sum "$output_dir/bundle-inventory.tsv" | awk '{p
 bundle_inventory_entries=$(wc -l <"$output_dir/bundle-inventory.tsv")
 verify_bundle_inventory
 
-environment_staging="$temporary/environment.json"
+environment_staging="$output_dir/environment.json.pending"
 environment_check="$temporary/environment-check.json"
+if [[ -e $environment_staging || -L $environment_staging ]]; then
+  echo "refusing to replace an existing benchmark completion staging file" >&2
+  exit 1
+fi
 write_canonical_environment "$environment_staging"
 write_canonical_environment "$environment_check"
 if ! cmp -s "$environment_staging" "$environment_check"; then
@@ -1491,6 +2212,8 @@ if ! jq -e \
   --argjson rows "$expected_rows" \
   '.schema == "shmem-pod-benchmark-environment-v2"
    and .complete == true
+   and .trust_model.name == "controlled-host-v1"
+   and .trust_model.excludes_active_same_uid_adversary == true
    and .run_id == $run_id
    and .result_rows == $rows
    and .bundle.absolute_path == $bundle_path
@@ -1509,6 +2232,7 @@ sync -f "$environment_staging"
 # publishes the completion marker.
 verify_source_stable
 verify_toolchain_stable
+verify_harness_result_bytes
 verify_bundle_inventory
 verify_environment_bindings "$environment_staging"
 if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; then
@@ -1516,8 +2240,9 @@ if [[ -e $output_dir/environment.json || -L $output_dir/environment.json ]]; the
   exit 1
 fi
 mv -- "$environment_staging" "$output_dir/environment.json"
-sync -f "$output_dir/environment.json"
 chmod a-w "$output_dir/environment.json"
+sync -f "$output_dir/environment.json"
+sync -f "$output_dir"
 run_succeeded=1
 output_claimed=0
 
