@@ -264,6 +264,103 @@ batch result log `ignored/batch-results-1785506513.txt`. The full sweep remains
 gated on the calibrated parallel-experiment runner and the #1160/#287/#1168
 dependency chain.
 
+## 2026-07-31 batch 3: first real shipped-byte divergence + first hermit crashes
+
+Eight more compiled targets (next unbuilt, alphabetical): `389-adminutil`,
+`3depict`, `4g8`, `6tunnel`, `7kaa`, `9menu`, `9wm`, `a56`. Same method as
+batches 1–2 (two independent roots, `hermit run --strict --base-env=minimal
+--network=local`, NO `--verify`, work-ahead binary sha256 `f170c29d…` from
+Hermit #1168 tip `f3b29a1f`). Batch result log
+`ignored/batch-results-1785512269.txt`. Run under **heavy concurrent host
+load** (many other agents' KVM/QEMU hermit processes on the shared 158-core
+box) — relevant to the crash class below.
+
+| package | verdict | detail |
+|---|---|---|
+| `4g8` | **reproducible** | byte-identical, `deb=443f912b…` |
+| `6tunnel` | **reproducible** | byte-identical, `deb=cc5cf5c9…` |
+| `9menu` | **reproducible** | byte-identical, `deb=10b163dc…` |
+| `9wm` | **reproducible** | byte-identical, `deb=1758d7d2…` |
+| `389-adminutil` | **DIVERGENT (real shipped bytes)** | see below |
+| `3depict` | **CRASH (PMU skid)** | hermit panicked, no `.deb` produced |
+| `7kaa` | **CRASH (PMU skid)** | hermit panicked, no `.deb` produced |
+| `a56` | harness-skip | `tar --same-owner` chown→uid 0 EINVAL (unprivileged two-root build, no fakeroot/userns); not a hermit defect |
+
+### New finding 1 — `389-adminutil`: clock nondeterminism leaks into *shipped* bytes
+
+This is the **first non-shallow divergence** in the corpus. `389-adminutil`
+produces three debs. Two (`libadminutil0`, `libadminutil-data`) are the familiar
+shallow class: decompressed payload content identical, only outer tar-header
+`mtime` off by −1/−2 s. The third, **`libadminutil-dev`, differs in shipped
+bytes**: the static archives `usr/lib/x86_64-linux-gnu/libadminutil.a` and
+`libadmsslutil.a` differ between roots, and `control/md5sums` differs as a
+consequence.
+
+Drilling in: all ten `.o` members inside `libadminutil.a` are **byte-identical**
+across roots, and the `ar` global-header timestamp is identical
+(`1767225600`). `cmp -l` shows **exactly 10 differing bytes**, one per member,
+each a single decimal digit `7`→`5` in the per-member `ar` mtime field. So the
+same ±1–2 s virtual-wall-clock nondeterminism that produced cosmetic tar-mtime
+deltas in batches 1–2 here **propagates into the shipped `.deb` payload**,
+because `ar` embeds each object file's mtime into the archive member header
+(non-deterministic `ar`, no `D`/`SOURCE_DATE_EPOCH` normalization in this
+wheezy toolchain). dettrace reproduced `389-adminutil` because its virtual time
+is a pure function of the schedule → identical `.o` mtimes → identical `.a`.
+Root cause is the same open scheduler/vtime-commit host-timing channel
+(#1157/#1160 + scheduler-vtime-jump-past-unproductive-pollers); the difference
+from batches 1–2 is that here the artifact toolchain bakes the timestamp into
+shipped content rather than into a dpkg-normalizable tar header. Evidence:
+`ignored/tworoot/389-adminutil/{A,B}`.
+
+### New finding 2 — `3depict` & `7kaa`: PMU skid crashes under load (P0-class)
+
+Both larger C++ builds **crashed** hermit `--strict` (ptrace) mid-compile with
+the same assertion at `reverie-ptrace/src/timer.rs:809`:
+
+```
+Clock perf counter exceeds target value at start of attempted single-step:
+  3depict: 766814174 > 766813944  (overshoot 230 RCB)
+  7kaa:     57652872 >  57652547  (overshoot 325 RCB)
+Consider increasing skid margin for this CPU.
+```
+
+The retired-conditional-branch (RCB) counter **skidded past the single-step
+target** before the precise-single-step machinery could take over, so
+`attempt_single_step`'s `ctr_initial <= target_rcb` precondition failed and the
+supervisor aborted (leaving the tracee ptrace-stopped — the process wedged and
+was reaped by exact PID). This is a **hardware/PMU robustness gap**, not a
+content-determinism bug, and it is **load-amplified**: both crashes happened
+while the box was saturated with other agents' hermit workloads, consistent with
+the known load-sensitivity note (`qemu-demos-host-provisioning`). Per the task
+definition ("any dettrace-determinized build that FAILS under hermit — nondet
+**or crash** — is a P0"), these two are P0-class: dettrace built both cleanly.
+Fix direction is the skid-margin / slow-single-step robustness path already
+noted (`gvisor-no-interpreter-dbi-is-skidfree-path`), or the skid-free DBI
+branch-count backend; it should be reconfirmed under a quiet host and, ideally,
+via the calibrated parallel-experiment runner rather than ad-hoc contention.
+Evidence: `ignored/logs/drb-{3depict,7kaa}-tworoot-A-*.log`.
+
+### Cumulative (through 2026-07-31 batch 3)
+
+- **Fully byte-identical reproduced:** 33 (through batch 2) + 4 here
+  (`4g8`, `6tunnel`, `9menu`, `9wm`) = **37 of 8,688**.
+- **Shallow ±1–2 s tar-mtime divergences (metadata only, payload identical):**
+  5 (through batch 2) + the two shallow debs of `389-adminutil` = still the
+  same cosmetic class.
+- **Real shipped-byte divergence (P0 content class):** `389-adminutil`
+  (`libadminutil-dev` `.a` via ar-embedded mtime) = **1** — first of the corpus.
+- **Crashes (P0):** `3depict`, `7kaa` (PMU skid, load-amplified) = **2**.
+- **Harness-skip (not a hermit verdict):** `a56` (chown/uid).
+- **46 of 8,688 target packages attempted end-to-end** under the fixed binary.
+
+These are the first non-cosmetic results in the corpus: batches 1–2 were all the
+shallow-mtime class, whereas batch 3 surfaced (a) the timestamp channel leaking
+into shipped bytes and (b) the load-sensitive PMU-skid crash. Both trace to
+already-tracked foundations (scheduler vtime host-timing; PMU skid robustness),
+not new root causes. The full sweep remains gated on the calibrated
+parallel-experiment runner (which would also remove the host-contention
+confound behind the skid crashes) and the #1160/#287/#1168 dependency chain.
+
 ### Methodology note: in-process `--verify` is unusable for full package builds
 
 `rebuild.sh hermit <pkg>` uses one shared root and runs `dpkg-buildpackage`
