@@ -1,124 +1,150 @@
 # dev_transcripts — cultivated dev-team transcripts
 
-A mechanism that generates **cultivated daily transcripts**, **prompt
+A mechanism that generates **cultivated daily/weekly transcripts**, **prompt
 word-counts**, and **session statistics** from the dev-hermit coordinator's
 durable conversation store — so the owner no longer has to keep records by hand.
 
-Task: `cultivated-transcript-generator`.
+Tasks: `cultivated-transcript-generator`, `transcript-generator-refinements`,
+`transcript-generator-v2-pipeline`.
 
 ## TL;DR
 
 ```bash
 cd dev_transcripts
 ./prompt_wordcount.py                 # owner-prompt word counts (daily/weekly/all-time)
-./gen_daily_transcripts.py            # build daily/*.md + daily/session-stats.json (uses cheap model)
-./gen_daily_transcripts.py --no-model # fast skeleton, verbatim prompts only, no LLM
+
+# v2 two-stage pipeline:
+./gen_daily_transcripts.py            # STAGE 1 (summarize, incremental) + STAGE 2 (render) + stats
+./gen_daily_transcripts.py --render-only   # STAGE 2 ONLY: re-render markdown from cache, ZERO LLM
+./summarize.py                        # STAGE 1 alone (refresh JSON summary cache)
+./render.py                           # STAGE 2 alone (JSON cache -> markdown)
+./gen_daily_transcripts.py --force    # re-summarize every turn (e.g. after a prompt change)
 ```
 
-Outputs land in the **gitignored** `daily/` subdir. The scripts themselves are
-version-controlled.
+Outputs land in the **gitignored** `daily/` subdir (including the
+`daily/.summary_data/` JSON cache). The scripts themselves are version-controlled.
 
 ## STEP-0 finding: what the durable source actually is
 
-The task hypothesized that `~/.orc/logs/*.log` hold the full history. **They do
-not.** Those are rotating **internal telemetry** (orc engine/JS trace lines),
-capped at ~100 files ≈ ~100 **minutes** retained per session. Conversation text
-only leaks into them incidentally (inside effect args), and inbound owner gchat
-events carry metadata but no message body. The per-session `events.db` is also
-short-lived (only the recent window).
-
-The **durable, complete, compaction-independent** source is the per-session
-SQLite database:
+`~/.orc/logs/*.log` are **not** the history — they are rotating **internal
+telemetry** capped at ~100 files ≈ ~100 **minutes** per session. The **durable,
+complete, compaction-independent** source is the per-session SQLite database:
 
 ```
 ~/.orc/sessions/<session-id>/session.db      table: content_blocks
 ```
 
-- `content_blocks` is **append-only** — SQLite triggers `RAISE(ABORT, …)` on any
-  `UPDATE`/`DELETE`, so it is unaffected by in-memory context compaction.
-- For the dev-hermit coordinator session it holds **52k+ blocks spanning the full
-  ~11 days back to session start (2026-07-20)**.
-- The session is resolved from `~/.orc/index.db` by matching `cwd` against
-  `dev-hermit` and choosing the session whose `session.db` has the most blocks —
-  **the UUID is not hardcoded** (override with `--session` / `--db`).
+`content_blocks` is **append-only** (SQLite triggers `RAISE(ABORT, …)` on
+`UPDATE`/`DELETE`), so it is unaffected by in-memory context compaction, and it
+holds every turn back to session start (2026-07-20). The session is resolved from
+`~/.orc/index.db` by matching `cwd` against `dev-hermit` and choosing the session
+whose `session.db` has the most blocks — **the UUID is not hardcoded** (override
+with `--session` / `--db`). **Owner verbatim prompts** = `role='user' AND
+block_type='text'`; wakeups and notifications are excluded. `user_source` gives
+the channel (`Web`/`Tui`/`GChat`; GChat threads become **Thread N** sections).
 
-Relevant columns: `role` (`user`/`assistant`/`notification`), `block_type`
-(`text`/`reasoning`/`code_execution`/`wakeup`/…), `turn_index` (pairs an owner
-prompt with the assistant blocks that answered it), `created_at_ms`, `content`,
-`token_count`, `model`, and `user_source` (a JSON tag of the input channel).
+## Architecture: v2 two-stage pipeline
 
-**Owner verbatim prompts** = `role='user' AND block_type='text'`. System
-`user|wakeup` and `notification|text` blocks are **not** owner prompts and are
-excluded from user word counts. `user_source` identifies the channel — `Web`,
-`Tui`, or `GChat` (GChat carries `thread_name`/`space_name`, used to split the
-transcript into **Main Chat** vs **Thread N** sections).
+The mechanism is split into two independent stages so that **format changes never
+require spending tokens on re-summarization**:
 
-## Architecture: hybrid code + cheap-model
+| Stage | Script | LLM? | Reads | Writes |
+|---|---|---|---|---|
+| **1 SUMMARIZE** | `summarize.py` | yes (cheap `claude -p --model sonnet`, batched + parallel) | `content_blocks` | `daily/.summary_data/*.json` |
+| **2 RENDER** | `render.py` | **no — pure code** | `daily/.summary_data/*.json` | `daily/*.md` |
 
-| Concern | How |
+`gen_daily_transcripts.py` orchestrates both stages and refreshes the pure-code
+`session-stats.json`. Because rendering is a separate no-LLM stage, tweaking the
+markdown format is free: edit `render.py`, run `./render.py`, done — no tokens.
+
+Stage 1 is **idempotent per turn**: a turn already in the day's JSON is not
+re-summarized unless `--force` is given (verified: re-running a stable past day is
+a ~0.5s no-op with zero model calls; only genuinely new turns hit the model).
+
+### Substance bucketing (stage 1)
+
+Each AI reply is classified by **substance** — design/architecture decisions,
+concrete results (tests passing, benchmarks, PRs/SHAs landed), problems/bugs,
+milestones — while **coordination chatter and tool-call narration are treated as
+noise**. Four buckets drive rendering:
+
+| Bucket | Rendered as |
 |---|---|
-| session resolution, verbatim prompt extraction, turn grouping, thread/Main-Chat split, word/token stats, JSON | **pure code** (`lib_transcript.py`) — deterministic, no LLM |
-| abridged AI-response summaries, topic-keyword section titles, one-paragraph day summary | **cheap model** via `claude -p --model sonnet` (or `codex exec`), **batched** (18 turns/call) and **cached** |
+| `omit` | *nothing* (dropped — bare acks, restart/tmux chatter, pure tool activity) |
+| `one_sentence` | `> AI response: <one line>` |
+| `paragraph` | `> AI response: <short substance paragraph>` (block-quote) |
+| `full` | the reply kept **verbatim** in a ` ```markdown ` fence (`AI response (full msg):`) |
 
-The expensive coordinator model is never used. Summaries are cached per turn
-(`daily/.abridge-cache.json`) so re-runs are ~free and incremental.
+Verbatim **user prompts** are always captured by pure code (never the LLM) and
+are never dropped.
+
+> **Note on `full`:** across the ~11-day history the classifier selected `full`
+> **zero** times — this is correct for this data, not a bug. The coordinator's own
+> chat replies are status/delegation text; the genuinely document-like artifacts
+> (`## … Assessment`, `## M9 ACHIEVED`, `Verdict:`, benchmark tables) live in
+> `ai_docs/` files, PRs, and sub-agent outputs, which the coordinator *references*
+> rather than pastes. The `full` render path is implemented and tested (it also
+> auto-lengthens the fence when the verbatim body contains ``` ``` ```).
+
+## Format (denser, owner's shape)
+
+- The H1 title carries the weekday: `YYYY-MM-DD <Wkd> Daily dev-hermit dev team
+  transcript` (+ `===`), followed by a `>` day-summary and `Main Chat:` /
+  `Thread N:` sections.
+- A turn is `**[HH:MM EDT · channel]**` **immediately** followed by the verbatim
+  prompt (no blank line), then the bucketed AI response.
+- A `----` horizontal rule appears **only** when the gap to the previous message
+  exceeds 15 min (blank line before it so it renders as a rule; none after).
+  Close/consecutive turns get no separator.
+- All clock times are Eastern (`America/New_York`, EDT/EST via `%Z`).
 
 ## Files (version-controlled)
 
 - `lib_transcript.py` — shared library: session resolution, `content_blocks`
-  reader, `Block`/`Turn` models, channel/thread classification, word counting.
-- `prompt_wordcount.py` — **pure-code** owner-prompt extraction + word counts
-  (daily / weekly ISO / by-channel / all-time). `--json` for machine output.
-- `gen_daily_transcripts.py` — **hybrid** generator: daily `.md` transcripts +
-  `session-stats.json`.
-- `.gitignore` — ignores `daily/`.
+  reader, `Block`/`Turn` models, channel/thread classification, Eastern-time
+  helpers, word counting.
+- `summarize.py` — **STAGE 1** (LLM): substance-bucketed JSON summary cache.
+- `render.py` — **STAGE 2** (pure): JSON cache → daily + weekly markdown.
+- `gen_daily_transcripts.py` — orchestrator (stage 1 + stage 2 + session-stats).
+- `prompt_wordcount.py` — pure-code owner-prompt word counts.
+- `.gitignore` — ignores `daily/` (which contains `.summary_data/` too).
 
 ## Generated outputs (in gitignored `daily/`)
 
-- `YYYY-MM-DD-dev-hermit-daily.md` — one cultivated transcript per day:
-  - `YYYY-MM-DD <Wkd> Daily dev-hermit dev team transcript` + `===` underline
-    (the abbreviated weekday, e.g. `Mon`, follows the date)
-  - one-paragraph day summary in a `>` block quote
-  - `Main Chat: <topic keywords>` then `Thread N: <topic keywords>` sections
-    (each `---` underlined)
-  - within each: the owner's **verbatim** prompt, then an `AI response:` label
-    above an **abridged** summary in a ` ```markdown ` fence; turns separated by
-    `----`. Each turn is timestamped in **Eastern time** (`[HH:MM EDT · channel]`,
-    via `America/New_York`, so it stays correct year-round).
-- `session-stats.json` — cumulative machine-readable stats for the whole session:
-  block/word/token counts (user vs AI), response counts, per-day breakdown,
-  per-channel breakdown, models seen, and taskgraph totals (total / by-status /
-  closed, read from `$TG_DB_PATH`).
-- `.abridge-cache.json` — per-turn summary cache (regenerate by deleting it).
+- `YYYY-MM-DD-dev-hermit-daily.md` — one cultivated transcript per day (format
+  above).
+- `YYYY-Www-dev-hermit-weekly.md` — per-ISO-week rollup: a synthesized week
+  overview + each day's summary and topics.
+- `.summary_data/<date>.json` — per-day cache: `meta` (day summary + section
+  titles) + per-turn records (verbatim prompt, bucket, summary / verbatim).
+- `.summary_data/weekly/<week>.json` — per-week cache (overview + day list).
+- `session-stats.json` — cumulative machine-readable stats (blocks/words/tokens,
+  responses, per-day, per-channel, models, taskgraph totals).
 
-## Options
+## Options (`gen_daily_transcripts.py`)
 
 ```
-gen_daily_transcripts.py
   --session <id> / --db <path>   force a session (default: auto-resolve)
-  --model <name>                 cheap model (default: sonnet)
-  --agent claude|codex           CLI to drive (default: claude)
+  --model <name>                 cheap model (default sonnet)
+  --agent claude|codex           CLI to drive stage 1 (default claude)
   --days YYYY-MM-DD ...          only these days
-  --no-model                     skeleton only (verbatim prompts, naive summary)
-  --stats-only                   only (re)write session-stats.json
-  --force                        regenerate days whose transcript already exists
-                                 (default is idempotent: only MISSING days are built)
+  --force                        re-summarize every turn (spend tokens)
+  --render-only                  STAGE 2 only — re-render from cache, no LLM
+  --summarize-only               STAGE 1 only — refresh the cache, skip render
+  --no-model                     heuristic buckets only (no tokens)
+  --stats-only                   only refresh session-stats.json
 ```
+
+Stage 1 tunables (env, for the heavy design-discussion days that can hit the
+model timeout): `SUMMARIZE_BATCH` (turns/call, default 16), `SUMMARIZE_WORKERS`
+(default 8), `SUMMARIZE_TIMEOUT` (seconds/call, default 240). A batch that fails
+or times out falls back to a heuristic summary for its turns and never aborts the
+run; re-run those days with smaller batch / longer timeout to upgrade them.
 
 ## Notes / limitations
 
 - `token_count` is populated only for user-input blocks in this schema;
-  assistant-block token counts read as 0, so the JSON reports token totals only
-  where the store records them (word counts cover all roles).
-- **Idempotency**: a re-run detects each already-generated
-  `daily/YYYY-MM-DD-dev-hermit-daily.md` and skips it, so a second run only fills
-  **missing** days (a full-history re-run with every day present is a ~1s no-op
-  that makes zero model calls; it still refreshes the fast, pure-code
-  `session-stats.json`). Pass `--force` to deliberately regenerate existing days.
-- **Timestamps are Eastern (EDT/EST)** and **titles carry the weekday**. Days are
-  bucketed by the block's UTC calendar date (unchanged) but every clock time is
-  displayed in `America/New_York`; near the UTC-midnight boundary a turn can show
-  an evening EDT time from the prior calendar day while still living in its
-  UTC-dated file. A one-time in-place migration converted the pre-existing
-  transcripts to this format without resummarizing.
+  assistant token counts read 0 (word counts cover all roles).
+- Today's file is a living snapshot — the session is active, so re-running picks
+  up new turns for the current day incrementally.
 - All network calls (the model) go through `with-proxy`.
