@@ -1,20 +1,21 @@
 ---
 title: Build reproducible IPC and synchronization benchmarks
-status: in_progress
+status: closed
 priority: 2
 issue_type: task
 assignee: devbig030
 depends_on:
   pod-17: blocks
-  pod-8: blocks
-  pod-1: parent-child
   pod-7: blocks
+  pod-1: parent-child
   pod-9: blocks
+  pod-4: blocks
+  pod-8: blocks
   pod-5: blocks
   pod-6: blocks
-  pod-4: blocks
 created_at: 2026-07-28T03:39:16.035270684+00:00
-updated_at: 2026-07-28T13:37:29.586482218+00:00
+updated_at: 2026-07-31T15:20:22.993128153+00:00
+closed_at: 2026-07-31T15:20:22.993127722+00:00
 claimed_at: 2026-07-28T12:25:48.600819771+00:00
 claimed_until: 2026-07-28T20:25:48.600526267+00:00
 ---
