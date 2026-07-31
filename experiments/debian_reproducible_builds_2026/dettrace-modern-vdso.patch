@@ -1,0 +1,24 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 68eeb8e..5c7fb53 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -205,9 +205,17 @@ int main(int argc, char** argv){
+   // only offets are used so it doesn't really matter
+   // we read it from tracer or tracee.
+   CloneArgs cloneArgs;
+-  auto syms = vdsoGetSymbols(getpid());
++  auto allSyms = vdsoGetSymbols(getpid());
++  decltype(allSyms) syms;
++  for (const auto& candidate : vdsoGetCandidateData()) {
++    const auto& name = candidate.first;
++    auto it = allSyms.find(name);
++    if (it != allSyms.end()) {
++      syms.insert(*it);
++    }
++  }
+   if (4 != syms.size()) {
+-    runtimeError("VDSO symbol map has only "+to_string(syms.size())+" entries instead of 4!");
++    runtimeError("VDSO symbol map has only "+to_string(syms.size())+" target entries instead of 4!");
+   }
+   cloneArgs.args = args;
+   cloneArgs.vdsoSyms = syms;
