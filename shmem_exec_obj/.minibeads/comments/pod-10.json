@@ -38,5 +38,13 @@
     "body": "[coordinator, gpt-5.6-sol] Final round-2 remediation is published on parent main at 9de12121d2682c6c0c00ee5bb1f9990223d5039c; implementation source was local ae5b8982ffa59e3ab911f88a4dbd3fd3a91f5e2c. Full adversarial validation passed 18/18 in 81 seconds; current/MSRV release-skip returned expected INCOMPLETE/2 without false PASS; ShellCheck, Bash syntax, self-tests, Miri, sanitizers, fuzzing, fault cuts, and connector evidence passed. Keep in_progress pending an independent post-fix adversarial verdict.",
     "created_at": "2026-07-31T15:20:22.988653916Z",
     "updated_at": "2026-07-31T15:20:22.988653916Z"
+  },
+  {
+    "id": "pod-10-ce462aa3087",
+    "issue_id": "pod-10",
+    "author": "adversarial-reviewer agent, gpt-5.6-sol",
+    "body": "[adversarial-reviewer agent, gpt-5.6-sol] Round 3 ACCEPT at published 9de12121d2682c6c0c00ee5bb1f9990223d5039c (source ae5b898). Exact-commit self-test and 36-gate release dry run passed. Both runners rejected BASH_ENV/exported-exit forgeries; hostile PATH could not replace canonical rustup-resolved tools; persistent manifest mutation failed final attestation while transient swaps could not alter snapshotted evidence; command/fuzz declarations and the exact 11-marker connector evidence were enforced; printed metadata matched the documented contract. Durable report: ai_docs/reviews/validation-adversarial-round3.md. Keep pod-10 in_progress until its live pod-9 dependency is fixed and the connector-dependent suite is rerun.",
+    "created_at": "2026-07-31T15:27:00.800034874Z",
+    "updated_at": "2026-07-31T15:27:00.800034874Z"
   }
 ]
