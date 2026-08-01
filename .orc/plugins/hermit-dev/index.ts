@@ -1,11 +1,15 @@
 const PLUGIN_NAME = "hermit-dev";
 const SKILL_NAME = "hermit-dev";
 const SPECULATIVE_ATTACK_SKILL_NAME = "hermit-parallel-speculative-attack";
+const URGENT_VALIDATION_SKILL_NAME =
+  "hermit-urgent-critical-path-fix-validation";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
 const WORKSPACE_SUBPATH = "work/dev-hermit";
 const RELATIVE_POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
 const SPECULATIVE_ATTACK_SKILL_PATH =
   orc.pluginDir() + "/parallel-speculative-attack.md";
+const URGENT_VALIDATION_SKILL_PATH =
+  orc.pluginDir() + "/urgent-critical-path-fix-validation.md";
 const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
 const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
 const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
@@ -35,6 +39,17 @@ const SPECULATIVE_ATTACK_SKILL_TRIGGERS = [
   "\\bcompeting (?:draft )?PRs?\\b",
   "\\bdeadline[- ]driven fan[- ]out\\b",
   "\\bquantified critical[- ]path bottleneck\\b",
+];
+const URGENT_VALIDATION_SKILL_DESCRIPTION =
+  "Coordinator-only fast validation loop for deadline-driven or quantified " +
+  "critical-path fixes: parallel local and GitHub CI, active CI babysitting, " +
+  "and tight local iteration on the individual failing test.";
+const URGENT_VALIDATION_SKILL_TRIGGERS = [
+  "\\burgent critical[- ]path (?:fix )?validation\\b",
+  "\\bCI[- ]on[- ](?:the[- ])?critical[- ]path\\b",
+  "\\bdeadline[- ]driven validation\\b",
+  "\\bbabysit (?:the )?CI\\b",
+  "\\btight local test loop\\b",
 ];
 
 let resolvedPolicyPath: string = RELATIVE_POLICY_PATH;
@@ -100,12 +115,32 @@ async function loadSpeculativeAttackSkill(): Promise<void> {
   registerSpeculativeAttackSkill(instructions);
 }
 
+function registerUrgentValidationSkill(instructions: string): void {
+  orc.registerSkill(URGENT_VALIDATION_SKILL_NAME, {
+    description: URGENT_VALIDATION_SKILL_DESCRIPTION,
+    instructions,
+    triggers: URGENT_VALIDATION_SKILL_TRIGGERS,
+  });
+}
+
+async function loadUrgentValidationSkill(): Promise<void> {
+  const instructions = await readPolicyIfPresent(URGENT_VALIDATION_SKILL_PATH);
+  if (instructions === null) {
+    throw new Error(
+      "hermit-dev coordinator skill not found or empty: " +
+        URGENT_VALIDATION_SKILL_PATH,
+    );
+  }
+  registerUrgentValidationSkill(instructions);
+}
+
 async function activateHermitDevPolicies(): Promise<string> {
   const { path, instructions } = await resolvePolicy();
 
   // Re-registering replaces the placeholder or previous policy atomically.
   registerHermitDevSkill(instructions);
   await loadSpeculativeAttackSkill();
+  await loadUrgentValidationSkill();
 
   if (orc.kvGet(POLICY_CACHE_KEY) === instructions) {
     return "hermit-dev policies already activated from " + path;
@@ -140,6 +175,10 @@ registerHermitDevSkill(
 registerSpeculativeAttackSkill(
   "The parallel speculative attack protocol is loaded during plugin startup.",
 );
+registerUrgentValidationSkill(
+  "The urgent critical-path validation protocol is loaded during plugin " +
+    "startup.",
+);
 
 orc.exposeFunction(
   PLUGIN_NAME + ".activate",
@@ -158,9 +197,13 @@ orc.exposeFunction(
     return {
       plugin: PLUGIN_NAME,
       skill: SKILL_NAME,
-      coordinatorSkills: [SPECULATIVE_ATTACK_SKILL_NAME],
+      coordinatorSkills: [
+        SPECULATIVE_ATTACK_SKILL_NAME,
+        URGENT_VALIDATION_SKILL_NAME,
+      ],
       policyPath: resolvedPolicyPath,
       speculativeAttackSkillPath: SPECULATIVE_ATTACK_SKILL_PATH,
+      urgentValidationSkillPath: URGENT_VALIDATION_SKILL_PATH,
       policyLoaded: typeof cachedPolicy === "string",
       policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
       workspace: "~/work/dev-hermit",

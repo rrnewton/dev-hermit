@@ -13,6 +13,9 @@ registers it as the `hermit-dev` skill, so a single source stays authoritative.
 - Registers the narrow `hermit-parallel-speculative-attack` coordinator skill
   from `parallel-speculative-attack.md`. It activates for explicit speculative
   fan-out language and keeps single-path execution as the default.
+- Registers `hermit-urgent-critical-path-fix-validation` from
+  `urgent-critical-path-fix-validation.md` for deadline-gated parallel local/CI
+  validation and tight individual-test debugging loops.
 - Activates those policies on session startup
   (`hermit-dev.startup`), so agents receive them without a manual step.
 - Exposes helper functions:
@@ -79,7 +82,7 @@ re-run `install.sh`. Re-run it after editing the plugin, e.g. from a git
 ```bash
 # It is a real directory, not a symlink:
 [ -L ~/.orc/plugins/hermit-dev ] && echo "SYMLINK (bad)" || echo "real dir (good)"
-ls ~/.orc/plugins/hermit-dev   # includes index.ts and parallel-speculative-attack.md
+ls ~/.orc/plugins/hermit-dev   # includes index.ts and both coordinator skill docs
 
 # The config auto-loads it:
 grep hermit-dev ~/.orc/config.js

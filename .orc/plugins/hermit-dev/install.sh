@@ -28,6 +28,7 @@ files=(
   gh-issue-create
   README.md
   parallel-speculative-attack.md
+  urgent-critical-path-fix-validation.md
 )
 for f in "${files[@]}"; do
   cp -p "${SRC}/${f}" "${DST}/${f}"
