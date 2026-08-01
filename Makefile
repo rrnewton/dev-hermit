@@ -7,9 +7,10 @@ SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
 	checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
+	compat-envelope compat-envelope-full \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
-	install-deps-core install-deps-full install-deps-qemu
+	install-deps-core install-deps-full install-deps-qemu validate
 
 build: init-hermit
 	@$(MAKE) --no-print-directory doctor-core
@@ -103,6 +104,40 @@ check-deps:
 check-portability:
 	@scripts/check-portable-paths.sh
 
+# compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
+# RELEASE hermit binary with the in-process DBI backend and asserts every
+# known-green compat cell stayed green (green-stays-green), refreshing the
+# scorecard CSVs as a side effect. This is the portable, always-on lane:
+# ptrace (golden denominator) + DBI. SaBRe (needs `make checkout-sabre` + build)
+# and KVM/reverie (need a /dev/kvm runner) are honestly recorded as n/a /
+# not-runnable when absent — never a false red — and are exercised by
+# compat-envelope-full.
+#
+# The gate runs against the RELEASE binary via HERMIT_BIN: a debug build is
+# ~5-10x slower and blows the harness per-test timeout on subprocess-heavy cells
+# (e.g. python-io-subprocess-time verify: 90s timeout under debug, passes under
+# release), which is also the binary hermit's own CI validates against.
+compat-envelope: init-hermit
+	cd hermit && cargo build --release -p hermit --bin hermit --features dbi
+	HERMIT_BIN="$(CURDIR)/hermit/target/release/hermit" \
+		compat-envelope/validate-envelope.sh --lane portable \
+		--backends ptrace,dbi --no-reverie
+
+# compat-envelope-full: the privileged superset lane. Adds the SaBRe backend and
+# the reverie B1.5 ptrace-vs-KVM boundary (needs /dev/kvm + the counter
+# launchers). Intended for the privileged self-hosted CI runner, not portable CI.
+compat-envelope-full: init-hermit
+	cd hermit && cargo build --release -p hermit --bin hermit --features third-party-backends
+	cd reverie && cargo build --release -p reverie-examples \
+		--bin counter1 --bin counter2 \
+		--bin reverie-kvm-counter1 --bin reverie-kvm-counter2
+	HERMIT_BIN="$(CURDIR)/hermit/target/release/hermit" \
+		compat-envelope/validate-envelope.sh --lane portable --backends ptrace,dbi,sabre
+
+# validate: the outer-repo definition-of-done gate. Currently the compat
+# envelope; extend as other workspace-level checks are added.
+validate: compat-envelope
+
 doctor:
 	@scripts/doctor.sh all
 
@@ -139,6 +174,9 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI)"
+	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie)"
+	@echo "make validate           Outer-repo definition-of-done gate (compat envelope)"
 	@echo "make checkout-all       Check out every standard and optional submodule"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"

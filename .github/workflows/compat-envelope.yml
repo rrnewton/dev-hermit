@@ -1,0 +1,170 @@
+name: Compat envelope
+
+# Cross-backend compatibility regression gate. Enshrines the compat-envelope
+# scorecard (compat-envelope/) into CI so the golden-ptrace denominator and the
+# backend parity/determinism cells stay green (green-stays-green).
+#
+# Two lanes, matching the Makefile targets:
+#   * portable  (ubuntu-latest, always-on): ptrace golden denominator, run against
+#     a RELEASE binary (a debug build blows the harness per-test timeout on
+#     subprocess-heavy cells). DBI/SaBRe/KVM are not built here and are recorded
+#     n/a (never a false red).
+#   * privileged (self-hosted PMU runner): `make compat-envelope-full` — adds the
+#     DBI backend, SaBRe, and the reverie B1.5 ptrace-vs-KVM boundary (needs
+#     /dev/kvm + the counter launchers). rrnewton-guarded like the demo sweep.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/compat-envelope.yml"
+      - ".gitmodules"
+      - "Makefile"
+      - "compat-envelope/**"
+      - "hermit"
+      - "reverie"
+  workflow_dispatch:
+
+concurrency:
+  group: compat-envelope-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  portable-denominator:
+    name: Portable ptrace denominator gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update || echo "::notice::apt-get update failed; using existing metadata"
+          sudo apt-get install -y \
+            build-essential clang cmake curl file git gzip \
+            libunwind-dev liblzma-dev pkg-config python3
+
+      - name: Ensure the repository Rust toolchain
+        working-directory: hermit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              -o "$RUNNER_TEMP/rustup-init.sh"
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+          channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hermit -> target
+          shared-key: compat-envelope-portable
+          cache-on-failure: true
+          cache-bin: false
+
+      - name: Install rust-script
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rust-script >/dev/null 2>&1 || cargo install rust-script
+
+      - name: Build release hermit (ptrace) and run the ptrace denominator gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd hermit && cargo build --release -p hermit --bin hermit --no-default-features
+          cd ..
+          HERMIT_BIN="$PWD/hermit/target/release/hermit" \
+            compat-envelope/validate-envelope.sh --lane portable \
+            --backends ptrace --no-reverie
+
+      - name: Upload rendered scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-envelope-portable-${{ github.run_id }}
+          path: |
+            compat-envelope/scorecard.csv
+          if-no-files-found: warn
+          retention-days: 14
+
+  privileged-full:
+    name: Privileged full-backend gate (DBI + SaBRe + KVM/reverie)
+    # The privileged self-hosted runner has /dev/kvm, PMU, and the full build
+    # deps. Fork-authored PR code must not run there; rrnewton branches are the
+    # trusted PR surface, matching nightly-demo-sweep.
+    if: >-
+      ${{
+        github.repository == 'rrnewton/dev-hermit' &&
+        (
+          github.event_name == 'workflow_dispatch' ||
+          github.ref == 'refs/heads/main' ||
+          (github.event_name == 'pull_request' &&
+           github.event.pull_request.user.login == 'rrnewton')
+        )
+      }}
+    runs-on: [Linux, X64, hermit, pmu, pmu-serial]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Ensure the repository Rust toolchain
+        working-directory: hermit
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+          channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            hermit -> target
+            reverie -> target
+          shared-key: compat-envelope-full
+          cache-on-failure: true
+          cache-bin: false
+
+      - name: Install rust-script
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rust-script >/dev/null 2>&1 || cargo install rust-script
+
+      - name: SaBRe source + full-backend compat gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          make checkout-sabre || echo "::notice::checkout-sabre failed; SaBRe cells record n/a"
+          make compat-envelope-full
+
+      - name: Upload rendered scorecards
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-envelope-full-${{ github.run_id }}
+          path: |
+            compat-envelope/scorecard.csv
+            compat-envelope/reverie-scorecard.csv
+          if-no-files-found: warn
+          retention-days: 14
