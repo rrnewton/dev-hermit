@@ -15,13 +15,15 @@ Two tracks are being driven in parallel toward closing this episode:
 
 - **Candidate SOLUTION (forward fix) — in implementation by hermit-226:** a
   **scheduler fairness / priority-aging fix** to the deadline-less
-  unproductive-poller steady state (the confirmed root cause, H1/H8/H10 +
-  `scheduler-vtime-jump-unproductive-pollers`). The demo config runs at the
-  syscall-boundary regime (0 PMU, H10); the fix must make that regime make forward
-  progress again — advance/age the starved vCPU instead of letting the socket
-  poller monopolize turns — rather than reverting to the rcb-time workaround.
+  unproductive-poller steady state (root cause H1/H8 +
+  `scheduler-vtime-jump-unproductive-pollers`). The fix must make the starved vCPU
+  make forward progress — advance/age it instead of letting the socket poller
+  monopolize turns — rather than reverting to the rcb-time workaround.
   **OWNER-GATED on a fairness review** (core DetCore scheduling = post-facto
-  trigger #4); not yet landed.
+  trigger #4); not yet landed. *Caveat:* the framing that the green path used the
+  `--no-rcb-time` syscall-boundary regime (H10) is **UNDER RE-VERIFICATION** (see
+  below) — the owner disputes that green ever used `--no-rcb-time`, so the fix
+  target may shift if H10 does not hold.
 - **Immediate-CAUSE commit (what regressed) — being bisected now by hermit-231:**
   the exact commit in GOOD `2a7ca98` .. BAD `ae2565be` that flipped demo5 from a
   ~1-min boot to the wedge. **Blamed commit: PENDING 231's bisection.** 20 suspects
@@ -70,17 +72,55 @@ now about the *foundation*: is the spin fundamentally unbounded because the burn
 mechanism is missing (H8), are the ~20% PMU-skid-panic and the poller-livelock the
 *same* bug via PMU-rearm failure (H9), and what restores sub-minute parity (H5)?
 
-Anchors: GOOD `2a7ca98` (#1077, ~75 s boot) → BAD `ae2565be` (hpet wedge). The
-fleet's earlier "window-start" `f6c836b1` already hangs, so any code regressor
-predates it; `2a7ca98` is the true ~1-min-good anchor.
+Anchors + WHEN: GOOD `2a7ca98` (#1077) booted in ~75 s on **2026-07-28** (commit
+10:31 EDT); by `f6c836b1` (**2026-07-29** 22:52) demo5 already hangs at
+qemu-startup, and `ae2565be` (**2026-07-31** 10:18) hangs at hpet. So demo5 broke
+in the **2026-07-28 → 07-29** window and has been broken for **~3–4 days** (through
+**2026-08-01**, today). Any *code* regressor predates `f6c836b1`; `2a7ca98` is the
+true ~1-min-good hermit anchor — **but see "What the demo actually tests" below:
+the demo's own boot config also changed inside this window** (`--no-rcb-time` was
+added to the demo on 2026-07-28 ~11:00, *after* the `2a7ca98` commit), so "what is
+tested" is a confound the bisection must control for.
 
-**P0 settled (owner, 2026-08-01, H10/E17): the green path never depended on PMU
-preemption.** The demo config passes `--max-timeslice disabled`, which arms no
-PMU/RCB timer, so preemption is 100 % at syscall boundaries (driven by the small
-`--target-timeslice`); every demo-config run counts **0** PMU events, while the
-only PMU-driven boot is the rcb-**ON** *workaround*. So PMU-skid is defense-in-
-depth for the workaround, and the real fix is restoring the syscall-boundary
-regime (fix `scheduler-vtime-jump-unproductive-pollers`), not hardening skid.
+**P0 — UNDER RE-VERIFICATION (231); owner disputes the earlier "settled".** An
+earlier revision claimed (H10/E17) that the green path never used PMU because the
+demo config's `--max-timeslice disabled` forces 0 PMU / 100 % syscall-boundary
+preemption, so PMU-skid is only defense-in-depth. **The owner disputes that green
+ever ran under `--no-rcb-time` at all**, and 231 is re-verifying. The temporal
+evidence cuts against the settled claim: `--no-rcb-time` entered the demo on
+2026-07-28 ~11:00 (`0591104`), *after* `2a7ca98` (10:31), so the last known ~1-min
+green may have booted under a **different** (rcb-time-ON, PMU-armed) config than
+the one measured. Until 231 confirms which config green actually used, treat H10
+as **open**, and do not conclude "restore the syscall-boundary regime" is the fix.
+
+---
+
+## What the demo actually tests / boot-flag evolution
+
+*Changes in **what** we boot matter as much as which hermit SHA — the demo's own
+boot config changed inside the regression window.* Timeline (parent
+`demos/05-qemu-boot.py` + `demos/lib/qemu_controller.py`):
+
+| date | commit | change to how Linux is booted |
+|---|---|---|
+| 2026-07-27 | `96a1874` | Python-controller rewrite of the QEMU demos; introduced `-icount shift=0,sleep=off`, `--target-timeslice`, and `--max-timeslice`. |
+| 2026-07-28 ~11:00 | `0591104` | **Added `--no-rcb-time` to the demo** (host-portability / skid + log-cleanliness). This is the config knob that exposes the foundation bug — and it lands *after* the `2a7ca98` (10:31) green anchor. |
+| 2026-07-28 | `2cf85d3` | Made demo 05 safe to run concurrently (per-run dirs/sockets). |
+| 2026-07-29 | `8a26a45` | Portable QEMU + deterministic drgn demos. |
+| 2026-07-29 | `9e077f4` | **Boot serial: unix socket → `-serial file:`** — fixed a boot timeout, because a pollable serial *socket* starves the `-icount` vCPU under `--no-rcb-time`. (So the boot path deliberately avoids the H6 socket trigger for the serial console; the QMP socket remains.) |
+| 2026-07-29 | `38acea8` | Resume demos (06/07): `-serial pipe:` FIFO (non-blocking) to avoid the same starvation on the resume path. |
+
+Current boot config (`demos/05-qemu-boot.py:131-146`): `hermit run --strict
+--no-rcb-time --target-timeslice 100000 --max-timeslice disabled -- qemu-system-x86_64
+… -icount shift=0,sleep=off -serial file:<log> --qmp-socket <sock>`. The QMP unix
+socket is the remaining host-pollable listening fd (H6 trigger).
+
+**Why this section exists:** the "GOOD `2a7ca98` boots in ~75 s" datum was produced
+by running *some* demo config against that hermit SHA — and `--no-rcb-time` was NOT
+in the demo until ~30 min after that commit. Whether green used `--no-rcb-time`,
+`-serial file:` vs `stdio`, and PMU-armed vs syscall-boundary preemption are all
+**test-definition** variables the bisection (231) must pin, not just the hermit SHA.
+This is the crux of the H10 dispute above.
 
 ---
 
@@ -102,8 +142,13 @@ regime (fix `scheduler-vtime-jump-unproductive-pollers`), not hardening skid.
   (200 ms) **still arms** the PMU timer (`run-bbx-wedge`: 519 `inbound timer
   preemption event`s); the demo config disables the PMU only because it *also*
   passes `--max-timeslice disabled`.
-- **P0 (owner, 2026-08-01): the GREEN regime uses ZERO PMU preemption BY
-  CONSTRUCTION — PMU-skid is NOT on the green path (H10, confirmed).** The demo
+- **P0 (H10) — UNDER RE-VERIFICATION by 231; owner DISPUTES this was settled.**
+  *Claim (do not treat as established):* the GREEN regime uses ZERO PMU preemption
+  by construction, so PMU-skid is not on the green path. **The owner disputes that
+  green ever ran under `--no-rcb-time`** (see the boot-flag timeline: `--no-rcb-time`
+  post-dates the `2a7ca98` green commit by ~30 min), so the measured 0-PMU config
+  may not be the config the ~1-min green actually used. The reasoning below is
+  retained as the *claim under test*, not a verdict:** The demo
   config (`demos/05-qemu-boot.py:131-136` = `--strict --no-rcb-time
   --target-timeslice 100000 --max-timeslice disabled`) arms **no** PMU/RCB timer,
   so `inbound timer preemption event` (the PMU path, lib.rs:1329) can never fire;
@@ -113,16 +158,17 @@ regime (fix `scheduler-vtime-jump-unproductive-pollers`), not hardening skid.
   archives `run-good` `0/39343`, `run-broken-ae2565be` `0/817815`, `run-norcb`
   `0/5536314`, `run-mid-1190` `0/223230`), whereas the **only** genuine boot-to-
   power-down is the rcb-**ON** *workaround* (`run-bbx-green` `858/868` = 98.8 % PMU).
-  Owner hypothesis **confirmed**: green depended on *small target + disabled max →
-  syscall-boundary, ~0 PMU*. **Consequences:** (1) PMU-skid robustness is
-  defense-in-depth for the rcb-ON workaround only, not the primary green-path fix;
-  (2) the fix is to **restore the syscall-boundary regime** — i.e. fix
-  `scheduler-vtime-jump-unproductive-pollers` so the `--max-timeslice disabled`
-  config boots again instead of livelocking on `SleepUntil(0)`. *Caveat:* the
-  historical ~1-min green (`2a7ca98`) is not archived, so its 0-PMU regime is
-  inferred **by construction** (same config), not directly counted; and that
-  config **cannot boot at current HEAD** (it wedges), so "restore the regime"
-  requires the foundation fix, not merely re-selecting the flags.
+  *If confirmed,* green would depend on *small target + disabled max →
+  syscall-boundary, ~0 PMU*, with consequences (1) PMU-skid is defense-in-depth
+  for the rcb-ON workaround only, and (2) the fix would be to **restore the
+  syscall-boundary regime** (fix `scheduler-vtime-jump-unproductive-pollers`).
+  **BUT this is exactly what is disputed.** The 0-PMU counts are all from runs the
+  *fleet* configured with `--no-rcb-time`; the historical ~1-min green (`2a7ca98`)
+  is **not archived**, so its regime is *inferred by construction, not measured*,
+  and that config **cannot boot at current HEAD** (it wedges). 231's
+  re-verification must answer: **did the ~1-min green actually use `--no-rcb-time`
+  (0 PMU), or rcb-time-ON (PMU-armed)?** Until then H10 is treated as **open** and
+  the "restore the syscall-boundary regime" conclusion is provisional.
 - **The sufficient trigger is a host-pollable listening socket fd (H6, confirmed
   by single-variable A/B).** Identical bare-busybox `--no-rcb-time` boot: no
   sockets → **boots** (`-serial stdio` and `-serial file:` both PASS); + two
