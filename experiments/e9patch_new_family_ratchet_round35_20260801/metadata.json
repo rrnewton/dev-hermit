@@ -1,0 +1,35 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round35",
+  "date": "2026-08-01",
+  "question": "Do six inert query/no-op probes on uncovered socket/fcntl/mmap/dup2 boundaries — a lone AF_UNIX SOCK_STREAM socket, getsockopt SO_ERROR and SO_ACCEPTCONN, fcntl F_GETSIG, mmap MAP_NORESERVE, and the POSIX dup2(fd,fd) no-op — reach L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_base_sha": "b1fdeaf6d7bcda0799a7a5c4f116bbe1ed55a43d",
+    "hermit_branch": "codex/e9patch-corpus-round35-socket-fcntl-mmap",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1394",
+    "pr": "https://github.com/rrnewton/hermit/pull/1399"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"],
+    "note": "Fleet PMU heavily contended during vetting (loadavg ~67-140, dozens of concurrent --verify). These probes have minimal RCBs and hit L2 for both golden and e9. Vetting used a killpg-on-wedge retry harness (compat-envelope/collect-e9patch-compat.rs) for the verify legs; a concurrent full corpus run also reported all six new guests PASS_L2 (sites c/1 m/1 b0/0, prologue=8, tail_match=yes). Any non-pass among the 227 PRE-EXISTING guests in a contended full run is a transient PMU verify-wedge, not a regression from this additive change (round 34 was 227/227 clean at the base SHA)."
+  },
+  "corpus_size": {"before": 227, "after": 233},
+  "kept": [
+    {"guest": "socket_stream", "syscall": "socket(41) AF_UNIX SOCK_STREAM", "expected_stdout": "socketstream=3\\n"},
+    {"guest": "getsockopt_soerror", "syscall": "getsockopt(55) SO_ERROR", "expected_stdout": "soerror=0\\n"},
+    {"guest": "getsockopt_acceptconn", "syscall": "getsockopt(55) SO_ACCEPTCONN", "expected_stdout": "acceptconn=0\\n"},
+    {"guest": "fcntl_getsig", "syscall": "fcntl(72) F_GETSIG", "expected_stdout": "getsig=0\\n"},
+    {"guest": "mmap_noreserve", "syscall": "mmap(9) MAP_NORESERVE", "expected_stdout": "noreserve=42\\n"},
+    {"guest": "dup2_same_fd", "syscall": "dup2(33) oldfd==newfd", "expected_stdout": "dup2same=3\\n"}
+  ],
+  "dropped": [],
+  "result": {
+    "native": "6/6 exit 0 with expected stdout",
+    "golden_ptrace": "6/6 L2 Determinism verified; native==golden and expected stdout matched",
+    "e9patch": "6/6 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=8 tail_match=yes; scorecard collector: every ptrace arm det=1, every e9patch arm det=1 par=1",
+    "full_corpus_run": "clean re-run 233/233 PASS_L2 (0 non-passes). A first, more heavily contended run reported 228/233 with all 6 new guests passing; the 5 non-passes were pre-existing guests transiently wedged on the verify leg under PMU load and all passed on the immediate clean re-run, confirming env artifacts not regressions (see environment note)"
+  }
+}
