@@ -4,6 +4,13 @@ Machine-readable cross-backend compatibility measurement, rendered in the owner'
 two-table format. The ptrace denominator is the **FULL e2e manifest corpus**, not
 the portable-CI subset.
 
+> **See `REPORT.md` for the authoritative MEASURED full-corpus scorecard** at
+> current `main` (hermit `82a8e853`): ptrace **179/200** L2, KVM det 130/200,
+> LiteInst det 118/200, all as real per-cell measurements. This file retains the
+> corpus enumeration, the L1-sweep corroboration, and the portable/privileged
+> triage; its L2-green column below (`28`) is the older *calibrated-CI subset*,
+> now superseded by the 179 measured over the whole corpus.
+
 ## The denominator correction (why this file replaces the "28" scorecard)
 
 The phase-1 scorecard reported a ptrace denominator of **28**. That was wrong as a
@@ -113,7 +120,11 @@ Fresh triage of every `lane=privileged` test (task
 
 - **Corpus / denominator** — **200 ptrace-verify cells** (202 tests; 13 buckets).
   True total, replacing the "28".
-- **Calibrated green** — **28** at L2 (`--strict --verify`, canonical release run).
+- **Measured L2 green** (REPORT.md, hermit `82a8e853`) — ptrace **179/200
+  (89.5%)** (flag-robust: 178/200 under default flags); KVM det **130/200**,
+  parity 112; LiteInst det **118/200**, parity 108.
+- **Calibrated-CI subset** — **28** at L2 (older canonical release run; the
+  `--ci-only ∩ portable` slice, not the corpus).
 - **Sweep corroboration** — ptrace **166/183** L1, KVM **105/183** L1 (quiet host).
 - **Portable/privileged** — **200 / 2** (was 199 / 3; cpuid-probe reclassified).
 - **Reverie** — ptrace **6**; KVM **0% parity, 100% determinism**.
