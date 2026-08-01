@@ -7,11 +7,13 @@ cause of the wedge.
 
 ## Question
 
-Why does demo5 (QEMU Linux boot under `hermit run --strict --no-rcb-time
---target-timeslice 100000 --max-timeslice disabled`, out-of-container enforcer)
-wedge instead of booting to its shell, and can the bounded service-lead
-fairness/aging overlay (design
-`ai_docs/scheduler-time-model-fairness-aging-design_20260801.md`) fix it?
+Why does demo5 (QEMU Linux boot, out-of-container enforcer) wedge instead of
+booting to its shell, and can the bounded service-lead fairness/aging overlay
+(design `ai_docs/scheduler-time-model-fairness-aging-design_20260801.md`) fix it?
+This was first established under the legacy `--no-rcb-time --max-timeslice
+disabled` config and then **confirmed identical under the CANONICAL rcb-armed
+config** (`--strict --target-timeslice 100000 --max-timeslice 2000000000`, the
+one demos/05-qemu-boot.py and the green-restore use) — see "Generalization" below.
 
 ## Answer: a lost futex wakeup blocks the vCPU outside the run queue
 
@@ -19,7 +21,7 @@ The wedge is a **lost futex wakeup**, definitively NOT the runnable-poller
 "equal-footing-forever" starvation previously hypothesized.
 
 Evidence (detlog, `RUST_LOG=...,detcore=info`, budget B=1000, 187,443 turns,
-`worktrees/226/hermit/ignored/fairness-val/detlog_B1000/run0/hermit-info.log`):
+`ignored/fairness-val/detlog_B1000/run0/hermit-info.log`):
 
 - The QEMU vCPU thread is `dtid 7` (its syscall mix is `madvise` / `futex` /
   `clock_nanosleep`). It goes silent at turn 162,779.
@@ -49,6 +51,36 @@ this is confirmed: with the overlay ON at every budget B ∈ {2, 5, 20, 50, 100,
 1000, 10000}, demo5 wedges **byte-identically** at the same guest time. This is
 exactly the caveat the design itself flagged under "Demo5: what this can and
 cannot claim." The overlay is the wrong lever for this wedge.
+
+## Generalization: identical under the canonical rcb-armed config (2026-08-01)
+
+The green-restore path does NOT use `--no-rcb-time`; it uses the canonical
+demos/05-qemu-boot.py config `--strict --target-timeslice 100000
+--max-timeslice 2000000000` (RCB/PMU preemption ARMED). To rule out the
+possibility that the wedge and the overlay's inertness were artifacts of the
+legacy `--no-rcb-time` config, the whole experiment was rerun at HEAD under the
+canonical config (out-of-container enforcer, `boot_sweep.py --rcb on`):
+
+- **OFF baseline: 0/3 boot.** All three runs TIMEOUT at 180s; first serial line
+  ~30s, then stall. (This is why the "cheap config-revert" does not green demo5:
+  the config was never the lever.)
+- **Overlay ON B=5: 0/6 boot.** All six wedge identically; first serial ~38s,
+  then stall. The overlay is inert here exactly as at every legacy budget.
+- **detlog classification (diag5, 136 MB info log):** vCPU = `dtid 7`
+  (`madvise`/`clock_nanosleep`/`futex` fingerprint) goes silent at turn 208,802
+  of 236,852; its LAST action is the SAME untimed
+  `futex(0x5555570f6708, FUTEX_WAIT, -1, NULL) = ?` that never returns. The last
+  `FUTEX_WAKE` on `0x5555570f6708` is log line **909,377**, the vCPU's final
+  `FUTEX_WAIT` is line **921,350** → wake PRECEDES wait, **zero** wakes after.
+  **28,049** scheduler turns commit afterward (busy-pollers dtid 13/11/5 spin
+  forever), confirming the vCPU is blocked OUTSIDE the run queue, not
+  runnable-starved. Same address, same guest time (`hpet0`, 0.724403 s), same
+  mechanism as the legacy config.
+
+**Conclusion:** the lost futex wakeup is the demo5 root cause **regardless of
+rcb-on/off**. The fairness overlay is definitively NOT the demo5 fix — it is
+the wrong lever in both configs. (Experiments `bmdmv83d6`, `diag5`; enforcer
+`ignored/fairness-val/boot_sweep.py --rcb on`.)
 
 ## The real fix direction
 
@@ -83,9 +115,10 @@ body for the enablement condition.
 ## Reproduction / enforcer
 
 Valid enforcer: out-of-container
-`worktrees/226/hermit/ignored/fairness-val/boot_sweep.py` (own pgid via
-`start_new_session=True`, outer wall-clock timeout, SIGKILL to the pgid on
-timeout — required because PMU-skid leaves the supervisor holding the guest tree
-ptrace-STOPPED). Do NOT use the in-container `qemu_controller.py --timeout`; it
+`ignored/fairness-val/boot_sweep.py` (own pgid via `start_new_session=True`,
+outer wall-clock timeout, SIGKILL to the pgid on timeout — required because
+PMU-skid leaves the supervisor holding the guest tree ptrace-STOPPED). Add
+`--rcb on` for the canonical rcb-armed config. Do NOT use the in-container
+`qemu_controller.py --timeout`; it
 is virtualized and trips on vtime skew before `qmp.sock` exists, giving a false
 wedge (`demo5-pmu-skid-refuted-target-timeslice-not-fix`).
