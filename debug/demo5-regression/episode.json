@@ -1,0 +1,21 @@
+{
+  "slug": "demo5-regression",
+  "title": "demo5 QEMU-boot regression / wedge under hermit --no-rcb-time",
+  "status": "open",
+  "created": "2026-07-31",
+  "owner": "hermit-226 (lead scientist); evidence fleet: 210 turn-order, 231 metrics, 237 log-science, 238 qemu-strace",
+  "question": "The demos/05-qemu-boot.py QEMU-Linux boot under hermit went from a sub-minute boot (GOOD) to a hard wedge / 600s timeout (BAD). WHY does the demo config (--no-rcb-time --max-timeslice disabled + the python controller's listening sockets) wedge, why does re-enabling rcb-time green it (slowly), is --no-rcb-time masking a determinism bug or is rcb-time a legitimate step-back (#151), and are scheduler decisions host-load independent (SACRED P0)?",
+  "anchors": {
+    "good": {
+      "sha": "2a7ca98f0028",
+      "note": "#1077 'tests: repair strict compatibility regressions' — demo5 boots in ~75s (112,506 QEMU syscalls, exit 0); last KNOWN ~1-min-good boot. NOTE the fleet's bisect window-start f6c836b18dac (#1161, tag demo-20260729) already HANGS at 300s/600s, so the regressor predates f6c836b1; 2a7ca98 is the wider true-good anchor."
+    },
+    "bad": {
+      "sha": "ae2565be5697",
+      "note": "'Gate third-party-dependency backends behind a cargo feature' — demo5 frozen at hpet0 (ts 0.724), 636k+ turns, committed_time frozen, 600s timeout. Mid-window 61d8df393b88 (#1190 clock fix) also HANGs at hpet."
+    }
+  },
+  "bisect_interval": "2a7ca98..ae2565be (122 commits; 20 touch core scheduler/time files -> seeded as suspects)",
+  "migrated_from": "experiments/demo5-rootcause-20260731/ (ledger.md + metrics.md + source-mechanism.md + turnorder.md + wedge-rate.md + log-science/ + pmu-skid-rootcause.md)",
+  "root_cause_summary": "CONFIRMED (single-variable A/B): the wedge = background state under --no-rcb-time --max-timeslice disabled (use_rcb_time()==false -> guest branch retirement adds ZERO vtime AND no PMU preemption is armed; step2d vtime-jump gated on empty run_queue with no future timed_waiter to jump to; committed clock races via the per-turn scheduler tick) [H1, necessary-not-sufficient] PLUS the trigger of a host-pollable listening socket fd (QMP + serial unix socket) whose readiness is host-timing-driven and monopolizes turns so the -icount vCPU never completes HPET calibration [H6]. Re-enabling rcb-time greens it because guest branch retirement then advances committed_time across the deadline (a legitimate ~5x-slow STEP-BACK, not masking) [H2/H3]. Scheduler DECISIONS are host-load independent (SACRED P0 passes) [H4]. The #1095 guest-clock-lag theory is KILLED for this wedge post-#1190 [H7]. Perf parity remains OPEN [H5]."
+}

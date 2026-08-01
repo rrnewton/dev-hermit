@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""dbg — a tiny CLI over persistent debugging *episodes*.
+
+A debugging episode is a subdirectory of debug/ (e.g. debug/demo5-regression/)
+holding three machine-readable JSON files that make an "automated-scientist"
+investigation reusable and queryable:
+
+  episode.json     metadata: title, status, the GOOD/BAD anchors, the question
+  hypotheses.json  each hypothesis: statement, detailed reasoning, predicted
+                   evidence, status (open|confirmed|killed) + verdict reasoning
+  evidence.json    evidence items bound to hypotheses (artifact paths, source)
+  suspects.json    candidate regressing commits/causes: sha, subsystem, files,
+                   status (open|cleared|confirmed) + reasoning
+
+The point: any regression investigation gets the same structure, and the state
+of the search (which hypotheses survive, which suspects remain open) is a query,
+not prose someone has to re-read.
+
+Usage:
+  ./debug/dbg episodes
+  ./debug/dbg hypotheses <episode> [--status open|closed|all] [-v]
+  ./debug/dbg suspects   <episode> [--status open|cleared|confirmed|all] [--open] [-v]
+  ./debug/dbg evidence   <episode> [--hypothesis Hn]
+  ./debug/dbg show       <episode> <id>
+  ./debug/dbg summary    <episode>
+
+  # mutations (write back to the JSON):
+  ./debug/dbg new-episode <slug> --title "..."
+  ./debug/dbg add-hypothesis   <episode> --id Hn --statement "..." [--reasoning "..."]
+  ./debug/dbg set-hypothesis   <episode> <Hn> --status confirmed|killed|open [--verdict "..."]
+  ./debug/dbg add-suspect      <episode> --sha SHA --subject "..." [--subsystem ..] [--files a,b]
+  ./debug/dbg set-suspect      <episode> <id|sha> --status open|cleared|confirmed [--reasoning "..."]
+  ./debug/dbg add-evidence     <episode> --id En --desc "..." [--hypotheses H1,H2] [--artifact PATH]
+
+Machine-readable: every list/show also accepts --json for raw JSON output, so
+the CLI composes with jq and other tooling.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent  # the debug/ dir
+
+HYP_STATUSES = ("open", "confirmed", "killed")
+SUS_STATUSES = ("open", "cleared", "confirmed")
+CLOSED_HYP = ("confirmed", "killed")  # terminal hypothesis states
+
+
+# --------------------------------------------------------------------------- #
+# storage helpers                                                             #
+# --------------------------------------------------------------------------- #
+def episode_dir(slug: str) -> Path:
+    d = ROOT / slug
+    if not (d / "episode.json").exists():
+        sys.exit(f"no episode {slug!r} (expected {d}/episode.json). "
+                 f"run `dbg episodes` to list.")
+    return d
+
+
+def load(slug: str, name: str) -> list | dict:
+    p = episode_dir(slug) / f"{name}.json"
+    if not p.exists():
+        return [] if name != "episode" else {}
+    return json.loads(p.read_text())
+
+
+def save(slug: str, name: str, data) -> None:
+    p = ROOT / slug / f"{name}.json"
+    p.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def all_episodes() -> list[Path]:
+    return sorted(d for d in ROOT.iterdir()
+                  if d.is_dir() and (d / "episode.json").exists())
+
+
+# --------------------------------------------------------------------------- #
+# formatting                                                                  #
+# --------------------------------------------------------------------------- #
+HMARK = {"open": "[ OPEN ]", "confirmed": "[CONFIRMED]", "killed": "[ KILLED ]"}
+SMARK = {"open": "[ OPEN ]", "cleared": "[CLEARED]", "confirmed": "[CONFIRMED]"}
+
+
+def wrap(text: str, indent: str) -> str:
+    import textwrap
+    out = []
+    for para in (text or "").split("\n"):
+        out.append(textwrap.fill(para, width=94,
+                                 initial_indent=indent, subsequent_indent=indent)
+                   if para.strip() else "")
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------- #
+# commands                                                                    #
+# --------------------------------------------------------------------------- #
+def cmd_episodes(a):
+    eps = all_episodes()
+    if a.json:
+        print(json.dumps([json.loads((d / "episode.json").read_text()) for d in eps], indent=2))
+        return
+    if not eps:
+        print("(no episodes yet — create one with `dbg new-episode <slug>`)")
+        return
+    for d in eps:
+        e = json.loads((d / "episode.json").read_text())
+        hs = json.loads((d / "hypotheses.json").read_text()) if (d / "hypotheses.json").exists() else []
+        ss = json.loads((d / "suspects.json").read_text()) if (d / "suspects.json").exists() else []
+        open_h = sum(1 for h in hs if h.get("status") == "open")
+        open_s = sum(1 for s in ss if s.get("status") == "open")
+        print(f"{e.get('slug', d.name):22} [{e.get('status','?'):>6}]  "
+              f"{len(hs)} hypotheses ({open_h} open)  {len(ss)} suspects ({open_s} open)")
+        print(f"{'':22}  {e.get('title','')}")
+
+
+def cmd_hypotheses(a):
+    hs = load(a.episode, "hypotheses")
+    status = a.status or ("closed" if a.closed else "all")
+    if status == "closed":
+        hs = [h for h in hs if h.get("status") in CLOSED_HYP]
+    elif status in HYP_STATUSES:
+        hs = [h for h in hs if h.get("status") == status]
+    if a.json:
+        print(json.dumps(hs, indent=2))
+        return
+    if not hs:
+        print(f"(no hypotheses matching status={status})")
+        return
+    for h in hs:
+        print(f"\n{HMARK.get(h.get('status'), '[?]')} {h['id']}: {h.get('statement','')}")
+        if h.get("owner"):
+            print(f"    owner: {h['owner']}")
+        if a.verbose:
+            if h.get("reasoning"):
+                print("  reasoning:")
+                print(wrap(h["reasoning"], "    "))
+            if h.get("predicted_evidence"):
+                print("  predicted evidence:")
+                print(wrap(h["predicted_evidence"], "    "))
+        if h.get("verdict"):
+            print("  verdict:")
+            print(wrap(h["verdict"], "    "))
+        if h.get("evidence_ids"):
+            print(f"    evidence: {', '.join(h['evidence_ids'])}")
+
+
+def cmd_suspects(a):
+    ss = load(a.episode, "suspects")
+    status = "open" if a.open else (a.status or "all")
+    if status in SUS_STATUSES:
+        ss = [s for s in ss if s.get("status") == status]
+    # stable, useful ordering: open first, then by priority then date
+    prio = {"high": 0, "medium": 1, "low": 2}
+    ss = sorted(ss, key=lambda s: (s.get("status") != "open",
+                                   prio.get(s.get("priority", "medium"), 1),
+                                   s.get("date", "")))
+    if a.json:
+        print(json.dumps(ss, indent=2))
+        return
+    if not ss:
+        print(f"(no suspects matching status={status})")
+        return
+    print(f"{len(ss)} suspect(s) [status filter: {status}]")
+    for s in ss:
+        pr = s.get("priority", "?")
+        print(f"\n{SMARK.get(s.get('status'), '[?]')} {s.get('id','?')} {s.get('sha','')[:12]}"
+              f"  ({pr:>6} priority, {s.get('subsystem','?')})  {s.get('date','')[:10]}")
+        print(f"    {s.get('subject','')}")
+        if a.verbose or status != "all":
+            if s.get("files"):
+                print(f"    files: {', '.join(s['files'])}")
+            if s.get("reasoning"):
+                print(wrap(s["reasoning"], "    "))
+
+
+def cmd_evidence(a):
+    ev = load(a.episode, "evidence")
+    if a.hypothesis:
+        ev = [e for e in ev if a.hypothesis in e.get("hypotheses", [])]
+    if a.json:
+        print(json.dumps(ev, indent=2))
+        return
+    for e in ev:
+        print(f"\n{e.get('id','?')}  (H: {', '.join(e.get('hypotheses', [])) or '-'})")
+        print(wrap(e.get("desc", ""), "    "))
+        if e.get("artifact"):
+            print(f"    artifact: {e['artifact']}")
+        if e.get("source"):
+            print(f"    source: {e['source']}")
+
+
+def cmd_show(a):
+    for name in ("hypotheses", "suspects", "evidence"):
+        for item in load(a.episode, name):
+            if item.get("id") == a.id or item.get("sha", "").startswith(a.id):
+                print(json.dumps(item, indent=2))
+                return
+    sys.exit(f"no item {a.id!r} in episode {a.episode}")
+
+
+def cmd_summary(a):
+    e = load(a.episode, "episode")
+    hs = load(a.episode, "hypotheses")
+    ss = load(a.episode, "suspects")
+    if a.json:
+        print(json.dumps({"episode": e,
+                          "hypotheses_open": [h["id"] for h in hs if h.get("status") == "open"],
+                          "hypotheses_confirmed": [h["id"] for h in hs if h.get("status") == "confirmed"],
+                          "hypotheses_killed": [h["id"] for h in hs if h.get("status") == "killed"],
+                          "suspects_open": [s.get("id") for s in ss if s.get("status") == "open"]},
+                         indent=2))
+        return
+    print(f"# {e.get('title','')}  [{e.get('status','?')}]")
+    print(f"slug: {e.get('slug')}   owner: {e.get('owner','')}")
+    if e.get("anchors"):
+        g = e["anchors"].get("good", {}); b = e["anchors"].get("bad", {})
+        print(f"GOOD: {g.get('sha','?')[:12]} {g.get('note','')}")
+        print(f"BAD : {b.get('sha','?')[:12]} {b.get('note','')}")
+    print(wrap(e.get("question", ""), "  "))
+    conf = [h['id'] for h in hs if h.get('status') == 'confirmed']
+    kill = [h['id'] for h in hs if h.get('status') == 'killed']
+    opn = [h['id'] for h in hs if h.get('status') == 'open']
+    print(f"\nhypotheses: {len(hs)}  confirmed={conf} killed={kill} open={opn}")
+    os_ = [s for s in ss if s.get("status") == "open"]
+    print(f"suspects: {len(ss)}  open={len(os_)} "
+          f"(high-priority open: {[s.get('id') for s in os_ if s.get('priority')=='high']})")
+
+
+# --------------------------------------------------------------------------- #
+# mutations                                                                   #
+# --------------------------------------------------------------------------- #
+def cmd_new_episode(a):
+    d = ROOT / a.slug
+    if (d / "episode.json").exists():
+        sys.exit(f"episode {a.slug} already exists")
+    d.mkdir(parents=True, exist_ok=True)
+    save(a.slug, "episode", {"slug": a.slug, "title": a.title or a.slug,
+                             "status": "open", "question": a.question or "",
+                             "owner": a.owner or ""})
+    for n in ("hypotheses", "suspects", "evidence"):
+        save(a.slug, n, [])
+    print(f"created episode {a.slug} at {d}")
+
+
+def _next_id(items, prefix):
+    n = len(items) + 1
+    return f"{prefix}{n:02d}"
+
+
+def cmd_add_hypothesis(a):
+    hs = load(a.episode, "hypotheses")
+    hs.append({"id": a.id, "statement": a.statement, "reasoning": a.reasoning or "",
+               "predicted_evidence": a.predicted or "", "status": "open",
+               "verdict": "", "evidence_ids": [], "owner": a.owner or ""})
+    save(a.episode, "hypotheses", hs)
+    print(f"added {a.id}")
+
+
+def cmd_set_hypothesis(a):
+    hs = load(a.episode, "hypotheses")
+    for h in hs:
+        if h["id"] == a.id:
+            if a.status:
+                if a.status not in HYP_STATUSES:
+                    sys.exit(f"status must be one of {HYP_STATUSES}")
+                h["status"] = a.status
+            if a.verdict:
+                h["verdict"] = a.verdict
+            save(a.episode, "hypotheses", hs)
+            print(f"{a.id} -> status={h['status']}")
+            return
+    sys.exit(f"no hypothesis {a.id}")
+
+
+def cmd_add_suspect(a):
+    ss = load(a.episode, "suspects")
+    ss.append({"id": _next_id(ss, "S"), "sha": a.sha, "subject": a.subject,
+               "subsystem": a.subsystem or "", "date": a.date or "",
+               "files": a.files.split(",") if a.files else [],
+               "interval": a.interval or "", "priority": a.priority or "medium",
+               "status": "open", "reasoning": a.reasoning or ""})
+    save(a.episode, "suspects", ss)
+    print(f"added suspect {ss[-1]['id']} {a.sha[:12]}")
+
+
+def cmd_set_suspect(a):
+    ss = load(a.episode, "suspects")
+    for s in ss:
+        if s.get("id") == a.id or s.get("sha", "").startswith(a.id):
+            if a.status:
+                if a.status not in SUS_STATUSES:
+                    sys.exit(f"status must be one of {SUS_STATUSES}")
+                s["status"] = a.status
+            if a.reasoning:
+                s["reasoning"] = (s.get("reasoning", "") + " | " + a.reasoning).strip(" |")
+            save(a.episode, "suspects", ss)
+            print(f"{s['id']} {s['sha'][:12]} -> status={s['status']}")
+            return
+    sys.exit(f"no suspect {a.id}")
+
+
+def cmd_add_evidence(a):
+    ev = load(a.episode, "evidence")
+    ev.append({"id": a.id or _next_id(ev, "E"), "desc": a.desc,
+               "hypotheses": a.hypotheses.split(",") if a.hypotheses else [],
+               "artifact": a.artifact or "", "source": a.source or ""})
+    save(a.episode, "evidence", ev)
+    print(f"added evidence {ev[-1]['id']}")
+
+
+# --------------------------------------------------------------------------- #
+# argparse                                                                    #
+# --------------------------------------------------------------------------- #
+def main():
+    ap = argparse.ArgumentParser(prog="dbg", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def add_json(p):
+        p.add_argument("--json", action="store_true", help="raw JSON output")
+
+    p = sub.add_parser("episodes"); add_json(p); p.set_defaults(fn=cmd_episodes)
+
+    p = sub.add_parser("hypotheses"); p.add_argument("episode")
+    p.add_argument("--status", choices=["open", "closed", "all", *HYP_STATUSES])
+    p.add_argument("--closed", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true"); add_json(p)
+    p.set_defaults(fn=cmd_hypotheses)
+
+    p = sub.add_parser("suspects"); p.add_argument("episode")
+    p.add_argument("--status", choices=["all", *SUS_STATUSES])
+    p.add_argument("--open", action="store_true", help="only remaining OPEN suspects")
+    p.add_argument("-v", "--verbose", action="store_true"); add_json(p)
+    p.set_defaults(fn=cmd_suspects)
+
+    p = sub.add_parser("evidence"); p.add_argument("episode")
+    p.add_argument("--hypothesis"); add_json(p); p.set_defaults(fn=cmd_evidence)
+
+    p = sub.add_parser("show"); p.add_argument("episode"); p.add_argument("id")
+    p.set_defaults(fn=cmd_show)
+
+    p = sub.add_parser("summary"); p.add_argument("episode"); add_json(p)
+    p.set_defaults(fn=cmd_summary)
+
+    p = sub.add_parser("new-episode"); p.add_argument("slug")
+    p.add_argument("--title"); p.add_argument("--question"); p.add_argument("--owner")
+    p.set_defaults(fn=cmd_new_episode)
+
+    p = sub.add_parser("add-hypothesis"); p.add_argument("episode")
+    p.add_argument("--id", required=True); p.add_argument("--statement", required=True)
+    p.add_argument("--reasoning"); p.add_argument("--predicted"); p.add_argument("--owner")
+    p.set_defaults(fn=cmd_add_hypothesis)
+
+    p = sub.add_parser("set-hypothesis"); p.add_argument("episode"); p.add_argument("id")
+    p.add_argument("--status"); p.add_argument("--verdict")
+    p.set_defaults(fn=cmd_set_hypothesis)
+
+    p = sub.add_parser("add-suspect"); p.add_argument("episode")
+    p.add_argument("--sha", required=True); p.add_argument("--subject", required=True)
+    p.add_argument("--subsystem"); p.add_argument("--date"); p.add_argument("--files")
+    p.add_argument("--interval"); p.add_argument("--priority", choices=["high", "medium", "low"])
+    p.add_argument("--reasoning"); p.set_defaults(fn=cmd_add_suspect)
+
+    p = sub.add_parser("set-suspect"); p.add_argument("episode"); p.add_argument("id")
+    p.add_argument("--status"); p.add_argument("--reasoning")
+    p.set_defaults(fn=cmd_set_suspect)
+
+    p = sub.add_parser("add-evidence"); p.add_argument("episode")
+    p.add_argument("--id"); p.add_argument("--desc", required=True)
+    p.add_argument("--hypotheses"); p.add_argument("--artifact"); p.add_argument("--source")
+    p.set_defaults(fn=cmd_add_evidence)
+
+    a = ap.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "H1",
+    "statement": "Wedge mechanism: deadline-less vtime starvation under --no-rcb-time --max-timeslice disabled.",
+    "reasoning": "use_rcb_time() = max_timeslice.is_some() && !no_rcb_time (detcore-model/src/config.rs:635). demo5 sets --no-rcb-time AND --max-timeslice disabled (=None), so use_rcb_time()==false: (1) RCB->vtime conversion (Detcore::update_logical_time_rcbs, lib.rs:359-475) is doubly gated off -> guest branch retirement advances vtime by ZERO; (2) no PMU preemption timer is armed (next_timeslice max_timeslice_end=None, tool_local.rs:2052) -> only preemption left is the --target-timeslice logical deadline reachable only at intercepted checkins; (3) step2d_handle_empty_queue (scheduler.rs:1989) is gated on run_queue.is_empty() AND needs a future timed_waiter; SleepUntil(LogicalTime(0)) pollers stay runnable and any target<=committed returns immediately without being inserted as a timed_waiter (scheduler.rs:2205) -> no future event to jump to; (4) per-turn add_scheduler_time creep (NANOS_PER_SCHED=500us x 500 strict multiplier) races committed_time far ahead of any guest deadline.",
+    "predicted_evidence": "wedge logs: 'Skipping global time ahead'=0; SleepUntil(LogicalTime(0)) commits dominate; 0 future timed_waiter registrations in terminal spin; guest serial frozen at hpet0; committed_time creeps/races, never reaching the timer deadline.",
+    "status": "confirmed",
+    "verdict": "CONFIRMED (source) as the BACKGROUND mechanism, with SCOPE CORRECTED: it is NECESSARY but NOT SUFFICIENT. A bare --no-rcb-time boot shows ALL the signatures (237 same-config A/B: Skipping=0, SleepUntil(0) dominates 558k, 0 future timed_waiters, committed races +2432s, rcbs:0) YET STILL BOOTS. The wedge additionally requires the H6 socket trigger. An earlier revision wrongly claimed the bare boot itself livelocks.",
+    "evidence_ids": ["E01", "E02", "E07"],
+    "owner": "226 source + 237 log-science + 231 metrics"
+  },
+  {
+    "id": "H2",
+    "statement": "Greening mechanism: rcb-time brute-forces committed_time forward across the guest timer deadline.",
+    "reasoning": "With rcb-time ON, guest branch retirement advances committed_time (RCB->ns) continuously. The busy-poll/calibration loops DO retire branches, so committed_time creeps until it crosses the HPET/timer deadline in guest time, the vCPU timer fires, and boot proceeds -- slowly (fine-grained creep), hence the ~325s crawl.",
+    "predicted_evidence": "booting run: committed_time advances with nonzero RCB contribution and eventually crosses the deadline; boot completes ~5x slower than pre-regression sub-minute.",
+    "status": "confirmed",
+    "verdict": "CONFIRMED (source). rcb-time greens the boot because RCB->vtime keeps committed_time moving even during the poll loops, so the guest timer deadline is eventually reached. Distinct from H1's zero-advance substrate.",
+    "evidence_ids": ["E08"],
+    "owner": "226 source + 231 metrics"
+  },
+  {
+    "id": "H3",
+    "statement": "#151 classification: --no-rcb-time EXPOSES the scheduler-vtime-jump-unproductive-pollers foundation bug; it does NOT mask a determinism bug. Re-enabling rcb-time is a legitimate STEP-BACK.",
+    "reasoning": "The wedge is a deterministic guest-starvation livelock (consistent with H4 load-independence), not a masked nondeterminism. rcb-time restores a decision-deterministic (if ~5x slow) boot. So the demo config change (--no-rcb-time) is what exposed a latent foundation scheduling gap, and reverting to rcb-time is a principled step-back, not papering over a race.",
+    "predicted_evidence": "the wedge is reproducible/deterministic (not seed- or interleaving-random); rcb-time boot is decision-deterministic.",
+    "status": "confirmed",
+    "verdict": "CONFIRMED. Crawl boot is decision-deterministic; wedge is deterministic; --no-rcb-time exposes, does not mask.",
+    "evidence_ids": ["E09"],
+    "owner": "226"
+  },
+  {
+    "id": "H4",
+    "statement": "Scheduler DECISIONS are host-load INDEPENDENT (Q3, SACRED P0 gate).",
+    "reasoning": "Determinism requires that no wall-clock read enters a scheduling DECISION path. If WHICH thread runs depended on host load, that is an instant P0. Test: contrast decision traces under different host loads; they must be byte-identical except verify-excluded values (committed_time wall drift).",
+    "predicted_evidence": "contrasting-load decision traces byte-identical over the compared turns; only verify-excluded committed_time value drifts by ns.",
+    "status": "confirmed",
+    "verdict": "CONFIRMED — Q3 P0 GATE PASSES, NO ESCALATION. Contrasting-load decision traces byte-identical over 41043 turns; only verify-excluded committed_time drifts <=238ns. The prior 'load-sensitive' verdict is confirmed-harmless (wall-clock + verify-excluded-value only). WHICH thread starves is a deterministic function of the flag/fd set, not load.",
+    "evidence_ids": ["E10"],
+    "owner": "226 load-independence + 237"
+  },
+  {
+    "id": "H5",
+    "statement": "Perf: the rcb-time crawl is NOT the perf fix; a foundation fix should restore sub-minute boot (Q4).",
+    "reasoning": "rcb-time greens but at ~5x slowdown (crawl). Metrics: green rcb-ON ~1,000 timeslices/~200s vtime vs 3-knob busybox ~85k timeslices/~1,450s vtime vs wedge 10^5-10^6 timeslices. The crawl is a WORKAROUND; true sub-minute parity under --no-rcb-time needs a scheduler-side fix.",
+    "predicted_evidence": "measured timeslice/vtime blow-up between green, crawl, and wedge; pre-regression sub-minute boot as the parity target.",
+    "status": "open",
+    "verdict": "QUANTIFIED, still OPEN on parity. Regression magnitude measured (231 metrics.md). True sub-minute parity under --no-rcb-time is untestable until a scheduler-side fix exists (out of scope here). Remains OPEN pending 231 pre-regression sub-minute confirmation.",
+    "evidence_ids": ["E11"],
+    "owner": "231 metrics"
+  },
+  {
+    "id": "H6",
+    "statement": "Wedge TRIGGER is a host-pollable listening socket fd (NOT a general gap, NOT the python controller code per se).",
+    "reasoning": "Single-variable A/B on identical bare busybox with identical --no-rcb-time/-icount/--target-timeslice flags, varying ONLY the injected listening sockets: boot_qemu_off.sh (-serial stdio, no sockets) BOOTS; boot_qemu_filecon.sh (-serial file:, no sockets) BOOTS; boot_qemu_sock.sh (-serial file: + serial-unix + QMP listening sockets) WEDGES at hpet0. The socket chardev is a host-timing-driven pollable fd that, with no PMU preemption, monopolizes turns and starves the -icount vCPU of forward progress at HPET calibration. Matches 05-qemu-boot.py:94-97 inline comment and memory qemu-serial-socket-starves-vcpu-under-hermit.",
+    "predicted_evidence": "with sockets -> wedge (frozen hpet0); without sockets, same config -> boot to PASS. An extra socket-poller thread present only in the wedge run.",
+    "status": "confirmed",
+    "verdict": "CONFIRMED (single-variable A/B), REVERSING an earlier wrong 'KILLED/general gap'. 237's same-config diff (wedge-sock vs wedge-filecon) shows the WEDGE has an extra socket-poller thread (clock_gettime x166156 + poll x13846 + read x13846, 32.3% of turns) ABSENT in green; notably the vCPU worker gets ~EQUAL absolute turns in both (289810 vs 292381) -> not aggregate turn-starvation but poller-interleaving preventing HPET calibration completion.",
+    "evidence_ids": ["E03", "E04"],
+    "owner": "226 A/B + 237 same-config log-science"
+  },
+  {
+    "id": "H7",
+    "statement": "(competing) The wedge is the #1095 guest-clock-lag past-deadline poller (guest CLOCK_MONOTONIC lags committed ~8.5s so an abs-deadline poll is already expired).",
+    "reasoning": "Pre-#1190, guest CLOCK_MONOTONIC could lag committed_time by ~8.53s (aa5258b: guest ~630.4s vs committed ~639.03s), turning a controller's clock_nanosleep(TIMER_ABSTIME, now+~100ms) into an already-expired sleep that COMMITs (runs immediately) instead of blocking -> busy-poll -> QEMU starved. Competes with H1/H6 as the wedge cause.",
+    "predicted_evidence": "if the ~8.5s guest-vs-committed lag is ABSENT post-#1190, H7 is KILLED for the current wedge (mechanism is H1/H6, not clock-domain).",
+    "status": "killed",
+    "verdict": "KILLED for the socket-triggered wedge. 237: in the post-#1190 wedge log (hermit @1ece0654), guest CLOCK_MONOTONIC tracks committed_time to ~ms (late reads 1767228032.485..0.553s vs final committed 1767228032.553s), NOT the pre-#1190 ~8.53s lag. #1190 (cc3730fd/3ac51e11 process-tree GuestClock unification) holds; the wedge is not a clock-lag problem.",
+    "evidence_ids": ["E05"],
+    "owner": "237 clock-lag inspection"
+  }
+]

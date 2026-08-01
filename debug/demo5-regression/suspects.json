@@ -1,0 +1,308 @@
+[
+  {
+    "id": "S01",
+    "sha": "cc3730fd9cbb",
+    "date": "2026-07-31",
+    "subject": "Track committed logical time in the guest clock",
+    "subsystem": "time/guest-clock",
+    "files": [
+      "detcore/src/syscalls/time.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Directly changes guest-clock <- committed logical time (part of the #1190 unification). Time behavior is central to the demo5 -icount/HPET wedge. NOTE: H7 (E05) shows post-#1190 guest clock tracks committed to ~ms, so this is more plausibly the FIX than the regressor; cross-check whether it altered pre-hpet timing."
+  },
+  {
+    "id": "S02",
+    "sha": "3ac51e112dcf",
+    "date": "2026-07-31",
+    "subject": "Share guest clock across process trees",
+    "subsystem": "time/guest-clock",
+    "files": [
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Process-tree GuestClock sharing (#1190). Alters how guest CLOCK_MONOTONIC relates to committed_time across exec/fork -> could shift the HPET deadline landing. Same H7 caveat: appears to be the clock-lag FIX; verify it doesn't change calibration-phase scheduling."
+  },
+  {
+    "id": "S03",
+    "sha": "39cfb5a7f70b",
+    "date": "2026-07-30",
+    "subject": "SaBRe: yield loopback pollers to localhost peers (#1182)",
+    "subsystem": "sabre/poller",
+    "files": [
+      "detcore/src/scheduler.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "Yield loopback pollers to localhost peers (#1182); scheduler.rs + tool_local poller-yield logic. demo5 uses ptrace not SaBRe, so lower direct risk, but it edits poller/yield scheduling shared paths."
+  },
+  {
+    "id": "S04",
+    "sha": "0321a015f19d",
+    "date": "2026-07-30",
+    "subject": "Fix KVM vfork barrier teardown for deferred child registration (#1152)",
+    "subsystem": "kvm/vfork",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore/src/scheduler.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "low",
+    "status": "open",
+    "reasoning": "KVM vfork barrier teardown (#1152); config + scheduler.rs. KVM backend; demo5=ptrace -> low, but edits scheduler.rs."
+  },
+  {
+    "id": "S05",
+    "sha": "45205d40a1e2",
+    "date": "2026-07-30",
+    "subject": "Fix SaBRe multithreaded exec reconciliation (#1173)",
+    "subsystem": "sabre/exec",
+    "files": [
+      "detcore-model/src/time.rs",
+      "detcore/src/scheduler.rs",
+      "detcore/src/tool_global.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "SaBRe multithreaded exec reconciliation (#1173); scheduler.rs + time.rs + tool_global. SaBRe-scoped but edits core scheduling+time files."
+  },
+  {
+    "id": "S06",
+    "sha": "37ea6bce0f8f",
+    "date": "2026-07-29",
+    "subject": "Normalize SaBRe inherited pipe verification (#1158)",
+    "subsystem": "sabre/pipe-verify",
+    "files": [
+      "detcore/src/scheduler.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "Normalize SaBRe inherited pipe verification (#1158); scheduler.rs. Landed make-jN SIGCHLD-adjacent fix; touches scheduler.rs so keep medium despite SaBRe framing."
+  },
+  {
+    "id": "S07",
+    "sha": "1663138d9cd1",
+    "date": "2026-07-29",
+    "subject": "Determinize SIGCHLD admission and pselect6 sigmask for make -jN",
+    "subsystem": "scheduler/admission",
+    "files": [
+      "detcore/src/scheduler.rs",
+      "detcore/src/scheduler/runqueue.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Determinizes SIGCHLD admission + pselect6 sigmask for make -jN; touches scheduler.rs + scheduler/runqueue.rs. Changes run-queue admission/quiescence \u2014 exactly the class of the scheduler-vtime-jump-unproductive-pollers foundation bug H1 rests on."
+  },
+  {
+    "id": "S08",
+    "sha": "eb76b3a0ab2f",
+    "date": "2026-07-29",
+    "subject": "Fix SaBRe child-exit timer ordering (#1156)",
+    "subsystem": "sabre/timer",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore/src/scheduler.rs",
+      "detcore/src/tool_global.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "SaBRe child-exit timer ordering (#1156); touches scheduler.rs + config + tool_global. Timer-ordering = time behavior; SaBRe-scoped lowers direct demo5 risk."
+  },
+  {
+    "id": "S09",
+    "sha": "b36f290256a6",
+    "date": "2026-07-29",
+    "subject": "Preserve SaBRe pipe state across fork and exec (#1154)",
+    "subsystem": "sabre/pipe",
+    "files": [
+      "detcore/src/tool_global.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "low",
+    "status": "open",
+    "reasoning": "SaBRe pipe state across fork/exec (#1154); tool_global/local. SaBRe-scoped."
+  },
+  {
+    "id": "S10",
+    "sha": "0df976bb0f3d",
+    "date": "2026-07-29",
+    "subject": "Expand SaBRe threaded lifecycle compatibility (#1023)",
+    "subsystem": "sabre/threads",
+    "files": [
+      "detcore/src/scheduler.rs",
+      "detcore/src/tool_global.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "low",
+    "status": "open",
+    "reasoning": "SaBRe threaded lifecycle compat (#1023); scheduler + tool_global. SaBRe backend; demo5=ptrace -> low direct risk."
+  },
+  {
+    "id": "S11",
+    "sha": "0c096177d71f",
+    "date": "2026-07-29",
+    "subject": "Replay slowdown epochs at exact branch boundaries",
+    "subsystem": "scheduler/chaos-epoch",
+    "files": [
+      "detcore/src/scheduler.rs",
+      "detcore/src/syscalls/time.rs",
+      "detcore/src/tool_global.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Replays slowdown epochs at exact branch boundaries (#1151). Ties epoch/vtime advance to branch boundaries \u2014 directly interacts with RCB->vtime and preemption timing that --no-rcb-time disables."
+  },
+  {
+    "id": "S12",
+    "sha": "fa847963d624",
+    "date": "2026-07-29",
+    "subject": "Link chaos epoch audit markers to PR 1151",
+    "subsystem": "scheduler/chaos-epoch",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore-model/src/time.rs",
+      "detcore/src/scheduler.rs",
+      "detcore/src/syscalls/time.rs",
+      "detcore/src/tool_global.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "Chaos epoch audit markers (#1151); broad touch (scheduler/time/config) but marker-linking \u2014 lower functional risk than 61078e29/0c096177."
+  },
+  {
+    "id": "S13",
+    "sha": "61078e295ef9",
+    "date": "2026-07-29",
+    "subject": "Implement deterministic chaos slowdown epochs",
+    "subsystem": "scheduler/chaos-epoch",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore-model/src/time.rs",
+      "detcore/src/scheduler.rs",
+      "detcore/src/syscalls/time.rs",
+      "detcore/src/tool_global.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Implements deterministic chaos slowdown epochs (PR #1151, the canonical core-scheduling change / trigger#4). Touches scheduler.rs, time.rs, tool_local/global, config, syscalls/time \u2014 the widest scheduling+time surface in the window. Strong structural suspect."
+  },
+  {
+    "id": "S14",
+    "sha": "f06e57649359",
+    "date": "2026-07-28",
+    "subject": "Point per-thread-slowdown review markers at PR #1149",
+    "subsystem": "scheduler/chaos",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "Per-thread-slowdown review markers (#1149); config + tool_local. Companion to d00d3a73; likely markers-only but touches slowdown config."
+  },
+  {
+    "id": "S15",
+    "sha": "d00d3a73a518",
+    "date": "2026-07-28",
+    "subject": "Add RR-style stable per-thread chaos slowdown factors",
+    "subsystem": "scheduler/chaos",
+    "files": [
+      "detcore-model/src/config.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "RR-style stable per-thread chaos slowdown factors (#1149). Per-thread slowdown modifies scheduling/vtime accounting; foundational to the epoch machinery above."
+  },
+  {
+    "id": "S16",
+    "sha": "f2cdc059bfab",
+    "date": "2026-07-28",
+    "subject": "meta: link KVM capability review",
+    "subsystem": "meta/kvm",
+    "files": [
+      "detcore-model/src/config.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "low",
+    "status": "open",
+    "reasoning": "meta: link KVM capability review; config only. Almost certainly markers/meta; lowest risk."
+  },
+  {
+    "id": "S17",
+    "sha": "3f04e02381d0",
+    "date": "2026-07-28",
+    "subject": "kvm: forward virtual capability prctls",
+    "subsystem": "kvm/prctl",
+    "files": [
+      "detcore-model/src/config.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "low",
+    "status": "open",
+    "reasoning": "KVM forward virtual capability prctls; config only. KVM-scoped, config touch."
+  },
+  {
+    "id": "S18",
+    "sha": "9482e344b7a4",
+    "date": "2026-07-28",
+    "subject": "detcore: share inherited stdio scheduler resources",
+    "subsystem": "scheduler/resources",
+    "files": [
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Shares inherited stdio scheduler resources (tool_local). Directly relevant: the wedge trigger (H6) is a host-pollable listening-socket/stdio poller; how inherited stdio resources are scheduled could change poller interleaving."
+  },
+  {
+    "id": "S19",
+    "sha": "fd6759799013",
+    "date": "2026-07-28",
+    "subject": "Make nginx process-group teardown deterministic",
+    "subsystem": "scheduler/teardown",
+    "files": [
+      "detcore/src/scheduler.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "medium",
+    "status": "open",
+    "reasoning": "nginx process-group teardown determinism; scheduler.rs. Teardown/reap scheduling; peripheral to boot-phase wedge."
+  },
+  {
+    "id": "S20",
+    "sha": "c4a4bba2a686",
+    "date": "2026-07-28",
+    "subject": "detcore: normalize guest clock after exec",
+    "subsystem": "time/guest-clock",
+    "files": [
+      "detcore/src/syscalls/time.rs",
+      "detcore/src/tool_local.rs"
+    ],
+    "interval": "2a7ca98..ae2565be",
+    "priority": "high",
+    "status": "open",
+    "reasoning": "Normalizes guest clock after exec (#1095 area). Post-exec clock reset historically split clock domains (see memory pr1095-fake-determinism-clock-review-lesson). Prime time-behavior suspect for a boot that wedges at clocksource calibration."
+  }
+]

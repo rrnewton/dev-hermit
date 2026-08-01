@@ -69,7 +69,6 @@
 
 # Transient tooling output
 **/__pycache__/
-/debug/
 *.perf.data
 *.log
 

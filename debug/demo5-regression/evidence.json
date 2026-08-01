@@ -1,0 +1,79 @@
+[
+  {
+    "id": "E01",
+    "desc": "SOURCE causal chain (code-search): use_rcb_time()==false under --no-rcb-time --max-timeslice disabled => guest branch retirement adds ZERO vtime (lib.rs:359-475 doubly gated), no PMU preemption armed (tool_local.rs:2052 + unit test target_only_mode_does_not_create_a_pmu_deadline), step2d gated on empty run_queue with no future timed_waiter (scheduler.rs:1989/2205), committed creeps NANOS_PER_SCHED=500us x500 strict.",
+    "hypotheses": ["H1"],
+    "artifact": "experiments/demo5-rootcause-20260731/source-mechanism.md",
+    "source": "226 (code-search)"
+  },
+  {
+    "id": "E02",
+    "desc": "EMPIRICAL background signatures in a bare --no-rcb-time boot: 'Skipping global time ahead'=0, SleepUntil(LogicalTime(0)) dominates (384704 vs 115 future), committed races +1425s, rcbs:0 -- YET the boot SUCCEEDS (wedge-off/filecon reach PASS ts1.903). So the signatures are the substrate, not the wedge discriminator.",
+    "hypotheses": ["H1"],
+    "artifact": "experiments/demo5-rootcause-20260731/log-science/sameconfig/signatures.txt",
+    "source": "237 log-science"
+  },
+  {
+    "id": "E03",
+    "desc": "Single-variable A/B on bare busybox, identical --no-rcb-time config, ONLY var = +2 listening sockets: boot_qemu_off.sh (-serial stdio) BOOTS; boot_qemu_filecon.sh (-serial file:) BOOTS; boot_qemu_sock.sh (-serial file: + serial-unix + QMP) WEDGES frozen at hpet0 ts0.716.",
+    "hypotheses": ["H6"],
+    "artifact": "experiments/demo5-rootcause-20260731/source-mechanism.md (S6); scratch/demo5-icount-sleep/out/wedge-{off,filecon,sock}-run1/",
+    "source": "226 A/B"
+  },
+  {
+    "id": "E04",
+    "desc": "Same-config wedge-vs-green per-dtid diff (237): WEDGE has an extra socket-poller thread (fingerprint clock_gettime x166156, poll x13846, read x13846; 208674 turns=32.3%) ABSENT in GREEN; vCPU/serial-writer gets ~equal ABSOLUTE turns in both (289810 wedge vs 292381 green) -> NOT aggregate turn-starvation; sockets add +45% total turns (646k vs 446k) perturbing interleaving so HPET calibration never completes. H1 scheduler signatures identical in both (non-discriminating).",
+    "hypotheses": ["H6", "H1"],
+    "artifact": "experiments/demo5-rootcause-20260731/log-science/sameconfig/README.md",
+    "source": "237 log-science"
+  },
+  {
+    "id": "E05",
+    "desc": "H7 clock-lag KILL: post-#1190 wedge log (hermit @1ece0654) guest CLOCK_MONOTONIC late reads 1767228032.485..0.553s vs final committed 1767228032.553s -> tracks to ~ms, NOT the pre-#1190 ~8.53s lag (aa5258b: guest ~630.4 vs committed ~639.03). #1190 clock unification holds.",
+    "hypotheses": ["H7"],
+    "artifact": "experiments/demo5-rootcause-20260731/log-science/sameconfig/signatures.txt",
+    "source": "237 log-science"
+  },
+  {
+    "id": "E06",
+    "desc": "Bisect matrix (results.csv): bare-qemu (no hermit) GREEN control; f6c836b1 (tag demo-20260729 'last-known-green') actually HANGs at qemu-startup 2/2 (300s & 600s); 61d8df39 (#1190) HANGs at hpet; ae2565be HANGs at hpet. Landscape NON-MONOTONE (window-start wedges WORSE than window-end) => no single green anchor inside the window; the ~1min-good is the earlier 2a7ca98.",
+    "hypotheses": ["H1", "H6"],
+    "artifact": "experiments/demo5_bisect_20260731/results.csv",
+    "source": "bisect (demo5-bisect-invalid-latent-scheduler-bug)"
+  },
+  {
+    "id": "E07",
+    "desc": "237 per-dtid starvation query on the parent-controller BAD trace (aa5258b): QEMU dtid9 ran 34 syscalls (last read#34 loading libpixman COMPLETES, runnable) then 94.3% of run (+874s committed) never scheduled again; busy-poller controller dtid7 27,597 syscalls. GOOD (2a7ca98): dtid9 112,506 syscalls, EXITED.",
+    "hypotheses": ["H1"],
+    "artifact": "experiments/demo5-rootcause-20260731/log-science/dtid_activity_broken.txt",
+    "source": "237 log-science"
+  },
+  {
+    "id": "E08",
+    "desc": "rcb-time ON greens (crawl): committed_time advances with nonzero RCB contribution and crosses the deadline; boot completes ~5x slower than pre-regression sub-minute.",
+    "hypotheses": ["H2"],
+    "artifact": "experiments/demo5-rootcause-20260731/metrics.md",
+    "source": "231 metrics"
+  },
+  {
+    "id": "E09",
+    "desc": "Classification: the wedge is a deterministic livelock (not seed/interleaving-random); rcb-time boot is decision-deterministic -> --no-rcb-time EXPOSES a foundation gap (scheduler-vtime-jump-unproductive-pollers) rather than masking a determinism bug.",
+    "hypotheses": ["H3"],
+    "artifact": "experiments/demo5-rootcause-20260731/ledger.md",
+    "source": "226"
+  },
+  {
+    "id": "E10",
+    "desc": "Q3 SACRED gate: contrasting-host-load decision traces byte-identical over 41043 turns; only verify-excluded committed_time drifts <=238ns. No wall-clock read in any decision path.",
+    "hypotheses": ["H4"],
+    "artifact": "experiments/demo5-rootcause-20260731/load-independence.md",
+    "source": "226 load-independence"
+  },
+  {
+    "id": "E11",
+    "desc": "Perf metrics: green rcb-ON ~1,000 timeslices/~200s vtime; 3-knob busybox (boots) ~85k timeslices/~1,450s vtime; wedge 10^5-10^6 timeslices. Crawl is a workaround; sub-minute parity untestable without a scheduler-side fix.",
+    "hypotheses": ["H5"],
+    "artifact": "experiments/demo5-rootcause-20260731/metrics.md",
+    "source": "231 metrics"
+  }
+]
