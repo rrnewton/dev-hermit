@@ -22,7 +22,14 @@ fi
 mkdir -p "${DST}"
 
 # Copy the files ORC needs; skip stray *.orig backups and this installer.
-for f in index.ts package.json gh-issue-create README.md; do
+files=(
+  index.ts
+  package.json
+  gh-issue-create
+  README.md
+  parallel-speculative-attack.md
+)
+for f in "${files[@]}"; do
   cp -p "${SRC}/${f}" "${DST}/${f}"
 done
 

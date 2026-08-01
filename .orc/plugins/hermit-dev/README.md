@@ -10,6 +10,9 @@ registers it as the `hermit-dev` skill, so a single source stays authoritative.
 - Registers a `hermit-dev` skill whose instructions are the current
   `AGENTS.md` contents (parent-workspace coordination, fork-only issue policy,
   Git/PR workflow, Reverie API policy, and product vision).
+- Registers the narrow `hermit-parallel-speculative-attack` coordinator skill
+  from `parallel-speculative-attack.md`. It activates for explicit speculative
+  fan-out language and keeps single-path execution as the default.
 - Activates those policies on session startup
   (`hermit-dev.startup`), so agents receive them without a manual step.
 - Exposes helper functions:
@@ -76,7 +79,7 @@ re-run `install.sh`. Re-run it after editing the plugin, e.g. from a git
 ```bash
 # It is a real directory, not a symlink:
 [ -L ~/.orc/plugins/hermit-dev ] && echo "SYMLINK (bad)" || echo "real dir (good)"
-ls ~/.orc/plugins/hermit-dev   # index.ts, package.json, gh-issue-create, README.md, install.sh
+ls ~/.orc/plugins/hermit-dev   # includes index.ts and parallel-speculative-attack.md
 
 # The config auto-loads it:
 grep hermit-dev ~/.orc/config.js

@@ -1,8 +1,11 @@
 const PLUGIN_NAME = "hermit-dev";
 const SKILL_NAME = "hermit-dev";
+const SPECULATIVE_ATTACK_SKILL_NAME = "hermit-parallel-speculative-attack";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
 const WORKSPACE_SUBPATH = "work/dev-hermit";
 const RELATIVE_POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
+const SPECULATIVE_ATTACK_SKILL_PATH =
+  orc.pluginDir() + "/parallel-speculative-attack.md";
 const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
 const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
 const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
@@ -22,6 +25,16 @@ const SKILL_TRIGGERS = [
   "\\bfacebookexperimental/reverie\\b",
   "\\bgh\\s+issue\\s+create\\b",
   "\\bReverie\\b",
+];
+const SPECULATIVE_ATTACK_SKILL_DESCRIPTION =
+  "Coordinator-only protocol for deadline-driven or quantified critical-path " +
+  "parallel speculative attacks. Single-path execution remains the default.";
+const SPECULATIVE_ATTACK_SKILL_TRIGGERS = [
+  "\\bparallel[- ]speculative[- ]attack\\b",
+  "\\bspeculative attack\\b",
+  "\\bcompeting (?:draft )?PRs?\\b",
+  "\\bdeadline[- ]driven fan[- ]out\\b",
+  "\\bquantified critical[- ]path bottleneck\\b",
 ];
 
 let resolvedPolicyPath: string = RELATIVE_POLICY_PATH;
@@ -68,11 +81,31 @@ function registerHermitDevSkill(instructions: string): void {
   });
 }
 
+function registerSpeculativeAttackSkill(instructions: string): void {
+  orc.registerSkill(SPECULATIVE_ATTACK_SKILL_NAME, {
+    description: SPECULATIVE_ATTACK_SKILL_DESCRIPTION,
+    instructions,
+    triggers: SPECULATIVE_ATTACK_SKILL_TRIGGERS,
+  });
+}
+
+async function loadSpeculativeAttackSkill(): Promise<void> {
+  const instructions = await readPolicyIfPresent(SPECULATIVE_ATTACK_SKILL_PATH);
+  if (instructions === null) {
+    throw new Error(
+      "hermit-dev coordinator skill not found or empty: " +
+        SPECULATIVE_ATTACK_SKILL_PATH,
+    );
+  }
+  registerSpeculativeAttackSkill(instructions);
+}
+
 async function activateHermitDevPolicies(): Promise<string> {
   const { path, instructions } = await resolvePolicy();
 
   // Re-registering replaces the placeholder or previous policy atomically.
   registerHermitDevSkill(instructions);
+  await loadSpeculativeAttackSkill();
 
   if (orc.kvGet(POLICY_CACHE_KEY) === instructions) {
     return "hermit-dev policies already activated from " + path;
@@ -104,6 +137,9 @@ export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
 registerHermitDevSkill(
   "The canonical dev-hermit policies are loaded from AGENTS.md during startup.",
 );
+registerSpeculativeAttackSkill(
+  "The parallel speculative attack protocol is loaded during plugin startup.",
+);
 
 orc.exposeFunction(
   PLUGIN_NAME + ".activate",
@@ -122,7 +158,9 @@ orc.exposeFunction(
     return {
       plugin: PLUGIN_NAME,
       skill: SKILL_NAME,
+      coordinatorSkills: [SPECULATIVE_ATTACK_SKILL_NAME],
       policyPath: resolvedPolicyPath,
+      speculativeAttackSkillPath: SPECULATIVE_ATTACK_SKILL_PATH,
       policyLoaded: typeof cachedPolicy === "string",
       policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
       workspace: "~/work/dev-hermit",
