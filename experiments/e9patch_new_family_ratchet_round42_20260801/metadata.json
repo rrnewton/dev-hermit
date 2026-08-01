@@ -1,0 +1,33 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round42",
+  "date": "2026-08-01",
+  "question": "Can seven inert guests on new fcntl-OP, ioctl, socket-option, madvise-advice, and xattr axes reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all seven kept at L2; corpus 268 -> 275, 275/275 PASS_L2. One prctl candidate dropped (golden -ENOSYS vs native -EINVAL).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1409",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1408",
+  "branch": "codex/e9patch-corpus-round42-families",
+  "commit_sha": "1c14749b5d0dc7efbd5d881ee862e4059d909a89",
+  "base_branch": "codex/e9patch-corpus-round41-families",
+  "base_sha": "cd7cdbab603c905347e105a6f73ed500021b2306",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "fcntl_setpipe_sz", "syscall": "fcntl(72) F_SETPIPE_SZ=1031", "stdout": "setpipesz=4096"},
+    {"guest": "fcntl_ofd_getlk_memfd", "syscall": "fcntl(72) F_OFD_GETLK=36", "stdout": "ofdgetlk=2"},
+    {"guest": "ioctl_fioclex_pipe", "syscall": "ioctl(16) FIOCLEX=0x5451", "stdout": "fioclex=0"},
+    {"guest": "getsockopt_rcvtimeo", "syscall": "getsockopt(55) SO_RCVTIMEO=20", "stdout": "rcvtimeo=0"},
+    {"guest": "setsockopt_broadcast", "syscall": "setsockopt(54) SO_BROADCAST=6", "stdout": "setbroadcast=0"},
+    {"guest": "madvise_cold", "syscall": "madvise(28) MADV_COLD=20", "stdout": "madvcold=0"},
+    {"guest": "listxattr_devnull", "syscall": "listxattr(194) /dev/null size query", "stdout": "listxattr=0"}
+  ],
+  "dropped": [
+    {"candidate": "prctl_get_fp_mode", "syscall": "prctl(157) PR_GET_FP_MODE=46", "reason": "golden hermit -ENOSYS(-38) vs native -EINVAL(-22); hermit limitation not parity (#152)"}
+  ],
+  "corpus_size_before": 268,
+  "corpus_size_after": 275,
+  "net_delta": 7,
+  "full_corpus_run": "RATCHET e9patch: 275/275 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
