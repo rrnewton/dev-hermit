@@ -1,0 +1,48 @@
+{
+  "experiment": "e9patch_scorecard_emission",
+  "date": "2026-08-01",
+  "question": "Emit honest L1-vs-L2 e9patch preprocessing-invariance cells into the compat-envelope scorecard (dedicated CSV, not a backend column). For each freestanding raw-syscall corpus guest, is the e9tool-rewritten ELF's output under ptrace bitwise-identical (L2) to the same guest un-rewritten (golden reference)?",
+  "run_id": "e9patch-20260801",
+  "repo": {
+    "parent_commit": "15d4726",
+    "parent_remote": "https://github.com/rrnewton/dev-hermit.git",
+    "hermit_sha": "b1fdeaf6d7bcda0799a7a5c4f116bbe1ed55a43d",
+    "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a"
+  },
+  "artifacts": {
+    "collector": "compat-envelope/collect-e9patch-compat.rs",
+    "csv": "compat-envelope/e9patch-scorecard.csv",
+    "docs": "compat-envelope/README.md (## e9patch compat section)"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"],
+    "strict_timeout_s": 45,
+    "verify_timeout_s": 90,
+    "verify_retries": 3,
+    "host_note": "Heavy fleet PMU contention during the run (loadavg ~75-140, ~49 concurrent --verify). Strict+verify wedge retries kept all cells honest; every guest reached L2 on both arms after retry (0 residual env wedges in the final tally)."
+  },
+  "measurement": {
+    "arms_per_guest": ["ptrace (golden reference, parity=None)", "e9patch (rewritten variant, parity = e9==golden)"],
+    "L2_definition": "hermit run --strict --verify prints 'Determinism verified' AND exits 0",
+    "deterministic_semantics": "1 iff L2; 0 for L1-only; blank for a strict-wedge (env, outcome=skip)",
+    "regression_definition": "parity-diverge OR real non-124 run-fail; env wedges are NOT regressions"
+  },
+  "corpus_size": 227,
+  "result": {
+    "guests_total": 227,
+    "L2_parity": 227,
+    "parity_pct": "100%",
+    "determinism_pct": "100%",
+    "parity_diverge": 0,
+    "run_fail": 0,
+    "strict_wedged": 0,
+    "l1_only": 0,
+    "assert_green": "GREEN",
+    "csv_rows": 454,
+    "rendered": "e9patch-corpus 227 ptrace / 100%,100% e9patch"
+  }
+}
