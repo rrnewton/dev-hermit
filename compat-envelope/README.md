@@ -44,6 +44,88 @@ All `.rs` files are [`rust-script`](https://rust-script.org) executables
 (`chmod +x`, run directly). They resolve their own directory via
 `RUST_SCRIPT_BASE_PATH`, so default CSV paths land next to the script.
 
+## Data flow: `validate` → intermediate → CSV → scorecard
+
+The compat data is **not** produced by `cargo nextest`. It comes from Hermit's
+own e2e runner, `hermit/ci/test_harness.sh` — a bash + `jq` harness that runs each
+manifest cell and emits results. `safe-ci-dag-runner` is still used, but **only in
+GitHub CI**, where it *schedules* `test_harness.sh run` steps in cgroup-boxed DAG
+nodes (`hermit/ci/dag/{portable,privileged}.json` via `hermit/ci/run-dag.sh`); it
+does not replace the harness or introduce nextest.
+
+The intermediate format is **JSONL** (one JSON record per cell). The harness's
+`append_result` writes `results.jsonl`; it *also* emits a parallel `junit.xml`
+(for CI test reporting), but the collectors consume the **JSONL**, never the
+JUnit.
+
+Two concrete pipelines share that runner:
+
+**CI split lanes** (portable / privileged), driven by `.github/workflows/compat-envelope.yml`:
+
+```
+make compat-envelope            (Makefile; builds release hermit --features dbi)
+  └─ compat-envelope/validate-envelope.sh --lane portable
+      └─ compat-envelope/collect-envelope.rs --mode regression --with-parity --assert-green
+          ├─ bash hermit/ci/test_harness.sh plan --lane L --format json      → cell list
+          ├─ bash hermit/ci/test_harness.sh run  --lane L --category B --backend BE
+          │      --results hermit/target/e2e/compat-envelope/L/B/BE.jsonl     ← JSONL intermediate
+          │      (bash+jq runner — NOT nextest; also emits …/junit.xml)
+          ├─ reads that JSONL (outcome, duration_ms, reason)
+          ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → parity
+          └─ appends 19-col rows → compat-envelope/scorecard.csv
+      └─ collect-reverie-compat.rs → reverie-scorecard.csv
+      └─ render-scorecard.rs --csv scorecard.csv --all               → rendered table
+```
+
+**Local definition-of-done** (`make validate`, this repo, a box with `/dev/kvm`):
+
+```
+make validate → compat-envelope-fullcorpus
+  └─ builds release hermit --features third-party-backends
+  └─ compat-envelope/collect-fullcorpus.sh
+      (enumerates the FULL 200-cell corpus, auto-detects every runnable backend,
+       ptrace FIRST to write the plain --strict parity reference, then each backend)
+      → compat-envelope/fullcorpus-scorecard.csv  → render-scorecard.rs
+```
+
+**Storage paths.**
+
+| Artifact | Path |
+| --- | --- |
+| Harness result root | `hermit/target/e2e/` (`E2E_RESULT_ROOT` override) |
+| CI DAG JSONL + JUnit | `hermit/target/e2e/<lane>/<category>/{results.jsonl,junit.xml}` |
+| Collector JSONL | `hermit/target/e2e/compat-envelope/<lane>/<bucket>/<backend>.jsonl` |
+| CSV compat-logs | `compat-envelope/{scorecard,fullcorpus-scorecard,reverie-scorecard}.csv` (this outer repo) |
+| Raw logs / scratch | `compat-envelope/ignored/` (gitignored) |
+
+## Local full-corpus gate (`collect-fullcorpus.sh`)
+
+`collect-envelope.rs` measures the portable, ci=true subset — the right scope for
+a GitHub runner that may lack `/dev/kvm` or the feature build. On a fully
+provisioned local box the definition-of-done should instead be the **union of
+both lanes = the full ~200-cell verify corpus across every runnable backend**.
+`collect-fullcorpus.sh` does exactly that and is what `make validate` runs locally
+(the split targets stay CI-only):
+
+- Enumerates the full corpus from `corpus/corpus-c.tsv` (184 compiled C guests) +
+  `corpus/corpus-nonc.tsv` (16 shell/interpreter cells) — the same denominator as
+  `corpus-manifest.csv`.
+- **Auto-detects** backends from the binary's `--backend` enum + host
+  (`/dev/kvm` for KVM; `--features third-party-backends` for dbi/sabre/e9patch);
+  a missing backend is recorded `n/a`, never a false red.
+- Runs **ptrace first** to write the parity reference, then each other backend:
+  `det` = `--strict --verify` exits 0; `parity` = backend stdout SHA-256 ==
+  reference.
+- **Parity reference gotcha (important):** the reference is captured with plain
+  `hermit run --strict`, *not* `--strict --verify`. `--verify` does an internal
+  double-run and emits **no** guest stdout to the parent, so a `--verify` capture
+  is 0 bytes and every backend's parity-vs-reference collapses to ~0. Cells where
+  ptrace itself fails under plain `--strict` are marked (`ptv.fail`) so downstream
+  backends record `parity=""` (unmeasured), never a false empty-vs-empty match.
+- **Ratchet-asserts** each backend's det count against a measured floor
+  (`82a8e853`: ptrace 179, e9patch 179, sabre 164, dbi 156, kvm 130, liteinst
+  118); a drop below the floor fails the gate.
+
 ## CSV schema (shared contract)
 
 ```

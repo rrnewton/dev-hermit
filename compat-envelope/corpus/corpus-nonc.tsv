@@ -1,0 +1,16 @@
+applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run
+data-handling/archive-roundtrip|portable|HERMITROOT/tests/e2e/data-handling/archive-roundtrip.sh --run
+data-handling/shell-pipeline|portable|HERMITROOT/tests/e2e/data-handling/shell-pipeline.sh --run
+determinism-stress/process-chains|portable|HERMITROOT/tests/e2e/determinism-stress/process-chains.sh --run
+determinism-stress/thread-contention|portable|HERMITROOT/tests/e2e/determinism-stress/thread-contention.sh --run
+determinism-stress/thread-output|portable|HERMITROOT/tests/e2e/determinism-stress/thread-output.sh --run
+language-runtimes/bash-loop-pipe-time|portable|HERMITROOT/tests/e2e/language-runtimes/bash-loop-pipe-time.sh --run
+language-runtimes/gawk-random|portable|HERMITROOT/tests/e2e/language-runtimes/gawk-random.sh --run
+language-runtimes/perl-io-subprocess-time|portable|HERMITROOT/tests/e2e/language-runtimes/perl-io-subprocess-time.sh --run
+language-runtimes/python-hash-determinism|portable|HERMITROOT/tests/e2e/language-runtimes/python-hash-determinism.sh --run
+language-runtimes/python-io-subprocess-time|portable|HERMITROOT/tests/e2e/language-runtimes/python-io-subprocess-time.sh --run
+language-runtimes/python-random|portable|HERMITROOT/tests/e2e/language-runtimes/python-random.sh --run
+system-utils/date-nanoseconds|portable|HERMITROOT/tests/e2e/system-utils/date-nanoseconds.sh --run
+system-utils/openssl-passwd|portable|HERMITROOT/tests/e2e/system-utils/openssl-passwd.sh --run
+system-utils/proc-uptime|portable|HERMITROOT/tests/e2e/system-utils/proc-uptime.sh --run
+system-utils/random-device|portable|HERMITROOT/tests/e2e/system-utils/random-device.sh --run
