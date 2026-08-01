@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round36",
+  "date": "2026-08-01",
+  "question": "Do six inert query/no-op probes on uncovered socket/madvise/mmap/open/wait axes — getsockopt SO_DOMAIN and SO_PROTOCOL, madvise MADV_FREE, mmap MAP_STACK, open O_DIRECTORY, and the waitid no-children ECHILD boundary — reach L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_base_sha": "f9f50a29a0733e66ecc325eec7e27059849cf501",
+    "hermit_branch": "codex/e9patch-corpus-round36-socket-madvise-mmap",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1399",
+    "pr": "https://github.com/rrnewton/hermit/pull/1401"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"],
+    "note": "Fleet PMU contended during vetting (dozens of concurrent --verify). These probes have minimal RCBs and hit L2 for both golden and e9. Vetting used a killpg-on-wedge retry harness (compat-envelope/collect-e9patch-compat.rs) for the verify legs: every ptrace arm det=1, every e9patch arm det=1 par=1, output_hash byte-identical between golden and e9 arms for all six guests. Any non-pass among the 233 PRE-EXISTING guests in a contended full run is a transient PMU verify-wedge, not a regression from this additive change."
+  },
+  "corpus_size": {"before": 233, "after": 239},
+  "kept": [
+    {"guest": "getsockopt_domain", "syscall": "getsockopt(55) SO_DOMAIN", "expected_stdout": "domain=1\\n"},
+    {"guest": "getsockopt_protocol", "syscall": "getsockopt(55) SO_PROTOCOL", "expected_stdout": "protocol=0\\n"},
+    {"guest": "madvise_free", "syscall": "madvise(28) MADV_FREE", "expected_stdout": "madvfree=0\\n"},
+    {"guest": "mmap_stack", "syscall": "mmap(9) MAP_STACK", "expected_stdout": "mmapstack=42\\n"},
+    {"guest": "open_directory", "syscall": "open(2) O_DIRECTORY", "expected_stdout": "opendir=3\\n"},
+    {"guest": "waitid_nochild", "syscall": "waitid(247) ECHILD", "expected_stdout": "waitid=10\\n"}
+  ],
+  "dropped": [],
+  "result": {
+    "native": "6/6 exit 0 with expected stdout",
+    "golden_ptrace": "6/6 L2 Determinism verified; native==golden and expected stdout matched",
+    "e9patch": "6/6 PASS_L2; scorecard collector: every ptrace arm det=1, every e9patch arm det=1 par=1, output_hash byte-identical between golden and e9 arms for each guest",
+    "full_corpus_run": "clean run 239/239 PASS_L2 (0 non-passes) on the first pass; all 6 new guests PASS_L2 with sites c/1 m/1 b0/0, prologue=8, tail_match=yes",
+    "inventory_audit": "EXIT=0 (617 files, 272 guest-fixtures)"
+  }
+}
