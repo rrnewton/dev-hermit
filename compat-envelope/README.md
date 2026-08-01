@@ -33,12 +33,14 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | --- | --- |
 | `collect-envelope.rs` | **Hermit** collector. Drives `hermit/ci/test_harness.sh`, consumes its JSONL, and appends rows to `scorecard.csv`. Two modes (below). `--assert-green` turns it into the regression gate. |
 | `collect-reverie-compat.rs` | **Reverie** collector (owner directive #1, run first). Runs the shared Reverie counter Tool through the ptrace and KVM launchers and records ptrace-vs-kvm parity into `reverie-scorecard.csv`. |
+| `collect-e9patch-compat.rs` | **e9patch** collector. Runs the freestanding raw-syscall corpus through the ptrace backend both un-rewritten (golden) and e9tool-rewritten, and records preprocessing-invariance (golden-vs-e9 parity) with honest L1/L2 levels into `e9patch-scorecard.csv`. e9patch is NOT a Detcore backend (see below), so it lives in its own CSV like reverie. |
 | `expansion-dag.rs` | Generates the **expansion-mode** safe-ci-dag-runner DAG: one boxed step per cell with per-cell wall-time + memory budgets, plus a dated evidence run dir. |
-| `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by both collectors. |
+| `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by all collectors. |
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
 | `reverie-scorecard.csv` | Reverie B1.5 Guest/Tool-boundary results (same schema). |
+| `e9patch-scorecard.csv` | e9patch preprocessing-invariance results over the ptrace backend (same schema). |
 
-All three `.rs` files are [`rust-script`](https://rust-script.org) executables
+All `.rs` files are [`rust-script`](https://rust-script.org) executables
 (`chmod +x`, run directly). They resolve their own directory via
 `RUST_SCRIPT_BASE_PATH`, so default CSV paths land next to the script.
 
@@ -139,11 +141,57 @@ surfaces a **constant 4 fewer syscalls** to the shared Tool callback than ptrace
 interception-surface gap, not a determinism defect, and is exactly the honest
 B1.5 signal the scorecard is meant to expose.
 
+## e9patch compat (preprocessing over ptrace, NOT a backend)
+
+`collect-e9patch-compat.rs` measures **preprocessing-invariance**, not a
+cross-backend parity. `hermit/AGENTS.md` is explicit that e9patch is not a
+Detcore backend — it is binary-rewriting preprocessing used *with* the ptrace
+backend. So this collector runs the freestanding raw-syscall corpus
+(`hermit/tests/backend-parity/e9patch_corpus/*.c`) through the ptrace backend in
+two arms and asks: is the e9tool-rewritten ELF's output bitwise-identical (L2) to
+the same guest run **without** rewriting (the golden reference)?
+
+- The `ptrace` column is the golden, un-rewritten reference arm (the denominator).
+- The `e9patch` column is the e9tool-rewritten variant arm; its `parity` = e9
+  output == golden output, both under ptrace.
+
+It lives in its own `e9patch-scorecard.csv` (like reverie), never as a column in
+the backend `scorecard.csv`, because a literal `e9patch` token in a backend field
+would misread as a Detcore backend and violate the #152 anti-fakery gate.
+
+**Honest L1 vs L2.** `deterministic=1` means the arm reached **L2** (`hermit run
+--strict --verify` printed "Determinism verified" and exited cleanly). An arm
+that ran under `--strict` (**L1**) but whose `--verify` leg did not confirm a
+bitwise repeat is recorded with `deterministic=0` and a `reason` that says whether
+L2 was missed because the verify leg **wedged** (PMU contention — an environment
+limitation, `outcome=l1`, not a regression) or genuinely **diverged**
+(`outcome=diverge` — a real finding). L1 is never reported as L2.
+
+Both the strict and verify legs are retried up to `--verify-retries` (default 3)
+whenever they wedge or skid-panic under fleet PMU load. If even the strict leg
+never clears on any retry, the arm is unmeasurable environment noise, not a
+confirmed red: it is recorded `outcome=skip` with **blank** determinism (never
+`0`), so an env wedge is never rendered as a failing cell. A real non-124 strict
+exit is the only `outcome=fail`.
+
+```bash
+export HERMIT_E9TOOL=../worktrees/e9patch/reverie/third-party/e9patch/e9tool
+export HERMIT_E9PATCH_BACKEND=../worktrees/e9patch/reverie/third-party/e9patch/e9patch
+./collect-e9patch-compat.rs --csv e9patch-scorecard.csv --assert-green
+./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch --latest
+```
+
+`--assert-green` treats only real defects (parity divergence or run failure) as
+regressions; an environment verify-wedge (L1-only) is reported, not failed. The
+e9 arm requires a hermit built `--features e9patch` plus `e9tool`/`e9patch` on
+disk (defaults resolve to the `worktrees/e9patch` checkout).
+
 ## Rendering
 
 ```bash
 ./render-scorecard.rs --all                       # hermit, default denominator=verify
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter --backends kvm --all
+./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch --latest
 ./render-scorecard.rs --all --json                # machine-readable
 ./render-scorecard.rs --latest                    # only the newest run_id
 ```
