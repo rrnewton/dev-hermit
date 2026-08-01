@@ -26,6 +26,7 @@ debug/
     evidence.json        # [{id, desc, hypotheses[], artifact, source}]
     suspects.json        # [{id, sha, subject, subsystem, files[], priority,
                          #   status: open|cleared|confirmed, reasoning}]
+    history/events.jsonl # append-only source journal (when an episode has one)
     NOTEBOOK.md          # AGENT-SYNTHESIZED curated prose synopsis (see below)
     .notebook-state.json # snapshot of the machine-readable state at last sync
     VCS_MISSING.md       # what's NOT checked in (regeneratable? code depends on it?)
@@ -91,6 +92,7 @@ Read queries (add `--json` to any for machine-readable output):
 ./debug/dbg suspects   <episode> --status all          # ALL suspects
 ./debug/dbg suspects   <episode> --open                # REMAINING OPEN suspects (regressor hunt)
 ./debug/dbg evidence   <episode> [--hypothesis Hn]
+./debug/dbg history    <episode> [--kind KIND] [--hypothesis Hn] [--suspect Sn]
 ./debug/dbg show       <episode> <id|sha-prefix>       # full record as JSON
 ./debug/dbg notebook   <episode>                       # print the curated NOTEBOOK.md
 ./debug/dbg changed    <episode>                        # what changed since last notebook sync
@@ -100,6 +102,12 @@ Read queries (add `--json` to any for machine-readable output):
 
 `dbg new-episode <slug>` scaffolds the JSON + a starter `.gitignore`, `VCS_MISSING.md`,
 and an `ignored/` dir so raw artifacts have a gitignored home from the start.
+
+`history/events.jsonl`, when present, is the immutable source journal behind the
+current snapshots and notebook. `dbg history` is intentionally read-only: it validates
+strictly increasing sequence numbers and unique event IDs, then filters by event kind,
+hypothesis, suspect, or sequence range. Corrections append a new event with
+`supersedes`; never edit or delete an earlier line.
 
 Write ops (persist back to the JSON):
 
@@ -130,10 +138,11 @@ Write ops (persist back to the JSON):
 
 - **`demo5-regression`** — the demo5 QEMU-boot wedge under `--no-rcb-time`.
   Migrated from `experiments/demo5-rootcause-20260731/` (lead hermit-226 + fleet
-  210/231/237/238). 7 hypotheses (H1–H4,H6 confirmed; H7 killed; H5 open on
-  perf), 11 evidence items, and **20 open suspects** seeded from the
-  scheduler/time commits in `2a7ca98..ae2565be` (8 high-priority). See
-  `./debug/dbg summary demo5-regression`.
+  210/231/237/238). Its suspect search converged on parent commit `0591104`:
+  all 20 Hermit scheduling/time candidates were cleared and the demo flag change
+  was confirmed. The episode also includes the append-only investigation journal.
+  See `./debug/dbg summary demo5-regression` and
+  `./debug/dbg history demo5-regression`.
 
 ## Relationship to experiments/
 

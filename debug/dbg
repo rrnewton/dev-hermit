@@ -21,6 +21,7 @@ Usage:
   ./debug/dbg hypotheses <episode> [--status open|closed|all] [-v]
   ./debug/dbg suspects   <episode> [--status open|cleared|confirmed|all] [--open] [-v]
   ./debug/dbg evidence   <episode> [--hypothesis Hn]
+  ./debug/dbg history    <episode> [--kind KIND] [--hypothesis Hn] [--suspect Sn] [-v]
   ./debug/dbg show       <episode> <id>
   ./debug/dbg summary    <episode>
 
@@ -192,6 +193,97 @@ def cmd_evidence(a):
             print(f"    artifact: {e['artifact']}")
         if e.get("source"):
             print(f"    source: {e['source']}")
+
+
+def _load_history(slug: str) -> list[dict]:
+    """Read and structurally validate the episode's append-only JSONL journal."""
+    p = episode_dir(slug) / "history" / "events.jsonl"
+    if not p.exists():
+        return []
+
+    events = []
+    seen_ids = set()
+    previous_seq = 0
+    for line_number, raw in enumerate(p.read_text().splitlines(), 1):
+        if not raw.strip():
+            sys.exit(f"{p}:{line_number}: blank lines are not valid history events")
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            sys.exit(f"{p}:{line_number}: invalid JSON: {exc.msg}")
+        if not isinstance(event, dict):
+            sys.exit(f"{p}:{line_number}: history event must be a JSON object")
+
+        seq = event.get("seq")
+        event_id = event.get("event_id")
+        if not isinstance(seq, int) or seq <= previous_seq:
+            sys.exit(f"{p}:{line_number}: seq must be an integer greater than "
+                     f"{previous_seq}, got {seq!r}")
+        if not isinstance(event_id, str) or not event_id:
+            sys.exit(f"{p}:{line_number}: event_id must be a non-empty string")
+        if event_id in seen_ids:
+            sys.exit(f"{p}:{line_number}: duplicate event_id {event_id!r}")
+        previous_seq = seq
+        seen_ids.add(event_id)
+        events.append(event)
+    return events
+
+
+def _history_ref_matches(refs, wanted: str) -> bool:
+    for ref in refs or []:
+        if isinstance(ref, dict):
+            if wanted in (ref.get("id"), ref.get("slug")):
+                return True
+        elif wanted == ref:
+            return True
+    return False
+
+
+def cmd_history(a):
+    events = _load_history(a.episode)
+    if a.kind:
+        events = [e for e in events if e.get("kind") in a.kind]
+    if a.hypothesis:
+        events = [e for e in events
+                  if _history_ref_matches(e.get("hypothesis_refs"), a.hypothesis)]
+    if a.suspect:
+        events = [e for e in events
+                  if _history_ref_matches(e.get("suspect_refs"), a.suspect)]
+    if a.since_seq is not None:
+        events = [e for e in events if e.get("seq", 0) >= a.since_seq]
+    if a.until_seq is not None:
+        events = [e for e in events if e.get("seq", 0) <= a.until_seq]
+
+    if a.json:
+        print(json.dumps(events, indent=2))
+        return
+    if not events:
+        print("(no history events matching the query)")
+        return
+
+    print(f"{len(events)} history event(s)")
+    for event in events:
+        print(f"\n{event['seq']:04d} {event['event_id']}  "
+              f"[{event.get('kind', '?')}]  {event.get('observed_at', '?')}")
+        print(wrap(event.get("summary", ""), "    "))
+        hrefs = [r.get("id") or r.get("slug") for r in event.get("hypothesis_refs", [])
+                 if isinstance(r, dict)]
+        srefs = [r.get("id") or r.get("slug") if isinstance(r, dict) else r
+                 for r in event.get("suspect_refs", [])]
+        refs = [*filter(None, hrefs), *filter(None, srefs)]
+        if refs:
+            print(f"    refs: {', '.join(refs)}")
+        if a.verbose:
+            source = event.get("source")
+            if source:
+                print(f"    source: {json.dumps(source, sort_keys=True)}")
+            details = event.get("details")
+            if details:
+                print(f"    details: {json.dumps(details, sort_keys=True)}")
+            for artifact in event.get("artifacts", []):
+                print(f"    artifact: {artifact}")
+            if event.get("supersedes"):
+                print(f"    supersedes: {', '.join(event['supersedes'])}")
 
 
 def cmd_show(a):
@@ -540,6 +632,16 @@ def main():
 
     p = sub.add_parser("evidence"); p.add_argument("episode")
     p.add_argument("--hypothesis"); add_json(p); p.set_defaults(fn=cmd_evidence)
+
+    p = sub.add_parser("history", help="query the read-only append-only event journal")
+    p.add_argument("episode")
+    p.add_argument("--kind", action="append", help="event kind (repeatable)")
+    p.add_argument("--hypothesis", help="hypothesis id or slug")
+    p.add_argument("--suspect", help="suspect id or slug")
+    p.add_argument("--since-seq", type=int, help="include events at or after this seq")
+    p.add_argument("--until-seq", type=int, help="include events at or before this seq")
+    p.add_argument("-v", "--verbose", action="store_true"); add_json(p)
+    p.set_defaults(fn=cmd_history)
 
     p = sub.add_parser("show"); p.add_argument("episode"); p.add_argument("id")
     p.set_defaults(fn=cmd_show)

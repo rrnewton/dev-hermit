@@ -1,7 +1,8 @@
 # debug/ episode schema
 
-Three JSON files per episode, all lists except `episode.json`. Stable, small,
-diff-friendly, and consumed by `dbg` (and directly by `jq`).
+Three JSON snapshot files per episode, all lists except `episode.json`. Stable,
+small, diff-friendly, and consumed by `dbg` (and directly by `jq`). Episodes may
+also carry an append-only JSONL history journal.
 
 ## episode.json (object)
 
@@ -57,6 +58,30 @@ touched the relevant subsystem, but can be any candidate cause.
 | `priority` | `high`\|`medium`\|`low` | relevance to the failing subsystem |
 | `status` | `open`\|`cleared`\|`confirmed` | `open` = not yet ruled out |
 | `reasoning` | string | why a suspect; cross-refs to hypotheses; clear/confirm notes |
+
+## history/events.jsonl (append-only event objects)
+
+Each line is one complete JSON object. This is an immutable source journal: append
+new observations and corrections, but never rewrite or remove an earlier event.
+Snapshots and the curated notebook are projections of the journal's current state.
+`dbg history` reads and filters it; no CLI command mutates it.
+
+| field | type | meaning |
+|---|---|---|
+| `schema_version` | string | event envelope version, currently `demo5-history/v1` |
+| `seq` | integer | strictly increasing episode-local sequence |
+| `event_id` | string | unique stable ID, e.g. `D5-000001` |
+| `observed_at` | timestamp | when the source observation happened |
+| `recorded_at` | timestamp | when the journal event was appended |
+| `source` | object | agent, task, source-note time, and stable note ID/hash |
+| `kind` | string | `finding`, `hypothesis_proposed`, `hypothesis_status`, `evidence`, `suspect_status`, `artifact`, or `correction` |
+| `hypothesis_refs` | list | referenced `{id, slug}` pairs |
+| `suspect_refs` | list | referenced suspect IDs/slugs |
+| `summary` | string | concise statement of the event |
+| `details` | object | structured event-specific facts |
+| `artifacts` | list | evidence paths or URLs |
+| `supersedes` | list | prior event IDs corrected by this event |
+| `tags` | list | searchable classification labels |
 
 ## NOTEBOOK.md (curated prose) + .notebook-state.json
 
