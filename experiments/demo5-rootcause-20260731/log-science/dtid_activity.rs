@@ -32,6 +32,7 @@
 //!   * `DETLOG [syscall]...[detcore, dtid D] inbound syscall:`
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::{self, Read};
 
 #[derive(Default, Clone)]
@@ -44,6 +45,27 @@ struct Dtid {
     first_vt_ns: Option<i128>,
     last_vt_ns: Option<i128>,
     exited: bool, // saw an exit()/exit_group() for this dtid: it is DONE, not starved
+    syscall_hist: HashMap<String, u64>, // syscall name -> count (role fingerprint)
+}
+
+/// The syscall name in `inbound syscall: <name>(...)`.
+fn inbound_syscall_name(line: &str) -> Option<&str> {
+    let i = line.find("inbound syscall: ")? + "inbound syscall: ".len();
+    let rest = &line[i..];
+    let end = rest.find(['(', ' ', ':']).unwrap_or(rest.len());
+    let name = rest[..end].trim();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Compact "name×count" of the top-`k` syscalls for a dtid (its role fingerprint).
+fn top_syscalls(hist: &HashMap<String, u64>, k: usize) -> String {
+    let mut v: Vec<(&String, &u64)> = hist.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    v.iter()
+        .take(k)
+        .map(|(n, c)| format!("{}×{}", n, c))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parse a virtual-time literal like `1_640_995_199.000_500_000s` into ns.
@@ -119,6 +141,9 @@ fn main() {
             if let Some(d) = cur_owner {
                 let e = map.entry(d).or_default();
                 e.syscalls += 1;
+                if let Some(name) = inbound_syscall_name(line) {
+                    *e.syscall_hist.entry(name.to_string()).or_insert(0) += 1;
+                }
                 if line.contains("inbound syscall: exit_group(")
                     || line.contains("inbound syscall: exit(")
                 {
@@ -240,5 +265,16 @@ fn main() {
              deadline-less unproductive-poller wedge -- the poller keeps the run queue non-empty \
              so committed vtime races ahead while the starved thread's next event is never reached."
         );
+    }
+    println!();
+
+    // Role fingerprints: the top syscalls per dtid. dtid NUMBERS are assigned by
+    // creation order and are NOT stable across runs (an extra thread shifts them),
+    // so when diffing two runs, match threads by this fingerprint, not by number.
+    println!("=== per-dtid role fingerprint (top syscalls; match ACROSS runs by this, not by dtid#) ===");
+    let mut rows2: Vec<(&u64, &Dtid)> = map.iter().collect();
+    rows2.sort_by_key(|(_, s)| std::cmp::Reverse(s.turns));
+    for (d, s) in rows2 {
+        println!("  dtid {:>3} ({:>7} turns): {}", d, s.turns, top_syscalls(&s.syscall_hist, 4));
     }
 }

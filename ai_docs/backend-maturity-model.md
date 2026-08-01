@@ -213,7 +213,7 @@ about unmeasured newer commits.
 | Backend | Current proven level | Evidence and next failing gate |
 | --- | --- | --- |
 | **ptrace** | **B2.1** | The scorecard passes 5/5 examples locally and defines the ptrace single-run reference. No same-SHA result proves all 183 C manifest rows, so B2.2 is not claimed. |
-| **KVM** | **B2 base** | It passes 5/5 backend-local example verification but matches ptrace guest output on only 2/5 (`rand.py`, `timed-progress-bar.py`). It therefore fails B2.1. The B1.5 audit also found child syscalls bypassing Tool callbacks. |
+| **KVM** | **B2 base** | It passes 5/5 backend-local example verification but matches ptrace guest output on only 2/5 (`rand.py`, `timed-progress-bar.py`) on the example set. It therefore fails B2.1. The `2f3689bd` audit confirmed KVM runs canonical Detcore with genuine per-child callbacks (21/23 exact-main L2, no relaxation), so the earlier "child syscalls bypass Tool callbacks" finding is withdrawn; the B2→B3 gap is corpus breadth, not the execution model. |
 | **DBI** | **B2 base** | It passes 4/5 backend-local verification; `race.sh` changes schedule between its two runs. It matches ptrace output on 2/5 examples and therefore fails B2.1 before later corpus gates are considered. |
 | **SaBRe** | **B2 base** | It passes 5/5 backend-local verification but matches ptrace output on only 1/5 (`timed-progress-bar.py`). Different time, random, and race outputs fail B2.1. |
 
