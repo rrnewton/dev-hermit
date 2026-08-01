@@ -1,0 +1,110 @@
+{
+  "experiment": "stress-test-under-load_20260731",
+  "task": "stress-test-under-load-harness",
+  "purpose": "Load-independence guardrail: provoke load-induced determinism failures (P0) by running Hermit determinism tests x N concurrently and diffing output hash / verify verdict / schedule fingerprint across identical reps.",
+  "date": "2026-07-31",
+  "repo_shas": {
+    "hermit": "1ece0654e39c67fa0555dfde645a8da61eb2f059",
+    "hermit_branch": "main",
+    "hermit_remote": "https://github.com/rrnewton/hermit.git",
+    "reverie": "aa6f1283aeee3efd174c57f6dd8198310bd307e1",
+    "parent": "8776039db0c69549aa658fd0b15080f56c1a07f5"
+  },
+  "host": {
+    "hostname": "devbig014.atn7.facebook.com",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": 316,
+    "cpu": "AMD EPYC 9D85 158-Core Processor",
+    "mem_total_gib": 754,
+    "mem_avail_gib": 544,
+    "cgroup": "v2, delegated io+memory+pids (NOT cpu); systemd --user scopes available",
+    "python": "3.12"
+  },
+  "toolchain": {
+    "hermit_bin": "target/release/hermit",
+    "safe_ci_dag_runner": "hermit/agent-utils/py/safe_ci_dag_runner"
+  },
+  "stack": [
+    "safe-ci-dag-runner: singleton DAG, outer cgroup MemoryMax cap (systemd --user scope, Delegate=yes, MemorySwapMax=0), verified active before run, per-step + whole-run resource CSVs (profiling), full-descendant reap on exit",
+    "harness.py: bounded worker pool (Nprocs..2xNprocs) of parallel `hermit run --strict --verify` reps in reps or timed(fair-hot-loop) mode",
+    "cross-rep divergence detection: output-hash / verify-verdict / schedule-fingerprint == P0"
+  ],
+  "workload_suite": {
+    "date": "bash examples/date.sh",
+    "devrand": "bash examples/devrand.sh",
+    "rand": "python3 examples/rand.py",
+    "progressbar": "python3 examples/timed-progress-bar.py",
+    "pipeline": "bash -c 'echo hermit-load-guardrail | gzip | gunzip | sha256sum'",
+    "excluded": {"race": "examples/race.sh intentionally chaotic; not a determinism oracle"}
+  },
+  "files": {
+    "run.sh": "CLI launcher; profiles smoke|validate|torture; redirects to results/<profile>_<ts>.log",
+    "guarded_run.py": "cgroup-boxed singleton-DAG safety+profiling wrapper (No-Silent-Failure cap gate)",
+    "harness.py": "bounded worker-pool engine; per-rep 2-invocation oracle; _classify severity model",
+    "test_classify.py": "dependency-free self-test: 26 asserts over _classify (all P0 branches + precedence + timeout-tolerance) and _count_fp (order-invariance, move-detection, mismatch-preservation); python3 test_classify.py, exit 0 = OK"
+  },
+  "commands": {
+    "smoke": "./run.sh smoke",
+    "validate": "./run.sh validate",
+    "torture": "./run.sh torture"
+  },
+  "severity_model": {
+    "GREEN": "all reps agree (1 output hash, verify passes, 1 count fingerprint)",
+    "P0_OUTPUT_DIVERGENCE": ">1 distinct output hash across reps",
+    "P0_VERIFY_FLIP": "verify passes some reps, fails others",
+    "P0_SCHEDULE_FP_DIVERGENCE": ">1 distinct schedule fingerprint across reps",
+    "PREEXISTING_VERIFY_FAIL": "verify fails consistently (real bug, not load-induced)",
+    "INCONCLUSIVE": "too few reps scored (e.g. all timed out)",
+    "timeouts": "recorded as perf note, never P0 alone"
+  },
+  "smoke_result": {
+    "profile": "smoke (reps x2, pool 8, mem_cap 8G)",
+    "wall_s": 159.3,
+    "overall": "GREEN (rc=0)",
+    "ambient_load": {"min": 72.86, "max": 90.4, "avg": 81.45, "samples": 54},
+    "cgroup": {"memory_max_bytes": 8589934592, "swap_max": 0, "memory_peak_bytes": 362659840, "oom_kill": 0},
+    "by_test": {
+      "date": {"verdict": "GREEN", "output_hash": "142e113ed20a5539", "verify": "2/2"},
+      "devrand": {"verdict": "GREEN", "output_hash": "f5edcf77a8645391", "verify": "2/2"},
+      "rand": {"verdict": "GREEN", "output_hash": "1c3d662e35b48901", "verify": "2/2"},
+      "pipeline": {"verdict": "GREEN", "output_hash": "6df2960214d3120d", "verify": "2/2"},
+      "progressbar": {"verdict": "INCONCLUSIVE", "note": "both reps hit 120s wall-clock timeout; correctly not a P0"}
+    }
+  },
+  "phase1_validate_result": {
+    "profile": "validate (reps x10, pool 316, mem_cap 64G, per_run_timeout 300)",
+    "wall_s": 302.6,
+    "overall": "GREEN (rc=0)",
+    "ambient_load": {"min": 56.41, "max": 238.28, "avg": 129.8, "samples": 101},
+    "cgroup": {"memory_max_bytes": 68719476736, "swap_max": 0, "memory_peak_bytes": 2124058624, "oom_kill": 0},
+    "by_test": {
+      "date": {"verdict": "GREEN", "reps_scored": 10, "output_hash": "bd10d6e1de07fa5a"},
+      "devrand": {"verdict": "GREEN", "reps_scored": 10, "output_hash": "f5edcf77a8645391"},
+      "rand": {"verdict": "GREEN", "reps_scored": 10, "output_hash": "1c3d662e35b48901"},
+      "progressbar": {"verdict": "GREEN", "reps_scored": 10, "output_hash": "d8778ce336753d09"},
+      "pipeline": {"verdict": "GREEN", "reps_scored": 10, "output_hash": "6df2960214d3120d"}
+    }
+  },
+  "phase2_timed_hotloop_smoke": {
+    "profile": "torture (timed fair hot-loop, minutes=3, pool auto=474, mem_cap 64G, per_run_timeout 120)",
+    "wall_s": 665.6,
+    "overall": "GREEN (rc=0)",
+    "ambient_load": {"min": 62.78, "max": 1247.7, "avg": 948.21, "samples": 222},
+    "cgroup": {"memory_max_bytes": 68719476736, "swap_max": 0, "memory_peak_bytes": 15866966016, "oom_kill": 0},
+    "total_runs_in_window": 876,
+    "fairness": "~175 runs per test (min-started picker)",
+    "by_test": {
+      "date": {"verdict": "GREEN", "runs": 176, "scored": 142, "timeouts": 34, "output_hash": "48118bb9f7129b89"},
+      "devrand": {"verdict": "GREEN", "runs": 175, "scored": 140, "timeouts": 35, "output_hash": "f5edcf77a8645391"},
+      "rand": {"verdict": "INCONCLUSIVE", "runs": 175, "scored": 0, "timeouts": 175, "note": "120s budget too tight at load ~948"},
+      "progressbar": {"verdict": "INCONCLUSIVE", "runs": 175, "scored": 0, "timeouts": 175, "note": "120s budget too tight at load ~948"},
+      "pipeline": {"verdict": "GREEN", "runs": 175, "scored": 79, "timeouts": 96, "output_hash": "6df2960214d3120d"}
+    }
+  },
+  "findings": {
+    "load_independence": "Held across ambient load 56->1247 (~20x swing): every test with >=2 scored reps produced exactly 1 output hash + 1 schedule fingerprint. No P0 across all three phases.",
+    "date_ns_cross_invocation_drift": "date.sh virtual epoch nanosecond field is byte-identical within a burst but drifts ~1.3us across separate hermit invocations minutes apart (smoke 142e/validate bd10/timed 48118b); NOT load-induced (stable within each run) so not a guardrail P0; separate owner-gated clock-domain investigation (cf #1095/PMU-skid/GuestClock).",
+    "real_torture_tuning": "Raise PER_RUN_TIMEOUT to ~600s and/or lower oversubscription factor toward 1.0-1.2 so rand/progressbar also score; fast tests carry the signal regardless. Timed-mode drain tail: deadline bounds STARTING reps; in-flight reps drain, so a 3-min window took 666s wall under extreme oversubscription."
+  },
+  "status": "BUILT + SMOKE + PHASE-1(reps x10) + PHASE-2(timed fair hot-loop smoke) all GREEN; cgroup cap verified active every run, 0 OOM; torture profile ARMED correct-by-default with Phase-2 tuning (OVERSUB=1.25, PER_RUN_TIMEOUT=600, STEP_TIMEOUT=minutes*60+per_run_timeout+600); real 1-hour torture HELD pending demo5 fix green+landed and main green"
+}

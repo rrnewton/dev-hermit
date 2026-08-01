@@ -1,0 +1,2 @@
+timestamp,machine_id,git_sha,nproc,wall_s,user_s,sys_s,result,n_steps,pct_we,pct_other,total_busy_pct,ipc,cache_miss_pct,jobs
+2026-07-31T22:07:38,AMD_EPYC_9D85_158-Core_Processor,c3b99b294889dc644a87e9cdec4e84a09625c1ce,316,302.8,284.5,3930.4,pass,1,4.4,27.97,32.37,,,1

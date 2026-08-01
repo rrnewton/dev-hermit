@@ -1,0 +1,97 @@
+{
+  "mode": "reps",
+  "timestamp": "20260731_220236",
+  "wall_s": 302.6,
+  "pool": 316,
+  "nproc": 316,
+  "per_run_timeout": 300,
+  "total_reps": 50,
+  "hermit_bin": "/home/newton/work/dev-hermit/hermit/target/release/hermit",
+  "ambient_load": {
+    "load_min": 56.41,
+    "load_max": 238.28,
+    "load_avg": 129.8,
+    "n": 101
+  },
+  "any_p0": false,
+  "any_preexisting_fail": false,
+  "by_test": {
+    "date": {
+      "verdict": "GREEN",
+      "p0": false,
+      "reps": 10,
+      "reps_scored": 10,
+      "timeouts": 0,
+      "verify_pass": 10,
+      "verify_fail": 0,
+      "distinct_output_hashes": [
+        "bd10d6e1de07fa5a"
+      ],
+      "distinct_count_fps": 1,
+      "sample_output_hash": "bd10d6e1de07fa5a",
+      "sample_count_fp": "DETLOG & scheduler COMMIT messages=1677:1677|INFO messages=845:845|detcore-specific messages=1957:1957|messages total=2439:2439"
+    },
+    "devrand": {
+      "verdict": "GREEN",
+      "p0": false,
+      "reps": 10,
+      "reps_scored": 10,
+      "timeouts": 0,
+      "verify_pass": 10,
+      "verify_fail": 0,
+      "distinct_output_hashes": [
+        "f5edcf77a8645391"
+      ],
+      "distinct_count_fps": 1,
+      "sample_output_hash": "f5edcf77a8645391",
+      "sample_count_fp": "DETLOG & scheduler COMMIT messages=1935:1935|INFO messages=975:975|detcore-specific messages=2237:2237|messages total=2779:2779"
+    },
+    "rand": {
+      "verdict": "GREEN",
+      "p0": false,
+      "reps": 10,
+      "reps_scored": 10,
+      "timeouts": 0,
+      "verify_pass": 10,
+      "verify_fail": 0,
+      "distinct_output_hashes": [
+        "1c3d662e35b48901"
+      ],
+      "distinct_count_fps": 1,
+      "sample_output_hash": "1c3d662e35b48901",
+      "sample_count_fp": "DETLOG & scheduler COMMIT messages=78072:78072|INFO messages=39433:39433|detcore-specific messages=81712:81712|messages total=96133:96133"
+    },
+    "progressbar": {
+      "verdict": "GREEN",
+      "p0": false,
+      "reps": 10,
+      "reps_scored": 10,
+      "timeouts": 0,
+      "verify_pass": 10,
+      "verify_fail": 0,
+      "distinct_output_hashes": [
+        "d8778ce336753d09"
+      ],
+      "distinct_count_fps": 1,
+      "sample_output_hash": "d8778ce336753d09",
+      "sample_count_fp": "DETLOG & scheduler COMMIT messages=275412:275412|INFO messages=138186:138186|detcore-specific messages=279692:279692|messages total=294080:294080"
+    },
+    "pipeline": {
+      "verdict": "GREEN",
+      "p0": false,
+      "reps": 10,
+      "reps_scored": 10,
+      "timeouts": 0,
+      "verify_pass": 10,
+      "verify_fail": 0,
+      "distinct_output_hashes": [
+        "6df2960214d3120d"
+      ],
+      "distinct_count_fps": 1,
+      "sample_output_hash": "6df2960214d3120d",
+      "sample_count_fp": "DETLOG & scheduler COMMIT messages=4356:4356|INFO messages=2185:2185|detcore-specific messages=4962:4962|messages total=6198:6198"
+    }
+  },
+  "jsonl": "/home/newton/work/dev-hermit/experiments/stress-test-under-load_20260731/results/reps_reps_20260731_220236.jsonl",
+  "reps_per_test": 10
+}
