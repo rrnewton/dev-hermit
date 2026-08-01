@@ -50,3 +50,9 @@ are missing, whether each is **regeneratable** (and how), and whether any tracke
 code **depends on reading** it (which would fail on another machine). `dbg
 new-episode` scaffolds it; `dbg vcs-check <episode>` lists the currently-ignored
 paths so you can keep it current.
+
+## Demo-touching commits (demos/**)
+
+Separate hard gate: every runnable-demo change needs an adversarial green-demo
+attestation before merge. See `demos/ADVERSARIAL-REVIEW-POLICY.md`, the CI job
+`demo-review-gate`, and `.githooks/commit-msg` (checker: `scripts/check-demo-review.sh`).
