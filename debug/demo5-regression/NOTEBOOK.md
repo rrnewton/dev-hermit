@@ -9,6 +9,39 @@
 > Lead: hermit-226. Evidence fleet: 210 turn-order, 231 metrics, 237 log-science,
 > 238 qemu-strace.
 
+## CURRENT STATUS (frontier-first — driven, not buried)
+
+Two tracks are being driven in parallel toward closing this episode:
+
+- **Candidate SOLUTION (forward fix) — in implementation by hermit-226:** a
+  **scheduler fairness / priority-aging fix** to the deadline-less
+  unproductive-poller steady state (the confirmed root cause, H1/H8/H10 +
+  `scheduler-vtime-jump-unproductive-pollers`). The demo config runs at the
+  syscall-boundary regime (0 PMU, H10); the fix must make that regime make forward
+  progress again — advance/age the starved vCPU instead of letting the socket
+  poller monopolize turns — rather than reverting to the rcb-time workaround.
+  **OWNER-GATED on a fairness review** (core DetCore scheduling = post-facto
+  trigger #4); not yet landed.
+- **Immediate-CAUSE commit (what regressed) — being bisected now by hermit-231:**
+  the exact commit in GOOD `2a7ca98` .. BAD `ae2565be` that flipped demo5 from a
+  ~1-min boot to the wedge. **Blamed commit: PENDING 231's bisection.** 20 suspects
+  are seeded (8 high-priority — guest-clock, chaos-slowdown-epoch #1151/#1149,
+  SIGCHLD-admission, stdio-scheduler-resources); **0 eliminated so far.** As
+  bisection rules each in or out, 231 closes it via
+  `./debug/dbg set-suspect demo5-regression <id|sha> --status cleared|confirmed
+  --reasoning "…"`; `./debug/dbg suspects demo5-regression --open` is the live
+  regressor worklist and should shrink toward the blamed commit. (Note: the H6 A/B
+  shows the wedge reproduces on the demo *config* alone, so the "immediate cause"
+  may be a config/latent-exposure rather than a single commit — the bisection
+  confirms-or-denies that.)
+
+> **Honest caveat — infra not yet adversarially reviewed.** This debug/ episode
+> infrastructure itself (the `dbg` CLI, the JSON schema, the size hook, this
+> notebook workflow) has **not** yet had a dedicated adversarial review. Treat it
+> as working-but-unreviewed scaffolding (PR rrnewton/dev-hermit#25, still draft);
+> the *investigation findings* below carry their own per-hypothesis verdicts and
+> evidence, which are independent of the tooling's review status.
+
 ## Synopsis
 
 `demos/05-qemu-boot.py` boots a full QEMU-Linux VM under hermit. It regressed from
