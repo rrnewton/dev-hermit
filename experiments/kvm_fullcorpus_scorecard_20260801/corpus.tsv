@@ -1,0 +1,184 @@
+backend-parity-c/cpuid-probe|tests/backend-parity/fixtures/cpuid_probe.c|||privileged|disabled
+backend-parity-c/pid-probe|tests/backend-parity/fixtures/pid_probe.c|||portable|disabled
+backend-parity-c/pthread-lifecycle|tests/backend-parity/fixtures/pthread_lifecycle.c|||portable|disabled
+bin-c/posix-timer-test|tests/bin/posix_timer_test.c|||portable|disabled
+bin-c/robust-futex-test|tests/bin/robust_futex_test.c|||portable|disabled
+c-programs/acct-refusal-probe|tests/c/acct_refusal_probe.c|||portable|disabled
+c-programs/add-key-enosys|tests/c/add_key_enosys.c|||portable|disabled
+c-programs/adjtimex-deterministic|tests/c/adjtimex_deterministic.c|||portable|disabled
+c-programs/arch-prctl-determinism|tests/c/arch_prctl_determinism.c|||portable|disabled
+c-programs/bpf-enosys|tests/c/bpf_enosys.c|||portable|disabled
+c-programs/cachestat-enosys|tests/c/cachestat_enosys.c|||portable|disabled
+c-programs/clock-adjtime-deterministic|tests/c/clock_adjtime_deterministic.c|||portable|disabled
+c-programs/clone|tests/c/clone.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/copy-file-range-refusal-probe|tests/c/copy_file_range_refusal_probe.c|||portable|disabled
+c-programs/dbi-copied-tiocgpgrp|tests/c/dbi_copied_tiocgpgrp.c|||portable|disabled
+c-programs/dbi-exec-failure|tests/c/dbi_exec_failure.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/dbi-execveat-unsupported|tests/c/dbi_execveat_unsupported.c|||portable|disabled
+c-programs/dbi-mmap-exec|tests/c/dbi_mmap_exec.c|||portable|disabled
+c-programs/dbi-pid-virtualization|tests/c/dbi_pid_virtualization.c|||portable|disabled
+c-programs/dbi-prlimit-self|tests/c/dbi_prlimit_self.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/dbi-self-sigqueue|tests/c/dbi_self_sigqueue.c|||portable|disabled
+c-programs/dbi-unsupported-syscall|tests/c/dbi_unsupported_syscall.c|||portable|disabled
+c-programs/dbi-wait-lifecycle|tests/c/dbi_wait_lifecycle.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/epoll-determinism|tests/c/epoll_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|enabled
+c-programs/fp-reduction-nondeterminism|tests/c/fp_reduction_nondeterminism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -fopenmp||portable|disabled
+c-programs/futex-requeue-enosys|tests/c/futex_requeue_enosys.c|||portable|disabled
+c-programs/futex-waitv-enosys|tests/c/futex_waitv_enosys.c|||portable|disabled
+c-programs/futex-wake-enosys|tests/c/futex_wake_enosys.c|||portable|disabled
+c-programs/getcpu|tests/c/getCpu.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/get-robust-list-child|tests/c/get_robust_list_child.c|||portable|disabled
+c-programs/get-robust-list-self|tests/c/get_robust_list_self.c|||portable|disabled
+c-programs/get-robust-list-thread|tests/c/get_robust_list_thread.c|||portable|disabled
+c-programs/getitimer-determinism-probe|tests/c/getitimer_determinism_probe.c|||portable|disabled
+c-programs/getsockopt-null|tests/c/getsockopt_null.c|||portable|disabled
+c-programs/hello-alarm|tests/c/hello_alarm.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/hello-signals|tests/c/hello_signals.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/io-uring-fallback|tests/c/io_uring_fallback.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/io-uring-ring-determinism|tests/c/io_uring_ring_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/ioctl-fioclex|tests/c/ioctl_fioclex.c|||portable|disabled
+c-programs/ioctl-siocethtool|tests/c/ioctl_siocethtool.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/ipc-determinism|tests/c/ipc_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/just-spin|tests/c/just_spin.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/kcmp-eperm|tests/c/kcmp_eperm.c|||portable|disabled
+c-programs/keyctl-enosys|tests/c/keyctl_enosys.c|||portable|disabled
+c-programs/keyctl-passthrough|tests/c/keyctl_passthrough.c|||portable|disabled
+c-programs/listmount-enosys|tests/c/listmount_enosys.c|||portable|disabled
+c-programs/liteinst-advanced|tests/c/liteinst_advanced.c|||portable|disabled
+c-programs/lsm-get-self-attr-enosys|tests/c/lsm_get_self_attr_enosys.c|||portable|disabled
+c-programs/lsm-list-modules-enosys|tests/c/lsm_list_modules_enosys.c|||portable|disabled
+c-programs/lsm-set-self-attr-enosys|tests/c/lsm_set_self_attr_enosys.c|||portable|disabled
+c-programs/madvise-determinism|tests/c/madvise_determinism.c|||portable|enabled
+c-programs/map-shadow-stack-enosys|tests/c/map_shadow_stack_enosys.c|||portable|disabled
+c-programs/memfd-secret-enosys|tests/c/memfd_secret_enosys.c|||portable|disabled
+c-programs/meminfo-available-deterministic|tests/c/meminfo_available_deterministic.c|||portable|disabled
+c-programs/meminfo-cached-deterministic|tests/c/meminfo_cached_deterministic.c|||portable|disabled
+c-programs/meminfo-free-deterministic|tests/c/meminfo_free_deterministic.c|||portable|disabled
+c-programs/memorypress|tests/c/memoryPress.c|||portable|disabled
+c-programs/mmap-determinism|tests/c/mmap_determinism.c|||portable|enabled
+c-programs/mmap-stress-determinism|tests/c/mmap_stress_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/name-to-handle-at-eopnotsupp|tests/c/name_to_handle_at_eopnotsupp.c|||portable|disabled
+c-programs/name-to-handle-directory-eopnotsupp|tests/c/name_to_handle_directory_eopnotsupp.c|||portable|disabled
+c-programs/name-to-handle-empty-path-eopnotsupp|tests/c/name_to_handle_empty_path_eopnotsupp.c|||portable|disabled
+c-programs/name-to-handle-regular-eopnotsupp|tests/c/name_to_handle_regular_eopnotsupp.c|||portable|disabled
+c-programs/nanosleep-par|tests/c/nanosleep-par.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/netlink-autobind-generic|tests/c/netlink_autobind_generic.c|||portable|enabled
+c-programs/netlink-autobind-route|tests/c/netlink_autobind_route.c|||portable|enabled
+c-programs/netlink-autobind-usersock|tests/c/netlink_autobind_usersock.c|||portable|enabled
+c-programs/netns-cookie-tcp4|tests/c/netns_cookie_tcp4.c|||portable|disabled
+c-programs/netns-cookie-tcp6|tests/c/netns_cookie_tcp6.c|||portable|disabled
+c-programs/netns-cookie-udp4|tests/c/netns_cookie_udp4.c|||portable|disabled
+c-programs/perf-event-hardware-enosys|tests/c/perf_event_hardware_enosys.c|||portable|disabled
+c-programs/perf-event-open-enosys|tests/c/perf_event_open_enosys.c|||portable|disabled
+c-programs/perf-event-software-enosys|tests/c/perf_event_software_enosys.c|||portable|disabled
+c-programs/perf-event-watchpoint-enosys|tests/c/perf_event_watchpoint_enosys.c|||portable|disabled
+c-programs/periodic-setitimer-delivery|tests/c/periodic_setitimer_delivery.c|||portable|disabled
+c-programs/pidfd-open-self|tests/c/pidfd_open_self.c|||portable|disabled
+c-programs/pidfd-poll-self|tests/c/pidfd_poll_self.c|||portable|disabled
+c-programs/pidfd-waitid-child|tests/c/pidfd_waitid_child.c|||portable|disabled
+c-programs/ppoll-readv|tests/c/ppoll_readv.c|||portable|disabled
+c-programs/ppoll-simulation|tests/c/ppoll_simulation.c|||portable|disabled
+c-programs/prctl-dumpable|tests/c/prctl_dumpable.c|||portable|disabled
+c-programs/print-memaddrs|tests/c/print_memaddrs.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/printf-with-threads|tests/c/printf_with_threads.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/proc-fd-link-aliases|tests/c/proc_fd_link_aliases.c|||portable|disabled
+c-programs/proc-fdinfo|tests/c/proc_fdinfo.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -DFD_SOURCE=1||portable|disabled
+c-programs/proc-locks|tests/c/proc_locks.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -DLOCK_API=1||portable|disabled
+c-programs/process-mrelease-enosys|tests/c/process_mrelease_enosys.c|||portable|disabled
+c-programs/process-vm-readv-refusal-probe|tests/c/process_vm_readv_refusal_probe.c|||portable|disabled
+c-programs/process-vm-writev-refusal-probe|tests/c/process_vm_writev_refusal_probe.c|||portable|disabled
+c-programs/procfs-positioned-probe|tests/c/procfs_positioned_probe.c|||portable|disabled
+c-programs/prodcons-determinism|tests/c/prodcons_determinism.c|||portable|disabled
+c-programs/pselect6-simulation|tests/c/pselect6_simulation.c|||portable|disabled
+c-programs/ptrace-attach-eperm|tests/c/ptrace_attach_eperm.c|||portable|disabled
+c-programs/ptrace-eperm|tests/c/ptrace_eperm.c|||portable|disabled
+c-programs/ptrace-seize-eperm|tests/c/ptrace_seize_eperm.c|||portable|disabled
+c-programs/ptrace-traceme-eperm|tests/c/ptrace_traceme_eperm.c|||portable|disabled
+c-programs/pty-nr-count|tests/c/pty_nr_count.c|||portable|disabled
+c-programs/random-sources|tests/c/random_sources.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/rcx-canonicalization|tests/c/rcx_canonicalization.c|||portable|disabled
+c-programs/record-replay-fd-close|tests/c/record_replay_fd_close.c|||portable|disabled
+c-programs/record-replay-file-state|tests/c/record_replay_file_state.c|||portable|disabled
+c-programs/record-replay-lseek-seek-cur|tests/c/record_replay_lseek_seek_cur.c|||portable|disabled
+c-programs/record-replay-setsockopt|tests/c/record_replay_setsockopt.c|||portable|disabled
+c-programs/recvmsg-scm-rights-mmap|tests/c/recvmsg_scm_rights_mmap.c|||portable|disabled
+c-programs/remap-file-pages-anonymous-enosys|tests/c/remap_file_pages_anonymous_enosys.c|||portable|disabled
+c-programs/remap-file-pages-memfd-enosys|tests/c/remap_file_pages_memfd_enosys.c|||portable|disabled
+c-programs/remap-file-pages-tmpfile-enosys|tests/c/remap_file_pages_tmpfile_enosys.c|||portable|disabled
+c-programs/request-key-enosys|tests/c/request_key_enosys.c|||portable|disabled
+c-programs/resource-determinism|tests/c/resource_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sched-setattr-batch|tests/c/sched_setattr_batch.c|||portable|disabled
+c-programs/sched-setattr-idle|tests/c/sched_setattr_idle.c|||portable|disabled
+c-programs/sched-setattr-other|tests/c/sched_setattr_other.c|||portable|disabled
+c-programs/sched-yield-progress|tests/c/sched_yield_progress.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/scheduler-policy-queries|tests/c/scheduler_policy_queries.c|||portable|disabled
+c-programs/setitimer-determinism|tests/c/setitimer_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sigmask-preemption|tests/c/sigmask_preemption.c|||portable|disabled
+c-programs/signal-determinism|tests/c/signal_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sigpipe-siginfo|tests/c/sigpipe_siginfo.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sigtimedwait-no-timeout|tests/c/sigtimedwait-no-timeout.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sigtimedwait-timeout-0s|tests/c/sigtimedwait-timeout-0s.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/sigtimedwait-timeout-1s|tests/c/sigtimedwait-timeout-1s.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/hello-nostdlib|tests/c/simple/hello_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+c-programs/nanosleep-threads-nocrash|tests/c/simple/nanosleep-threads-nocrash.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/nanosleep-threads-simple|tests/c/simple/nanosleep-threads-simple.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/pread64-nostdlib|tests/c/simple/pread64_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+c-programs/racewrite-nostdlib|tests/c/simple/racewrite_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+c-programs/so-incoming-cpu-tcp4|tests/c/so_incoming_cpu_tcp4.c|||portable|disabled
+c-programs/so-incoming-cpu-tcp6|tests/c/so_incoming_cpu_tcp6.c|||portable|disabled
+c-programs/so-incoming-cpu-udp4|tests/c/so_incoming_cpu_udp4.c|||portable|disabled
+c-programs/socket-cookie-tcp|tests/c/socket_cookie_tcp.c|||portable|disabled
+c-programs/socket-cookie-udp|tests/c/socket_cookie_udp.c|||portable|disabled
+c-programs/socket-cookie-unix|tests/c/socket_cookie_unix.c|||portable|disabled
+c-programs/socket-ioctl-timestamp|tests/c/socket_ioctl_timestamp.c|||portable|disabled
+c-programs/socket-timestamp-edge-cases|tests/c/socket_timestamp_edge_cases.c|||portable|disabled
+c-programs/socket-timestamp-timespec|tests/c/socket_timestamp_timespec.c|||portable|disabled
+c-programs/socket-timestamp-timeval|tests/c/socket_timestamp_timeval.c|||portable|disabled
+c-programs/splice-enosys|tests/c/splice_enosys.c|||portable|disabled
+c-programs/statmount-enosys|tests/c/statmount_enosys.c|||portable|disabled
+c-programs/syscall-file-io|tests/c/syscall_file_io.c|||portable|disabled
+c-programs/syscall-file-metadata|tests/c/syscall_file_metadata.c|||portable|disabled
+c-programs/syscall-quick-wins|tests/c/syscall_quick_wins.c|||portable|disabled
+c-programs/sysfs-enosys|tests/c/sysfs_enosys.c|||portable|disabled
+c-programs/sysinfo|tests/c/sysinfo.c|||portable|disabled
+c-programs/sysinfo-uptime|tests/c/sysinfo_uptime.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/syslog-deterministic|tests/c/syslog_deterministic.c|||portable|disabled
+c-programs/sysv-sem-enosys|tests/c/sysv_sem_enosys.c|||portable|disabled
+c-programs/sysv-shm-enosys|tests/c/sysv_shm_enosys.c|||portable|disabled
+c-programs/tcp-info-accept4|tests/c/tcp_info_accept4.c|||portable|disabled
+c-programs/tcp-info-accept6|tests/c/tcp_info_accept6.c|||portable|disabled
+c-programs/tcp-info-client4|tests/c/tcp_info_client4.c|||portable|disabled
+c-programs/tee-enosys|tests/c/tee_enosys.c|||portable|disabled
+c-programs/threadexhaustion|tests/c/threadExhaustion.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/thread-self-procfs-handoff|tests/c/thread_self_procfs_handoff.c|||portable|disabled
+c-programs/thread-sync-determinism|tests/c/thread_sync_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|enabled
+c-programs/timer-create-determinism|tests/c/timer_create_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/uname|tests/c/uname.c|||portable|disabled
+c-programs/unix-autobind-dgram|tests/c/unix_autobind_dgram.c|||portable|disabled
+c-programs/unix-autobind-seqpacket|tests/c/unix_autobind_seqpacket.c|||portable|disabled
+c-programs/unix-autobind-stream|tests/c/unix_autobind_stream.c|||portable|disabled
+c-programs/ustat-enosys|tests/c/ustat_enosys.c|||portable|disabled
+c-programs/vforkexec|tests/c/vforkExec.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+c-programs/vmsplice-enosys|tests/c/vmsplice_enosys.c|||portable|disabled
+c-programs/wait-on-child|tests/c/wait_on_child.c|||portable|disabled
+c-programs/writev-determinism|tests/c/writev_determinism.c|||portable|disabled
+chaos-c/lock-granularity|tests/chaos/lock_granularity.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+debugger-c/debuggee|tests/debugger/guests/debuggee.c|||portable|disabled
+determinism-stress-c/fork-tree|tests/e2e/determinism-stress/fork_tree.c|||portable|disabled
+determinism-stress-c/lock-free|tests/e2e/determinism-stress/guests/lock_free.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+determinism-stress-c/pid-tid|tests/e2e/determinism-stress/guests/pid_tid.c|||portable|disabled
+determinism-stress-c/signal-order|tests/e2e/determinism-stress/guests/signal_order.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled
+determinism-stress-c/mmap-fork-shared|tests/e2e/determinism-stress/mmap_fork_shared.c|||portable|disabled
+determinism-stress-c/pipe-chain|tests/e2e/determinism-stress/pipe_chain.c|||portable|disabled
+determinism-stress-c/pipe-prefill|tests/e2e/determinism-stress/pipe_prefill.c|||portable|disabled
+determinism-stress-c/thread-contention|tests/e2e/determinism-stress/thread_contention.c|||portable|disabled
+determinism-stress-c/thread-stress|tests/e2e/determinism-stress/thread_stress.c|||portable|disabled
+determinism-stress-c/producer-consumer|tests/e2e/determinism-stress/producer_consumer.c|||portable|disabled
+determinism-stress/order-violation|tests/chaos/order_violation.c|-pthread -Wno-unused-parameter||portable|disabled
+shared-futex-c/qemu-exec-init|tests/shared-futex-verify/qemu_exec_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+shared-futex-c/qemu-hello|tests/shared-futex-verify/qemu_hello.c|||portable|disabled
+shared-futex-c/qemu-init|tests/shared-futex-verify/qemu_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+shared-futex-c/qemu-net-init|tests/shared-futex-verify/qemu_net_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
+system-utils/clock-determinism|tests/c/clock_determinism.c|-O0 -D_GNU_SOURCE||portable|disabled
+system-utils/record-getpid|tests/c/getpid.c|||portable|disabled
+util-c/pmu-skid|tests/util/pmu_skid.c|||portable|disabled

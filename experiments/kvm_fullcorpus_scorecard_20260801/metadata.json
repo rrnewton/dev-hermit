@@ -1,0 +1,43 @@
+{
+  "experiment": "kvm_fullcorpus_scorecard_20260801",
+  "question": "KVM backend parity% vs golden ptrace and L2 determinism% across the full 200-cell verify-mode corpus, emitted into compat-envelope/scorecard.csv",
+  "date_utc": "2026-08-01",
+  "hermit_sha": "82a8e853357584a3a567fd80812e015572a607c7",
+  "reverie_sha": "a4f33d69a56ed4233a53b218c39d93807ffc8cd0",
+  "denominator_source": "compat-envelope/corpus-manifest.csv (235 scorecard-full-manifest-denominator, 200 cells)",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "cpu_cores": 316,
+  "dev_kvm": "present (crw-rw-rw- root:kvm 10,232)",
+  "toolchain": "gcc 11.5.0 20240719 (Red Hat 11.5.0-14)",
+  "lane": "portable (--no-virtualize-cpuid --max-timeslice=disabled)",
+  "mode": "hermit run --backend kvm --strict [--verify], bypassing manifest gating",
+  "timeouts_s": { "run": 30, "verify": 60 },
+  "cells": {
+    "total": 200,
+    "c": 184,
+    "non_c": 16
+  },
+  "results": {
+    "determinism_l2": { "pass": 130, "total": 200, "pct": 65.0 },
+    "parity_vs_ptrace": { "pass": 112, "measurable": 184, "pct": 60.9, "unmeasurable_ptrace_side_fail": 16 },
+    "c_cells": { "det": "122/184", "parity_measurable": "106/168" },
+    "non_c_cells": { "det": "8/16", "parity": "6/16" }
+  },
+  "prior_sweep": {
+    "id": "kvm_b3_corpus_sweep_20260730",
+    "hermit_sha": "0c8429e7",
+    "parity": "105/183 (63.3%)",
+    "relationship": "this sweep is a strict superset (200 vs 183) at a denominator-aligned SHA, adding the L2 determinism dimension; the 6 verify-timeout cells were identically kvm_exit=124 in the prior sweep (reproducible, not load-induced)"
+  },
+  "outputs": {
+    "authoritative": "scorecard-kvm-full.csv",
+    "c_only": "scorecard-kvm.csv",
+    "non_c_only": "scorecard-kvm-nonc.csv",
+    "merged_into": "compat-envelope/scorecard.csv (+200 rows, backend=kvm, disjoint append)"
+  },
+  "commands": [
+    "PAR=12 bash experiments/kvm_fullcorpus_scorecard_20260801/sweep.sh",
+    "PAR=8 bash experiments/kvm_fullcorpus_scorecard_20260801/sweep-nonc.sh"
+  ]
+}

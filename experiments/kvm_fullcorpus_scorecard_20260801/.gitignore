@@ -1,0 +1,5 @@
+# Intermediate per-cell rows (assembled into the scorecard-kvm*.csv deliverables)
+rows/
+rows-nonc/
+sweep.log
+verify_c.tsv
