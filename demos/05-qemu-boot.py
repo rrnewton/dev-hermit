@@ -293,3 +293,5 @@ if __name__ == "__main__":
     except Exception as error:
         print("WARN: {}: FAILURE: {}".format(DEMO_LABEL, error), file=sys.stderr)
         sys.exit(1)
+
+# range-block-test
