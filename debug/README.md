@@ -35,6 +35,11 @@ debug/
 
 ## Hygiene (commit code + reports + state, not raw artifacts)
 
+- **Don't break the demos.** Any `demos/**` change needs an adversarial green-demo
+  review (the demo still runs GREEN) before merge — enforced by the same hook infra:
+  `demo-review-gate` CI + `.githooks/commit-msg` (checker `scripts/check-demo-review.sh`);
+  see `demos/ADVERSARIAL-REVIEW-POLICY.md`.
+
 - **ignored/-first default.** Write anything you won't commit — raw logs, boot
   artifacts, scratch, big outputs — **directly into `<episode>/ignored/` from the
   start** (gitignored). No commit-time judgment needed; only reports, `NOTEBOOK.md`,

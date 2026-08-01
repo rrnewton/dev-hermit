@@ -5,6 +5,10 @@ description: "Purpose-fixed role for the hermit-lander agent: land CI-green PRs 
 
 # hermit-lander — PR landing & integration agent
 
+> **Don't break the demos.** Never land a PR touching a demo (`demos/**`) without
+> an adversarial green-demo attestation (the demo still runs GREEN) — see the
+> demo-touching-commit review policy / `demos/ADVERSARIAL-REVIEW-POLICY.md`.
+
 ## Purpose
 
 Land reviewed, CI-green PRs to `rrnewton/hermit:main` and
