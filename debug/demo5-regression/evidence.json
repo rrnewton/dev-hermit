@@ -130,5 +130,52 @@
     ],
     "artifact": "debug/demo5-regression/ignored/smoke/smoke-norcb/info.log",
     "source": "hermit-226"
+  },
+  {
+    "id": "E15",
+    "desc": "DECISIVE norcb linearity sweep (--target-timeslice 1e3..1e7, 4 orders of magnitude, 120s wall each). vtime_burned FLAT ~490s +/-4% (494.5,492.4,484.7,507.8,491.5); guest_ts FLAT ~0.71s NEVER escapes at any K; preempt_events=0 at EVERY K. At extreme K=1e7 the knob only coarsens poll granularity (turns 161678->46088, vtime/turn 3.06ms->10.66ms) but total vtime and guest progress UNCHANGED. => INSENSITIVE/non-linear response. --target-timeslice is INERT under --no-rcb-time (installs no productive preemption). H8 CONFIRMED: burn-out mechanism MISSING, spin UNBOUNDED not mistuned. Artifact: debug/demo5-regression/sweep.csv.",
+    "hypotheses": [
+      "H8"
+    ],
+    "artifact": "debug/demo5-regression/sweep.csv",
+    "source": "hermit-226"
+  },
+  {
+    "id": "E16",
+    "desc": "rcbtime CONTROL arm (--target-timeslice 1e4..1e6, 150s wall). preempt_events=380/399/435 (>0, burn-out PRESENT) vs norcb 0. Knob RESPONDS: turns 95932->73911->14727, preempt-per-turn 1/252->1/185->1/34, vtime_burned 156.5->149.6->128.2s as K grows (larger slice = fewer longer turns, more logical time per preemption). Contrast is decisive: the ONLY spin-bounding mechanism is 'inbound timer preemption event' which requires PMU/rcb-time; under --no-rcb-time it is absent so no knob bounds the spin. (Partial-wall so neither arm hit ts>=1.8 escape; N=20 rcb batch is the boot ground-truth, 12/20 BOOT_OK ts=1.819.)",
+    "hypotheses": [
+      "H8",
+      "H2"
+    ],
+    "artifact": "debug/demo5-regression/sweep.csv",
+    "source": "hermit-226"
+  },
+  {
+    "id": "E17",
+    "desc": "P0 PMU-vs-syscall split (source-grounded + log-counted). Demo config demos/05-qemu-boot.py:131-136 = --strict --no-rcb-time --target-timeslice 100000 --max-timeslice disabled. SOURCE (226 code-search): the PMU/RCB timer is armed ONLY when max_timeslice.is_some() (post_handler_hook lib.rs:640-644); 'inbound timer preemption event' (lib.rs:1329) IS the PMU path exclusively; --target-timeslice sets a SOFTWARE syscall-boundary deadline (end_of_timeslice, checked every handler entry), --max-timeslice sets the PMU deadline. So --max-timeslice disabled => max=None => ZERO PMU by construction; preemption 100% at syscall boundaries. LOG COUNTS (PMU='inbound timer preemption event', total='ending timeslice T', syscall-bound=diff): run-bbx-wedgekit (DEMO config, busybox) = 0 PMU / 387451 ends / 387451 syscall-bound / 387450 SleepUntil0 -> 0-PMU AND WEDGES. All full-linux controller archives (run-good-f6c836b1 0/39343, run-broken-ae2565be 0/817815, run-norcb 0/5536314, run-mid-1190 0/223230) = demo config = 0 PMU, all WEDGE. CONTRAST: run-bbx-green (busybox --strict, rcb ON, max=default 200ms) = 858 PMU / 868 ends = 98.8% PMU -> the ONLY genuine boot-to-powerdown, and it is the rcb-time WORKAROUND. PRECISION FIX to H1 prose: bare --no-rcb-time with DEFAULT max still ARMS the PMU (run-bbx-wedge: --no-rcb-time only, max=200ms => 519 PMU events) \u2014 it is --max-timeslice disabled, not --no-rcb-time, that zeroes PMU. ANSWER TO OWNER P0: green did NOT depend on PMU at all (0 by construction, small target + disabled max = syscall-boundary regime); PMU-skid is NOT on the green path; the fix is restoring the syscall-boundary regime (fix scheduler-vtime-jump-unproductive-pollers so max-disabled config boots again instead of SleepUntil0 livelock).",
+    "hypotheses": [
+      "H1",
+      "H8"
+    ],
+    "artifact": "experiments/demo5_bisect_20260731/ignored/run-bbx-wedgekit-670209ba-3071011",
+    "source": ""
+  },
+  {
+    "id": "E18",
+    "desc": "H9 route-(b) skid-hunt NEGATIVE under config --target-timeslice 100000 --max-timeslice 200000000: 14/20 rcbtime controller boots (N=20 batch) with 0 skid, 0 non-boot, 0 rearm-failure; healthy runs show 'inbound timer preemption event' continuing to within 1-3 turns of tail. This config does NOT reproduce the ~20% skid (that came from the panic-prone rcb-time-time margin config in demo5-rcb-config-panic-vs-slow-tradeoff). Testing H9 route (b) requires the panic-prone config + 210 turn-order; route (a) (--no-rcb-time, preemption never armed, 0 skid) fully accounts for the demo5 wedge studied here.",
+    "hypotheses": [
+      "H9"
+    ],
+    "artifact": "experiments/demo5_bisect_20260731/ignored/ctrl-valid/out/results.csv",
+    "source": "hermit-226"
+  },
+  {
+    "id": "E19",
+    "desc": "H9 FALSE-POSITIVE CORRECTION (adversarial). run-15 & run-16 tripped the naive preempt_timeline signature (preemption ceased 15881 / 97505 turns before log-end, su0 exploding) but BOTH completed BOOT_OK. Cause: at run-16 turn 76208 dtid17 (CPU-bound vCPU poller) took its LAST preemption ('ending timeslice T67680, 0 syscalls this timeslice') then turn 76209 handed off to dtid7 running clock_nanosleep(CLOCK_MONOTONIC,...) \u2014 a PHASE TRANSITION from CPU-bound TCG execution to sleep-driven threads. Once the CPU-bound thread stops running RCBs there is nothing to PMU-preempt, so preemption ceases in HEALTHY boots too. Therefore 'preemption ceased before log end' is NOT a valid rearm-failure signature by itself. run-15 preemption RESUMED (last_p 179450->184943) confirming it was sparse, not dead. Valid H9 test requires a run whose FINAL verdict is non-BOOT_OK with dtid17 still the active poller and preemption dead. Under this config (target-timeslice 100000 max-timeslice 200000000): 16/20 BOOT_OK, 0 wedge, 0 skid => route (b) does NOT reproduce here.",
+    "hypotheses": [
+      "H9"
+    ],
+    "artifact": "experiments/demo5_bisect_20260731/ignored/ctrl-valid/out/results.csv",
+    "source": "hermit-226"
   }
 ]

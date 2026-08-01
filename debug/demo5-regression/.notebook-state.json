@@ -31,12 +31,16 @@
         "hash": "666cf743dddd"
       },
       "H8": {
-        "status": "open",
-        "hash": "f724a48c3bed"
+        "status": "confirmed",
+        "hash": "4e1ed0948700"
       },
       "H9": {
         "status": "open",
         "hash": "2450a41276b0"
+      },
+      "H10": {
+        "status": "confirmed",
+        "hash": "04de2eea65d4"
       }
     },
     "evidence": {
@@ -95,6 +99,18 @@
       "E14": {
         "status": "",
         "hash": "d5751b051b5e"
+      },
+      "E15": {
+        "status": "",
+        "hash": "2874fe509c40"
+      },
+      "E16": {
+        "status": "",
+        "hash": "6b8291f9b0a5"
+      },
+      "E17": {
+        "status": "",
+        "hash": "5fb7e6eba21a"
       }
     },
     "suspects": {
@@ -180,7 +196,7 @@
       }
     },
     "episode": {
-      "hash": "aa1230037e6e"
+      "hash": "c385a2a33c0a"
     }
   }
 }

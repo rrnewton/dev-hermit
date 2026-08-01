@@ -41,19 +41,55 @@ Anchors: GOOD `2a7ca98` (#1077, ~75 s boot) → BAD `ae2565be` (hpet wedge). The
 fleet's earlier "window-start" `f6c836b1` already hangs, so any code regressor
 predates it; `2a7ca98` is the true ~1-min-good anchor.
 
+**P0 settled (owner, 2026-08-01, H10/E17): the green path never depended on PMU
+preemption.** The demo config passes `--max-timeslice disabled`, which arms no
+PMU/RCB timer, so preemption is 100 % at syscall boundaries (driven by the small
+`--target-timeslice`); every demo-config run counts **0** PMU events, while the
+only PMU-driven boot is the rcb-**ON** *workaround*. So PMU-skid is defense-in-
+depth for the workaround, and the real fix is restoring the syscall-boundary
+regime (fix `scheduler-vtime-jump-unproductive-pollers`), not hardening skid.
+
 ---
 
 ## EXPLORED — established, with evidence
 
 - **The wedge substrate is deterministic vtime starvation under `--no-rcb-time`
   (H1, confirmed in source).** `use_rcb_time() = max_timeslice.is_some() &&
-  !no_rcb_time`; the demo sets both off, so RCB→vtime is doubly gated off, no PMU
-  timer is armed, `step2d`'s vtime-jump is gated on an empty run-queue with no
-  future `timed_waiter` to jump to, and committed time only creeps per-turn.
+  !no_rcb_time`; the demo sets `--no-rcb-time` **and** `--max-timeslice disabled`,
+  so RCB→vtime is gated off, **no PMU timer is armed** (the timer is armed only
+  when `max_timeslice.is_some()`, `post_handler_hook` lib.rs:640-644),
+  `step2d`'s vtime-jump is gated on an empty run-queue with no future
+  `timed_waiter` to jump to, and committed time only creeps per-turn.
   *Evidence:* E01 (source chain), E02 (a bare `--no-rcb-time` boot shows **all**
   these signatures — `Skipping global time ahead`=0, `SleepUntil(0)` dominant, 0
   future waiters, committed races +1425 s, rcbs:0 — **yet still boots**, so the
   substrate is *necessary but not sufficient*), E07.
+  *Precision fix (E17):* it is **`--max-timeslice disabled`**, not `--no-rcb-time`
+  alone, that zeroes the PMU. Bare `--no-rcb-time` with the *default* max
+  (200 ms) **still arms** the PMU timer (`run-bbx-wedge`: 519 `inbound timer
+  preemption event`s); the demo config disables the PMU only because it *also*
+  passes `--max-timeslice disabled`.
+- **P0 (owner, 2026-08-01): the GREEN regime uses ZERO PMU preemption BY
+  CONSTRUCTION — PMU-skid is NOT on the green path (H10, confirmed).** The demo
+  config (`demos/05-qemu-boot.py:131-136` = `--strict --no-rcb-time
+  --target-timeslice 100000 --max-timeslice disabled`) arms **no** PMU/RCB timer,
+  so `inbound timer preemption event` (the PMU path, lib.rs:1329) can never fire;
+  `--target-timeslice` is a pure **syscall-boundary** deadline (`end_of_timeslice`,
+  checked every handler entry). *Evidence:* E17 — every demo-config run counts
+  **0** PMU / 100 % syscall-boundary (wedgekit busybox `0/387451`; full-Linux
+  archives `run-good` `0/39343`, `run-broken-ae2565be` `0/817815`, `run-norcb`
+  `0/5536314`, `run-mid-1190` `0/223230`), whereas the **only** genuine boot-to-
+  power-down is the rcb-**ON** *workaround* (`run-bbx-green` `858/868` = 98.8 % PMU).
+  Owner hypothesis **confirmed**: green depended on *small target + disabled max →
+  syscall-boundary, ~0 PMU*. **Consequences:** (1) PMU-skid robustness is
+  defense-in-depth for the rcb-ON workaround only, not the primary green-path fix;
+  (2) the fix is to **restore the syscall-boundary regime** — i.e. fix
+  `scheduler-vtime-jump-unproductive-pollers` so the `--max-timeslice disabled`
+  config boots again instead of livelocking on `SleepUntil(0)`. *Caveat:* the
+  historical ~1-min green (`2a7ca98`) is not archived, so its 0-PMU regime is
+  inferred **by construction** (same config), not directly counted; and that
+  config **cannot boot at current HEAD** (it wedges), so "restore the regime"
+  requires the foundation fix, not merely re-selecting the flags.
 - **The sufficient trigger is a host-pollable listening socket fd (H6, confirmed
   by single-variable A/B).** Identical bare-busybox `--no-rcb-time` boot: no
   sockets → **boots** (`-serial stdio` and `-serial file:` both PASS); + two
