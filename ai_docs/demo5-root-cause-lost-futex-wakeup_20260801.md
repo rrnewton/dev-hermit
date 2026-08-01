@@ -1,166 +1,109 @@
-# demo5 root cause: mutex/poller livelock (a lost wakeup is NOT the terminal cause)
+# demo5 "wedge" RETRACTED: an under-budgeted-timeout artifact, not a wedge
 
 Date: 2026-08-01. Author: impl agent, opus-4.8 (task `demo5-fix-scheduler-fairness-impl`).
-Status: **CORRECTED — see "CORRECTION" below.** The lost-futex-wakeup framing in
-the body was the working hypothesis; it is now FALSIFIED as the *terminal* cause
-by a direct fix experiment. The terminal cause is a userspace mutex/poller
-**livelock**. The lower sections are retained as the honest investigation trail
-that led here, but the corrected conclusion supersedes them.
+Status: **RETRACTION.** Both prior conclusions in this file — the "lost futex
+wakeup" working hypothesis and its "mutex/poller livelock" correction — are
+**WITHDRAWN**. Under the shipped rcb-armed config on a quiet host, demo5 does
+**not** wedge: it boots reliably in ~242 s. Every "0/3 / 0/6 byte-identical
+wedge" datum below came from wall-clock timeouts (90–200 s) that were shorter
+than demo5's real boot time, so a slow crawl was misread as a permanent wedge.
 
-## CORRECTION (2026-08-01, later): a lost wakeup is not the terminal cause
+## What is actually true (validated 2026-08-01)
 
-The "lost futex wakeup" conclusion below predicted that recording a fizzled
-`FUTEX_WAKE` and replaying it as a spec-legal spurious wakeup at the next
-matching `FUTEX_WAIT` would let the vCPU proceed and demo5 would boot. That fix
-was implemented, unit-tested, and run — and it **does not green demo5**:
+demo5, canonical shipped config (`hermit run --strict --target-timeslice 100000
+--max-timeslice 2000000000`, RCB/PMU preemption ARMED — exactly what
+`demos/05-qemu-boot.py` and `boot_sweep.py --rcb on` use), out-of-container
+enforcer, quiet host (~17 % load, 316 cores), **real 600 s demo budget**:
 
-- Branch `claude/detcore-sticky-futex-wakes` @`d79fe238`, flag
-  `--sched-sticky-futex-wakes` (default off), unit tests 3/3.
-- Canonical rcb-armed config, out-of-container enforcer
-  (`boot_sweep.py --rcb on --sticky`): **0/3 boot, byte-identical 17869-byte
-  wedge** at `hpet0: 3 comparators`, guest `0.724403s` — indistinguishable from
-  the OFF baseline. The overlay was demonstrably active (124 sticky records / 45
-  consumes) yet produced **zero** boot progress.
+| run | wall (s) | first-serial (s) | boot to RTC shell? |
+| --- | --- | --- | --- |
+| 500 s single | 242.9 | 30.0 | yes |
+| 5-rep #0 | 238.3 | 29.8 | yes |
+| 5-rep #1 | 242.8 | 29.3 | yes |
+| 5-rep #2 | 247.6 | 30.0 | yes |
+| 5-rep #3 | 242.8 | 29.5 | yes |
+| 5-rep #4 | 242.8 | 29.8 | yes |
 
-If a single lost wakeup were the terminal cause, crediting and replaying it would
-change the terminal state. It does not. Therefore the wedge is NOT a lost wakeup
-that this futex-layer fix can cure.
+**6/6 PASS**, walls 238.3–247.6 s, median 242.8 s, tight distribution. The
+boot reaches the `2022-01-01T` RTC shell marker and hermit exits 0 every time.
 
-**Corrected terminal cause — userspace mutex/poller livelock.** Under detlog at
-the wedge, the QEMU vCPU (`dtid 7`) is blocked on a **glibc mutex**
-`0x5555570c8ec0` (`FUTEX_WAIT_PRIVATE val=2`) that sees **~13.9k balanced
-FUTEX_WAIT/FUTEX_WAKE — wakes are NOT lost**; meanwhile iothreads (`dtid 11/13`)
-spin on `SleepUntil(LogicalTime(0))` pollers. Committed virtual time races ahead
-because step2d only jumps vtime when the run queue is empty, but the `SleepUntil(0)`
-pollers keep it non-empty, so vtime never advances past the unproductive pollers
-and the mutex owner is never scheduled to release. This is exactly
-`scheduler-vtime-jump-unproductive-pollers`, not a futex-ordering defect.
+The serial transcript pauses for ~90 s at `hpet0: 3 comparators` (frozen at
+exactly 17869 bytes mid-crawl) and then resumes and boots. That pause — the
+exact state earlier runs captured and labelled a "17869-byte byte-identical
+wedge" — is a **normal slow phase of the TCG-emulated boot**, not a terminal
+state.
 
-**Real fix direction (owner/design-gated, trigger #4).** A core DetCore scheduler
-change: let committed virtual time jump over provably unproductive pollers so the
-mutex owner runs, i.e. livelock/progress handling — NOT a futex sticky-wake and
-NOT the runnable fairness/aging overlay. Both of those levers are now falsified
-with byte-identical evidence. This must be discussed with the owner before
-implementation per CLAUDE.md (core scheduling change).
+## The measurement error
 
----
+Every "wedge" datum previously recorded here and in the memory
+[[demo5-real-cause-lost-futex-wakeup-not-poller-starvation]] was produced with
+a wall-clock timeout below the real boot time:
 
-_Original working hypothesis (retained as investigation trail; superseded above):_
+- OFF baseline "0/3": 180 s timeout — boot needs ~242 s.
+- Fairness overlay "0/6", B=5: 180 s timeout.
+- Sticky-wake overlay "0/3": 200 s timeout.
 
-## Question
+All three timeouts fell inside the ~90 s hpet0 pause, so the enforcer SIGKILLed
+a still-progressing boot and recorded a false wedge. The "byte-identical 17869
+bytes" was not evidence of a deterministic livelock — it was just the serial
+length at the moment the crawl happens to pause, identical across runs because
+the boot is deterministic *up to that point* and every run was killed there.
 
-Why does demo5 (QEMU Linux boot, out-of-container enforcer) wedge instead of
-booting to its shell, and can the bounded service-lead fairness/aging overlay
-(design `ai_docs/scheduler-time-model-fairness-aging-design_20260801.md`) fix it?
-This was first established under the legacy `--no-rcb-time --max-timeslice
-disabled` config and then **confirmed identical under the CANONICAL rcb-armed
-config** (`--strict --target-timeslice 100000 --max-timeslice 2000000000`, the
-one demos/05-qemu-boot.py and the green-restore use) — see "Generalization" below.
+This reconfirms the pre-existing memory
+[[demo5-icount-sleep-on-neutral-under-strict]], which already recorded that
+under `--strict` demo5 has **no hard livelock** and "crawls to boot ~323–328s"
+(that figure was under different load; ~242 s here). I should have heeded it
+before concluding a wedge existed.
 
-## Answer: a lost futex wakeup blocks the vCPU outside the run queue
+## Consequences for the two "fix" levers
 
-The wedge is a **lost futex wakeup**, definitively NOT the runnable-poller
-"equal-footing-forever" starvation previously hypothesized.
+Because there is no wedge under the shipped config on this host, neither lever
+can be credited or discredited *against demo5*:
 
-Evidence (detlog, `RUST_LOG=...,detcore=info`, budget B=1000, 187,443 turns,
-`ignored/fairness-val/detlog_B1000/run0/hermit-info.log`):
+- **Sticky/pending futex-wake overlay** (`--sched-sticky-futex-wakes`, branch
+  `claude/detcore-sticky-futex-wakes` @ `41ed79ce`, unit tests 3/3): remains a
+  legitimate **default-off research** overlay for genuine lost-wakeup
+  interleavings. Its earlier "does not green demo5" note is retracted as an
+  artifact; it simply has no demonstrated demo5 relevance either way.
+- **Bounded service-lead fairness/aging overlay** (Hermit PR #1386,
+  `--sched-fairness-budget=B`): unchanged status — default-off, labeled,
+  research-only, with the unresolved ON-path determinism hole (#140). No demo5
+  claim, positive or negative, is supported.
+- **vtime-jump-over-unproductive-pollers** (Option A `step2d_handle_empty_queue`
+  / Option B per-turn `add_scheduler_time` suppression): both were previously
+  and independently refuted for demo5
+  ([[demo5-cause-B-vtime-suppression-empirical-refutation]]); with no wedge to
+  fix, there is nothing here for a vtime-jump change to address. **Do not
+  prototype it for demo5.**
 
-- The QEMU vCPU thread is `dtid 7` (its syscall mix is `madvise` / `futex` /
-  `clock_nanosleep`). It goes silent at turn 162,779.
-- Its **last action is an untimed blocking wait**:
-  `futex(0x5555570f6708, FUTEX_WAIT, -1, NULL)`, which never returns. Over the
-  run this address sees 8 inbound waits but only 7 finish.
-- The **last** `FUTEX_WAKE` on `0x5555570f6708` is at log line **745,130**,
-  which **precedes** the vCPU's final `FUTEX_WAIT` at line **750,692**. There is
-  **no** `FUTEX_WAKE` on that address after the vCPU's wait.
-- The waker (dtid 13 / 5) therefore woke an **empty** waitlist; the vCPU then
-  entered `FUTEX_WAIT` and blocked forever — **outside** the run queue.
-- After the vCPU disappears, the trace records **24,663** poller turns among the
-  remaining runnable threads. That count is far larger than any fairness budget
-  tested (B ∈ {2..10000}), which confirms the vCPU is **genuinely blocked**, not
-  runnable-but-starved.
+## The real operational property of demo5
 
-The guest boot freezes at guest time `0.724403s`, right after `hpet0: 3
-comparators` in the serial transcript (17,869 bytes), and never reaches the
-`2022-01-01T` RTC shell marker.
+demo5's actual property under the shipped config is **slowness**, not a livelock:
+a full-Linux QEMU boot under `hermit --strict` takes ~4 min of wall time on a
+quiet host, dominated by TCG emulation, and is load-sensitive (prior findings
+[[qemu-demos-host-provisioning-devbig014]], [[demo5-multisect-*]] record that
+under heavy contention it can fail; those are load/host-capacity failures and a
+distinct earlier-than-hpet0 signature, not the deterministic code livelock this
+file wrongly asserted). The actionable levers are therefore:
 
-## Why runnable fairness cannot fix it
+1. an adequate wall budget (≥ ~300 s) plus host headroom — the demo's own
+   `QEMU_TIMEOUT=600` default is already sufficient; only the validation
+   harness was mis-budgeted, and
+2. boot-time reduction (out of scope of any scheduler fairness/futex change).
 
-The bounded service-lead overlay selects among **runnable** threads and charges
-committed turns. It has **no mechanism** to select a thread that is blocked
-outside the run queue, and it explicitly **synthesizes no wakeups**. Empirically
-this is confirmed: with the overlay ON at every budget B ∈ {2, 5, 20, 50, 100,
-1000, 10000}, demo5 wedges **byte-identically** at the same guest time. This is
-exactly the caveat the design itself flagged under "Demo5: what this can and
-cannot claim." The overlay is the wrong lever for this wedge.
-
-## Generalization: identical under the canonical rcb-armed config (2026-08-01)
-
-The green-restore path does NOT use `--no-rcb-time`; it uses the canonical
-demos/05-qemu-boot.py config `--strict --target-timeslice 100000
---max-timeslice 2000000000` (RCB/PMU preemption ARMED). To rule out the
-possibility that the wedge and the overlay's inertness were artifacts of the
-legacy `--no-rcb-time` config, the whole experiment was rerun at HEAD under the
-canonical config (out-of-container enforcer, `boot_sweep.py --rcb on`):
-
-- **OFF baseline: 0/3 boot.** All three runs TIMEOUT at 180s; first serial line
-  ~30s, then stall. (This is why the "cheap config-revert" does not green demo5:
-  the config was never the lever.)
-- **Overlay ON B=5: 0/6 boot.** All six wedge identically; first serial ~38s,
-  then stall. The overlay is inert here exactly as at every legacy budget.
-- **detlog classification (diag5, 136 MB info log):** vCPU = `dtid 7`
-  (`madvise`/`clock_nanosleep`/`futex` fingerprint) goes silent at turn 208,802
-  of 236,852; its LAST action is the SAME untimed
-  `futex(0x5555570f6708, FUTEX_WAIT, -1, NULL) = ?` that never returns. The last
-  `FUTEX_WAKE` on `0x5555570f6708` is log line **909,377**, the vCPU's final
-  `FUTEX_WAIT` is line **921,350** → wake PRECEDES wait, **zero** wakes after.
-  **28,049** scheduler turns commit afterward (busy-pollers dtid 13/11/5 spin
-  forever), confirming the vCPU is blocked OUTSIDE the run queue, not
-  runnable-starved. Same address, same guest time (`hpet0`, 0.724403 s), same
-  mechanism as the legacy config.
-
-**Conclusion:** the lost futex wakeup is the demo5 root cause **regardless of
-rcb-on/off**. The fairness overlay is definitively NOT the demo5 fix — it is
-the wrong lever in both configs. (Experiments `bmdmv83d6`, `diag5`; enforcer
-`ignored/fairness-val/boot_sweep.py --rcb on`.)
-
-## The real fix direction
-
-The defect is **futex wake/wait ORDERING under DetCore sequentialization**: the
-`FUTEX_WAKE` is scheduled before the vCPU reaches `FUTEX_WAIT`, so the wake is
-lost. Candidate fixes (owner/design-gated — core scheduling / futex model):
-
-- correct wake/wait ordering so a wake cannot be committed before a wait that a
-  correct interleaving would place first, or
-- a sticky-wake / re-check-condition-on-wait so a `FUTEX_WAIT` whose condition
-  was already satisfied does not block, or
-- avoid the earlier interleaving that produces the premature wake.
-
-This is a NEW, separate task from the fairness overlay. Related: the committed
-virtual time races ahead here to ~1.77e9 s because there is no future
-`timed_waiter` to bound step2d's vtime jump
-(`scheduler-vtime-jump-unproductive-pollers`).
-
-## Relationship to the delivered fairness overlay
-
-The overlay was implemented per 241's design and shipped as **default-off,
-labeled, research-only** infrastructure in Hermit PR #1386
-(`--sched-fairness-budget=B`, head `4970a5de`). It is correct for the
-*runnable*-poller-contention case (unit-proven burn-out mechanism, OFF
-byte-identical, ON-path L2 on a closed-world multithreaded program) but has an
-**unresolved ON-path determinism hole for external-actor poll-heavy workloads**
-(#140: host-timing-dependent count of committed `InternalIOPolling` poll-retries
-feeds selection-gating `S`), so it must not be enabled by default until the
-`make -j8 --strict --verify` overlay-ON ≥5×-bitwise gate is green. See the PR
-body for the enablement condition.
+There is no evidence for a core-DetCore scheduling defect behind demo5 on this
+host, and no core scheduling change is warranted by this investigation.
 
 ## Reproduction / enforcer
 
-Valid enforcer: out-of-container
-`ignored/fairness-val/boot_sweep.py` (own pgid via `start_new_session=True`,
-outer wall-clock timeout, SIGKILL to the pgid on timeout — required because
-PMU-skid leaves the supervisor holding the guest tree ptrace-STOPPED). Add
-`--rcb on` for the canonical rcb-armed config. Do NOT use the in-container
-`qemu_controller.py --timeout`; it
-is virtualized and trips on vtime skew before `qmp.sock` exists, giving a false
-wedge (`demo5-pmu-skid-refuted-target-timeslice-not-fix`).
+Out-of-container `ignored/fairness-val/boot_sweep.py` (own pgid via
+`start_new_session=True`, outer wall-clock timeout, SIGKILL to the pgid on
+timeout). **Use `--rcb on` for the canonical config and a timeout ≥ 300 s** (the
+default 150 s and the ad-hoc 180–200 s values used earlier are all too short and
+will manufacture a false wedge). Do NOT use the in-container
+`qemu_controller.py --timeout`; it is virtualized and trips on vtime skew before
+`qmp.sock` exists ([[demo5-pmu-skid-refuted-target-timeslice-not-fix]]).
+
+```bash
+python3 ignored/fairness-val/boot_sweep.py --rcb on --timeout 600 --reps 5
+```
