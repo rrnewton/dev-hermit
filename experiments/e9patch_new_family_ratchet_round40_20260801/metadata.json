@@ -1,0 +1,30 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round40",
+  "date": "2026-08-01",
+  "question": "Can six inert guests on new socket-option and memfd-fcntl-seal axes reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all six kept at L2; corpus 254 -> 260, 260/260 PASS_L2, zero drops.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1407",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1406",
+  "branch": "codex/e9patch-corpus-round40-sockopt-fcntl-seals",
+  "commit_sha": "991cdec979218486e0440f68b7ebf9e7b5308b43",
+  "base_branch": "codex/e9patch-corpus-round39-madvise-mmap-sockopt",
+  "base_sha": "ec35dbc9e9f604c6619e8e7ce680b22f32209523",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getsockopt_reuseport", "syscall": "getsockopt(55) SO_REUSEPORT=15", "stdout": "reuseport=0"},
+    {"guest": "getsockopt_passcred", "syscall": "getsockopt(55) SO_PASSCRED=16", "stdout": "passcred=0"},
+    {"guest": "getsockopt_timestamp", "syscall": "getsockopt(55) SO_TIMESTAMP=29", "stdout": "timestamp=0"},
+    {"guest": "getsockopt_nocheck", "syscall": "getsockopt(55) SO_NO_CHECK=11", "stdout": "nocheck=0"},
+    {"guest": "getsockopt_priority", "syscall": "getsockopt(55) SO_PRIORITY=12", "stdout": "priority=0"},
+    {"guest": "fcntl_get_seals", "syscall": "memfd_create(319)+fcntl(72) F_GET_SEALS=1034", "stdout": "seals=1"}
+  ],
+  "dropped": [],
+  "corpus_size_before": 254,
+  "corpus_size_after": 260,
+  "net_delta": 6,
+  "full_corpus_run": "RATCHET e9patch: 260/260 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
