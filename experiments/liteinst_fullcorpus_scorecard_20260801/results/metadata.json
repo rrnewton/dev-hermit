@@ -1,0 +1,26 @@
+{
+  "determinism_count": 117,
+  "determinism_pct_full": 58.5,
+  "determinism_pct_spst": 91.4,
+  "dirty": false,
+  "full_ptrace_verify_denominator": 200,
+  "hermit_sha": "464cbd9f9bb43d5505c914783819e1d349630283",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "machine": "x86_64",
+  "measured_spst": 128,
+  "method": "ptrace strict+summary topology; LiteInst strict exit+stdout parity; LiteInst strict+verify DETLOG",
+  "parity_count": 107,
+  "parity_pct_full": 53.5,
+  "parity_pct_spst": 83.6,
+  "reverie_sha": "aa6f1283aeee3efd174c57f6dd8198310bd307e1",
+  "run_id": "liteinst-fullcorpus-1785621912",
+  "run_utc": "@1785621912",
+  "schema": 1,
+  "scope_counts": {
+    "excluded-static": 6,
+    "excluded-topology": 50,
+    "measured-spst": 128,
+    "unclassified": 16
+  }
+}
