@@ -58,7 +58,20 @@ touched the relevant subsystem, but can be any candidate cause.
 | `status` | `open`\|`cleared`\|`confirmed` | `open` = not yet ruled out |
 | `reasoning` | string | why a suspect; cross-refs to hypotheses; clear/confirm notes |
 
-### Status conventions
+## NOTEBOOK.md (curated prose) + .notebook-state.json
+
+`NOTEBOOK.md` is agent-authored prose (not a schema-bound record): a synopsis of
+the whole episode in three sections — **EXPLORED**, **INVALIDATED** (with
+adversarially-evaluable resurrection claims), **FRONTIER** (open hypotheses +
+suspects + the decisive next experiment).
+
+`.notebook-state.json` is CLI-managed: `{note, state}` where `state` maps each
+record type to `{id: {status, hash}}` plus an episode hash, captured at the last
+`dbg notebook-sync`. `dbg changed` diffs current state against it to report
+added / removed / status-changed / content-changed records — the worklist for the
+next synthesize-and-revise pass. Do not hand-edit it.
+
+## Status conventions
 
 - Hypothesis: `open` → `confirmed` or `killed` (terminal). "Closed" = either terminal.
 - Suspect: `open` (default at seed) → `cleared` (ruled out) or `confirmed` (a/the regressor).

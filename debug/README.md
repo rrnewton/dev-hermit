@@ -26,7 +26,30 @@ debug/
     evidence.json        # [{id, desc, hypotheses[], artifact, source}]
     suspects.json        # [{id, sha, subject, subsystem, files[], priority,
                          #   status: open|cleared|confirmed, reasoning}]
+    NOTEBOOK.md          # AGENT-SYNTHESIZED curated prose synopsis (see below)
+    .notebook-state.json # snapshot of the machine-readable state at last sync
 ```
+
+## The lab notebook (curated prose, not generated)
+
+`NOTEBOOK.md` is the **synopsis a new reader starts from** — a well-written,
+agent-synthesized narrative of the whole investigation, **not** a mechanical dump
+of the JSON. It is structured in three sections:
+
+- **EXPLORED** — what is established, each claim with evidence pointers (`E..`,
+  artifact paths).
+- **INVALIDATED** — killed hypotheses / dead ends, each with the evidence *and*
+  the adversarially-evaluable claim that would resurrect it.
+- **FRONTIER** — open hypotheses and open suspects, with their supporting evidence
+  and the decisive experiment that would resolve them.
+
+**Workflow (synthesize-and-revise on every change).** The machine-readable JSON is
+the ledger of record; the notebook is curated by an agent. On each change to
+log/hypotheses/evidence/suspects: (1) `dbg changed <episode>` surfaces exactly
+what changed since the last sync; (2) the agent *synthesizes* the new item into the
+notebook **and re-reads the whole notebook for global consistency** (a good
+synopsis, not an append); (3) `dbg notebook-sync <episode>` re-snapshots. The CLI
+makes the delta easy to see; it never writes the prose.
 
 ## The CLI (`./debug/dbg`)
 
@@ -42,6 +65,9 @@ Read queries (add `--json` to any for machine-readable output):
 ./debug/dbg suspects   <episode> --open                # REMAINING OPEN suspects (regressor hunt)
 ./debug/dbg evidence   <episode> [--hypothesis Hn]
 ./debug/dbg show       <episode> <id|sha-prefix>       # full record as JSON
+./debug/dbg notebook   <episode>                       # print the curated NOTEBOOK.md
+./debug/dbg changed    <episode>                        # what changed since last notebook sync
+./debug/dbg notebook-sync <episode>                     # re-snapshot AFTER revising NOTEBOOK.md
 ```
 
 Write ops (persist back to the JSON):

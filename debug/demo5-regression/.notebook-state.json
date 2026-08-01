@@ -1,0 +1,186 @@
+{
+  "note": "state snapshot at last NOTEBOOK.md synthesis; `dbg changed` diffs against this",
+  "state": {
+    "hypotheses": {
+      "H1": {
+        "status": "confirmed",
+        "hash": "53101a713198"
+      },
+      "H2": {
+        "status": "confirmed",
+        "hash": "fb6643cc6169"
+      },
+      "H3": {
+        "status": "confirmed",
+        "hash": "e1f6dab66178"
+      },
+      "H4": {
+        "status": "confirmed",
+        "hash": "29fc55c205c1"
+      },
+      "H5": {
+        "status": "open",
+        "hash": "2020e5975c6d"
+      },
+      "H6": {
+        "status": "confirmed",
+        "hash": "9e2f3384b2b9"
+      },
+      "H7": {
+        "status": "killed",
+        "hash": "666cf743dddd"
+      },
+      "H8": {
+        "status": "open",
+        "hash": "f724a48c3bed"
+      },
+      "H9": {
+        "status": "open",
+        "hash": "2450a41276b0"
+      }
+    },
+    "evidence": {
+      "E01": {
+        "status": "",
+        "hash": "82e5cc01092b"
+      },
+      "E02": {
+        "status": "",
+        "hash": "4818bf65a13a"
+      },
+      "E03": {
+        "status": "",
+        "hash": "e4a8edd62f83"
+      },
+      "E04": {
+        "status": "",
+        "hash": "e8abb5dcc26c"
+      },
+      "E05": {
+        "status": "",
+        "hash": "66fed1e1086a"
+      },
+      "E06": {
+        "status": "",
+        "hash": "8cf0da351a36"
+      },
+      "E07": {
+        "status": "",
+        "hash": "666aa7f90587"
+      },
+      "E08": {
+        "status": "",
+        "hash": "eafa23fc0c0d"
+      },
+      "E09": {
+        "status": "",
+        "hash": "f02f2de809cc"
+      },
+      "E10": {
+        "status": "",
+        "hash": "53fdc9fd2ed0"
+      },
+      "E11": {
+        "status": "",
+        "hash": "d38f17749f45"
+      },
+      "E12": {
+        "status": "",
+        "hash": "2ec93946deef"
+      },
+      "E13": {
+        "status": "",
+        "hash": "803210f085c7"
+      },
+      "E14": {
+        "status": "",
+        "hash": "d5751b051b5e"
+      }
+    },
+    "suspects": {
+      "S01": {
+        "status": "open",
+        "hash": "a5ea438a5472"
+      },
+      "S02": {
+        "status": "open",
+        "hash": "1887c25694a7"
+      },
+      "S03": {
+        "status": "open",
+        "hash": "c6aed0b75bc4"
+      },
+      "S04": {
+        "status": "open",
+        "hash": "cd24f5e2e0bb"
+      },
+      "S05": {
+        "status": "open",
+        "hash": "6d3fd4f07f41"
+      },
+      "S06": {
+        "status": "open",
+        "hash": "84e101f45379"
+      },
+      "S07": {
+        "status": "open",
+        "hash": "826c9b71a4a2"
+      },
+      "S08": {
+        "status": "open",
+        "hash": "35ed16c059c5"
+      },
+      "S09": {
+        "status": "open",
+        "hash": "633d04e5a229"
+      },
+      "S10": {
+        "status": "open",
+        "hash": "2adab53b8cf2"
+      },
+      "S11": {
+        "status": "open",
+        "hash": "b91e4785aee7"
+      },
+      "S12": {
+        "status": "open",
+        "hash": "fe295da4f791"
+      },
+      "S13": {
+        "status": "open",
+        "hash": "af8dfbf92608"
+      },
+      "S14": {
+        "status": "open",
+        "hash": "7b0645b49b1b"
+      },
+      "S15": {
+        "status": "open",
+        "hash": "7be99462539c"
+      },
+      "S16": {
+        "status": "open",
+        "hash": "482b3c0b20cc"
+      },
+      "S17": {
+        "status": "open",
+        "hash": "a51593f5e48c"
+      },
+      "S18": {
+        "status": "open",
+        "hash": "4a0de7191584"
+      },
+      "S19": {
+        "status": "open",
+        "hash": "542f1545675b"
+      },
+      "S20": {
+        "status": "open",
+        "hash": "b498244ad17a"
+      }
+    },
+    "episode": {
+      "hash": "aa1230037e6e"
+    }
+  }
+}
