@@ -7,7 +7,7 @@ SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
 	checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
-	compat-envelope compat-envelope-full \
+	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
 	install-deps-core install-deps-full install-deps-qemu validate
@@ -134,9 +134,24 @@ compat-envelope-full: init-hermit
 	HERMIT_BIN="$(CURDIR)/hermit/target/release/hermit" \
 		compat-envelope/validate-envelope.sh --lane portable --backends ptrace,dbi,sabre
 
-# validate: the outer-repo definition-of-done gate. Currently the compat
-# envelope; extend as other workspace-level checks are added.
-validate: compat-envelope
+# compat-envelope-fullcorpus: the LOCAL definition-of-done gate. The
+# portable/privileged split (compat-envelope[-full]) exists for GitHub CI, where
+# a runner may lack /dev/kvm or the third-party-backend feature build. On a
+# fully-provisioned local box (this machine has /dev/kvm) the gate should instead
+# measure the UNION — the FULL ~200-cell verify corpus (184 compiled C + 16
+# shell/interpreter cells) across EVERY backend the local binary can run — not
+# the ~28-cell ci=true portable subset. Backends are auto-detected; a missing one
+# is recorded n/a, never a false red. Ratchet-asserted (green-stays-green) against
+# per-backend det floors measured at 82a8e853.
+compat-envelope-fullcorpus: init-hermit
+	cd hermit && cargo build --release -p hermit --bin hermit --features third-party-backends
+	HERMIT_BIN="$(CURDIR)/hermit/target/release/hermit" \
+		compat-envelope/collect-fullcorpus.sh
+
+# validate: the outer-repo definition-of-done gate. Locally this is the FULL
+# ~200-cell cross-backend envelope (both lanes' union); the portable/privileged
+# split is CI-only. Extend as other workspace-level checks are added.
+validate: compat-envelope-fullcorpus
 
 doctor:
 	@scripts/doctor.sh all
@@ -174,9 +189,10 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
-	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI)"
-	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie)"
-	@echo "make validate           Outer-repo definition-of-done gate (compat envelope)"
+	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"
+	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
+	@echo "make compat-envelope-fullcorpus  LOCAL full ~200-cell union across all runnable backends"
+	@echo "make validate           Outer-repo definition-of-done gate (local = full-corpus envelope)"
 	@echo "make checkout-all       Check out every standard and optional submodule"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
