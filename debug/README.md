@@ -28,7 +28,29 @@ debug/
                          #   status: open|cleared|confirmed, reasoning}]
     NOTEBOOK.md          # AGENT-SYNTHESIZED curated prose synopsis (see below)
     .notebook-state.json # snapshot of the machine-readable state at last sync
+    VCS_MISSING.md       # what's NOT checked in (regeneratable? code depends on it?)
+    .gitignore           # per-episode hygiene tuning (starter scaffolded)
+    ignored/             # gitignored: raw logs / boot artifacts / scratch live HERE
 ```
+
+## Hygiene (commit code + reports + state, not raw artifacts)
+
+- **ignored/-first default.** Write anything you won't commit — raw logs, boot
+  artifacts, scratch, big outputs — **directly into `<episode>/ignored/` from the
+  start** (gitignored). No commit-time judgment needed; only reports, `NOTEBOOK.md`,
+  and machine-readable state are tracked. `dbg new-episode` scaffolds `ignored/`.
+- **`.log` is NOT blanket-ignored** — small curated logs may be tracked; big/raw
+  logs go under `ignored/`. A **pre-commit size hook** (`.githooks/pre-commit`,
+  install via `scripts/setup-hooks.sh`) is the backstop: it warns + blocks staged
+  files over a soft limit unless `HERMIT_HYGIENE_OVERRIDE=1`. Full policy:
+  `.githooks/hygiene-policy.md`.
+- **Per-episode `.gitignore`.** Each episode dir may tune what lives-but-ignored
+  locally; `dbg new-episode` scaffolds a sensible starter.
+- **`VCS_MISSING.md` (required per dir).** Summarizes what won't exist on a fresh
+  clone: which artifacts are missing, whether each is regeneratable (and how), and
+  whether any tracked code **reads** it (→ fails elsewhere). `dbg new-episode`
+  scaffolds it; `dbg vcs-check <episode>` lists currently-ignored paths to keep it
+  current.
 
 ## The lab notebook (curated prose, not generated)
 
@@ -68,7 +90,11 @@ Read queries (add `--json` to any for machine-readable output):
 ./debug/dbg notebook   <episode>                       # print the curated NOTEBOOK.md
 ./debug/dbg changed    <episode>                        # what changed since last notebook sync
 ./debug/dbg notebook-sync <episode>                     # re-snapshot AFTER revising NOTEBOOK.md
+./debug/dbg vcs-check  <episode>                        # list git-ignored paths for VCS_MISSING.md
 ```
+
+`dbg new-episode <slug>` scaffolds the JSON + a starter `.gitignore`, `VCS_MISSING.md`,
+and an `ignored/` dir so raw artifacts have a gitignored home from the start.
 
 Write ops (persist back to the JSON):
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -233,6 +234,52 @@ def cmd_summary(a):
 # --------------------------------------------------------------------------- #
 # mutations                                                                   #
 # --------------------------------------------------------------------------- #
+STARTER_GITIGNORE = """\
+# Per-episode hygiene (tune locally). DEFAULT: write anything you won't commit --
+# raw logs, boot artifacts, scratch, big outputs -- DIRECTLY under ignored/ from
+# the start; it is gitignored, so no commit-time judgment is needed. Only reports,
+# NOTEBOOK.md, and machine-readable state (episode/hypotheses/evidence/suspects
+# JSON) live tracked here. The repo pre-commit size hook is only a backstop.
+# NOTE: *.log is intentionally NOT ignored -- small curated logs may be tracked;
+# put big/raw logs under ignored/. Add/remove patterns below to fit this episode.
+ignored/
+boots-*/
+boot-*/
+runs/
+*.qcow2
+*.img
+*.raw
+*.iso
+*.cpio
+*.cpio.gz
+bzImage
+vmlinux
+*.core
+*.perf.data
+"""
+
+
+def _starter_vcs_missing(slug: str) -> str:
+    return f"""\
+# VCS_MISSING — {slug}
+
+What is **not** checked in for this episode (won't exist on a fresh clone). Keep
+this current: whenever you leave an artifact untracked (e.g. write it under
+`ignored/`), add a row. Run `dbg vcs-check {slug}` to list currently-ignored paths.
+
+| path (rel to this dir) | what it is | regeneratable? | how to regenerate | tracked code READS it? |
+|---|---|---|---|---|
+| ignored/ | raw scratch: logs, boot artifacts, big outputs | yes | see Notes | no |
+
+## Notes
+- DEFAULT: un-committable artifacts are written under `ignored/` from the start.
+- Regeneration: <commands / scripts that reproduce the missing artifacts>.
+- Runtime dependency: if ANY tracked script/tool READS a missing path it WILL fail
+  on another machine -- list it above and mark the last column "yes". None known
+  so far (confirm as the episode grows).
+"""
+
+
 def cmd_new_episode(a):
     d = ROOT / a.slug
     if (d / "episode.json").exists():
@@ -243,7 +290,17 @@ def cmd_new_episode(a):
                              "owner": a.owner or ""})
     for n in ("hypotheses", "suspects", "evidence"):
         save(a.slug, n, [])
+    # Hygiene scaffolding: per-episode .gitignore, VCS_MISSING.md, and an ignored/
+    # scratch dir so raw artifacts have a gitignored home from the very start.
+    (d / ".gitignore").write_text(STARTER_GITIGNORE)
+    (d / "VCS_MISSING.md").write_text(_starter_vcs_missing(a.slug))
+    (d / "ignored").mkdir(exist_ok=True)
+    (d / "ignored" / ".keep").write_text("")  # local anchor (ignored/ is gitignored)
     print(f"created episode {a.slug} at {d}")
+    print("  scaffolded: episode/hypotheses/evidence/suspects.json, .gitignore, "
+          "VCS_MISSING.md, ignored/")
+    print("  next: write NOTEBOOK.md (EXPLORED/INVALIDATED/FRONTIER), then "
+          f"`dbg notebook-sync {a.slug}`")
 
 
 def _next_id(items, prefix):
@@ -419,6 +476,43 @@ def cmd_notebook(a):
     sys.stdout.write(nb.read_text())
 
 
+def cmd_vcs_check(a):
+    """List files under the episode dir that git IGNORES (won't exist on a fresh
+    clone) so VCS_MISSING.md can be kept current."""
+    d = episode_dir(a.episode)
+    files = [str(p) for p in sorted(d.rglob("*")) if p.is_file()]
+    ignored = []
+    if files:
+        # git check-ignore --stdin prints the paths that ARE ignored.
+        try:
+            r = subprocess.run(["git", "check-ignore", "--stdin"],
+                               input="\n".join(files), capture_output=True, text=True)
+            ignored = sorted(x for x in r.stdout.splitlines() if x.strip())
+        except Exception as e:  # noqa: BLE001
+            sys.exit(f"git check-ignore failed: {e}")
+    vcs = d / "VCS_MISSING.md"
+    if a.json:
+        print(json.dumps({"episode": a.episode, "vcs_missing_exists": vcs.exists(),
+                          "ignored_paths": [str(Path(x).relative_to(d)) for x in ignored]},
+                         indent=2))
+        return
+    if not vcs.exists():
+        print(f"VCS_MISSING.md MISSING for {a.episode} — scaffold one (see policy) and "
+              f"list what's below.")
+    print(f"Files under {a.episode}/ that git IGNORES (NOT on a fresh clone -> "
+          f"must be in VCS_MISSING.md):")
+    if not ignored:
+        print("  (none — every file here is tracked)")
+    else:
+        # collapse to top-level dirs + loose files for readability
+        tops = sorted({str(Path(x).relative_to(d)).split("/")[0] for x in ignored})
+        for t in tops:
+            n = sum(1 for x in ignored if str(Path(x).relative_to(d)).split("/")[0] == t)
+            print(f"  {t}{'/' if (d / t).is_dir() else ''}  ({n} file(s))")
+    print("\nKeep VCS_MISSING.md current: for each, note regeneratable? how? does "
+          "tracked code READ it?")
+
+
 # --------------------------------------------------------------------------- #
 # argparse                                                                    #
 # --------------------------------------------------------------------------- #
@@ -455,6 +549,9 @@ def main():
 
     p = sub.add_parser("notebook", help="print the curated NOTEBOOK.md")
     p.add_argument("episode"); p.set_defaults(fn=cmd_notebook)
+
+    p = sub.add_parser("vcs-check", help="list git-ignored paths (not on a fresh clone) for VCS_MISSING.md")
+    p.add_argument("episode"); add_json(p); p.set_defaults(fn=cmd_vcs_check)
 
     p = sub.add_parser("notebook-sync", help="snapshot state as the notebook baseline (after revising NOTEBOOK.md)")
     p.add_argument("episode"); p.add_argument("--force", action="store_true")

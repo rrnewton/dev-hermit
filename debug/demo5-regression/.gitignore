@@ -1,0 +1,21 @@
+# Per-episode hygiene (tune locally). DEFAULT: write anything you won't commit --
+# raw logs, boot artifacts, scratch, big outputs -- DIRECTLY under ignored/ from
+# the start; it is gitignored, so no commit-time judgment is needed. Only reports,
+# NOTEBOOK.md, and machine-readable state (episode/hypotheses/evidence/suspects
+# JSON) live tracked here. The repo pre-commit size hook is only a backstop.
+# NOTE: *.log is intentionally NOT ignored -- small curated logs may be tracked;
+# put big/raw logs under ignored/. Add/remove patterns below to fit this episode.
+ignored/
+boots-*/
+boot-*/
+runs/
+*.qcow2
+*.img
+*.raw
+*.iso
+*.cpio
+*.cpio.gz
+bzImage
+vmlinux
+*.core
+*.perf.data

@@ -71,6 +71,18 @@ record type to `{id: {status, hash}}` plus an episode hash, captured at the last
 added / removed / status-changed / content-changed records — the worklist for the
 next synthesize-and-revise pass. Do not hand-edit it.
 
+## VCS_MISSING.md, per-episode .gitignore, ignored/ (hygiene, per dir)
+
+- **`VCS_MISSING.md`** (required in every `experiments/<foo>/` and `debug/<bar>/`):
+  a table of what is NOT checked in — path, what it is, regeneratable? (and how),
+  and whether tracked code **reads** it (→ would fail on a fresh clone). Scaffolded
+  by `dbg new-episode`; keep current with `dbg vcs-check`.
+- **`.gitignore`** (per-episode): starter scaffolded by `dbg new-episode`; tune what
+  large/scratch artifacts live-but-ignored locally.
+- **`ignored/`**: the gitignored home for raw logs / boot artifacts / scratch —
+  write them here from the start (ignored/-first default). See
+  `.githooks/hygiene-policy.md`.
+
 ## Status conventions
 
 - Hypothesis: `open` → `confirmed` or `killed` (terminal). "Closed" = either terminal.

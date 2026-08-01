@@ -71,11 +71,15 @@
 /experiments/**/boot-*/
 
 # debug/ debugging-episode infra (#40): each episode dir holds machine-readable
-# state (episode/hypotheses/evidence/suspects JSON) plus reports/summaries only.
-# Raw giant logs, boot artifacts, VM/kernel images, and binaries live under an
-# ignored/ scratch dir or an external artifact store, never in git. Episodes
-# REFERENCE such artifacts by path (e.g. into experiments/ or ignored/).
-/debug/**/*.log
+# state (episode/hypotheses/evidence/suspects JSON) + reports/NOTEBOOK only.
+# DEFAULT: write anything you know you won't commit -- raw logs, boot artifacts,
+# scratch, big outputs -- DIRECTLY into <episode>/ignored/ from the start (it is
+# gitignored below), so there is no commit-time judgment call. Episodes REFERENCE
+# such artifacts by path. Small CURATED logs MAY be tracked (.log is intentionally
+# NOT blanket-ignored); the pre-commit size hook (.githooks/pre-commit) is the
+# backstop for oversized staged files, and each episode may add its own
+# <episode>/.gitignore to tune what lives-but-ignored locally.
+# Hard-ignored here = clearly-never-commit artifacts only.
 /debug/**/boots-*/
 /debug/**/boot-*/
 /debug/**/runs/
@@ -101,10 +105,15 @@
 /debug/**/initramfs*.cpio*
 /debug/**/*.cpio
 
-# Transient tooling output
+# Transient tooling output. NOTE: *.log is intentionally NOT blanket-ignored --
+# a blanket rule is too blunt (small curated logs are wanted, and blanket-ignore
+# forces agents to force-add the ones they want, which they won't). Oversized
+# staged files (logs or otherwise) are caught by the pre-commit size hook
+# (.githooks/pre-commit, install via scripts/setup-hooks.sh). Raw giant logs
+# belong under an ignored/ dir. Clearly-never-commit artifacts stay hard-ignored
+# above (images, kernels/initrd, boots-*/, archives, binaries, core dumps).
 **/__pycache__/
 *.perf.data
-*.log
 
 # High-volume per-run transcripts stay local.  Compact, durable tables are
 # promoted to each experiment's results directory before publication.
