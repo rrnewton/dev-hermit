@@ -1,0 +1,30 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round38",
+  "date": "2026-08-01",
+  "question": "Can six inert guests on new socket-option and interval-timer axes reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all six kept at L2; corpus 242 -> 248, 248/248 PASS_L2, zero drops.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1405",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1403",
+  "branch": "codex/e9patch-corpus-round38-sockopt-itimer",
+  "commit_sha": "51085420",
+  "base_branch": "codex/e9patch-corpus-round37-socket-lseek",
+  "base_sha": "32ad9ca8c753e3c01fd8cea3c566a0a82308301d",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getsockopt_keepalive", "syscall": "getsockopt(55) SO_KEEPALIVE=9", "stdout": "keepalive=0"},
+    {"guest": "getsockopt_oobinline", "syscall": "getsockopt(55) SO_OOBINLINE=10", "stdout": "oobinline=0"},
+    {"guest": "getsockopt_dontroute", "syscall": "getsockopt(55) SO_DONTROUTE=5", "stdout": "dontroute=0"},
+    {"guest": "getsockopt_rcvlowat", "syscall": "getsockopt(55) SO_RCVLOWAT=18", "stdout": "rcvlowat=1"},
+    {"guest": "getitimer_virtual", "syscall": "getitimer(36) ITIMER_VIRTUAL=1", "stdout": "getitimervirt=0"},
+    {"guest": "getitimer_prof", "syscall": "getitimer(36) ITIMER_PROF=2", "stdout": "getitimerprof=0"}
+  ],
+  "dropped": [],
+  "corpus_size_before": 242,
+  "corpus_size_after": 248,
+  "net_delta": 6,
+  "full_corpus_run": "RATCHET e9patch: 248/248 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
