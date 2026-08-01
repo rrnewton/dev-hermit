@@ -1,0 +1,200 @@
+2241990 20:01:45.000000 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000010 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000011>
+2241990 20:01:45.000018 <... futex resumed>) = 0 <0.000009>
+2241974 20:01:45.000024 read(7,  <unfinished ...>
+2241990 20:01:45.000029 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000038 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000011>
+2241974 20:01:45.000050 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000007>
+2241990 20:01:45.000065 <... futex resumed>) = 0 <0.000028>
+2241974 20:01:45.000070 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000077 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000093 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000114 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000038>
+2241990 20:01:45.000131 <... write resumed>) = 8 <0.000023>
+2241974 20:01:45.000147 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000161 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000167 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000008>
+2241990 20:01:45.000173 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:45.000178 read(7,  <unfinished ...>
+2241990 20:01:45.000183 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000187 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000005>
+2241974 20:01:45.000197 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:45.000208 <... futex resumed>) = 0 <0.000022>
+2241974 20:01:45.000213 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000220 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000239 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000258 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000038>
+2241990 20:01:45.000271 <... write resumed>) = 8 <0.000019>
+2241974 20:01:45.000283 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000294 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000298 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000006>
+2241990 20:01:45.000305 <... futex resumed>) = 0 <0.000007>
+2241974 20:01:45.000309 read(7,  <unfinished ...>
+2241990 20:01:45.000314 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000319 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000006>
+2241974 20:01:45.000329 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000005>
+2241990 20:01:45.000341 <... futex resumed>) = 0 <0.000023>
+2241974 20:01:45.000346 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000357 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000373 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000386 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000030>
+2241990 20:01:45.000400 <... write resumed>) = 8 <0.000020>
+2241974 20:01:45.000405 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000411 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000417 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000007>
+2241990 20:01:45.000424 <... futex resumed>) = 0 <0.000007>
+2241974 20:01:45.000436 read(7,  <unfinished ...>
+2241990 20:01:45.000447 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000462 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000016>
+2241974 20:01:45.000475 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000006>
+2241990 20:01:45.000487 <... futex resumed>) = 0 <0.000026>
+2241974 20:01:45.000496 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000507 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000523 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000537 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000030>
+2241990 20:01:45.000543 <... write resumed>) = 8 <0.000012>
+2241974 20:01:45.000550 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000555 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000565 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000011>
+2241990 20:01:45.000582 <... futex resumed>) = 0 <0.000018>
+2241974 20:01:45.000595 read(7,  <unfinished ...>
+2241990 20:01:45.000605 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000611 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000008>
+2241974 20:01:45.000621 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000005>
+2241990 20:01:45.000633 <... futex resumed>) = 0 <0.000022>
+2241974 20:01:45.000643 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000650 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000668 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000683 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000033>
+2241990 20:01:45.000699 <... write resumed>) = 8 <0.000022>
+2241974 20:01:45.000714 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000726 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000745 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000019>
+2241990 20:01:45.000757 <... futex resumed>) = 0 <0.000013>
+2241974 20:01:45.000768 read(7,  <unfinished ...>
+2241990 20:01:45.000780 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000786 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000007>
+2241974 20:01:45.000804 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000003>
+2241990 20:01:45.000814 <... futex resumed>) = 0 <0.000029>
+2241974 20:01:45.000818 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000825 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000003>
+2241990 20:01:45.000849 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000866 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000042>
+2241990 20:01:45.000872 <... write resumed>) = 8 <0.000012>
+2241974 20:01:45.000877 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000882 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.000886 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000006>
+2241990 20:01:45.000892 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:45.000903 read(7,  <unfinished ...>
+2241990 20:01:45.000908 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.000912 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000005>
+2241974 20:01:45.000922 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:45.000934 <... futex resumed>) = 0 <0.000022>
+2241974 20:01:45.000941 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.000954 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.000973 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.000983 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000030>
+2241990 20:01:45.000989 <... write resumed>) = 8 <0.000011>
+2241974 20:01:45.000994 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.000999 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001004 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000006>
+2241990 20:01:45.001009 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:45.001014 read(7,  <unfinished ...>
+2241990 20:01:45.001018 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001023 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000006>
+2241974 20:01:45.001037 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000005>
+2241990 20:01:45.001055 <... futex resumed>) = 0 <0.000033>
+2241974 20:01:45.001060 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001067 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.001084 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001102 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000035>
+2241990 20:01:45.001113 <... write resumed>) = 8 <0.000016>
+2241974 20:01:45.001126 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001136 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001143 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000008>
+2241990 20:01:45.001148 <... futex resumed>) = 0 <0.000007>
+2241974 20:01:45.001153 read(7,  <unfinished ...>
+2241990 20:01:45.001158 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001163 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000006>
+2241974 20:01:45.001173 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000005>
+2241990 20:01:45.001187 <... futex resumed>) = 0 <0.000026>
+2241974 20:01:45.001197 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001204 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000005>
+2241990 20:01:45.001224 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001236 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000033>
+2241990 20:01:45.001244 <... write resumed>) = 8 <0.000015>
+2241974 20:01:45.001248 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001253 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001259 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000007>
+2241990 20:01:45.001266 <... futex resumed>) = 0 <0.000007>
+2241974 20:01:45.001271 read(7,  <unfinished ...>
+2241990 20:01:45.001276 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001280 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000006>
+2241974 20:01:45.001293 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:45.001310 <... futex resumed>) = 0 <0.000031>
+2241974 20:01:45.001323 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001342 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000005>
+2241990 20:01:45.001374 write(7, "\1\0\0\0\0\0\0\0", 8) = 8 <0.000006>
+2241974 20:01:45.001400 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000058>
+2241990 20:01:45.001409 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001415 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001423 <... write resumed>) = 8 <0.000009>
+2241990 20:01:45.001433 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000006>
+2241974 20:01:45.001446 <... futex resumed>) = 0 <0.000025>
+2241974 20:01:45.001454 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001458 write(7, "\1\0\0\0\0\0\0\0", 8) = 8 <0.000005>
+2241990 20:01:45.001475 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001484 <... futex resumed>) = 0 <0.000026>
+2241990 20:01:45.001489 <... futex resumed>) = 1 <0.000010>
+2241974 20:01:45.001493 read(7,  <unfinished ...>
+2241990 20:01:45.001496 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001501 <... read resumed>"\3\0\0\0\0\0\0\0", 512) = 8 <0.000005>
+2241974 20:01:45.001511 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:45.001522 <... futex resumed>) = 0 <0.000023>
+2241974 20:01:45.001530 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001538 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000005>
+2241990 20:01:45.001557 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001567 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000030>
+2241990 20:01:45.001574 <... write resumed>) = 8 <0.000012>
+2241974 20:01:45.001578 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001583 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001596 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000013>
+2241990 20:01:45.001600 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:45.001605 read(7,  <unfinished ...>
+2241990 20:01:45.001610 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001614 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000005>
+2241974 20:01:45.001625 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:45.001640 <... futex resumed>) = 0 <0.000027>
+2241974 20:01:45.001650 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001665 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.001700 write(7, "\1\0\0\0\0\0\0\0", 8) = 8 <0.000006>
+2241974 20:01:45.001715 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000051>
+2241990 20:01:45.001727 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001732 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001737 <... write resumed>) = 8 <0.000005>
+2241990 20:01:45.001745 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001756 <... futex resumed>) = 0 <0.000021>
+2241990 20:01:45.001763 <... futex resumed>) = 1 <0.000013>
+2241974 20:01:45.001769 read(7,  <unfinished ...>
+2241990 20:01:45.001774 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001778 <... read resumed>"\2\0\0\0\0\0\0\0", 512) = 8 <0.000005>
+2241974 20:01:45.001792 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000006>
+2241990 20:01:45.001817 <... futex resumed>) = 0 <0.000040>
+2241974 20:01:45.001823 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001830 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000004>
+2241990 20:01:45.001848 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:45.001859 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000029>
+2241990 20:01:45.001868 <... write resumed>) = 8 <0.000016>
+2241974 20:01:45.001882 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:45.001887 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:45.001892 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000006>
+2241990 20:01:45.001897 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:45.001903 read(7,  <unfinished ...>
+2241990 20:01:45.001908 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:45.001914 <... read resumed>"\1\0\0\0\0\0\0\0", 512) = 8 <0.000007>
+2241974 20:01:45.001923 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000005>
+2241990 20:01:45.001954 <... futex resumed>) = 0 <0.000040>
+2241974 20:01:45.001963 ppoll([{fd=4, events=POLLIN}, {fd=5, events=POLLIN}, {fd=6, events=POLLIN}, {fd=7, events=POLLIN}], 4, NULL, NULL, 8 <unfinished ...>
+2241990 20:01:45.001970 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 0 <0.000005>
+2241990 20:01:45.001990 write(7, "\1\0\0\0\0\0\0\0", 8) = 8 <0.000005>
+2241974 20:01:45.002008 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.000038>

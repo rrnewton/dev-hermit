@@ -1,0 +1,37 @@
+{
+  "experiment": "demo5-rootcause-metrics-table",
+  "role": "metrics evidence agent (hermit-231 slot) feeding lead scientist hermit-226",
+  "task": "demo5-baseline-metrics-table",
+  "ledger": "experiments/demo5-rootcause-20260731/ledger.md (hypotheses H1/H2/H5)",
+  "date": "2026-07-31",
+  "host": "devbig014",
+  "question": "Quantify the demo5 --no-rcb-time wedge vs the rcb-time green boot: wall-time, detcore turns, elapsed virtual time, timeslice count, syscall count. Does the fix restore pre-regression perf?",
+  "hermit_shas": {
+    "f6c836b18dac": "window-start / tag demo-20260729 (last-known-green anchor)",
+    "61d8df393b88": "mid-window (#1190 guest-clock unify landed nearby)",
+    "ae2565be5697": "window-end (Gate third-party-dependency backends behind cargo feature)",
+    "670209ba0863": "current main + fix-demo5-kernel-image-fetch (hermit-220 slot); hermit-220 green anchor"
+  },
+  "qemu": "qemu-system-x86_64 (system /usr/bin), 10.x",
+  "kernel_wedge_harness": "ignored/qemu-linux/bzImage (Linux 6.17.13, full-Linux controller boot)",
+  "kernel_busybox_harness": "pinned bzImage sha256 e4b1c0248a31c7e1f7cb31d82a1a03d4e7cab408ee1b8e622dd897c17eae46a2",
+  "harnesses": {
+    "wedge": "parent demos/05-qemu-boot.py + demos/lib/qemu_controller.py; hermit run --strict --no-rcb-time --target-timeslice 100000 --max-timeslice disabled; full Linux + QMP + savevm snapshot",
+    "green_crawl": "hermit-repo demos/05-qemu-busybox.sh + boot_qemu.sh; hermit run --strict (rcb-time ON); bare busybox, -icount shift=0,sleep=off, -serial stdio"
+  },
+  "controlled_pair": "busybox harness, same binary hermit-670209ba, only --no-rcb-time flipped (strict vs strict+no-rcb-time) — single-variable H6 kill-test",
+  "metric_sources": {
+    "turns": "hermit run report: 'Internally, the hermit scheduler ran N turns'",
+    "elapsed_vtime": "hermit run report: 'Elapsed virtual global (cpu) time: Xs'",
+    "timeslices": "hermit run report: 'Timeslice stats: ... count=N'",
+    "syscalls": "count of DETLOG 'finish syscall' lines in the info log",
+    "wall": "harness date(+%s) delta AND first->last info-log timestamp (log-active wall)"
+  },
+  "raw_run_dirs": "experiments/demo5_bisect_20260731/ignored/ (gitignored; run-*, run-bbx-*)",
+  "caveats": [
+    "No commit in the current environment boots green under the WEDGE harness (--no-rcb-time): the commit bisect is invalid (all wedge; bare QEMU boots). The good->bad axis is the CONFIG, not the commit.",
+    "Wedge (full-Linux controller) and green (bare busybox) are DIFFERENT guests; cross-harness ratios are indicative of magnitude, not a single-variable measurement. The controlled busybox pair is the single-variable measurement.",
+    "Ad-hoc rcb-controller boots (metrics_boot.sh config=rcb) failed at QEMU-startup (harness-config mismatch vs hermit-220's landed demo config), NOT a scheduler wedge; excluded from scheduler conclusions.",
+    "DECISIVE: the full 3-knob wedge stack applied to a BARE BUSYBOX guest (busybox_pair.sh config=wedgekit) does NOT permanently wedge -- it boots to power-down, crawling (~493k turns, ~1450s vtime, ~85k timeslices, 387k syscalls; ~12x a green boot). The permanent wedge (Table A: millions of turns, guest frozen <1s) appears ONLY when the same config drives the full-Linux CONTROLLER guest. => config stack and controller topology are BOTH required; neither alone suffices (supports ledger H6, refines H1)."
+  ]
+}

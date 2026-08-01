@@ -1,0 +1,32 @@
+=== Hermit per-dtid activity & starvation analysis ===
+distinct dtids: 23    total scheduler turns: 63178    final committed vtime: 1767226513.241 s
+
+ dtid    turns  syscall  first_trn   last_trn       first_vt_s        last_vt_s   tail_turns     tail_vt_s  flags
+    7    35978    27597        527      36558   1767225607.813   1767226249.753        26619       263.489  EXITED BUSY-POLLER
+   23     9303     7801      37988      62942   1767226300.793   1767226511.032          235         2.210  EXITED
+   27     7787     7636      38428      63037   1767226317.501   1767226511.709          140         1.532  EXITED
+   13     2353     2215      36985      63118   1767226262.226   1767226512.577           59         0.664  EXITED
+    3     1469     1367          0      63177   1767225600.000   1767226513.241            0         0.000  EXITED
+   25      954      606      38089      63091   1767226308.395   1767226512.346           86         0.895  EXITED
+   17      907      787      37262      63050   1767226275.990   1767226511.878          127         1.363  EXITED
+   21      610      312      37949      63002   1767226293.546   1767226511.387          175         1.854  EXITED
+   39      577      331      44121      62782   1767226400.023   1767226510.394          395         2.847  EXITED
+   31      503      305      38678      50144   1767226333.781   1767226479.882        13033        33.359  EXITED
+   19      445      153      37814      63165   1767226285.957   1767226513.076           12         0.166  EXITED
+    5      425      399        164      61629   1767225602.419   1767226506.942         1548         6.299  
+   35      308      293      43139      50014   1767226372.190   1767226479.181        13163        34.060  EXITED
+   45      289      268      46880      48648   1767226452.974   1767226474.736        14529        38.505  EXITED
+   29      273        3      38480      63171   1767226325.102   1767226513.088            6         0.153  
+   37      251      236      43485      55009   1767226385.457   1767226491.940         8168        21.301  EXITED
+   15      249      235      37243      63060   1767226269.857   1767226512.033          117         1.208  EXITED
+   33      162      151      41551      49794   1767226355.108   1767226478.183        13383        35.058  EXITED
+   11      133      109      36960      63134   1767226256.867   1767226512.765           43         0.476  EXITED
+   41       79       29      45415      49360   1767226418.091   1767226476.644        13817        36.598  EXITED
+   47       53       52      46928      47466   1767226468.651   1767226471.044        15711        42.197  EXITED
+    9       40       34       3541       3594   1767225638.481   1767225638.857        59583       874.384  STARVED-TAIL
+   43       30       25      46807      47826   1767226437.341   1767226472.629        15351        40.612  EXITED
+
+=== wedge witnesses (starvation tail, worst first) ===
+  dtid   9: last ran at turn 3594 (1767225638.857 s committed), then 59583 turns (94.3% of run) with the committed clock advancing +874.384 s and this thread NEVER scheduled again.
+
+INTERPRETATION: a large starvation tail combined with a BUSY-POLLER dtid is the deadline-less unproductive-poller wedge -- the poller keeps the run queue non-empty so committed vtime races ahead while the starved thread's next event is never reached.

@@ -1,0 +1,57 @@
+{
+  "task": "demo5-log-science-diff",
+  "agent": "hermit-237 (log-science)",
+  "feeds": "demo5-rigorous-rootcause (lead hermit-226)",
+  "date": "2026-07-31",
+  "host": "devbig014.atn7.facebook.com",
+  "cpus": 316,
+  "load_avg_at_run": [65.75, 62.53, 58.75],
+  "hermit_primary_head_used_for_tools": "1ece0654e39c67fa0555dfde645a8da61eb2f059",
+  "log_timeslice_base_commit": "2327925f",
+  "tool_versions": {"rust_script": "0.36.0"},
+  "traces": {
+    "good": {
+      "hermit_sha": "2a7ca98f",
+      "pr": 1077,
+      "outcome": "exit 0, boots",
+      "path": "ignored/logs/demo5-good-boot-2a7ca98-rerun-1785460783-197-1542507.log",
+      "bytes": 771000000,
+      "lines": 7443967,
+      "qemu_dtid9_syscalls": 112506,
+      "qemu_dtid9_state": "EXITED"
+    },
+    "bad": {
+      "hermit_sha": "aa5258b6",
+      "pr": 1186,
+      "outcome": "timed out waiting for socket qmp.sock",
+      "path": "ignored/logs/demo5-bad-boot-aa5258b-rerun600-1785460998-903-1644132.log",
+      "bytes": 37985451,
+      "lines": 347521,
+      "qemu_dtid9_syscalls": 34,
+      "qemu_dtid9_state": "STARVED"
+    }
+  },
+  "wedge_config": "hermit run --strict --no-rcb-time --target-timeslice 100000 --max-timeslice disabled + python qemu_controller.py boot",
+  "commands": {
+    "logdiff": "hermit log-diff --no-color --strip-lines --limit 8 --ignore-lines bisect-demo5 --ignore-lines execve <good_head45k> <broken_head45k>",
+    "timeslice": "hermit/scripts/log_timeslice.rs < ignored/demo5-broken-trace.log",
+    "dtid_activity": "./dtid_activity.rs < ignored/demo5-{broken,good}-trace.log"
+  },
+  "key_finding": {
+    "bad_wedge_witness_dtid": 9,
+    "bad_dtid9_last_committed_s": 1767225638.857,
+    "bad_final_committed_s": 1767226513.241,
+    "bad_tail_committed_advance_s": 874.384,
+    "bad_tail_turns_pct": 94.3,
+    "bad_busy_poller_dtid": 7,
+    "bad_busy_poller_syscalls": 27597,
+    "dtid9_identity": "/bin/qemu-system-x86_64",
+    "dtid7_identity": "python3.12 qemu_controller.py",
+    "wedge_point": "QEMU read(3,..,832)=syscall#34 loading libpixman-1.so in ld.so; completes but never rescheduled"
+  },
+  "tooling_gaps": [
+    "log-diff --strip-lines does not normalize per-run output dirs (spurious first divergence)",
+    "log-diff zip alignment derails on benign early reorder; cannot express thread-disappearance",
+    "no per-dtid starvation query (added: dtid_activity.rs)"
+  ]
+}

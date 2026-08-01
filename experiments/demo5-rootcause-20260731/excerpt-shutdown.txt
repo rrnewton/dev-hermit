@@ -1,0 +1,60 @@
+2241990 20:01:59.043527 writev(1, [{iov_base=" ", iov_len=1}], 1) = 1 <0.000005>
+2241990 20:01:59.043546 writev(1, [{iov_base="r", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043566 writev(1, [{iov_base="e", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043588 writev(1, [{iov_base="b", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043612 writev(1, [{iov_base="o", iov_len=1}], 1) = 1 <0.000008>
+2241990 20:01:59.043637 writev(1, [{iov_base="o", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043659 writev(1, [{iov_base="t", iov_len=1}], 1) = 1 <0.000008>
+2241990 20:01:59.043681 writev(1, [{iov_base=":", iov_len=1}], 1) = 1 <0.000011>
+2241990 20:01:59.043705 writev(1, [{iov_base=" ", iov_len=1}], 1) = 1 <0.000008>
+2241990 20:01:59.043733 writev(1, [{iov_base="P", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043754 writev(1, [{iov_base="o", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043778 writev(1, [{iov_base="w", iov_len=1}], 1) = 1 <0.000008>
+2241990 20:01:59.043800 writev(1, [{iov_base="e", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043823 writev(1, [{iov_base="r", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043845 writev(1, [{iov_base=" ", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043864 writev(1, [{iov_base="d", iov_len=1}], 1) = 1 <0.000007>
+2241990 20:01:59.043888 writev(1, [{iov_base="o", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043909 writev(1, [{iov_base="w", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043933 writev(1, [{iov_base="n", iov_len=1}], 1) = 1 <0.000017>
+2241990 20:01:59.043975 writev(1, [{iov_base="\r", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.043995 writev(1, [{iov_base="\n", iov_len=1}], 1) = 1 <0.000006>
+2241990 20:01:59.044588 mprotect(0x7f54cc5de000, 4096, PROT_READ|PROT_WRITE) = 0 <0.000007>
+2241990 20:01:59.045377 mprotect(0x7f54cc5df000, 4096, PROT_READ|PROT_WRITE) = 0 <0.000006>
+2241990 20:01:59.045841 mprotect(0x7f54cc5e0000, 4096, PROT_READ|PROT_WRITE) = 0 <0.000005>
+2241990 20:01:59.046415 write(7, "\1\0\0\0\0\0\0\0", 8) = 8 <0.000006>
+2241974 20:01:59.046432 <... ppoll resumed>) = 1 ([{fd=7, revents=POLLIN}]) <0.014786>
+2241990 20:01:59.046440 write(7, "\1\0\0\0\0\0\0\0", 8 <unfinished ...>
+2241974 20:01:59.046445 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:59.046450 <... write resumed>) = 8 <0.000005>
+2241990 20:01:59.046460 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:59.046471 <... futex resumed>) = 0 <0.000021>
+2241990 20:01:59.046475 <... futex resumed>) = 1 <0.000011>
+2241974 20:01:59.046484 read(7,  <unfinished ...>
+2241990 20:01:59.046493 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241974 20:01:59.046504 <... read resumed>"\2\0\0\0\0\0\0\0", 512) = 8 <0.000011>
+2241974 20:01:59.046589 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1) = 1 <0.000004>
+2241990 20:01:59.046601 <... futex resumed>) = 0 <0.000098>
+2241974 20:01:59.046608 futex(0x56071b501e48, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+2241990 20:01:59.046613 futex(0x56071b501e48, FUTEX_WAKE_PRIVATE, 2147483647 <unfinished ...>
+2241974 20:01:59.046617 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000004>
+2241990 20:01:59.046622 <... futex resumed>) = 0 <0.000006>
+2241974 20:01:59.046638 futex(0x56071b501ec0, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+2241990 20:01:59.046645 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241974 20:01:59.046652 <... futex resumed>) = -1 EAGAIN (Resource temporarily unavailable) <0.000007>
+2241990 20:01:59.046657 <... futex resumed>) = 0 <0.000005>
+2241974 20:01:59.046661 futex(0x56071b501ec0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+2241990 20:01:59.046667 futex(0x56071b5e3538, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 504, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+2241974 20:01:59.046678 <... futex resumed>) = 0 <0.000013>
+2241974 20:01:59.046699 ppoll([{fd=5, events=POLLIN|POLLERR|POLLHUP}, {fd=4, events=POLLIN|POLLERR|POLLHUP}], 2, {tv_sec=0, tv_nsec=0}, NULL, 8) = 0 (Timeout) <0.000005>
+2241974 20:01:59.046730 ioctl(0, SNDCTL_TMR_START or TCSETS, {c_iflag=, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|, c_cflag=B0|CS5|, c_lflag=, ...}) = -1 ENOTTY (Inappropriate ioctl for device) <0.000005>
+2241974 20:01:59.046769 fcntl(0, F_SETFL, O_RDONLY|O_LARGEFILE) = 0 <0.000005>
+2241974 20:01:59.046788 fcntl(1, F_SETFL, O_WRONLY|O_LARGEFILE) = 0 <0.000004>
+2241974 20:01:59.046806 close(0)        = 0 <0.000004>
+2241974 20:01:59.046825 close(1)        = 0 <0.000004>
+2241974 20:01:59.047164 exit_group(0)   = ?
+2241990 20:01:59.047182 <... futex resumed>) = ?
+2241988 20:01:59.047185 <... futex resumed>) = ?
+2241990 20:01:59.047215 +++ exited with 0 +++
+2241988 20:01:59.060131 +++ exited with 0 +++
+2241974 20:01:59.060154 +++ exited with 0 +++

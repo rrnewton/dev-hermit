@@ -45,40 +45,113 @@ Wedge config (parent `demos/05-qemu-boot.py`, also reproduced bare in
    boundary (`end_timeslice_if_needed` `lib.rs:506-522`, `timeslice_expired`
    `tool_local.rs:1804-1811`, `current_time >= end_of_timeslice`).
 
-4. **QEMU's HPET-init spin never checks in → run_queue never empties.**
-   The vCPU/TCG thread spins in-guest with no intercepted syscall, so
-   `current_time` (= `thread_logical_time`, which by step 2 does not advance)
-   never reaches `end_of_timeslice`, and with no PMU timer nothing forces a
-   checkin. The thread stays runnable indefinitely.
+4. **Unproductive pollers keep run_queue non-empty and register NO future
+   timed_waiter.** The runnable set at HPET init is dominated by pollers yielding
+   `ResourceID::SleepUntil(LogicalTime(0))` (immediate). With `target <=
+   committed_time` (incl. `LogicalTime(0)`), `block_for_one_resource` returns
+   `Ok(())` immediately and NEVER inserts a `timed_waiter` (`scheduler.rs:2205-2225`).
+   This is present in BOTH a healthy bare-stdio boot and the wedge, so it is
+   necessary background, not the trigger (see step 6 correction).
 
 5. **The virtual-time forward-jump (`step2d`) never fires.**
    `Scheduler::step2d_handle_empty_queue` (`detcore/src/scheduler.rs:1989-2051`)
-   is guarded by `if self.run_queue.is_empty() {` (`scheduler.rs:1997`) — false
-   here. Even if the queue emptied, the jump target is the earliest
-   `timed_waiter` (a `BTreeMap<LogicalTime,…>` pop, `scheduler.rs:2019-2027`,
-   log `"Skipping global time ahead to {}."` `:2028`), and there is none:
-   `ResourceID::SleepUntil` with `target <= committed_time` (incl.
-   `SleepUntil(LogicalTime(0))`) returns `Ok(())` immediately and is NEVER
-   inserted as a `timed_waiter` (`scheduler.rs:2205-2225`). So even an empty queue
-   would fall through without advancing time.
+   is guarded by `if self.run_queue.is_empty() {` (`scheduler.rs:1997`). Because the
+   `SleepUntil(0)` pollers stay runnable, the queue is never empty → the guard
+   fails → **step2d never fires.** Even if the queue emptied, there is no future
+   `timed_waiter` (step 4) to jump to. Again present in healthy boots too.
 
-6. **Per-turn creep can't rescue it.**
-   `add_scheduler_time` adds `NANOS_PER_SCHED = 500_000` ns/turn
-   (`detcore-model/src/time.rs:98`, applied `scheduler.rs:2524`) but only on a
-   *productive* scheduler turn; an in-guest spin yields no turns.
+6. **CORRECTION (adversarial self-refutation) — the background signatures above
+   are NOT sufficient for the wedge; the trigger is a host-pollable listening
+   socket fd.**
+   An earlier version of this file claimed a bare-QEMU boot wedges and cited a
+   `wedge-off-run1` "dtid 5 starved" witness. **That was wrong.** The bare
+   `-serial stdio` busybox boot (`scratch/demo5-icount-sleep/boot_qemu_off.sh`,
+   `out/wedge-off-run1/console.log`) **BOOTS**: it reaches
+   `HERMIT-QEMU-BUSYBOX-PASS` and `reboot: Power down` at guest ts 1.903 — slow
+   (crawls to `hpet0` by ~3 min) but successful; the `status=124` was a
+   post-power-down teardown hang, not an HPET wedge. So `SleepUntil(0)`-dominance,
+   `step2d`=0, and the racing clock all occur in a HEALTHY `--no-rcb-time` boot.
 
-⇒ committed_time cannot reach the guest HPET deadline ⇒ HPET calibration never
-completes ⇒ **hard, deterministic livelock.**
+   **Minimal isolation repro of the true trigger**
+   (`scratch/demo5-icount-sleep/boot_qemu_sock.sh` vs `boot_qemu_off.sh` —
+   single variable: injected host-pollable listening sockets). Identical bare
+   busybox kernel/initrd, identical `-icount shift=0,sleep=off`, console held
+   observable via `-serial file:`; the sock variant ADDS
+   `-serial unix:…,server,nowait` + `-qmp unix:…,server,nowait`:
+   - **`boot_qemu_off.sh` (no sockets): BOOTS to PASS (guest ts 1.903).**
+   - **`boot_qemu_sock.sh` (+2 listening sockets): WEDGES — frozen at
+     `hpet0` (guest ts 0.715845), zero guest output for 77+ s while the
+     scheduler burns ~174k turns / 20 s (`out/wedge-sock-run1`), never reaching
+     PASS within the 300 s budget.**
+   This is the same freeze point as the parent controller harness
+   (`demos/05-qemu-boot.py`, 237's aa5258b trace: "timed out waiting for
+   qmp.sock"). The parent demo's own comment (`05-qemu-boot.py:94-97`) already
+   names this: a socket chardev is a host-timing-driven pollable fd that starves
+   the `-icount` vCPU under `--no-rcb-time`.
+
+   **CAVEAT 1 — the `dtid_activity` STARVED-TAIL flag is NOT a wedge
+   discriminator.** Running `log-science/dtid_activity.rs` on BOTH traces shows a
+   large starvation tail in EACH:
+   - wedge (sock): dtid 7 starved 84.7% of the run, clock +2222 s.
+   - **SUCCESS (bare, `wedge-off-run1`, reaches PASS): dtid 5 starved 76.2% of
+     the run, clock +1232 s — yet the boot completes.**
+   A thread that legitimately finishes its work and is never needed again trips
+   the same heuristic as a genuinely starved one. So "a starvation tail exists"
+   proves nothing; the only sound discriminator is the OUTCOME — the bare boot
+   reaches `HERMIT-QEMU-BUSYBOX-PASS` / `Power down` (guest ts 1.903) whereas the
+   sock boot stays frozen at `hpet0` (guest ts 0.715) for 7+ min / 3 M+ turns and
+   never PASSes. (This over-fire is a real gap in `dtid_activity.rs`; it needs a
+   "did the guest reach a terminal marker / did every thread's last state = parked
+   vs exited" refinement before its STARVED-TAIL flag can be trusted.)
+
+   **CAVEAT 2 — console confound, closed by a dedicated control.**
+   `boot_qemu_off.sh` used `-serial stdio` while `boot_qemu_sock.sh` used
+   `-serial file:` console PLUS the two sockets, so off→sock changed two things.
+   `boot_qemu_filecon.sh` is the single-variable control: `-serial file:` console
+   and NO extra sockets. **RESULT: it BOOTS** — crawls at `hpet0` (~0.7167) for
+   ~75 s then breaks through to `HERMIT-QEMU-BUSYBOX-PASS` / `reboot: Power down`
+   (guest ts 1.903269), `out/wedge-filecon-run1`. So the `-serial file:` console
+   is NOT the cause; the two host-pollable listening sockets are the sole
+   remaining variable ⇒ **the host-pollable listening socket fd is the confirmed
+   single-variable wedge trigger.**
+
+   **Controlled A/B (identical bare busybox, same `--no-rcb-time`/`-icount`
+   flags; the ONLY variable is the injected listening sockets):**
+
+   | variant | console | listening sockets | outcome |
+   |---|---|---|---|
+   | `boot_qemu_off.sh` | `-serial stdio` | none | BOOTS — PASS at guest ts 1.903 |
+   | `boot_qemu_filecon.sh` | `-serial file:` | none | BOOTS — PASS at guest ts 1.903 |
+   | `boot_qemu_sock.sh` | `-serial file:` | +2 (serial unix + QMP) | **WEDGES — frozen at `hpet0` ts 0.716, 3 M+ turns / 7+ min, never PASS** |
+
+⇒ **Refined mechanism.** The deadline-less unproductive-poller steady state
+(`SleepUntil(0)`, run_queue never empty, step2d=0, committed_time racing via the
+500× syscall multiplier + per-turn `NANOS_PER_SCHED` tick) is real but on its own
+a bare guest still makes forward progress and boots. Adding a **host-pollable
+listening socket fd** introduces a chardev poller whose readiness is
+host-timing-driven; under `!use_rcb_time()` (no PMU preemption) that poller
+monopolizes turns and the productive `-icount` vCPU thread is starved of
+re-selection — the guest freezes at `hpet0` while committed_time races past. Plain
+`--strict` (PMU armed) preempts the poller and keeps the vCPU getting turns, so it
+boots regardless of the socket. (Q3 load-independence is unaffected: WHICH thread
+is starved is a deterministic function of the flag/fd set — see
+`load-independence.md`; only wall-clock duration and the verify-excluded
+committed_time value vary with host load.)
 
 ## Why plain `--strict` (the crawl) boots
 
 No `--no-rcb-time`, no `--max-timeslice disabled` → `max_timeslice` keeps default
 `200000000` (`config.rs:396-403`) and `no_rcb_time == false` ⇒
-**`use_rcb_time() == true`**. Both rescue channels the wedge removes are active:
-RCB retirement folds into vtime (step 2 gates now pass), and the PMU preemption
-timer IS armed (`lib.rs:529-639` install path, `guest.set_timer_precise(...)`),
-forcing periodic checkins. Together they creep committed_time across the HPET
-deadline — slowly (~325s), hence the crawl.
+**`use_rcb_time() == true`**. The decisive difference is the **PMU preemption
+timer**: it IS armed (`lib.rs:529-639` install path, `guest.set_timer_precise(
+TimerSchedule::Rcbs(...))`), so the QEMU vCPU/TCG thread is forcibly preempted
+after a bounded number of retired branches and returns to the scheduler as a
+productive checkin — it can no longer be starved indefinitely by the pollers, and
+RCB retirement also folds into its logical time. The guest therefore keeps getting
+turns and advances through HPET init — slowly (~325s), hence the crawl. (Note the
+crawl is not primarily "RCB creeps the global clock across a deadline"; global
+committed_time races ahead in BOTH configs. What rcb-time restores is bounded
+preemption/fair turns for the productive guest thread.)
 
 ## Load-independence corollary (Q3)
 

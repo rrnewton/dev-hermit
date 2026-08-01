@@ -41,18 +41,66 @@ handshake + python controller). Isolating each knob is required (see H1/H6).
 
 ## ROOT CAUSE (evidence-backed, adversarially judged) — 2026-07-31
 
-**The demo5 wedge is a fully deterministic virtual-time-starvation livelock, not a
-race and not a masked determinism bug.** Under
-`--strict --no-rcb-time --target-timeslice 100000 --max-timeslice disabled`,
-`use_rcb_time()` is false, so (a) guest branch retirement advances virtual time by
-zero and (b) no PMU preemption timer is armed. QEMU's in-guest HPET-init spin
-issues no intercepted checkin, so it never yields; the run_queue never empties, so
-the scheduler's only forward-jump (`step2d`, gated on an empty queue) never fires;
-and the spin registers no future `timed_waiter` for it to jump to anyway.
-committed_time cannot reach the guest HPET deadline → livelock. Full file:line
-proof in `source-mechanism.md`; causal chain confirmed as **H1**.
+> **REVISION 3 (2026-07-31, two adversarial self-corrections, now RESOLVED by a
+> controlled A/B).**
+> **(a)** An earlier version claimed a *bare* QEMU boot under `--no-rcb-time`
+> wedges and that H6 was KILLED. My own bare-QEMU busybox boots **REFUTED that**:
+> both `-serial stdio` (`wedge-off-run1`) and `-serial file:` (`wedge-filecon-run1`)
+> boot to `HERMIT-QEMU-BUSYBOX-PASS` / `reboot: Power down` (guest ts 1.903) — slow
+> (crawl through `hpet0` ~75 s) but successful; `status=124` was a post-power-down
+> teardown hang, not an HPET wedge.
+> **(b)** I initially cited `dtid_activity.rs` STARVED-TAIL as the wedge witness.
+> That flag **also fires in the SUCCESSFUL bare boot** (dtid 5 starved 76.2%, yet
+> PASS) — a false positive. So neither the `SleepUntil(0)`/`step2d`=0/racing-clock
+> signatures nor the starvation-tail flag are *sufficient* for the wedge; the sound
+> discriminator is the OUTCOME (reaches PASS vs frozen at `hpet0` forever).
 
-- **Q1 (mechanism):** answered — chain above (H1 CONFIRMED, source-definitive).
+**ROOT CAUSE (CONFIRMED by single-variable A/B).** The demo5 wedge is a
+deterministic guest-starvation livelock **triggered by a host-pollable listening
+socket fd** (the QMP socket + serial socket the controller harness adds), on top of
+the `--no-rcb-time --max-timeslice disabled` background state that removes both PMU
+preemption and RCB→vtime advance. Controlled experiment (identical bare busybox,
+identical `--no-rcb-time`/`-icount`/`--target-timeslice` flags; the ONLY variable
+is the injected listening sockets — full table in `source-mechanism.md` §6):
+
+| variant | console | listening sockets | outcome |
+|---|---|---|---|
+| `boot_qemu_off.sh` | `-serial stdio` | none | **BOOTS** — PASS at guest ts 1.903 |
+| `boot_qemu_filecon.sh` | `-serial file:` | none | **BOOTS** — PASS at guest ts 1.903 |
+| `boot_qemu_sock.sh` | `-serial file:` | +2 (serial unix + QMP) | **WEDGES** — frozen at `hpet0` ts 0.716, 3 M+ turns / 7+ min, never PASS |
+
+This matches the parent demo's own inline comment (`05-qemu-boot.py:94-97`: a
+socket chardev is a host-timing-driven pollable fd that starves the `-icount` vCPU
+under `hermit --no-rcb-time`), 237's controller trace (dtid 9 `qemu-system-x86_64`
+runnable after a completed `read()`, never rescheduled → "timed out waiting for
+qmp.sock"), and memory `qemu-serial-socket-starves-vcpu-under-hermit`.
+
+**Independent convergence + refinement (231's `metrics.md`).** 231 independently
+reached the same two-part conclusion from a different angle: `--no-rcb-time` alone
+boots a bare busybox (racing vtime ~4.5×), and even the **full 3-knob stack** on
+bare busybox **boots** (crawls: ~493 k turns, ~12× green, ~85 k timeslices) — so
+"config alone" is NOT sufficient; 231 attributes the permanent wedge to the
+"controller topology." **My socket A/B SHARPENS that attribution**: the sufficient
+final ingredient is specifically the **host-pollable listening socket fd**, not the
+full-Linux controller complexity — a bare busybox (no full Linux, no python
+controller, no BQL/iothreads, no `savevm`) wedges with just +2 listening sockets
+added (my `wedge-sock-run1` vs 231's booting bare-busybox 3-knob row, which used
+`-serial stdio` with no sockets). 231's cleanest wedge signature — timeslice count
+~1,000 (green) → ~85 k (busybox+3-knob, still boots) → 10⁵–10⁶ (wedge) — is the
+same fragmentation my dtid_activity busy-pollers show.
+
+**Q1 (mechanism) — answered.** Background (definitive in source, H1): under
+`--no-rcb-time --max-timeslice disabled`, `use_rcb_time()==false` → guest branch
+retirement adds ZERO vtime AND no PMU preemption timer is armed; the only
+preemption is the `--target-timeslice` *logical* deadline, reachable only via an
+intercepted checkin. Trigger (A/B, H6): adding a host-pollable listening socket
+introduces a chardev poller whose readiness is host-timing-driven; with no PMU
+preemption it monopolizes turns and the `-icount` vCPU is starved of re-selection,
+frozen at `hpet0`. Without the socket the same background state still lets the vCPU
+progress (slowly) to PASS. Why plain `--strict` greens regardless: PMU preemption
+is armed, so the vCPU cannot be starved indefinitely (H2 CONFIRMED). The precise
+turn-by-turn interleaving of the starvation is the open turn-order question (210).
+
 - **Q2 (#151 classification):** `--no-rcb-time` **EXPOSES** the
   `scheduler-vtime-jump-unproductive-pollers` foundation bug; it does NOT mask a
   determinism bug. Re-enabling rcb-time (the crawl) is a legitimate STEP-BACK to a
@@ -61,14 +109,16 @@ proof in `source-mechanism.md`; causal chain confirmed as **H1**.
   read in any decision path; contrasting-load decision traces byte-identical over
   41043 turns; only the verify-excluded committed_time value drifts ≤238ns
   (H4 CONFIRMED). The prior "load-sensitive" verdict is confirmed-harmless
-  (wall-clock + verify-excluded-value only).
-- **Q4 (perf parity):** OPEN — rcb-crawl (~325s) is a workaround, not the fix; the
-  genuine scheduler-side fix should restore sub-minute boot under `--no-rcb-time`.
-  Awaiting 231's pre-regression baseline + turns/vtime/syscall table (H5).
+  (wall-clock + verify-excluded-value only). Unaffected by the corrections above:
+  WHICH thread starves is a deterministic function of the flag/fd set.
+- **Q4 (perf parity):** QUANTIFIED, OPEN on parity. 231's `metrics.md` measures the
+  regression (green rcb-ON ~1,000 timeslices/~200s vtime vs 3-knob busybox ~85k
+  timeslices/~1,450s vtime vs wedge 10⁵–10⁶ timeslices). rcb-crawl is a WORKAROUND,
+  not the fix; true sub-minute parity under `--no-rcb-time` is untestable until a
+  scheduler-side fix exists (out of scope here) (H5).
 
-Remaining corroboration (not load-bearing on the root cause): own bare-QEMU
-`--no-rcb-time` wedge run (H6, expected KILL of "controller-specific"), 237
-clock-lag inspection (H7, expected KILL of #1095-lag), 231 perf table (H5/Q4).
+Remaining corroboration (not load-bearing on the root cause): 237 clock-lag
+inspection (H7, expected KILL of #1095-lag).
 
 ---
 
@@ -109,22 +159,36 @@ calibration never completes ⇒ hard livelock.
      reachable ONLY via intercepted syscall/rdtsc/cpuid checkins at handler
      boundaries (`end_timeslice_if_needed` `lib.rs:506-522`, `timeslice_expired`
      `tool_local.rs:1804-1811`).
-  4. QEMU's HPET-init in-guest spin issues NO intercepted checkin → `end_of_timeslice`
-     never reached → the thread never yields → **`run_queue` never empties.**
-  5. `step2d_handle_empty_queue` (`scheduler.rs:1989-2051`) is guarded by
-     `if self.run_queue.is_empty()` (`scheduler.rs:1997`) → never fires. Even if
-     it did, `SleepUntil(LogicalTime(0))` / any `target <= committed_time` returns
-     `Ok(())` immediately and is NEVER inserted as a `timed_waiter`
-     (`scheduler.rs:2205-2225`) → no future event to jump to.
-  6. Per-turn `add_scheduler_time` creep (`NANOS_PER_SCHED=500_000`, `time.rs:98`,
-     `scheduler.rs:2524`) needs *productive scheduler turns*; an in-guest spin
-     yields none. ⇒ committed_time cannot reach the guest timer deadline ⇒ **hard
-     deterministic livelock.**
-- **Evidence (EMPIRICAL):** own bare-QEMU `--no-rcb-time` run pending (H6 kill);
-  237/210 wedge-log confirmation of step2d=0 / 0 future timed_waiters pending.
-- **Verdict:** **CONFIRMED (source, definitive).** The mechanism is a fully
-  proven deterministic vtime-starvation livelock, not a race. Empirical wedge-log
-  confirmation is corroborating, not load-bearing.
+  4. `step2d_handle_empty_queue` (`scheduler.rs:1989-2051`) is guarded by
+     `if self.run_queue.is_empty()` (`scheduler.rs:1997`). While `SleepUntil(0)`
+     pollers stay runnable it does not fire; and any `target <= committed_time`
+     (incl. `LogicalTime(0)`) returns `Ok(())` immediately and is NEVER inserted as
+     a `timed_waiter` (`scheduler.rs:2205-2225`) → no future event to jump to.
+  5. Per-turn `add_scheduler_time` creep (`NANOS_PER_SCHED=500_000`, `time.rs:98`,
+     `scheduler.rs:2524`) advances committed_time on productive turns; combined with
+     the 500× `--strict` syscall multiplier (`time.rs:508-524`) the clock RACES far
+     ahead of any guest deadline while providing no bounded preemption.
+- **SCOPE (corrected).** This chain is the *background state* under
+  `--no-rcb-time --max-timeslice disabled`: no RCB→vtime advance, no PMU
+  preemption, step2d gated, clock racing. It is NECESSARY but by itself
+  **NOT SUFFICIENT** for the wedge — see the A/B in the ROOT CAUSE section: a bare
+  boot with all of it still reaches PASS. The wedge additionally requires the
+  host-pollable listening socket trigger (H6). An earlier revision wrongly asserted
+  "in-guest spin → run_queue never empties → hard livelock" as if the bare boot
+  wedged; the bare boot in fact progresses through `hpet0` and boots.
+- **Evidence (EMPIRICAL):** in a bare `--no-rcb-time` boot the background
+  signatures are all present — step2d `Skipping global time ahead` = 0,
+  `SleepUntil(LogicalTime(0))` commits dominate (384704 vs 115 future), committed_time
+  races +1425s, `rcbs: 0` (237 log_timeslice) — **yet the boot SUCCEEDS**
+  (`wedge-off-run1`, `wedge-filecon-run1`: PASS at guest ts 1.903). The
+  `dtid_activity.rs` STARVED-TAIL flag fires in that successful boot too (dtid 5,
+  76.2%), so it is not a wedge discriminator. Only when the listening sockets are
+  present does the guest freeze at `hpet0` indefinitely.
+- **Verdict:** **CONFIRMED (source) as the background mechanism**, with SCOPE
+  corrected: it is the substrate, not the trigger. The trigger is H6 (socket fd),
+  confirmed by single-variable A/B. The wedge is a deterministic guest-starvation
+  livelock (not a race — consistent with H4 load-independence), but requires
+  background + socket, not background alone.
 
 ### H2 — Greening mechanism: rcb-time brute-forces vtime forward
 With rcb-time ON, guest branch retirement advances committed_time continuously
@@ -224,25 +288,50 @@ parity with the pre-regression baseline.
 - **Predicted evidence:** 231 per-commit table (wall / turns / vtime / syscalls)
   quantifying the regression, and — once a candidate fix exists — sub-minute
   parity.
-- **Evidence:** _pending 231 metrics._
-- **Verdict:** OPEN.
+- **Evidence (231 `metrics.md`, controlled single-variable busybox, binary
+  `670209ba`):** green `--strict` (rcb ON) = ~345 s wall / 39–41 k turns / ~195–221 s
+  vtime / **~1,000 timeslices** / ~252–257 k syscalls → BOOT_OK. Full 3-knob stack
+  on the SAME bare busybox = ~382 s wall / **493 k turns** / 1,450 s vtime /
+  **~85 k timeslices** / 387 k syscalls → still BOOT_OK but ~12× slower. Wedge
+  harness (Table A) = millions of turns, guest frozen <1 s. Timeslice count is the
+  cleanest axis: ~1,000 (green) → ~85 k (busybox+3-knob) → 10⁵–10⁶ (wedge).
+- **Verdict:** **QUANTIFIED, still OPEN on parity.** The regression magnitude is
+  measured, and rcb-time green is itself already a ~5× "crawl" (not a sub-minute
+  restore) — so re-enabling rcb-time is a WORKAROUND, not a perf fix. True perf
+  parity (sub-minute under `--no-rcb-time` with no wedge) cannot be measured until a
+  scheduler-side fix exists; no such fix is in scope for this task. Remains OPEN
+  pending a candidate fix to test against 231's baseline table.
 
-### H6 — (competing) Wedge is controller-specific, not a general scheduler gap
-The wedge is caused specifically by the in-sandbox python controller poll loop
-(dtid 7), not a general deadline-less scheduler gap; a bare QEMU boot under
-`--no-rcb-time` would not wedge.
-- **Kill test:** bare QEMU boot (no controller) under `--no-rcb-time` — does it
-  still wedge? If it wedges ⇒ H6 KILLED (general gap, supports H1). If it boots ⇒
-  H6 gains support and H1 must be narrowed.
-- **Evidence (SOURCE):** H1's proven chain is triggered by ANY in-guest spin that
-  issues no intercepted checkin — the QEMU vCPU/TCG thread's own HPET-init spin
-  qualifies; the python controller is not required. Predicts the bare boot ALSO
-  wedges.
-- **Evidence (EMPIRICAL — own, in progress):** bare-QEMU busybox boot (NO python
-  controller, NO QMP) under `--strict --no-rcb-time --target-timeslice 100000
-  --max-timeslice disabled`, `scratch/demo5-icount-sleep/run_wedge.sh`, 420s
-  budget (crawl booted in ~325s, so a timeout = wedge). Result pending.
-- **Verdict:** OPEN → expected KILLED (source predicts general gap).
+### H6 — Wedge trigger is a host-pollable listening socket fd (NOT a general gap, NOT the python controller code per se)
+The wedge is triggered specifically by the presence of a **host-pollable listening
+socket fd** (QEMU chardev backend for the QMP/serial sockets), not by a general
+deadline-less scheduler gap and not by the python controller *code* as such — any
+harness that hands QEMU a listening socket reproduces it.
+- **Kill test (refined after the bare-boot refutation):** (a) bare QEMU boot under
+  `--no-rcb-time` with NO listening sockets — if it wedges, the trigger is general
+  (H1-alone); if it boots, H1-alone is insufficient. (b) Same bare boot + injected
+  listening sockets as the ONLY change — if it wedges, the socket fd is the
+  confirmed single-variable trigger.
+- **Evidence (EMPIRICAL — own, single-variable A/B):**
+  - `boot_qemu_off.sh` (`-serial stdio`, no sockets): **BOOTS** to PASS (guest ts
+    1.903), `wedge-off-run1`.
+  - `boot_qemu_filecon.sh` (`-serial file:` console, no sockets): **BOOTS** to PASS
+    (guest ts 1.903), `wedge-filecon-run1` — rules out the file-console confound.
+  - `boot_qemu_sock.sh` (`-serial file:` console **+2 listening sockets**: serial
+    unix + QMP, otherwise byte-identical invocation): **WEDGES** — frozen at
+    `hpet0` (guest ts 0.716) for 7+ min / 3 M+ turns, never PASS, `wedge-sock-run1`.
+  The ONLY variable across the three is the injected listening sockets.
+- **Evidence (corroboration):** 237's controller trace (aa5258b) — dtid 9
+  `qemu-system-x86_64` completes a `read()` (runnable) then is never rescheduled →
+  "timed out waiting for qmp.sock"; parent `05-qemu-boot.py:94-97` comment; memory
+  `qemu-serial-socket-starves-vcpu-under-hermit`.
+- **Verdict:** **CONFIRMED (single-variable A/B).** The wedge trigger is a
+  host-pollable listening socket fd, not a general in-guest-spin gap and not the
+  python controller code specifically. The original "controller-specific" framing
+  was too narrow (it's the socket the controller adds, reproducible without the
+  controller) and the earlier "KILLED / general gap" verdict was WRONG (it rested
+  on a bare-wedge that never actually wedged). This NARROWS H1: H1 is the necessary
+  background substrate; H6 is the trigger.
 
 ### H7 — (competing) Wedge is the #1095 guest-clock-lag past-deadline poller
 The wedge is the clock-domain lag (guest CLOCK_MONOTONIC lagging committed vtime
@@ -256,8 +345,24 @@ wedge still shows the lag, #1190 is incomplete.
   it. Under `--no-rcb-time --max-timeslice disabled` committed_time is frozen at
   the spin, so there is no advancing committed clock for the guest to lag behind.
   Predicts NO 8.5s lag signature → H7 killed for this wedge.
-- **Evidence (EMPIRICAL):** pending 237 wedge-log lag inspection.
-- **Verdict:** OPEN → expected KILLED (distinct mechanism from #1095).
+- **Evidence (EMPIRICAL — own, minimal socket wedge `wedge-sock-run1`):** the
+  committed-resource distribution is dominated by DEADLINE-LESS pollers, not
+  past-deadline ones: **558,354 `SleepUntil(LogicalTime(0))`** (immediate) vs only
+  **104** nonzero-target `SleepUntil`, and those 104 are legitimate FUTURE guest
+  timers (absolute targets ≈ epoch+26 s / +38 s / +49 s), not a past deadline being
+  re-committed. FutexWait 71,740, InternalIOPolling 14,770. The #1095 signature —
+  a `SleepUntil(LogicalTime(T))` with `T` a PAST nonzero value repeatedly committed
+  because guest CLOCK_MONOTONIC lags committed vtime — is ABSENT. This minimal repro
+  also has NO python controller / fork-exec-split-clock-domain (bare busybox exec'd
+  directly), yet wedges — so the #1095 fork/exec clock-domain split is not required.
+- **Verdict:** **KILLED for the socket-triggered wedge.** The mechanism is the
+  deadline-less (`SleepUntil(0)`) unproductive-poller monopoly
+  (`scheduler-vtime-jump-unproductive-pollers`), categorically distinct from the
+  #1095 clock-domain-lag / expired-past-deadline poll. (Caveat: the full-Linux
+  controller harness may layer additional guest-clock-lag effects on top; but the
+  socket-triggered wedge mechanism itself is deadline-less-poller starvation, not
+  clock-domain skew. This updates memory `demo5-wedge-clock-skew-past-deadline-poller`,
+  whose "past-deadline" framing does not hold for the isolated socket wedge.)
 
 ---
 
@@ -276,8 +381,17 @@ wedge still shows the lag, #1190 is incomplete.
   wedge chain (from the RCB-time/timeslice/step2d code-search).
 - `scratch/demo5-icount-sleep/out/{on-run3,on-run4,on-run5,off-run3,off-run4}/hermit-info.log`
   — raw crawl `--log info` decision traces used for the load-independence diffs.
-- `scratch/demo5-icount-sleep/run_wedge.sh` + `out/wedge-off-run1/` — own bare-QEMU
-  `--no-rcb-time` H6 kill-test run (in progress).
+- **H6 single-variable A/B (own, `scratch/demo5-icount-sleep/`):**
+  - `boot_qemu_off.sh` + `out/wedge-off-run1/` (`-serial stdio`, no sockets): BOOTS
+    to PASS (`console.log` has `HERMIT-QEMU-BUSYBOX-PASS` + `reboot: Power down`,
+    guest ts 1.903).
+  - `boot_qemu_filecon.sh` + `out/wedge-filecon-run1/` (`-serial file:`, no
+    sockets): BOOTS to PASS — closes the console confound.
+  - `boot_qemu_sock.sh` + `out/wedge-sock-run1/` (`-serial file:` + serial-unix +
+    QMP listening sockets): WEDGES at `hpet0` (guest ts 0.716), 3 M+ turns, never
+    PASS. `out/wedge-sock-run1/dtid_activity.txt` = starvation witness (note:
+    STARVED-TAIL flag also fires in the passing bare boots — outcome is the sound
+    discriminator, not the flag).
 - _(to be added: metrics.md (231), turnorder.md (210), qemu-strace profile (238).)_
 
 ## Load-Independence Protocol (Q3 — the P0 gate) — **PASSED**
@@ -298,12 +412,27 @@ wedge still shows the lag, #1190 is incomplete.
   by design). Both independent axes agree. Prior "load-sensitive" verdict
   reclassified **confirmed-harmless (wall-clock + verify-excluded-value only)**.
   No P0 escalation.
-- **2026-07-31 — H1 (wedge mechanism): CONFIRMED (source, definitive).** Full
-  causal chain proven with file:line citations (config gate → RCB-conversion
-  double-skip → PMU-timer skip → target-timeslice-only preemption → no intercepted
-  checkin → run_queue never empty → step2d guard never fires → no timed_waiter to
-  jump to → livelock). Adversarial angle (is it a race?): killed — mechanism is a
-  deterministic vtime-starvation, confirmed by H4 load-independence.
+- **2026-07-31 — H1 (background mechanism): CONFIRMED (source), SCOPE CORRECTED.**
+  File:line chain proven (config gate → RCB-conversion double-skip → PMU-timer skip
+  → target-timeslice-only preemption → step2d guard → no timed_waiter → clock
+  races). **Adversarial self-refutation:** the original verdict claimed this alone
+  produces a "hard livelock" and cited a bare-QEMU wedge. My own bare boots
+  (`wedge-off-run1`, `wedge-filecon-run1`) BOOT to PASS with all these signatures
+  present, so H1 is the necessary SUBSTRATE, not sufficient. Re-scoped: H1 =
+  background; trigger = H6. Race angle still killed (deterministic, per H4).
+- **2026-07-31 — H6 (wedge trigger = host-pollable listening socket fd):
+  CONFIRMED (single-variable A/B), REVERSING an earlier wrong "KILLED".** The
+  earlier KILL rested on a bare-wedge that never wedged. Controlled A/B: identical
+  bare busybox + `--no-rcb-time`/`-icount` flags; no sockets (stdio OR file
+  console) → BOOTS; +2 listening sockets → WEDGES at `hpet0` forever. The socket fd
+  is the sole variable. Corroborated by 237's controller trace, the demo's own
+  `05-qemu-boot.py:94-97` comment, and memory
+  `qemu-serial-socket-starves-vcpu-under-hermit`.
+- **2026-07-31 — tooling caveat logged: `dtid_activity.rs` STARVED-TAIL is a
+  false-positive discriminator** — it fires in the SUCCESSFUL bare boot (dtid 5,
+  76.2%) as well as the wedge. Needs a terminal-marker / parked-vs-exited
+  refinement before its flag can be trusted as a wedge witness. Recorded for the
+  impl agent who lands `dtid_activity.rs` (237's gap list).
 - **2026-07-31 — H2 (greening mechanism): CONFIRMED (source).** Crawl differs from
   wedge only in CONFIG: plain `--strict` keeps `use_rcb_time()==true` (default
   max_timeslice + no `--no-rcb-time`), re-enabling BOTH RCB→vtime creep and PMU
@@ -313,8 +442,17 @@ wedge still shows the lag, #1190 is incomplete.
   numeric drift). rcb-time masks the LIVELOCK, not a determinism bug;
   `--no-rcb-time` EXPOSES the `scheduler-vtime-jump-unproductive-pollers`
   foundation bug. Latent-bug-EXPOSED, not masked.
-- **2026-07-31 — H6, H7: OPEN, expected KILLED.** Source predicts bare boot
-  wedges (H6) and no clock-domain lag (H7); own bare-wedge run + 237 log
-  inspection pending.
+- **2026-07-31 — H7 (#1095 clock-lag): KILLED for the socket-triggered wedge.**
+  Empirical: minimal socket wedge is 558,354 `SleepUntil(LogicalTime(0))` vs 104
+  nonzero (all FUTURE guest timers) — the #1095 past-deadline-repeatedly-committed
+  signature is absent, and the repro has no python-controller fork/exec clock split
+  yet wedges. Mechanism = deadline-less unproductive-poller monopoly, distinct from
+  clock-domain skew. Updates memory `demo5-wedge-clock-skew-past-deadline-poller`.
+- **2026-07-31 — H5 (perf parity): QUANTIFIED, OPEN on parity.** 231's `metrics.md`
+  measures the regression (timeslice count ~1,000 green → ~85k busybox+3-knob →
+  10⁵–10⁶ wedge; green rcb-ON is itself a ~5× crawl). rcb-time is a WORKAROUND, not
+  a perf restore; sub-minute parity untestable until a scheduler-side fix exists
+  (out of scope). Independent convergence with H1/H6: 231 also finds config-alone
+  insufficient; my socket A/B narrows 231's "controller topology" to the socket fd.
 - **2026-07-31 — H5 (perf parity): OPEN.** Awaiting 231 pre-regression sub-minute
   baseline + turns/vtime/syscall table.

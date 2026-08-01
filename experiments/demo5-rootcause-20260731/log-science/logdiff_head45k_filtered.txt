@@ -1,0 +1,102 @@
+Logs contain 29043 | 27892 messages total
+Logs contain 29042 | 27892 detcore-specific messages
+Logs contain 29040 | 27892 INFO messages
+Logs contain 21280 | 19817 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+(DETLOG) Mismatch at log messages 2594 (run 1) and 2592 (run 2): Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {BlockedExternalContinue(ExternalOpId { tid: DetPid(<NUM>), sequence: <NUM> }): RW}, on previously committed <NANOSECONDS>"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 645, dettid 3 using resources {BlockedExternalContinue(ExternalOpId { tid: DetPid(3), sequence: 478 }): RW}, on previously committed 1_767_225_608.011_762_500s"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 645, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.011_762_500s"
+(DETLOG) Mismatch at log messages 2595 (run 1) and 2593 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: clone3(<ADDR>, <NUM>) = Ok(<NUM>)"
+>"INFO detcore: DETLOG [post_exec, dtid <NUM>] init auxv AT_RANDOM value to [<NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>]"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #478: clone3(0x7fffffffab30, 88) = Ok(7)"
+>"INFO detcore: DETLOG [post_exec, dtid 7] init auxv AT_RANDOM value to [95, 214, 47, 53, 30, 4, 111, 242, 206, 62, 185, 162, 189, 45, 53, 244]"
+(DETLOG) Mismatch at log messages 2597 (run 1) and 2596 (run 2): Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: brk(NULL) = ?"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 646, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.012_262_500s"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 7] inbound syscall: brk(NULL) = ?"
+(DETLOG) Mismatch at log messages 2598 (run 1) and 2597 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [post_exec, dtid <NUM>] init auxv AT_RANDOM value to [<NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>, <NUM>]"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: brk(NULL) = Ok(<NUM>)"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [post_exec, dtid 7] init auxv AT_RANDOM value to [95, 214, 47, 53, 30, 4, 111, 242, 206, 62, 185, 162, 189, 45, 53, 244]"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 7] finish syscall #119: brk(NULL) = Ok(13070336)"
+(DETLOG) Mismatch at log messages 2601 (run 1) and 2599 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: brk(NULL) = ?"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 7] inbound syscall: brk(NULL) = ?"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 646, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.017_287_500s"
+(DETLOG) Mismatch at log messages 2602 (run 1) and 2601 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: brk(NULL) = Ok(<NUM>)"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 7] finish syscall #119: brk(NULL) = Ok(13070336)"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 647, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.017_887_500s"
+(DETLOG) Mismatch at log messages 2606 (run 1) and 2604 (run 2): Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: access(<ADDR> -> "/usr/local/fbcode/platform010/etc/etc/ld.so.preload", Mode(S_IROTH)) = ?"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 648, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.018_387_500s"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 7] inbound syscall: access(0x7ffff7fd6fe0 -> "/usr/local/fbcode/platform010/etc/etc/ld.so.preload", Mode(S_IROTH)) = ?"
+(DETLOG) Mismatch at log messages 2608 (run 1) and 2605 (run 2): Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {SleepUntil(LogicalTime(<NUM>)): W}, on previously committed <NANOSECONDS>"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: access(<ADDR> -> "/usr/local/fbcode/platform010/etc/etc/ld.so.preload", Mode(S_IROTH)) = Err(Errno(ENOENT))"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 649, dettid 7 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_608.018_987_500s"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 7] finish syscall #120: access(0x7ffff7fd6fe0 -> "/usr/local/fbcode/platform010/etc/etc/ld.so.preload", Mode(S_IROTH)) = Err(Errno(ENOENT))"
+More than 8 differences, eliding the rest...
+Run 1 contains 1463 extra messages not matched in run 2. Displaying up to 10:
+INFO detcore: DETLOG [syscall][detcore, dtid 11] finish syscall #290: madvise(0x555557413000, 32768, 4) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 7883, dettid 17 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_752.926_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 17] inbound syscall: gettimeofday(0x7ffff4d5e720, NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 17] finish syscall #704: gettimeofday(0x7ffff4d5e720 -> { tv_sec: 1767225752, tv_usec: 927625 }, NULL) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 7884, dettid 11 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_752.928_125_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 11] inbound syscall: madvise(0x55555746a000, 32768, 4) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 11] finish syscall #291: madvise(0x55555746a000, 32768, 4) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 7885, dettid 17 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_752.933_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 17] inbound syscall: gettimeofday(0x7ffff4d5e720, NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 17] finish syscall #705: gettimeofday(0x7ffff4d5e720 -> { tv_sec: 1767225752, tv_usec: 934625 }, NULL) = Ok(0)
+Done processing logs, differences found.
