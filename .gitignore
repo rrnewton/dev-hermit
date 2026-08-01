@@ -66,6 +66,40 @@
 /experiments/**/bzImage
 /experiments/**/vmlinux
 /experiments/**/initramfs*.cpio*
+/experiments/**/*.cpio
+/experiments/**/boots-*/
+/experiments/**/boot-*/
+
+# debug/ debugging-episode infra (#40): each episode dir holds machine-readable
+# state (episode/hypotheses/evidence/suspects JSON) plus reports/summaries only.
+# Raw giant logs, boot artifacts, VM/kernel images, and binaries live under an
+# ignored/ scratch dir or an external artifact store, never in git. Episodes
+# REFERENCE such artifacts by path (e.g. into experiments/ or ignored/).
+/debug/**/*.log
+/debug/**/boots-*/
+/debug/**/boot-*/
+/debug/**/runs/
+/debug/**/ignored/
+/debug/**/*.img
+/debug/**/*.qcow2
+/debug/**/*.raw
+/debug/**/*.iso
+/debug/**/*.bin
+/debug/**/*.a
+/debug/**/*.o
+/debug/**/*.so
+/debug/**/*.tar
+/debug/**/*.tar.*
+/debug/**/*.tgz
+/debug/**/*.gz
+/debug/**/*.zip
+/debug/**/*.zst
+/debug/**/*.core
+/debug/**/core.[0-9]*
+/debug/**/bzImage
+/debug/**/vmlinux
+/debug/**/initramfs*.cpio*
+/debug/**/*.cpio
 
 # Transient tooling output
 **/__pycache__/
