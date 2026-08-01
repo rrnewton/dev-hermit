@@ -1,9 +1,51 @@
-# demo5 root cause: lost futex wakeup (not poller starvation)
+# demo5 root cause: mutex/poller livelock (a lost wakeup is NOT the terminal cause)
 
 Date: 2026-08-01. Author: impl agent, opus-4.8 (task `demo5-fix-scheduler-fairness-impl`).
-Status: DURABLE finding. Supersedes the "unbounded poller spin / burn-out
-missing" framing (`demo5-spin-unbounded-burnout-missing`) as the *terminal*
-cause of the wedge.
+Status: **CORRECTED — see "CORRECTION" below.** The lost-futex-wakeup framing in
+the body was the working hypothesis; it is now FALSIFIED as the *terminal* cause
+by a direct fix experiment. The terminal cause is a userspace mutex/poller
+**livelock**. The lower sections are retained as the honest investigation trail
+that led here, but the corrected conclusion supersedes them.
+
+## CORRECTION (2026-08-01, later): a lost wakeup is not the terminal cause
+
+The "lost futex wakeup" conclusion below predicted that recording a fizzled
+`FUTEX_WAKE` and replaying it as a spec-legal spurious wakeup at the next
+matching `FUTEX_WAIT` would let the vCPU proceed and demo5 would boot. That fix
+was implemented, unit-tested, and run — and it **does not green demo5**:
+
+- Branch `claude/detcore-sticky-futex-wakes` @`d79fe238`, flag
+  `--sched-sticky-futex-wakes` (default off), unit tests 3/3.
+- Canonical rcb-armed config, out-of-container enforcer
+  (`boot_sweep.py --rcb on --sticky`): **0/3 boot, byte-identical 17869-byte
+  wedge** at `hpet0: 3 comparators`, guest `0.724403s` — indistinguishable from
+  the OFF baseline. The overlay was demonstrably active (124 sticky records / 45
+  consumes) yet produced **zero** boot progress.
+
+If a single lost wakeup were the terminal cause, crediting and replaying it would
+change the terminal state. It does not. Therefore the wedge is NOT a lost wakeup
+that this futex-layer fix can cure.
+
+**Corrected terminal cause — userspace mutex/poller livelock.** Under detlog at
+the wedge, the QEMU vCPU (`dtid 7`) is blocked on a **glibc mutex**
+`0x5555570c8ec0` (`FUTEX_WAIT_PRIVATE val=2`) that sees **~13.9k balanced
+FUTEX_WAIT/FUTEX_WAKE — wakes are NOT lost**; meanwhile iothreads (`dtid 11/13`)
+spin on `SleepUntil(LogicalTime(0))` pollers. Committed virtual time races ahead
+because step2d only jumps vtime when the run queue is empty, but the `SleepUntil(0)`
+pollers keep it non-empty, so vtime never advances past the unproductive pollers
+and the mutex owner is never scheduled to release. This is exactly
+`scheduler-vtime-jump-unproductive-pollers`, not a futex-ordering defect.
+
+**Real fix direction (owner/design-gated, trigger #4).** A core DetCore scheduler
+change: let committed virtual time jump over provably unproductive pollers so the
+mutex owner runs, i.e. livelock/progress handling — NOT a futex sticky-wake and
+NOT the runnable fairness/aging overlay. Both of those levers are now falsified
+with byte-identical evidence. This must be discussed with the owner before
+implementation per CLAUDE.md (core scheduling change).
+
+---
+
+_Original working hypothesis (retained as investigation trail; superseded above):_
 
 ## Question
 
