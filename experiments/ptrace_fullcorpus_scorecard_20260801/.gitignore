@@ -1,4 +1,3 @@
 rows/
-rows-default/
-rows-liteinst/
+rows-*/
 *.log

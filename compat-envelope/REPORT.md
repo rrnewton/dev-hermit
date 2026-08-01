@@ -44,54 +44,60 @@ columns are apples-to-apples with the ptrace reference.
 
 ### Full-corpus scorecard (absolute counts)
 
-`ptrace` is the golden denominator (integer cells passing L2). `kvm` / `liteinst`
-show `det / parity` absolute counts. `dbi` / `sabre` / `e9patch` are `n/a` on the
-e2e corpus buckets in this checkout (see notes + the backend-parity matrix below);
-`n/a` = **ran zero cells here, not a confirmed fail**.
+`ptrace` is the golden denominator (integer cells passing L2). Every other
+backend shows `det / parity` absolute counts, where `det` = backend
+`--strict --verify` exits 0 and `parity` = backend guest stdout is SHA-256-identical
+to the plain-`--strict` ptrace reference. All six backends are now populated with
+**measured** data at hermit `82a8e853` (uniform lane flags). Parity is measured
+against a race-free plain-`--strict` ptrace reference regenerated for this run
+(`ptref235.out`); 20 cells where ptrace itself fails under plain `--strict` are
+parity-unmeasured for every non-ptrace backend (det still measured).
 
 ```
-bucket                  corpus   ptrace L2     kvm det/par   lite det/par   dbi  sabre  e9patch
----------------------------------------------------------------------------------------------
-applications                 1       1/1          1/1           0/0         n/a   n/a    n/a
-backend-parity-c             3       3/3          3/2           2/2         n/a   n/a    n/a
-bin-c                        2       1/2          0/0           1/1         n/a   n/a    n/a
-c-programs                 159     149/159      111/99        112/103       n/a   n/a    n/a
-chaos-c                      1       1/1          1/1           0/0         n/a   n/a    n/a
-data-handling                2       0/2          0/0           0/0         n/a   n/a    n/a
-debugger-c                   1       1/1          1/0           1/1         n/a   n/a    n/a
-determinism-stress           4       2/4          2/2           0/0         n/a   n/a    n/a
-determinism-stress-c        10       9/10         3/3           0/0         n/a   n/a    n/a
-language-runtimes            6       6/6          3/2           0/0         n/a   n/a    n/a
-shared-futex-c               4       0/4          0/0           0/0         n/a   n/a    n/a
-system-utils                 6       6/6          5/2           2/1         n/a   n/a    n/a
-util-c                       1       0/1          0/0           0/0         n/a   n/a    n/a
----------------------------------------------------------------------------------------------
-TOTAL                      200     179/200      130/112       118/108       n/a   n/a    n/a
+bucket                 corpus  ptrace     kvm         lite        dbi         sabre       e9patch
+------------------------------------------------------------------------------------------------
+applications                1   1/1        1/1         0/0         1/1         1/1         1/1
+backend-parity-c            3   3/3        3/2         2/2         3/3         2/2         3/3
+bin-c                       2   1/2        0/0         1/1         1/1         1/1         1/1
+c-programs                159 149/159    111/99      112/103     133/120     137/123     149/147
+chaos-c                     1   1/1        1/1         0/0         1/1         1/1         1/1
+data-handling               2   0/2        0/0         0/0         0/0         0/0         0/0
+debugger-c                  1   1/1        1/0         1/1         1/1         1/1         1/1
+determinism-stress          4   2/4        2/2         0/0         1/1         2/2         2/2
+determinism-stress-c       10   9/10       3/3         0/0         7/6         9/8         9/9
+language-runtimes           6   6/6        3/2         0/0         3/1         4/1         6/3
+shared-futex-c              4   0/4        0/0         0/0         0/0         0/0         0/0
+system-utils                6   6/6        5/2         2/1         5/2         6/2         6/5
+util-c                      1   0/1        0/0         0/0         0/0         0/0         0/0
+------------------------------------------------------------------------------------------------
+TOTAL                     200 179/200    130/112     118/108     156/137     164/142     179/173
 ```
 
 ### Same scorecard as `parity%, determinism%` of the ptrace-green count
 
-(Rendered by `render-scorecard.rs --csv fullcorpus-scorecard.csv --all`; each
-backend cell is a fraction of that bucket's ptrace-green count, `det% ≥ parity%`.)
+(Rendered by
+`render-scorecard.rs --csv fullcorpus-scorecard.csv --all --backends dbi,kvm,sabre,liteinst,e9patch`;
+each backend cell is `parity%, determinism%` as a fraction of that bucket's
+ptrace-green count, `det% ≥ parity%` by construction.)
 
 ```
-bucket                  ptrace               kvm          liteinst
-------------------------------------------------------------------
-applications                 1        100%, 100%            0%, 0%
-backend-parity-c             3         67%, 100%          67%, 67%
-bin-c                        1            0%, 0%        100%, 100%
-c-programs                 149          66%, 74%          69%, 75%
-chaos-c                      1        100%, 100%            0%, 0%
-data-handling                0            0%, 0%            0%, 0%
-debugger-c                   1          0%, 100%        100%, 100%
-determinism-stress           2        100%, 100%            0%, 0%
-determinism-stress-c         9          33%, 33%            0%, 0%
-language-runtimes            6          33%, 50%            0%, 0%
-shared-futex-c               0            0%, 0%            0%, 0%
-system-utils                 6          33%, 83%          17%, 33%
-util-c                       0            0%, 0%            0%, 0%
-------------------------------------------------------------------
-TOTAL                      179          63%, 72%          60%, 66%
+bucket                  ptrace               dbi               kvm             sabre          liteinst           e9patch
+------------------------------------------------------------------------------------------------------------------------
+applications                 1        100%, 100%        100%, 100%        100%, 100%            0%, 0%        100%, 100%
+backend-parity-c             3        100%, 100%         67%, 100%          67%, 67%          67%, 67%        100%, 100%
+bin-c                        1        100%, 100%            0%, 0%        100%, 100%        100%, 100%        100%, 100%
+c-programs                 149          80%, 89%          66%, 74%          82%, 92%          69%, 75%          98%, 99%
+chaos-c                      1        100%, 100%        100%, 100%        100%, 100%            0%, 0%        100%, 100%
+data-handling                0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+debugger-c                   1        100%, 100%          0%, 100%        100%, 100%        100%, 100%        100%, 100%
+determinism-stress           2          50%, 50%        100%, 100%        100%, 100%            0%, 0%        100%, 100%
+determinism-stress-c         9          67%, 78%          33%, 33%         89%, 100%            0%, 0%        100%, 100%
+language-runtimes            6          17%, 50%          33%, 50%          17%, 67%            0%, 0%         50%, 100%
+shared-futex-c               0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+system-utils                 6          33%, 83%          33%, 83%         33%, 100%          17%, 33%         83%, 100%
+util-c                       0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+------------------------------------------------------------------------------------------------------------------------
+TOTAL                      179          76%, 87%          63%, 72%          79%, 92%          60%, 66%          96%, 99%
 ```
 
 ### Headline numbers (for relay)
@@ -103,9 +109,9 @@ TOTAL                      179          63%, 72%          60%, 66%
 | ptrace L2 green (default flags) | 178/200 (89.0%) | preemption on; cross-validates the denominator is **flag-robust**. |
 | **KVM** | det **130/200 (65%)**, parity **112** | of 184 parity-measurable cells (16 non-C: ptrace-side fail → parity unmeasured). |
 | **LiteInst** | det **118/200 (59%)**, parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
-| DBI | n/a on corpus | feature binary not built at this SHA in this slot; real data in the matrix below (21/23 L2). |
-| SaBRe | n/a | loader not built in this checkout. |
-| e9patch | n/a | AOT+ptrace; no e2e-corpus cells; empty scorecard. |
+| **DBI** | det **156/200 (78%)**, parity **137** | `--features third-party-backends` binary at `82a8e853`; parity of 180 measurable cells. |
+| **SaBRe** | det **164/200 (82%)**, parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
+| **e9patch** | det **179/200 (90%)**, parity **173** | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. |
 | **Portable / privileged** | **200 / 2** | was 199 / 3; `cpuid-probe` reclassified portable. |
 
 Honest caveats:
@@ -117,11 +123,20 @@ Honest caveats:
   Default hermit flags give **178** (one cell — `applications/timed-progress-bar`
   — times out with preemption on but passes with it off), so the denominator does
   not depend on the flag choice.
-- **DBI/SaBRe/e9patch `n/a`** reflects binary availability in *this* checkout, not
-  a compat wall. DBI needs the `third-party-backends` feature build (not present
-  in the default `82a8e853` release binary here); SaBRe needs its loader built;
-  e9patch is AOT+ptrace and has no e2e-corpus cells. Where DBI *is* built, it has
-  real data — see the backend-parity matrix.
+- **DBI/SaBRe/e9patch are now measured on the full corpus** using a
+  `--features third-party-backends` binary at `82a8e853`
+  (`scratch/featured235-target/release/hermit`). Ordering by determinism:
+  e9patch (179) ≈ ptrace (179) > sabre (164) > dbi (156). e9patch tracks ptrace
+  because its runtime *is* ptrace (only the guest code is AOT-rewritten by
+  e9patch); SaBRe is a genuine ELF-loader backend (`libdetcore_sabre.so` +
+  coordinator RPC, confirmed via `--log=trace`); DBI is DynamoRIO in-process
+  and pays the most from preemption/re-entrancy limits (see the DBI notes).
+- **Parity reference correctness.** Parity is measured against a plain-`--strict`
+  ptrace reference (`ptref235.out`) regenerated race-free for this run, because
+  the earlier `--verify`-based reference emitted no guest stdout (double-run mode
+  suppresses it), which had spuriously deflated every backend's parity. 20 cells
+  where ptrace itself errors under plain `--strict` are parity-unmeasured (not
+  counted as 0) for all non-ptrace backends; det remains measured on all 200.
 
 ## Backend-parity matrix (complementary — where DBI has real data)
 
@@ -200,16 +215,30 @@ experiments/ptrace_fullcorpus_scorecard_20260801/sweep-liteinst.sh   # LiteInst 
 experiments/kvm_fullcorpus_scorecard_20260801/sweep.sh               # KVM (C cells)
 experiments/kvm_fullcorpus_scorecard_20260801/sweep-nonc.sh          # KVM (shell/interpreter cells)
 
-# Merge + render:
-cat scorecard-ptrace.csv <(tail +2 kvm-all.csv) <(tail +2 scorecard-liteinst.csv) > fullcorpus-scorecard.csv
-compat-envelope/render-scorecard.rs --csv compat-envelope/fullcorpus-scorecard.csv --all
+# DBI / SaBRe / e9patch (needs a --features third-party-backends binary):
+HERMIT_BIN=scratch/featured235-target/release/hermit BACKEND=dbi \
+  experiments/ptrace_fullcorpus_scorecard_20260801/sweep-backend.sh   # (also sabre, e9patch)
+
+# Regenerate the plain --strict ptrace PARITY reference (ptref235.out) — the
+# --verify-based ptv.out is empty (double-run suppresses stdout), so parity must
+# use this; then recompute the backend parity columns against it:
+HERMIT_BIN=scratch/featured235-target/release/hermit \
+  experiments/ptrace_fullcorpus_scorecard_20260801/gen-ptrace-parity-ref.sh
+experiments/ptrace_fullcorpus_scorecard_20260801/recompute-parity.sh
+
+# Merge + render (ptrace+kvm+liteinst+dbi+sabre+e9patch = 1200 rows):
+cat scorecard-ptrace.csv <(tail +2 kvm-all.csv) <(tail +2 scorecard-liteinst.csv) \
+    <(tail +2 scorecard-dbi.csv) <(tail +2 scorecard-sabre.csv) \
+    <(tail +2 scorecard-e9patch.csv) > fullcorpus-scorecard.csv
+compat-envelope/render-scorecard.rs --csv compat-envelope/fullcorpus-scorecard.csv \
+  --all --backends dbi,kvm,sabre,liteinst,e9patch
 ```
 
 ## Data files
 
-- `fullcorpus-scorecard.csv` — merged 600-row full-corpus scorecard (ptrace + kvm
-  + liteinst, 200 cells each) at hermit `82a8e853`. **This is the machine-readable
-  denominator artifact.**
+- `fullcorpus-scorecard.csv` — merged 1200-row full-corpus scorecard (ptrace + kvm
+  + liteinst + dbi + sabre + e9patch, 200 cells each) at hermit `82a8e853`. **This
+  is the machine-readable denominator artifact.**
 - `corpus-manifest.csv` — the 200 ptrace-verify cells + lane + calibration state.
 - `ignored/backend-parity-scorecard.csv` — the 23-test backend-parity matrix
   (ptrace/dbi/kvm L2).
