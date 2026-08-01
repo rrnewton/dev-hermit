@@ -36,11 +36,15 @@
       },
       "H9": {
         "status": "open",
-        "hash": "2450a41276b0"
+        "hash": "2f34cc9f61fe"
       },
       "H10": {
+        "status": "killed",
+        "hash": "2b5831faaccf"
+      },
+      "H11": {
         "status": "confirmed",
-        "hash": "04de2eea65d4"
+        "hash": "3c2804cb3f7b"
       }
     },
     "evidence": {
@@ -111,88 +115,112 @@
       "E17": {
         "status": "",
         "hash": "5fb7e6eba21a"
+      },
+      "E18": {
+        "status": "",
+        "hash": "5368133a0339"
+      },
+      "E19": {
+        "status": "",
+        "hash": "726fe883e4e8"
+      },
+      "E20": {
+        "status": "",
+        "hash": "2bb2eb243882"
+      },
+      "E21": {
+        "status": "",
+        "hash": "5c1fa87418d0"
+      },
+      "E22": {
+        "status": "",
+        "hash": "27c1284e308d"
       }
     },
     "suspects": {
       "S01": {
-        "status": "open",
-        "hash": "a5ea438a5472"
+        "status": "cleared",
+        "hash": "834b720093ee"
       },
       "S02": {
-        "status": "open",
-        "hash": "1887c25694a7"
+        "status": "cleared",
+        "hash": "5f86991e1990"
       },
       "S03": {
-        "status": "open",
-        "hash": "c6aed0b75bc4"
+        "status": "cleared",
+        "hash": "3619ccd85ec2"
       },
       "S04": {
-        "status": "open",
-        "hash": "cd24f5e2e0bb"
+        "status": "cleared",
+        "hash": "6102b53336ce"
       },
       "S05": {
-        "status": "open",
-        "hash": "6d3fd4f07f41"
+        "status": "cleared",
+        "hash": "6e1ae1a26d3a"
       },
       "S06": {
-        "status": "open",
-        "hash": "84e101f45379"
+        "status": "cleared",
+        "hash": "88ebdfdc3814"
       },
       "S07": {
-        "status": "open",
-        "hash": "826c9b71a4a2"
+        "status": "cleared",
+        "hash": "4d423785d1f6"
       },
       "S08": {
-        "status": "open",
-        "hash": "35ed16c059c5"
+        "status": "cleared",
+        "hash": "64ea5c9644d2"
       },
       "S09": {
-        "status": "open",
-        "hash": "633d04e5a229"
+        "status": "cleared",
+        "hash": "c18ef450274b"
       },
       "S10": {
-        "status": "open",
-        "hash": "2adab53b8cf2"
+        "status": "cleared",
+        "hash": "31fb1039fe08"
       },
       "S11": {
-        "status": "open",
-        "hash": "b91e4785aee7"
+        "status": "cleared",
+        "hash": "b160170be3a1"
       },
       "S12": {
-        "status": "open",
-        "hash": "fe295da4f791"
+        "status": "cleared",
+        "hash": "9a41a90c6bfb"
       },
       "S13": {
-        "status": "open",
-        "hash": "af8dfbf92608"
+        "status": "cleared",
+        "hash": "1100b7b46142"
       },
       "S14": {
-        "status": "open",
-        "hash": "7b0645b49b1b"
+        "status": "cleared",
+        "hash": "b64afa7ee1e5"
       },
       "S15": {
-        "status": "open",
-        "hash": "7be99462539c"
+        "status": "cleared",
+        "hash": "3fc211bbc2b7"
       },
       "S16": {
-        "status": "open",
-        "hash": "482b3c0b20cc"
+        "status": "cleared",
+        "hash": "6e55d361ed79"
       },
       "S17": {
-        "status": "open",
-        "hash": "a51593f5e48c"
+        "status": "cleared",
+        "hash": "5cf3cd423f0b"
       },
       "S18": {
-        "status": "open",
-        "hash": "4a0de7191584"
+        "status": "cleared",
+        "hash": "b45d44d72d15"
       },
       "S19": {
-        "status": "open",
-        "hash": "542f1545675b"
+        "status": "cleared",
+        "hash": "21a3318c561c"
       },
       "S20": {
-        "status": "open",
-        "hash": "b498244ad17a"
+        "status": "cleared",
+        "hash": "0c8e91896375"
+      },
+      "S21": {
+        "status": "confirmed",
+        "hash": "6e4c73a0dcb5"
       }
     },
     "episode": {

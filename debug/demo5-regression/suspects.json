@@ -11,8 +11,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Directly changes guest-clock <- committed logical time (part of the #1190 unification). Time behavior is central to the demo5 -icount/HPET wedge. NOTE: H7 (E05) shows post-#1190 guest clock tracks committed to ~ms, so this is more plausibly the FIX than the regressor; cross-check whether it altered pre-hpet timing."
+    "status": "cleared",
+    "reasoning": "Directly changes guest-clock <- committed logical time (part of the #1190 unification). Time behavior is central to the demo5 -icount/HPET wedge. NOTE: H7 (E05) shows post-#1190 guest clock tracks committed to ~ms, so this is more plausibly the FIX than the regressor; cross-check whether it altered pre-hpet timing. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S02",
@@ -25,8 +25,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Process-tree GuestClock sharing (#1190). Alters how guest CLOCK_MONOTONIC relates to committed_time across exec/fork -> could shift the HPET deadline landing. Same H7 caveat: appears to be the clock-lag FIX; verify it doesn't change calibration-phase scheduling."
+    "status": "cleared",
+    "reasoning": "Process-tree GuestClock sharing (#1190). Alters how guest CLOCK_MONOTONIC relates to committed_time across exec/fork -> could shift the HPET deadline landing. Same H7 caveat: appears to be the clock-lag FIX; verify it doesn't change calibration-phase scheduling. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S03",
@@ -40,8 +40,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "Yield loopback pollers to localhost peers (#1182); scheduler.rs + tool_local poller-yield logic. demo5 uses ptrace not SaBRe, so lower direct risk, but it edits poller/yield scheduling shared paths."
+    "status": "cleared",
+    "reasoning": "Yield loopback pollers to localhost peers (#1182); scheduler.rs + tool_local poller-yield logic. demo5 uses ptrace not SaBRe, so lower direct risk, but it edits poller/yield scheduling shared paths. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S04",
@@ -55,8 +55,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "low",
-    "status": "open",
-    "reasoning": "KVM vfork barrier teardown (#1152); config + scheduler.rs. KVM backend; demo5=ptrace -> low, but edits scheduler.rs."
+    "status": "cleared",
+    "reasoning": "KVM vfork barrier teardown (#1152); config + scheduler.rs. KVM backend; demo5=ptrace -> low, but edits scheduler.rs. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S05",
@@ -71,8 +71,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "SaBRe multithreaded exec reconciliation (#1173); scheduler.rs + time.rs + tool_global. SaBRe-scoped but edits core scheduling+time files."
+    "status": "cleared",
+    "reasoning": "SaBRe multithreaded exec reconciliation (#1173); scheduler.rs + time.rs + tool_global. SaBRe-scoped but edits core scheduling+time files. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S06",
@@ -85,8 +85,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "Normalize SaBRe inherited pipe verification (#1158); scheduler.rs. Landed make-jN SIGCHLD-adjacent fix; touches scheduler.rs so keep medium despite SaBRe framing."
+    "status": "cleared",
+    "reasoning": "Normalize SaBRe inherited pipe verification (#1158); scheduler.rs. Landed make-jN SIGCHLD-adjacent fix; touches scheduler.rs so keep medium despite SaBRe framing. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S07",
@@ -100,8 +100,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Determinizes SIGCHLD admission + pselect6 sigmask for make -jN; touches scheduler.rs + scheduler/runqueue.rs. Changes run-queue admission/quiescence \u2014 exactly the class of the scheduler-vtime-jump-unproductive-pollers foundation bug H1 rests on."
+    "status": "cleared",
+    "reasoning": "Determinizes SIGCHLD admission + pselect6 sigmask for make -jN; touches scheduler.rs + scheduler/runqueue.rs. Changes run-queue admission/quiescence \u2014 exactly the class of the scheduler-vtime-jump-unproductive-pollers foundation bug H1 rests on. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S08",
@@ -116,8 +116,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "SaBRe child-exit timer ordering (#1156); touches scheduler.rs + config + tool_global. Timer-ordering = time behavior; SaBRe-scoped lowers direct demo5 risk."
+    "status": "cleared",
+    "reasoning": "SaBRe child-exit timer ordering (#1156); touches scheduler.rs + config + tool_global. Timer-ordering = time behavior; SaBRe-scoped lowers direct demo5 risk. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S09",
@@ -131,8 +131,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "low",
-    "status": "open",
-    "reasoning": "SaBRe pipe state across fork/exec (#1154); tool_global/local. SaBRe-scoped."
+    "status": "cleared",
+    "reasoning": "SaBRe pipe state across fork/exec (#1154); tool_global/local. SaBRe-scoped. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S10",
@@ -146,8 +146,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "low",
-    "status": "open",
-    "reasoning": "SaBRe threaded lifecycle compat (#1023); scheduler + tool_global. SaBRe backend; demo5=ptrace -> low direct risk."
+    "status": "cleared",
+    "reasoning": "SaBRe threaded lifecycle compat (#1023); scheduler + tool_global. SaBRe backend; demo5=ptrace -> low direct risk. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S11",
@@ -163,8 +163,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Replays slowdown epochs at exact branch boundaries (#1151). Ties epoch/vtime advance to branch boundaries \u2014 directly interacts with RCB->vtime and preemption timing that --no-rcb-time disables."
+    "status": "cleared",
+    "reasoning": "Replays slowdown epochs at exact branch boundaries (#1151). Ties epoch/vtime advance to branch boundaries \u2014 directly interacts with RCB->vtime and preemption timing that --no-rcb-time disables. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S12",
@@ -182,8 +182,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "Chaos epoch audit markers (#1151); broad touch (scheduler/time/config) but marker-linking \u2014 lower functional risk than 61078e29/0c096177."
+    "status": "cleared",
+    "reasoning": "Chaos epoch audit markers (#1151); broad touch (scheduler/time/config) but marker-linking \u2014 lower functional risk than 61078e29/0c096177. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S13",
@@ -201,8 +201,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Implements deterministic chaos slowdown epochs (PR #1151, the canonical core-scheduling change / trigger#4). Touches scheduler.rs, time.rs, tool_local/global, config, syscalls/time \u2014 the widest scheduling+time surface in the window. Strong structural suspect."
+    "status": "cleared",
+    "reasoning": "Implements deterministic chaos slowdown epochs (PR #1151, the canonical core-scheduling change / trigger#4). Touches scheduler.rs, time.rs, tool_local/global, config, syscalls/time \u2014 the widest scheduling+time surface in the window. Strong structural suspect. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S14",
@@ -216,8 +216,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "Per-thread-slowdown review markers (#1149); config + tool_local. Companion to d00d3a73; likely markers-only but touches slowdown config."
+    "status": "cleared",
+    "reasoning": "Per-thread-slowdown review markers (#1149); config + tool_local. Companion to d00d3a73; likely markers-only but touches slowdown config. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S15",
@@ -231,8 +231,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "RR-style stable per-thread chaos slowdown factors (#1149). Per-thread slowdown modifies scheduling/vtime accounting; foundational to the epoch machinery above."
+    "status": "cleared",
+    "reasoning": "RR-style stable per-thread chaos slowdown factors (#1149). Per-thread slowdown modifies scheduling/vtime accounting; foundational to the epoch machinery above. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S16",
@@ -245,8 +245,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "low",
-    "status": "open",
-    "reasoning": "meta: link KVM capability review; config only. Almost certainly markers/meta; lowest risk."
+    "status": "cleared",
+    "reasoning": "meta: link KVM capability review; config only. Almost certainly markers/meta; lowest risk. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S17",
@@ -259,8 +259,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "low",
-    "status": "open",
-    "reasoning": "KVM forward virtual capability prctls; config only. KVM-scoped, config touch."
+    "status": "cleared",
+    "reasoning": "KVM forward virtual capability prctls; config only. KVM-scoped, config touch. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S18",
@@ -273,8 +273,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Shares inherited stdio scheduler resources (tool_local). Directly relevant: the wedge trigger (H6) is a host-pollable listening-socket/stdio poller; how inherited stdio resources are scheduled could change poller interleaving."
+    "status": "cleared",
+    "reasoning": "Shares inherited stdio scheduler resources (tool_local). Directly relevant: the wedge trigger (H6) is a host-pollable listening-socket/stdio poller; how inherited stdio resources are scheduled could change poller interleaving. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S19",
@@ -287,8 +287,8 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "medium",
-    "status": "open",
-    "reasoning": "nginx process-group teardown determinism; scheduler.rs. Teardown/reap scheduling; peripheral to boot-phase wedge."
+    "status": "cleared",
+    "reasoning": "nginx process-group teardown determinism; scheduler.rs. Teardown/reap scheduling; peripheral to boot-phase wedge. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
   },
   {
     "id": "S20",
@@ -302,7 +302,21 @@
     ],
     "interval": "2a7ca98..ae2565be",
     "priority": "high",
-    "status": "open",
-    "reasoning": "Normalizes guest clock after exec (#1095 area). Post-exec clock reset historically split clock domains (see memory pr1095-fake-determinism-clock-review-lesson). Prime time-behavior suspect for a boot that wedges at clocksource calibration."
+    "status": "cleared",
+    "reasoning": "Normalizes guest clock after exec (#1095 area). Post-exec clock reset historically split clock domains (see memory pr1095-fake-determinism-clock-review-lesson). Prime time-behavior suspect for a boot that wedges at clocksource calibration. | Cleared by bisect E21: the demo5 wedge reproduces on hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31) purely by applying the parent config flip (0591104: --no-rcb-time + --max-timeslice disabled). 2a7ca98 predates this suspect, and boots cleanly (rc=0) under the green-demo/PMU config. Therefore this hermit code commit is NOT the immediate cause; the sole immediate cause is parent config commit 0591104. No code regressor exists in range 2a7ca98..ae2565be."
+  },
+  {
+    "id": "S21",
+    "sha": "0591104",
+    "subject": "parent demos/05-qemu-boot.py config flip: --max-timeslice 2000000000 -> disabled, add --no-rcb-time (sync 1100)",
+    "subsystem": "parent/demo-config",
+    "date": "",
+    "files": [
+      "demos/05-qemu-boot.py"
+    ],
+    "interval": "",
+    "priority": "medium",
+    "status": "confirmed",
+    "reasoning": "CONFIRMED immediate cause (E21). This is a PARENT-repo commit, not a hermit code commit \u2014 which is why the prior hermit-code bisect was non-monotone (the demo config held --no-rcb-time+disabled throughout, so every hermit commit wedged). 0591104 (2026-07-28 15:02, 31 min AFTER GOOD hermit anchor 2a7ca98@14:31 UTC) changed demos/05-qemu-boot.py from --max-timeslice 2000000000 (PMU armed, boots) to --max-timeslice disabled + --no-rcb-time (0 hardware preemption deadline). Under that config the scheduler's unproductive-poller micro-yields (SleepUntil(LogicalTime(0))) explode ~912 -> ~386k and committed vtime creeps without ever hitting a preemption deadline (scheduler-vtime-jump-unproductive-pollers foundation bug), so hermit never terminates (busybox) / the guest never boots past HPET (full-linux controller). Fix belongs to the owner-gated scheduler fairness change (hermit-226), not a revert-a-code-commit action."
   }
 ]

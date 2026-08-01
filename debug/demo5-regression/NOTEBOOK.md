@@ -20,22 +20,32 @@ Two tracks are being driven in parallel toward closing this episode:
   make forward progress — advance/age it instead of letting the socket poller
   monopolize turns — rather than reverting to the rcb-time workaround.
   **OWNER-GATED on a fairness review** (core DetCore scheduling = post-facto
-  trigger #4); not yet landed. *Caveat:* the framing that the green path used the
-  `--no-rcb-time` syscall-boundary regime (H10) is **UNDER RE-VERIFICATION** (see
-  below) — the owner disputes that green ever used `--no-rcb-time`, so the fix
-  target may shift if H10 does not hold.
-- **Immediate-CAUSE commit (what regressed) — being bisected now by hermit-231:**
-  the exact commit in GOOD `2a7ca98` .. BAD `ae2565be` that flipped demo5 from a
-  ~1-min boot to the wedge. **Blamed commit: PENDING 231's bisection.** 20 suspects
-  are seeded (8 high-priority — guest-clock, chaos-slowdown-epoch #1151/#1149,
-  SIGCHLD-admission, stdio-scheduler-resources); **0 eliminated so far.** As
-  bisection rules each in or out, 231 closes it via
-  `./debug/dbg set-suspect demo5-regression <id|sha> --status cleared|confirmed
-  --reasoning "…"`; `./debug/dbg suspects demo5-regression --open` is the live
-  regressor worklist and should shrink toward the blamed commit. (Note: the H6 A/B
-  shows the wedge reproduces on the demo *config* alone, so the "immediate cause"
-  may be a config/latent-exposure rather than a single commit — the bisection
-  confirms-or-denies that.)
+  trigger #4); not yet landed. *RESOLVED (2026-08-01, hermit-231 E22; owner was
+  right):* the green path did **NOT** use `--no-rcb-time`. **H10 is KILLED**, its
+  successor **H11 CONFIRMED**: the last-good demo config kept **RCBs ON** with a
+  large-but-finite `--max-timeslice 2000000000` (2 s) safety that fired **rarely
+  but non-zero** (41 RCB-boundary preemptions / ~100k timeslices on hermit
+  `2a7ca98`, boots+exits rc=0). Parent commit `0591104` flipped it to
+  `--no-rcb-time --max-timeslice disabled` (0 timer preemptions → wedge). So there
+  are now **two** fixes: (a) **cheap, un-gated** — re-arm `--max-timeslice` in the
+  demo config (restores green immediately); (b) the deep owner-gated scheduler
+  fairness fix so even the 0-PMU config terminates.
+- **Immediate-CAUSE commit (what regressed) — RESOLVED by hermit-231 (2026-08-01):**
+  **BLAMED COMMIT = PARENT-repo `0591104` "sync 1100"** (2026-07-28 15:02 UTC), a
+  demo-*config* commit (NOT a hermit code commit). It flipped
+  `demos/05-qemu-boot.py` from `--max-timeslice 2000000000` to
+  `--no-rcb-time --max-timeslice disabled`. **All 20 hermit suspects (S01–S20) are
+  CLEARED**, confirmed suspect **S21 = `0591104`**. The bisect COLLAPSED: building
+  hermit @`2a7ca98` (GOOD anchor, predates every suspect) and running the busybox
+  demo shows the flipped config wedges (0 RCB preemptions, `SleepUntil0`=385934,
+  rc=124) while the last-good RCB-ON config boots+exits (41 RCB preemptions, rc=0)
+  on the *same* binary — so no hermit code commit in `2a7ca98..ae2565be` is the
+  regressor; the config flip is. This also explains why the earlier hermit-code
+  bisect was non-monotone (the demo config held `--no-rcb-time` throughout, so
+  every hermit commit wedged). The last-good pre-flip commit is tagged
+  **`demo5-lastgood` → `9371e5b`** (pushed to rrnewton/dev-hermit). Evidence
+  E21 + E22; artifacts under
+  `experiments/demo5_bisect_20260731/ignored/anchor-2a7ca98/`.
 
 > **Honest caveat — infra not yet adversarially reviewed.** This debug/ episode
 > infrastructure itself (the `dbg` CLI, the JSON schema, the size hook, this
@@ -82,16 +92,22 @@ the demo's own boot config also changed inside this window** (`--no-rcb-time` wa
 added to the demo on 2026-07-28 ~11:00, *after* the `2a7ca98` commit), so "what is
 tested" is a confound the bisection must control for.
 
-**P0 — UNDER RE-VERIFICATION (231); owner disputes the earlier "settled".** An
+**P0 — RESOLVED (231, 2026-08-01); the owner was right, H10 is KILLED.** An
 earlier revision claimed (H10/E17) that the green path never used PMU because the
 demo config's `--max-timeslice disabled` forces 0 PMU / 100 % syscall-boundary
-preemption, so PMU-skid is only defense-in-depth. **The owner disputes that green
-ever ran under `--no-rcb-time` at all**, and 231 is re-verifying. The temporal
-evidence cuts against the settled claim: `--no-rcb-time` entered the demo on
-2026-07-28 ~11:00 (`0591104`), *after* `2a7ca98` (10:31), so the last known ~1-min
-green may have booted under a **different** (rcb-time-ON, PMU-armed) config than
-the one measured. Until 231 confirms which config green actually used, treat H10
-as **open**, and do not conclude "restore the syscall-boundary regime" is the fix.
+preemption. **That was FALSE — it read the CURRENT (post-flip) config, not the
+historical green one.** Config archaeology + a direct build/run at `2a7ca98`
+(E21/E22) settle it: the last-good demo config (`9371e5b`, tag `demo5-lastgood`)
+was `--strict --target-timeslice 100000 --max-timeslice 2000000000` — **RCBs ON,
+2 s finite safety, NO `--no-rcb-time`** — and `2a7ca98` (14:31 UTC) sits *inside*
+that RCB-ON window, 31 min before parent `0591104` (15:02 UTC) added
+`--no-rcb-time` **and** flipped `--max-timeslice 2000000000 → disabled`. Measured
+on hermit `2a7ca98`: the RCB-ON config booted+exited with **41** RCB-boundary
+preemptions (`inbound timer preemption event`) — **non-zero, rarely hit** — while
+the flipped config had **0** and wedged. So green **did** use PMU/RCB preemption;
+the fix is **not** "restore the syscall-boundary regime" but either (a) re-arm
+`--max-timeslice` in the demo (cheap, un-gated) or (b) fix
+`scheduler-vtime-jump-unproductive-pollers` (deep, owner-gated). See H11.
 
 ---
 
@@ -103,8 +119,9 @@ boot config changed inside the regression window.* Timeline (parent
 
 | date | commit | change to how Linux is booted |
 |---|---|---|
-| 2026-07-27 | `96a1874` | Python-controller rewrite of the QEMU demos; introduced `-icount shift=0,sleep=off`, `--target-timeslice`, and `--max-timeslice`. |
-| 2026-07-28 ~11:00 | `0591104` | **Added `--no-rcb-time` to the demo** (host-portability / skid + log-cleanliness). This is the config knob that exposes the foundation bug — and it lands *after* the `2a7ca98` (10:31) green anchor. |
+| 2026-07-27 | `96a1874` | Python-controller rewrite of the QEMU demos; introduced `-icount shift=0,sleep=off`, `--target-timeslice 100000`, and **`--max-timeslice 2000000000` (RCBs ON, 2 s finite safety, NO `--no-rcb-time`)**. |
+| 2026-07-28 13:02 UTC | `9371e5b` | "sync 0900" — demo config still RCB-ON (unchanged from `96a1874`). **Last-good pre-flip commit; tagged `demo5-lastgood`.** |
+| 2026-07-28 15:02 UTC | `0591104` | **THE FLIP: `+--no-rcb-time`, `--max-timeslice 2000000000 → disabled`** ("sync 1100"). Disables *all* timer preemption → exposes the foundation bug. Lands *after* the `2a7ca98` (14:31 UTC) green anchor. **This is the blamed immediate-cause commit (S21).** |
 | 2026-07-28 | `2cf85d3` | Made demo 05 safe to run concurrently (per-run dirs/sockets). |
 | 2026-07-29 | `8a26a45` | Portable QEMU + deterministic drgn demos. |
 | 2026-07-29 | `9e077f4` | **Boot serial: unix socket → `-serial file:`** — fixed a boot timeout, because a pollable serial *socket* starves the `-icount` vCPU under `--no-rcb-time`. (So the boot path deliberately avoids the H6 socket trigger for the serial console; the QMP socket remains.) |
@@ -116,11 +133,12 @@ Current boot config (`demos/05-qemu-boot.py:131-146`): `hermit run --strict
 socket is the remaining host-pollable listening fd (H6 trigger).
 
 **Why this section exists:** the "GOOD `2a7ca98` boots in ~75 s" datum was produced
-by running *some* demo config against that hermit SHA — and `--no-rcb-time` was NOT
-in the demo until ~30 min after that commit. Whether green used `--no-rcb-time`,
-`-serial file:` vs `stdio`, and PMU-armed vs syscall-boundary preemption are all
-**test-definition** variables the bisection (231) must pin, not just the hermit SHA.
-This is the crux of the H10 dispute above.
+by running *some* demo config against that hermit SHA — and `--no-rcb-time`/
+`--max-timeslice disabled` were NOT in the demo until 31 min after that commit.
+**RESOLVED (231):** the green anchor ran the **RCB-ON** config (`--max-timeslice
+2000000000`, tag `demo5-lastgood` = `9371e5b`); `--no-rcb-time --max-timeslice
+disabled` entered at `0591104` and is what wedges. This settled the H10 dispute
+above (H10 killed, H11 confirmed): green was PMU-armed, not syscall-boundary.
 
 ---
 
@@ -142,33 +160,29 @@ This is the crux of the H10 dispute above.
   (200 ms) **still arms** the PMU timer (`run-bbx-wedge`: 519 `inbound timer
   preemption event`s); the demo config disables the PMU only because it *also*
   passes `--max-timeslice disabled`.
-- **P0 (H10) — UNDER RE-VERIFICATION by 231; owner DISPUTES this was settled.**
-  *Claim (do not treat as established):* the GREEN regime uses ZERO PMU preemption
-  by construction, so PMU-skid is not on the green path. **The owner disputes that
-  green ever ran under `--no-rcb-time`** (see the boot-flag timeline: `--no-rcb-time`
-  post-dates the `2a7ca98` green commit by ~30 min), so the measured 0-PMU config
-  may not be the config the ~1-min green actually used. The reasoning below is
-  retained as the *claim under test*, not a verdict:** The demo
-  config (`demos/05-qemu-boot.py:131-136` = `--strict --no-rcb-time
-  --target-timeslice 100000 --max-timeslice disabled`) arms **no** PMU/RCB timer,
-  so `inbound timer preemption event` (the PMU path, lib.rs:1329) can never fire;
-  `--target-timeslice` is a pure **syscall-boundary** deadline (`end_of_timeslice`,
-  checked every handler entry). *Evidence:* E17 — every demo-config run counts
-  **0** PMU / 100 % syscall-boundary (wedgekit busybox `0/387451`; full-Linux
-  archives `run-good` `0/39343`, `run-broken-ae2565be` `0/817815`, `run-norcb`
-  `0/5536314`, `run-mid-1190` `0/223230`), whereas the **only** genuine boot-to-
-  power-down is the rcb-**ON** *workaround* (`run-bbx-green` `858/868` = 98.8 % PMU).
-  *If confirmed,* green would depend on *small target + disabled max →
-  syscall-boundary, ~0 PMU*, with consequences (1) PMU-skid is defense-in-depth
-  for the rcb-ON workaround only, and (2) the fix would be to **restore the
-  syscall-boundary regime** (fix `scheduler-vtime-jump-unproductive-pollers`).
-  **BUT this is exactly what is disputed.** The 0-PMU counts are all from runs the
-  *fleet* configured with `--no-rcb-time`; the historical ~1-min green (`2a7ca98`)
-  is **not archived**, so its regime is *inferred by construction, not measured*,
-  and that config **cannot boot at current HEAD** (it wedges). 231's
-  re-verification must answer: **did the ~1-min green actually use `--no-rcb-time`
-  (0 PMU), or rcb-time-ON (PMU-armed)?** Until then H10 is treated as **open** and
-  the "restore the syscall-boundary regime" conclusion is provisional.
+- **P0 (H10 KILLED → H11 CONFIRMED) — RESOLVED by 231 (2026-08-01); the owner was
+  right.** *Killed claim:* "the GREEN regime uses ZERO PMU by construction." That
+  read the **current post-flip** demo config, not the historical green one. The
+  historical green (`2a7ca98`, inside the RCB-ON window) ran the last-good config
+  `--strict --target-timeslice 100000 --max-timeslice 2000000000` (**RCBs ON**),
+  which arms the RCB/max-timeslice timer, so `inbound timer preemption event` (the
+  RCB path, lib.rs:1264 — the sole `handle_timer_event` preemption site, so its
+  `grep -c` is an exact RCB-boundary preemption count) **does** fire. *Evidence
+  E21/E22 — measured on hermit `2a7ca98`, busybox demo:*
+  - last-good RCB-ON config (`--max-timeslice 2000000000`): **41** RCB-boundary
+    preemptions, boots+exits **rc=0** (~101 s). **Non-zero — RCBs rarely hit.**
+  - plain `--strict` (default `--max-timeslice` 200 ms): **902** RCB preemptions,
+    boots+exits rc=0.
+  - flipped `0591104` config (`--no-rcb-time --max-timeslice disabled`): **0** RCB
+    preemptions (no timer armed), **WEDGE** (`SleepUntil0`=385934, rc=124).
+
+  So green **depended on** an armed `--max-timeslice`; the flip removed it. No
+  `#1341` back-port was needed — the native RCB marker gives the exact count. (The
+  older E17 "0 PMU / 100 % syscall-boundary" counts were all from `--no-rcb-time`
+  runs the *fleet* configured, i.e. the post-flip config — never the historical
+  green.) **Consequence:** the fix is (a) re-arm `--max-timeslice` in the demo
+  (cheap, un-gated) or (b) `scheduler-vtime-jump-unproductive-pollers` (deep,
+  owner-gated) — **not** "restore the syscall-boundary regime."
 - **The sufficient trigger is a host-pollable listening socket fd (H6, confirmed
   by single-variable A/B).** Identical bare-busybox `--no-rcb-time` boot: no
   sockets → **boots** (`-serial stdio` and `-serial file:` both PASS); + two

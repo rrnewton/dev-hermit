@@ -177,5 +177,35 @@
     ],
     "artifact": "experiments/demo5_bisect_20260731/ignored/ctrl-valid/out/results.csv",
     "source": "hermit-226"
+  },
+  {
+    "id": "E20",
+    "desc": "Hardened wedge-detector validated: preempt_timeline.sh now attributes the TAIL (commits after last preemption) to a discovered poller dtid and classifies NO-PREEMPT-BY-CONFIG (H8/norcb) / PREEMPTION-ACTIVE / PHASE-TRANSITION / WEDGE-REARM-FAILURE. Validated on 3 known logs: norcb spin -> NO-PREEMPT-BY-CONFIG (preempts=0, su0=138199); rcb SLOW_CENSORED run-17 -> PREEMPTION-ACTIVE (gap=852); rcb SLOW_CENSORED run-18 -> PHASE-TRANSITION (gap=2787 but dominant dtid 9 != poller 17). Confirms E19: the naive 'preemption ceased before end' signature false-positives on healthy handoff (old script would have flagged run-18). WEDGE-REARM-FAILURE branch is untriggered in this never-wedging config and is reserved for 210's route-(b) hunt in the panic-prone margin config.",
+    "hypotheses": [
+      "H8",
+      "H9"
+    ],
+    "artifact": "debug/demo5-regression/preempt_timeline.sh",
+    "source": ""
+  },
+  {
+    "id": "E21",
+    "desc": "BISECT COLLAPSED: built hermit @2a7ca98f (GOOD anchor, 2026-07-28 10:31, predates ALL 20 suspects) and ran busybox demo under 3 configs on the SAME binary. config-b (parent commit 0591104: --strict --no-rcb-time --target-timeslice 100000 --max-timeslice disabled) = WEDGE pathology: SleepUntil0=385934, rc=124 (never terminates in 180s). config-a (parent 96a1874 green demo: --strict --target-timeslice 100000 --max-timeslice 2000000000, PMU armed) = CLEAN rc=0, boots+exits 101s, SleepUntil0=100417. plain --strict control (PMU default 200ms) = CLEAN rc=0, 261s, SleepUntil0=912 (green regime). Discriminator = whether --max-timeslice is armed: armed -> terminates; 'disabled'+--no-rcb-time -> unproductive-poller creep explodes, no termination. Because the wedge reproduces at the GOOD anchor purely by flipping the DEMO CONFIG, there is NO hermit code regressor in the 122-commit range 2a7ca98..ae2565be. The immediate cause is PARENT repo commit 0591104 'sync 1100' (2026-07-28 15:02), which changed demos/05-qemu-boot.py from --max-timeslice 2000000000 to disabled and added --no-rcb-time, 31 min after the GOOD anchor.",
+    "hypotheses": [
+      "H1",
+      "H10"
+    ],
+    "artifact": "experiments/demo5_bisect_20260731/ignored/anchor-2a7ca98/",
+    "source": "hermit-231 build+run at GOOD anchor 2a7ca98f"
+  },
+  {
+    "id": "E22",
+    "desc": "OWNER P0-ACCURACY CORRECTION. (1) Config archaeology of demos/05-qemu-boot.py (PARENT repo): 96a1874 (2026-07-27 21:51 UTC) created it with --strict --target-timeslice 100000 --max-timeslice 2000000000 (RCBs ON, 2s finite safety, NO --no-rcb-time); UNCHANGED through 9371e5b 'sync 0900' (2026-07-28 13:02 UTC, tagged demo5-lastgood, pins hermit adbfaca3); parent 0591104 'sync 1100' (2026-07-28 15:02 UTC) is the FLIP: diff = +--no-rcb-time, -2000000000, +disabled. GOOD hermit anchor 2a7ca98 (14:31 UTC) sits INSIDE the RCB-ON window, 31 min before the flip. (2) RCB-boundary preemption count via native marker 'inbound timer preemption event' (detcore/src/lib.rs:1264, the sole handle_timer_event RCB/max-timeslice preemption path -> exact count, no #1341 back-port needed) on hermit @2a7ca98 busybox demo: last-good RCB-ON 2s config = 41 RCB preemptions, boots+exits rc=0, 101s; plain --strict 200ms = 902 RCB preemptions, boots+exits rc=0, 261s; flipped 0591104 config = 0 RCB preemptions (max_timeslice None -> no timer armed), WEDGE rc=124 SleepUntil0=385934. ANSWER to owner: the GOOD runs had SOME RCB hits (41), NOT zero; RCBs were ON and fired rarely (41/100k=0.04%, the 'rarely hit safety'). This FALSIFIES H10's 'green used 0 PMU by construction' (which read the current post-flip config). Counts are deterministic under --strict (cf wedge-rate.md 7/7 byte-identical). Under --strict the target-timeslice(100us) syscall-boundary deadline vs voluntary SleepUntil(0) micro-yields are not separately instrumented at 2a7ca98; that split is the only thing a #1341 back-port would add and it does not change the conclusion.",
+    "hypotheses": [
+      "H10",
+      "H11"
+    ],
+    "artifact": "experiments/demo5_bisect_20260731/ignored/anchor-2a7ca98/",
+    "source": "hermit-231 config archaeology + RCB-boundary preemption count at 2a7ca98"
   }
 ]
