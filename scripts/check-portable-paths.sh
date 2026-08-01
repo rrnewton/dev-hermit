@@ -36,6 +36,14 @@ is_excluded() {
             | */third-party/* | */vendor/* | */worktrees/* \
             | */scripts/check-portable-paths.sh/)
             return 0 ;;
+        # Per-episode debug/ dirs (debug/<episode>/...) are research/repro
+        # artifacts like experiments/<foo>/ -- their repro scripts legitimately
+        # reference machine-local assets. The portable-tooling requirement still
+        # applies to the top-level debug/ CLI (debug/dbg, debug/*.md), which is
+        # NOT excluded by this depth>=2 pattern (the trailing ?* requires a
+        # non-empty component under the episode dir).
+        */debug/*/?*)
+            return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -115,6 +123,19 @@ self_test() {
 
     is_excluded ai_docs/measurements/reproduce.sh || {
         echo "portability self-test rejected historical provenance" >&2
+        return 1
+    }
+
+    is_excluded debug/demo5-regression/run_sweep.sh || {
+        echo "portability self-test failed to exclude a per-episode debug script" >&2
+        return 1
+    }
+    ! is_excluded debug/dbg || {
+        echo "portability self-test wrongly excluded the top-level debug CLI" >&2
+        return 1
+    }
+    ! is_excluded debug/README.md || {
+        echo "portability self-test wrongly excluded a top-level debug doc" >&2
         return 1
     }
 }
