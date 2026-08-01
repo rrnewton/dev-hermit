@@ -228,6 +228,10 @@ places stay consistent — read it before any worktree operation.**
     `worktrees/<slot>/{hermit,reverie,liteinst2}` where
     `<slot>` is a named agent or `slotNN` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
+15. Don't break the demos: a commit touching `demos/**` must get an adversarial
+    review that verifies the demo still runs GREEN before landing (mechanical gate:
+    `demo-review-gate` CI + `.githooks/commit-msg`; policy
+    `demos/ADVERSARIAL-REVIEW-POLICY.md`).
 
 ## Clean Start And Checkout Ownership
 
