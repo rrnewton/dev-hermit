@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round29",
+  "date": "2026-08-01",
+  "question": "Do sched_yield, prctl query, and setfs credential raw-syscall guests achieve L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_sha": "fe5b6383239edf3581ae40eb4b3b2e6efaa4407a",
+    "hermit_base_sha": "59d13202b25fcd7bf3ed1ae21457144955514538",
+    "hermit_branch": "codex/e9patch-corpus-round29-families",
+    "pr": "https://github.com/rrnewton/hermit/pull/1364",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1361"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"]
+  },
+  "corpus_size": {"before": 198, "after": 203},
+  "kept": [
+    {"guest": "sched_yield_noop", "syscall": "sched_yield(24)", "expected_stdout": "yield=0\\n"},
+    {"guest": "prctl_capbset_read", "syscall": "prctl(157) PR_CAPBSET_READ", "expected_stdout": "capbset=1\\n"},
+    {"guest": "prctl_thp_disable", "syscall": "prctl(157) PR_GET_THP_DISABLE", "expected_stdout": "thpdisable=1\\n"},
+    {"guest": "setfsuid_noop", "syscall": "setfsuid(122)", "expected_stdout": "setfsuid=1\\n"},
+    {"guest": "setfsgid_noop", "syscall": "setfsgid(123)", "expected_stdout": "setfsgid=1\\n"}
+  ],
+  "dropped": [
+    {"guest": "prctl_get_no_new_privs", "syscall": "prctl(157) PR_GET_NO_NEW_PRIVS(39)", "reason": "returns -ENOSYS (-38) under golden hermit-ptrace"},
+    {"guest": "rseq_register", "syscall": "rseq(334)", "reason": "returns -ENOSYS (-38) under golden hermit-ptrace"}
+  ],
+  "result": {
+    "golden_ptrace": "5/5 L2verified=1, expected stdout matched",
+    "e9patch": "5/5 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=8 tail_match=yes",
+    "audit_inventory": "exit 0"
+  }
+}

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# Parent dev-hermit repo-hygiene guard (backstop).
+#
+# The DEFAULT hygiene practice is to write anything you won't commit -- raw logs,
+# boot artifacts, scratch, big outputs -- directly into an ignored/ dir from the
+# start, so there is no commit-time judgment call. This hook is only a BACKSTOP:
+# it WARNS + BLOCKS when a staged file exceeds a soft size limit, so an oversized
+# artifact never lands by accident. It does NOT blanket-ban any extension; small
+# curated logs/reports commit freely.
+#
+# Override (you testify you've verified this file is a genuinely-needed, curated
+# tracked report / machine-readable state):
+#     HERMIT_HYGIENE_OVERRIDE=1 git commit ...
+# Tune the limit (KiB):
+#     HERMIT_HYGIENE_MAX_KB=2048 git commit ...
+#
+# Install:  scripts/setup-hooks.sh   (sets core.hooksPath=.githooks)
+# Policy:   .githooks/hygiene-policy.md
+
+set -u
+LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
+POLICY=".githooks/hygiene-policy.md"
+
+big=()
+# Only added/copied/modified files; deletions and renames-away don't add bytes.
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  # Size of the STAGED blob (bytes). Fail open on any lookup error (never wedge).
+  sz=$(git cat-file -s ":$f" 2>/dev/null) || continue
+  kb=$(( (sz + 1023) / 1024 ))
+  if [ "$kb" -gt "$LIMIT_KB" ]; then
+    big+=("$(printf '%7d KiB  %s' "$kb" "$f")")
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+[ "${#big[@]}" -eq 0 ] && exit 0
+
+{
+  echo "----------------------------------------------------------------------"
+  echo "REPO HYGIENE: staged file(s) over the ${LIMIT_KB} KiB soft limit:"
+  for b in "${big[@]}"; do echo "  $b"; done
+  echo
+  echo "Commit CODE + REPORTS + machine-readable state only. Raw giant logs,"
+  echo "dumps, and binaries belong under an ignored/ dir (write them there from"
+  echo "the START), not in git -- especially under experiments/ and debug/."
+  echo "Policy: ${POLICY}  and  hermit/.claude/skills/repo-cleanliness.md"
+  echo
+} >&2
+
+if [ "${HERMIT_HYGIENE_OVERRIDE:-}" = "1" ]; then
+  echo "HERMIT_HYGIENE_OVERRIDE=1 set -- proceeding on your testimony that the" >&2
+  echo "above are verified-compliant curated report/state files." >&2
+  exit 0
+fi
+
+{
+  echo "BLOCKED. Choose one:"
+  echo "  * move the artifact under an ignored/ dir (or reference it by path), OR"
+  echo "  * if it is a genuinely-needed tracked report/state, re-run:"
+  echo "        HERMIT_HYGIENE_OVERRIDE=1 git commit ..."
+  echo "----------------------------------------------------------------------"
+} >&2
+exit 1

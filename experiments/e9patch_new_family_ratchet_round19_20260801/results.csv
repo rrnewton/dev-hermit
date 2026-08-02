@@ -1,0 +1,9 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+listen_abstract,50,listen=0,yes,0,PASS_L2,yes
+recvmsg_socketpair,47,recvmsg=hi,yes,0,PASS_L2,yes
+recvfrom_socketpair,45,recvfrom=hi,yes,0,PASS_L2,yes
+arch_prctl_getgs,158,getgs=0,yes,0,PASS_L2,yes
+prctl_pdeathsig,157,pdeathsig=0,yes,0,PASS_L2,yes
+kill_self_sig0,62,kill=0,yes,0,PASS_L2,yes
+tgkill_self_sig0,234,tgkill=0,yes,0,PASS_L2,yes
+flistxattr_memfd,196,flistxattr=0,yes,0,PASS_L2,yes

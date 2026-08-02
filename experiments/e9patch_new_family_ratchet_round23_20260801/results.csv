@@ -1,0 +1,8 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+setpriority_self,141,setpriority=0,yes,0,PASS_L2,yes
+getpriority_self,140,getpriority=1,yes,0,PASS_L2,yes
+get_mempolicy_default,239,getmempolicy=0,yes,0,PASS_L2,yes
+set_mempolicy_default,238,setmempolicy=0,yes,0,PASS_L2,yes
+modify_ldt_read,154,modifyldt=0,yes,0,PASS_L2,yes
+rt_sigqueueinfo_self,129,sigqueueinfo=0,yes,0,PASS_L2,yes
+io_setup_destroy,206,iosetup=-38,yes,0,FAIL_GOLDEN_ENOSYS,no

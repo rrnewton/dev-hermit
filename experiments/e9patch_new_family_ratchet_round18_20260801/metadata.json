@@ -1,0 +1,18 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round18",
+  "date": "2026-08-01",
+  "question": "Does e9patch preprocessing + ptrace backend preserve byte-identical L2 parity for 7 previously-uncovered syscalls (sched_getparam, sched_get_priority_min, ftruncate, sync_file_range, SOCK_SEQPACKET socketpair, pidfd_open, sendmmsg)?",
+  "hermit_sha": "f6e3ed13622001348e43d66da0d0247a4adf44e0",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "pr": "https://github.com/rrnewton/hermit/pull/1319",
+  "base_branch": "codex/e9patch-corpus-round17-families",
+  "branch": "codex/e9patch-corpus-round18-families",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "result": "RATCHET e9patch: 144/144 PASS_L2",
+  "kept": 7,
+  "dropped": [
+    {"guest": "prctl_no_new_privs", "syscall": "prctl(157) PR_SET_NO_NEW_PRIVS=38 / PR_GET_NO_NEW_PRIVS=39", "reason": "PR_SET_NO_NEW_PRIVS returns -ENOSYS (-38) under golden hermit ptrace; hermit limitation, not parity (#152)"}
+  ],
+  "note": "Round targets syscalls with NO prior guest (corpus already covers umask/access/chdir/msync/fstat/statx/prctl-name/uname; those were not duplicated). e9patch is preprocessing for the ptrace backend, not a Detcore backend; golden = ptrace. L2 = guest-visible bitwise-identical + detlog tail-match modulo the fixed 8-syscall e9loader prologue. e9tool/e9patch absent from CI.",
+  "inventory": {"guest_fixture_before": 170, "guest_fixture_after": 177, "manifest_test": 196, "total_after": 522}
+}

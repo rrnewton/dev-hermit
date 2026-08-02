@@ -1,0 +1,9 @@
+guest,syscall_family,expected_stdout,candidate_sites,mapped,b0,prologue,tail_match,result
+getrandom_bytes,getrandom,getrandom=16,1,1,0,8,yes,PASS_L2
+gettid_check,gettid,gettid=1,1,1,0,8,yes,PASS_L2
+getrlimit_nofile,getrlimit(97-legacy),getrlimit=0,1,1,0,8,yes,PASS_L2
+set_tid_address_ok,set_tid_address,settid=1,1,1,0,8,yes,PASS_L2
+sched_priority_max,sched_get_priority_max,priomax=0,1,1,0,8,yes,PASS_L2
+sched_getscheduler_check,sched_getscheduler,sched=0,1,1,0,8,yes,PASS_L2
+sync_all,sync,sync=0,1,1,0,8,yes,PASS_L2
+prctl_subreaper,prctl(PR_GET_CHILD_SUBREAPER),subreaper=0,-,-,-,-,-,DROPPED(golden hermit ptrace returns -ENOSYS/-38)

@@ -1,0 +1,9 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+dup2_high,dup2-fd-placement,exact:dup2=20,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+chdir_root,chdir,exact:cwd=/,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fchdir_root,fchdir,exact:cwd=/,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fsync_memfd,fsync,exact:fsync=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+socketpair_rw,socketpair,exact:sp=hi,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+flock_memfd,flock,exact:flock=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+pipe_nonblock_eagain,nonblocking-pipe-errno,exact:eagain=-11,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+getpgid_check,getpgid,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

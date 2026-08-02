@@ -1,0 +1,6 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+tkill_self_sig0,200,tkill=0,yes,0,PASS_L2,yes
+rt_tgsigqueueinfo_self,297,tgsigqueueinfo=0,yes,0,PASS_L2,yes
+prctl_securebits,27,securebits=0,yes,0,FAIL_GOLDEN_ENOSYS,no
+prctl_mce_kill_get,34,mcekill=2,yes,0,FAIL_GOLDEN_ENOSYS,no
+userfaultfd_create,323,userfaultfd=1,yes,-1,DROPPED_NATIVE_FAIL,no

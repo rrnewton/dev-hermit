@@ -1,0 +1,13 @@
+guest,golden_syscalls,e9_syscalls,prologue_len,tail_match,verdict
+clock_gettime,2,10,8,yes,TAIL_MATCH
+compute,1,9,8,yes,TAIL_MATCH
+getpid_check,2,10,8,yes,TAIL_MATCH
+getrandom,2,10,8,yes,TAIL_MATCH
+loop_write,10,18,8,yes,TAIL_MATCH
+minimal_exit,1,9,8,yes,TAIL_MATCH
+mmap_anon,3,11,8,yes,TAIL_MATCH
+multi_site,3,13,10,yes,TAIL_MATCH
+nanosleep,2,10,8,yes,TAIL_MATCH
+sigmask,3,11,8,yes,TAIL_MATCH
+uname,2,10,8,yes,TAIL_MATCH
+write_stdout,2,10,8,yes,TAIL_MATCH

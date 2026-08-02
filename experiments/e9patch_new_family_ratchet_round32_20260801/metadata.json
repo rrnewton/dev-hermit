@@ -1,0 +1,38 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round32",
+  "date": "2026-08-01",
+  "question": "Do a direct memfd_create fd probe, an unarmed getitimer(ITIMER_REAL) query, and a 1ms relative clock_nanosleep on CLOCK_MONOTONIC achieve L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path? And which zero-copy / cross-address-space data-movement syscalls does golden hermit not yet support?",
+  "repo": {
+    "hermit_sha": "e33bb6802e83cf422ecb8bf046d300e291c9b846",
+    "hermit_base_sha": "cdf6ade8fd303765fb3850c6ae45847137c162ba",
+    "hermit_branch": "codex/e9patch-corpus-round32-families",
+    "pr": "https://github.com/rrnewton/hermit/pull/1390",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1373"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"],
+    "note": "Fleet PMU heavily contended by ~31 concurrent kvm/sabre --verify processes (many leaked/wedged supervisors alive >1 day). L2 verify runs intermittently wedged (PMU-skid); vetting used per-run kill-and-retry (killpg on wedge) to catch clean PMU windows."
+  },
+  "corpus_size": {"before": 214, "after": 217},
+  "kept": [
+    {"guest": "memfd_create_check", "syscall": "memfd_create(319)", "expected_stdout": "memfd=1\\n"},
+    {"guest": "getitimer_real", "syscall": "getitimer(36)", "expected_stdout": "getitimer=0\\n"},
+    {"guest": "clock_nanosleep_relative", "syscall": "clock_nanosleep(230)", "expected_stdout": "clocknanosleep=0\\n"}
+  ],
+  "dropped": [
+    {"guest": "splice_pipe", "syscall": "splice(275)", "golden": "-38 (-ENOSYS)", "native": "5", "reason": "hermit does not support splice; keeping would bless a hermit gap"},
+    {"guest": "tee_pipe", "syscall": "tee(276)", "golden": "-38 (-ENOSYS)", "native": "5", "reason": "hermit does not support tee"},
+    {"guest": "vmsplice_pipe", "syscall": "vmsplice(278)", "golden": "-38 (-ENOSYS)", "native": "5", "reason": "hermit does not support vmsplice"},
+    {"guest": "copy_file_range_memfd", "syscall": "copy_file_range(326)", "golden": "-38 (-ENOSYS)", "native": "5", "reason": "hermit does not support copy_file_range"},
+    {"guest": "process_vm_readv_self", "syscall": "process_vm_readv(310)", "golden": "-1 (-EPERM)", "native": "5", "reason": "hermit ptrace supervision blocks process_vm_readv on a self target"}
+  ],
+  "result": {
+    "golden_ptrace": "3/3 L2verified=1; native==golden and expected stdout matched",
+    "e9patch": "3/3 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=0 tail_match=yes",
+    "audit_inventory": "exit 0 (595 files, 250 guest-fixture)"
+  }
+}

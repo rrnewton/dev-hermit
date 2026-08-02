@@ -1,0 +1,8 @@
+inbound syscall: readlink(A -> "/proc/self/exe", A, N)
+inbound syscall: open(A -> "/home/newton/e9scratch/dlp.DtpX64/write_stdout", 0)
+inbound syscall: arch_prctl(ARCH_GET_FS, A)
+inbound syscall: mmap(A, N, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0)
+inbound syscall: arch_prctl(ARCH_SET_FS, N)
+inbound syscall: mmap(A, N, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED), 3, N)
+inbound syscall: mmap(A, N, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED), 3, N)
+inbound syscall: close(3)

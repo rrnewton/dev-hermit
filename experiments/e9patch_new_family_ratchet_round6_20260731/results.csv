@@ -1,0 +1,8 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+newfstatat_devnull,at-stat,exact:fstatat_chr=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+faccessat_devnull,at-access,exact:faccessat=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+sendfile_memfd,sendfile,exact:sent=5,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+pwrite_pread_memfd,positioned-io,exact:pread=abc,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+eventfd_rw,eventfd,exact:eventfd=5,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+rt_sigpending_empty,signal-pending,exact:pending=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fchmod_memfd,fchmod,exact:chmod=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

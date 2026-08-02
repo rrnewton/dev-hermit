@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round31",
+  "date": "2026-08-01",
+  "question": "Do the remove/lremove/fremovexattr nonexistent-xattr error path, an unarmed timerfd_create fd probe, a CLOCK_MONOTONIC clock_getres resolution query, and a non-blocking rt_sigtimedwait poll achieve L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_sha": "cdf6ade8fd303765fb3850c6ae45847137c162ba",
+    "hermit_base_sha": "ed4042395785bc779e86ebd0358ffb63e205cfef",
+    "hermit_branch": "codex/e9patch-corpus-round31-families",
+    "pr": "https://github.com/rrnewton/hermit/pull/1373",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1368"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"]
+  },
+  "corpus_size": {"before": 208, "after": 214},
+  "kept": [
+    {"guest": "removexattr_devnull", "syscall": "removexattr(197)", "expected_stdout": "removexattr=1\\n"},
+    {"guest": "lremovexattr_devnull", "syscall": "lremovexattr(198)", "expected_stdout": "lremovexattr=1\\n"},
+    {"guest": "fremovexattr_devnull", "syscall": "fremovexattr(199)", "expected_stdout": "fremovexattr=1\\n"},
+    {"guest": "timerfd_create_check", "syscall": "timerfd_create(283)", "expected_stdout": "timerfd=1\\n"},
+    {"guest": "clock_getres_monotonic", "syscall": "clock_getres(229)", "expected_stdout": "clockres=0\\n"},
+    {"guest": "rt_sigtimedwait_empty", "syscall": "rt_sigtimedwait(128)", "expected_stdout": "sigtimedwait=-11\\n"}
+  ],
+  "dropped": [
+    {"guest": "kcmp_self_file", "syscall": "kcmp(312)", "reason": "returns -1 under golden hermit-ptrace (native returns 0); pid virtualization breaks the kernel's pid-based comparison, a hermit limitation"}
+  ],
+  "result": {
+    "golden_ptrace": "6/6 L2verified=1, native==golden and expected stdout matched",
+    "e9patch": "6/6 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=8 tail_match=yes",
+    "audit_inventory": "exit 0"
+  }
+}

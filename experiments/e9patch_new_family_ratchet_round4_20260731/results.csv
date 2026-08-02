@@ -1,0 +1,9 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+brk_grow,heap-brk,exact:brk=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+madvise_dontneed,memory-advice,exact:madvise=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+file_mmap_zero,file-backed-mmap,exact:mzero=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+memfd_seek,anon-file-seek,exact:end=4096,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+ioctl_enotty,ioctl-errno,exact:enotty=-25,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+access_devnull,fs-access,exact:access=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+sigaction_query,signal-disposition,exact:sigaction=ok,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+getppid_check,process-hierarchy,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

@@ -1,0 +1,20 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round13",
+  "date": "2026-07-31",
+  "question": "Does e9patch preprocessing leave statfs/pipe/getdents64/signalfd4/close_range/getsockopt/setsockopt/fcntl(F_GETLK) byte-identical to golden ptrace at L2?",
+  "hermit_branch": "codex/e9patch-corpus-round13-families",
+  "hermit_sha": "c539a58027a1e3198d60f9ca1f583068073c33bd",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "pr": "https://github.com/rrnewton/hermit/pull/1305",
+  "base_branch": "codex/e9patch-corpus-round12-families",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "env": {
+    "HERMIT_E9TOOL": "<reverie>/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "<reverie>/third-party/e9patch/e9patch"
+  },
+  "command": "python3 -u tests/backend-parity/e9patch_corpus.py",
+  "result": "RATCHET e9patch: 107/107 PASS_L2 (exit 0); corpus 99->107",
+  "backend": "e9patch preprocessing + ptrace backend (golden = ptrace)",
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "dropped": []
+}

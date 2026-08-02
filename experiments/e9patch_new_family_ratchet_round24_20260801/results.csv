@@ -1,0 +1,8 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+mlockall_all,151,mlockall=0,yes,0,PASS_L2,yes
+faccessat2_devnull,439,faccessat2=0,yes,0,PASS_L2,yes
+pidfd_send_signal_self,424,pidfdsignal=0,yes,0,PASS_L2,yes
+openat2_devnull,437,openat2=0,yes,0,FAIL_GOLDEN_UNSUPPORTED,no
+shmget_rmid,29,shmget=0,yes,0,FAIL_GOLDEN_NO_SYSV_IPC,no
+semget_rmid,64,semget=0,yes,0,FAIL_GOLDEN_NO_SYSV_IPC,no
+msgget_rmid,68,msgget=0,yes,0,FAIL_GOLDEN_NO_SYSV_IPC,no

@@ -1,0 +1,124 @@
+Logs contain 46356 | 46263 messages total
+Logs contain 46355 | 46262 detcore-specific messages
+Logs contain 46354 | 46261 INFO messages
+Logs contain 34579 | 34430 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+(DETLOG) Mismatch at log messages 1492 (run 1) and 1492 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: openat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", <NUM>) = ?"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: openat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", <NUM>) = ?"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = ?"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = ?"
+Divergent syscall context:
+  run 1, log message 1492: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = ?
+  run 2, log message 1492: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = ?
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+
+(DETLOG) Mismatch at log messages 1493 (run 1) and 1493 (run 2): Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {Path("/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh"): R}, on previously committed <NANOSECONDS>"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn <NUM>, dettid <NUM> using resources {Path("/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh"): R}, on previously committed <NANOSECONDS>"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 407, dettid 3 using resources {Path("/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh"): R}, on previously committed 1_767_225_604.482_400_000s"
+>"INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 407, dettid 3 using resources {Path("/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh"): R}, on previously committed 1_767_225_604.482_400_000s"
+Divergent syscall context:
+  run 1, log message 1492: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = ?
+  run 2, log message 1492: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = ?
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+
+(DETLOG) Mismatch at log messages 1495 (run 1) and 1495 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: openat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", <NUM>) = Ok(<NUM>)"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: openat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", <NUM>) = Ok(<NUM>)"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = Ok(3)"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = Ok(3)"
+Divergent syscall context:
+  run 1, log message 1495: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = Ok(3)
+  run 2, log message 1495: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = Ok(3)
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #337: prlimit64(0, 6, NULL, 0x7fffffffb2d0) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+
+(DETLOG) Mismatch at log messages 1498 (run 1) and 1498 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: newfstatat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", <ADDR>, AtFlags(<ADDR>)) = ?"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] inbound syscall: newfstatat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", <ADDR>, AtFlags(<ADDR>)) = ?"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0x7fffffffb3c0, AtFlags(0x0)) = ?"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0x7fffffffb3c0, AtFlags(0x0)) = ?"
+Divergent syscall context:
+  run 1, log message 1498: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0x7fffffffb3c0, AtFlags(0x0)) = ?
+  run 2, log message 1498: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0x7fffffffb3c0, AtFlags(0x0)) = ?
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = Ok(3)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = Ok(3)
+
+(DETLOG) Mismatch at log messages 1499 (run 1) and 1499 (run 2): Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: newfstatat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", <ADDR> -> {st_mode=SFlag(S_IFREG) | <NUM>, st_size=<NUM>, ...}, AtFlags(<ADDR>)) = Ok(<NUM>)"
+>"INFO detcore: DETLOG [syscall][detcore, dtid <NUM>] finish syscall #<NUM>: newfstatat(-<NUM>, <ADDR> -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", <ADDR> -> {st_mode=SFlag(S_IFREG) | <NUM>, st_size=<NUM>, ...}, AtFlags(<ADDR>)) = Ok(<NUM>)"
+(DETLOG) Original entries before normalization: Diff < left / right > :
+<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #341: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0x7fffffffb3c0 -> {st_mode=SFlag(S_IFREG) | 0755, st_size=934, ...}, AtFlags(0x0)) = Ok(0)"
+>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #341: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0x7fffffffb3c0 -> {st_mode=SFlag(S_IFREG) | 0755, st_size=1091, ...}, AtFlags(0x0)) = Ok(0)"
+Divergent syscall context:
+  run 1, log message 1499: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #341: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0x7fffffffb3c0 -> {st_mode=SFlag(S_IFREG) | 0755, st_size=934, ...}, AtFlags(0x0)) = Ok(0)
+  run 2, log message 1499: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #341: newfstatat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0x7fffffffb3c0 -> {st_mode=SFlag(S_IFREG) | 0755, st_size=1091, ...}, AtFlags(0x0)) = Ok(0)
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_filecon.sh", 0) = Ok(3)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #338: brk(0x5555556f0000) = Ok(93824993918976)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #339: rt_sigprocmask(0, NULL, 0x5555556a3288, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #340: openat(-100, 0x5555556d1850 -> "/home/newton/work/dev-hermit/scratch/demo5-icount-sleep/boot_qemu_sock.sh", 0) = Ok(3)
+
+More than 5 differences, eliding the rest...
+Run 1 contains 149 extra messages not matched in run 2. Displaying up to 10:
+INFO detcore: DETLOG [syscall][detcore, dtid 9] inbound syscall: gettimeofday(0x7ffff4d5c720, NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 9] finish syscall #9446: gettimeofday(0x7ffff4d5c720 -> { tv_sec: 1767225655, tv_usec: 7887 }, NULL) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 11819, dettid 9 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_655.008_387_500s
+INFO detcore: DETLOG [syscall][detcore, dtid 9] inbound syscall: gettimeofday(0x7ffff4d5c720, NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 9] finish syscall #9447: gettimeofday(0x7ffff4d5c720 -> { tv_sec: 1767225655, tv_usec: 9387 }, NULL) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 11820, dettid 9 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_655.009_887_500s
+INFO detcore: DETLOG [syscall][detcore, dtid 9] inbound syscall: gettimeofday(0x7ffff4d5c720, NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 9] finish syscall #9448: gettimeofday(0x7ffff4d5c720 -> { tv_sec: 1767225655, tv_usec: 10887 }, NULL) = Ok(0)
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 11821, dettid 9 using resources {SleepUntil(LogicalTime(0)): W}, on previously committed 1_767_225_655.011_387_500s
+INFO detcore: DETLOG [syscall][detcore, dtid 9] inbound syscall: gettimeofday(0x7ffff4d5c720, NULL) = ?
+Done processing logs, differences found.

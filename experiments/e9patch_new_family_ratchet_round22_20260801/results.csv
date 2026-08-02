@@ -1,0 +1,7 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+setresuid_noop,117,setresuid=0,yes,0,PASS_L2,yes
+setresgid_noop,119,setresgid=0,yes,0,PASS_L2,yes
+setreuid_noop,113,setreuid=0,yes,0,PASS_L2,yes
+setregid_noop,114,setregid=0,yes,0,PASS_L2,yes
+accept4_abstract,288,accept4=1,yes,0,PASS_L2,yes
+ioprio_get_check,252,ioprio=1,yes,0,PASS_L2,yes

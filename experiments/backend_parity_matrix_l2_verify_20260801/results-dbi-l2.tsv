@@ -1,0 +1,24 @@
+test_name	backend	expectation	result	seconds	detail
+hello_stdout	dbi	detlog	PASS	0.176	L2 DETLOG-bitwise: --verify double-run matched
+argument_forwarding	dbi	detlog	PASS	0.178	L2 DETLOG-bitwise: --verify double-run matched
+exit_zero	dbi	detlog	PASS	0.100	L2 DETLOG-bitwise: --verify double-run matched
+exit_status	dbi	gap	GAP	0.000	hermit --verify runs the DBI guest only once when the first run exits non-zero (--verify-allow both), so the double-run DETLOG comparison never executes for this non-zero-exit contract
+file_read	dbi	detlog	PASS	0.173	L2 DETLOG-bitwise: --verify double-run matched
+file_mutation	dbi	detlog	PASS	0.112	L2 DETLOG-bitwise: --verify double-run matched
+file_metadata	dbi	detlog	PASS	0.118	L2 DETLOG-bitwise: --verify double-run matched
+io_uring_fallback	dbi	detlog	PASS	0.108	L2 DETLOG-bitwise: --verify double-run matched
+listmount_unavailable	dbi	detlog	PASS	0.125	L2 DETLOG-bitwise: --verify double-run matched
+process_vm_readv_refusal	dbi	detlog	PASS	0.108	L2 DETLOG-bitwise: --verify double-run matched
+process_vm_writev_refusal	dbi	detlog	PASS	0.107	L2 DETLOG-bitwise: --verify double-run matched
+executable_mmap	dbi	detlog	PASS	0.117	L2 DETLOG-bitwise: --verify double-run matched
+memory_advice	dbi	detlog	PASS	0.109	L2 DETLOG-bitwise: --verify double-run matched
+heap_growth	dbi	detlog	PASS	0.112	L2 DETLOG-bitwise: --verify double-run matched
+anonymous_mmap_layout	dbi	detlog	PASS	0.113	L2 DETLOG-bitwise: --verify double-run matched
+shared_anonymous_mmap	dbi	detlog	PASS	0.111	L2 DETLOG-bitwise: --verify double-run matched
+pthread_lifecycle	dbi	gap	GAP	0.000	inherited from the L1 DBI pthread_lifecycle gap: DynamoRIO startup stall prevents any L2 verify run
+process_wait_accounting	dbi	detlog	PASS	0.123	L2 DETLOG-bitwise: --verify double-run matched
+process_wait_lifecycle	dbi	detlog	PASS	0.130	L2 DETLOG-bitwise: --verify double-run matched
+cpuid_policy	dbi	detlog	PASS	0.111	L2 DETLOG-bitwise: --verify double-run matched
+virtual_clock	dbi	detlog	PASS	0.122	L2 DETLOG-bitwise: --verify double-run matched
+random_sources	dbi	detlog	PASS	0.149	L2 DETLOG-bitwise: --verify double-run matched
+virtual_pid	dbi	detlog	PASS	0.114	L2 DETLOG-bitwise: --verify double-run matched

@@ -1,0 +1,9 @@
+guest,syscalls,printed_value,host_independent,native_rc,golden_e9_result,kept
+fcntl_setfd_cloexec,memfd_create+fcntl(F_SETFD/F_GETFD),setfd=1,yes,0,PASS_L2,yes
+fcntl_getown_pipe,pipe+fcntl(F_GETOWN=9),getown=0,yes,0,PASS_L2,yes
+ioctl_fionread_pipe,pipe+write+ioctl(FIONREAD),fionread=3,yes,0,PASS_L2,yes
+ioctl_fionbio_pipe,pipe+ioctl(FIONBIO),fionbio=0,yes,0,PASS_L2,yes
+eventfd_semaphore,eventfd2(EFD_SEMAPHORE)+write+read,efdsem=1,yes,0,PASS_L2,yes
+socketpair_dgram,socketpair(AF_UNIX/SOCK_DGRAM)+write+read,sp=hi,yes,0,PASS_L2,yes
+bind_abstract,socket(AF_UNIX)+bind(abstract),bind=0,yes,0,PASS_L2,yes
+fcntl_getpipe_sz,pipe+fcntl(F_GETPIPE_SZ=1032),pipesz=1,yes,0,PASS_L2,yes

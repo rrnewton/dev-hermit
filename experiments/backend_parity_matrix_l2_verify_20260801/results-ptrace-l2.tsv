@@ -1,0 +1,24 @@
+test_name	backend	expectation	result	seconds	detail
+hello_stdout	ptrace	detlog	PASS	0.284	L2 DETLOG-bitwise: --verify double-run matched
+argument_forwarding	ptrace	detlog	PASS	0.284	L2 DETLOG-bitwise: --verify double-run matched
+exit_zero	ptrace	detlog	PASS	0.263	L2 DETLOG-bitwise: --verify double-run matched
+exit_status	ptrace	detlog	PASS	0.480	L2 DETLOG-bitwise: --verify double-run matched
+file_read	ptrace	detlog	PASS	0.323	L2 DETLOG-bitwise: --verify double-run matched
+file_mutation	ptrace	detlog	PASS	0.310	L2 DETLOG-bitwise: --verify double-run matched
+file_metadata	ptrace	detlog	PASS	0.396	L2 DETLOG-bitwise: --verify double-run matched
+io_uring_fallback	ptrace	detlog	PASS	0.290	L2 DETLOG-bitwise: --verify double-run matched
+listmount_unavailable	ptrace	detlog	PASS	0.267	L2 DETLOG-bitwise: --verify double-run matched
+process_vm_readv_refusal	ptrace	detlog	PASS	0.271	L2 DETLOG-bitwise: --verify double-run matched
+process_vm_writev_refusal	ptrace	detlog	PASS	0.298	L2 DETLOG-bitwise: --verify double-run matched
+executable_mmap	ptrace	detlog	PASS	0.292	L2 DETLOG-bitwise: --verify double-run matched
+memory_advice	ptrace	detlog	PASS	0.300	L2 DETLOG-bitwise: --verify double-run matched
+heap_growth	ptrace	detlog	PASS	0.269	L2 DETLOG-bitwise: --verify double-run matched
+anonymous_mmap_layout	ptrace	detlog	PASS	0.271	L2 DETLOG-bitwise: --verify double-run matched
+shared_anonymous_mmap	ptrace	detlog	PASS	0.272	L2 DETLOG-bitwise: --verify double-run matched
+pthread_lifecycle	ptrace	detlog	PASS	0.433	L2 DETLOG-bitwise: --verify double-run matched
+process_wait_accounting	ptrace	detlog	PASS	0.364	L2 DETLOG-bitwise: --verify double-run matched
+process_wait_lifecycle	ptrace	detlog	PASS	0.373	L2 DETLOG-bitwise: --verify double-run matched
+cpuid_policy	ptrace	detlog	PASS	0.248	L2 DETLOG-bitwise: --verify double-run matched
+virtual_clock	ptrace	detlog	PASS	0.315	L2 DETLOG-bitwise: --verify double-run matched
+random_sources	ptrace	detlog	PASS	0.680	L2 DETLOG-bitwise: --verify double-run matched
+virtual_pid	ptrace	detlog	PASS	0.269	L2 DETLOG-bitwise: --verify double-run matched

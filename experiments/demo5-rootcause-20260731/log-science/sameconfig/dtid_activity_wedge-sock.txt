@@ -1,0 +1,21 @@
+=== Hermit per-dtid activity & starvation analysis ===
+distinct dtids: 5    total scheduler turns: 646057    final committed vtime: 1767228032.553 s
+
+ dtid    turns  syscall  first_trn   last_trn       first_vt_s        last_vt_s   tail_turns     tail_vt_s  flags
+   11   289810   289780       1752     646056   1767225649.345   1767228032.553            0         0.000  BUSY-POLLER
+    9   208674   193860       1667     646055   1767225637.869   1767228032.548            1         0.005  BUSY-POLLER
+    3   146242    73714          0     646054   1767225600.000   1767228032.547            2         0.006  BUSY-POLLER
+    7     1170      866       1542      98799   1767225626.381   1767225809.879       547257      2222.674  STARVED-TAIL
+    5      161      128        471        642   1767225609.294   1767225610.615       645414      2421.938  EXITED
+
+=== wedge witnesses (starvation tail, worst first) ===
+  dtid   7: last ran at turn 98799 (1767225809.879 s committed), then 547257 turns (84.7% of run) with the committed clock advancing +2222.674 s and this thread NEVER scheduled again.
+
+INTERPRETATION: a large starvation tail combined with a BUSY-POLLER dtid is the deadline-less unproductive-poller wedge -- the poller keeps the run queue non-empty so committed vtime races ahead while the starved thread's next event is never reached.
+
+=== per-dtid role fingerprint (top syscalls; match ACROSS runs by this, not by dtid#) ===
+  dtid  11 ( 289810 turns): write×139046 futex×71810 gettimeofday×61467 writev×16975
+  dtid   9 ( 208674 turns): clock_gettime×166156 poll×13846 read×13846 gettid×2
+  dtid   3 ( 146242 turns): futex×71553 clock_gettime×533 mmap×419 openat×156
+  dtid   7 (   1170 turns): madvise×591 futex×213 clock_nanosleep×52 munmap×4
+  dtid   5 (    161 turns): openat×30 close×21 mmap×21 fstat×17

@@ -1,0 +1,32 @@
+SAME-CONFIG WEDGE vs GREEN (bare busybox, --no-rcb-time --max-timeslice disabled
+--target-timeslice 100000 --strict; -icount shift=0,sleep=off; -serial file: in
+BOTH; single variable = +2 host listening sockets in WEDGE).
+Binary: hermit/target/release/hermit @1ece0654 (post-#1190). Host devbig014.
+
+                                  WEDGE(sock)     GREEN(filecon)   discriminator?
+total scheduler turns             646,057         445,857          -
+distinct dtids                    5               4                +1 (socket poller)
+guest serial last line            hpet0 ts 0.7158 PASS ts 1.903    YES (outcome)
+H1a "Skipping global time ahead"  0               0                NO (same)
+H1b SleepUntil(LogicalTime(0))    558,354         372,124          NO (both dominate)
+    SleepUntil future (>0)        104             127              NO
+H1c future timed_waiter regs      0               0                NO (same)
+STARVED-TAIL fires                yes (a thread)  yes (a thread)   NO (both)
+committed clock races ahead       +2432 s         +1378 s          NO (both race)
+
+ROLE turn-share (by syscall profile, dtid# not stable across runs):
+  socket-poller (poll+read on sock, 166k clock_gettime): WEDGE 208,674 (32.3%) | GREEN ABSENT
+  vCPU/serial-writer (writev serial+futex+gettimeofday):  WEDGE 289,810 (44.9%) | GREEN 292,381 (65.6%)
+  qemu main:                                              WEDGE 146,242 (22.6%) | GREEN 150,708 (33.8%)
+  => vCPU worker gets ~EQUAL ABSOLUTE turns in both (289,810 vs 292,381): NOT aggregate
+     turn-starvation. The sockets inject an extra poller thread (+45% total turns) whose
+     interleaving prevents the guest from completing HPET calibration.
+
+H7 (#1095 guest-vs-committed clock lag post-#1190): KILLED.
+  guest CLOCK_MONOTONIC late reads 1767228032.4845..0.5525 s vs final committed
+  1767228032.553 s  => tracks to ~ms, NOT the pre-#1190 ~8.53 s lag (aa5258b). #1190 holds.
+
+First functional divergence (log-diff): socket(1,524289,0)/bind(9)/listen(9) +
+bind(14)/listen(14) by qemu main (dtid 3) -- ABSENT in green (0 socket calls).
+(log-diff's reported "first divergence" msg 1492 is the boot-script path in an openat
+= run-path noise, tooling gap #1.)

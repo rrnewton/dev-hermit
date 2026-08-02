@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Local demo-review gate: a commit touching a runnable demo (demos/**) must carry
+# a Demo-Green-Review attestation (an adversarial reviewer ran the demo GREEN), or
+# be explicitly overridden for a pre-review WIP commit. CI/lander is authoritative.
+# See scripts/check-demo-review.sh and demos/ADVERSARIAL-REVIEW-POLICY.md.
+set -uo pipefail
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+checker="$root/scripts/check-demo-review.sh"
+[ -x "$checker" ] || [ -f "$checker" ] || exit 0   # fail open if checker absent
+bash "$checker" --staged --message-file "$1"

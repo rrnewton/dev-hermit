@@ -1,0 +1,9 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+fchown_memfd,93,fchown=0,yes,0,PASS_L2,yes
+munlockall_ok,152,munlockall=0,yes,0,PASS_L2,yes
+setrlimit_nofile,160,setrlimit=0,yes,0,PASS_L2,yes
+sched_getaffinity_check,204,affinity=1,yes,0,PASS_L2,yes
+sched_rr_get_interval_check,148,rrinterval=0,yes,0,PASS_L2,yes
+setpgid_self,109,setpgid=0,yes,0,PASS_L2,yes
+poll_timeout_zero,7,poll=0,yes,0,PASS_L2,yes
+sched_getattr_check,275,getattr=-38,yes,0,FAIL_ENOSYS,no

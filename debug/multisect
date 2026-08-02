@@ -1,0 +1,755 @@
+#!/usr/bin/env python3
+"""Rate-aware parallel multisect over a Git commit range.
+
+The driver never checks out commits. It selects commits, exports their identity
+to a caller-provided test command, and executes every repetition through the
+safe-ci-dag-runner ``box`` subcommand. This keeps checkout/build policy in the
+caller's harness while making selection, containment, rate calculation, and
+recursive narrowing reusable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import csv
+import dataclasses
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+DEBUG_ROOT = Path(__file__).resolve().parent
+BAD_BOX_CLASSES = {"FAIL", "OOM", "TIMEOUT"}
+VERDICT_RE = re.compile(r"^VERDICT\b.*\bclass=([A-Z-]+)\b", re.MULTILINE)
+
+
+class MultisectError(RuntimeError):
+    """Base class for an operational multisect error."""
+
+
+class InfraError(MultisectError):
+    """The containment or execution infrastructure failed."""
+
+
+class AmbiguousStep(MultisectError):
+    """The measured rates do not contain a qualifying high-to-low step."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    repo: Path
+    good: str
+    bad: str
+    k: int
+    reps: int
+    jobs: int
+    min_step: float
+    good_floor: float
+    bad_ceiling: float
+    max_rounds: int
+    history_mode: str
+    runner: Path
+    mem: str
+    timeout: int
+    cores: int
+    output_dir: Path
+    command: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class RepResult:
+    round_number: int
+    index: int
+    commit: str
+    rep: int
+    box_class: str
+    green: bool | None
+    exit_code: int
+    wall_seconds: float
+    label: str
+    stdout: str
+    stderr: str
+
+    def as_dict(self) -> dict[str, object]:
+        return dataclasses.asdict(self)
+
+
+@dataclasses.dataclass(frozen=True)
+class CommitSample:
+    index: int
+    commit: str
+    results: tuple[RepResult, ...]
+
+    @property
+    def green_count(self) -> int:
+        return sum(result.green is True for result in self.results)
+
+    @property
+    def bad_count(self) -> int:
+        return sum(result.green is False for result in self.results)
+
+    @property
+    def infra_count(self) -> int:
+        return sum(result.green is None for result in self.results)
+
+    @property
+    def rate(self) -> float:
+        measured = self.green_count + self.bad_count
+        return self.green_count / measured if measured else 0.0
+
+    def as_dict(self, config: Config) -> dict[str, object]:
+        return {
+            "index": self.index,
+            "commit": self.commit,
+            "green": self.green_count,
+            "bad": self.bad_count,
+            "infra": self.infra_count,
+            "reps": len(self.results),
+            "green_rate": self.rate,
+            "classification": classify_rate(self.rate, config),
+        }
+
+
+def run_git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise MultisectError(f"git {' '.join(args)} failed: {detail}")
+    return completed.stdout.strip()
+
+
+def resolve_history(repo: Path, good: str, bad: str, mode: str) -> list[str]:
+    repo = repo.resolve()
+    if not (repo / ".git").exists():
+        # Nested worktrees use a .git file, while ordinary repositories use a dir.
+        if not (repo / ".git").is_file():
+            raise MultisectError(f"not a Git checkout: {repo}")
+
+    good_sha = run_git(repo, "rev-parse", "--verify", f"{good}^{{commit}}")
+    bad_sha = run_git(repo, "rev-parse", "--verify", f"{bad}^{{commit}}")
+    ancestor = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha],
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        raise MultisectError(
+            f"GOOD {good_sha[:12]} is not an ancestor of BAD {bad_sha[:12]}"
+        )
+
+    if good_sha == bad_sha:
+        raise MultisectError("GOOD and BAD must identify different commits")
+
+    rev_list = ["rev-list", "--reverse"]
+    if mode == "first-parent":
+        rev_list.extend(("--first-parent", "--parents"))
+    else:
+        rev_list.append("--ancestry-path")
+    rev_list.append(f"{good_sha}..{bad_sha}")
+    lines = run_git(repo, *rev_list).splitlines()
+    if mode == "first-parent":
+        tail: list[str] = []
+        expected_parent = good_sha
+        for line in lines:
+            fields = line.split()
+            commit, parents = fields[0], fields[1:]
+            if not parents or parents[0] != expected_parent:
+                raise MultisectError(
+                    f"GOOD {good_sha[:12]} is not on BAD's first-parent chain"
+                )
+            tail.append(commit)
+            expected_parent = commit
+    else:
+        tail = lines
+    history = [good_sha, *tail]
+    if history[-1] != bad_sha:
+        raise MultisectError(
+            f"history mode {mode!r} did not produce BAD {bad_sha[:12]} as its endpoint"
+        )
+    return history
+
+
+def select_indices(low: int, high: int, k: int) -> list[int]:
+    """Return endpoints plus up to K evenly spaced interior indices."""
+    if low < 0 or high <= low:
+        raise ValueError(f"invalid interval [{low}, {high}]")
+    interior = high - low - 1
+    probes = min(k, interior)
+    if not probes:
+        return [low, high]
+    span = high - low
+    selected = [low]
+    selected.extend(low + (position * span) // (probes + 1) for position in range(1, probes + 1))
+    selected.append(high)
+    if len(selected) != len(set(selected)):
+        raise AssertionError(f"probe selection produced duplicates: {selected}")
+    return selected
+
+
+def classify_rate(rate: float, config: Config) -> str:
+    if rate >= config.good_floor:
+        return "GREENISH"
+    if rate <= config.bad_ceiling:
+        return "WEDGED"
+    return "JITTER"
+
+
+def choose_step(samples: Sequence[CommitSample], config: Config) -> tuple[int, int, float]:
+    """Choose the largest adjacent qualifying GREENISH -> WEDGED rate drop."""
+    candidates: list[tuple[float, int, int]] = []
+    for left, right in zip(samples, samples[1:]):
+        delta = left.rate - right.rate
+        if (
+            left.rate >= config.good_floor
+            and right.rate <= config.bad_ceiling
+            and delta >= config.min_step
+        ):
+            candidates.append((delta, left.index, right.index))
+    if not candidates:
+        measured = ", ".join(
+            f"{sample.commit[:12]}={sample.rate:.3f}" for sample in samples
+        )
+        raise AmbiguousStep(
+            "no adjacent high-to-low rate step met "
+            f"good>={config.good_floor:.3f}, bad<={config.bad_ceiling:.3f}, "
+            f"delta>={config.min_step:.3f}; measured: {measured}"
+        )
+    delta, low, high = max(candidates, key=lambda candidate: candidate[0])
+    return low, high, delta
+
+
+def atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def log_tail(path: Path, limit: int = 65536) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        return handle.read().decode(errors="replace")
+
+
+def parse_box_class(stdout: Path) -> str:
+    # The native boxer emits its authoritative final VERDICT on stdout. Do not
+    # allow test-command stderr to forge or override that classification.
+    matches = VERDICT_RE.findall(log_tail(stdout))
+    return matches[-1] if matches else "BOX_ERROR"
+
+
+def green_from_box(box_class: str, return_code: int) -> bool | None:
+    """Map a self-consistent native box verdict to green/bad; fail closed otherwise."""
+    if box_class == "PASS":
+        return True if return_code == 0 else None
+    if box_class in BAD_BOX_CLASSES:
+        return False if return_code != 0 else None
+    return None
+
+
+def expand_command(command: Sequence[str], values: dict[str, str]) -> list[str]:
+    expanded: list[str] = []
+    for argument in command:
+        for key, value in values.items():
+            argument = argument.replace("{" + key + "}", value)
+        expanded.append(argument)
+    return expanded
+
+
+def run_repetition(
+    config: Config,
+    round_number: int,
+    index: int,
+    commit: str,
+    rep: int,
+) -> RepResult:
+    short = commit[:12]
+    label = f"multisect-r{round_number}-{short}-n{rep}"
+    rep_dir = config.output_dir / "logs" / f"round-{round_number:02d}" / short / f"rep-{rep:03d}"
+    perf_dir = rep_dir / "perf"
+    rep_dir.mkdir(parents=True, exist_ok=True)
+    perf_dir.mkdir(parents=True, exist_ok=True)
+    stdout = rep_dir / "stdout.log"
+    stderr = rep_dir / "stderr.log"
+
+    values = {
+        "commit": commit,
+        "short_commit": short,
+        "rep": str(rep),
+        "round": str(round_number),
+        "output_dir": str(rep_dir),
+        "repo": str(config.repo),
+    }
+    command = expand_command(config.command, values)
+    argv = [
+        str(config.runner),
+        "box",
+        "--mem",
+        config.mem,
+        "--timeout",
+        str(config.timeout),
+        "--cores",
+        str(config.cores),
+        "--label",
+        label,
+        "--perf-dir",
+        str(perf_dir),
+        "--",
+        *command,
+    ]
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MULTISECT_COMMIT": commit,
+            "MULTISECT_SHORT_COMMIT": short,
+            "MULTISECT_REP": str(rep),
+            "MULTISECT_ROUND": str(round_number),
+            "MULTISECT_OUTPUT_DIR": str(rep_dir),
+            "MULTISECT_REPO": str(config.repo),
+        }
+    )
+    started = time.monotonic()
+    with stdout.open("w") as out_handle, stderr.open("w") as err_handle:
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=config.repo,
+                env=environment,
+                check=False,
+                stdout=out_handle,
+                stderr=err_handle,
+                text=True,
+            )
+            return_code = completed.returncode
+        except OSError as error:
+            print(f"failed to execute boxed runner: {error}", file=err_handle)
+            return_code = 127
+    wall_seconds = time.monotonic() - started
+    box_class = parse_box_class(stdout)
+    green = green_from_box(box_class, return_code)
+    result = RepResult(
+        round_number=round_number,
+        index=index,
+        commit=commit,
+        rep=rep,
+        box_class=box_class,
+        green=green,
+        exit_code=return_code,
+        wall_seconds=wall_seconds,
+        label=label,
+        stdout=str(stdout),
+        stderr=str(stderr),
+    )
+    atomic_json(rep_dir / "result.json", result.as_dict())
+    return result
+
+
+def sample_commit(
+    config: Config,
+    round_number: int,
+    index: int,
+    commit: str,
+) -> CommitSample:
+    results: list[RepResult] = []
+    for rep in range(1, config.reps + 1):
+        result = run_repetition(config, round_number, index, commit, rep)
+        results.append(result)
+        outcome = "INFRA" if result.green is None else ("GREEN" if result.green else "BAD")
+        print(
+            f"round={round_number} commit={commit[:12]} rep={rep}/{config.reps} "
+            f"class={result.box_class} outcome={outcome}",
+            flush=True,
+        )
+        if result.green is None:
+            # Do not spend more repetitions after containment/infrastructure failure.
+            break
+    return CommitSample(index=index, commit=commit, results=tuple(results))
+
+
+def append_rep_csv(path: Path, samples: Iterable[CommitSample]) -> None:
+    exists = path.exists()
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "round_number",
+                "index",
+                "commit",
+                "rep",
+                "box_class",
+                "green",
+                "exit_code",
+                "wall_seconds",
+                "label",
+                "stdout",
+                "stderr",
+            ],
+        )
+        if not exists:
+            writer.writeheader()
+        for sample in samples:
+            for result in sample.results:
+                row = result.as_dict()
+                row["wall_seconds"] = f"{result.wall_seconds:.6f}"
+                writer.writerow(row)
+
+
+def sample_round(
+    config: Config,
+    history: Sequence[str],
+    round_number: int,
+    indices: Sequence[int],
+) -> list[CommitSample]:
+    print(
+        f"round={round_number} interval={indices[0]}..{indices[-1]} "
+        f"sampling={','.join(history[index][:12] for index in indices)}",
+        flush=True,
+    )
+    by_index: dict[int, CommitSample] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(config.jobs, len(indices))) as pool:
+        futures = {
+            pool.submit(sample_commit, config, round_number, index, history[index]): index
+            for index in indices
+        }
+        for future in concurrent.futures.as_completed(futures):
+            sample = future.result()
+            by_index[sample.index] = sample
+    samples = [by_index[index] for index in indices]
+    append_rep_csv(config.output_dir / "repetitions.csv", samples)
+    infra = [sample for sample in samples if sample.infra_count]
+    if infra:
+        details = ", ".join(
+            f"{sample.commit[:12]}:{sample.results[-1].box_class}" for sample in infra
+        )
+        raise InfraError(f"boxed execution unavailable or malformed: {details}")
+    return samples
+
+
+def config_record(config: Config, history: Sequence[str]) -> dict[str, object]:
+    return {
+        "repo": str(config.repo),
+        "good": history[0],
+        "bad": history[-1],
+        "commit_count": len(history),
+        "k": config.k,
+        "reps": config.reps,
+        "jobs": config.jobs,
+        "min_step": config.min_step,
+        "good_floor": config.good_floor,
+        "bad_ceiling": config.bad_ceiling,
+        "max_rounds": config.max_rounds,
+        "history_mode": config.history_mode,
+        "runner": str(config.runner),
+        "box": {"mem": config.mem, "timeout": config.timeout, "cores": config.cores},
+        "command": list(config.command),
+        "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+
+
+def run_multisect(config: Config, history: Sequence[str]) -> dict[str, object]:
+    config.output_dir.mkdir(parents=True, exist_ok=False)
+    atomic_json(config.output_dir / "config.json", config_record(config, history))
+    rounds: list[dict[str, object]] = []
+    low = 0
+    high = len(history) - 1
+
+    for round_number in range(1, config.max_rounds + 1):
+        indices = select_indices(low, high, config.k)
+        try:
+            samples = sample_round(config, history, round_number, indices)
+        except InfraError as error:
+            result = {
+                "status": "infra-failure",
+                "error": str(error),
+                "low": history[low],
+                "high": history[high],
+                "rounds": rounds,
+            }
+            atomic_json(config.output_dir / "result.json", result)
+            raise
+
+        sample_records = [sample.as_dict(config) for sample in samples]
+        round_record: dict[str, object] = {
+            "round": round_number,
+            "interval": {"low_index": low, "high_index": high},
+            "samples": sample_records,
+        }
+
+        if high - low == 1:
+            delta = samples[0].rate - samples[-1].rate
+            if (
+                samples[0].rate < config.good_floor
+                or samples[-1].rate > config.bad_ceiling
+                or delta < config.min_step
+            ):
+                error = AmbiguousStep(
+                    "adjacent commits do not preserve the required GOOD/BAD rate step: "
+                    f"{samples[0].commit[:12]}={samples[0].rate:.3f}, "
+                    f"{samples[-1].commit[:12]}={samples[-1].rate:.3f}, "
+                    f"delta={delta:.3f}"
+                )
+                round_record["decision"] = {"status": "ambiguous", "error": str(error)}
+                rounds.append(round_record)
+                atomic_json(config.output_dir / f"round-{round_number:02d}.json", round_record)
+                result = {
+                    "status": "ambiguous",
+                    "error": str(error),
+                    "low": history[low],
+                    "high": history[high],
+                    "rounds": rounds,
+                }
+                atomic_json(config.output_dir / "result.json", result)
+                raise error
+            round_record["decision"] = {
+                "status": "converged",
+                "good": history[low],
+                "bad": history[high],
+            }
+            rounds.append(round_record)
+            atomic_json(config.output_dir / f"round-{round_number:02d}.json", round_record)
+            result = {
+                "status": "converged",
+                "candidate_good": history[low],
+                "candidate_bad": history[high],
+                "round_count": round_number,
+                "rounds": rounds,
+            }
+            atomic_json(config.output_dir / "result.json", result)
+            return result
+
+        try:
+            next_low, next_high, delta = choose_step(samples, config)
+        except AmbiguousStep as error:
+            round_record["decision"] = {"status": "ambiguous", "error": str(error)}
+            rounds.append(round_record)
+            atomic_json(config.output_dir / f"round-{round_number:02d}.json", round_record)
+            result = {
+                "status": "ambiguous",
+                "error": str(error),
+                "low": history[low],
+                "high": history[high],
+                "rounds": rounds,
+            }
+            atomic_json(config.output_dir / "result.json", result)
+            raise
+        round_record["decision"] = {
+            "status": "recurse",
+            "delta": delta,
+            "next_low_index": next_low,
+            "next_high_index": next_high,
+            "next_good": history[next_low],
+            "next_bad": history[next_high],
+        }
+        rounds.append(round_record)
+        atomic_json(config.output_dir / f"round-{round_number:02d}.json", round_record)
+        print(
+            f"round={round_number} "
+            f"step={history[next_low][:12]}({samples[indices.index(next_low)].rate:.3f})"
+            f"->{history[next_high][:12]}({samples[indices.index(next_high)].rate:.3f}) "
+            f"delta={delta:.3f}",
+            flush=True,
+        )
+        low, high = next_low, next_high
+
+    result = {
+        "status": "round-limit",
+        "error": f"did not converge within {config.max_rounds} rounds",
+        "low": history[low],
+        "high": history[high],
+        "rounds": rounds,
+    }
+    atomic_json(config.output_dir / "result.json", result)
+    raise MultisectError(result["error"])
+
+
+def resolve_runner(value: str) -> Path:
+    if os.sep in value:
+        candidate = Path(value).expanduser().resolve()
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise MultisectError(f"boxed runner is not executable: {candidate}")
+        return candidate
+    found = shutil.which(value)
+    if not found:
+        raise MultisectError(
+            f"cannot find boxed runner {value!r}; build agent-utils/rs or pass --box-runner"
+        )
+    return Path(found).resolve()
+
+
+def default_output_dir(episode: str, good: str, bad: str) -> Path:
+    episode_dir = DEBUG_ROOT / episode
+    if not (episode_dir / "episode.json").exists():
+        raise MultisectError(
+            f"unknown debug episode {episode!r}; create it with ./debug/dbg new-episode"
+        )
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return episode_dir / "ignored" / f"multisect-{stamp}-{good[:8]}-{bad[:8]}"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Parallel, boxed, green-rate multisect over GOOD..BAD",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--repo", type=Path, required=True, help="Git checkout whose history is sampled"
+    )
+    parser.add_argument(
+        "--episode", required=True, help="debug/<episode> receiving ignored run artifacts"
+    )
+    parser.add_argument("--good", required=True, help="known high-green-rate ancestor")
+    parser.add_argument("--bad", required=True, help="known low-green-rate descendant")
+    parser.add_argument("-k", type=int, default=3, help="evenly spaced interior probes per round")
+    parser.add_argument(
+        "-n", "--reps", type=int, default=6, help="sequential repetitions per commit"
+    )
+    parser.add_argument(
+        "-j", "--jobs", type=int, help="commits sampled concurrently (default: K+2)"
+    )
+    parser.add_argument(
+        "--min-step", type=float, default=0.5, help="minimum adjacent green-rate drop"
+    )
+    parser.add_argument(
+        "--good-floor", type=float, default=0.67, help="minimum rate for a high endpoint"
+    )
+    parser.add_argument(
+        "--bad-ceiling", type=float, default=0.33, help="maximum rate for a low endpoint"
+    )
+    parser.add_argument("--max-rounds", type=int, default=32)
+    parser.add_argument(
+        "--history-mode",
+        choices=("first-parent", "ancestry"),
+        default="first-parent",
+        help="commit ordering used within GOOD..BAD",
+    )
+    parser.add_argument(
+        "--box-runner",
+        default=os.environ.get("SAFE_CI_DAG_RUNNER_BIN", "safe-ci-dag-runner"),
+        help="safe-ci-dag-runner binary with the native box subcommand",
+    )
+    parser.add_argument("--mem", default="6G", help="memory.max passed to each box")
+    parser.add_argument(
+        "--timeout", type=int, default=300, help="hard per-repetition timeout in seconds"
+    )
+    parser.add_argument("--cores", type=int, default=1, help="cpu.max-equivalent cores per box")
+    parser.add_argument("--output-dir", type=Path, help="override episode ignored/ run directory")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print first-round selection without executing"
+    )
+    parser.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        help=(
+            "test argv after --; supports {commit}, {short_commit}, {rep}, {round}, "
+            "{output_dir}, {repo}"
+        ),
+    )
+    return parser
+
+
+def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.k < 1:
+        parser.error("-k must be at least 1")
+    if args.reps < args.k:
+        parser.error(f"-n/--reps must be >= K ({args.k})")
+    if args.jobs is not None and args.jobs < 1:
+        parser.error("--jobs must be at least 1")
+    if args.timeout < 1 or args.cores < 1 or args.max_rounds < 1:
+        parser.error("--timeout, --cores, and --max-rounds must be positive")
+    for name in ("min_step", "good_floor", "bad_ceiling"):
+        value = getattr(args, name)
+        if not 0.0 <= value <= 1.0:
+            parser.error(f"--{name.replace('_', '-')} must be within [0,1]")
+    if args.good_floor <= args.bad_ceiling:
+        parser.error("--good-floor must be greater than --bad-ceiling")
+    if args.command and args.command[0] == "--":
+        args.command = args.command[1:]
+    if not args.command:
+        parser.error("a test command is required after --")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    validate_args(args, parser)
+    try:
+        repo = args.repo.resolve()
+        history = resolve_history(repo, args.good, args.bad, args.history_mode)
+        output_dir = (
+            args.output_dir.resolve()
+            if args.output_dir
+            else default_output_dir(args.episode, history[0], history[-1])
+        )
+        first_round = select_indices(0, len(history) - 1, args.k)
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {
+                        "good": history[0],
+                        "bad": history[-1],
+                        "commit_count": len(history),
+                        "first_round": [history[index] for index in first_round],
+                        "command": args.command,
+                        "output_dir": str(output_dir),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        runner = resolve_runner(args.box_runner)
+        config = Config(
+            repo=repo,
+            good=history[0],
+            bad=history[-1],
+            k=args.k,
+            reps=args.reps,
+            jobs=args.jobs or args.k + 2,
+            min_step=args.min_step,
+            good_floor=args.good_floor,
+            bad_ceiling=args.bad_ceiling,
+            max_rounds=args.max_rounds,
+            history_mode=args.history_mode,
+            runner=runner,
+            mem=args.mem,
+            timeout=args.timeout,
+            cores=args.cores,
+            output_dir=output_dir,
+            command=tuple(args.command),
+        )
+        result = run_multisect(config, history)
+        print(
+            "CONVERGED "
+            f"good={result['candidate_good']} bad={result['candidate_bad']} "
+            f"rounds={result['round_count']} artifacts={output_dir}"
+        )
+        return 0
+    except InfraError as error:
+        print(f"INFRA-FAIL: {error}", file=sys.stderr)
+        return 3
+    except AmbiguousStep as error:
+        print(f"AMBIGUOUS: {error}", file=sys.stderr)
+        return 4
+    except MultisectError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

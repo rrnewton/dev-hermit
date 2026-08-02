@@ -1,0 +1,9 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+dup_lowest,dup-fd-allocation,exact:dup=4,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fcntl_dupfd,fcntl-F_DUPFD,exact:dupfd=20,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fcntl_getfl,fcntl-F_GETFL,exact:getfl=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+lseek_seekcur_memfd,lseek-SEEK_CUR,exact:cur=5,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+pread_past_eof,pread-past-eof,exact:eof=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+readlinkat_exe,readlinkat,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+getresuid_check,getresuid,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+prlimit_nofile,prlimit64,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

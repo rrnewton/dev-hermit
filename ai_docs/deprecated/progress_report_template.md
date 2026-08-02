@@ -1,5 +1,27 @@
 # Hermit Progress Report Template
 
+> # ⛔ RETIRED (2026-08-01) — do not copy this template for new reports.
+> #152 (anti-fakery) retired this hand-filled template: prose "cells" copied by
+> hand invite un-backed parity/determinism claims. Backend coverage is now
+> measured mechanically by the **compat-envelope system** in the parent repo
+> (`compat-envelope/`), which renders the cross-backend scorecard from a CSV
+> that is a *side effect of actually running every cell*:
+>
+> - `compat-envelope/collect-envelope.rs` — REGRESSION mode: run the known-green
+>   cells, assert they stay green, and write `scorecard.csv` (the only witness).
+> - `compat-envelope/expansion-dag.rs` — EXPANSION mode: boxed per-cell sweep of
+>   the full superset (incl. failing/disabled cells) to catch failing→passing
+>   flips, with dated per-cell evidence under `ignored/compat-envelope/`.
+> - `compat-envelope/render-scorecard.rs` — render the owner scorecard table
+>   (ptrace integer denominator + `parity%, determinism%` per backend cell)
+>   from that CSV. See `compat-envelope/README.md`.
+>
+> A cell exists only for a B1.5+ backend running the canonical shared Detcore
+> tool; a not-run cell reads as 0%, never as an optimistic prose estimate. The
+> assurance-level ladder below (L0–L4) and the rubric it derives from remain
+> useful reference reading, but **stop producing hand-filled report instances
+> from this file** — the scorecard is the source of truth.
+
 > **This is a template, not a report.** Copy it to a dated file under
 > `ai_docs/transient/` (e.g. `ai_docs/transient/YYYYMMDD_progress_report.md`),
 > then replace every `{{PLACEHOLDER}}` and delete the `> INSTRUCTION` callouts.

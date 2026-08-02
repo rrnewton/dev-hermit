@@ -1,0 +1,42 @@
+name: Demo review gate
+
+# Mechanical enforcement of the demo-adversarial-review policy: any PR that
+# touches a runnable demo (demos/**) must carry at least one Demo-Green-Review
+# attestation (an adversarial reviewer verified the demo runs GREEN) in one of its
+# commit messages. Independent of post-facto-human-review. See
+# demos/ADVERSARIAL-REVIEW-POLICY.md and scripts/check-demo-review.sh.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  demo-review:
+    name: Demo-touching commits require a green-demo attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0            # need the full range base..head
+      - name: Require a Demo-Green-Review attestation for demos/** changes
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+          # First push of a branch reports an all-zero base; fall back to the
+          # previous commit so we still scan the new commit.
+          if ! git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then
+            base="$head^"
+          fi
+          echo "scanning range ${base}..${head}"
+          scripts/check-demo-review.sh --range "${base}..${head}"

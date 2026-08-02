@@ -1,0 +1,4 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+capset_noop,126,capset=0,yes,0,PASS_L2,yes
+epoll_wait_timeout_zero,232,epollwait=0,yes,0,PASS_L2,yes
+keyctl_keyring_id,250,keyctl=0,yes,0,FAIL_GOLDEN_UNSUPPORTED,no

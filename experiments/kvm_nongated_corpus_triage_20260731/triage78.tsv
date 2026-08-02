@@ -1,0 +1,79 @@
+id	kvm_exit	bucket	signature
+backend-parity-c/pid-probe	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < pid=3 > pid=1
+c-programs/dbi-pid-virtualization	124	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < root pid=3 ppid=1 tid=3 < grandchild pid=7 ppid=5 tid=7
+c-programs/random-sources	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < thread-getrandom[0]=6e3e3c52835de672dd26c052b3afc0f1 > th
+c-programs/socket-cookie-tcp	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < tcp=12884901893,12884901894 > tcp=4294967301,4294967302
+c-programs/socket-cookie-udp	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < udp=12884901893,12884901894 > udp=4294967301,4294967302
+c-programs/socket-cookie-unix	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < unix=12884901893,12884901894 > unix=4294967301,4294967302
+c-programs/vforkexec	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < child pid: 5 < parent pid: 3
+c-programs/wait-on-child	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < Child: My pid: 5 < Parent: My pid: 3
+debugger-c/debuggee	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < pid=3 result=55 > pid=1 result=55
+determinism-stress-c/pid-tid	5	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < root pid=3 ppid=1 tid=3 < thread[0] pid=3 tid=5
+system-utils/record-getpid	0	A_DETPID_OWNED_by_fix-kvm-detpid-mismatch	 < My pid: 3 > My pid: 1
+c-programs/dbi-wait-lifecycle	6	B_KVM_CHILDSYNC_reverie_blocked	 < wait4=7 waitid=9 sigchld=observed reaped=2 cpu=zero
+c-programs/get-robust-list-child	1	B_KVM_CHILDSYNC_reverie_blocked	child readiness: Resource temporarily unavailable  < child r
+c-programs/get-robust-list-thread	1	B_KVM_CHILDSYNC_reverie_blocked	get_robust_list thread: Resource temporarily unavailable  <
+c-programs/ptrace-attach-eperm	1	B_KVM_CHILDSYNC_reverie_blocked	child readiness: Resource temporarily unavailable  < PTRACE_
+c-programs/ptrace-seize-eperm	1	B_KVM_CHILDSYNC_reverie_blocked	child readiness: Resource temporarily unavailable  < PTRACE_
+determinism-stress-c/pipe-chain	1	B_KVM_CHILDSYNC_reverie_blocked	write(seed): Broken pipe  < seed=ptrace-compat < stage=0 pay
+determinism-stress-c/pipe-prefill	1	B_KVM_CHILDSYNC_reverie_blocked	 < fork-pipe bytes=21 child-exit=37 payload=KVM PIPE INHERIT
+c-programs/clone	1	B_KVM_SYSCALL_GAP_reverie_blocked	Clone failed, reason: Operation not supported  < Child exite
+c-programs/dbi-unsupported-syscall	1	B_KVM_SYSCALL_GAP_reverie_blocked	2026-08-01T02:07:03.789372Z ERROR detcore: [detcore, dtid 1]
+c-programs/pidfd-waitid-child	1	B_KVM_SYSCALL_GAP_reverie_blocked	pidfd_open child failed: No such process  < pidfd-waitid-chi
+c-programs/ppoll-readv	1	B_KVM_SYSCALL_GAP_reverie_blocked	ppoll(ready): ret=-1 revents=0  < ppoll-readv-ok ABCDEFGHIJK
+c-programs/ppoll-simulation	1	B_KVM_SYSCALL_GAP_reverie_blocked	ready ppoll: Function not implemented  < ppoll-simulation-ok
+c-programs/pselect6-simulation	1	B_KVM_SYSCALL_GAP_reverie_blocked	ready pselect: Function not implemented  < pselect6-simulati
+c-programs/record-replay-fd-close	1	B_KVM_SYSCALL_GAP_reverie_blocked	memfd_create(displaced) failed: Function not implemented
+c-programs/record-replay-file-state	1	B_KVM_SYSCALL_GAP_reverie_blocked	sendfile(unlinked file) failed: Function not implemented  <
+c-programs/recvmsg-scm-rights-mmap	1	B_KVM_SYSCALL_GAP_reverie_blocked	sendmsg: Function not implemented  < recvmsg-scm-rights-mmap
+c-programs/remap-file-pages-memfd-enosys	1	B_KVM_SYSCALL_GAP_reverie_blocked	memfd setup: Function not implemented  < memfd nonlinear map
+c-programs/socket-timestamp-edge-cases	3	B_KVM_SYSCALL_GAP_reverie_blocked	truncated recvmsg: Function not implemented  < truncated=176
+c-programs/socket-timestamp-timespec	2	B_KVM_SYSCALL_GAP_reverie_blocked	recvmsg: Function not implemented  < 1767225600.003674595
+c-programs/socket-timestamp-timeval	2	B_KVM_SYSCALL_GAP_reverie_blocked	recvmsg: Function not implemented  < 1767225600.003776
+c-programs/so-incoming-cpu-tcp4	1	B_KVM_SYSCALL_GAP_reverie_blocked	connect: Address family not supported by protocol  < tcp4-in
+c-programs/so-incoming-cpu-tcp6	1	B_KVM_SYSCALL_GAP_reverie_blocked	bind: Address family not supported by protocol  < tcp6-incom
+c-programs/so-incoming-cpu-udp4	1	B_KVM_SYSCALL_GAP_reverie_blocked	getsockopt SO_INCOMING_CPU: Protocol not available  < udp4-i
+c-programs/syscall-quick-wins	1	B_KVM_SYSCALL_GAP_reverie_blocked	sendfile: Function not implemented  < syscall-quick-wins-ok
+c-programs/tcp-info-accept4	1	B_KVM_SYSCALL_GAP_reverie_blocked	connect: Address family not supported by protocol  < accept4
+c-programs/tcp-info-accept6	1	B_KVM_SYSCALL_GAP_reverie_blocked	bind: Address family not supported by protocol  < accept6 st
+c-programs/tcp-info-client4	1	B_KVM_SYSCALL_GAP_reverie_blocked	connect: Address family not supported by protocol  < client4
+c-programs/unix-autobind-seqpacket	1	B_KVM_SYSCALL_GAP_reverie_blocked	socket: Protocol not supported  < seqpacket=08000
+c-programs/writev-determinism	1	B_KVM_SYSCALL_GAP_reverie_blocked	atomic pipe F_GETPIPE_SZ: Function not implemented  < writev
+bin-c/posix-timer-test	1	C_SIGNAL_TIMER_ownergated	FAIL: SIGALRM was not delivered within 100 ms of virtual tim
+c-programs/dbi-self-sigqueue	2	C_SIGNAL_TIMER_ownergated	rt_tgsigqueueinfo failed: result=-1 errno=38 delivered=0  <
+c-programs/hello-alarm	1	C_SIGNAL_TIMER_ownergated	 < ++ Received signal: 14 = Alarm clock < == Success: Delive
+c-programs/hello-signals	1	C_SIGNAL_TIMER_ownergated	 < ++ Received signal: 4 = Illegal instruction < == Success:
+c-programs/periodic-setitimer-delivery	5	C_SIGNAL_TIMER_ownergated	expected 3 periodic alarms, got 0  < PASS: 3 periodic ITIMER
+c-programs/setitimer-determinism	0	C_SIGNAL_TIMER_ownergated	 < SIGALRM deliveries: 20 > SIGALRM deliveries: 0
+c-programs/sigpipe-siginfo	1	C_SIGNAL_TIMER_ownergated	write SIGPIPE info was code=-1 errno=-1 pid=-1 uid=-1  < sig
+c-programs/sigtimedwait-timeout-0s	0	C_SIGNAL_TIMER_ownergated	<empty>
+system-utils/clock-determinism	0	D_GUESTCLOCK_ownergated(#1212)	 < CLOCK_REALTIME gettime=1767225600.002533175 nanosleep_rc=
+c-programs/print-memaddrs	0	E_INTRINSIC_layout	 < Stack address: 0x7fffffffb10c < Malloc'd pointers: 0x4062
+c-programs/madvise-determinism	17	F_DETCORE_PROCFS_needs_backend_align	 < madvise-ok
+c-programs/proc-fdinfo	1	F_DETCORE_PROCFS_needs_backend_align	 < pos:	1 < flags:	0000102
+c-programs/proc-fd-link-aliases	1	F_DETCORE_PROCFS_needs_backend_align	lexical: Permission denied  < canonical=/home/newton/work/de
+c-programs/pty-nr-count	1	F_DETCORE_PROCFS_needs_backend_align	 < pty-count-tracks-open-files-ok
+c-programs/sysinfo	0	F_DETCORE_PROCFS_needs_backend_align	 < free RAM: 997,394,944 > free RAM: 0
+c-programs/sysinfo-uptime	0	F_DETCORE_PROCFS_needs_backend_align	 < thread2-> freeram: 913332736  > thread2-> freeram: 0
+c-programs/thread-self-procfs-handoff	1	F_DETCORE_PROCFS_needs_backend_align	 < thread-self opener identity preserved
+c-programs/fp-reduction-nondeterminism	124	G_HANG_sched_ownergated	<empty>
+determinism-stress-c/mmap-fork-shared	124	G_HANG_sched_ownergated	  blocked: BlockedPool { futex_waiters: {Shared { object: An
+determinism-stress-c/signal-order	124	G_HANG_sched_ownergated	 < signal-order=USR1,USR2
+determinism-stress-c/thread-stress	124	G_HANG_sched_ownergated	read(signal cascade): Resource temporarily unavailable  < th
+bin-c/robust-futex-test	124	H_PTRACE_SIDE_FAIL(excluded)	  blocked: BlockedPool { futex_waiters: {Private { mm: MmId
+c-programs/epoll-determinism	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/ipc-determinism	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/liteinst-advanced	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/mmap-determinism	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/nanosleep-threads-simple	0	H_PTRACE_SIDE_FAIL(excluded)	<empty>
+c-programs/record-replay-lseek-seek-cur	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/resource-determinism	1	H_PTRACE_SIDE_FAIL(excluded)	times elapsed clock did not advance across logical work  < s
+c-programs/signal-determinism	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+c-programs/socket-ioctl-timestamp	1	H_PTRACE_SIDE_FAIL(excluded)	usage: socket_ioctl_timestamp v4-us|v4-ns|v6-us
+c-programs/thread-sync-determinism	2	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+determinism-stress-c/thread-contention	1	H_PTRACE_SIDE_FAIL(excluded)	usage: /home/newton/work/dev-hermit/worktrees/kvm/hermit/ign
+shared-futex-c/qemu-exec-init	1	H_PTRACE_SIDE_FAIL(excluded)	thread caused non-unwinding panic. aborting. Error: Sandbox
+shared-futex-c/qemu-hello	7	H_PTRACE_SIDE_FAIL(excluded)	 < QEMU_USERSPACE_HELLO_OK pid=3 > QEMU_USERSPACE_HELLO_OK p
+shared-futex-c/qemu-init	1	H_PTRACE_SIDE_FAIL(excluded)	thread caused non-unwinding panic. aborting. Error: Sandbox
+shared-futex-c/qemu-net-init	1	H_PTRACE_SIDE_FAIL(excluded)	Error: KVM guest execution failed: guest exception vector 13
+util-c/pmu-skid	1	H_PTRACE_SIDE_FAIL(excluded)	Child failed to enter its initial ptrace stop PTRACE_KILL: O
