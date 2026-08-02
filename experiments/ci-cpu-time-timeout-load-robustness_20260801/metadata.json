@@ -1,0 +1,42 @@
+{
+  "question": "Is a GENEROUS wall timeout + AGGRESSIVE RLIMIT_CPU CPU-time budget more robust against SPURIOUS timeouts under host CPU contention than today's tight wall-only timeout in safe-ci-dag-runner?",
+  "date": "2026-08-01",
+  "agent": "hermit-ci",
+  "task": "timeout-headroom-and-load-relative",
+  "runner_repo": "rrnewton/agent-utils",
+  "runner_branch": "ci/cpu-time-rlimit-timeout",
+  "runner_sha": "f1a61a163da522e864a5f1f11c74436541ff7c73",
+  "runner_base_main_sha": "1c0e9c3c4928dac192e0115291f114863bc03a0d",
+  "runner_pr": "https://github.com/rrnewton/agent-utils/pull/4",
+  "runner_binary": "rs/target/release/safe-ci-dag-runner (v0.11.0, --release)",
+  "command": "./run.sh   (LEVELS=idle:0 moderate:2 swamped:5, REPS=8)",
+  "host": {
+    "nproc": 316,
+    "cpu_model": "AMD EPYC 9D85 158-Core Processor",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "prlimit": "util-linux 2.37.4"
+  },
+  "method": {
+    "victim_work": "awk summing 64,000,000 ints ~= 2.0 CPU-seconds (~2.25s idle boxed wall)",
+    "load_model": "N extra concurrent CPU-bound steps in the SAME DAG (sibling step-*.cpu cgroups), whole runner pinned to core 0 via taskset -c 0 so K concurrent equal steps each get ~1/K of the core (wall inflates ~Kx, CPU-s fixed)",
+    "why_load_inside_dag": "the runner boxes each step in its own cgroup-v2 scope, so EXTERNAL-slice host load barely slows a step; the wall flakes that bite CI come from contention AMONG the runner's own concurrent steps",
+    "policies": {
+      "wall-tight": "timeout=4s (~1.5x over 2.25s idle boxed wall), cpu_timeout=0 (wall-only == today)",
+      "cpu-generous": "timeout=120s (generous wall backstop), cpu_timeout=6 CPU-s (~3x the ~2 CPU-s of real work)"
+    },
+    "flake_definition": "any non-PASS on the fixed ~2 CPU-s of LEGITIMATE victim work",
+    "reps_per_cell": 8,
+    "load_levels": {"idle": 0, "moderate": 2, "swamped": 5}
+  },
+  "results_summary": {
+    "wall-tight/idle":     {"reps": 8, "flakes": 0, "flake_pct": 0,   "max_wall_s": 4.26},
+    "wall-tight/moderate": {"reps": 8, "flakes": 8, "flake_pct": 100, "max_wall_s": 4.43},
+    "wall-tight/swamped":  {"reps": 8, "flakes": 8, "flake_pct": 100, "max_wall_s": 4.73},
+    "cpu-generous/idle":     {"reps": 8, "flakes": 0, "flake_pct": 0, "max_wall_s": 3.13},
+    "cpu-generous/moderate": {"reps": 8, "flakes": 0, "flake_pct": 0, "max_wall_s": 6.51},
+    "cpu-generous/swamped":  {"reps": 8, "flakes": 0, "flake_pct": 0, "max_wall_s": 12.57}
+  },
+  "runaway_control": "infinite busy-loop under cpu-generous (6 CPU-s budget, 120s wall backstop) is KILLED at ~6 CPU-s via CPU-TIMEOUT (RLIMIT_CPU), NOT allowed to run to the 120s wall -> robustness, not mere leniency",
+  "interpretation": "The load-invariant CPU-time budget eliminates the wall-timeout flake (100% -> 0% at moderate/swamped) while still bounding a genuine runaway. Confirms the owner's CPU-time approach.",
+  "reproduction": "RUNNER=<release binary path> ./run.sh  (raw logs land in ignored/, tracked outputs in results/)"
+}
