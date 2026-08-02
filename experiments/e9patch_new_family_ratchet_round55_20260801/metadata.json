@@ -1,0 +1,32 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round55",
+  "date": "2026-08-01",
+  "question": "Can five freestanding raw-syscall guests driving removed Linux kernel-module/sysctl-management syscalls (_sysctl/create_module/query_module/get_kernel_syms/nfsservctl) into faithful -ENOSYS(-38) reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all five kept at L2; corpus 385 -> 390, 390/390 PASS_L2. Two candidate veins probed and DROPPED as false parity (data-movement splice/tee/vmsplice/copy_file_range/process_vm_* and prctl GET-variants).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1439",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1426",
+  "branch": "codex/e9patch-corpus-round55-families",
+  "commit_sha": "85f2f925",
+  "base_branch": "codex/e9patch-corpus-round54-families",
+  "base_sha": "064bfee2",
+  "hermit_repo": "rrnewton/hermit",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "sysctl_enosys", "syscall": "_sysctl(156)", "history": "removed Linux 5.5", "errno": "-ENOSYS(-38)", "stdout": "sysctl=-38"},
+    {"guest": "create_module_enosys", "syscall": "create_module(174)", "history": "ENOSYS since 2.6, removed 5.18", "errno": "-ENOSYS(-38)", "stdout": "createmod=-38"},
+    {"guest": "query_module_enosys", "syscall": "query_module(178)", "history": "ENOSYS since 2.6, removed 5.18", "errno": "-ENOSYS(-38)", "stdout": "querymod=-38"},
+    {"guest": "get_kernel_syms_enosys", "syscall": "get_kernel_syms(177)", "history": "ENOSYS since 2.6, removed 5.18", "errno": "-ENOSYS(-38)", "stdout": "getkernelsyms=-38"},
+    {"guest": "nfsservctl_enosys", "syscall": "nfsservctl(180)", "history": "removed Linux 3.1", "errno": "-ENOSYS(-38)", "stdout": "nfsservctl=-38"}
+  ],
+  "dropped": [
+    {"vein": "in-process data movement", "guests": ["splice(275)", "tee(276)", "vmsplice(278)", "copy_file_range(326)", "process_vm_readv(310)", "process_vm_writev(311)"], "reason": "native returns real 16-byte count; golden ptrace returns -ENOSYS(-38) for splice family and -1 for process_vm_* -> false parity (hermit does not faithfully implement these)"},
+    {"vein": "prctl GET variants", "guests": ["PR_GET_SECCOMP(21)", "PR_GET_NO_NEW_PRIVS(39)", "PR_GET_TSC(25)", "PR_GET_CHILD_SUBREAPER(37)", "PR_MCE_KILL_GET(34)"], "reason": "native returns real values; golden ptrace returns -ENOSYS(-38) -> hermit prctl allowlist does not cover them -> false parity"}
+  ],
+  "corpus_size_before": 385,
+  "corpus_size_after": 390,
+  "net_delta": 5,
+  "full_corpus_run": "RATCHET e9patch: 390/390 PASS_L2",
+  "per_guest_coverage": "candidate==mapped==1, b0==0, prologue=8, tail_match=yes",
+  "inventory_audit": "audit-inventory EXIT=0 (768 files)",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=.../e9tool HERMIT_E9PATCH_BACKEND=.../e9patch python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}

@@ -1,0 +1,17 @@
+guest,syscall_num,native_stdout,golden_stdout,e9patch_result,disposition
+sysctl_enosys,156,sysctl=-38,sysctl=-38,PASS_L2,kept
+create_module_enosys,174,createmod=-38,createmod=-38,PASS_L2,kept
+query_module_enosys,178,querymod=-38,querymod=-38,PASS_L2,kept
+get_kernel_syms_enosys,177,getkernelsyms=-38,getkernelsyms=-38,PASS_L2,kept
+nfsservctl_enosys,180,nfsservctl=-38,nfsservctl=-38,PASS_L2,kept
+splice_memfd_pipe,275,splice=16,splice=-38,n/a,dropped_false_parity
+tee_pipe_pipe,276,tee=16,tee=-38,n/a,dropped_false_parity
+vmsplice_pipe,278,vmsplice=16,vmsplice=-38,n/a,dropped_false_parity
+copy_file_range_memfd,326,cfr=16,cfr=-38,n/a,dropped_false_parity
+process_vm_readv_self,310,pvreadv=16,pvreadv=-1,n/a,dropped_false_parity
+process_vm_writev_self,311,pvwritev=16,pvwritev=-1,n/a,dropped_false_parity
+prctl_get_seccomp,157,getseccomp=0,getseccomp=-38,n/a,dropped_false_parity
+prctl_no_new_privs,157,nonewprivs=0,nonewprivs=-38,n/a,dropped_false_parity
+prctl_get_tsc,157,gettsc=1,gettsc=-38,n/a,dropped_false_parity
+prctl_child_subreaper,157,subreaper=-4294967296,subreaper=-38,n/a,dropped_false_parity
+prctl_mce_kill_get,157,mcekill=2,mcekill=-38,n/a,dropped_false_parity
