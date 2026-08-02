@@ -1,0 +1,37 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round47",
+  "date": "2026-08-01",
+  "question": "Can ten more inert guests reading protocol-level getsockopt options (TCP/IP/IPv6, including IPv4/IPv6 multicast sub-families) reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all ten kept at L2; corpus 311 -> 321, 321/321 PASS_L2. Two candidates dropped (host-sysctl-tuned, golden diverges from native).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1417",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1415",
+  "branch": "codex/e9patch-corpus-round47-families",
+  "commit_sha": "0737b0da5b959f06567a348dbd2ea291b9929521",
+  "base_branch": "codex/e9patch-corpus-round46-families",
+  "base_sha": "5e62523a0e30f6ffbb2ab24dcd8ef63fbb7df567",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getsockopt_tcp_quickack", "option": "TCP_QUICKACK(12) IPPROTO_TCP(6) stream", "stdout": "tcpquickack=1"},
+    {"guest": "getsockopt_tcp_defer_accept", "option": "TCP_DEFER_ACCEPT(9) IPPROTO_TCP(6) stream", "stdout": "tcpdeferaccept=0"},
+    {"guest": "getsockopt_tcp_window_clamp", "option": "TCP_WINDOW_CLAMP(10) IPPROTO_TCP(6) stream", "stdout": "tcpwinclamp=0"},
+    {"guest": "getsockopt_tcp_user_timeout", "option": "TCP_USER_TIMEOUT(18) IPPROTO_TCP(6) stream", "stdout": "tcpusertimeo=0"},
+    {"guest": "getsockopt_tcp_fastopen", "option": "TCP_FASTOPEN(23) IPPROTO_TCP(6) stream", "stdout": "tcpfastopen=0"},
+    {"guest": "getsockopt_ip_tos", "option": "IP_TOS(1) IPPROTO_IP(0) stream", "stdout": "iptos=0"},
+    {"guest": "getsockopt_ip_multicast_ttl", "option": "IP_MULTICAST_TTL(33) IPPROTO_IP(0) dgram", "stdout": "ipmcttl=1"},
+    {"guest": "getsockopt_ip_multicast_loop", "option": "IP_MULTICAST_LOOP(34) IPPROTO_IP(0) dgram", "stdout": "ipmcloop=1"},
+    {"guest": "getsockopt_ipv6_multicast_hops", "option": "IPV6_MULTICAST_HOPS(18) IPPROTO_IPV6(41) dgram", "stdout": "v6mchops=1"},
+    {"guest": "getsockopt_ipv6_tclass", "option": "IPV6_TCLASS(67) IPPROTO_IPV6(41) stream", "stdout": "v6tclass=0"}
+  ],
+  "dropped": [
+    {"candidate": "getsockopt_tcp_keepidle", "option": "TCP_KEEPIDLE(4) IPPROTO_TCP(6)", "reason": "host sysctl tcp_keepalive_time native 2400 vs golden 7200 (#152)"},
+    {"candidate": "getsockopt_tcp_linger2", "option": "TCP_LINGER2(8) IPPROTO_TCP(6)", "reason": "host sysctl tcp_fin_timeout native 5 vs golden 60 (#152)"}
+  ],
+  "corpus_size_before": 311,
+  "corpus_size_after": 321,
+  "net_delta": 10,
+  "full_corpus_run": "RATCHET e9patch: 321/321 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
