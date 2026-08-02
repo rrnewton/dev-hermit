@@ -1,0 +1,38 @@
+{
+  "artifact": "hermit-portable-ci-dag-profiling",
+  "date": "2026-08-02",
+  "agent": "hermit-ci",
+  "lane": "CI (GitHub-managed portable)",
+  "dag_file": "hermit/ci/dag/portable.json",
+  "hermit_sha": "c7531a837a65d388707e3b14642a6ba36b660267",
+  "source_artifact": "dag-perf-regular (GitHub Actions upload)",
+  "runner": {
+    "cpu": "AMD_EPYC_9V74_80-Core_Processor",
+    "nproc_visible": 4,
+    "outer_jobs": 1,
+    "mem_cap": "14G",
+    "command": "ci/run-dag.sh portable --max-mem 14G"
+  },
+  "results": {
+    "nodes": 46,
+    "total_node_work_s": 1918,
+    "critical_path_s": 935,
+    "ideal_speedup_x": 2.05,
+    "measured_wall_s": 1920.0,
+    "total_busy_pct": 68.64,
+    "user_s": 4698.6,
+    "sys_s": 554.4,
+    "result": "pass"
+  },
+  "critical_path": [
+    {"node": "build.workspace", "s": 240.9},
+    {"node": "build.dbi_release", "s": 563.9},
+    {"node": "build.liteinst_runtime_release", "s": 78.7},
+    {"node": "test.liteinst_strict", "s": 51.8}
+  ],
+  "renders": {
+    "graphviz": "https://www.internalfb.com/intern/graphviz/?paste=2445698597",
+    "dot_paste": "https://www.internalfb.com/intern/paste/P2445698602/"
+  },
+  "reproduce": "rust-script analyze-dag.rs <ci/dag/portable.json> step_profiles.csv portable-dag.dot"
+}
