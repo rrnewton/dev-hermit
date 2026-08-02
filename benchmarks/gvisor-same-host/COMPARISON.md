@@ -1,55 +1,53 @@
-# Same-host backend comparison
+# Same-host comparison notes
 
-All rows below were measured on `devbig014`. The gVisor rows
-use official runsc release `20260727.0`; no gVisor blog value participates in a
-ratio or ranking.
+The [mini-paper](README.md) is the primary result. The rounded tables in
+[`HEAD_TO_HEAD.md`](HEAD_TO_HEAD.md) provide the expanded numeric appendix, and
+[`SCORECARD.tsv`](SCORECARD.tsv) retains full precision for recomputation.
 
-## Local runsc results
+## What the measurements support
 
-| Workload | Native | systrap | KVM | ptrace |
-| --- | ---: | ---: | ---: | ---: |
-| getpid | 100.789 ns | 4,056.209 ns (40.245x) | 1,252.276 ns (12.425x) | 7,109.977 ns (70.543x) |
-| Redis SET 250k/c5 | 1,128.000 ms | 12,668.003 ms (11.230x) | 14,089.000 ms (12.490x) | 23,075.993 ms (20.457x) |
-| ffmpeg | 24,681.582 ms | 25,933.676 ms (1.051x) | 25,686.832 ms (1.041x) | 25,941.522 ms (1.051x) |
-| Build ABSL | 91,773.778 ms | 103,183.537 ms (1.124x) | 185,941.937 ms (2.026x) | 121,825.586 ms (1.327x) |
-| TensorFlow-8 | 162,181.537 ms | 423,369.988 ms (2.610x) | 400,047.639 ms (2.467x) | timeout >900,000 ms (>5.549x) |
+- **Interception microbenchmark:** runsc KVM is **~12.4x**, systrap **~40.2x**,
+  and ptrace **~70.5x** the runsc collection's **100.789 ns native getpid
+  anchor**. This ordering is specific to the tight syscall loop.
+- **Syscall-heavy application:** Redis is **~11.2x-20.5x** the runsc
+  collection's **1.128 s native anchor**, depending on platform. The metric is
+  `250000 / QPS`, not end-to-end wall time.
+- **CPU-heavy application:** all runsc ffmpeg platforms remain
+  **~1.04x-1.05x** the **24.682 s native anchor**, consistent with codec work
+  amortizing interception overhead.
+- **Long mixed workloads:** ABSL ranges from **~1.12x to ~2.03x** its
+  **91.774 s native anchor**. Completed TensorFlow engines are **~2.47x-2.61x**
+  its **162.182 s native anchor**, while ptrace times out above **5.55x**. These
+  are one-sample observations.
 
-getpid, Redis, and ffmpeg are medians of three measured repetitions after one
-warmup. ABSL and TensorFlow are one measured repetition. A TensorFlow result is
-accepted only after all eight programs emit the final `TF_OK` marker, so the
-ptrace timeout is not summarized as a completed time.
+Getpid does not predict whole-application ordering. Systrap is closest to
+native for this bounded ABSL build; KVM is slightly faster than systrap for the
+TensorFlow suite; all three ffmpeg platforms cluster together.
 
-## Hermit and Reverie context
+## What the measurements do not support
 
-The existing Hermit/Reverie evidence was also collected on this host, but in
-earlier runs. The ratios therefore normalize each row to the native sample from
-its own run; they remove the invalid cross-machine comparison but do not make
-the runs simultaneous or the systems semantically equivalent.
+- They do not explain why local systrap getpid is **~40.2x** its
+  **100.789 ns native anchor** while the 2023 blog reports **~4.26x** its
+  **239 ns blog-native anchor**. Instruction shape, fast-path coverage,
+  runtime/kernel/hardware differences, harness accounting, and shared-host load
+  are hypotheses, not established causes.
+- They do not establish that the Redis cell reproduces the blog metric. This
+  harness derives `250000 / QPS` and records a **1.128 s native anchor**; the
+  blog describes median request latency scaled by 250,000 and shows a 17.250 s
+  native bar. The aggregation may differ.
+- They do not rank ABSL across the runsc and counter2 collections because the
+  parallelism bounds differ.
+- They do not rank the TensorFlow collections because no completed matching
+  eight-program Hermit/Reverie aggregate exists.
+- They do not establish semantic equivalence. Counter2, deterministic Hermit,
+  and runsc enforce different execution and isolation properties.
 
-| Workload | Tier/backend | Local-native slowdown |
-| --- | --- | ---: |
-| getpid | counter2 ptrace / KVM | 186.743x / 157.428x |
-| getpid | counter2 LiteInst / DBI / SaBRe / e9patch | 7.838x / 13.725x / 28.272x / 9.547x |
-| getpid | relaxed ptrace / KVM / LiteInst / SaBRe / e9patch | 434.364x / 232.564x / 1,010.829x / 641.102x / 421.328x |
-| getpid | strict ptrace / KVM / LiteInst / DBI / SaBRe / e9patch | 3,697.296x / 485.569x / 2,089.840x / 16.879x / 259.142x / 1,839.454x |
-| Redis SET 250k/c5 | counter2 ptrace / DBI / SaBRe | 14.611x / 4.118x / 1.370x |
-| Redis SET 250k/c5 | relaxed ptrace / SaBRe / e9patch | 35.273x / 75.478x / 32.915x |
-| Redis SET 250k/c5 | strict DBI | 80.943x |
-| ffmpeg | counter2 ptrace / relaxed ptrace | 1.116x / 4.672x |
-| ffmpeg | counter2 DBI | timeout >37.391x |
-| Build ABSL | counter2 ptrace | 16.387x |
-| TensorFlow basic five | counter2 ptrace | 8.127x |
-| TensorFlow convolutional | counter2 ptrace | timeout >34.001x |
+## Hermit/Reverie interpretation
 
-The same-host correction changes the conclusions. For getpid, counter2
-LiteInst and e9patch have lower normalized overhead than local runsc KVM,
-systrap, and ptrace; DBI is close to runsc KVM. For Redis, counter2 SaBRe and
-DBI have lower normalized overhead than local runsc systrap, while counter2
-ptrace is between local runsc KVM and ptrace. For ffmpeg, all three runsc
-platforms are near 1.05x and counter2 ptrace is 1.116x.
-
-ABSL is not ranked across the two collections: the new harness pins 16 Bazel
-jobs/loading threads to avoid exhausting this shared 316-CPU host, while the
-older counter2 row was unbounded. TensorFlow also has no completed full
-eight-program counter2 row, so only the local runsc matrix is comparable for
-that complete suite. `SCORECARD.tsv` retains every numeric row and its source.
+The earlier same-machine rows are useful for locating overhead, not declaring a
+single winner. For example, counter2 LiteInst is **~7.84x** and e9patch is
+**~9.55x** their **91.715 ns native getpid anchor**, while strict DBI is
+**~16.9x** its separate **276.045 ns strict-native anchor**. For Redis,
+counter2 SaBRe is **~1.37x** and DBI **~4.12x** their **1.158 s native anchor**.
+Adding syscall determinization and deterministic scheduling changes both the
+cost and the guarantee, so comparisons should remain within the named tier.

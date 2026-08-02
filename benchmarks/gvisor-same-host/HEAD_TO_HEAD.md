@@ -1,76 +1,64 @@
-# Same-host head-to-head
+# Same-host head-to-head appendix
 
-Host: `devbig014`. Values are slowdown versus the native
-sample from the same collection. The runsc columns use local runsc release
-`20260727.0`; no gVisor blog result is used.
+This appendix expands the comparison summarized in the
+[colleague-ready mini-paper](README.md). All rows were measured on `devbig014`,
+but the runsc and Hermit/Reverie collections were not simultaneous. Every
+slowdown is rounded and paired with the native denominator from its own
+collection.
+
+The systems also provide different semantics. Counter2 counts interceptions,
+Hermit relaxed adds syscall determinization, Hermit strict adds deterministic
+thread scheduling, and runsc supplies an application-kernel sandbox.
 
 ## getpid
 
-| Our tier | Our backend | Our result | runsc systrap | runsc KVM | runsc ptrace |
-| --- | --- | ---: | ---: | ---: | ---: |
-| counter2 | ptrace | 186.743x | 40.245x | 12.425x | 70.543x |
-| counter2 | KVM | 157.428x | 40.245x | 12.425x | 70.543x |
-| counter2 | LiteInst | 7.838x | 40.245x | 12.425x | 70.543x |
-| counter2 | DBI | 13.725x | 40.245x | 12.425x | 70.543x |
-| counter2 | SaBRe | 28.272x | 40.245x | 12.425x | 70.543x |
-| counter2 | e9patch | 9.547x | 40.245x | 12.425x | 70.543x |
-| relaxed | ptrace | 434.364x | 40.245x | 12.425x | 70.543x |
-| relaxed | KVM | 232.564x | 40.245x | 12.425x | 70.543x |
-| relaxed | LiteInst | 1,010.829x | 40.245x | 12.425x | 70.543x |
-| relaxed | SaBRe | 641.102x | 40.245x | 12.425x | 70.543x |
-| relaxed | e9patch | 421.328x | 40.245x | 12.425x | 70.543x |
-| strict | ptrace | 3,697.296x | 40.245x | 12.425x | 70.543x |
-| strict | KVM | 485.569x | 40.245x | 12.425x | 70.543x |
-| strict | LiteInst | 2,089.840x | 40.245x | 12.425x | 70.543x |
-| strict | DBI | 16.879x | 40.245x | 12.425x | 70.543x |
-| strict | SaBRe | 259.142x | 40.245x | 12.425x | 70.543x |
-| strict | e9patch | 1,839.454x | 40.245x | 12.425x | 70.543x |
+| Collection/tier | Native anchor | systrap | KVM | ptrace | LiteInst | DBI | SaBRe | e9patch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| runsc | **100.789 ns** | **~40.2x** | **~12.4x** | **~70.5x** | n/a | n/a | n/a | n/a |
+| counter2 | **91.715 ns** | n/a | **~157x** | **~187x** | **~7.84x** | **~13.7x** | **~28.3x** | **~9.55x** |
+| relaxed | **91.715 ns** | n/a | **~233x** | **~434x** | **~1,010x** | n/a | **~641x** | **~421x** |
+| strict | **276.045 ns** | n/a | **~486x** | **~3,700x** | **~2,090x** | **~16.9x** | **~259x** | **~1,840x** |
 
-Runsc medians are native `100.789 ns`, systrap `4,056.209 ns`, KVM
-`1,252.276 ns`, and ptrace `7,109.977 ns`. Counter2/relaxed used 200,000
-iterations; strict used 20,000; runsc used 1,000,000. The table compares
-steady-state per-call cost, not equal-duration processes.
+Runsc used one million calls per sample. Counter2 and relaxed used 200,000;
+strict used 20,000. Runsc reports three measured samples after one warmup.
+Hermit/Reverie backend medians use three samples and their native anchors use
+five. These are steady-state per-call costs, not equal-duration processes.
 
 ## Redis SET 250k/c5
 
-| Our tier | Our backend | Our result | runsc systrap | runsc KVM | runsc ptrace |
-| --- | --- | ---: | ---: | ---: | ---: |
-| counter2 | ptrace | 14.611x | 11.230x | 12.490x | 20.457x |
-| counter2 | DBI | 4.118x | 11.230x | 12.490x | 20.457x |
-| counter2 | SaBRe | 1.370x | 11.230x | 12.490x | 20.457x |
-| relaxed | ptrace | 35.273x | 11.230x | 12.490x | 20.457x |
-| relaxed | SaBRe | 75.478x | 11.230x | 12.490x | 20.457x |
-| relaxed | e9patch | 32.915x | 11.230x | 12.490x | 20.457x |
-| strict | DBI | 80.943x | 11.230x | 12.490x | 20.457x |
+| Collection/tier | Native anchor | systrap | KVM | ptrace | DBI | SaBRe | e9patch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| runsc | **1.128 s** | **~11.2x** | **~12.5x** | **~20.5x** | n/a | n/a | n/a |
+| counter2 | **1.158 s** | n/a | n/a | **~14.6x** | **~4.12x** | **~1.37x** | n/a |
+| relaxed | **1.158 s** | n/a | n/a | **~35.3x** | n/a | **~75.5x** | **~32.9x** |
+| strict | **1.158 s** | n/a | n/a | n/a | **~80.9x** | n/a | n/a |
 
-Runsc medians are native `1,128.000 ms`, systrap `12,668.003 ms`, KVM
-`14,089.000 ms`, and ptrace `23,075.993 ms`. All rows use 250,000 SET requests
-and five concurrent clients.
+All local rows invoke 250,000 SET operations with five clients and report three
+measured samples. The runsc harness and earlier Hermit harness each derive a
+nominal duration from QPS. As discussed in the main paper, matching the 2023
+blog's scaled-latency metric has not been established.
 
 ## ffmpeg
 
-| Our tier | Our backend | Our result | runsc systrap | runsc KVM | runsc ptrace |
-| --- | --- | ---: | ---: | ---: | ---: |
-| counter2 | ptrace | 1.116x | 1.051x | 1.041x | 1.051x |
-| relaxed | ptrace | 4.672x | 1.051x | 1.041x | 1.051x |
-| counter2 | DBI | timeout >37.391x | 1.051x | 1.041x | 1.051x |
+| Collection/tier | Native anchor | systrap | KVM | ptrace | DBI |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| runsc | **24.682 s** | **~1.05x** | **~1.04x** | **~1.05x** | n/a |
+| counter2 | **24.070 s** | n/a | n/a | **~1.12x** | timeout **>37.4x** |
+| relaxed | **24.070 s** | n/a | n/a | **~4.67x** | n/a |
 
-Runsc medians are native `24,681.582 ms`, systrap `25,933.676 ms`, KVM
-`25,686.832 ms`, and ptrace `25,941.522 ms`. All successful rows produced the
-expected output file.
+All successful rows produced the expected output file. Runsc has three measured
+samples; the earlier Hermit application cells have one.
 
 ## Coverage-limited applications
 
-| Workload | Our tier/backend | Our result | runsc systrap | runsc KVM | runsc ptrace | Head-to-head status |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| Build ABSL | counter2 ptrace | 16.387x | 1.124x | 2.026x | 1.327x | Not ranked: our older build was unbounded; runsc is pinned to 16 Bazel jobs/loading threads. |
-| TensorFlow basic five | counter2 ptrace | 8.127x | n/a | n/a | n/a | Not ranked: runsc measured the full eight-program suite. |
-| TensorFlow convolutional | counter2 ptrace | timeout >34.001x | n/a | n/a | n/a | Not ranked: neither row is a completed matching aggregate. |
-| TensorFlow full eight | no completed tier | n/a | 2.610x | 2.467x | timeout >5.549x | Local runsc result only. |
+| Workload/collection | Native anchor | Results | Status |
+| --- | ---: | --- | --- |
+| Build ABSL, runsc | **91.774 s** | systrap **~1.12x**, KVM **~2.03x**, ptrace **~1.33x** | One sample per engine. |
+| Build ABSL, counter2 ptrace | **12.110 s** | **~16.4x** | Not ranked against runsc: this older build was unbounded, while runsc used 16 Bazel jobs/loading threads. |
+| TensorFlow full eight, runsc | **162.182 s** | systrap **~2.61x**, KVM **~2.47x**, ptrace timeout **>5.55x** | One sample per engine; ptrace did not complete. |
+| TensorFlow basic five, counter2 ptrace | **105.010 s** | **~8.13x** | Not ranked: runsc measured the full eight-program suite. |
+| TensorFlow convolutional, counter2 ptrace | **26.470 s** | timeout **>34.0x** | Not ranked: no completed matching aggregate. |
 
-The comparison is same-host but not simultaneous. It compares overhead, not
-semantic equivalence: counter2 only counts interceptions, relaxed adds syscall
-determinization without thread scheduling, strict adds full deterministic
-scheduling, and runsc provides a sandbox rather than Hermit's determinization.
-Exact absolute values, repetitions, statuses, and sources are in
-[`SCORECARD.tsv`](SCORECARD.tsv).
+Exact absolute measurements, statuses, repetition counts, and source paths are
+in [`SCORECARD.tsv`](SCORECARD.tsv). The primary paper explains the workload
+definitions, uncertainty, and cross-study hypotheses.
