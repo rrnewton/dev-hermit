@@ -1,0 +1,7 @@
+workload,backend,reps,min_wall_s,per_call_us,notes
+bin_true,native,3,0.00,,below 10ms time resolution
+bin_true,ptrace,3,0.01,,fixed attach/teardown
+bin_true,dbi,3,0.05,,~40ms DynamoRIO warmup tax
+getpid_1e5,native,3,0.00,,below 10ms time resolution (100k raw getpid is sub-ms)
+getpid_1e5,ptrace,3,3.30,33.0,ptrace stop-per-syscall dominates
+getpid_1e5,dbi,3,0.20,2.0,in-process interception; ~16.5x faster than ptrace
