@@ -111,7 +111,7 @@ TOTAL                      179          76%, 87%          63%, 72%          79%,
 | **LiteInst** | det **118/200 (59%)**, parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
 | **DBI** | det **156/200 (78%)**, parity **137** | `--features third-party-backends` binary at `82a8e853`; parity of 180 measurable cells. |
 | **SaBRe** | det **164/200 (82%)**, parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
-| **e9patch** | det **179/200 (90%)**, parity **173** *(this column is at `82a8e853` and is now STALE — see caveat)* | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. **CORRECTION (measured `e8ddd925`):** of the 7 cells previously flagged inherent, **6 have flipped to parity-green + L2-det**; only **1** (`rcx-canonicalization`) is a genuine inherent gap. |
+| **e9patch** | **AUTHORITATIVE (whole-corpus re-sweep `c7531a83`): 183/184 (99.46%) parity AND det on the ptrace-green denominator.** *(The `82a8e853` column below — det 179/200, parity 173 — is SUPERSEDED.)* | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. The **only** e9patch-specific gap is `rcx-canonicalization` (inherent instruction relocation); the parity gap collapsed 7 → 1 vs `82a8e853` as landed detcore fixes (stdio-inode `ee746bde`, proc-fd fixture `c7531a83`, backend-independent virtual clock) flipped in. Evidence: `experiments/e9patch_fullcorpus_resweep_c7531a83_20260802/`. |
 | **Portable / privileged** | **200 / 2** | was 199 / 3; `cpuid-probe` reclassified portable. |
 
 Honest caveats:
@@ -158,11 +158,22 @@ Honest caveats:
     so the guest's own SYSRET `%rcx` return-RIP no longer equals its inline label;
     e9 exits 1 / 0 bytes / det-verify exit 1). This one is truly "impossible by
     construction" — no interception backend that relocates the syscall can pass it.
-  - **Caveat on scope:** only the 7 previously-flagged cells were re-measured; the
-    full 200-cell e9patch column above is still at `82a8e853` and needs a fresh
-    sweep for an authoritative new total. Corrected per-cell evidence + reproduction:
-    `experiments/e9patch_compat_ratchet_recheck_20260802/`; superseded prior
-    analysis: `experiments/e9patch_compat_last_cells_rootcause_20260801/`.
+  - **Scope caveat RESOLVED — whole-corpus re-sweep at `c7531a83`.** The 7-cell
+    re-check above left the full column stale at `82a8e853`; a fresh
+    `collect-fullcorpus.sh --backends ptrace,e9patch` sweep at current main
+    (hermit `c7531a83`, reverie `ef5ffebc`, 235-cell corpus, 184 ptrace-green)
+    now gives the authoritative figure: **e9patch 183/184 (99.46%) parity AND
+    det on the ptrace-green denominator.** The parity gap is down to **1** — the
+    sole cell where ptrace passes det but e9patch does not is
+    `rcx-canonicalization`; there are **zero** parity-only gaps, and the 21
+    parity-unmeasured cells are all ones where **ptrace itself fails** (qemu-*,
+    thread-contention, ipc/signal/mmap-determinism, shell-pipeline, pmu-skid, …),
+    which e9patch mirrors rather than regresses. The product-side ratchet is thus
+    at its achievable bar, this time confirmed by whole-corpus measurement, not
+    inference. Evidence: `experiments/e9patch_fullcorpus_resweep_c7531a83_20260802/`
+    (full 410-row CSV). Prior 7-cell recheck:
+    `experiments/e9patch_compat_ratchet_recheck_20260802/`; superseded original:
+    `experiments/e9patch_compat_last_cells_rootcause_20260801/`.
 
 ## Backend-parity matrix (complementary — where DBI has real data)
 

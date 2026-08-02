@@ -1,0 +1,47 @@
+{
+  "experiment": "e9patch_fullcorpus_resweep_c7531a83",
+  "date": "2026-08-02",
+  "question": "What is the authoritative e9patch full-corpus parity/determinism column at current main c7531a83, resolving the scope caveat left by the 7-cell recheck?",
+  "answer": "On the 184 ptrace-green cells, e9patch is 183/184 (99.46%) on BOTH parity and determinism; the single residual e9patch-specific gap is rcx-canonicalization (inherent instruction relocation). Zero parity-only gaps. The stale 82a8e853 column (det 179/200, parity 173) is superseded.",
+  "measurement": {
+    "hermit_sha": "c7531a837a65d388707e3b14642a6ba36b660267",
+    "reverie_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+    "binary": "scratch/featured-c7531a83-target/release/hermit (--features e9patch)",
+    "e9tool": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "gate": "compat-envelope/collect-fullcorpus.sh --backends ptrace,e9patch --no-assert --par 24",
+    "flags": "--strict [--verify] --no-virtualize-cpuid --max-timeslice=disabled",
+    "corpus": "235-cell e2e union corpus (grown from the 200-cell corpus behind the 82a8e853 column)",
+    "wall_clock": "14m25s",
+    "gate_result": "GREEN",
+    "host": "shared 316-core devbig, release binary"
+  },
+  "tallies": {
+    "ptrace_green_cells": 184,
+    "e9patch_det_on_green": 183,
+    "e9patch_parity_on_green": 183,
+    "e9patch_pct_on_green": "99.46%",
+    "raw_measurable_cells": 205,
+    "ptrace_det": 184,
+    "e9patch_det": 183,
+    "e9patch_parity": 183,
+    "e9patch_parity_zero": 1,
+    "parity_unmeasured_ptrace_ref_failed": 21
+  },
+  "sole_e9patch_specific_gap": {
+    "cell": "c-programs/rcx-canonicalization",
+    "ptrace_det": 1,
+    "e9_det": 0,
+    "e9_parity": 0,
+    "class": "inherent: e9tool relocates the in-ELF syscall into a trampoline, so the guest's own SYSRET %rcx return-RIP != inline label; unfixable without abandoning interception"
+  },
+  "parity_only_gaps": 0,
+  "unmeasured_are_not_e9patch_gaps": "the 21 parity-unmeasured cells are ones where ptrace itself fails --strict (qemu-*, thread-contention, ipc/signal/mmap-determinism, shell-pipeline, pmu-skid, etc.); e9patch mirrors ptrace, neither credited nor blamed",
+  "vs_prior": {
+    "82a8e853_reported": "e9patch det 179/200, parity 173/200; on ptrace-green 178/179 det, 172/179 parity",
+    "c7531a83_measured": "e9patch 183/184 det AND parity on ptrace-green; parity gap 7 -> 1",
+    "cause_of_flips": "landed detcore determinization (ee746bde stdio-inode, c7531a83 proc-fd fixture, backend-independent virtual clock), inherited free because e9patch runtime IS ptrace"
+  },
+  "product_pr_warranted": false,
+  "supersedes_scope_caveat_of": "experiments/e9patch_compat_ratchet_recheck_20260802",
+  "no_false_parity": "issue #152 — every parity credit is a byte-compare against a real ptrace --strict reference; unmeasured cells are recorded blank, never as a match"
+}
