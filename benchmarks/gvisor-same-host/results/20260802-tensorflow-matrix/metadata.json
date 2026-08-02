@@ -1,0 +1,39 @@
+{
+  "end_load_average": "390.20 371.74 273.71 44/62267 4093031\n",
+  "existing_backend_reference_host": "devbig014.atn7.facebook.com",
+  "existing_backend_reference_is_same_host": true,
+  "expensive_repetitions": 1,
+  "expensive_warmups": 0,
+  "getpid_source_sha256": "55a297b3564f0d2e730ee28a29277f37b1bff86a385aa6b9033d4ac6d2c4857d",
+  "host": "devbig014.atn7.facebook.com",
+  "images": {
+    "absl": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/absl_x86_64@sha256:5f3c919fd4d1bef9c220345cb577efd3bfa6c3656420c82f63d6b3108ffe05a0",
+    "ffmpeg": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/ffmpeg_x86_64@sha256:14ddfe863d28ac20b27aceb4eaf3a2ed5a0dc9269fb3952d6995e4de3c99df46",
+    "redis": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/redis_x86_64@sha256:7f3745cd93de68d0cff864d37f409b1ff6abaa18b051f1b3248bfd530b35cb7e",
+    "tensorflow": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/tensorflow_x86_64@sha256:7accf29be680e86d4cf0abe88fcc711cd6dac1d07b488466fcd73b21c54345f7"
+  },
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "platforms": [
+    "systrap",
+    "kvm",
+    "ptrace"
+  ],
+  "repetitions": 3,
+  "run_id": "20260802T095303Z",
+  "runsc_release": "20260727.0",
+  "runsc_sha512": "ab99ea1b0e2d169ec95473ea6c44abdac9b6b63d9c483f898487fd2b3c32d63bfa9ea104a3d5eed217b90cfc880ceb7a1130a9f7daef6e50656b6e028a8f52e3",
+  "runsc_url": "https://storage.googleapis.com/gvisor/releases/release/20260727.0/x86_64/runsc",
+  "runsc_version": "runsc version release-20260727.0\nspec: 1.2.1",
+  "schema": 1,
+  "script_sha256": "b9fb378905b0974f7c329249e4eb2e3aa6567ccb99c8970435622410a224865d",
+  "start_load_average": [
+    112.06,
+    77.04,
+    112.23
+  ],
+  "timeout_seconds": 900,
+  "warmups": 1,
+  "workloads": [
+    "tensorflow"
+  ]
+}

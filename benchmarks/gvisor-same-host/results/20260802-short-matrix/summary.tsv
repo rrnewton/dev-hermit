@@ -1,0 +1,13 @@
+workload	engine	repetitions	median	unit	ratio_vs_native
+ffmpeg	kvm	3	25686.832271	ms	1.040729
+ffmpeg	native	3	24681.582487	ms	1.000000
+ffmpeg	ptrace	3	25941.521744	ms	1.051048
+ffmpeg	systrap	3	25933.675899	ms	1.050730
+getpid	kvm	3	1252.276302	ns/call	12.424778
+getpid	native	3	100.788625	ns/call	1.000000
+getpid	ptrace	3	7109.976997	ns/call	70.543447
+getpid	systrap	3	4056.209341	ns/call	40.244714
+redis	kvm	3	14088.999647	ms	12.490248
+redis	native	3	1128.000029	ms	1.000000
+redis	ptrace	3	23075.992937	ms	20.457440
+redis	systrap	3	12668.003057	ms	11.230499
