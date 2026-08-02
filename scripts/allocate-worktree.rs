@@ -107,7 +107,10 @@ fn find_root() -> PathBuf {
 }
 
 fn now_iso() -> String {
-    match Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output() {
+    match Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+    {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     }
@@ -139,7 +142,10 @@ fn epoch_now() -> i64 {
 
 /// Convert an ISO-8601 timestamp to epoch seconds via `date -d`.
 fn epoch_of(iso: &str) -> Option<i64> {
-    let out = Command::new("date").args(["-d", iso, "+%s"]).output().ok()?;
+    let out = Command::new("date")
+        .args(["-d", iso, "+%s"])
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -176,8 +182,22 @@ fn newest_source_mtime(dir: &Path) -> i64 {
     let out = Command::new("find")
         .arg(dir)
         .args([
-            "(", "-name", "target", "-o", "-name", ".git", "-o", "-name", "node_modules", ")",
-            "-prune", "-o", "-type", "f", "-printf", "%T@\n",
+            "(",
+            "-name",
+            "target",
+            "-o",
+            "-name",
+            ".git",
+            "-o",
+            "-name",
+            "node_modules",
+            ")",
+            "-prune",
+            "-o",
+            "-type",
+            "f",
+            "-printf",
+            "%T@\n",
         ])
         .output();
     match out {
@@ -313,7 +333,9 @@ fn homeostasis_check(root: &Path) {
         for (n, w) in warnings.iter().enumerate() {
             eprintln!("  {}. {w}", n + 1);
         }
-        eprintln!("  See ai_docs/transient/2026-07-27-worktree-management-map.md §5 (disk hygiene).");
+        eprintln!(
+            "  See ai_docs/transient/2026-07-27-worktree-management-map.md §5 (disk hygiene)."
+        );
         eprintln!("═══════════════════════════════════════════════════════════════════════");
         eprintln!();
     }
@@ -329,8 +351,8 @@ fn load_state(root: &Path) -> Value {
         return json!({ "version": 3, "updated": Value::Null, "slots": {} });
     }
     let txt = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("read state: {e}")));
-    let mut v: Value =
-        serde_json::from_str(&txt).unwrap_or_else(|e| die(&format!("parse worktree-state.json: {e}")));
+    let mut v: Value = serde_json::from_str(&txt)
+        .unwrap_or_else(|e| die(&format!("parse worktree-state.json: {e}")));
     if !v.get("slots").map(|s| s.is_object()).unwrap_or(false) {
         v["slots"] = json!({});
     }
@@ -341,7 +363,8 @@ fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
     state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
-    std::fs::write(state_path(root), txt + "\n").unwrap_or_else(|e| die(&format!("write state: {e}")));
+    std::fs::write(state_path(root), txt + "\n")
+        .unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
 
 /// Rewrite the managed table block inside worktrees/ACTIVE.md from state.
@@ -391,10 +414,16 @@ fn regen_active_md(root: &Path, state: &Value) {
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let new_content = if let (Some(b), Some(e)) = (existing.find(BEGIN), existing.find(END)) {
         let e_end = e + END.len();
-        let after = existing[e_end..].strip_prefix('\n').unwrap_or(&existing[e_end..]);
+        let after = existing[e_end..]
+            .strip_prefix('\n')
+            .unwrap_or(&existing[e_end..]);
         format!("{}{}{}", &existing[..b], block, after)
     } else {
-        let sep = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
+        let sep = if existing.is_empty() || existing.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
         let lead = if existing.is_empty() {
             "# Active Hermit Worktrees\n\n## Machine-managed slot table\n\n".to_string()
         } else {
@@ -411,8 +440,14 @@ fn regen_active_md(root: &Path, state: &Value) {
 /// Slot name is a named token [a-z0-9-]+ (e.g. kvm) or slotNN.
 fn valid_slot(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        && name.chars().next().map(|c| c.is_ascii_alphanumeric()).unwrap_or(false)
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphanumeric())
+            .unwrap_or(false)
 }
 
 fn next_free_slot(root: &Path, state: &Value) -> String {
@@ -434,7 +469,10 @@ fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
             println!("  adopt existing worktree {}", dst.display());
             return;
         }
-        die(&format!("path exists but is not a git worktree: {}", dst.display()));
+        die(&format!(
+            "path exists but is not a git worktree: {}",
+            dst.display()
+        ));
     }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -445,7 +483,10 @@ fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
         None => git(primary, &["worktree", "add", "--detach", &dst_s, start]),
     };
     if !ok {
-        die(&format!("git worktree add failed for {}: {err}", dst.display()));
+        die(&format!(
+            "git worktree add failed for {}: {err}",
+            dst.display()
+        ));
     }
     println!("  created {}", dst.display());
 }
@@ -460,10 +501,7 @@ fn primary_start(root: &Path, product: &str, override_start: Option<&str>) -> St
     if let Some(start) = override_start {
         return start.to_string();
     }
-    let (ok, out, _) = git(
-        &root.join(product),
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-    );
+    let (ok, out, _) = git(&root.join(product), &["rev-parse", "--abbrev-ref", "HEAD"]);
     if ok && !out.is_empty() {
         out
     } else {
@@ -553,11 +591,17 @@ fn main() {
     // Default slot name: agent name with a leading 'hermit-' stripped.
     if slot.is_empty() {
         let candidate = agent.strip_prefix("hermit-").unwrap_or(&agent).to_string();
-        slot = if valid_slot(&candidate) { candidate } else { next_free_slot(&root, &state) };
+        slot = if valid_slot(&candidate) {
+            candidate
+        } else {
+            next_free_slot(&root, &state)
+        };
         println!("selected slot: {slot}");
     }
     if !valid_slot(&slot) {
-        die(&format!("invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"));
+        die(&format!(
+            "invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"
+        ));
     }
 
     // 1-1 mapping: refuse if this mutating agent already owns a different slot.
@@ -591,7 +635,10 @@ fn main() {
     if let Some(existing) = state["slots"].get(&slot) {
         let owner = existing["agents"]
             .as_array()
-            .and_then(|a| a.iter().find(|x| !x["read_only"].as_bool().unwrap_or(false)))
+            .and_then(|a| {
+                a.iter()
+                    .find(|x| !x["read_only"].as_bool().unwrap_or(false))
+            })
             .and_then(|x| x["name"].as_str())
             .map(|s| s.to_string());
         if let Some(owner) = owner {
@@ -681,7 +728,8 @@ fn main() {
     if entry.get("hermit_branch").is_none() || (include_hermit && entry["hermit_branch"] == "-") {
         entry["hermit_branch"] = json!(if include_hermit { "detached" } else { "-" });
     }
-    if entry.get("reverie_branch").is_none() || (include_reverie && entry["reverie_branch"] == "-") {
+    if entry.get("reverie_branch").is_none() || (include_reverie && entry["reverie_branch"] == "-")
+    {
         entry["reverie_branch"] = json!(if include_reverie { "detached" } else { "-" });
     }
     if entry.get("liteinst2_branch").is_none()
@@ -690,7 +738,10 @@ fn main() {
         entry["liteinst2_branch"] = json!(if include_liteinst2 { "detached" } else { "-" });
     }
     let agents = entry["agents"].as_array_mut().unwrap();
-    if let Some(a) = agents.iter_mut().find(|a| a["name"].as_str() == Some(&agent)) {
+    if let Some(a) = agents
+        .iter_mut()
+        .find(|a| a["name"].as_str() == Some(&agent))
+    {
         a["read_only"] = json!(read_mostly);
         if !task.is_empty() {
             a["task"] = json!(task.clone());

@@ -133,7 +133,10 @@ fn adopt_skill(root: &Path, memory_dir: &Path, skill_rel: &str, check: bool) {
     }
     let canonical = flat_skill_rel(&meta.name);
     if skill_rel != canonical {
-        eprintln!("adopt {skill_rel}: skill name '{}' requires path {canonical}", meta.name);
+        eprintln!(
+            "adopt {skill_rel}: skill name '{}' requires path {canonical}",
+            meta.name
+        );
         std::process::exit(1);
     }
 

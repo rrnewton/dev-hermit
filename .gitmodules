@@ -1,9 +1,12 @@
 [submodule "hermit"]
 	path = hermit
 	url = https://github.com/rrnewton/hermit.git
+	update = checkout
 [submodule "reverie"]
 	path = reverie
 	url = https://github.com/rrnewton/reverie.git
+	update = checkout
 [submodule "liteinst2"]
 	path = liteinst2
 	url = https://github.com/rrnewton/liteinst2.git
+	update = checkout

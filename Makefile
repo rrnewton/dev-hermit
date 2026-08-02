@@ -6,11 +6,11 @@ SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
-	checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
+	check-submodules checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
-	install-deps-core install-deps-full install-deps-qemu validate
+	install-deps-core install-deps-full install-deps-qemu lint validate
 
 build: init-hermit
 	@$(MAKE) --no-print-directory doctor-core
@@ -39,12 +39,7 @@ demo1 demo2 demo3 demo4 demo5 demo6 demo7:
 demos:
 	@$(MAKE) -C demos --no-print-directory all
 
-init-hermit:
-	@set -eu; \
-	if [ ! -e hermit/.git ]; then \
-		echo "Hermit submodule is not initialized; checking it out..."; \
-		git submodule update --init hermit; \
-	fi
+init-hermit: check-submodules
 
 checkout-e9patch:
 	@scripts/checkout-optional-submodules.rs e9patch
@@ -59,6 +54,17 @@ checkout-all:
 	@$(SUBMODULE_GIT) submodule update --init --recursive
 	@$(MAKE) -C hermit --no-print-directory checkout-all
 	@$(MAKE) -C reverie --no-print-directory checkout-all
+
+check-submodules: checkout-all
+	@status="$$($(SUBMODULE_GIT) submodule status --recursive)"; \
+		printf '%s\n' "$$status"; \
+		if printf '%s\n' "$$status" | grep -Eq '^[-+U]'; then \
+			echo 'ERROR: a required submodule is missing or not at its pinned revision.' >&2; \
+			exit 1; \
+		fi
+	@test -f hermit/Cargo.toml || { echo 'ERROR: Hermit submodule is missing.' >&2; exit 1; }
+	@test -f reverie/Cargo.toml || { echo 'ERROR: Reverie submodule is missing.' >&2; exit 1; }
+	@test -f liteinst2/Cargo.toml || { echo 'ERROR: LiteInst2 submodule is missing.' >&2; exit 1; }
 
 build-hermit: init-hermit
 	@if [ ! -f hermit/Cargo.toml ]; then \
@@ -103,6 +109,17 @@ check-deps:
 
 check-portability:
 	@scripts/check-portable-paths.sh
+
+lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
+	@command -v rustfmt >/dev/null 2>&1 || { echo 'ERROR: rustfmt is required.' >&2; exit 1; }
+	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
+	@command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required.' >&2; exit 1; }
+	rustfmt --edition 2021 --check scripts/*.rs
+	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push
+	python3 -m py_compile scripts/*.py
+	python3 -m unittest discover -s scripts -p 'test_*.py'
+	@scripts/check-parent-gitmodules.sh
+	@$(MAKE) --no-print-directory check-portability
 
 # compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
 # RELEASE hermit binary with the in-process DBI backend and asserts every
@@ -189,6 +206,7 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make lint               Lint parent scripts, tests, paths, and submodule policy"
 	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"
 	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
 	@echo "make compat-envelope-fullcorpus  LOCAL full 235-cell union across all runnable backends"

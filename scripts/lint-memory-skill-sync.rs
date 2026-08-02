@@ -251,7 +251,6 @@ fn canonical_body(content: &str) -> String {
     normalize_lines(lines)
 }
 
-
 /// Collapse any run of blank lines to a single blank; strip leading/trailing blanks.
 fn normalize_lines(lines: Vec<String>) -> String {
     let mut res: Vec<String> = Vec::new();

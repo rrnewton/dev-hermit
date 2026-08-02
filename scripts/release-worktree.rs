@@ -66,7 +66,10 @@ fn find_root() -> PathBuf {
 }
 
 fn now_iso() -> String {
-    match Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output() {
+    match Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+    {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     }
@@ -96,8 +99,8 @@ fn load_state(root: &Path) -> Value {
         die("worktree-state.json not found; nothing to release");
     }
     let txt = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("read state: {e}")));
-    let mut v: Value =
-        serde_json::from_str(&txt).unwrap_or_else(|e| die(&format!("parse worktree-state.json: {e}")));
+    let mut v: Value = serde_json::from_str(&txt)
+        .unwrap_or_else(|e| die(&format!("parse worktree-state.json: {e}")));
     if !v.get("slots").map(|s| s.is_object()).unwrap_or(false) {
         v["slots"] = json!({});
     }
@@ -108,7 +111,8 @@ fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
     state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
-    std::fs::write(state_path(root), txt + "\n").unwrap_or_else(|e| die(&format!("write state: {e}")));
+    std::fs::write(state_path(root), txt + "\n")
+        .unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
 
 fn regen_active_md(root: &Path, state: &Value) {
@@ -156,10 +160,16 @@ fn regen_active_md(root: &Path, state: &Value) {
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let new_content = if let (Some(b), Some(e)) = (existing.find(BEGIN), existing.find(END)) {
         let e_end = e + END.len();
-        let after = existing[e_end..].strip_prefix('\n').unwrap_or(&existing[e_end..]);
+        let after = existing[e_end..]
+            .strip_prefix('\n')
+            .unwrap_or(&existing[e_end..]);
         format!("{}{}{}", &existing[..b], block, after)
     } else {
-        let sep = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
+        let sep = if existing.is_empty() || existing.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
         format!("{existing}{sep}\n## Machine-managed slot table\n\n{block}")
     };
     std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
@@ -217,12 +227,17 @@ fn main() {
     let mut state = load_state(&root);
 
     if state["slots"].get(&slot).is_none() {
-        die(&format!("slot {slot} is not registered in worktree-state.json"));
+        die(&format!(
+            "slot {slot} is not registered in worktree-state.json"
+        ));
     }
 
     // If dropping one sharer and others remain, do not tear down the slot.
     if let Some(name) = &agent {
-        let agents = state["slots"][&slot]["agents"].as_array().cloned().unwrap_or_default();
+        let agents = state["slots"][&slot]["agents"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let remaining: Vec<Value> = agents
             .into_iter()
             .filter(|a| a["name"].as_str() != Some(name.as_str()))
@@ -233,7 +248,9 @@ fn main() {
             state["slots"][&slot]["updated"] = json!(now_iso());
             save_state(&root, &mut state);
             regen_active_md(&root, &state);
-            println!("✓ dropped agent '{name}' from {slot}; {n} agent(s) remain, slot still active");
+            println!(
+                "✓ dropped agent '{name}' from {slot}; {n} agent(s) remain, slot still active"
+            );
             return;
         }
         println!("agent '{name}' was the last owner of {slot}; releasing whole slot");
