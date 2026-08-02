@@ -1,0 +1,52 @@
+hermit: [liteinst in-guest] activation verified (traps=1, hooks=32); Detcore Tool active in guest with coordinator GlobalTool RPC
+2026-08-02T08:05:40.196185Z  INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0
+2026-08-02T08:05:40.197346Z  INFO detcore::scheduler: [scheduler] daemon task starting up, waiting for guest thread start..
+2026-08-02T08:05:40.205190Z  INFO detcore::scheduler: [scheduler] guest in queue, scheduler proceeding..
+2026-08-02T08:05:40.205282Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_000s
+2026-08-02T08:05:40.205491Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 1, dettid 3 using resources {MemAddrSpace(DetPid(3)): RW}, on previously committed 1_767_225_600.000_500_000s
+2026-08-02T08:05:40.205519Z  INFO detcore::tool_global: [detcore, dtid 3] New thread given go-ahead to proceed via <ivar Go(None)>
+2026-08-02T08:05:40.206766Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 2, dettid 5 using resources {MemAddrSpace(DetPid(5)): RW}, on previously committed 1_767_225_600.251_000_000s
+2026-08-02T08:05:40.206820Z  INFO detcore::tool_global: [detcore, dtid 5] New thread given go-ahead to proceed via <ivar Go(None)>
+2026-08-02T08:05:40.208033Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 3, dettid 6 using resources {MemAddrSpace(DetPid(6)): RW}, on previously committed 1_767_225_600.626_750_000s
+2026-08-02T08:05:40.208087Z  INFO detcore::tool_global: [detcore, dtid 6] New thread given go-ahead to proceed via <ivar Go(None)>
+2026-08-02T08:05:40.208606Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 4, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(5) }: W}, on previously committed 1_767_225_600.752_375_000s
+2026-08-02T08:05:40.208986Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 5, dettid 5 using resources {ParentContinue { parent: DetPid(5), child: DetPid(6) }: W}, on previously committed 1_767_225_600.877_875_000s
+2026-08-02T08:07:09.784282Z  INFO detcore::tool_global: Scheduler state at exit:
+  Run queue, size=3, last_back_turn=6, last_front_turn=-3:
+    (PrioritizedOrder { priority: 1000, turn: 4 }, QueueValue { tid: DetPid(6), poll_upgrade: None })
+    (PrioritizedOrder { priority: 1000, turn: 5 }, QueueValue { tid: DetPid(3), poll_upgrade: None })
+    (PrioritizedOrder { priority: 1000, turn: 6 }, QueueValue { tid: DetPid(5), poll_upgrade: None })
+
+  Futex-waiters, 0 blocked on 0 futexes:
+
+  Timed-waiters, 0:
+
+  External-IO-blocked, 0:
+
+  Next_turns: 
+ ==> dtid 3, req <ivar Ok(Resources { tid: DetPid(3), resources: {InternalIOPolling: W}, poll_attempt: 0, fyi: "wait4" })>, resp <ivar HasWaiter>
+ ==> dtid 5, req <ivar HasWaiter>, resp <ivar NoWaiter>
+ ==> dtid 6, req <ivar Ok(Resources { tid: DetPid(6), resources: {Exit { group: true, process: DetPid(6), mm: MmId { creator: DetPid(6), generation: 0 } }: RW}, poll_attempt: 0, fyi: "" })>, resp <ivar HasWaiter>
+
+2026-08-02T08:07:09.784558Z  INFO detcore::tool_global: detcore shut down, destroying global state
+2026-08-02T08:07:09.784673Z  INFO detcore::tool_global: 
+  ------------------------------ hermit run report ------------------------------
+Final thread-tree was: [3 [5 [6]]]
+There were 3 group leaders of 3 thread(s) total.
+Internally, the hermit scheduler ran 6 turns, recorded 0 events, replayed 0 events (0 desynced)
+Final virtual global (cpu) time: 1_767_225_600.877_875_000s
+Elapsed virtual global (cpu) time: 877_875_000ns
+Timeslice stats: none recorded
+

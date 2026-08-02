@@ -1,0 +1,8 @@
+fixture,backend,mode,tree,outcome,rc,notes
+nested_min,native,none,root->child1->grandchild (child1 waits),ok,0,baseline sanity
+nested_min,liteinst,--strict,root->child1->grandchild (child1 waits),HANG,124,scheduler stall; tree [3 [5 [6]]] formed then deadlock
+nested_min,ptrace,--strict,root->child1->grandchild (child1 waits),ok,0,golden reference runs it
+nested_min,ptrace,--strict --verify,root->child1->grandchild (child1 waits),L2_VERIFIED,0,byte-identical determinism verified
+nested_nowait,native,none,root->child1->grandchild (child1 does NOT wait),ok,0,control
+nested_nowait,liteinst,--strict,root->child1->grandchild (child1 does NOT wait),ok,0,isolation: not-waiting works => trigger is non-root wait4
+nested_fork,liteinst,--strict --verify,3x nested fork with waits,ERROR,1,original discovery: "fork grandchild: Unknown error -6"

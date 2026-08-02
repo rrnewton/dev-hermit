@@ -1,0 +1,16 @@
+{
+  "experiment": "liteinst_nested_fork_wait_reap_gap",
+  "date": "2026-08-02",
+  "question": "Does LiteInst flat-fork L2 support extend to a nested tree where a fork-child both forks a grandchild and waits on it (a mid-tree non-root parent-waiter)?",
+  "answer": "No. Mid-tree non-root parent-waiter deadlocks LiteInst at teardown; golden ptrace backend runs the identical tree at L2. Gap = non-root wait4/reap mediation (owner-gated lifecycle change).",
+  "hermit_branch": "codex/liteinst-flagship-hermit-pin",
+  "hermit_sha": "1470de838044b4894407173ee8ff41c7c59267da",
+  "reverie_pin": "456b628bc361c16faa6393942714ec6ca40af846",
+  "reverie_worktree_sha": "8c9aad1b5a320d0e45405799c3158efbed6d8f79",
+  "hermit_binary": "worktrees/liteinst/hermit/target/debug/hermit (debug)",
+  "backends": ["liteinst", "ptrace"],
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64, 316 cpus",
+  "toolchain": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)",
+  "inputs": ["src/nested_min.c", "src/nested_nowait.c", "src/nested_fork.c"],
+  "evidence": "logs/liteinst_nested_min_deadlock.detcore.txt (tree [3 [5 [6]]], run-queue stall, dtid3 wait4 / dtid5 ParentContinue(5->6) / dtid6 Exit not committing)"
+}
