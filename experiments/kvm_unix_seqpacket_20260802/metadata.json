@@ -1,0 +1,20 @@
+{
+  "experiment": "kvm_unix_seqpacket_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "4ef93d5efb398cc80aea63ff884f1ec457f19184",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/347",
+  "branch": "codex/kvm-unix-seqpacket-socket",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "155 pass / 1 fail; the fail (fcntl_pipe_capacity_get_and_set_forward_to_host) is pre-existing+environmental, fails identically on base ef5ffeb (F_SETPIPE_SZ rejected by container pipe-buffer accounting); fmt+clippy clean",
+  "new_test": "unix_seqpacket_socket_autobinds_like_stream_and_dgram",
+  "corpus_cells_targeted": [
+    "c-programs/unix-autobind-seqpacket"
+  ],
+  "cells_flipped": 1,
+  "flip_is_clean": "yes; cell uses only AF_UNIX socket->bind(autobind)->getsockname, no connect (unlike so_incoming_cpu_* which are blocked by the AF_INET connect gap)",
+  "golden_reference": "hermit/detcore/src/syscalls/files.rs:1806 (handle_socket forwards all socket types to host)",
+  "host": "devbig; real /dev/kvm"
+}
