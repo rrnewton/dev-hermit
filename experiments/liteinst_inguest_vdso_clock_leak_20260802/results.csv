@@ -1,0 +1,4 @@
+probe,backend,mode,vdso_clock_gettime_sec,raw_syscall_clock_gettime_sec,interpretation
+clock_probe,native,none,1785660391,1785660391,host wall-clock (both)
+clock_probe,liteinst,--strict,1785660392,1767225600,VDSO LEAKS host time; RAW syscall determinized to epoch
+clock_probe,ptrace,--strict,1767225600,1767225600,both determinized to epoch (golden reference)

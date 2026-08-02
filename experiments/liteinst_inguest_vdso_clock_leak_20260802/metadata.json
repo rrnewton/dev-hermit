@@ -1,0 +1,19 @@
+{
+  "experiment": "liteinst_inguest_vdso_clock_leak",
+  "date": "2026-08-02",
+  "question": "Why does the in-guest LiteInst flagship fail the authoritative liteinst_strict_verify_virtual_identity_and_time gate (date +%s returns host wall-clock instead of the deterministic epoch)?",
+  "answer": "The in-guest Tool DOES determinize the raw clock_gettime syscall (raw=epoch), but the glibc vDSO fast path leaks host wall-clock (vdso=host). reverie-ptrace vdso_patch (which rewrites vDSO time symbols to real syscalls) is effective under a full-Tool ptrace supervisor but NOT under the in-guest TracerBuilder::<()> lifecycle supervisor. Bounded determinism bug, NOT owner-gated/structural (refutes prior memory note). Blocks the entire flagship stack (#1429->#1443->#1466) from landing.",
+  "epoch_seconds": 1767225600,
+  "hermit_sha": "1470de838044b4894407173ee8ff41c7c59267da",
+  "hermit_branch": "codex/liteinst-flagship-hermit-pin",
+  "reverie_pin": "456b628bc361c16faa6393942714ec6ca40af846",
+  "main_reverie_pin": "028fe52338081426a3b532ce6cb45a81e953156c",
+  "key_source": [
+    "reverie-ptrace/src/vdso.rs:247 vdso_patch (rewrites __vdso_clock_gettime etc to mov+syscall+ret stubs)",
+    "reverie-ptrace/src/task.rs:1757 vdso_patch called UNGATED in tracee_preinit",
+    "reverie-preload/src/seccomp.rs for_trusted_gate: traps every syscall by IP except trusted gate; vDSO fast path makes NO syscall so is uncovered unless vdso_patch redirects it",
+    "reverie-liteinst/src/backend.rs:628 in-guest launch = TracerBuilder::<()>::new(command).spawn()"
+  ],
+  "host": "Linux 6.18.39 x86_64",
+  "authoritative_gate": "Regular tests (GitHub-managed portable) / liteinst_strict_verify_virtual_identity_and_time"
+}
