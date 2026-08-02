@@ -1,4 +1,5 @@
 bucket,test_id,lane,ci_calibrated,l2_ptrace_verify,l1_ptrace_strict,l1_kvm_parity
+applications,applications/example-timed-progress-bar,portable,uncalibrated,pass,pass,parity
 applications,applications/timed-progress-bar,portable,calibrated,pass,-,-
 backend-parity-c,backend-parity-c/cpuid-probe,privileged,uncalibrated,-,pass,parity
 backend-parity-c,backend-parity-c/pid-probe,portable,uncalibrated,-,pass,diff
@@ -178,11 +179,13 @@ determinism-stress-c,determinism-stress-c/producer-consumer,portable,calibrated,
 determinism-stress-c,determinism-stress-c/signal-order,portable,calibrated,-,pass,diff
 determinism-stress-c,determinism-stress-c/thread-contention,portable,uncalibrated,-,fail,diff
 determinism-stress-c,determinism-stress-c/thread-stress,portable,uncalibrated,-,pass,diff
+determinism-stress,determinism-stress/example-race,portable,uncalibrated,pass,pass,parity
 determinism-stress,determinism-stress/order-violation,portable,calibrated,pass,pass,parity
 determinism-stress,determinism-stress/process-chains,portable,calibrated,pass,-,-
 determinism-stress,determinism-stress/thread-contention,portable,calibrated,pass,-,-
 determinism-stress,determinism-stress/thread-output,portable,calibrated,pass,-,-
 language-runtimes,language-runtimes/bash-loop-pipe-time,portable,calibrated,pass,-,-
+language-runtimes,language-runtimes/example-python-random,portable,uncalibrated,pass,pass,parity
 language-runtimes,language-runtimes/gawk-random,portable,calibrated,pass,-,-
 language-runtimes,language-runtimes/perl-io-subprocess-time,portable,calibrated,pass,-,-
 language-runtimes,language-runtimes/python-hash-determinism,portable,calibrated,pass,-,-
@@ -194,6 +197,8 @@ shared-futex-c,shared-futex-c/qemu-init,portable,uncalibrated,-,fail,diff
 shared-futex-c,shared-futex-c/qemu-net-init,portable,uncalibrated,-,fail,diff
 system-utils,system-utils/clock-determinism,portable,calibrated,pass,pass,diff
 system-utils,system-utils/date-nanoseconds,portable,calibrated,pass,-,-
+system-utils,system-utils/example-date,portable,uncalibrated,pass,pass,diff
+system-utils,system-utils/example-devrand,portable,uncalibrated,pass,pass,parity
 system-utils,system-utils/openssl-passwd,portable,calibrated,pass,-,-
 system-utils,system-utils/proc-uptime,portable,calibrated,-,-,-
 system-utils,system-utils/random-device,portable,calibrated,pass,-,-
