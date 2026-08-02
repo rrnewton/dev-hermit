@@ -1,0 +1,42 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round50",
+  "date": "2026-08-01",
+  "question": "Can twelve inert guests across new madvise/credential/membarrier families reach e9patch preprocessing-parity L2 after the getsockopt lane is exhausted?",
+  "answer": "Yes, all twelve kept at L2; corpus 343 -> 355, 355/355 PASS_L2. Five candidates dropped (ENOSYS/EOPNOTSUPP-class or host-variable clock resolution).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1421",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1419",
+  "branch": "codex/e9patch-corpus-round50-families",
+  "commit_sha": "a68192c6c8918b06804e2eaad3fa0ca6b6dd4144",
+  "base_branch": "codex/e9patch-corpus-round49-families",
+  "base_sha": "55c3a587b50eb3547d98fc5d07afca69d1aae45d",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "setuid_noop", "syscall": "setuid(105) to current uid", "stdout": "setuid=0"},
+    {"guest": "setgid_noop", "syscall": "setgid(106) to current gid", "stdout": "setgid=0"},
+    {"guest": "madvise_hugepage", "syscall": "madvise(28) MADV_HUGEPAGE=14", "stdout": "madvhugepage=0"},
+    {"guest": "madvise_nohugepage", "syscall": "madvise(28) MADV_NOHUGEPAGE=15", "stdout": "madvnohugepage=0"},
+    {"guest": "madvise_wipeonfork", "syscall": "madvise(28) MADV_WIPEONFORK=18", "stdout": "madvwipeonfork=0"},
+    {"guest": "madvise_keeponfork", "syscall": "madvise(28) MADV_KEEPONFORK=19", "stdout": "madvkeeponfork=0"},
+    {"guest": "madvise_mergeable", "syscall": "madvise(28) MADV_MERGEABLE=12", "stdout": "madvmergeable=0"},
+    {"guest": "madvise_unmergeable", "syscall": "madvise(28) MADV_UNMERGEABLE=13", "stdout": "madvunmergeable=0"},
+    {"guest": "madvise_dodump", "syscall": "madvise(28) MADV_DODUMP=17", "stdout": "madvdodump=0"},
+    {"guest": "madvise_pageout", "syscall": "madvise(28) MADV_PAGEOUT=21", "stdout": "madvpageout=0"},
+    {"guest": "madvise_collapse", "syscall": "madvise(28) MADV_COLLAPSE=25 -> -EINVAL", "stdout": "madvcollapse=-22"},
+    {"guest": "membarrier_private", "syscall": "membarrier(324) REGISTER_PRIVATE_EXPEDITED+PRIVATE_EXPEDITED", "stdout": "membarpriv=0"}
+  ],
+  "dropped": [
+    {"candidate": "rseq", "syscall": "rseq(334)", "reason": "golden -ENOSYS(-38) vs native 0 (#152)"},
+    {"candidate": "name_to_handle_at", "syscall": "name_to_handle_at(303)", "reason": "golden -EOPNOTSUPP(-95) vs native 0 (#152)"},
+    {"candidate": "prctl_nonewprivs", "syscall": "prctl PR_GET_NO_NEW_PRIVS=39", "reason": "golden -ENOSYS(-38) vs native 0 (#152)"},
+    {"candidate": "clock_getres_realtime", "syscall": "clock_getres(229) CLOCK_REALTIME", "reason": "native 1ns vs golden-determinized 10000ns (#152)"},
+    {"candidate": "clock_getres_proccpu", "syscall": "clock_getres(229) CLOCK_PROCESS_CPUTIME_ID", "reason": "native 1ns vs golden-determinized 10000ns (#152)"}
+  ],
+  "corpus_size_before": 343,
+  "corpus_size_after": 355,
+  "net_delta": 12,
+  "full_corpus_run": "RATCHET e9patch: 355/355 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
