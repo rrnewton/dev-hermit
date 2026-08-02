@@ -10,11 +10,13 @@
   "command": "cargo test -p reverie-kvm",
   "result": "194/194 pass; fmt+clippy clean",
   "new_test": "getsockopt_so_incoming_cpu_is_canonical_zero",
-  "corpus_cells": [
+  "corpus_cells_targeted": [
     "c-programs/so-incoming-cpu-tcp4",
     "c-programs/so-incoming-cpu-tcp6",
     "c-programs/so-incoming-cpu-udp4"
   ],
+  "cells_flipped": 0,
+  "correction_20260802": "Original 'flips 3 cells' claim was WRONG. These cells run a full AF_INET loopback and fail at connect() (executor.rs:4810 accepts only AF_UNIX -> EAFNOSUPPORT) BEFORE reaching the new getsockopt(SO_INCOMING_CPU) arm. The added arm is correct golden parity and unit-tested, but is necessary-not-sufficient: cells stay KVM-fail until AF_INET loopback connect is supported. See PR #345 correction comment.",
   "golden_reference": "hermit/detcore/src/syscalls/files.rs:1995-2008 (handle_getsockopt SO_INCOMING_CPU, TODO-HUMAN-REVIEW(PR-898))",
   "host": "devbig; real /dev/kvm"
 }

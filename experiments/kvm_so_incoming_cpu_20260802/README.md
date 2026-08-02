@@ -53,12 +53,24 @@ per-option breadcrumb convention (`// AUTONOMOUS-BOT-IMPLEMENTED` +
 
 ## Interpretation
 
-Expected parity effect once landed + reverie pin bumped: **+3 cells** flip to
-KVM/ptrace parity (`so_incoming_cpu_tcp4`, `so_incoming_cpu_tcp6`,
-`so_incoming_cpu_udp4`). Unlike the socket-cookie cells (which diverge only in
-the printed cookie *value* and would need detcore's exact socket-sequence
-semantics replicated), these cells fail hard under KVM today and require a
-single deterministic value — a clean, low-risk ratchet.
+**Correction (2026-08-02): this change flips 0 cells today.** The original
+"+3 cells" claim was wrong. `so_incoming_cpu_tcp4.c` (and tcp6/udp4) run a full
+AF_INET loopback — `socket(AF_INET)` → `bind` → `getsockname` → `listen` →
+`socket(AF_INET)` → **`connect(client, AF_INET addr)`** → `accept` →
+`getsockopt(SO_INCOMING_CPU)`. Under KVM, `connect` accepts only `AF_UNIX`
+(`reverie-kvm/src/executor.rs:4810` returns `EAFNOSUPPORT` for any other
+family), so the cell fails at `connect()` **before** reaching the new
+`getsockopt(SO_INCOMING_CPU)` arm. The earlier "sibling `socket_cookie_tcp`
+exits 0" evidence does not support the claim: `socket_cookie_tcp.c` only creates
+two AF_INET sockets and reads `SO_COOKIE`; it never calls `connect`.
+
+The added arm is still **correct golden parity** (mirrors detcore
+`handle_getsockopt`, files.rs:1995-2008) and unit-tested, so it is a valid
+*incremental* fix that removes one gap on the path — but it is
+necessary-but-not-sufficient. The `so_incoming_cpu_*` cells stay KVM-fail until
+KVM supports AF_INET loopback `connect` (a larger subsystem lift that also
+blocks `tcp_info_*` and `socket_timestamp_*`). See the PR #345 correction
+comment.
 
 ## Reproduction
 
