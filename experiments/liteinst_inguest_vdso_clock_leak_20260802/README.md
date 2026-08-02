@@ -61,34 +61,70 @@ fast path escapes it.
   filter (`reverie-preload/src/seccomp.rs::for_trusted_gate`, traps by IP)
   would catch and route to the in-guest Tool for determinization — exactly as it
   already does for libc's raw `clock_gettime`.
-- `vdso_patch` is invoked **ungated** in `reverie-ptrace/src/task.rs:1757`
-  (`vdso::vdso_patch(self).await.expect(...)`, contrast the CPUID patch at
-  1775 gated on `subscriptions.has_cpuid()`), so it *should* run for the
-  in-guest `()` supervisor too.
-- Yet the vDSO still leaks host time under liteinst while it is determinized
-  under the full-`T` ptrace supervisor. So the redirect is **not landing** on
-  the guest's live `[vdso]` in the in-guest launch path
-  (`reverie-liteinst/src/backend.rs` in-guest `None` arm =
-  `TracerBuilder::<()>::new(command).spawn()`).
+### RESOLVED by runtime instrumentation (2026-08-02) — Hypothesis (a): `vdso_patch` is never reached
 
-The remaining unknown — **why** the ungated `vdso_patch` write is ineffective
-under the `()` supervisor (not reached for this task, silently no-ops, is
-reverted, or the redirected syscall is not trapped in-guest) — requires hands-on
-runtime inspection (trace in `vdso_patch`, or dump the running guest's `[vdso]`
-bytes). That is a bounded corrective fix reusing the existing `vdso_patch`
-primitive + the existing in-guest seccomp trap, **not** a new Tool/Guest/Backend
-abstraction. If the eventual fix turns out to change syscall-interception
-semantics, it becomes owner-gated; the diagnosis so far points at a
-plumbing/ordering bug, not a semantic change.
+A `VDSO_TRACE` `eprintln!` build (scratch reverie checkout at `456b628`) shows
+the ptrace backend emits the full patch trace (ENTER → found `[vdso]` → 5 stub
+writes → DONE) while the **LiteInst backend emits zero `VDSO_TRACE` lines**. The
+reason is now source-confirmed:
 
-## Disposition
+- At the pinned `456b628`, `reverie-liteinst/src/backend.rs::launch<T>()`
+  (line 549) launches the guest via a **plain `child_command.spawn()`**
+  (line 620) — a `std::process::Command::spawn()` with **no `TracerBuilder` and
+  no ptrace attach**, in *both* the `Some(tool_data)` and `None` arms. The
+  `TracerBuilder`-based `run_host_with_preload*` paths (lines 208–330) exist but
+  `launch()` does not use them.
+- `vdso_patch`'s only call site is `reverie-ptrace/src/task.rs:1757` via
+  `tracee_preinit` (`tracer.rs:1731 postspawn`), which only runs under a ptrace
+  supervisor. With no supervisor, `vdso_patch` never executes for the LiteInst
+  backend.
+- LiteInst's only in-guest interceptor is `reverie-preload`'s `InProcessSeccomp`
+  (`lifecycle.rs:73-79`): a SIGSYS handler + `SeccompFilter::for_trusted_gate`
+  that traps **syscall instructions** at non-gate IPs. The glibc vDSO
+  `clock_gettime` fast path issues **no syscall instruction** (it reads the
+  kernel `vvar` page directly), so it is never trapped → host time leaks. The
+  raw `syscall(SYS_clock_gettime)` *is* a syscall instruction → trapped → SIGSYS
+  → `LiteinstDispatcher::dispatch` → determinized. That is exactly the observed
+  `vdso=host raw=epoch` split.
+
+**Correction to this note's own earlier framing:** the premise that the in-guest
+arm uses `TracerBuilder::<()>` (and therefore a bounded "why is the ungated
+`vdso_patch` ineffective" wiring bug) was WRONG — that describes the *later*
+commit `8c9aad1` / reverie PR #337, not the pinned `456b628`. At `456b628` there
+is no supervisor at all, so there is no uncalled `vdso_patch` to wire up.
+
+## Disposition — OWNER-GATED (not a contained fix)
+
+`reverie-preload/src/lifecycle.rs:16-21` documents the gap directly: the
+in-process seccomp "cannot cover the ~40 loader/startup syscalls before the
+constructor, **vDSO fast paths**, or `exec`." The documented remedy —
+`HybridPtrace` LifecycleController (`lifecycle.rs:82-104`) — is an intentional
+non-functional skeleton (`install()` returns `ErrorKind::Unsupported`) that a
+future task must build. Two remedy paths exist and **both are owner-gated** under
+the Reverie API Policy because both change the LiteInst
+syscall-interception / lifecycle mechanism:
+
+1. **HybridPtrace lifecycle controller** (smallest correct change): a thin ptrace
+   launcher that stops the guest at the post-exec preinit stop, calls the
+   *existing, proven* `reverie_ptrace::vdso::vdso_patch` on the guest `[vdso]`,
+   then hands the hot path to the in-process SIGSYS trap. Reuses `vdso_patch`
+   verbatim but introduces a new backend lifecycle controller / interception
+   mechanism. (Reverie PR #337's `TracerBuilder::<()>` lifecycle-supervisor slice
+   is this same class of change — it *would* reach `vdso_patch` — but #337 also
+   carries a separate `backend.rs` LD_PRELOAD regression and is itself the
+   lifecycle change, so it is not a drop-in either.)
+2. **In-guest-only vDSO neutralization** (self-patch the vDSO in the preload
+   constructor): not reliably contained — the in-handler dispatch fails closed
+   with `EOPNOTSUPP` for any unhookable site (`runtime.rs:1722-1723`, no
+   trap-and-emulate), and the only fully-safe variant depends on glibc-version
+   vDSO fallback behavior. New in-guest interception machinery → owner-gated.
 
 This single vDSO clock leak is the **sole** red cell on PR #1466's authoritative
 gate (`Regular tests (GitHub-managed portable)`); every other flagship test
 (fork L2, thread-clone fail-closed, python entropy/random, preload-inert) is
-green. Fixing it turns the gate green and unblocks the entire flagship stack from
-landing. It is reported and preserved here; the fix is being pinned via runtime
-inspection before any reverie-crate edit.
+green. But turning it green requires an owner-reviewed lifecycle-controller task,
+not an autonomous in-lane fix. It is reported as an owner-gated blocker; the
+shipped flagship increment (flat plain-fork L2, PR #1466) is unaffected.
 
 ## Reproduction
 
