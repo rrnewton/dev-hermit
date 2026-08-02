@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round44",
+  "date": "2026-08-01",
+  "question": "Can nine inert guests on new path-credential, socket-option, mmap-flag, netlink, O_DIRECT-pipe, fcntl-I/O-signal, and arch_prctl-CPUID axes reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all nine kept at L2; corpus 282 -> 291, 291/291 PASS_L2. Two candidates dropped/set aside (golden diverges from native, or errno-only).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1413",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1410",
+  "branch": "codex/e9patch-corpus-round44-families",
+  "commit_sha": "e65bd97fdc39c704600b899fb6748e9e8c042dc7",
+  "base_branch": "codex/e9patch-corpus-round43-families",
+  "base_sha": "ba3dbad918306ef0f5a162a64342c3d2aa1f577b",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "fchownat_devnull", "syscall": "fchownat(260) AT_FDCWD owner/group -1", "stdout": "fchownat=0"},
+    {"guest": "getsockopt_zerocopy", "syscall": "getsockopt(55) SO_ZEROCOPY=60", "stdout": "zerocopy=0"},
+    {"guest": "getsockopt_mark", "syscall": "getsockopt(55) SO_MARK=36", "stdout": "mark=0"},
+    {"guest": "mmap_locked", "syscall": "mmap(9) MAP_LOCKED=0x2000", "stdout": "maplocked=1"},
+    {"guest": "mmap_growsdown", "syscall": "mmap(9) MAP_GROWSDOWN=0x100", "stdout": "growsdown=1"},
+    {"guest": "socket_netlink", "syscall": "socket(41) AF_NETLINK/SOCK_RAW/NETLINK_ROUTE", "stdout": "netlink=1"},
+    {"guest": "pipe2_direct", "syscall": "pipe2(293) O_DIRECT=0x4000", "stdout": "pd=hi"},
+    {"guest": "fcntl_setsig", "syscall": "fcntl(72) F_SETSIG=10/F_GETSIG=11", "stdout": "setsig=10"},
+    {"guest": "arch_prctl_getcpuid", "syscall": "arch_prctl(158) ARCH_GET_CPUID=0x1011", "stdout": "getcpuid=0"}
+  ],
+  "dropped": [
+    {"candidate": "prctl_get_no_new_privs", "syscall": "prctl(157) PR_GET_NO_NEW_PRIVS=39", "reason": "native 0 vs golden hermit -ENOSYS(-38); hermit limitation not parity (#152)"},
+    {"candidate": "getsockopt_passsec", "syscall": "getsockopt(55) SO_PASSSEC=34", "reason": "errno-only -EOPNOTSUPP(-95) on AF_INET; set aside to keep the batch value-bearing"}
+  ],
+  "corpus_size_before": 282,
+  "corpus_size_after": 291,
+  "net_delta": 9,
+  "full_corpus_run": "RATCHET e9patch: 291/291 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
