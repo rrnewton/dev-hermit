@@ -1,0 +1,22 @@
+{
+  "experiment": "e9patch_warmpath_tool_digest_cache",
+  "date": "2026-08-01",
+  "question": "Where does e9patch's per-run time go on the warm path, and what is the fix?",
+  "attribution": "100% of warm-path overhead = redundant SHA-256 of e9tool(935KiB)+e9patch(159KiB), twice each, on every run to rebuild the rewrite-cache key; tools never executed on a cache hit.",
+  "fix": "(path,len,mtime)-keyed tool-digest sidecar memo; defer trusted snapshot copy to miss path; authoritative key rebuilt on miss; artifact still content-verified.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1436",
+  "branch": "codex/e9patch-warmpath-tool-digest-cache",
+  "commit_sha": "dfcb41fe",
+  "base_branch": "main",
+  "base_sha": "065980ea661f9d5e84b4fbaa0c69f4a4f69a81a9",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly",
+  "build": "cargo build -p hermit --features e9patch --bin hermit",
+  "guest": "freestanding static raw-syscall x86-64, 1 candidate site",
+  "measurement": "preprocess_us from ':: Backend: e9patch' banner; 8 warm reps each; same build, same warm cache; toggled by HERMIT_E9PATCH_NO_DIGEST_CACHE",
+  "result_old_median_us": 55000,
+  "result_new_median_us": 1940,
+  "speedup": "~28x warm-path; ~53ms saved/run",
+  "artifact_sha256_identical": "567c3409388a13c57d82d19df61305e28d8c4a03ff34646b20235d7e1ba6c0bb (cold-miss == new-hit == old-hit)",
+  "correctness": "e9patch corpus 12/12 PASS_L2; unit tests 15/15; fmt/clippy clean"
+}
