@@ -1,0 +1,18 @@
+{
+  "experiment": "kvm_ppoll_masked_ready_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "35971125f594fe208fa95d54537895920067ab1e",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/346",
+  "branch": "codex/kvm-ppoll-masked-ready",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "194/194 pass (155 lib incl. new test); fmt+clippy clean",
+  "new_test": "executor::tests::ppoll_masked_ready_returns_count_and_blocking_fails_closed",
+  "corpus_cells": [
+    "c-programs/ppoll-readv"
+  ],
+  "golden_reference": "hermit/detcore/src/syscalls/io.rs:922-939 (handle_internal_ppoll masked zero-probe fail-closed, TODO-HUMAN-REVIEW(PR-273))",
+  "host": "devbig; real /dev/kvm"
+}
