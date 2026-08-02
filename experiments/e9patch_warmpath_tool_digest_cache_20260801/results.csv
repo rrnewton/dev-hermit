@@ -1,0 +1,17 @@
+path,rep,rewrite_cache,preprocess_us
+old_always_snapshot,1,hit,56258
+old_always_snapshot,2,hit,53539
+old_always_snapshot,3,hit,54936
+old_always_snapshot,4,hit,55022
+old_always_snapshot,5,hit,55824
+old_always_snapshot,6,hit,70119
+old_always_snapshot,7,hit,53436
+old_always_snapshot,8,hit,56313
+new_digest_memo,1,hit,1922
+new_digest_memo,2,hit,2021
+new_digest_memo,3,hit,1973
+new_digest_memo,4,hit,1941
+new_digest_memo,5,hit,1908
+new_digest_memo,6,hit,1917
+new_digest_memo,7,hit,1986
+new_digest_memo,8,hit,1915
