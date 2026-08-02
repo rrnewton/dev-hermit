@@ -1,0 +1,29 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round54",
+  "date": "2026-08-01",
+  "question": "Can five inert guests driving socket syscalls into faithful Linux errno constants (getpeername/shutdown ENOTCONN, accept EINVAL, listen EOPNOTSUPP) plus a getsockname family read reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all five kept at L2; corpus 380 -> 385, 385/385 PASS_L2. No candidates dropped this round.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1426",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1425",
+  "branch": "codex/e9patch-corpus-round54-families",
+  "commit_sha": "064bfee2",
+  "base_branch": "codex/e9patch-corpus-round53-families",
+  "base_sha": "bb1de255",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getpeername_unconnected", "op": "getpeername(52) unconnected AF_INET stream", "errno": "-ENOTCONN(-107)", "stdout": "getpeername=-107"},
+    {"guest": "shutdown_unconnected", "op": "shutdown(48) SHUT_RDWR unconnected AF_INET stream", "errno": "-ENOTCONN(-107)", "stdout": "shutdownunc=-107"},
+    {"guest": "accept_nonlisten", "op": "accept(43) non-listening AF_INET stream", "errno": "-EINVAL(-22)", "stdout": "acceptnolis=-22"},
+    {"guest": "listen_dgram", "op": "listen(50) AF_INET dgram", "errno": "-EOPNOTSUPP(-95)", "stdout": "listendgram=-95"},
+    {"guest": "getsockname_family", "op": "getsockname(51) family unbound AF_INET stream", "value": "AF_INET(2)", "stdout": "gsnfamily=2"}
+  ],
+  "dropped": [],
+  "corpus_size_before": 380,
+  "corpus_size_after": 385,
+  "net_delta": 5,
+  "full_corpus_run": "RATCHET e9patch: 385/385 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
