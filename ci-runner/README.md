@@ -1,16 +1,14 @@
 # Hermit CI runner / status tooling
 
-On-demand visibility into the Hermit repos' GitHub Actions state. Modeled on the
-`dev-deepscry/ci-runner` pattern but sized to Hermit's reality: Hermit does **not**
-run a container fleet — it uses a single, permanently-installed PMU self-hosted
-runner per repo. This directory currently provides a **non-mutating status
-reporter**, not fleet provisioning.
+On-demand visibility into the Hermit repos' GitHub Actions state, sized to
+Hermit's reality: Hermit does **not** run a container fleet - it uses a single,
+permanently-installed PMU self-hosted runner per repo. This directory currently
+provides a **non-mutating status reporter**, not fleet provisioning.
 
-> Scope note: `dev-deepscry/ci-runner` additionally contains Hetzner fleet
-> provisioning, a CI shepherd/reconciler, and a runner container image. Those are
-> deliberately **not** ported here — Hermit's runners are host-local PMU machines
-> (they need `perf` RCB counters), so cloud-fleet scale-out does not apply. Add
-> them only if Hermit moves to on-demand runners.
+> Scope note: Fleet provisioning, a CI shepherd/reconciler, and a runner
+> container image are deliberately out of scope. Hermit's runners are host-local
+> PMU machines (they need `perf` RCB counters), so cloud-fleet scale-out does not
+> apply. Add those capabilities only if Hermit moves to on-demand runners.
 
 ## Quick start
 
