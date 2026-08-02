@@ -1,0 +1,17 @@
+{
+  "experiment": "kvm_seccomp_eopnotsupp_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "3157b542d699e0c944327d2fac0205ddabfad355",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/344",
+  "branch": "codex/kvm-seccomp-eopnotsupp",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "194/194 pass; fmt+clippy clean",
+  "golden_reference": "hermit detcore/src/syscalls/misc.rs seccomp_result",
+  "corpus_cells": [
+    "c-programs/syscall_quick_wins"
+  ],
+  "host": "devbig; real /dev/kvm"
+}
