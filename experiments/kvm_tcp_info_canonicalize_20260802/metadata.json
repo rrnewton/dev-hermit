@@ -28,6 +28,6 @@
   ],
   "cells_flipped_standalone": 0,
   "requires_stack": "#349 (connect lift) + #350 (this) together are the Reverie-side prerequisites for the 3 tcp_info_* cells",
-  "fullstack_verify": "not asserted; debug-build KVM container boot pathologically slow in this env (see memory kvm-fullstack-debug-boot-unusably-slow)",
+  "fullstack_verify": "ATTEMPTED with target/release/hermit on devbig 2026-08-02; NOT obtainable in this env. /dev/kvm present + world-rw (crw-rw-rw- root kvm). Four guests each SIGKILLed with zero guest output, all stalled at '[scheduler] daemon task starting up, waiting for guest thread start..' (vCPU never enters guest): tcp_info_accept4 --strict --verify (300s timeout), trivial dynamic hello write+exit (>250s), busybox echo (>720s), busybox true (>840s). ptrace reference of tcp_info_accept4 passes in ~1s ('Determinism verified', accept4 state=1 ca=0 options=7 scales=153). So integrated L1/L2 KVM cell flip for #349+#350 is a coordinator task on a KVM-capable host/CI; L0 executor unit tests are the ceiling here. See memory kvm-fullstack-debug-boot-unusably-slow.",
   "host": "devbig; host TCP loopback sockets available"
 }
