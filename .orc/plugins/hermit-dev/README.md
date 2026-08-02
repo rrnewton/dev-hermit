@@ -24,6 +24,12 @@ registers it as the `hermit-dev` skill, so a single source stays authoritative.
   - `orc.hermit-dev.status()` — report registration and policy-source state.
 - Ships `gh-issue-create`, the wrapper that keeps agent-created GitHub issues
   on the `rrnewton` forks (never `facebookexperimental`).
+- Registers `hermitGithubMainHealth`, which polls current-main `push` workflow
+  runs for dev-hermit, Hermit, and Reverie through `with-proxy gh`.
+- Runs that poll every 30 minutes in the durable `hermit-dev-pr-health`
+  workflow. Every tick wakes the coordinator with live results; red or query
+  failure uses a `HARD WARNING` title. This is an executed poll, not a reminder
+  to inspect GitHub later.
 
 `AGENTS.md` is resolved across both install layouts: first relative to the
 plugin directory (`orc.pluginDir() + "/../../../AGENTS.md"`, which hits the repo

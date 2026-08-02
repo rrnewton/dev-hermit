@@ -56,3 +56,12 @@ paths so you can keep it current.
 Separate hard gate: every runnable-demo change needs an adversarial green-demo
 attestation before merge. See `demos/ADVERSARIAL-REVIEW-POLICY.md`, the CI job
 `demo-review-gate`, and `.githooks/commit-msg` (checker: `scripts/check-demo-review.sh`).
+
+## GitHub main health before push
+
+`.githooks/pre-push` runs `scripts/github_main_health.py` before every parent
+push. It polls current-main `push` workflow runs for `rrnewton/dev-hermit`,
+`rrnewton/hermit`, and `rrnewton/reverie` through `with-proxy gh`. A red main or
+query failure emits a hard warning. The hook deliberately does not block because
+the pending push may be the repair, but the coordinator must not claim green
+until the live report is green.

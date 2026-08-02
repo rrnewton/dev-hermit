@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Warn on every parent push when GitHub reports a red current main commit.
+# This is deliberately non-blocking: it makes the red impossible to miss while
+# still allowing the coordinator to push a fix for that red.
+set -uo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+checker="$root/scripts/github_main_health.py"
+
+if [ ! -f "$checker" ]; then
+  echo "HARD WARNING: GitHub main health checker is missing: $checker" >&2
+  exit 0
+fi
+
+output=$("$checker" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  printf '%s\n' "$output" >&2
+  exit 0
+fi
+
+{
+  echo "----------------------------------------------------------------------"
+  printf '%s\n' "$output"
+  if [ "$rc" -eq 1 ]; then
+    echo "Pre-push warning: GitHub reports RED main. Push is allowed so fixes can land."
+  else
+    echo "Pre-push warning: GitHub main health could not be verified. Do not claim green."
+  fi
+  echo "----------------------------------------------------------------------"
+} >&2
+exit 0

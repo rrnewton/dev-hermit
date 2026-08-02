@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report operational health for open Hermit and Reverie pull requests."""
+"""Report GitHub-grounded main and open-PR operational health."""
 
 from __future__ import annotations
 
@@ -10,12 +10,17 @@ import sys
 from dataclasses import dataclass
 from typing import Sequence
 
+if __package__:
+    from . import github_main_health
+else:
+    import github_main_health
+
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
 DEFAULT_WARN_THRESHOLD = 10
 # Landing is never gated on human review. Every open PR is free to land once CI
 # is green; the only distinction this report draws is whether the post-facto
 # (post-landing) review label has already been applied.
-POST_FACTO_REVIEW_LABEL = "post-facto-review"
+POST_FACTO_REVIEW_LABEL = "post-facto-human-review"
 
 RED_CONCLUSIONS = frozenset(
     (
@@ -167,23 +172,24 @@ def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
     lines = [
         "Open PR health: rrnewton/hermit + rrnewton/reverie",
         "",
-        "  All open PRs are FREE TO LAND once CI is green. 'post-facto-review' is",
+        "  All open PRs are FREE TO LAND once CI is green. 'post-facto-human-review' is",
         "  a POST-LANDING tag, never a pre-landing gate. The two groups below only",
         "  differ by whether that label has been applied yet.",
         "",
-        f"Free to land (post-facto-review label applied) ({len(labeled)})",
+        f"Free to land (post-facto-human-review label applied) ({len(labeled)})",
     ]
     lines.extend(_format_pr(pr) for pr in labeled)
     if not labeled:
         lines.append("  (none)")
 
     lines.extend(
-        ("", f"Free to land (no post-facto-review label yet) ({len(unlabeled)})")
+        ("", f"Free to land (no post-facto-human-review label yet) ({len(unlabeled)})")
     )
     for pr in unlabeled:
         lines.append(_format_pr(pr))
         lines.append(
-            "    ACTION: add the post-facto-review label, then merge when CI is green"
+            "    ACTION: add post-facto-human-review only when policy triggers it; "
+            "merge when CI is green"
         )
     if not unlabeled:
         lines.append("  (none)")
@@ -193,8 +199,8 @@ def render_report(prs: Sequence[PullRequest], warn_threshold: int) -> str:
             "",
             "Summary",
             f"  total open (all free to land):  {len(prs)}",
-            f"  with post-facto-review label:   {len(labeled)}",
-            f"  need post-facto-review label:   {len(unlabeled)}",
+            f"  with post-facto-human-review:   {len(labeled)}",
+            f"  without that optional label:    {len(unlabeled)}",
             f"  CI-failing:                     {ci_failing}",
         )
     )
@@ -236,13 +242,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     repos = tuple(args.repos) if args.repos else DEFAULT_REPOS
 
     try:
+        main_health = [
+            github_main_health.evaluate_repo(repo)
+            for repo in github_main_health.DEFAULT_REPOS
+        ]
         prs = [pr for repo in repos for pr in fetch_open_prs(repo)]
     except (RuntimeError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
 
+    print(github_main_health.render_report(main_health))
+    print()
     print(render_report(prs, args.warn_threshold))
-    return 0
+    return 1 if github_main_health.overall_state(main_health) == "red" else 0
 
 
 if __name__ == "__main__":

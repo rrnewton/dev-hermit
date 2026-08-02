@@ -12,6 +12,9 @@ const URGENT_VALIDATION_SKILL_PATH =
   orc.pluginDir() + "/urgent-critical-path-fix-validation.md";
 const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
 const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
+const MAIN_HEALTH_SCRIPT_NAME = "hermitGithubMainHealth";
+const MAIN_HEALTH_COMMAND =
+  'cd "$HOME/work/dev-hermit" && ./scripts/github_main_health.py';
 const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
 const PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
 
@@ -157,13 +160,28 @@ async function activateHermitDevPolicies(): Promise<string> {
 
 export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
   await wf.loop(async () => {
-    await wf.sleep(PR_HEALTH_INTERVAL_MS);
+    const result = await orc.scripts.hermitGithubMainHealth() as {
+      exitCode: number;
+      stdout?: string;
+      stderr?: string;
+    };
+    const exitCode = Number(result.exitCode);
+    const stdout = String(result.stdout || "").trim();
+    const stderr = String(result.stderr || "").trim();
+    const report = [stdout, stderr].filter(Boolean).join("\n");
+    const title = exitCode === 0
+      ? "GitHub main health ops tick"
+      : exitCode === 1
+        ? "HARD WARNING: GitHub main is RED"
+        : "HARD WARNING: GitHub main health is UNKNOWN";
     await orc.sendWakeup(
       [],
-      "PR health heartbeat",
-      "Run " + PR_STATUS_COMMAND + ". Review post-facto-human-review follow-ups, " +
-        "CI failures, and the free-to-land backlog before opening more PRs.",
+      title,
+      report + "\nRun " + PR_STATUS_COMMAND +
+        ". Review post-facto-human-review follow-ups, CI failures, and the " +
+        "free-to-land backlog before opening more PRs.",
     );
+    await wf.sleep(PR_HEALTH_INTERVAL_MS);
   });
 }
 
@@ -179,6 +197,12 @@ registerUrgentValidationSkill(
   "The urgent critical-path validation protocol is loaded during plugin " +
     "startup.",
 );
+
+orc.registerScript(MAIN_HEALTH_SCRIPT_NAME, {
+  script: MAIN_HEALTH_COMMAND,
+  description: "Poll live GitHub current-main push workflow health",
+  timeoutSec: 120,
+});
 
 orc.exposeFunction(
   PLUGIN_NAME + ".activate",
@@ -212,6 +236,7 @@ orc.exposeFunction(
       reverieIssueRepo: "rrnewton/reverie",
       issueCreateWrapper: ISSUE_CREATE_WRAPPER,
       prStatusCommand: PR_STATUS_COMMAND,
+      githubMainHealthCommand: MAIN_HEALTH_COMMAND,
       prHealthIntervalMinutes: PR_HEALTH_INTERVAL_MS / 60000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,

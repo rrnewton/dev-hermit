@@ -14,11 +14,15 @@ def pull_request(
     *,
     repo: str = "rrnewton/hermit",
     number: int = 1,
-    human_review: bool = False,
+    post_facto_review: bool = False,
     ci_status: str = "green",
     draft: bool = False,
 ) -> pr_status.PullRequest:
-    labels = frozenset((pr_status.HUMAN_REVIEW_LABEL,)) if human_review else frozenset()
+    labels = (
+        frozenset((pr_status.POST_FACTO_REVIEW_LABEL,))
+        if post_facto_review
+        else frozenset()
+    )
     return pr_status.PullRequest(
         repo=repo,
         number=number,
@@ -55,17 +59,20 @@ class CiRollupTests(unittest.TestCase):
 
 
 class PullRequestTests(unittest.TestCase):
-    def test_human_review_label_blocks_pr(self) -> None:
+    def test_post_facto_label_is_reported(self) -> None:
         raw = {
             "number": 12,
             "title": "  Review   this ",
             "url": "https://example.test/12",
             "isDraft": True,
-            "labels": [{"name": "human-review"}, {"name": "backend"}],
+            "labels": [
+                {"name": "post-facto-human-review"},
+                {"name": "backend"},
+            ],
             "statusCheckRollup": [],
         }
         pr = pr_status.parse_pull_request("rrnewton/reverie", raw)
-        self.assertTrue(pr.needs_human_review)
+        self.assertTrue(pr.has_post_facto_review)
         self.assertEqual(pr.title, "Review this")
         self.assertEqual(pr.ci_status, "none")
 
@@ -86,21 +93,21 @@ class PullRequestTests(unittest.TestCase):
 class ReportTests(unittest.TestCase):
     def test_report_categorizes_and_counts(self) -> None:
         prs = [
-            pull_request(number=3, human_review=True, ci_status="green"),
+            pull_request(number=3, post_facto_review=True, ci_status="green"),
             pull_request(number=2, ci_status="red", draft=True),
             pull_request(repo="rrnewton/reverie", number=1, ci_status="pending"),
         ]
         report = pr_status.render_report(prs, warn_threshold=10)
-        self.assertIn("Ready to land - needs post-facto review (1)", report)
+        self.assertIn("Free to land (post-facto-human-review label applied) (1)", report)
         self.assertIn(
-            "ACTION: add post-facto-review label, merge immediately if CI green",
+            "ACTION: add post-facto-human-review only when policy triggers it",
             report,
         )
-        self.assertIn("Free to land: no human-review label (2)", report)
-        self.assertIn("total open:        3", report)
-        self.assertIn("post-facto-land:   1", report)
-        self.assertIn("free-to-land:      2", report)
-        self.assertIn("CI-failing:        1", report)
+        self.assertIn("Free to land (no post-facto-human-review label yet) (2)", report)
+        self.assertIn("total open (all free to land):  3", report)
+        self.assertIn("with post-facto-human-review:   1", report)
+        self.assertIn("without that optional label:    2", report)
+        self.assertIn("CI-failing:                     1", report)
         self.assertIn("ci=red", report)
         self.assertIn("draft=yes", report)
         self.assertNotIn("WARNING:", report)
