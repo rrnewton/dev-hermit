@@ -1,0 +1,22 @@
+{
+  "experiment": "e9patch_warmpath_guest_artifact_memo",
+  "date": "2026-08-01",
+  "question": "After #1436, does any dumb per-run cost remain on an e9patch cache hit, and does the rewrite cache reliably hit run-to-run?",
+  "pr": "https://github.com/rrnewton/hermit/pull/1459",
+  "hermit_branch": "codex/e9patch-warmpath-guest-artifact-memo",
+  "hermit_sha": "a140c72e478a8139a3fc3d63fc9d4ae674668067",
+  "hermit_base": "55fd251b (origin/main)",
+  "reverie_rev": "028fe52338081426a3b532ce6cb45a81e953156c",
+  "follow_up_to": "PR #1436, merged as c7611ea799199bd9ac9364cf932a5c4875e2e831",
+  "host": "316-core devbig, debug hermit binary",
+  "guest": "/var/tmp/biggp — 24 MiB static freestanding, one patchable syscall site",
+  "result": {
+    "cold_preprocess_us": 1274313,
+    "warm_preprocess_us_range": [929, 1048],
+    "speedup_vs_pre_1459": "~1800-2000x",
+    "cache_hits_reliably": true,
+    "artifact_byte_identical_cold_vs_warm": true,
+    "artifact_sha256": "f70c819d3bc6d0db44f58383f2f8acef6dfc284c7872507107d71e6872f217b2"
+  },
+  "conclusion": "No remaining dumb slowness on the warm path (~1ms/run); cold ~1.27s is the inherent one-time e9tool rewrite, amortized by a reliable cache hit."
+}

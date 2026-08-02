@@ -1,0 +1,5 @@
+run,cache_state,preprocess_us,wall_s,rewrite_cache,instruction_map_cache,artifact_sha256
+cold,empty,1274313,1.29,miss,Miss,f70c819d3bc6d0db44f58383f2f8acef6dfc284c7872507107d71e6872f217b2
+warm1,populated,961,0.02,hit,Hit,f70c819d3bc6d0db44f58383f2f8acef6dfc284c7872507107d71e6872f217b2
+warm2,populated,929,0.02,hit,Hit,f70c819d3bc6d0db44f58383f2f8acef6dfc284c7872507107d71e6872f217b2
+warm3,populated,1048,0.02,hit,Hit,f70c819d3bc6d0db44f58383f2f8acef6dfc284c7872507107d71e6872f217b2

@@ -1,0 +1,50 @@
+{
+  "experiment": "e9patch_compat_last_cells_rootcause",
+  "date": "2026-08-01",
+  "question": "What are the exact e9patch parity/determinism gap cells against the ptrace reference in the full-corpus compat-envelope scorecard, and what is the honest root cause of each?",
+  "data_provenance": {
+    "source_scorecard": "compat-envelope/fullcorpus-scorecard.csv",
+    "source_report": "compat-envelope/REPORT.md",
+    "hermit_sha": "82a8e853357584a3a567fd80812e015572a607c7",
+    "reverie_sha": "a4f33d69a56ed4233a53b218c39d93807ffc8cd0",
+    "host": "316-core devbig, release hermit binary, load ~77 during the sweep",
+    "backend": "e9patch (AOT e9tool rewrite + ptrace runtime) vs ptrace reference",
+    "mode": "hermit run --strict --verify (L2, DETLOG-bitwise self-verify); portable lane flags --no-virtualize-cpuid --max-timeslice=disabled"
+  },
+  "denominator": {
+    "full_corpus_cells": 200,
+    "ptrace_green_cells": 179,
+    "e9patch_det_green_absolute": 179,
+    "e9patch_parity_green_absolute": 173,
+    "e9patch_det_green_on_ptrace_green": 178,
+    "e9patch_det_pct_of_ptrace_green": 99.44,
+    "e9patch_parity_green_on_ptrace_green": 172,
+    "e9patch_parity_pct_of_ptrace_green": 96.09
+  },
+  "gap_cells": {
+    "determinism_failures": ["c-programs/rcx-canonicalization"],
+    "parity_only_failures": [
+      "c-programs/print-memaddrs",
+      "c-programs/proc-fd-link-aliases",
+      "system-utils/date-nanoseconds",
+      "language-runtimes/bash-loop-pipe-time",
+      "language-runtimes/perl-io-subprocess-time",
+      "language-runtimes/python-io-subprocess-time"
+    ]
+  },
+  "root_cause_classification": {
+    "a_inherent_instruction_relocation": ["c-programs/rcx-canonicalization"],
+    "b_inherent_e9loader_prologue_value_shift": [
+      "c-programs/print-memaddrs",
+      "c-programs/proc-fd-link-aliases",
+      "system-utils/date-nanoseconds",
+      "language-runtimes/bash-loop-pipe-time",
+      "language-runtimes/perl-io-subprocess-time",
+      "language-runtimes/python-io-subprocess-time"
+    ],
+    "c_shared_unrelated": [],
+    "note": "All 7 are structural/inherent to e9patch (instruction relocation + deterministic e9loader prologue advancing virtual clock / shifting virtual inode / shifting absolute addresses). Zero fixable defects, zero shared failures. Each backend stays internally L2-deterministic; only cross-backend emitted VALUES differ. Not corpus-addition or harness-path-invariance opportunities; correct action = document as known inherent limits."
+  },
+  "conclusion": "e9patch compat parity is SATURATED at 96.1% / determinism 99.4% of ptrace-green cells; the residual 7 are inherent to the backend architecture per tests/backend-parity/README.md:177-196.",
+  "reproduction": "awk -F, join of e9patch vs ptrace rows in compat-envelope/fullcorpus-scorecard.csv, keyed on test_id; see README.md."
+}
