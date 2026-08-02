@@ -65,3 +65,12 @@ push. It polls current-main `push` workflow runs for `rrnewton/dev-hermit`,
 query failure emits a hard warning. The hook deliberately does not block because
 the pending push may be the repair, but the coordinator must not claim green
 until the live report is green.
+
+## Primary checkout freshness before commit
+
+`.githooks/pre-commit` runs `scripts/primary_checkout.py check` before every
+parent commit. It warns when `hermit/`, `reverie/`, or `liteinst2/` is detached
+or differs from the repository's live `origin/main`. The warning is nonblocking
+so a gitlink or tooling repair can still be committed. Run `make checkout-fresh`
+to fetch, check out `main`, and fast-forward each clean primary; dirty primaries
+are preserved and skipped with a warning.

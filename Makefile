@@ -6,7 +6,7 @@ SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
-	check-submodules checkout-all checkout-e9patch checkout-optional-submodules checkout-sabre \
+	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
@@ -54,6 +54,9 @@ checkout-all:
 	@$(SUBMODULE_GIT) submodule update --init --recursive
 	@$(MAKE) -C hermit --no-print-directory checkout-all
 	@$(MAKE) -C reverie --no-print-directory checkout-all
+
+checkout-fresh: ## Safely move clean primary checkouts to the latest origin/main
+	@scripts/primary_checkout.py fresh
 
 check-submodules: checkout-all
 	@status="$$($(SUBMODULE_GIT) submodule status --recursive)"; \
@@ -119,6 +122,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	python3 -m py_compile scripts/*.py
 	python3 -m unittest discover -s scripts -p 'test_*.py'
 	@scripts/check-parent-gitmodules.sh
+	@scripts/primary_checkout.py check
 	@$(MAKE) --no-print-directory check-portability
 
 # compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
@@ -212,6 +216,7 @@ help:
 	@echo "make compat-envelope-fullcorpus  LOCAL full 235-cell union across all runnable backends"
 	@echo "make validate           Outer-repo definition-of-done gate (local = full-corpus envelope)"
 	@echo "make checkout-all       Check out every standard and optional submodule"
+	@echo "make checkout-fresh     Move clean primary checkouts to latest origin/main"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
 	@echo "make checkout-optional-submodules  Check out both optional sources"
