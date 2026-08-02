@@ -20,37 +20,32 @@ cd dev-hermit
 git submodule update --init --recursive
 ```
 
-All three submodules use public HTTPS URLs, so this path does not require a
-GitHub SSH key. Existing clones can adopt the recorded URLs with
-`git submodule sync --recursive` before updating.
-
-### Optional backend source submodules
-
-Reverie's pinned e9patch and SaBRe source trees use `update = none`, so a
-normal recursive initialization intentionally skips them; `--force` does not
-override that update policy. Check out only the source you need, or both:
+The product and backend source submodules use public HTTPS URLs, so this path
+does not require a GitHub SSH key. Existing clones can adopt the recorded URLs
+and initialize the complete pinned tree with:
 
 ```bash
-make checkout-e9patch
-make checkout-sabre
-make checkout-optional-submodules
+git submodule sync --recursive
+git submodule update --init --recursive
 ```
 
-These targets initialize the pinned Reverie checkout if needed, temporarily
-override the selected nested submodule's update policy, recursively check it
-out, and verify its HEAD against Reverie's gitlink. They do not persist a Git
-configuration change or advance a submodule branch. The underlying commands
-for e9patch (SaBRe substitutes `third-party/sabre`) are:
+### Submodule checkout policy
 
-```bash
-git -c submodule.reverie.update=checkout \
-  submodule update --init --checkout -- reverie
-git -C reverie -c submodule.third-party/e9patch.update=checkout \
-  submodule update --init --checkout --recursive -- third-party/e9patch
-```
+All product and backend source submodules are checked out by default. Recursive
+initialization gets Hermit, Reverie, LiteInst2, and Reverie's pinned DynamoRIO,
+e9patch, and SaBRe sources; those nested backend entries all use
+`update = checkout`. No per-backend update override or `--force` is needed.
 
-The helper uses `with-proxy` automatically when that wrapper is installed and
-falls back to plain `git` elsewhere.
+The normal `make`, `make build`, and `make build-full` entry points also run the
+submodule checkout chain before building, so they initialize any missing
+required checkout at its recorded revision. Run `make checkout-all` to perform
+that initialization explicitly. These Make targets use `with-proxy`
+automatically when the wrapper is installed and fall back to plain `git`
+elsewhere.
+
+The parent `agent-utils` submodule is separate on-demand agent tooling, not a
+product or backend source dependency. It remains excluded from ordinary
+recursive initialization and is materialized by the scripts that require it.
 
 Read `AGENTS.md` and `WORKTREES.md` before creating a feature worktree. Do not
 develop in the primary `hermit/` or `reverie/` checkout.
