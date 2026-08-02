@@ -233,7 +233,9 @@ fn build_compiled_fixture(
     if !src.exists() {
         return None;
     }
-    let dir = repo.join("target/compat-envelope-parity").join(test_id.replace('/', "_"));
+    let dir = repo
+        .join("ignored/compat-envelope-parity")
+        .join(test_id.replace('/', "_"));
     std::fs::create_dir_all(&dir).ok()?;
     let bin = dir.join("program");
     let extra = |key: &str| -> Vec<String> {

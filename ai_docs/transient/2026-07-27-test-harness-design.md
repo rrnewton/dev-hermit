@@ -365,8 +365,8 @@ ci/e2e-harness.rs plan --lane portable --format json
 
 # Run required cells for one lane.
 ci/e2e-harness.rs run --lane portable \
-  --results target/e2e/portable/results.jsonl \
-  --junit target/e2e/portable/junit.xml
+  --results ignored/e2e/portable/results.jsonl \
+  --junit ignored/e2e/portable/junit.xml
 
 # Run only one dimension while iterating.
 ci/e2e-harness.rs run --lane privileged --mode verify --backend kvm \
@@ -374,7 +374,7 @@ ci/e2e-harness.rs run --lane privileged --mode verify --backend kvm \
 
 # Probe combinations outside the allowlist.
 ci/e2e-harness.rs audit-gaps --lane privileged \
-  --results target/e2e/gaps/results.jsonl
+  --results ignored/e2e/gaps/results.jsonl
 ```
 
 `plan` is deterministic: sorting is category, test ID, mode, backend,
@@ -448,7 +448,7 @@ It must never report `84/84` when only a subset of the 217 required cells ran.
 
 ## Isolation and failure handling
 
-Each cell receives a fresh directory under `target/e2e/runs/<run-id>/` and a
+Each cell receives a fresh directory under `ignored/e2e/runs/<run-id>/` and a
 fresh record data directory. The harness:
 
 - sets `LC_ALL=C`, `TZ=UTC`, a controlled `PATH`, and an empty stdin;

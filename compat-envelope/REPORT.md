@@ -207,7 +207,7 @@ real **B1.5 Guest-contract interception-surface gap**, measured and confirmed 0
 ## How to regenerate
 
 ```bash
-# Full-corpus L2 sweep (reuses guests compiled under target/kvm-fullcorpus):
+# Full-corpus L2 sweep (reuses guests compiled under ignored/kvm-fullcorpus):
 experiments/ptrace_fullcorpus_scorecard_20260801/sweep.sh            # ptrace L2 (uniform flags)
 NOFLAGS=1 ROWS=.../rows-default OUTCSV=.../scorecard-ptrace-default.csv \
   experiments/ptrace_fullcorpus_scorecard_20260801/sweep.sh          # ptrace L2 (default flags)

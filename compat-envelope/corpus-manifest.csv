@@ -191,6 +191,16 @@ language-runtimes,language-runtimes/perl-io-subprocess-time,portable,calibrated,
 language-runtimes,language-runtimes/python-hash-determinism,portable,calibrated,pass,-,-
 language-runtimes,language-runtimes/python-io-subprocess-time,portable,calibrated,pass,-,-
 language-runtimes,language-runtimes/python-random,portable,calibrated,pass,-,-
+performance,performance/barrier-rounds,privileged,uncalibrated,pass,pass,parity
+performance,performance/condvar-baton,privileged,uncalibrated,pass,pass,parity
+performance,performance/mmap-churn,privileged,uncalibrated,pass,pass,parity
+performance,performance/mutex-contention,privileged,uncalibrated,pass,pass,parity
+performance,performance/pipe-roundtrip,privileged,uncalibrated,pass,pass,diff
+performance,performance/rwlock-contention,privileged,uncalibrated,pass,pass,parity
+performance,performance/sigmask-toggle,privileged,uncalibrated,pass,pass,parity
+performance,performance/socketpair-roundtrip,privileged,uncalibrated,pass,pass,diff
+performance,performance/syscall-mix,privileged,uncalibrated,pass,pass,parity
+performance,performance/yield-storm,privileged,uncalibrated,pass,pass,parity
 shared-futex-c,shared-futex-c/qemu-exec-init,portable,uncalibrated,-,fail,diff
 shared-futex-c,shared-futex-c/qemu-hello,portable,uncalibrated,-,fail,diff
 shared-futex-c,shared-futex-c/qemu-init,portable,uncalibrated,-,fail,diff

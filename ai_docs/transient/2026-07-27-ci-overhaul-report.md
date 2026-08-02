@@ -142,7 +142,7 @@ and pass its case-specific assertion while differing from ptrace output.
 Implemented structured output:
 
 - `ci/test_harness.sh`: one JSONL row per cell, `summary.json`, and JUnit XML.
-- Portable and privileged workflows: upload `target/e2e/<lane>` artifacts for
+- Portable and privileged workflows: upload `ignored/e2e/<lane>` artifacts for
   14 days.
 - `tests/backend-parity/run_matrix.py --output`: TSV with test, backend,
   expectation, result, duration, and detail.

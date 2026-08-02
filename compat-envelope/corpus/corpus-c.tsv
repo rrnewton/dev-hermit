@@ -175,6 +175,16 @@ determinism-stress-c/thread-contention|tests/e2e/determinism-stress/thread_conte
 determinism-stress-c/thread-stress|tests/e2e/determinism-stress/thread_stress.c|||portable|disabled
 determinism-stress-c/producer-consumer|tests/e2e/determinism-stress/producer_consumer.c|||portable|disabled
 determinism-stress/order-violation|tests/chaos/order_violation.c|-pthread -Wno-unused-parameter||portable|disabled
+performance/barrier-rounds|tests/e2e/performance/barrier-rounds.c|-pthread||privileged|disabled
+performance/condvar-baton|tests/e2e/performance/condvar-baton.c|-pthread||privileged|disabled
+performance/mmap-churn|tests/e2e/performance/mmap-churn.c|-pthread||privileged|disabled
+performance/mutex-contention|tests/e2e/performance/mutex-contention.c|-pthread||privileged|disabled
+performance/pipe-roundtrip|tests/e2e/performance/pipe-roundtrip.c|-pthread||privileged|disabled
+performance/rwlock-contention|tests/e2e/performance/rwlock-contention.c|-pthread||privileged|disabled
+performance/sigmask-toggle|tests/e2e/performance/sigmask-toggle.c|-pthread||privileged|disabled
+performance/socketpair-roundtrip|tests/e2e/performance/socketpair-roundtrip.c|-pthread||privileged|disabled
+performance/syscall-mix|tests/e2e/performance/syscall-mix.c|-pthread||privileged|disabled
+performance/yield-storm|tests/e2e/performance/yield-storm.c|-pthread||privileged|disabled
 shared-futex-c/qemu-exec-init|tests/shared-futex-verify/qemu_exec_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled
 shared-futex-c/qemu-hello|tests/shared-futex-verify/qemu_hello.c|||portable|disabled
 shared-futex-c/qemu-init|tests/shared-futex-verify/qemu_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled

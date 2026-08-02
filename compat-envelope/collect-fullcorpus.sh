@@ -5,11 +5,11 @@
 # for GitHub CI, where a runner may lack /dev/kvm, the third-party-backend
 # feature build, or the SaBRe loader. On a fully-provisioned local box (this
 # machine has /dev/kvm) the definition-of-done gate should instead measure the
-# UNION — the FULL 205-cell e2e verify corpus across EVERY backend the local
+# UNION — the FULL 215-cell e2e verify corpus across EVERY backend the local
 # binary can run — not the ~28-cell ci=true portable subset.
 #
-# This script enumerates the full 205-cell ptrace-verify corpus (the same
-# denominator as compat-envelope/corpus-manifest.csv: 184 compiled C guests +
+# This script enumerates the full 215-cell ptrace-verify corpus (the same
+# denominator as compat-envelope/corpus-manifest.csv: 194 compiled C guests +
 # 21 shell/interpreter cells, listed in corpus/corpus-c.tsv + corpus/corpus-nonc.tsv),
 # and for every locally-available backend runs, per cell:
 #   det    = <backend> --strict --verify exits 0 (L2 DETLOG-bitwise self-verify)
@@ -40,7 +40,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HROOT="$(realpath -m "${HERMIT_REPO:-$here/../hermit}")"
 RROOT="$(realpath -m "${REVERIE_REPO:-$here/../reverie}")"
 BIN="${HERMIT_BIN:-$HROOT/target/release/hermit}"
-BUILD="$(realpath -m "${FULLCORPUS_BUILD:-$HROOT/target/kvm-fullcorpus}")"   # gitignored guest build tree (shared)
+BUILD="$(realpath -m "${FULLCORPUS_BUILD:-$HROOT/ignored/kvm-fullcorpus}")"   # gitignored guest build tree (shared)
 CORPUS_C="${CORPUS_C:-$here/corpus/corpus-c.tsv}"
 CORPUS_NONC="${CORPUS_NONC:-$here/corpus/corpus-nonc.tsv}"
 OUT="$here/fullcorpus-scorecard.csv"
@@ -82,7 +82,7 @@ have_backend() { # $1 = backend name; probes the binary's --backend enum + host
   # path containing parent ("..") components, so the probe path must be canonical
   # or e9patch would be spuriously dropped. Contract: a feature backend that
   # cannot run a plain guest here is n/a.
-  timeout 30 "$BIN" run --backend "$b" -- /bin/true >/dev/null 2>&1
+  timeout 30 "$BIN" --backend "$b" run -- /bin/true >/dev/null 2>&1
   local rc=$?
   [ "$rc" = 0 ]
 }
@@ -98,19 +98,20 @@ echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
 echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
 
 # --- per-backend ratchet baselines (green-stays-green floor) ------------------
-# Measured at hermit 82a8e853 over the full 205-cell corpus (uniform lane flags).
+# Existing 205-cell floors were measured at hermit 82a8e853; the ten performance
+# cells were measured with the same binary and uniform lane flags.
 # A backend that drops below its floor fails the gate. New backends default 0.
 baseline() {
-  # Measured floors at hermit 82a8e853 over the full 205-cell corpus (uniform
-  # lane flags), det = <backend> --strict --verify exits 0. A backend dropping
+  # Combined floors over the full 215-cell corpus; det =
+  # <backend> --strict --verify exits 0. A backend dropping
   # below its floor fails the gate.
   case "$1" in
-    ptrace) echo 184 ;;   # original 179 + five examples
-    kvm) echo 135 ;;      # original 130 + five examples
-    liteinst) echo 118 ;; # all five examples currently fail post-start exec
-    dbi) echo 160 ;;      # original 156 + four deterministic examples
-    sabre) echo 169 ;;    # original 164 + five examples
-    e9patch) echo 184 ;;  # original 179 + five examples
+    ptrace) echo 194 ;;
+    kvm) echo 143 ;;
+    liteinst) echo 118 ;;
+    dbi) echo 170 ;;
+    sabre) echo 179 ;;
+    e9patch) echo 194 ;;
     *) echo 0 ;;
   esac
 }
@@ -159,10 +160,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     return
   fi
   # non-ptrace backend: strict (for parity) + strict --verify (for det)
-  timeout "$TMO_RUN" "$BIN" run --backend "$backend" --strict $flags -- "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
+  timeout "$TMO_RUN" "$BIN" --backend "$backend" run --strict $flags -- "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
   local t0 t1 dur ve bhash phash det outcome reason parity ohash
   t0=$(date +%s%3N)
-  timeout "$TMO_VERIFY" "$BIN" run --backend "$backend" --strict --verify $flags -- "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
+  timeout "$TMO_VERIFY" "$BIN" --backend "$backend" run --strict --verify $flags -- "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
   t1=$(date +%s%3N); dur=$((t1-t0))
   bhash=$(sha256sum "$cell/$backend.out" | cut -c1-64); ohash="$bhash"
   if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";

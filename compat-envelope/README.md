@@ -68,7 +68,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
       └─ compat-envelope/collect-envelope.rs --mode regression --with-parity --assert-green
           ├─ bash hermit/ci/test_harness.sh plan --lane L --format json      → cell list
           ├─ bash hermit/ci/test_harness.sh run  --lane L --category B --backend BE
-          │      --results hermit/target/e2e/compat-envelope/L/B/BE.jsonl     ← JSONL intermediate
+          │      --results hermit/ignored/e2e/compat-envelope/L/B/BE.jsonl    ← JSONL intermediate
           │      (bash+jq runner — NOT nextest; also emits …/junit.xml)
           ├─ reads that JSONL (outcome, duration_ms, reason)
           ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → parity
@@ -83,7 +83,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
 make validate → compat-envelope-fullcorpus
   └─ builds release hermit --features third-party-backends
   └─ compat-envelope/collect-fullcorpus.sh
-      (enumerates the FULL 205-cell corpus, auto-detects every runnable backend,
+      (enumerates the FULL 215-cell corpus, auto-detects every runnable backend,
        ptrace FIRST to write the plain --strict parity reference, then each backend)
       → compat-envelope/fullcorpus-scorecard.csv  → render-scorecard.rs
 ```
@@ -92,9 +92,9 @@ make validate → compat-envelope-fullcorpus
 
 | Artifact | Path |
 | --- | --- |
-| Harness result root | `hermit/target/e2e/` (`E2E_RESULT_ROOT` override) |
-| CI DAG JSONL + JUnit | `hermit/target/e2e/<lane>/<category>/{results.jsonl,junit.xml}` |
-| Collector JSONL | `hermit/target/e2e/compat-envelope/<lane>/<bucket>/<backend>.jsonl` |
+| Harness result root | `hermit/ignored/e2e/` (`E2E_RESULT_ROOT` override) |
+| CI DAG JSONL + JUnit | `hermit/ignored/e2e/<lane>/<category>/{results.jsonl,junit.xml}` |
+| Collector JSONL | `hermit/ignored/e2e/compat-envelope/<lane>/<bucket>/<backend>.jsonl` |
 | CSV compat-logs | `compat-envelope/{scorecard,fullcorpus-scorecard,reverie-scorecard}.csv` (this outer repo) |
 | Raw logs / scratch | `compat-envelope/ignored/` (gitignored) |
 
@@ -103,11 +103,11 @@ make validate → compat-envelope-fullcorpus
 `collect-envelope.rs` measures the portable, ci=true subset — the right scope for
 a GitHub runner that may lack `/dev/kvm` or the feature build. On a fully
 provisioned local box the definition-of-done should instead be the **union of
-both lanes = the full 205-cell verify corpus across every runnable backend**.
+both lanes = the full 215-cell verify corpus across every runnable backend**.
 `collect-fullcorpus.sh` does exactly that and is what `make validate` runs locally
 (the split targets stay CI-only):
 
-- Enumerates the full corpus from `corpus/corpus-c.tsv` (184 compiled C guests) +
+- Enumerates the full corpus from `corpus/corpus-c.tsv` (194 compiled C guests) +
   `corpus/corpus-nonc.tsv` (21 shell/interpreter cells) — the same denominator as
   `corpus-manifest.csv`.
 - **Auto-detects** backends from the binary's `--backend` enum + host
@@ -123,8 +123,9 @@ both lanes = the full 205-cell verify corpus across every runnable backend**.
   ptrace itself fails under plain `--strict` are marked (`ptv.fail`) so downstream
   backends record `parity=""` (unmeasured), never a false empty-vs-empty match.
 - **Ratchet-asserts** each backend's det count against a measured floor
-  (`82a8e853`: ptrace 179, e9patch 179, sabre 164, dbi 156, kvm 130, liteinst
-  118); a drop below the floor fails the gate.
+  (ptrace 194, e9patch 194, sabre 179, dbi 170, kvm 143, liteinst 118); a drop
+  below the floor fails the gate. The existing 205-cell floors and the ten new
+  performance cells were measured with Hermit `82a8e853` and uniform lane flags.
 
 ## CSV schema (shared contract)
 
@@ -296,7 +297,7 @@ phase-2 bar (*every red a CONFIRMED red*) requires. Machine-readable
 backend and compares stdout SHA-256. `.sh` fixtures run via `--run`, `direct`
 commands via `bash -c`, and **compiled `.c`/`.rs` fixtures are built the way the
 harness builds them** (`build_compiled_fixture()`) into
-`repo/target/compat-envelope-parity/<id>/` — NOT `/tmp`, which hermit isolates
+`repo/ignored/compat-envelope-parity/<id>/` — NOT `/tmp`, which hermit isolates
 and refuses to launch a guest from. Backend availability is probed once up front
 (`backend_available()`); an absent backend binary is recorded `unavailable`
 (blank determinism), never a fabricated red.

@@ -383,7 +383,7 @@ fn enumerate_plan(repo: &Path, lane: &str, mode: &str) -> Vec<PlanCell> {
 /// Run one (bucket,backend) group and parse the results JSONL.
 fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -> Vec<HarnessResult> {
     let harness = repo.join("ci/test_harness.sh");
-    let results_dir = repo.join("target/e2e/compat-envelope").join(lane).join(bucket);
+    let results_dir = repo.join("ignored/e2e/compat-envelope").join(lane).join(bucket);
     let _ = fs::create_dir_all(&results_dir);
     let results = results_dir.join(format!("{backend}.jsonl"));
     let mut args: Vec<String> = vec![
@@ -536,9 +536,11 @@ fn build_compiled_fixture(
     if !src.exists() {
         return None;
     }
-    // Build under the repo target tree, NOT /tmp: hermit replaces guest /tmp with
+    // Build under the repo output tree, NOT /tmp: hermit replaces guest /tmp with
     // an isolated dir and refuses to launch a guest program that lives there.
-    let dir = repo.join("target/compat-envelope-parity").join(test_id.replace('/', "_"));
+    let dir = repo
+        .join("ignored/compat-envelope-parity")
+        .join(test_id.replace('/', "_"));
     fs::create_dir_all(&dir).ok()?;
     let bin = dir.join("program");
     let extra = |key: &str| -> Vec<String> {
