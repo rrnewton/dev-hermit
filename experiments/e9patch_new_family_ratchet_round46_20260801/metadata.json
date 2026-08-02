@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round46",
+  "date": "2026-08-01",
+  "question": "Can nine inert guests reading socket options at the IPPROTO_TCP/IP/IPV6 protocol levels (a new option-level dimension) reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all nine kept at L2; corpus 302 -> 311, 311/311 PASS_L2. Two candidates dropped (golden diverges from native).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1415",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1414",
+  "branch": "codex/e9patch-corpus-round46-families",
+  "commit_sha": "5e62523a0e30f6ffbb2ab24dcd8ef63fbb7df567",
+  "base_branch": "codex/e9patch-corpus-round45-families",
+  "base_sha": "5dd365dc7407b989b1789877032f6485a90d700b",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getsockopt_tcp_nodelay", "option": "TCP_NODELAY(1) IPPROTO_TCP(6)", "stdout": "tcpnodelay=0"},
+    {"guest": "getsockopt_tcp_cork", "option": "TCP_CORK(3) IPPROTO_TCP(6)", "stdout": "tcpcork=0"},
+    {"guest": "getsockopt_tcp_keepcnt", "option": "TCP_KEEPCNT(6) IPPROTO_TCP(6)", "stdout": "tcpkeepcnt=9"},
+    {"guest": "getsockopt_tcp_keepintvl", "option": "TCP_KEEPINTVL(5) IPPROTO_TCP(6)", "stdout": "tcpkeepintvl=75"},
+    {"guest": "getsockopt_tcp_syncnt", "option": "TCP_SYNCNT(7) IPPROTO_TCP(6)", "stdout": "tcpsyncnt=6"},
+    {"guest": "getsockopt_tcp_maxseg", "option": "TCP_MAXSEG(2) IPPROTO_TCP(6)", "stdout": "tcpmaxseg=536"},
+    {"guest": "getsockopt_ip_mtudiscover", "option": "IP_MTU_DISCOVER(10) IPPROTO_IP(0)", "stdout": "ipmtudisc=1"},
+    {"guest": "getsockopt_ipv6_v6only", "option": "IPV6_V6ONLY(26) IPPROTO_IPV6(41)", "stdout": "v6only=0"},
+    {"guest": "getsockopt_ipv6_hops", "option": "IPV6_UNICAST_HOPS(16) IPPROTO_IPV6(41)", "stdout": "v6hops=64"}
+  ],
+  "dropped": [
+    {"candidate": "getsockopt_ip_ttl", "option": "IP_TTL(2) IPPROTO_IP(0)", "reason": "host-variable native 96 vs golden 64 (#152)"},
+    {"candidate": "prctl_get_endian", "option": "prctl(157) PR_GET_ENDIAN(19)", "reason": "native -EINVAL(-22) vs golden -ENOSYS(-38) (#152)"}
+  ],
+  "corpus_size_before": 302,
+  "corpus_size_after": 311,
+  "net_delta": 9,
+  "full_corpus_run": "RATCHET e9patch: 311/311 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
