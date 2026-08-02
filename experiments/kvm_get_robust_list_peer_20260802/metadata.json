@@ -1,0 +1,17 @@
+{
+  "experiment": "kvm_get_robust_list_peer_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "87e3ed29b464d7f29c5e4918fc408a25cc507f65",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/343",
+  "branch": "codex/kvm-get-robust-list-peer",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "194/194 pass; fmt+clippy clean",
+  "corpus_cells": [
+    "c-programs/get_robust_list_child",
+    "c-programs/get_robust_list_thread"
+  ],
+  "host": "devbig; real /dev/kvm"
+}
