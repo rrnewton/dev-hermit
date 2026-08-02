@@ -55,8 +55,8 @@ checkout-all:
 	@$(MAKE) -C hermit --no-print-directory checkout-all
 	@$(MAKE) -C reverie --no-print-directory checkout-all
 
-checkout-fresh: ## Safely move clean primary checkouts to the latest origin/main
-	@scripts/primary_checkout.py fresh
+checkout-fresh: ## Refresh clean primaries and publish one coherent parent snapshot
+	@scripts/primary_checkout.py fresh --publish-parent --strict
 
 check-submodules: checkout-all
 	@status="$$($(SUBMODULE_GIT) submodule status --recursive)"; \
@@ -216,7 +216,7 @@ help:
 	@echo "make compat-envelope-fullcorpus  LOCAL full 235-cell union across all runnable backends"
 	@echo "make validate           Outer-repo definition-of-done gate (local = full-corpus envelope)"
 	@echo "make checkout-all       Check out every standard and optional submodule"
-	@echo "make checkout-fresh     Move clean primary checkouts to latest origin/main"
+	@echo "make checkout-fresh     Refresh clean primaries and publish parent gitlinks"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
 	@echo "make checkout-optional-submodules  Check out both optional sources"

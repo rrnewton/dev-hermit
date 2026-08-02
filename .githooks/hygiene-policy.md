@@ -70,7 +70,11 @@ until the live report is green.
 
 `.githooks/pre-commit` runs `scripts/primary_checkout.py check` before every
 parent commit. It warns when `hermit/`, `reverie/`, or `liteinst2/` is detached
-or differs from the repository's live `origin/main`. The warning is nonblocking
-so a gitlink or tooling repair can still be committed. Run `make checkout-fresh`
-to fetch, check out `main`, and fast-forward each clean primary; dirty primaries
-are preserved and skipped with a warning.
+or differs from the repository's live `origin/main`, when a parent gitlink is
+stale, or when Hermit's tracked Cargo manifests do not pin the exact Reverie
+main SHA. The warning is nonblocking so a gitlink or tooling repair can still be
+committed. Run `make checkout-fresh` to fetch, check out `main`, and fast-forward
+each clean primary, then commit and push the three gitlinks as one coherent
+snapshot. Dirty primaries are preserved and skipped with a warning. Tick-hub
+runs this same strict routine every five minutes; it hard-warns instead of
+publishing if any cleanliness, branch, freshness, pin, or parent-main gate fails.

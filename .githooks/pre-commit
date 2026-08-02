@@ -22,8 +22,9 @@ set -u
 LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
 POLICY=".githooks/hygiene-policy.md"
 
-# Warning-only checkout freshness probe. A stale/detached primary must be loud,
-# but it must not prevent a parent commit that repairs a stale gitlink or hook.
+# Warning-only checkout/snapshot freshness probe. A stale/detached primary,
+# stale parent gitlink, or Reverie-pin mismatch must be loud, but it must not
+# prevent a parent commit that repairs a stale gitlink or hook.
 if [ -x scripts/primary_checkout.py ]; then
   scripts/primary_checkout.py check >&2 || true
 else

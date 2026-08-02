@@ -16,6 +16,9 @@ registers it as the `hermit-dev` skill.
   The versioned config is `ops/tick-hub.yaml`; the plugin only supplies the
   live `orc.listAgents()` snapshot, invokes `scripts/run-tick-hub`, and sends a
   `HARD WARNING` wakeup when the hub emits an action/error or fails.
+- Through that tick, gently fast-forward clean product primaries and publish a
+  coherent parent gitlink snapshot; dirty or inconsistent state is preserved
+  and surfaced as a hard warning.
 - Kill the obsolete `hermit-dev-pr-health` reminder workflow at startup. The
   replacement workflow has the distinct ID
   `hermit-dev-operational-health-v1`, so an old durable source cannot be

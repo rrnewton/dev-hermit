@@ -13,13 +13,20 @@ health polling. Project policy stays in this repository:
   wakeup delivery adapter.
 
 The hub checks GitHub current-main health and open-PR red counts every 15
-minutes. It checks the live ORC agent snapshot every five minutes. An agent is
-reported stuck when ORC marks it broken, or when an active agent has no
-activity for at least 60 minutes. Green ticks stay quiet; an `ACTION:` or
-`ERROR:` wakes the coordinator with a `HARD WARNING`.
+minutes. Every five minutes it checks the live ORC agent snapshot and runs the
+same gentle primary-refresh routine as `make checkout-fresh`. Clean product
+checkouts fast-forward to `main`; a globally consistent Hermit/Reverie/LiteInst2
+gitlink snapshot is committed and pushed to parent `main`. A dirty checkout,
+detached or stale branch, Hermit/Reverie pin mismatch, or parent-main race is
+preserved and hard-warned instead. An agent is reported stuck when ORC marks it
+broken, or when an active agent has no activity for at least 60 minutes. Green
+ticks stay quiet; an `ACTION:` or `ERROR:` wakes the coordinator with a
+`HARD WARNING`.
 
-The only mutable hub data is `.tick-hub/fired-state`, which is gitignored.
-The probes are read-only; `--flush` only advances that cadence state.
+Hub cadence data lives in the gitignored `.tick-hub/fired-state`. Health and PR
+probes are read-only. The primary-snapshot reminder is intentionally mutating,
+but only through clean fast-forwards and a path-limited parent gitlink commit;
+it has no reset, clean, force-checkout, or force-push path.
 
 Run a dry tick from the repository root:
 

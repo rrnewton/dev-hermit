@@ -4,16 +4,20 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tomllib
 from typing import TextIO
 
 
 PRODUCTS = ("hermit", "reverie", "liteinst2")
 MAIN_REF = "refs/heads/main"
+REVERIE_GIT_URL = "https://github.com/rrnewton/reverie.git"
+SNAPSHOT_COMMIT_MESSAGE = "Advance product submodules as consistent snapshot"
 
 
 def run_git(
@@ -37,14 +41,169 @@ def print_command_output(result: subprocess.CompletedProcess[str], stream: TextI
             print(output.rstrip(), file=stream)
 
 
-def checkout_fresh(
+def _walk_reverie_dependencies(value: object) -> list[str]:
+    pins: list[str] = []
+    if isinstance(value, Mapping):
+        if value.get("git") == REVERIE_GIT_URL and isinstance(value.get("rev"), str):
+            pins.append(value["rev"])
+        for child in value.values():
+            pins.extend(_walk_reverie_dependencies(child))
+    elif isinstance(value, list):
+        for child in value:
+            pins.extend(_walk_reverie_dependencies(child))
+    return pins
+
+
+def reverie_manifest_pins(hermit: Path) -> tuple[set[str], int, list[str]]:
+    """Return exact Reverie revisions from tracked Hermit Cargo manifests."""
+    manifests = run_git(hermit, "ls-files", "-z", "--", "*Cargo.toml")
+    if manifests.returncode != 0:
+        return set(), 0, ["could not list tracked Hermit Cargo.toml files"]
+
+    pins: list[str] = []
+    errors: list[str] = []
+    for relative in filter(None, manifests.stdout.split("\0")):
+        path = hermit / relative
+        try:
+            with path.open("rb") as source:
+                pins.extend(_walk_reverie_dependencies(tomllib.load(source)))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"could not parse {relative}: {error}")
+    return set(pins), len(pins), errors
+
+
+def publish_parent_snapshot(
     root: Path,
     *,
     use_proxy: bool = True,
     out: TextIO = sys.stdout,
     err: TextIO = sys.stderr,
 ) -> int:
+    """Commit and push exact product-main gitlinks when the snapshot is coherent."""
+    heads: dict[str, str] = {}
+    failures: list[str] = []
+    for product in PRODUCTS:
+        repo = root / product
+        status = run_git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+        branch = run_git(repo, "branch", "--show-current")
+        head = run_git(repo, "rev-parse", "HEAD")
+        remote = run_git(repo, "rev-parse", "origin/main")
+        if status.returncode != 0 or status.stdout.strip():
+            failures.append(f"{product}: primary is dirty; parent snapshot not advanced")
+            continue
+        if branch.returncode != 0 or branch.stdout.strip() != "main":
+            failures.append(f"{product}: primary is not on main")
+            continue
+        head_sha = head.stdout.strip()
+        remote_sha = remote.stdout.strip()
+        if head.returncode != 0 or remote.returncode != 0 or head_sha != remote_sha:
+            failures.append(f"{product}: primary HEAD does not equal fetched origin/main")
+            continue
+        heads[product] = head_sha
+
+    if not failures and len(heads) == len(PRODUCTS):
+        pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
+        failures.extend(f"hermit: {message}" for message in pin_errors)
+        expected = heads["reverie"]
+        if pin_count == 0:
+            failures.append("hermit: no tracked Cargo manifest pins rrnewton/reverie")
+        elif pins != {expected}:
+            failures.append(
+                "Hermit Reverie pins are not globally consistent: "
+                f"manifests={','.join(sorted(pins)) or 'none'} reverie/main={expected}"
+            )
+
+    if failures:
+        print("HARD WARNING: PARENT SUBMODULE SNAPSHOT NOT PUBLISHED", file=err)
+        for failure in failures:
+            print(f"  {failure}", file=err)
+        return 1
+
+    fetch = run_git(root, "fetch", "origin", "main", network=True, use_proxy=use_proxy)
+    print_command_output(fetch, out if fetch.returncode == 0 else err)
+    if fetch.returncode != 0:
+        print("ERROR: parent origin/main fetch failed; snapshot not published.", file=err)
+        return 1
+    parent_branch = run_git(root, "branch", "--show-current").stdout.strip()
+    parent_head = run_git(root, "rev-parse", "HEAD").stdout.strip()
+    parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
+    if parent_branch != "main" or not parent_head or parent_head != parent_remote:
+        print(
+            "HARD WARNING: parent is not current on main; refusing automatic gitlink commit "
+            f"(branch={parent_branch or 'DETACHED'} HEAD={parent_head or 'unknown'} "
+            f"origin/main={parent_remote or 'unknown'}).",
+            file=err,
+        )
+        return 1
+
+    staged = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
+    if staged.returncode != 0:
+        print(
+            "HARD WARNING: product gitlinks are already staged; refusing to overwrite "
+            "another coordinator operation.",
+            file=err,
+        )
+        return 1
+
+    add = run_git(root, "add", "--", *PRODUCTS)
+    if add.returncode != 0:
+        print_command_output(add, err)
+        return 1
+    changed = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
+    if changed.returncode == 0:
+        print(
+            "Parent product snapshot already current: "
+            + ", ".join(f"{name}={heads[name][:12]}" for name in PRODUCTS),
+            file=out,
+        )
+        return 0
+    if changed.returncode != 1:
+        print("ERROR: could not inspect staged product gitlinks.", file=err)
+        return 1
+
+    commit = run_git(
+        root,
+        "commit",
+        "--only",
+        "-m",
+        SNAPSHOT_COMMIT_MESSAGE,
+        "--",
+        *PRODUCTS,
+    )
+    print_command_output(commit, out if commit.returncode == 0 else err)
+    if commit.returncode != 0:
+        print("ERROR: automatic parent snapshot commit failed; push skipped.", file=err)
+        return 1
+
+    push = run_git(root, "push", "origin", "main", network=True, use_proxy=use_proxy)
+    print_command_output(push, out if push.returncode == 0 else err)
+    if push.returncode != 0:
+        print(
+            "HARD WARNING: parent snapshot commit is local but push failed; reconcile "
+            "without force-pushing.",
+            file=err,
+        )
+        return 1
+    snapshot = run_git(root, "rev-parse", "HEAD").stdout.strip()
+    print(
+        f"Published parent snapshot {snapshot}: "
+        + ", ".join(f"{name}={heads[name]}" for name in PRODUCTS),
+        file=out,
+    )
+    return 0
+
+
+def checkout_fresh(
+    root: Path,
+    *,
+    publish_parent: bool = False,
+    strict: bool = False,
+    use_proxy: bool = True,
+    out: TextIO = sys.stdout,
+    err: TextIO = sys.stderr,
+) -> int:
     failures = 0
+    skipped = 0
     for product in PRODUCTS:
         repo = root / product
         if not (repo / ".git").exists():
@@ -68,6 +227,7 @@ def checkout_fresh(
                 print(f"  {line}", file=err)
             if len(dirty_lines) > 20:
                 print(f"  ... {len(dirty_lines) - 20} more path(s)", file=err)
+            skipped += 1
             continue
 
         print(f"Refreshing {product}...", file=out)
@@ -116,7 +276,17 @@ def checkout_fresh(
             failures += 1
             continue
         print(f"{product}: main is current at {head}", file=out)
-    return 1 if failures else 0
+    if publish_parent and failures == 0 and skipped == 0:
+        failures += publish_parent_snapshot(
+            root, use_proxy=use_proxy, out=out, err=err
+        )
+    elif publish_parent and skipped:
+        print(
+            "HARD WARNING: parent snapshot not published because a primary checkout "
+            "was dirty and preserved.",
+            file=err,
+        )
+    return 1 if failures or (strict and skipped) else 0
 
 
 def check_freshness(
@@ -163,11 +333,35 @@ def check_freshness(
         if branch == "main" and head == remote:
             current.append(f"{product}={head[:12]}")
 
+        gitlink = run_git(root, "rev-parse", f":{product}")
+        recorded = gitlink.stdout.strip()
+        if gitlink.returncode != 0 or not recorded:
+            warnings.append(f"{product}: parent index has no gitlink")
+        elif remote and recorded != remote:
+            warnings.append(
+                f"{product}: parent gitlink {recorded} differs from origin/main {remote}"
+            )
+
+    reverie_head = run_git(root / "reverie", "rev-parse", "HEAD").stdout.strip()
+    pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
+    warnings.extend(f"hermit: {message}" for message in pin_errors)
+    if pin_count == 0:
+        warnings.append("hermit: no tracked Cargo manifest pins rrnewton/reverie")
+    elif reverie_head and pins != {reverie_head}:
+        warnings.append(
+            "Hermit Reverie manifest pin mismatch: "
+            f"manifests={','.join(sorted(pins)) or 'none'} reverie={reverie_head}"
+        )
+
     if warnings:
         print("HARD WARNING: PRIMARY CHECKOUT FRESHNESS", file=err)
         for warning in warnings:
             print(f"  {warning}", file=err)
-        print("Run `make checkout-fresh`; dirty primaries are preserved and skipped.", file=err)
+        print(
+            "Run `make checkout-fresh`; dirty primaries are preserved and skipped, "
+            "and only a coherent snapshot is published.",
+            file=err,
+        )
     else:
         print(f"Primary checkouts are current on main: {', '.join(current)}", file=out)
     return 1 if strict and warnings else 0
@@ -181,14 +375,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=default_root())
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("fresh", help="refresh every clean primary checkout")
+    fresh = subparsers.add_parser("fresh", help="refresh every clean primary checkout")
+    fresh.add_argument(
+        "--publish-parent",
+        action="store_true",
+        help="commit and push coherent product gitlinks to parent main",
+    )
+    fresh.add_argument(
+        "--strict",
+        action="store_true",
+        help="return nonzero when a dirty primary must be skipped",
+    )
     check = subparsers.add_parser("check", help="warn about detached or stale primaries")
     check.add_argument("--strict", action="store_true", help="return nonzero on warnings")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
     if args.command == "fresh":
-        return checkout_fresh(root)
+        return checkout_fresh(
+            root, publish_parent=args.publish_parent, strict=args.strict
+        )
     return check_freshness(root, strict=args.strict)
 
 

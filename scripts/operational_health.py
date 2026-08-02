@@ -8,13 +8,15 @@ import os
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from io import StringIO
 from typing import Any
 
 if __package__:
-    from . import github_main_health, pr_status
+    from . import github_main_health, pr_status, primary_checkout
 else:
     import github_main_health
     import pr_status
+    import primary_checkout
 
 
 BROKEN_AGENT_STATES = frozenset(
@@ -90,6 +92,25 @@ def pull_request_gate() -> int:
         }
     )
     return 1 if counts["red"] else 0
+
+
+def primary_snapshot_gate() -> int:
+    output, errors = StringIO(), StringIO()
+    result = primary_checkout.checkout_fresh(
+        primary_checkout.default_root(),
+        publish_parent=True,
+        strict=True,
+        out=output,
+        err=errors,
+    )
+    report = errors.getvalue().strip() or output.getvalue().strip()
+    _emit(
+        {
+            "state": "ok" if result == 0 else "blocked",
+            "summary": report or "primary-snapshot-produced-no-output",
+        }
+    )
+    return result
 
 
 def _last_activity_seconds(raw: object) -> float | None:
@@ -190,10 +211,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return github_main_gate()
     if args == ["pull-requests"]:
         return pull_request_gate()
+    if args == ["primary-snapshot"]:
+        return primary_snapshot_gate()
     if args == ["agents"]:
         return agent_gate()
     print(
-        "usage: operational_health.py <github-main|pull-requests|agents>",
+        "usage: operational_health.py "
+        "<github-main|pull-requests|primary-snapshot|agents>",
         file=sys.stderr,
     )
     return 2

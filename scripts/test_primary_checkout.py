@@ -55,6 +55,39 @@ class PrimaryCheckoutTests(unittest.TestCase):
             )
             self.seeds[product] = seed
 
+        reverie_rev = git(self.seeds["reverie"], "rev-parse", "HEAD")
+        hermit_manifest = self.seeds["hermit"] / "Cargo.toml"
+        hermit_manifest.write_text(
+            "[package]\n"
+            'name = "hermit-test"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            "reverie = { git = \"https://github.com/rrnewton/reverie.git\", "
+            f'rev = "{reverie_rev}" }}\n'
+        )
+        git(self.seeds["hermit"], "add", "Cargo.toml")
+        git(self.seeds["hermit"], "commit", "-m", "pin reverie")
+        git(self.seeds["hermit"], "push", "origin", "main")
+        git(self.root / "hermit", "pull", "--ff-only", "origin", "main")
+
+        subprocess.run(
+            ("git", "init", "--initial-branch=main", str(self.root)),
+            check=True,
+            capture_output=True,
+        )
+        git(self.root, "config", "user.email", "test@example.com")
+        git(self.root, "config", "user.name", "Test")
+        git(self.root, "add", *primary_checkout.PRODUCTS)
+        git(self.root, "commit", "-m", "initial snapshot")
+        parent_remote = Path(self.temp.name) / "parent.git"
+        subprocess.run(
+            ("git", "init", "--bare", "--initial-branch=main", str(parent_remote)),
+            check=True,
+            capture_output=True,
+        )
+        git(self.root, "remote", "add", "origin", str(parent_remote))
+        git(self.root, "push", "origin", "main")
+
     def tearDown(self) -> None:
         self.temp.cleanup()
 
@@ -106,6 +139,53 @@ class PrimaryCheckoutTests(unittest.TestCase):
         self.assertEqual(strict_result, 1)
         self.assertIn("hermit: HEAD", err.getvalue())
         self.assertIn("reverie: branch is DETACHED", err.getvalue())
+
+    def test_fresh_publishes_one_consistent_parent_snapshot(self) -> None:
+        hermit_remote = self.advance("hermit")
+        liteinst_remote = self.advance("liteinst2")
+        out, err = StringIO(), StringIO()
+
+        result = primary_checkout.checkout_fresh(
+            self.root,
+            publish_parent=True,
+            strict=True,
+            use_proxy=False,
+            out=out,
+            err=err,
+        )
+
+        self.assertEqual(result, 0, err.getvalue())
+        self.assertEqual(git(self.root, "rev-parse", "HEAD:hermit"), hermit_remote)
+        self.assertEqual(
+            git(self.root, "rev-parse", "HEAD:reverie"),
+            git(self.root / "reverie", "rev-parse", "HEAD"),
+        )
+        self.assertEqual(
+            git(self.root, "rev-parse", "HEAD:liteinst2"), liteinst_remote
+        )
+        self.assertEqual(
+            git(self.root, "rev-parse", "HEAD"),
+            git(self.root, "rev-parse", "origin/main"),
+        )
+        self.assertIn("Published parent snapshot", out.getvalue())
+
+    def test_snapshot_refuses_reverie_manifest_mismatch(self) -> None:
+        original_parent = git(self.root, "rev-parse", "HEAD")
+        self.advance("reverie")
+        out, err = StringIO(), StringIO()
+
+        result = primary_checkout.checkout_fresh(
+            self.root,
+            publish_parent=True,
+            strict=True,
+            use_proxy=False,
+            out=out,
+            err=err,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
+        self.assertIn("not globally consistent", err.getvalue())
 
 
 if __name__ == "__main__":

@@ -66,6 +66,21 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("red=1", output)
         self.assertIn("pending=1", output)
 
+    def test_primary_snapshot_failure_is_a_structured_warning(self) -> None:
+        def blocked(*_args: object, **kwargs: object) -> int:
+            kwargs["err"].write("dirty Hermit primary\n")  # type: ignore[attr-defined]
+            return 1
+
+        with mock.patch.object(
+            operational_health.primary_checkout,
+            "checkout_fresh",
+            side_effect=blocked,
+        ):
+            result, output = self.capture(operational_health.primary_snapshot_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("summary=dirty Hermit primary", output)
+
     def test_broken_and_silent_active_agents_are_stuck(self) -> None:
         agents = [
             {"name": "broken", "status": "crashed", "last_activity": 9_999},

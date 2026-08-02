@@ -4,6 +4,19 @@ description: |-
   cadence and only emits actions when a hard warning is required.
 
 reminders:
+  - name: primary_checkout_snapshot
+    cadence_secs: 300
+    gate:
+      cmd: ./scripts/operational_health.py primary-snapshot
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: primary-checkout-snapshot
+      title: "primary checkout snapshot needs attention: {summary}"
+
   - name: github_main_health
     cadence_secs: 900
     gate:
