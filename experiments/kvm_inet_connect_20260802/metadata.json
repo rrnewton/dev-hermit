@@ -1,0 +1,46 @@
+{
+  "experiment": "kvm_inet_connect_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "703b1e76ac65dcb8c267c5c7778970a3c2d93fea",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/349",
+  "branch": "codex/kvm-inet-connect",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "157 lib tests pass / 0 fail; vmcall + integration suites green; fmt + clippy clean",
+  "new_tests": [
+    "inet_loopback_connect_completes_handshake",
+    "inet6_loopback_connect_completes_handshake",
+    "connect_rejects_unsupported_address_family"
+  ],
+  "change": "executor.rs connect() forwards AF_INET/AF_INET6 to host (was AF_UNIX-only); bind() allowlist gains AF_INET6",
+  "golden_reference": [
+    "hermit/detcore/src/syscalls/io.rs:1138 (handle_connect: no address rewriting)",
+    "hermit/detcore/src/syscalls/files.rs:2133 (handle_bind AF_INET port determinization)",
+    "hermit/detcore/src/syscalls/files.rs:2175 (handle_bind AF_INET6 port determinization)",
+    "hermit/detcore/src/syscalls/files.rs:95 (canonicalize_tcp_info for the tcp_info follow-up)"
+  ],
+  "corpus_cells_prerequisite_for": [
+    "so_incoming_cpu_tcp4",
+    "so_incoming_cpu_tcp6",
+    "tcp_info_accept4",
+    "tcp_info_accept6",
+    "tcp_info_client4"
+  ],
+  "cells_flipped_standalone": 0,
+  "cells_flipped_with_pr345": [
+    "so_incoming_cpu_tcp4",
+    "so_incoming_cpu_tcp6"
+  ],
+  "further_gap_for_tcp_info": "getsockopt(SOL_TCP, TCP_INFO) executor arm mirroring detcore canonicalize_tcp_info (files.rs:95); not yet implemented",
+  "unaffected_no_connect": [
+    "so_incoming_cpu_udp4",
+    "socket_cookie_tcp",
+    "socket_cookie_udp",
+    "socket_timestamp_timespec",
+    "socket_timestamp_timeval",
+    "socket_timestamp_edge_cases"
+  ],
+  "host": "devbig; host sockets incl. IPv6 loopback ::1 available"
+}
