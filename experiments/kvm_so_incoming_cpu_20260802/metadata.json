@@ -1,0 +1,20 @@
+{
+  "experiment": "kvm_so_incoming_cpu_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "d6ac1843f99246779bc9e42dd35d7dad7d84e57c",
+  "reverie_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/345",
+  "branch": "codex/kvm-so-incoming-cpu",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "194/194 pass; fmt+clippy clean",
+  "new_test": "getsockopt_so_incoming_cpu_is_canonical_zero",
+  "corpus_cells": [
+    "c-programs/so-incoming-cpu-tcp4",
+    "c-programs/so-incoming-cpu-tcp6",
+    "c-programs/so-incoming-cpu-udp4"
+  ],
+  "golden_reference": "hermit/detcore/src/syscalls/files.rs:1995-2008 (handle_getsockopt SO_INCOMING_CPU, TODO-HUMAN-REVIEW(PR-898))",
+  "host": "devbig; real /dev/kvm"
+}
