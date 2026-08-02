@@ -83,7 +83,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
 make validate → compat-envelope-fullcorpus
   └─ builds release hermit --features third-party-backends
   └─ compat-envelope/collect-fullcorpus.sh
-      (enumerates the FULL 200-cell corpus, auto-detects every runnable backend,
+      (enumerates the FULL 205-cell corpus, auto-detects every runnable backend,
        ptrace FIRST to write the plain --strict parity reference, then each backend)
       → compat-envelope/fullcorpus-scorecard.csv  → render-scorecard.rs
 ```
@@ -103,12 +103,12 @@ make validate → compat-envelope-fullcorpus
 `collect-envelope.rs` measures the portable, ci=true subset — the right scope for
 a GitHub runner that may lack `/dev/kvm` or the feature build. On a fully
 provisioned local box the definition-of-done should instead be the **union of
-both lanes = the full ~200-cell verify corpus across every runnable backend**.
+both lanes = the full 205-cell verify corpus across every runnable backend**.
 `collect-fullcorpus.sh` does exactly that and is what `make validate` runs locally
 (the split targets stay CI-only):
 
 - Enumerates the full corpus from `corpus/corpus-c.tsv` (184 compiled C guests) +
-  `corpus/corpus-nonc.tsv` (16 shell/interpreter cells) — the same denominator as
+  `corpus/corpus-nonc.tsv` (21 shell/interpreter cells) — the same denominator as
   `corpus-manifest.csv`.
 - **Auto-detects** backends from the binary's `--backend` enum + host
   (`/dev/kvm` for KVM; `--features third-party-backends` for dbi/sabre/e9patch);

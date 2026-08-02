@@ -5,12 +5,12 @@
 # for GitHub CI, where a runner may lack /dev/kvm, the third-party-backend
 # feature build, or the SaBRe loader. On a fully-provisioned local box (this
 # machine has /dev/kvm) the definition-of-done gate should instead measure the
-# UNION — the FULL ~200-cell e2e verify corpus across EVERY backend the local
+# UNION — the FULL 205-cell e2e verify corpus across EVERY backend the local
 # binary can run — not the ~28-cell ci=true portable subset.
 #
-# This script enumerates the full 200-cell ptrace-verify corpus (the same
+# This script enumerates the full 205-cell ptrace-verify corpus (the same
 # denominator as compat-envelope/corpus-manifest.csv: 184 compiled C guests +
-# 16 shell/interpreter cells, listed in corpus/corpus-c.tsv + corpus/corpus-nonc.tsv),
+# 21 shell/interpreter cells, listed in corpus/corpus-c.tsv + corpus/corpus-nonc.tsv),
 # and for every locally-available backend runs, per cell:
 #   det    = <backend> --strict --verify exits 0 (L2 DETLOG-bitwise self-verify)
 #   parity = <backend> --strict stdout == ptrace --strict --verify stdout
@@ -98,19 +98,19 @@ echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
 echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
 
 # --- per-backend ratchet baselines (green-stays-green floor) ------------------
-# Measured at hermit 82a8e853 over the full 200-cell corpus (uniform lane flags).
+# Measured at hermit 82a8e853 over the full 205-cell corpus (uniform lane flags).
 # A backend that drops below its floor fails the gate. New backends default 0.
 baseline() {
-  # Measured floors at hermit 82a8e853 over the full 200-cell corpus (uniform
+  # Measured floors at hermit 82a8e853 over the full 205-cell corpus (uniform
   # lane flags), det = <backend> --strict --verify exits 0. A backend dropping
   # below its floor fails the gate.
   case "$1" in
-    ptrace) echo 179 ;;   # det 179/200 L2
-    kvm) echo 130 ;;      # det 130/200
-    liteinst) echo 118 ;; # det 118/200
-    dbi) echo 156 ;;      # det 156/200 (--features third-party-backends)
-    sabre) echo 164 ;;    # det 164/200
-    e9patch) echo 179 ;;  # det 179/200 (AOT rewrite + ptrace runtime)
+    ptrace) echo 184 ;;   # original 179 + five examples
+    kvm) echo 135 ;;      # original 130 + five examples
+    liteinst) echo 118 ;; # all five examples currently fail post-start exec
+    dbi) echo 160 ;;      # original 156 + four deterministic examples
+    sabre) echo 169 ;;    # original 164 + five examples
+    e9patch) echo 184 ;;  # original 179 + five examples
     *) echo 0 ;;
   esac
 }
