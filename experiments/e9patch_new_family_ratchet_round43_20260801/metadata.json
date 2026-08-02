@@ -1,0 +1,34 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round43",
+  "date": "2026-08-01",
+  "question": "Can seven inert guests on new file-time, OFD-lock-SET, socket-option, mmap-flag, mprotect, and memory-protection-key axes reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all seven kept at L2; corpus 275 -> 282, 282/282 PASS_L2. Two candidates dropped (golden diverges from native).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1410",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1409",
+  "branch": "codex/e9patch-corpus-round43-families",
+  "commit_sha": "ba3dbad918306ef0f5a162a64342c3d2aa1f577b",
+  "base_branch": "codex/e9patch-corpus-round42-families",
+  "base_sha": "1c14749b5d0dc7efbd5d881ee862e4059d909a89",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "utimensat_memfd", "syscall": "utimensat(280) times=NULL", "stdout": "utimens=0"},
+    {"guest": "fcntl_ofd_setlk_memfd", "syscall": "fcntl(72) F_OFD_SETLK=37 F_UNLCK", "stdout": "ofdsetlk=0"},
+    {"guest": "getsockopt_timestampns", "syscall": "getsockopt(55) SO_TIMESTAMPNS=35", "stdout": "timestampns=0"},
+    {"guest": "getsockopt_busy_poll", "syscall": "getsockopt(55) SO_BUSY_POLL=46", "stdout": "busypoll=0"},
+    {"guest": "mmap_32bit", "syscall": "mmap(9) MAP_32BIT=0x40", "stdout": "map32=1"},
+    {"guest": "mprotect_none", "syscall": "mprotect(10) PROT_NONE->PROT_READ", "stdout": "protnone=0"},
+    {"guest": "pkey_alloc_free", "syscall": "pkey_alloc(330)+pkey_free(331)", "stdout": "pkeyalloc=1"}
+  ],
+  "dropped": [
+    {"candidate": "getsockopt_incoming_cpu", "syscall": "getsockopt(55) SO_INCOMING_CPU=49", "reason": "native -1 vs golden hermit 0; hermit limitation not parity (#152)"},
+    {"candidate": "prctl_get_tid_address", "syscall": "prctl(157) PR_GET_TID_ADDRESS=40", "reason": "native -EINVAL(-22) vs golden hermit -ENOSYS(-38); hermit limitation not parity (#152)"}
+  ],
+  "corpus_size_before": 275,
+  "corpus_size_after": 282,
+  "net_delta": 7,
+  "full_corpus_run": "RATCHET e9patch: 282/282 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
