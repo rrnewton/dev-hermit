@@ -1,0 +1,24 @@
+{
+  "question": "How has CI/validate runtime grown over the last ~10 days as the compat envelope went 1->6 backends? Daily median/p90 per lane, self-hosted + GitHub-hosted.",
+  "date": "2026-08-01",
+  "agent": "hermit-ci",
+  "task": "ci-runtime-trend-10day",
+  "source": "GitHub Actions API per-workflow queries (with-proxy gh api .../actions/workflows/<id>/runs), rrnewton/hermit + rrnewton/reverie",
+  "duration_metric": "updated_at - run_started_at (seconds), completed runs only (conclusion != null)",
+  "window_pulled": "2026-07-23 .. 2026-08-02 (collection time 2026-08-01)",
+  "lanes": {
+    "hermit-portable-hosted": {"wf": "CI (GitHub-managed portable)", "completed_runs": 779, "days": "07-28..08-02", "role": "GitHub-hosted; carries the compat-envelope expansion matrix"},
+    "hermit-privileged-selfhosted": {"completed_runs": 989, "days": "07-28..08-02", "role": "self-hosted; near-instant, most runs SKIP (no /dev/kvm) -> not a duration signal"},
+    "hermit-validation-levels": {"completed_runs": 316, "days": "07-24..07-26", "role": "self-hosted validate.sh levels; went quiet after 07-26 in this window"},
+    "hermit-p0-demo-gate": {"completed_runs": 4, "days": "07-31", "role": "demo gate"},
+    "hermit-dag-runner-manual": {"completed_runs": 0, "role": "manual trigger; no completed runs"},
+    "reverie-rust": {"wf": "Regular tests + Host-dependent tests", "completed_runs": 884, "days": "07-23..08-02", "role": "reverie fork CI"}
+  },
+  "headline": {
+    "hermit-portable-hosted": {"median_min_start": 14.7, "median_min_end": 44.0, "median_growth": "3.0x", "p90_min_start": 24.9, "p90_min_end": 48.9, "p90_growth": "2.0x", "window": "07-28 -> 08-01", "shape": "monotonic day-over-day; steepest 07-29->07-31 (KVM+DBI columns)"},
+    "reverie-rust": {"median_min_start": 2.4, "median_min_end": 10.1, "median_growth": "4.2x", "window": "07-23 -> 08-01"}
+  },
+  "interpretation": "End-to-end CI wall-time scales ~linearly with backend columns; 1->6 backends over the window ~= 3x on the dominant (portable-hosted) lane, whose p90 is now at the GitHub-hosted job ceiling. Quantitative basis for the timeout-headroom work and for pruning/parallelizing the envelope DAG.",
+  "tracked_outputs": ["render-ci-trend.rs", "results/daily-aggregate.csv", "results/trend-chart.txt", "README.md"],
+  "raw_inputs": "ignored/raw/lane-*.jsonl (gitignored)"
+}
