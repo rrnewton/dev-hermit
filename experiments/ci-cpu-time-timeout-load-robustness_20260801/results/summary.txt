@@ -1,0 +1,7 @@
+policy/load                  reps   flakes     flake%   max_wall_s
+wall-tight/idle                 8        0         0%         4.26
+wall-tight/moderate             8        8       100%         4.43
+wall-tight/swamped              8        8       100%         4.73
+cpu-generous/idle               8        0         0%         3.13
+cpu-generous/moderate           8        0         0%         6.51
+cpu-generous/swamped            8        0         0%        12.57
