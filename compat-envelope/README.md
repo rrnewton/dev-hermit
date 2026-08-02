@@ -83,7 +83,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
 make validate → compat-envelope-fullcorpus
   └─ builds release hermit --features third-party-backends
   └─ compat-envelope/collect-fullcorpus.sh
-      (enumerates the FULL 225-cell corpus, auto-detects every runnable backend,
+      (enumerates the FULL 235-cell corpus, auto-detects every runnable backend,
        ptrace FIRST to write the plain --strict parity reference, then each backend)
       → compat-envelope/fullcorpus-scorecard.csv  → render-scorecard.rs
 ```
@@ -103,11 +103,11 @@ make validate → compat-envelope-fullcorpus
 `collect-envelope.rs` measures the portable, ci=true subset — the right scope for
 a GitHub runner that may lack `/dev/kvm` or the feature build. On a fully
 provisioned local box the definition-of-done should instead be the **union of
-both lanes = the full 225-cell verify corpus across every runnable backend**.
+both lanes = the full 235-cell verify corpus across every runnable backend**.
 `collect-fullcorpus.sh` does exactly that and is what `make validate` runs locally
 (the split targets stay CI-only):
 
-- Enumerates the full corpus from `corpus/corpus-c.tsv` (204 compiled C guests) +
+- Enumerates the full corpus from `corpus/corpus-c.tsv` (214 compiled C guests) +
   `corpus/corpus-nonc.tsv` (21 shell/interpreter cells) — the same denominator as
   `corpus-manifest.csv`.
 - **Auto-detects** backends from the binary's `--backend` enum + host
@@ -123,8 +123,8 @@ both lanes = the full 225-cell verify corpus across every runnable backend**.
   ptrace itself fails under plain `--strict` are marked (`ptv.fail`) so downstream
   backends record `parity=""` (unmeasured), never a false empty-vs-empty match.
 - **Ratchet-asserts** each backend's det count against a measured floor
-  (ptrace 204, e9patch 204, sabre 189, dbi 180, kvm 151, liteinst 118); a drop
-  below the floor fails the gate. The existing 205-cell floors and the twenty new
+  (ptrace 214, e9patch 214, sabre 199, dbi 190, kvm 160, liteinst 118); a drop
+  below the floor fails the gate. The existing 205-cell floors and the thirty new
   performance cells were measured with Hermit `82a8e853` and uniform lane flags.
 
 ## CSV schema (shared contract)

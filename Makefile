@@ -138,7 +138,7 @@ compat-envelope-full: init-hermit
 # portable/privileged split (compat-envelope[-full]) exists for GitHub CI, where
 # a runner may lack /dev/kvm or the third-party-backend feature build. On a
 # fully-provisioned local box (this machine has /dev/kvm) the gate should instead
-# measure the UNION — the FULL 225-cell verify corpus (204 compiled C + 21
+# measure the UNION — the FULL 235-cell verify corpus (214 compiled C + 21
 # shell/interpreter cells) across EVERY backend the local binary can run — not
 # the ~28-cell ci=true portable subset. Backends are auto-detected; a missing one
 # is recorded n/a, never a false red. Ratchet-asserted (green-stays-green) against
@@ -149,7 +149,7 @@ compat-envelope-fullcorpus: init-hermit
 		compat-envelope/collect-fullcorpus.sh
 
 # validate: the outer-repo definition-of-done gate. Locally this is the FULL
-# 225-cell cross-backend envelope (both lanes' union); the portable/privileged
+# 235-cell cross-backend envelope (both lanes' union); the portable/privileged
 # split is CI-only. Extend as other workspace-level checks are added.
 validate: compat-envelope-fullcorpus
 
@@ -191,7 +191,7 @@ help:
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
 	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"
 	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
-	@echo "make compat-envelope-fullcorpus  LOCAL full 225-cell union across all runnable backends"
+	@echo "make compat-envelope-fullcorpus  LOCAL full 235-cell union across all runnable backends"
 	@echo "make validate           Outer-repo definition-of-done gate (local = full-corpus envelope)"
 	@echo "make checkout-all       Check out every standard and optional submodule"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
