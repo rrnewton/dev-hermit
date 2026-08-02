@@ -232,6 +232,11 @@ from diagnostic stderr. Its reported `/bin/ls` validation observed 281 DETLOG
 records and 138 finish records, and strict verify compared 277 syscall records
 per run. That PR is open and is not evidence about landed main behavior.
 
+The coordinated `audit_cross_backend_detlog` read also found that there is no
+true merged cross-process DETLOG stream today. PR #1448 appends captured guest
+records after the host log, so it establishes parity coverage but not semantic
+interleaving between host and guest events.
+
 For convergence, copying diagnostic stderr is an acceptable short-term proof,
 not the final shared protocol. A common guest runtime should emit a framed
 record containing at least stable process/thread identity, a per-thread
