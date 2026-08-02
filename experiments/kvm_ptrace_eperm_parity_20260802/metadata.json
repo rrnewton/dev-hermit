@@ -1,0 +1,17 @@
+{
+  "experiment": "kvm_ptrace_eperm_parity_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "63aaac6cd70ab9ddf5440c0d7d510a0e3f49b1a0",
+  "reverie_base_sha": "df1d7fcde8e1f632628eb9b0fff12d6876b90906",
+  "pr": "https://github.com/rrnewton/reverie/pull/341",
+  "branch": "codex/kvm-ptrace-eperm-parity",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "192/192 pass; fmt+clippy clean",
+  "corpus_cells": [
+    "c-programs/ptrace-attach-eperm",
+    "c-programs/ptrace-seize-eperm"
+  ],
+  "host": "devbig; real /dev/kvm"
+}
