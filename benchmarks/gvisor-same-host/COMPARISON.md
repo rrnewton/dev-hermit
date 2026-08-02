@@ -1,6 +1,6 @@
 # Same-host backend comparison
 
-All rows below were measured on `devbig014.atn7.facebook.com`. The gVisor rows
+All rows below were measured on `devbig014`. The gVisor rows
 use official runsc release `20260727.0`; no gVisor blog value participates in a
 ratio or ranking.
 

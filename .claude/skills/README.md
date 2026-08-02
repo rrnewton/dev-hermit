@@ -28,7 +28,7 @@ The active set is:
   `hermit-lander.md`, `hermit-linux.md`, `hermit-liteinst.md`,
   `hermit-opt.md`, and `hermit-sabre.md`.
 - Coordinator review and reporting:
-  `backend-reality-reviewer.md`, `post-facto-review.md`, and
+  `backend-reality-reviewer.md`, `benchmarking.md`, `post-facto-review.md`, and
   `progress-rubric.md`.
 - Memory-backed policy skills: the 22 remaining flat Markdown files.
   Edit their source memories and run the sync tool.

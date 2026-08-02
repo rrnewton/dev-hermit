@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio, exit};
+use std::process::{exit, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -281,10 +281,31 @@ fn timestamp() -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+fn short_hostname(value: &str) -> String {
+    let hostname = value.trim().split('.').next().unwrap_or_default();
+    if hostname.is_empty() {
+        die("hostname is empty");
+    }
+    hostname.to_owned()
+}
+
 fn hostname() -> String {
     let output = Command::new("hostname")
         .output()
         .unwrap_or_else(|error| die(&format!("hostname: {error}")));
+    short_hostname(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn repository_sha(root: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap_or_else(|error| die(&format!("git rev-parse HEAD: {error}")));
+    if !output.status.success() {
+        die("git rev-parse HEAD failed");
+    }
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
@@ -906,13 +927,14 @@ fn write_results(
     let reference_host = fs::read_to_string(&reference_metadata)
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value["host"].as_str().map(str::to_owned));
+        .and_then(|value| value["host"].as_str().map(short_hostname));
     let current_host = hostname();
     let same_reference_host = reference_host.as_deref() == Some(current_host.as_str());
 
     let metadata = json!({
         "schema": 1,
         "run_id": run_id,
+        "repository_sha": repository_sha(root),
         "host": current_host,
         "kernel": String::from_utf8_lossy(&Command::new("uname").arg("-r").output().unwrap().stdout).trim(),
         "start_load_average": [start_load.0, start_load.1, start_load.2],

@@ -1,6 +1,6 @@
 # Same-host head-to-head
 
-Host: `devbig014.atn7.facebook.com`. Values are slowdown versus the native
+Host: `devbig014`. Values are slowdown versus the native
 sample from the same collection. The runsc columns use local runsc release
 `20260727.0`; no gVisor blog result is used.
 

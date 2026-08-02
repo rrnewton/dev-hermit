@@ -1,11 +1,11 @@
 {
   "end_load_average": "101.73 73.43 111.66 136/61512 3077145\n",
-  "existing_backend_reference_host": "devbig014.atn7.facebook.com",
+  "existing_backend_reference_host": "devbig014",
   "existing_backend_reference_is_same_host": true,
   "expensive_repetitions": 1,
   "expensive_warmups": 0,
   "getpid_source_sha256": "55a297b3564f0d2e730ee28a29277f37b1bff86a385aa6b9033d4ac6d2c4857d",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "images": {
     "absl": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/absl_x86_64@sha256:5f3c919fd4d1bef9c220345cb577efd3bfa6c3656420c82f63d6b3108ffe05a0",
     "ffmpeg": "us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/benchmarks/ffmpeg_x86_64@sha256:14ddfe863d28ac20b27aceb4eaf3a2ed5a0dc9269fb3952d6995e4de3c99df46",
@@ -20,6 +20,7 @@
   ],
   "repetitions": 3,
   "run_id": "20260802T094424Z",
+  "repository_sha": "3f391f88e854d62be233c25012d1895f03b937a1",
   "runsc_release": "20260727.0",
   "runsc_sha512": "ab99ea1b0e2d169ec95473ea6c44abdac9b6b63d9c483f898487fd2b3c32d63bfa9ea104a3d5eed217b90cfc880ceb7a1130a9f7daef6e50656b6e028a8f52e3",
   "runsc_url": "https://storage.googleapis.com/gvisor/releases/release/20260727.0/x86_64/runsc",
