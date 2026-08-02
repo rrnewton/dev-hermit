@@ -145,12 +145,13 @@ canonical_trusted_executable() {
 
 rustup_request=${SHMEM_POD_RUSTUP_BIN:-"$account_home/.cargo/bin/rustup"}
 if [[ -z ${SHMEM_POD_RUSTUP_BIN:-} && ! -x $rustup_request ]]; then
-  for rustup_fallback in /usr/bin/rustup /usr/local/bin/rustup; do
-    if [[ -x $rustup_fallback ]]; then
-      rustup_request=$rustup_fallback
-      break
-    fi
-  done
+  # Portable discovery: resolve rustup from PATH instead of baking in
+  # machine-specific bin directories. The result is still validated below by
+  # canonical_trusted_executable, which is the actual trust boundary.
+  path_rustup=$(command -v rustup 2>/dev/null || true)
+  if [[ -n $path_rustup && -x $path_rustup ]]; then
+    rustup_request=$path_rustup
+  fi
 fi
 RUSTUP_BIN=$(canonical_trusted_executable rustup "$rustup_request") || exit $?
 readonly RUSTUP_BIN

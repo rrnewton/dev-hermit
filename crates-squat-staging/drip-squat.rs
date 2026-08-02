@@ -12,8 +12,30 @@ use std::io::Write;
 use std::process::Command;
 use std::{thread, time::Duration};
 
-const CRATES_DIR: &str = "/home/newton/work/dev-hermit/crates-squat-staging/crates";
-const LOG: &str = "/home/newton/work/dev-hermit/crates-squat-staging/ignored/crates-squat-drip.log";
+// Portable base dir: honor an explicit override, else resolve the
+// crates-squat-staging tree relative to the current directory (run from the
+// dev-hermit checkout root or from the staging dir itself). Avoids baking in
+// any single machine's absolute home path.
+fn squat_root() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("CRATES_SQUAT_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    if cwd.join("crates-squat-staging").is_dir() {
+        cwd.join("crates-squat-staging")
+    } else {
+        cwd
+    }
+}
+fn crates_dir() -> String {
+    squat_root().join("crates").to_string_lossy().into_owned()
+}
+fn log_path() -> String {
+    squat_root()
+        .join("ignored/crates-squat-drip.log")
+        .to_string_lossy()
+        .into_owned()
+}
 const SPACING_SECS: u64 = 660; // ~11 min, > the 10-min new-crate replenish window
 const MAX_ATTEMPTS: u32 = 10;
 const UA: &str = "hermit-squat-drip (hermit@rrnewton.github.io)";
@@ -21,7 +43,7 @@ const UA: &str = "hermit-squat-drip (hermit@rrnewton.github.io)";
 fn log(msg: &str) {
     let line = format!("[{}] {}\n", stamp(), msg);
     print!("{line}");
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
         let _ = f.write_all(line.as_bytes());
     }
 }
@@ -48,7 +70,7 @@ fn is_live(name: &str) -> bool {
 }
 
 fn publish(name: &str) -> (bool, String) {
-    let manifest = format!("{CRATES_DIR}/{name}/Cargo.toml");
+    let manifest = format!("{}/{name}/Cargo.toml", crates_dir());
     match Command::new("with-proxy")
         .args(["cargo", "publish", "--manifest-path", &manifest, "--allow-dirty"])
         .output()
