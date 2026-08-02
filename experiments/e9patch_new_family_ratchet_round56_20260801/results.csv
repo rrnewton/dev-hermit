@@ -1,0 +1,6 @@
+guest,syscall,condition,errno,native_stdout,golden_stdout,e9patch_result,disposition
+getcwd_erange,getcwd(79),1-byte buffer,ERANGE(-34),getcwderange=-34,getcwderange=-34,PASS_L2,kept
+pread_pipe_espipe,pread64(17),on a pipe,ESPIPE(-29),preadespipe=-29,preadespipe=-29,PASS_L2,kept
+open_notdir,openat(257),/dev/null O_DIRECTORY,ENOTDIR(-20),opennotdir=-20,opennotdir=-20,PASS_L2,kept
+memfd_einval,memfd_create(319),invalid flags,EINVAL(-22),memfdeinval=-22,memfdeinval=-22,PASS_L2,kept
+read_dir_eisdir,read(0),on a directory fd,EISDIR(-21),readeisdir=-21,readeisdir=-21,PASS_L2,kept

@@ -1,0 +1,29 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round56",
+  "date": "2026-08-01",
+  "question": "Can five freestanding raw-syscall guests driving already-covered syscalls into faithful wrong-arg errno constants across five distinct errno classes (ERANGE/ESPIPE/ENOTDIR/EINVAL/EISDIR) reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all five kept at L2; corpus 390 -> 395, 395/395 PASS_L2. Native==golden for every guest (kernel arg-validation errno).",
+  "pr": "https://github.com/rrnewton/hermit/pull/1446",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1439",
+  "branch": "codex/e9patch-corpus-round56-families",
+  "commit_sha": "f3a86e5a",
+  "base_branch": "codex/e9patch-corpus-round55-families",
+  "base_sha": "85f2f925",
+  "hermit_repo": "rrnewton/hermit",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "getcwd_erange", "syscall": "getcwd(79)", "condition": "1-byte buffer", "errno": "-ERANGE(-34)", "stdout": "getcwderange=-34"},
+    {"guest": "pread_pipe_espipe", "syscall": "pread64(17)", "condition": "on a pipe", "errno": "-ESPIPE(-29)", "stdout": "preadespipe=-29"},
+    {"guest": "open_notdir", "syscall": "openat(257)", "condition": "/dev/null O_DIRECTORY", "errno": "-ENOTDIR(-20)", "stdout": "opennotdir=-20"},
+    {"guest": "memfd_einval", "syscall": "memfd_create(319)", "condition": "invalid flags", "errno": "-EINVAL(-22)", "stdout": "memfdeinval=-22"},
+    {"guest": "read_dir_eisdir", "syscall": "read(0)", "condition": "on a directory fd", "errno": "-EISDIR(-21)", "stdout": "readeisdir=-21"}
+  ],
+  "dropped": [],
+  "corpus_size_before": 390,
+  "corpus_size_after": 395,
+  "net_delta": 5,
+  "full_corpus_run": "RATCHET e9patch: 395/395 PASS_L2",
+  "per_guest_coverage": "candidate==mapped==1, b0==0, prologue=8, tail_match=yes",
+  "inventory_audit": "audit-inventory EXIT=0 (773 files)",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=.../e9tool HERMIT_E9PATCH_BACKEND=.../e9patch python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
