@@ -1,0 +1,40 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round51",
+  "date": "2026-08-01",
+  "question": "Can nine inert guests exercising the setsockopt(54) write path (set a non-default option, read it back) plus an mlockall on-fault variant reach e9patch preprocessing-parity L2?",
+  "answer": "Yes, all nine kept at L2; corpus 355 -> 364, 364/364 PASS_L2. Duplicate setsockopt round-trips (SO_KEEPALIVE, SO_REUSEPORT, SO_BROADCAST) already covered were excluded; madv_populate_read/write and prctl PR_GET_TIMERSLACK dropped on divergence/host-dependence.",
+  "pr": "https://github.com/rrnewton/hermit/pull/1423",
+  "pr_stacked_on": "https://github.com/rrnewton/hermit/pull/1421",
+  "branch": "codex/e9patch-corpus-round51-families",
+  "commit_sha": "9febe35a",
+  "base_branch": "codex/e9patch-corpus-round50-families",
+  "base_sha": "a68192c6c8918b06804e2eaad3fa0ca6b6dd4144",
+  "hermit_repo": "rrnewton/hermit",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "e9patch_source": "reverie/third-party/e9patch (e9tool + e9patch)",
+  "kept": [
+    {"guest": "setsockopt_priority", "option": "SO_PRIORITY(12) SOL_SOCKET(1) stream", "set": 6, "stdout": "sopriority=6"},
+    {"guest": "setsockopt_nodelay", "option": "TCP_NODELAY(1) IPPROTO_TCP(6) stream", "set": 1, "stdout": "setnodelay=1"},
+    {"guest": "setsockopt_ipttl", "option": "IP_TTL(2) IPPROTO_IP(0) stream", "set": 33, "stdout": "setipttl=33"},
+    {"guest": "setsockopt_rcvlowat", "option": "SO_RCVLOWAT(18) SOL_SOCKET(1) stream", "set": 2, "stdout": "setrcvlowat=2"},
+    {"guest": "setsockopt_iptos", "option": "IP_TOS(1) IPPROTO_IP(0) stream", "set": 8, "stdout": "setiptos=8"},
+    {"guest": "setsockopt_ip_multicast_ttl", "option": "IP_MULTICAST_TTL(33) IPPROTO_IP(0) dgram", "set": 5, "stdout": "setipmcttl=5"},
+    {"guest": "setsockopt_tcp_cork", "option": "TCP_CORK(3) IPPROTO_TCP(6) stream", "set": 1, "stdout": "settcpcork=1"},
+    {"guest": "setsockopt_ipv6_hops", "option": "IPV6_UNICAST_HOPS(16) IPPROTO_IPV6(41) stream", "set": 5, "stdout": "setipv6hops=5"},
+    {"guest": "mlockall_onfault", "option": "mlockall(151) MCL_CURRENT|MCL_ONFAULT then munlockall(152)", "stdout": "mlockonfault=0"}
+  ],
+  "dropped": [
+    {"candidate": "ss_keepalive", "reason": "duplicate of existing setsockopt_keepalive (SO_KEEPALIVE set+read-back)"},
+    {"candidate": "ss_reuseport", "reason": "duplicate of existing setsockopt_reuseport (SO_REUSEPORT set+read-back)"},
+    {"candidate": "ss_broadcast", "reason": "SO_BROADCAST already covered by existing setsockopt_broadcast"},
+    {"candidate": "madv_populate_read", "reason": "MADV_POPULATE_READ native 0 vs golden -EINVAL(-22), golden diverges from native (#152)"},
+    {"candidate": "madv_populate_write", "reason": "MADV_POPULATE_WRITE native 0 vs golden -EINVAL(-22), golden diverges from native (#152)"},
+    {"candidate": "prctl_gettimerslack", "reason": "PR_GET_TIMERSLACK returns host-default timer slack, host-configuration dependent"}
+  ],
+  "corpus_size_before": 355,
+  "corpus_size_after": 364,
+  "net_delta": 9,
+  "full_corpus_run": "RATCHET e9patch: 364/364 PASS_L2",
+  "inventory_audit": "audit-inventory EXIT=0",
+  "reproduction": "cd worktrees/e9patch/hermit && HERMIT_E9TOOL=... HERMIT_E9PATCH_BACKEND=... python3 tests/backend-parity/e9patch_corpus.py --hermit target/debug/hermit"
+}
