@@ -105,7 +105,6 @@
 ignored/
 ACTIVE.md
 
-# Local backup and type-checker cache files.
-*.orig
+# Local type-checker cache files.
 **/.mypy_cache/
 /worktree-state.json

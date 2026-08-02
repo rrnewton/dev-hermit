@@ -1,0 +1,29 @@
+{
+  "experiment": "dbi_perf_leader_baseline_20260801",
+  "question": "Quantify the DBI backend's per-syscall interception advantage over ptrace, and its fixed startup tax, so the perf lead is documented and regressions are detectable.",
+  "date": "2026-08-01",
+  "host": {
+    "name": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "logical_cpus": 316,
+    "load_during_run": "~61-93 (shared host; min-of-N used to suppress contention noise)"
+  },
+  "toolchain": {
+    "gcc": "11.5.0 20240719 (Red Hat 11.5.0-14)",
+    "microbench_build": "gcc -O2 -o syscall_loop syscall_loop.c"
+  },
+  "hermit": {
+    "feature_branch_sha": "dcea4278d84fa356028c5abd3d69e1c5ce3e89fe",
+    "base_main_sha": "065980ea661f9d5e84b4fbaa0c69f4a4f69a81a9",
+    "binary": "target/release/hermit built with --features dbi --release",
+    "note": "The --summary stats commit on this branch does not affect run performance; the ptrace binary and DBI backend are the same release binary."
+  },
+  "reverie_dbi_pin": "26ffc1a6a5a13da92bb70bc0caac6b8d8524deb9",
+  "profile": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
+  "method": "min-of-3 wall-clock via /usr/bin/time -o FILE -f %e; guest stdout/stderr to /dev/null; ratio (not absolute) is the trustworthy signal on a loaded shared host",
+  "workloads": {
+    "startup_tax": "/bin/true (fixed backend attach/teardown cost, ~no guest syscalls of interest)",
+    "per_syscall": "syscall_loop 100000 (tight raw SYS_getpid loop; every iteration crosses the backend)"
+  },
+  "caveat": "CPU-bound microbenchmarks (e.g. a pure arithmetic loop) measured 0.00s under both backends at 100M iters and are NOT reported here: they fall below /usr/bin/time's 10ms resolution and are an unreliable artifact. Only the syscall-interception numbers are reported."
+}
