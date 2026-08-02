@@ -1,0 +1,6 @@
+test_id,pre_fix_ptrace,pre_fix_kvm,post_fix_ptrace,post_fix_kvm,pre_parity,post_parity
+backend-parity-c/pid-probe,pid=3,pid=1,pid=3,pid=3,diff,parity
+c-programs/socket-cookie-tcp,"tcp=12884901893,12884901894","tcp=4294967301,4294967302","tcp=12884901888,12884901889","tcp=12884901888,12884901889",diff,parity
+c-programs/socket-cookie-udp,-,-,"udp=12884901888,12884901889","udp=12884901888,12884901889",diff,parity
+c-programs/socket-cookie-unix,-,-,"unix=12884901888,12884901889","unix=12884901888,12884901889",diff,parity
+system-utils/record-getpid,-,-,My pid: 3,My pid: 3,diff,parity

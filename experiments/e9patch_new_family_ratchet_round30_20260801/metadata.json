@@ -1,0 +1,37 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round30",
+  "date": "2026-08-01",
+  "question": "Do prctl timer-slack query, times CPU-tick accounting, and getxattr/lgetxattr/fgetxattr nonexistent-xattr error-path raw-syscall guests achieve L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_sha": "ed4042395785bc779e86ebd0358ffb63e205cfef",
+    "hermit_base_sha": "fe5b6383239edf3581ae40eb4b3b2e6efaa4407a",
+    "hermit_branch": "codex/e9patch-corpus-round30-families",
+    "pr": "https://github.com/rrnewton/hermit/pull/1368",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1364"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"]
+  },
+  "corpus_size": {"before": 203, "after": 208},
+  "kept": [
+    {"guest": "prctl_timerslack", "syscall": "prctl(157) PR_GET_TIMERSLACK=30", "expected_stdout": "timerslack=1\\n"},
+    {"guest": "times_check", "syscall": "times(100)", "expected_stdout": null, "note": "parity-only (host/timing-dependent return)"},
+    {"guest": "getxattr_devnull", "syscall": "getxattr(191)", "expected_stdout": "getxattr=1\\n"},
+    {"guest": "lgetxattr_devnull", "syscall": "lgetxattr(192)", "expected_stdout": "lgetxattr=1\\n"},
+    {"guest": "fgetxattr_devnull", "syscall": "fgetxattr(193)", "expected_stdout": "fgetxattr=1\\n"}
+  ],
+  "dropped": [
+    {"guest": "prctl_fp_mode", "syscall": "prctl(157) PR_GET_FP_MODE=46", "reason": "returns -ENOSYS (-38) under golden hermit-ptrace (native returned -EINVAL -22)"},
+    {"guest": "name_to_handle_at_devnull", "syscall": "name_to_handle_at(303)", "reason": "returns -EOPNOTSUPP (-95) under golden hermit-ptrace (native succeeded); hermit limitation"},
+    {"guest": "seccomp_get_action_avail", "syscall": "seccomp(317)", "reason": "returns -EOPNOTSUPP (-95) under golden hermit-ptrace (native succeeded); hermit limitation"}
+  ],
+  "result": {
+    "golden_ptrace": "5/5 L2verified=1, expected stdout matched (times_check parity-only)",
+    "e9patch": "5/5 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=8 tail_match=yes",
+    "audit_inventory": "exit 0"
+  }
+}

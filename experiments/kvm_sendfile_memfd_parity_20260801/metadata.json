@@ -1,0 +1,24 @@
+{
+  "experiment": "kvm_sendfile_memfd_parity",
+  "date_utc": "2026-08-01",
+  "reverie_branch": "codex/kvm-sendfile-memfd-parity",
+  "reverie_sha": "59bb618aaf22d246094a3ec193cbfce92c8f9803",
+  "hermit_slot_sha": "464cbd9f9bb43d5505c914783819e1d349630283",
+  "reverie_pr": "https://github.com/rrnewton/reverie/pull/322",
+  "backend": "kvm",
+  "backend_flags": ["--no-virtualize-cpuid", "--max-timeslice=disabled"],
+  "env": {"LC_ALL": "C", "TZ": "UTC"},
+  "test_mode": "verify",
+  "golden_reference": "ptrace",
+  "build_method": "test-only local cargo patch redirecting hermit reverie git-dep to slot (reverted after)",
+  "cells_flipped_to_parity": [
+    "c-programs/record-replay-fd-close",
+    "c-programs/remap-file-pages-memfd-enosys"
+  ],
+  "cells_still_failing_out_of_scope": {
+    "c-programs/syscall-quick-wins": "close_range ENOSYS",
+    "c-programs/record-replay-file-state": "FICLONE ioctl unimplemented; also fails ptrace --verify in corpus (not parity-eligible)"
+  },
+  "kvm_baseline": {"det": "130/200", "parity": "112/184"},
+  "kvm_after": {"det": "132/200", "parity": "114/184"}
+}

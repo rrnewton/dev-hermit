@@ -1,0 +1,9 @@
+guest,syscall_family,expected_stdout,candidate_sites,mapped,b0,prologue,tail_match,result
+socket_dgram,socket,socket=3,1,1,0,8,yes,PASS_L2
+shutdown_socketpair,shutdown,shutdown=0,1,1,0,8,yes,PASS_L2
+set_robust_list_ok,set_robust_list,robust=0,1,1,0,8,yes,PASS_L2
+get_robust_list_ok,get_robust_list,getrobust=0,1,1,0,8,yes,PASS_L2
+madvise_willneed,madvise,willneed=0,1,1,0,8,yes,PASS_L2
+mmap_shared_anon,mmap(MAP_SHARED),shmap=0,1,1,0,8,yes,PASS_L2
+prctl_keepcaps,prctl(PR_GET_KEEPCAPS),keepcaps=0,1,1,0,8,yes,PASS_L2
+arch_prctl_getfs,arch_prctl(ARCH_GET_FS),getfs=0,1,1,0,8,yes,PASS_L2

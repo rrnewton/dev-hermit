@@ -1,0 +1,36 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round34",
+  "date": "2026-08-01",
+  "question": "Do six more inert query/no-op syscalls on uncovered boundaries — unarmed POSIX timer_create+timer_gettime, unarmed timerfd_gettime, non-blocking futex(FUTEX_WAIT) value-mismatch, wait4(WNOHANG) with no children, membarrier(CMD_QUERY), and getrusage(RUSAGE_THREAD) — reach L2 parity across the golden ptrace backend and the e9patch-rewritten ptrace path?",
+  "repo": {
+    "hermit_sha": "b1fdeaf6d7bcda0799a7a5c4f116bbe1ed55a43d",
+    "hermit_base_sha": "301b36410f22f10cdebae12fd24b331d96795f9d",
+    "hermit_branch": "codex/e9patch-corpus-round34-families",
+    "pr": "https://github.com/rrnewton/hermit/pull/1394",
+    "base_pr": "https://github.com/rrnewton/hermit/pull/1391"
+  },
+  "environment": {
+    "hermit_binary": "worktrees/e9patch/hermit/target/debug/hermit (e9patch feature)",
+    "HERMIT_E9TOOL": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "HERMIT_E9PATCH_BACKEND": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+    "cc": "/usr/bin/cc",
+    "freestanding_flags": ["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"],
+    "note": "Fleet PMU moderately contended during vetting (loadavg ~680, ~43 concurrent --verify, down from round 33's ~365). These single-syscall probes have minimal RCBs and hit L2 on the first verify attempt for both golden and e9; vetting used a killpg-on-wedge retry harness for the verify legs as a precaution."
+  },
+  "corpus_size": {"before": 221, "after": 227},
+  "kept": [
+    {"guest": "timer_create_gettime", "syscall": "timer_create(222)+timer_gettime(224)", "expected_stdout": "timergettime=0\\n"},
+    {"guest": "timerfd_gettime_unarmed", "syscall": "timerfd_gettime(287)", "expected_stdout": "timerfdgettime=0\\n"},
+    {"guest": "futex_wait_mismatch", "syscall": "futex(202) FUTEX_WAIT", "expected_stdout": "futexwait=-11\\n"},
+    {"guest": "wait4_nochild", "syscall": "wait4(61) WNOHANG", "expected_stdout": "wait4=-10\\n"},
+    {"guest": "membarrier_query", "syscall": "membarrier(324) CMD_QUERY", "expected_stdout": "membarrierquery=1\\n"},
+    {"guest": "getrusage_thread", "syscall": "getrusage(98) RUSAGE_THREAD", "expected_stdout": "getrusagethread=0\\n"}
+  ],
+  "dropped": [],
+  "result": {
+    "native": "6/6 exit 0 with expected stdout",
+    "golden_ptrace": "6/6 L2 Determinism verified; native==golden and expected stdout matched",
+    "e9patch": "6/6 PASS_L2 exit=0 sites c/1 m/1 b0/0 prologue=8 tail_match=yes",
+    "audit_inventory": "exit 0 (605 files)"
+  }
+}

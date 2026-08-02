@@ -1,0 +1,19 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round25",
+  "date": "2026-08-01",
+  "question": "Do the capability-writeback (capset) and non-blocking epoll_wait families, with no existing corpus guest, hold byte-identical parity under e9patch preprocessing with the golden hermit ptrace backend, after dropping keyctl which hermit does not support?",
+  "hermit_sha": "3fb7141d109345ece566d9e8f1df4e0dc734a5de",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "branch": "codex/e9patch-corpus-round25-families",
+  "base_branch": "codex/e9patch-corpus-round24-families",
+  "pr": "https://github.com/rrnewton/hermit/pull/1338",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "backend": "ptrace (golden reference); e9patch = binary-rewriting preprocessing, not a backend",
+  "determinism_level": "L2 (--strict --verify, guest-visible bitwise-identical; detlog tail-match modulo 8-syscall e9loader prologue)",
+  "result": "183/183 PASS_L2 (181 prior + 2 new); 2/3 kept, 1 dropped",
+  "dropped": ["keyctl_keyring_id: keyctl(250) KEYCTL_GET_KEYRING_ID returns failure under hermit (no usable kernel keyring)"],
+  "host_independence": "prints only syscall return on success (0) or a boolean; keyring id / capability bits read but not printed",
+  "gating": "non-gated: capability writeback and non-blocking epoll_wait touch neither time, randomness, nor CPU scheduling; routine backend-parity, no post-facto-human-review trigger",
+  "ci_note": "e9tool/e9patch absent from CI (like KVM /dev/kvm); corpus harness ungated, only audit-inventory gates these files",
+  "note": "field thinning: rising drop rate across rounds (r22 0/6, r23 1/7, r24 4/7, r25 1/3); readily-reachable supported non-gated syscall families nearly exhausted. Confirmed hermit-unsupported this session: sched_getattr=275, io_setup=206, openat2=437, SysV IPC shmget=29/semget=64/msgget=68, keyctl=250. xattr write/get/remove on memfd fails natively (-EACCES/-ENODATA, tmpfs anon inode rejects user.* xattrs) so not shippable as host-independent success guests."
+}

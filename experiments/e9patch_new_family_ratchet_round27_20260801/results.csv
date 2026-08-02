@@ -1,0 +1,7 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+accept_abstract,43,accept=1,yes,0,PASS_L2,yes
+select_timeout_zero,23,select=0,yes,0,PASS_L2,yes
+pselect6_timeout_zero,270,pselect=0,yes,0,PASS_L2,yes
+ppoll_timeout_zero,271,ppoll=0,yes,0,PASS_L2,yes
+epoll_pwait_timeout_zero,281,epollpwait=0,yes,0,PASS_L2,yes
+getrusage_self,98,getrusage=0,yes,0,PASS_L2,yes

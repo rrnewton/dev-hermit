@@ -1,0 +1,25 @@
+{
+  "question": "Which cross-backend parity contracts in hermit/tests/backend-parity/matrix.tsv actually hold at L2 (hermit run --strict --verify), and at which assurance kind per backend?",
+  "hermit_base_sha": "2f3689bd8830ab6b59dacea6cb72951f4d0d899e",
+  "hermit_branch": "codex/backend-parity-matrix-l2-verify",
+  "reverie_sha": "unchanged (no reverie change)",
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "cc": "gcc 11.5.0 (Red Hat 11.5.0-14)",
+    "dev_kvm": "present, read-write (crw-rw-rw- root kvm)"
+  },
+  "hermit_binary": "target/debug/hermit built with third-party-backends (ptrace+kvm first-party, dbi via DynamoRIO)",
+  "commands": {
+    "ptrace_l2": "python3 tests/backend-parity/run_matrix.py --backend ptrace --verify --require-backend",
+    "dbi_l2": "python3 tests/backend-parity/run_matrix.py --backend dbi --verify --require-backend",
+    "kvm_l2": "python3 tests/backend-parity/run_matrix.py --backend kvm --verify --require-backend",
+    "l1_regression": "python3 tests/backend-parity/run_matrix.py --backend <b> --strict --require-backend",
+    "check": "python3 tests/backend-parity/run_matrix.py --check"
+  },
+  "results_l2": {
+    "ptrace": {"verified": 23, "of": 23, "kind": "detlog", "gaps": []},
+    "dbi": {"verified": 21, "of": 23, "kind": "detlog", "gaps": ["exit_status", "pthread_lifecycle"]},
+    "kvm": {"verified": 21, "of": 23, "kind": "guest-visible", "gaps": ["process_wait_accounting", "process_wait_lifecycle"]}
+  },
+  "exit_codes": {"ptrace_l2": 0, "dbi_l2": 0, "kvm_l2": 0, "dbi_l1": 0, "ptrace_l1": 0}
+}

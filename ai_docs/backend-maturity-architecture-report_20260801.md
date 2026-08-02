@@ -21,14 +21,17 @@ reference.
 | Backend | B-level | Headline evidence | Load path | Determinism reached |
 | --- | --- | --- | --- | --- |
 | **ptrace** | **B4** (golden reference) | 23/23 parity contracts; full record/replay/chaos; the L0–L4 reference | `Detcore<PtraceGuest>`, seccomp+`PTRACE` | L0–L4 |
-| **KVM** (flagship) | **B3** | 22/23 parity contracts (96%); L3 heap/stack now reported (#301) | `KvmGuest<Detcore>`, HW VM-exit hypercall, out-of-process | L1 in matrix; L2 on frozen examples; L3 memory newly wired |
+| **KVM** (flagship) | **B2** | 22/23 favorable-subset parity contracts (96%); canonical Detcore with per-child callbacks confirmed (21/23 exact-main L2, no relaxation, `2f3689bd`); B3 unearned — needs B2.4 + ≥½ the *full* frozen ptrace corpus, not a curated subset | `KvmGuest<Detcore>`, HW VM-exit hypercall, out-of-process | L2 on the 23-contract subset (`2f3689bd`); full-corpus L2/L3 sweep still pending |
 | **DBI / DynamoRIO** | **B3** | 22/23 parity contracts (96%); 70/89 (78.7%) native suite | `Detcore<DbiGuest>`, DynamoRIO JIT rewrite, in-process | L1 in matrix (`--strict`, no `--verify`) |
 | **SaBRe** | **B3** (qualified tonight) | 131/194 strict-verify cells = 67.5% (#1214) | `RemoteReverieAdapter<Detcore>` / `SabreGuest`, ELF SYSCALL rewrite, in-process + RPC coordinator | L2 with relaxations |
 | **LiteInst** | **B2** (hybrid) | 65+ single-process programs L2; direct path L0-harness-only | **Hybrid**: `reverie_ptrace` host runs Detcore + liteinst patch runtime | L2 (single-process only; caveated) |
 | **e9patch** | **N/A — not a backend** | 12-guest AOT preprocessing corpus (#1216) | e9tool AOT-rewrites ELF → runs under **ptrace** | L2 via ptrace |
 
-**One-line state of the union:** ptrace remains the golden B4 reference. KVM and
-DBI are both solid B3 on the 23-contract cross-backend matrix (96% each), each
+**One-line state of the union:** ptrace remains the golden B4 reference. KVM
+matches 22/23 of the cross-backend matrix (96%) running canonical Detcore with
+per-child callbacks (confirmed by the `2f3689bd` L2 audit), but stays **B2**: the
+23 contracts are a favorable curated subset, not ≥½ the full frozen ptrace
+corpus, and no B2.4 is established. DBI is a solid B3 on the same matrix (96%),
 with exactly one well-characterized gap. SaBRe crossed the B3 corpus threshold
 **tonight** (67.5% of the strict-verify plan). LiteInst is a B2 hybrid whose
 "L2" must be read carefully (Detcore actually runs in a ptrace host). e9patch is
@@ -93,10 +96,22 @@ frontier is not ptrace itself but the lower-overhead backends catching up to it.
 
 ---
 
-## 3. KVM — the flagship backend (B3)
+## 3. KVM — the flagship backend (B2)
 
-**Maturity: B3.** 22/23 cross-backend contracts (96%,
-`tests/backend-parity/matrix.tsv`). Sole gap: `process_wait_lifecycle`.
+**Maturity: B2.** 22/23 cross-backend contracts (96%,
+`tests/backend-parity/matrix.tsv`); sole gap: `process_wait_lifecycle`. The
+23-contract set is a **favorable curated subset**, not ≥½ the full frozen ptrace
+corpus, and no B2.4 is established, so the B3 threshold is **unearned** despite the
+high subset ratio. (The earlier "105/183 sweep" was exit-code + stdout only —
+no stderr, no semantic/L3 comparison — and does not qualify as corpus-level B3
+evidence either.)
+
+**Canonical Detcore, per-child, confirmed.** The `2f3689bd` audit
+(`kvm-maturity-integrity-audit`) ran the matrix at L2 (`--strict --verify`,
+**no relaxation**) and measured **21/23 exact-main parity**. KVM runs the real
+shared Detcore tool with genuine per-child callbacks — the earlier claim that
+child/thread syscalls bypass Detcore in a backend-local `ElfExecutor`
+personality is **withdrawn as inaccurate**.
 
 **Architecture.** KVM loads the real shared Detcore as a Reverie tool via
 `KvmGuest<Detcore>`. `reverie-kvm/src/runtime.rs:343` `run_with_tool` calls
@@ -137,20 +152,17 @@ crash.
 **Doesn't (honest).** Sole matrix gap = `process_wait_lifecycle`: KVM records
 serialized child exits and implements `wait4`/`waitid`, but **does not yet
 synthesize an x86-64 SIGCHLD handler frame** to actually run the guest's signal
-handler. Architectural caveat (#152): child-process and thread syscalls execute
-in the backend's deterministic `ElfExecutor` personality **without per-child
-Detcore callbacks** — the shared personality provides distinct worker samples and
-byte-identical strict output, but this is not per-child Detcore parity. The CPUID
-row validates reverie-kvm's backend-local `KVM_SET_CPUID2` policy, not Detcore
-CPUID-event parity. Matrix evidence is L1 (`--strict`, no `--verify`); L2 is
-established only on the frozen example set, not a broad corpus.
+handler. The CPUID row validates reverie-kvm's backend-local `KVM_SET_CPUID2`
+policy, not Detcore CPUID-event parity. The binding B2→B3 gap is **corpus
+breadth, not the execution model**: the 23 contracts and the exit+stdout-only
+"105/183" sweep are not ≥½ the full frozen ptrace corpus compared at the L3 /
+semantic level, so B3 stays unearned.
 
 **Next gaps (incl. owner-gated).** (1) SIGCHLD signal-frame synthesis for
-`process_wait_lifecycle` → B4 on that contract. (2) Per-child Detcore callbacks
-for child/thread syscalls (currently `ElfExecutor` personality) — a core
-execution-model change, **owner-gated** (touches the KVM guest/backend contract).
-(3) Broaden L2/L3 beyond frozen examples to a corpus sweep. Any KVM change also
-requires the **Relationship to gVisor** PR section.
+`process_wait_lifecycle` → B4 on that contract. (2) Broaden the confirmed L2
+parity from the 23-contract subset to ≥½ the full frozen ptrace corpus
+(stderr + semantic/L3, not exit+stdout) — the real B2→B3 step. Any KVM change
+also requires the **Relationship to gVisor** PR section.
 
 ---
 
@@ -375,10 +387,12 @@ New e2e determinism tests this session (portable, two-sided, draft PRs):
   Do not present them as L2. SaBRe's 131/194 *is* L2 (`--strict --verify`), but
   with `--no-virtualize-cpuid --max-timeslice=disabled` relaxations on the
   portable corpus.
-- **"One shared Detcore" is real for ptrace/KVM/DBI/SaBRe**, but KVM's child/
-  thread syscalls run in a backend-local `ElfExecutor` personality (not per-child
-  Detcore), and LiteInst's productive path runs Detcore in a **ptrace host** — so
-  neither is unqualified "Detcore parity" for those paths.
+- **"One shared Detcore" is real for ptrace/KVM/DBI/SaBRe**, and for KVM this now
+  includes genuine **per-child Detcore callbacks** (confirmed by the `2f3689bd`
+  L2 audit: 21/23 exact-main, no relaxation) — the earlier "KVM child/thread
+  syscalls run in a backend-local `ElfExecutor` personality without per-child
+  Detcore" caveat is withdrawn. LiteInst's productive path still runs Detcore in
+  a **ptrace host**, so that path is not unqualified "Detcore parity."
 - **LiteInst L2 can be a false positive** for any program touching
   threads/child-processes (run1==run2 ≠ run==native). Only single-process,
   single-thread LiteInst L2 is trustworthy.
@@ -392,8 +406,9 @@ New e2e determinism tests this session (portable, two-sided, draft PRs):
 ## 10. Priority next steps (for the owner)
 
 1. **KVM SIGCHLD signal-frame synthesis** — the single remaining matrix contract
-   for KVM; also the KVM per-child Detcore callback question (owner-gated core
-   model + gVisor comparison).
+   for KVM. (Per-child Detcore callbacks are confirmed working per the `2f3689bd`
+   audit; the real B2→B3 lift is corpus breadth at L2/L3, not the execution
+   model.) Any KVM change still needs the gVisor-comparison PR section.
 2. **SaBRe divergence cells (18)** — clock-trajectory unification and
    multithreaded random-source parity are the highest-leverage; then the 30
    failing cells (clone/vfork/static-binary envelope).

@@ -1,0 +1,13 @@
+guest,exit_g,exit_e,exit_par,stdout_par,L2_g,L2_e,candidate_sites,mapped_sites,b0_sites,verdict
+clock_gettime,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+compute,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+getpid_check,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+getrandom,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+loop_write,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+minimal_exit,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+mmap_anon,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+multi_site,0,0,yes,yes,pass,pass,3,3,0,PASS_L2
+nanosleep,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+sigmask,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+uname,0,0,yes,yes,pass,pass,1,1,0,PASS_L2
+write_stdout,0,0,yes,yes,pass,pass,1,1,0,PASS_L2

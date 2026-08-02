@@ -1,0 +1,9 @@
+guest,syscall_family,expected_stdout,candidate_sites,mapped,b0,prologue,tail_match,result
+syncfs_memfd,syncfs,syncfs=0,1,1,0,8,yes,PASS_L2
+membarrier_global,membarrier(CMD_GLOBAL),membarrier=0,1,1,0,8,yes,PASS_L2
+getcpu_check,getcpu,getcpu=0,1,1,0,8,yes,PASS_L2
+getdents_legacy,getdents(78-legacy),getdents=1,1,1,0,8,yes,PASS_L2
+personality_query,personality,persona=1,1,1,0,8,yes,PASS_L2
+fcntl_setlk_memfd,fcntl(F_SETLK),setlk=0,1,1,0,8,yes,PASS_L2
+inotify_rm_watch,inotify_rm_watch,inotify_rm=0,1,1,0,8,yes,PASS_L2
+process_vm_readv_self,process_vm_readv,pvm=4,-,-,-,-,-,DROPPED(golden hermit ptrace returns -1)

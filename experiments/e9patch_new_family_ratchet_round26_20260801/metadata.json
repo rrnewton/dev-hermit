@@ -1,0 +1,23 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round26",
+  "date": "2026-08-01",
+  "question": "Do the thread-directed signalling families tkill (signal 0) and rt_tgsigqueueinfo (signal 0), with no existing corpus guest, hold byte-identical parity under e9patch preprocessing with the golden hermit ptrace backend, after dropping two -ENOSYS prctl options and a natively-failing userfaultfd?",
+  "hermit_sha": "fdb5fe38c7a8022e9e00cc335da797c48c3bb151",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "branch": "codex/e9patch-corpus-round26-families",
+  "base_branch": "codex/e9patch-corpus-round25-families",
+  "pr": "https://github.com/rrnewton/hermit/pull/1344",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "backend": "ptrace (golden reference); e9patch = binary-rewriting preprocessing, not a backend",
+  "determinism_level": "L2 (--strict --verify, guest-visible bitwise-identical; detlog tail-match modulo 8-syscall e9loader prologue)",
+  "result": "185/185 PASS_L2 (183 prior + 2 new); 2/5 kept, 3 dropped",
+  "dropped": [
+    "prctl_securebits: prctl PR_GET_SECUREBITS(27) returns -ENOSYS (-38) under golden hermit ptrace",
+    "prctl_mce_kill_get: prctl PR_MCE_KILL_GET(34) returns -ENOSYS (-38) under golden hermit ptrace",
+    "userfaultfd_create: userfaultfd(323) fails even natively here (unprivileged userfaultfd disabled) -- error path, not a supported-success guest"
+  ],
+  "host_independence": "prints only the syscall return on success (0); signal 0 is a permission check with no delivery so no handler runs and the schedule is unperturbed",
+  "gating": "non-gated: thread-directed signal-0 probes touch neither time, randomness, nor CPU scheduling; routine backend-parity, no post-facto-human-review trigger",
+  "ci_note": "e9tool/e9patch absent from CI (like KVM /dev/kvm); corpus harness ungated, only audit-inventory gates these files",
+  "note": "field thinning continues: drop rate across rounds r22 0/6, r23 1/7, r24 4/7, r25 1/3, r26 3/5. Readily-reachable supported non-gated syscall families are nearly exhausted. Confirmed hermit-UNSUPPORTED this session (do not re-add): sched_getattr=275, io_setup=206, openat2=437, SysV IPC shmget=29/semget=64/msgget=68, keyctl=250, prctl PR_GET_SECUREBITS=27, prctl PR_MCE_KILL_GET=34; xattr on memfd + userfaultfd fail natively. Confirmed hermit-SUPPORTED and now shipped: tkill=200, rt_tgsigqueueinfo=297."
+}

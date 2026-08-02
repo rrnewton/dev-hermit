@@ -1,0 +1,8 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+munlock_page,11,munlock=0,yes,0,PASS_L2,yes
+connect_abstract,42,connect=0,yes,0,PASS_L2,yes
+recvmmsg_socketpair,299,recvmmsg=hi,yes,0,PASS_L2,yes
+preadv2_memfd,327,preadv2=hi,yes,0,PASS_L2,yes
+pwritev2_memfd,328,pwritev2=hi,yes,0,PASS_L2,yes
+prctl_cap_ambient,157,capambient=0,yes,0,PASS_L2,yes
+pidfd_getfd_self,438,pidfdgetfd=1,yes,0,PASS_L2,yes

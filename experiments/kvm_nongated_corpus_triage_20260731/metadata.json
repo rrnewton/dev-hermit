@@ -1,0 +1,32 @@
+{
+  "date": "2026-07-31",
+  "task": "kvm-corpus-round-nongated",
+  "question": "Is there a non-gated corpus batch an impl agent can enable AND land toward B3 105/183+ on current main, avoiding owner-gated families and other agents' owned files, with no false parity?",
+  "hermit_sha": "be567129",
+  "hermit_sha_note": "PR #1191 branch = current main KVM behavior (incl cc3730fd guest-clock) + L3 detlog memory-region hashing fix",
+  "baseline_sweep": "experiments/kvm_b3_corpus_sweep_20260730 @ hermit 9cd955f9",
+  "reverie_pin_on_hermit_main": "adc147342f34754b449b9a24174aca3ac3a2e16b (pre-rename; reverie-kvm fixes landing-blocked by rename #304 pin-bump)",
+  "host": "AMD EPYC 9D85, kernel 6.18.39-0_fbk0_hardened_0_ga43d5727b443, /dev/kvm 0666",
+  "method": "recompile each verify-mode C guest; hermit run --strict (ptrace) vs --backend kvm --strict; compare exit + stdout SHA-256; diff verdicts vs 07-30; root-cause every DIFF cell",
+  "results": {
+    "total_verify_c_cells": 183,
+    "kvm_eq_ptrace_parity": 105,
+    "diff": 78,
+    "parity_pct": 57.4,
+    "verdict_flips_since_0730": 0,
+    "fair_frontier_excluding_ptrace_side_fail": 61,
+    "buckets_of_78": {
+      "B_KVM_SYSCALL_GAP_reverie_blocked": 22,
+      "H_PTRACE_SIDE_FAIL_excluded": 17,
+      "A_DETPID_owned_by_fix-kvm-detpid-mismatch": 11,
+      "C_SIGNAL_TIMER_ownergated": 8,
+      "F_DETCORE_PROCFS_needs_backend_align": 7,
+      "B_KVM_CHILDSYNC_reverie_blocked": 7,
+      "G_HANG_sched_ownergated": 4,
+      "E_INTRINSIC_layout": 1,
+      "D_GUESTCLOCK_ownergated_1212": 1
+    }
+  },
+  "conclusion": "No compliant non-gated impl-agent batch exists on current main. exit+stdout ratchet exhausted at 105/183. Path past 105 is coordinator/owner-gated: land fix-kvm-detpid-mismatch (11 cells) + reverie rename pin-bump to unblock 29 reverie-kvm cells. No false-parity PR opened. #1188 (7->100 verify enable) revalidated: 93 parity-clean cells still in the 105, zero flips.",
+  "no_pr_reason": "Every DIFF cell is owner-gated, owned by another agent, reverie-landing-blocked, ptrace-side, or not byte-matchable to the frozen ptrace golden. Enabling any would be false parity."
+}

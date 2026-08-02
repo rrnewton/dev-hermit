@@ -1,0 +1,23 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round24",
+  "date": "2026-08-01",
+  "question": "Do three non-gated syscall families (mlockall, faccessat2, pidfd_send_signal) with no existing corpus guest hold byte-identical parity under e9patch preprocessing with the golden hermit ptrace backend, after dropping openat2 and System V IPC which hermit does not support?",
+  "hermit_sha": "f5a67c3eb5784e79e86e70f17a2a0ffc16d825ea",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "branch": "codex/e9patch-corpus-round24-families",
+  "base_branch": "codex/e9patch-corpus-round23-families",
+  "pr": "https://github.com/rrnewton/hermit/pull/1335",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "backend": "ptrace (golden reference); e9patch = binary-rewriting preprocessing, not a backend",
+  "determinism_level": "L2 (--strict --verify, guest-visible bitwise-identical; detlog tail-match modulo 8-syscall e9loader prologue)",
+  "result": "181/181 PASS_L2 (178 prior + 3 new); 3/7 kept, 4 dropped",
+  "dropped": [
+    "openat2_devnull: openat2(437) returns failure under hermit (unsupported)",
+    "shmget_rmid: shmget(29) fails under hermit (no usable System V IPC namespace)",
+    "semget_rmid: semget(64) fails under hermit (no usable System V IPC namespace)",
+    "msgget_rmid: msgget(68) fails under hermit (no usable System V IPC namespace)"
+  ],
+  "host_independence": "prints only syscall return on success (0) or a boolean; fd/id numbers read but not printed",
+  "gating": "non-gated: memory locking / access check / pidfd signalling touch neither time, randomness, nor CPU scheduling; routine backend-parity, no post-facto-human-review trigger",
+  "ci_note": "e9tool/e9patch absent from CI (like KVM /dev/kvm); corpus harness ungated, only audit-inventory gates these files"
+}

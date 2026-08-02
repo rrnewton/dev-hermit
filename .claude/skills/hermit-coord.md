@@ -59,30 +59,15 @@ is the operational summary of the coordinator role.
 
 ## Post-facto human-review criteria
 
-Apply `post-facto-human-review` exactly when a PR contains at least one of
-these four triggers:
-
-1. new syscall support, after verifying `AUTONOMOUS-BOT-IMPLEMENTED` at the
-   new dispatch/classification entry and `TODO-HUMAN-REVIEW(PR-id)` at the
-   implementation or determinization block;
-2. a Reverie API/core-abstraction change to the `Tool`, `Guest`, `Backend`,
-   or syscall-interception model;
-3. a new determinization strategy; or
-4. a core DetCore scheduling change affecting how programs are scheduled,
-   especially race search. Trigger 4 is always labeled.
-
-Routine backend parity toward the golden ptrace reference implementation is not
-a trigger merely because it changes a non-ptrace backend. It is labeled only if
-it also meets one of the four triggers.
-
-Every PR description requires `Summary`, mandatory `Determinism` (why the
-change is deterministic plus its logic or informal proof), and `Validation`.
-KVM PRs also require `Relationship to gVisor`. A labeled PR additionally
-requires `Human Review Required`, naming the specific numbered trigger rather
-than vague prose such as "backend change". The syscall tags above verify trigger
-1; they are not blanket backend-change markers. Hermit
-[PR #1151](https://github.com/rrnewton/hermit/pull/1151), which moved slowdown
-into virtual-time/epoch scheduling, is the canonical good example for trigger 4.
+Apply `post-facto-human-review` for any of the four triggers: (1) new syscall
+support (leave `AUTONOMOUS-BOT-IMPLEMENTED` + `TODO-HUMAN-REVIEW(PR-id)` tags),
+(2) a Reverie API/core-abstraction change (`Tool`/`Guest`/`Backend`/interception),
+(3) a new determinization strategy, (4) a core DetCore scheduling change (always
+labeled; canonical example is Hermit PR #1151). Routine backend parity is not a
+trigger by itself. Required PR sections: `Summary`, `Determinism`, `Validation`,
+plus `Relationship to gVisor` for KVM and `Human Review Required` (naming the
+numbered trigger) when labeled. Full trigger definitions and the dual-review
+gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Fixed-agent routing protocol
 

@@ -1,0 +1,9 @@
+guest,syscall_family,expected_stdout,candidate_sites,mapped,b0,prologue,tail_match,result
+stat_devnull,stat,stat_chr=1,1,1,0,8,yes,PASS_L2
+lstat_devnull,lstat,lstat_chr=1,1,1,0,8,yes,PASS_L2
+openat_devnull,openat,openat=0,1,1,0,8,yes,PASS_L2
+mlock_page,mlock/munlock,mlock=0,1,1,0,8,yes,PASS_L2
+mlock2_page,mlock2/munlock,mlock2=0,1,1,0,8,yes,PASS_L2
+msync_anon,msync,msync=0,1,1,0,8,yes,PASS_L2
+inotify_watch_root,inotify_init1/inotify_add_watch,inotify=1,1,1,0,8,yes,PASS_L2
+readahead_memfd,readahead,readahead=0,1,1,0,8,yes,PASS_L2

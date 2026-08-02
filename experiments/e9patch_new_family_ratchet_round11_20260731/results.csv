@@ -1,0 +1,10 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+rt_sigprocmask_query,rt_sigprocmask,exact:sigprocmask=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+sigaltstack_query,sigaltstack,exact:altstack=2,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+epoll_ctl_add,epoll_create1/epoll_ctl,exact:epoll=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+memfd_seal,memfd-fcntl-sealing,exact:seals=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+uname_sysname,uname,exact:uname=Linux,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+prctl_dumpable,prctl-PR_GET_DUMPABLE,exact:dumpable=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+capget_ok,capget,exact:capget=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fstatfs_memfd,fstatfs,exact:fstatfs=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+splice_pipe_memfd,splice,exact:splice=3,DROPPED,DROPPED,n/a,n/a,1,1,0,8,n/a,DROPPED_HERMIT_ENOSYS

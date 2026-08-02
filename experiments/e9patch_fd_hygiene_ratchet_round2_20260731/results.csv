@@ -1,0 +1,9 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+fd_open_number,fd-alloc,exact:fd=3,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fd_lowest_free,fd-reuse,exact:a=3;b=4;c=3,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+pipe_fds,fd-pair,exact:r=0;rd=3;wr=4,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+dup3_high,fd-fixed,exact:dup3=10;viaten,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+writev_multi,output-gather,exact:ABC;wrote=4,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fcntl_cloexec,fd-flags,exact:stdout_fd_flags=0;opened_fd=3;opened_flags=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+proc_self_fd_count,fd-count,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+readlink_exe,exe-path,parity-only(None),pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

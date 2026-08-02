@@ -1,0 +1,9 @@
+guest,family,expected_stdout_mode,exit_parity,stdout_parity,golden_l2,e9patch_l2,candidate_sites,mapped_sites,b0_sites,prologue,detlog_tail_match,status
+sendto_socketpair,sendto-recvfrom,exact:sf=hi,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+getsockname_unix,getsockname,exact:sockname=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+getpeername_unix,getpeername,exact:peername=1,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fallocate_memfd,fallocate,exact:falloc=8,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fdatasync_memfd,fdatasync,exact:fdatasync=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+mincore_resident,mincore,exact:mincore=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+fadvise_memfd,fadvise64,exact:fadvise=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2
+sysinfo_ok,sysinfo,exact:sysinfo=0,pass,pass,pass,pass,1,1,0,8,yes,PASS_L2

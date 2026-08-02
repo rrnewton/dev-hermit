@@ -1,0 +1,12 @@
+{
+  "question": "Which KVM compat corpus cells flip from parity=diff to parity=parity once the KVM root-DetPid fix (PR #1120) is applied?",
+  "hermit_verify_branch": "codex/kvm-parity-detpid-verify",
+  "hermit_verify_sha": "f7843024",
+  "composed_of": ["origin/main 065980ea", "env-parity PR #1432 790b1d3a", "detpid PR #1120 (set_root_pid=ROOT_DETPID) cherry-picked"],
+  "reverie_pin": "26ffc1a6 (contains set_root_pid, reverie #238)",
+  "prior_kvm_scorecard_sha": "82a8e853 (pre-fix, KVM seeds vpid=1)",
+  "command_per_cell": "hermit run --backend {ptrace,kvm} --tmp=/tmp --strict -- <guest>; compare SHA-256 of stdout",
+  "level": "L1 parity (--strict, stdout bitwise vs ptrace reference)",
+  "host": "devbig, /dev/kvm present",
+  "gating": "These flips require PR #1120 to land on main; do not mark parity in corpus-manifest.csv until landed."
+}

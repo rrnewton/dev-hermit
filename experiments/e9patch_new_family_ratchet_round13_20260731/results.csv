@@ -1,0 +1,9 @@
+guest,syscall_family,expected_stdout,candidate_sites,mapped,b0,prologue,tail_match,result
+statfs_root,statfs,statfs=0,1,1,0,8,yes,PASS_L2
+pipe_legacy,pipe,pipe=3,1,1,0,8,yes,PASS_L2
+getdents_root,getdents64,getdents=1,1,1,0,8,yes,PASS_L2
+signalfd_create,signalfd4,signalfd=1,1,1,0,8,yes,PASS_L2
+close_range_high,close_range,close_range=0,1,1,0,8,yes,PASS_L2
+getsockopt_socktype,getsockopt,socktype=1,1,1,0,8,yes,PASS_L2
+setsockopt_reuseaddr,setsockopt,setsockopt=0,1,1,0,8,yes,PASS_L2
+fcntl_getlk,fcntl(F_GETLK),getlk=2,1,1,0,8,yes,PASS_L2

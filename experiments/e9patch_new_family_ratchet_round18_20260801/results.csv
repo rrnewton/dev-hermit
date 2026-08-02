@@ -1,0 +1,9 @@
+guest,syscall_num,printed_value,host_independent,native_rc,golden_e9_result,kept
+sched_getparam_check,143,getparam=0,yes,0,PASS_L2,yes
+sched_get_priority_min_check,147,priomin=0,yes,0,PASS_L2,yes
+ftruncate_memfd,77,ftruncate=0,yes,0,PASS_L2,yes
+sync_file_range_memfd,277,syncrange=0,yes,0,PASS_L2,yes
+socketpair_seqpacket,53(SOCK_SEQPACKET=5),sp=hi,yes,0,PASS_L2,yes
+pidfd_open_self,434,pidfd=1,yes,0,PASS_L2,yes
+sendmmsg_socketpair,307,sendmmsg=1,yes,0,PASS_L2,yes
+prctl_no_new_privs,157(PR_SET_NO_NEW_PRIVS=38),nnp=1(native),no-golden,0,DROP_ENOSYS_-38,no

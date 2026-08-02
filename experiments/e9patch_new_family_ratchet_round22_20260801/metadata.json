@@ -1,0 +1,18 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round22",
+  "date": "2026-08-01",
+  "question": "Do six more non-gated syscall families (setresuid/setresgid/setreuid/setregid credential no-ops, accept4, ioprio_get) with no existing corpus guest hold byte-identical parity under e9patch preprocessing with the golden hermit ptrace backend?",
+  "hermit_sha": "3c7934aa5f824a432f0b87d123e59952c5809ba2",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "branch": "codex/e9patch-corpus-round22-families",
+  "base_branch": "codex/e9patch-corpus-round21-families",
+  "pr": "https://github.com/rrnewton/hermit/pull/1329",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "backend": "ptrace (golden reference); e9patch = binary-rewriting preprocessing, not a backend",
+  "determinism_level": "L2 (--strict --verify, guest-visible bitwise-identical; detlog tail-match modulo 8-syscall e9loader prologue)",
+  "result": "172/172 PASS_L2 (166 prior + 6 new); 6/6 kept, 0 dropped",
+  "dropped": [],
+  "host_independence": "prints only syscall return on success (0) or a boolean; credential ids use -1 no-op form; accept4 fd number and ioprio class/level read but not printed",
+  "gating": "non-gated: credential no-ops are identity not scheduling; accept4/ioprio_get are socket/io-priority ops, not CPU scheduling/time/randomness; routine backend-parity, no post-facto-human-review trigger",
+  "ci_note": "e9tool/e9patch absent from CI (like KVM /dev/kvm); corpus harness ungated, only audit-inventory gates these files"
+}

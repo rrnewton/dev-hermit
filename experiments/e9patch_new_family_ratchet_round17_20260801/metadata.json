@@ -1,0 +1,18 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round17",
+  "date": "2026-08-01",
+  "question": "Does e9patch preprocessing + ptrace backend preserve byte-identical L2 parity for 8 more non-gated syscall families (fcntl fd-flag/ownership ops, working ioctls, semaphore eventfd, dgram socketpair, abstract bind)?",
+  "hermit_sha": "1db2eb134ab0f2b7fd1b8719a5964da2a2d90dd6",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "pr": "https://github.com/rrnewton/hermit/pull/1315",
+  "base_branch": "codex/e9patch-corpus-round16-families",
+  "branch": "codex/e9patch-corpus-round17-families",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "e9tool": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+  "e9patch": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+  "result": "RATCHET e9patch: 137/137 PASS_L2",
+  "kept": 8,
+  "dropped": [],
+  "inventory": {"guest_fixture_before": 162, "guest_fixture_after": 170, "manifest_test": 196, "total_after": 515},
+  "note": "e9patch is preprocessing for the ptrace backend, not a Detcore backend; golden = ptrace. L2 = guest-visible bitwise-identical + detlog tail-match modulo the fixed 8-syscall e9loader prologue. e9tool/e9patch absent from CI."
+}

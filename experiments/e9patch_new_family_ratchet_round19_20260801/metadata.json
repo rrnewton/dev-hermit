@@ -1,0 +1,20 @@
+{
+  "experiment": "e9patch_new_family_ratchet_round19",
+  "date": "2026-08-01",
+  "question": "Do eight more non-gated syscall families (listen, recvmsg, recvfrom, arch_prctl GET_GS, prctl GET_PDEATHSIG, kill sig0, tgkill sig0, flistxattr) with no existing corpus guest hold byte-identical parity under e9patch preprocessing with the golden hermit ptrace backend?",
+  "hermit_sha": "988d22837dd9d1354f47a5b13855de07e571364c",
+  "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
+  "branch": "codex/e9patch-corpus-round19-families",
+  "base_branch": "codex/e9patch-corpus-round18-families",
+  "pr": "https://github.com/rrnewton/hermit/pull/1322",
+  "harness": "tests/backend-parity/e9patch_corpus.py",
+  "e9tool": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+  "e9patch": "worktrees/e9patch/reverie/third-party/e9patch/e9patch",
+  "backend": "ptrace (golden reference); e9patch = binary-rewriting preprocessing, not a backend",
+  "determinism_level": "L2 (--strict --verify, guest-visible bitwise-identical; detlog tail-match modulo 8-syscall e9loader prologue)",
+  "result": "152/152 PASS_L2 (144 prior + 8 new); 8/8 kept, 0 dropped",
+  "dropped": [],
+  "host_independence": "prints only syscall return on success (0) or fixed round-tripped text; GS base and xattr list read but never printed; signal-0 probes deliver no signal",
+  "gating": "non-gated: no time/vtime, scheduling, randomness, SIGCHLD, new-syscall-support, or reverie-API changes; routine backend-parity, no post-facto-human-review trigger",
+  "ci_note": "e9tool/e9patch absent from CI (like KVM /dev/kvm); corpus harness ungated, only audit-inventory gates these files"
+}

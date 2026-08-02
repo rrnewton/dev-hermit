@@ -1,0 +1,28 @@
+{
+  "question": "Which further legacy/variant Linux syscalls (no existing corpus guest) hold at e9patch-preprocessing L2 parity against the golden ptrace backend in round 28?",
+  "hermit_stack_base_branch": "codex/e9patch-corpus-round26-families",
+  "hermit_stack_base_sha": "c1b6cd3dcd5b181f58dce98988c396e7245f0893",
+  "hermit_round28_branch": "codex/e9patch-corpus-round28-families",
+  "hermit_round28_sha": "59d13202",
+  "pr": "https://github.com/rrnewton/hermit/pull/1361",
+  "reverie_sha": "unchanged (vendored e9tool/e9patch under reverie/third-party/e9patch)",
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "cc": "gcc 11.5.0 (Red Hat 11.5.0-14)"
+  },
+  "hermit_binary": "target/debug/hermit built with e9patch cargo feature",
+  "command": "python3 tests/backend-parity/e9patch_corpus.py --require-backend",
+  "result": "RATCHET e9patch: 198/198 PASS_L2 (191 -> 198)",
+  "new_guests": [
+    "epoll_create_legacy (epoll_create 213)",
+    "eventfd_legacy (eventfd 284)",
+    "inotify_init_legacy (inotify_init 253)",
+    "signalfd_legacy (signalfd 282)",
+    "mbind_default (mbind 237)",
+    "ioprio_set_self (ioprio_set 251)",
+    "epoll_pwait2_timeout_zero (epoll_pwait2 441)"
+  ],
+  "drops": [],
+  "per_guest_metrics": "candidate_sites=1 mapped_sites=1 b0_sites=0 prologue=8 tail_match=yes",
+  "audit_inventory": "exit 0 (guest-fixture 224->231, manifest-test 196 unchanged, files 569->576)"
+}
