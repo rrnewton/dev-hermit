@@ -111,7 +111,7 @@ TOTAL                      179          76%, 87%          63%, 72%          79%,
 | **LiteInst** | det **118/200 (59%)**, parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
 | **DBI** | det **156/200 (78%)**, parity **137** | `--features third-party-backends` binary at `82a8e853`; parity of 180 measurable cells. |
 | **SaBRe** | det **164/200 (82%)**, parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
-| **e9patch** | det **179/200 (90%)**, parity **173** | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. On the ptrace-green denominator: det **178/179 (99.4%)**, parity **172/179 (96.1%)**; the residual 7 are all **inherent-structural** (see caveat + experiment) — **SATURATED**, not a backlog. |
+| **e9patch** | det **179/200 (90%)**, parity **173** *(this column is at `82a8e853` and is now STALE — see caveat)* | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. **CORRECTION (measured `e8ddd925`):** of the 7 cells previously flagged inherent, **6 have flipped to parity-green + L2-det**; only **1** (`rcx-canonicalization`) is a genuine inherent gap. |
 | **Portable / privileged** | **200 / 2** | was 199 / 3; `cpuid-probe` reclassified portable. |
 
 Honest caveats:
@@ -137,19 +137,32 @@ Honest caveats:
   suppresses it), which had spuriously deflated every backend's parity. 20 cells
   where ptrace itself errors under plain `--strict` are parity-unmeasured (not
   counted as 0) for all non-ptrace backends; det remains measured on all 200.
-- **e9patch ratchet is SATURATED — do NOT re-triage the 7 residual gaps.** On the
-  179 ptrace-green cells, e9patch is det 178/179 (99.4%) and parity 172/179
-  (96.1%). The 7-cell gap was root-caused per cell to two intrinsic properties of
-  the backend — **instruction relocation** (1 cell: `rcx-canonicalization`, whose
-  guest observes its own SYSRET `%rcx` return-RIP) and the **deterministic
-  e9loader prologue** (6 cells: virtual-clock / virtual-inode / absolute-address
-  *values* shifted by the pre-`_start`
-  `readlink→open→arch_prctl→N×mmap→close` prologue). Each backend stays internally
-  L2-deterministic; only cross-backend emitted *values* differ, by a fixed offset.
-  0 fixable defects, 0 shared failures, 0 corpus-addition opportunities — these
-  are "impossible by construction" (`tests/backend-parity/README.md:177-196`).
-  Full per-cell evidence:
-  `experiments/e9patch_compat_last_cells_rootcause_20260801/`.
+- **e9patch ratchet ADVANCED — the earlier "7 inherent gaps / SATURATED" claim is
+  RETRACTED.** That claim was made at `82a8e853`. Re-measured at `e8ddd925` (exact
+  portable-lane flags `--strict --no-virtualize-cpuid --max-timeslice=disabled`,
+  real corpus guests), **6 of the 7 flipped to parity-green + L2-deterministic**:
+    - `proc-fd-link-aliases` → green via **`ee746bde` "Stabilize stdio inode
+      identity across backends"** (fd 1's `readlink` now emits a fixed
+      `pipe:[1001]` = `DET_SPECIAL_INODE_OFFSET+1`, independent of loader activity
+      — read the diff, this is the confirmed cause).
+    - `date-nanoseconds`, `bash-loop-pipe-time`, `perl-io-subprocess-time`,
+      `python-io-subprocess-time` → green: the **virtual clock is now
+      backend-independent** (byte-identical CLOCK_REALTIME/MONOTONIC ns and
+      subprocess durations across ptrace vs e9patch), so my earlier
+      "e9loader-prologue advances the virtual clock" attribution was **stale/wrong**
+      at this SHA.
+    - `print-memaddrs` → green: stack + malloc `%p` addresses byte-identical
+      across backends.
+  - **Only `rcx-canonicalization` remains a genuine inherent gap** (class-a
+    instruction relocation: e9tool moves the in-ELF `syscall` into a trampoline,
+    so the guest's own SYSRET `%rcx` return-RIP no longer equals its inline label;
+    e9 exits 1 / 0 bytes / det-verify exit 1). This one is truly "impossible by
+    construction" — no interception backend that relocates the syscall can pass it.
+  - **Caveat on scope:** only the 7 previously-flagged cells were re-measured; the
+    full 200-cell e9patch column above is still at `82a8e853` and needs a fresh
+    sweep for an authoritative new total. Corrected per-cell evidence + reproduction:
+    `experiments/e9patch_compat_ratchet_recheck_20260802/`; superseded prior
+    analysis: `experiments/e9patch_compat_last_cells_rootcause_20260801/`.
 
 ## Backend-parity matrix (complementary — where DBI has real data)
 

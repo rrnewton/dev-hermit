@@ -1,5 +1,14 @@
 # e9patch compat "last cells" — honest root-cause of every parity/determinism gap
 
+> **⚠️ SUPERSEDED (2026-08-02).** The "SATURATED / 7 inherent gaps" conclusion
+> below was derived from the `82a8e853` scorecard + source-reading, not a direct
+> re-measurement. A featured re-measurement at current main `e8ddd925` shows **6
+> of the 7 flagged cells flipped to parity-green + L2-deterministic** (via
+> `ee746bde` stdio-inode determinization + backend-independent virtual clock);
+> only `rcx-canonicalization` is genuinely inherent. See
+> `experiments/e9patch_compat_ratchet_recheck_20260802/`. The **method** here is
+> sound; only the SATURATED conclusion is stale.
+
 ## Question
 
 The full-corpus compat-envelope scorecard puts e9patch at **parity 96%,

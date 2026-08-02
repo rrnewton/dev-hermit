@@ -1,0 +1,34 @@
+{
+  "experiment": "e9patch_compat_ratchet_recheck",
+  "date": "2026-08-02",
+  "question": "Does last cycle's 'e9patch compat SATURATED, 7 inherent gaps' claim (measured 82a8e853) still hold at current main e8ddd925, after ee746bde and 36 other commits landed?",
+  "answer": "No. 6 of 7 flipped to parity-green + L2-deterministic; only rcx-canonicalization remains inherent. The SATURATED claim is RETRACTED.",
+  "measurement": {
+    "hermit_sha": "e8ddd9253f4eb5f1400f0c5dab966ebbdfd7dae9",
+    "binary": "scratch/featured-e8ddd925-target/release/hermit (--features e9patch)",
+    "e9tool": "worktrees/e9patch/reverie/third-party/e9patch/e9tool",
+    "host": "316-core devbig, release hermit binary",
+    "flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled (exact portable-lane sweep flags)",
+    "parity_def": "e9patch plain --strict stdout == ptrace plain --strict stdout (byte-compare; proc-fd piped)",
+    "det_def": "e9patch --strict --verify exit code (0 = L2 DETLOG self-verify)"
+  },
+  "cells": {
+    "flipped_to_green": [
+      "c-programs/print-memaddrs",
+      "c-programs/proc-fd-link-aliases",
+      "system-utils/date-nanoseconds",
+      "language-runtimes/bash-loop-pipe-time",
+      "language-runtimes/perl-io-subprocess-time",
+      "language-runtimes/python-io-subprocess-time"
+    ],
+    "still_inherent": ["c-programs/rcx-canonicalization"]
+  },
+  "attribution": {
+    "proc-fd-link-aliases": "CONFIRMED ee746bde 'Stabilize stdio inode identity across backends' — deterministic_stdio_inode() returns fixed DET_SPECIAL_INODE_OFFSET+fd on the /proc/self/fd readlink path; fd 1 => pipe:[1001] independent of loader activity",
+    "date-nanoseconds,bash/perl/python-io-subprocess-time": "virtual clock is now backend-independent at e8ddd925 (byte-identical CLOCK_REALTIME/MONOTONIC ns + subprocess durations); earlier 'e9loader-prologue advances virtual clock' attribution was stale/wrong; exact fixing commit not bisected",
+    "print-memaddrs": "stack + malloc %p addresses byte-identical across backends at e8ddd925",
+    "rcx-canonicalization": "inherent class-a instruction relocation: e9tool moves in-ELF syscall into trampoline, guest's own SYSRET %rcx return-RIP != inline label; unfixable without abandoning interception"
+  },
+  "scope_caveat": "Only the 7 previously-flagged cells were re-measured. The full 200-cell e9patch column in REPORT.md is still at 82a8e853 and needs a fresh collect-fullcorpus.sh --backends e9patch sweep at e8ddd925 for an authoritative new total.",
+  "supersedes": "experiments/e9patch_compat_last_cells_rootcause_20260801 (method sound; conclusion stale as of ee746bde + clock determinization)"
+}
