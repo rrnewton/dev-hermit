@@ -1,0 +1,4 @@
+workload	engine	repetitions	median	unit	ratio_vs_native
+tensorflow	kvm	1	400047.639089	ms	2.466666
+tensorflow	native	1	162181.536706	ms	1.000000
+tensorflow	systrap	1	423369.988151	ms	2.610470

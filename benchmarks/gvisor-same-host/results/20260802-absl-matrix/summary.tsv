@@ -1,0 +1,5 @@
+workload	engine	repetitions	median	unit	ratio_vs_native
+absl	kvm	1	185941.936894	ms	2.026090
+absl	native	1	91773.778331	ms	1.000000
+absl	ptrace	1	121825.585591	ms	1.327455
+absl	systrap	1	103183.537002	ms	1.124325
