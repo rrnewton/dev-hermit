@@ -65,7 +65,33 @@ class PrimaryCheckoutTests(unittest.TestCase):
             "reverie = { git = \"https://github.com/rrnewton/reverie.git\", "
             f'rev = "{reverie_rev}" }}\n'
         )
-        git(self.seeds["hermit"], "add", "Cargo.toml")
+        lock_text = (
+            "version = 3\n\n"
+            "[[package]]\n"
+            'name = "reverie-core"\n'
+            'version = "0.2.0"\n'
+            f'source = "git+https://github.com/rrnewton/reverie.git?rev={reverie_rev}#{reverie_rev}"\n'
+        )
+        generated = {
+            Path("Cargo.lock"): lock_text,
+            Path("liteinst-runtime-build/Cargo.lock"): lock_text,
+            Path("ci/dag/portable.json"): f"liteinst-runtime-build-{reverie_rev[:8]}\n",
+            Path("hermit-cli/tests/common/liteinst.rs"): (
+                f"liteinst-runtime-build-{reverie_rev[:8]}\n"
+            ),
+            Path("hermit-install/build.rs"): f"liteinst-runtime-{reverie_rev[:8]}\n",
+            Path("validate.sh"): f"liteinst-runtime-build-{reverie_rev[:8]}\n",
+        }
+        for relative, contents in generated.items():
+            path = self.seeds["hermit"] / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents)
+        git(
+            self.seeds["hermit"],
+            "add",
+            "Cargo.toml",
+            *(str(path) for path in generated),
+        )
         git(self.seeds["hermit"], "commit", "-m", "pin reverie")
         git(self.seeds["hermit"], "push", "origin", "main")
         git(self.root / "hermit", "pull", "--ff-only", "origin", "main")
@@ -186,6 +212,51 @@ class PrimaryCheckoutTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
         self.assertIn("not globally consistent", err.getvalue())
+
+    def test_snapshot_refuses_stale_reverie_lock(self) -> None:
+        original_parent = git(self.root, "rev-parse", "HEAD")
+        lock = self.seeds["hermit"] / "Cargo.lock"
+        reverie_head = git(self.root / "reverie", "rev-parse", "HEAD")
+        lock.write_text(lock.read_text().replace(reverie_head, "0" * 40))
+        git(self.seeds["hermit"], "add", "Cargo.lock")
+        git(self.seeds["hermit"], "commit", "-m", "stale lock")
+        git(self.seeds["hermit"], "push", "origin", "main")
+        out, err = StringIO(), StringIO()
+
+        result = primary_checkout.checkout_fresh(
+            self.root,
+            publish_parent=True,
+            strict=True,
+            use_proxy=False,
+            out=out,
+            err=err,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
+        self.assertIn("Cargo.lock: stale Reverie source", err.getvalue())
+
+    def test_snapshot_refuses_stale_revision_cache_key(self) -> None:
+        original_parent = git(self.root, "rev-parse", "HEAD")
+        cache = self.seeds["hermit"] / "validate.sh"
+        cache.write_text("liteinst-runtime-build-00000000\n")
+        git(self.seeds["hermit"], "add", "validate.sh")
+        git(self.seeds["hermit"], "commit", "-m", "stale cache")
+        git(self.seeds["hermit"], "push", "origin", "main")
+        out, err = StringIO(), StringIO()
+
+        result = primary_checkout.checkout_fresh(
+            self.root,
+            publish_parent=True,
+            strict=True,
+            use_proxy=False,
+            out=out,
+            err=err,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
+        self.assertIn("validate.sh: cache keys=00000000", err.getvalue())
 
 
 if __name__ == "__main__":

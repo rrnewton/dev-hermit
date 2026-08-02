@@ -7,6 +7,7 @@ import argparse
 from collections.abc import Mapping
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,17 @@ PRODUCTS = ("hermit", "reverie", "liteinst2")
 MAIN_REF = "refs/heads/main"
 REVERIE_GIT_URL = "https://github.com/rrnewton/reverie.git"
 SNAPSHOT_COMMIT_MESSAGE = "Advance product submodules as consistent snapshot"
+REVERIE_SOURCE = re.compile(
+    rf"^git\+{re.escape(REVERIE_GIT_URL)}\?rev=([0-9a-f]{{40}})#([0-9a-f]{{40}})$"
+)
+REVERIE_LOCKFILES = (Path("Cargo.lock"), Path("liteinst-runtime-build/Cargo.lock"))
+REVERIE_CACHE_FILES = (
+    Path("ci/dag/portable.json"),
+    Path("hermit-cli/tests/common/liteinst.rs"),
+    Path("hermit-install/build.rs"),
+    Path("validate.sh"),
+)
+REVERIE_CACHE_KEY = re.compile(r"liteinst-runtime(?:-build)?-([0-9a-f]{8})")
 
 
 def run_git(
@@ -72,6 +84,48 @@ def reverie_manifest_pins(hermit: Path) -> tuple[set[str], int, list[str]]:
     return set(pins), len(pins), errors
 
 
+def reverie_generated_pin_errors(hermit: Path, expected: str) -> list[str]:
+    """Check generated lock sources and revision-keyed build cache paths."""
+    errors: list[str] = []
+    for relative in REVERIE_LOCKFILES:
+        path = hermit / relative
+        try:
+            with path.open("rb") as source:
+                lock = tomllib.load(source)
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"could not parse {relative}: {error}")
+            continue
+
+        sources = [
+            package.get("source", "")
+            for package in lock.get("package", [])
+            if isinstance(package, Mapping)
+            and str(package.get("source", "")).startswith(f"git+{REVERIE_GIT_URL}")
+        ]
+        if not sources:
+            errors.append(f"{relative}: no Reverie git sources found")
+            continue
+        for source in sources:
+            match = REVERIE_SOURCE.fullmatch(str(source))
+            if match is None or match.group(1) != expected or match.group(2) != expected:
+                errors.append(f"{relative}: stale Reverie source {source}")
+
+    expected_short = expected[:8]
+    for relative in REVERIE_CACHE_FILES:
+        path = hermit / relative
+        try:
+            keys = set(REVERIE_CACHE_KEY.findall(path.read_text()))
+        except OSError as error:
+            errors.append(f"could not read {relative}: {error}")
+            continue
+        if keys != {expected_short}:
+            errors.append(
+                f"{relative}: cache keys={','.join(sorted(keys)) or 'none'} "
+                f"expected={expected_short}"
+            )
+    return errors
+
+
 def publish_parent_snapshot(
     root: Path,
     *,
@@ -112,6 +166,10 @@ def publish_parent_snapshot(
                 "Hermit Reverie pins are not globally consistent: "
                 f"manifests={','.join(sorted(pins)) or 'none'} reverie/main={expected}"
             )
+        failures.extend(
+            f"hermit: {message}"
+            for message in reverie_generated_pin_errors(root / "hermit", expected)
+        )
 
     if failures:
         print("HARD WARNING: PARENT SUBMODULE SNAPSHOT NOT PUBLISHED", file=err)
@@ -149,6 +207,15 @@ def publish_parent_snapshot(
     if add.returncode != 0:
         print_command_output(add, err)
         return 1
+    for product in PRODUCTS:
+        staged_head = run_git(root, "rev-parse", f":{product}").stdout.strip()
+        if staged_head != heads[product]:
+            print(
+                "HARD WARNING: validated primary moved while staging parent gitlinks; "
+                f"{product} index={staged_head or 'missing'} validated={heads[product]}.",
+                file=err,
+            )
+            return 1
     changed = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
     if changed.returncode == 0:
         print(
@@ -175,7 +242,14 @@ def publish_parent_snapshot(
         print("ERROR: automatic parent snapshot commit failed; push skipped.", file=err)
         return 1
 
-    push = run_git(root, "push", "origin", "main", network=True, use_proxy=use_proxy)
+    push = run_git(
+        root,
+        "push",
+        "origin",
+        "HEAD:refs/heads/main",
+        network=True,
+        use_proxy=use_proxy,
+    )
     print_command_output(push, out if push.returncode == 0 else err)
     if push.returncode != 0:
         print(
@@ -351,6 +425,11 @@ def check_freshness(
         warnings.append(
             "Hermit Reverie manifest pin mismatch: "
             f"manifests={','.join(sorted(pins)) or 'none'} reverie={reverie_head}"
+        )
+    if reverie_head:
+        warnings.extend(
+            f"hermit: {message}"
+            for message in reverie_generated_pin_errors(root / "hermit", reverie_head)
         )
 
     if warnings:
