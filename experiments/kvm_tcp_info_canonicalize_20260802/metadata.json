@@ -1,0 +1,33 @@
+{
+  "experiment": "kvm_tcp_info_canonicalize_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "44a456490818276ea6ae10469ef05a2cc54b1bc9",
+  "reverie_base_sha": "703b1e76ac65dcb8c267c5c7778970a3c2d93fea",
+  "reverie_stack_base_pr": "https://github.com/rrnewton/reverie/pull/349",
+  "reverie_root_base_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "pr": "https://github.com/rrnewton/reverie/pull/350",
+  "branch": "codex/kvm-tcp-info-canonicalize",
+  "pr_base_ref": "codex/kvm-inet-connect",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "158 lib tests pass / 0 fail (+1 vs #349); vmcall (6) + integration green; fmt + clippy clean",
+  "new_tests": [
+    "getsockopt_tcp_info_is_canonicalized"
+  ],
+  "change": "executor.rs getsockopt() gains an IPPROTO_TCP/TCP_INFO arm that forwards to host then applies new canonicalize_tcp_info (retain offsets 0,1,5,6; zero the rest)",
+  "golden_reference": [
+    "hermit/detcore/src/syscalls/files.rs:95 (canonicalize_tcp_info)",
+    "hermit/detcore/src/syscalls/files.rs:2009 (handle_getsockopt TCP_INFO arm)"
+  ],
+  "audit_tags": "TODO-HUMAN-REVIEW(PR-350) breadcrumb only; no AUTONOMOUS-BOT-IMPLEMENTED, no post-facto-human-review label (already-dispatched getsockopt; already-established detcore strategy; routine golden-ptrace parity)",
+  "corpus_cells_prerequisite_for": [
+    "tcp_info_accept4",
+    "tcp_info_accept6",
+    "tcp_info_client4"
+  ],
+  "cells_flipped_standalone": 0,
+  "requires_stack": "#349 (connect lift) + #350 (this) together are the Reverie-side prerequisites for the 3 tcp_info_* cells",
+  "fullstack_verify": "not asserted; debug-build KVM container boot pathologically slow in this env (see memory kvm-fullstack-debug-boot-unusably-slow)",
+  "host": "devbig; host TCP loopback sockets available"
+}
