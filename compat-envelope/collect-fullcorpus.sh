@@ -5,11 +5,11 @@
 # for GitHub CI, where a runner may lack /dev/kvm, the third-party-backend
 # feature build, or the SaBRe loader. On a fully-provisioned local box (this
 # machine has /dev/kvm) the definition-of-done gate should instead measure the
-# UNION — the FULL 215-cell e2e verify corpus across EVERY backend the local
+# UNION — the FULL 225-cell e2e verify corpus across EVERY backend the local
 # binary can run — not the ~28-cell ci=true portable subset.
 #
-# This script enumerates the full 215-cell ptrace-verify corpus (the same
-# denominator as compat-envelope/corpus-manifest.csv: 194 compiled C guests +
+# This script enumerates the full 225-cell ptrace-verify corpus (the same
+# denominator as compat-envelope/corpus-manifest.csv: 204 compiled C guests +
 # 21 shell/interpreter cells, listed in corpus/corpus-c.tsv + corpus/corpus-nonc.tsv),
 # and for every locally-available backend runs, per cell:
 #   det    = <backend> --strict --verify exits 0 (L2 DETLOG-bitwise self-verify)
@@ -98,20 +98,20 @@ echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
 echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
 
 # --- per-backend ratchet baselines (green-stays-green floor) ------------------
-# Existing 205-cell floors were measured at hermit 82a8e853; the ten performance
+# Existing 205-cell floors were measured at hermit 82a8e853; the twenty performance
 # cells were measured with the same binary and uniform lane flags.
 # A backend that drops below its floor fails the gate. New backends default 0.
 baseline() {
-  # Combined floors over the full 215-cell corpus; det =
+  # Combined floors over the full 225-cell corpus; det =
   # <backend> --strict --verify exits 0. A backend dropping
   # below its floor fails the gate.
   case "$1" in
-    ptrace) echo 194 ;;
-    kvm) echo 143 ;;
+    ptrace) echo 204 ;;
+    kvm) echo 151 ;;
     liteinst) echo 118 ;;
-    dbi) echo 170 ;;
-    sabre) echo 179 ;;
-    e9patch) echo 194 ;;
+    dbi) echo 180 ;;
+    sabre) echo 189 ;;
+    e9patch) echo 204 ;;
     *) echo 0 ;;
   esac
 }
