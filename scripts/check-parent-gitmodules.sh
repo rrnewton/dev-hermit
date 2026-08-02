@@ -5,9 +5,10 @@ root=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 cd "$root"
 
 expected=(
-    "hermit|hermit|https://github.com/rrnewton/hermit.git"
-    "reverie|reverie|https://github.com/rrnewton/reverie.git"
-    "liteinst2|liteinst2|https://github.com/rrnewton/liteinst2.git"
+    "hermit|hermit|https://github.com/rrnewton/hermit.git|checkout"
+    "reverie|reverie|https://github.com/rrnewton/reverie.git|checkout"
+    "liteinst2|liteinst2|https://github.com/rrnewton/liteinst2.git|checkout"
+    "agent-utils|agent-utils|https://github.com/rrnewton/agent-utils.git|none"
 )
 
 mapfile -t configured < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$')
@@ -17,7 +18,7 @@ if [[ ${#configured[@]} -ne ${#expected[@]} ]]; then
 fi
 
 for spec in "${expected[@]}"; do
-    IFS='|' read -r name path url <<<"$spec"
+    IFS='|' read -r name path url expected_update <<<"$spec"
     actual_path=$(git config -f .gitmodules --get "submodule.$name.path" || true)
     actual_url=$(git config -f .gitmodules --get "submodule.$name.url" || true)
     update=$(git config -f .gitmodules --get "submodule.$name.update" || true)
@@ -31,8 +32,8 @@ for spec in "${expected[@]}"; do
         echo "ERROR: submodule $name URL is '$actual_url', expected '$url'." >&2
         exit 1
     }
-    [[ "$update" == checkout ]] || {
-        echo "ERROR: submodule $name must set update = checkout." >&2
+    [[ "$update" == "$expected_update" ]] || {
+        echo "ERROR: submodule $name must set update = $expected_update." >&2
         exit 1
     }
     [[ "$mode" == 160000 ]] || {
@@ -41,4 +42,4 @@ for spec in "${expected[@]}"; do
     }
 done
 
-echo "Parent submodule policy is valid: all ${#expected[@]} gitlinks default to checkout."
+echo "Parent submodule policy is valid: product gitlinks default to checkout; agent-utils is on demand."

@@ -13,6 +13,7 @@
 /.ops-driver.env
 /.ops-state.json
 /.ops-state.yaml
+/.tick-hub/
 
 # Physical worktrees and disposable work areas are machine-local.
 /worktree/

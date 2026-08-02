@@ -5,18 +5,43 @@ const URGENT_VALIDATION_SKILL_NAME =
   "hermit-urgent-critical-path-fix-validation";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
 const WORKSPACE_SUBPATH = "work/dev-hermit";
-const RELATIVE_POLICY_PATH = orc.pluginDir() + "/../../../AGENTS.md";
+
+function currentEvalDirectory(): string | null {
+  const readModulePath = (orc as any).readEvalModulePath;
+  const modulePath = typeof readModulePath === "function"
+    ? String(readModulePath() || "")
+    : "";
+  const separator = modulePath.lastIndexOf("/");
+  return separator > 0 ? modulePath.slice(0, separator) : null;
+}
+
+const REGISTERED_PLUGIN_DIRECTORY = orc.pluginDir();
+const CONFIG_DIRECTORY = currentEvalDirectory();
+const SOURCE_DIRECTORY = REGISTERED_PLUGIN_DIRECTORY ||
+  (CONFIG_DIRECTORY ? CONFIG_DIRECTORY + "/plugins/hermit-dev" : null);
+const WORKSPACE_ROOT = REGISTERED_PLUGIN_DIRECTORY
+  ? REGISTERED_PLUGIN_DIRECTORY + "/../../.."
+  : CONFIG_DIRECTORY
+  ? CONFIG_DIRECTORY + "/.."
+  : "$HOME/work/dev-hermit";
+const RELATIVE_POLICY_PATH = WORKSPACE_ROOT + "/AGENTS.md";
 const SPECULATIVE_ATTACK_SKILL_PATH =
-  orc.pluginDir() + "/parallel-speculative-attack.md";
+  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
+  "/parallel-speculative-attack.md";
 const URGENT_VALIDATION_SKILL_PATH =
-  orc.pluginDir() + "/urgent-critical-path-fix-validation.md";
-const ISSUE_CREATE_WRAPPER = orc.pluginDir() + "/gh-issue-create";
-const PR_STATUS_COMMAND = "cd ~/work/dev-hermit && ./scripts/pr_status.py";
-const MAIN_HEALTH_SCRIPT_NAME = "hermitGithubMainHealth";
-const MAIN_HEALTH_COMMAND =
-  'cd "$HOME/work/dev-hermit" && ./scripts/github_main_health.py';
-const PR_HEALTH_INTERVAL_MS = 30 * 60 * 1000;
-const PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
+  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
+  "/urgent-critical-path-fix-validation.md";
+const ISSUE_CREATE_WRAPPER =
+  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
+  "/gh-issue-create";
+const PR_STATUS_COMMAND = 'cd "' + WORKSPACE_ROOT + '" && ./scripts/pr_status.py';
+const OPERATIONAL_TICK_SCRIPT_NAME = "hermitOperationalTick";
+const OPERATIONAL_TICK_COMMAND =
+  'cd "' + WORKSPACE_ROOT + '" && ' +
+  'HERMIT_AGENT_SNAPSHOT_JSON="$1" ./scripts/run-tick-hub --flush --no-header';
+const OPERATIONAL_TICK_INTERVAL_MS = 5 * 60 * 1000;
+const OPERATIONAL_TICK_WORKFLOW_NAME = "hermit-dev-operational-health-v1";
+const LEGACY_PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
 
 const SKILL_DESCRIPTION = "Project-specific coordination, fork-only issue, " +
   "Git/PR, Reverie API, and product-vision policies for dev-hermit.";
@@ -158,9 +183,21 @@ async function activateHermitDevPolicies(): Promise<string> {
   return "hermit-dev policies activated from " + path;
 }
 
-export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
+function actionableTickLines(report: string): string[] {
+  return report.split("\n").filter((line) => {
+    if (line.startsWith("ACTION:") || line.startsWith("ERROR:")) {
+      return true;
+    }
+    return line.startsWith("HEALTH:") && !line.includes(" ok ");
+  });
+}
+
+export async function operationalHealthHeartbeat(wf: WfContext): Promise<void> {
   await wf.loop(async () => {
-    const result = await orc.scripts.hermitGithubMainHealth() as {
+    const agents = await orc.listAgents();
+    const result = await orc.scripts.hermitOperationalTick(
+      JSON.stringify(agents),
+    ) as {
       exitCode: number;
       stdout?: string;
       stderr?: string;
@@ -169,19 +206,19 @@ export async function prHealthHeartbeat(wf: WfContext): Promise<void> {
     const stdout = String(result.stdout || "").trim();
     const stderr = String(result.stderr || "").trim();
     const report = [stdout, stderr].filter(Boolean).join("\n");
-    const title = exitCode === 0
-      ? "GitHub main health ops tick"
-      : exitCode === 1
-        ? "HARD WARNING: GitHub main is RED"
-        : "HARD WARNING: GitHub main health is UNKNOWN";
-    await orc.sendWakeup(
-      [],
-      title,
-      report + "\nRun " + PR_STATUS_COMMAND +
-        ". Review post-facto-human-review follow-ups, CI failures, and the " +
-        "free-to-land backlog before opening more PRs.",
-    );
-    await wf.sleep(PR_HEALTH_INTERVAL_MS);
+    const actionable = actionableTickLines(stdout);
+    if (exitCode !== 0 || actionable.length > 0) {
+      const title = exitCode === 0
+        ? "HARD WARNING: operational health requires action"
+        : "HARD WARNING: operational health poll failed";
+      await orc.sendWakeup(
+        [],
+        title,
+        (report || "tick-hub returned no diagnostic output") +
+          "\nRun " + PR_STATUS_COMMAND + " for the full GitHub/PR report.",
+      );
+    }
+    await wf.sleep(OPERATIONAL_TICK_INTERVAL_MS);
   });
 }
 
@@ -198,10 +235,10 @@ registerUrgentValidationSkill(
     "startup.",
 );
 
-orc.registerScript(MAIN_HEALTH_SCRIPT_NAME, {
-  script: MAIN_HEALTH_COMMAND,
-  description: "Poll live GitHub current-main push workflow health",
-  timeoutSec: 120,
+orc.registerScript(OPERATIONAL_TICK_SCRIPT_NAME, {
+  script: OPERATIONAL_TICK_COMMAND,
+  description: "Run the version-pinned dev-hermit tick-hub operational poll",
+  timeoutSec: 180,
 });
 
 orc.exposeFunction(
@@ -230,14 +267,15 @@ orc.exposeFunction(
       urgentValidationSkillPath: URGENT_VALIDATION_SKILL_PATH,
       policyLoaded: typeof cachedPolicy === "string",
       policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
-      workspace: "~/work/dev-hermit",
+      workspace: WORKSPACE_ROOT,
       hermitPrimary: "rrnewton/hermit",
       hermitUpstream: "facebookexperimental/hermit",
       reverieIssueRepo: "rrnewton/reverie",
       issueCreateWrapper: ISSUE_CREATE_WRAPPER,
       prStatusCommand: PR_STATUS_COMMAND,
-      githubMainHealthCommand: MAIN_HEALTH_COMMAND,
-      prHealthIntervalMinutes: PR_HEALTH_INTERVAL_MS / 60000,
+      operationalTickCommand: OPERATIONAL_TICK_COMMAND,
+      operationalTickConfig: WORKSPACE_ROOT + "/ops/tick-hub.yaml",
+      operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,
       maxAgents: 15,
@@ -251,15 +289,20 @@ orc.exposeFunction(
 );
 
 orc.workflow(
-  prHealthHeartbeat,
-  "Wake the coordinator every 30 minutes to inspect Hermit and Reverie PR health",
+  operationalHealthHeartbeat,
+  "Run tick-hub operational checks and hard-warn the coordinator on failures",
   {
-    name: PR_HEALTH_WORKFLOW_NAME,
+    name: OPERATIONAL_TICK_WORKFLOW_NAME,
     restartable: {} as any,
   },
 );
 
 orc.registerStartup(PLUGIN_NAME + ".startup", async function hermitDevStartup() {
+  try {
+    await orc.killWorkflow(LEGACY_PR_HEALTH_WORKFLOW_NAME);
+  } catch (_err) {
+    // The legacy workflow is absent in new sessions.
+  }
   const result = await activateHermitDevPolicies();
   orc.log("info", result);
 });

@@ -1,110 +1,58 @@
 # hermit-dev ORC plugin
 
-Auto-loads the canonical `dev-hermit` coordinator policies into every ORC
-session. The policy text is not duplicated here: the plugin reads the
-workspace's `AGENTS.md` (the same file `CLAUDE.md` symlinks to) at startup and
-registers it as the `hermit-dev` skill, so a single source stays authoritative.
+This version-controlled project plugin loads the canonical `dev-hermit`
+coordinator policies and owns the thin ORC adapter for operational polling.
+The policy text is not duplicated: startup reads the workspace `AGENTS.md` and
+registers it as the `hermit-dev` skill.
 
-## What this plugin does
+## Responsibilities
 
-- Registers a `hermit-dev` skill whose instructions are the current
-  `AGENTS.md` contents (parent-workspace coordination, fork-only issue policy,
-  Git/PR workflow, Reverie API policy, and product vision).
-- Registers the narrow `hermit-parallel-speculative-attack` coordinator skill
-  from `parallel-speculative-attack.md`. It activates for explicit speculative
-  fan-out language and keeps single-path execution as the default.
-- Registers `hermit-urgent-critical-path-fix-validation` from
-  `urgent-critical-path-fix-validation.md` for deadline-gated parallel local/CI
-  validation and tight individual-test debugging loops.
-- Activates those policies on session startup
-  (`hermit-dev.startup`), so agents receive them without a manual step.
-- Exposes helper functions:
-  - `await orc.hermit-dev.activate()` — reload `AGENTS.md` and re-activate the
-    policies (use after editing the policy file).
-  - `orc.hermit-dev.status()` — report registration and policy-source state.
-- Ships `gh-issue-create`, the wrapper that keeps agent-created GitHub issues
-  on the `rrnewton` forks (never `facebookexperimental`).
-- Registers `hermitGithubMainHealth`, which polls current-main `push` workflow
-  runs for dev-hermit, Hermit, and Reverie through `with-proxy gh`.
-- Runs that poll every 30 minutes in the durable `hermit-dev-pr-health`
-  workflow. Every tick wakes the coordinator with live results; red or query
-  failure uses a `HARD WARNING` title. This is an executed poll, not a reminder
-  to inspect GitHub later.
+- Register and activate the canonical `AGENTS.md` policy.
+- Register the two narrow coordinator skills stored beside this file.
+- Expose `await orc.hermit-dev.activate()` and
+  `orc.hermit-dev.status()`.
+- Register the fork-safe `gh-issue-create` wrapper.
+- Run the real `agent-utils/tick-hub` operational poll every five minutes.
+  The versioned config is `ops/tick-hub.yaml`; the plugin only supplies the
+  live `orc.listAgents()` snapshot, invokes `scripts/run-tick-hub`, and sends a
+  `HARD WARNING` wakeup when the hub emits an action/error or fails.
+- Kill the obsolete `hermit-dev-pr-health` reminder workflow at startup. The
+  replacement workflow has the distinct ID
+  `hermit-dev-operational-health-v1`, so an old durable source cannot be
+  silently retained.
 
-`AGENTS.md` is resolved across both install layouts: first relative to the
-plugin directory (`orc.pluginDir() + "/../../../AGENTS.md"`, which hits the repo
-root when the plugin runs from its in-repo source location), then falling back
-to `<home>/work/dev-hermit/AGENTS.md` (home derived from `orc.userInfo()`, used
-when the plugin runs as the installed home copy). See `resolvePolicy()` in
-`index.ts`.
+## Loading
 
-## Install
+Start ORC from the dev-hermit workspace so it loads the tracked project config
+at `.orc/config.js`. That config imports the versioned module directly:
 
-The plugin source is version-controlled inside this repository. ORC only
-discovers "home" plugins under `~/.orc/plugins/`, so install a **real copy**
-there and load it from your ORC config.
-
-> **Why a copy and not a symlink?** ORC's module sandbox resolves symlinks and
-> rejects imports whose real path escapes the managed module roots. A symlinked
-> plugin dir makes the auto-generated `orc_plugin_loader.js` do
-> `import "./index.ts"`, which resolves through the symlink to a path outside
-> `~/.orc/plugins/` — ORC refuses it with *"Relative import './index.ts'
-> escapes managed module roots"*, and the plugin fails to load on every session
-> start. A real copy keeps `index.ts` inside the managed root.
-
-```bash
-# 1. Install (or refresh) the plugin as a real copy under ~/.orc/plugins/.
-~/work/dev-hermit/.orc/plugins/hermit-dev/install.sh
-
-# 2. Auto-load it at every session startup by appending to ~/.orc/config.js
-#    (append — do NOT overwrite existing content):
-printf '\norc.loadPlugin("hermit-dev");\n' >> ~/.orc/config.js
+```js
+import "./plugins/hermit-dev/index.ts";
 ```
 
-Start a new ORC session (or run `orc.loadPlugin("hermit-dev")` in the current
-one) to load it.
+The direct import is intentional: the installed ORC build finds the project
+config but does not add project plugin names to `loadPlugin()`'s registry in
+the session runtime. A relative module import stays inside the project module
+root and is covered by an isolated headless boot test.
 
-### Keeping the copy in sync
+`~/.orc/config.js` may contain a comment referring to this project config plus
+genuine per-user settings such as the selected model. It must not contain a
+plugin copy, workflow, polling, or policy logic. Do not copy or symlink this
+module into `~/.orc/plugins/`: a copy drifts from version control, while a
+symlink is rejected by ORC's module-root sandbox.
 
-Because it is a copy (not a symlink), edits to the source under
-`~/work/dev-hermit/.orc/plugins/hermit-dev/` do **not** take effect until you
-re-run `install.sh`. Re-run it after editing the plugin, e.g. from a git
-`post-merge` / `post-checkout` hook or manually. (Editing the policy text in
-`AGENTS.md` itself needs no re-copy — it is read at startup, or via
-`await orc.hermit-dev.activate()`.)
-
-## Why a home copy + config.js instead of `registerSkill`
-
-- `orc.registerSkill(...)` is in-memory only; it is not persisted across
-  sessions, so the policies would silently disappear on the next start.
-- Home plugins (`~/.orc/plugins/`) are always discovered. Project plugins
-  (`<repo>/.orc/plugins/`) are only discovered if the project root existed at
-  ORC startup, which is unreliable for a workspace opened mid-session.
-- `orc.loadPlugin(...)` in `~/.orc/config.js` runs at every session startup, so
-  the plugin (and thus the `AGENTS.md` policies) load deterministically.
+The historical `install.sh` now checks this invariant and explains how to
+remove a stale home copy; it no longer installs one.
 
 ## Verify
 
-```bash
-# It is a real directory, not a symlink:
-[ -L ~/.orc/plugins/hermit-dev ] && echo "SYMLINK (bad)" || echo "real dir (good)"
-ls ~/.orc/plugins/hermit-dev   # includes index.ts and both coordinator skill docs
-
-# The config auto-loads it:
-grep hermit-dev ~/.orc/config.js
-```
-
-Inside an ORC session:
-
-```js
-orc.listPlugins();          // includes { name: "hermit-dev", loaded: true, ... }
-orc.loadPlugin("hermit-dev");
-orc.hermit-dev.status();    // policyLoaded: true, policyBytes > 0
-```
-
-## Uninstall
+From the dev-hermit root:
 
 ```bash
-rm -rf ~/.orc/plugins/hermit-dev
-# then remove the `orc.loadPlugin("hermit-dev");` line from ~/.orc/config.js
+HERMIT_AGENT_SNAPSHOT_JSON='[]' ./scripts/run-tick-hub --no-header
 ```
+
+A live session's `orc.hermit-dev.status()` must report the five-minute tick
+interval and `ops/tick-hub.yaml` config. `orc.listWorkflows()` must show the
+sleeping `hermit-dev-operational-health-v1` workflow and must not show
+`hermit-dev-pr-health`.

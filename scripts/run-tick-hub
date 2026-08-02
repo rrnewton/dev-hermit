@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
+cd "$ROOT"
+AGENT_UTILS="$ROOT/agent-utils"
+EXPECTED=$(git -C "$ROOT" rev-parse :agent-utils)
+ACTUAL=""
+
+if [[ -e "$AGENT_UTILS/.git" ]]; then
+    ACTUAL=$(git -C "$AGENT_UTILS" rev-parse HEAD 2>/dev/null || true)
+fi
+
+if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+    if [[ -n "$ACTUAL" ]] && [[ -n $(git -C "$AGENT_UTILS" status --porcelain) ]]; then
+        echo "run-tick-hub: agent-utils is dirty at $ACTUAL; expected $EXPECTED" >&2
+        exit 1
+    fi
+    update=(
+        git -C "$ROOT"
+        -c submodule.agent-utils.update=checkout
+        submodule update --init --checkout -- agent-utils
+    )
+    if command -v with-proxy >/dev/null 2>&1; then
+        with-proxy "${update[@]}"
+    else
+        "${update[@]}"
+    fi
+fi
+
+ACTUAL=$(git -C "$AGENT_UTILS" rev-parse HEAD)
+if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+    echo "run-tick-hub: agent-utils is at $ACTUAL; expected $EXPECTED" >&2
+    exit 1
+fi
+
+PYTHON=${TICK_HUB_PYTHON:-python3}
+if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    VENV="$ROOT/.tick-hub/venv"
+    if [[ ! -x "$VENV/bin/python" ]]; then
+        "$PYTHON" -m venv "$VENV"
+    fi
+    PYTHON="$VENV/bin/python"
+    if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+        install=(
+            "$PYTHON" -m pip install
+            --disable-pip-version-check
+            --requirement "$ROOT/ops/tick-hub-requirements.txt"
+        )
+        if command -v with-proxy >/dev/null 2>&1; then
+            with-proxy "${install[@]}"
+        else
+            "${install[@]}"
+        fi
+    fi
+fi
+
+exec "$PYTHON" "$AGENT_UTILS/py/bin/tick-hub" tick \
+    --config "$ROOT/ops/tick-hub.yaml" \
+    --state "$ROOT/ops/tick-hub-state.yaml" \
+    --fired-state "$ROOT/.tick-hub/fired-state" \
+    --current-tick-min 5 \
+    "$@"

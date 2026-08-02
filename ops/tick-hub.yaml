@@ -1,0 +1,46 @@
+description: |-
+  Operational health polling for the dev-hermit coordinator. The outer ORC
+  workflow runs one tick every five minutes; this config owns each check's
+  cadence and only emits actions when a hard warning is required.
+
+reminders:
+  - name: github_main_health
+    cadence_secs: 900
+    gate:
+      cmd: ./scripts/operational_health.py github-main
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: github-main
+      title: "GitHub main health is {state}: {summary}"
+
+  - name: pull_request_health
+    cadence_secs: 900
+    gate:
+      cmd: ./scripts/operational_health.py pull-requests
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: pull-requests
+      title: "open PR CI needs attention: {summary}"
+
+  - name: stuck_agents
+    cadence_secs: 300
+    gate:
+      cmd: ./scripts/operational_health.py agents
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: agents
+      title: "agent fleet needs attention: {summary}"
+
+health_checks: []

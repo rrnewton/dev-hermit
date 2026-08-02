@@ -55,12 +55,16 @@ product-specific requirements with a summary.
 
 `~/work/dev-hermit/` is a multi-agent development harness — **not** the Hermit,
 Reverie, or LiteInst2 code project. The parent repository coordinates three
-pinned Git submodules:
+product submodules and one optional tooling submodule, all pinned by exact
+gitlinks:
 
 - `hermit/`: the primary Hermit product checkout.
 - `reverie/`: the Reverie instrumentation/runtime checkout, used for reference,
   compatibility work, and coordinated changes.
 - `liteinst2/`: the standalone LiteInst2 instrumentation checkout.
+- `agent-utils/`: shared agent tooling, including `tick-hub`; `update = none`
+  keeps it out of ordinary recursive initialization and project scripts
+  materialize its exact pin on demand.
 
 The parent owns orchestration policy, worktree registries, reproducible
 experiments, AI research notes, and exact submodule pins. Product source, tests,
@@ -139,6 +143,7 @@ remain valid and do not replace the work slug.
 |-- hermit/                         # primary; coordinator only
 |-- reverie/                        # primary; coordinator only
 |-- liteinst2/                      # primary; coordinator only
+|-- agent-utils/                    # optional shared tooling; exact pin, on demand
 |-- worktree-state.json             # machine-local slot->owner map (gitignored)
 |-- worktrees/
 |   |-- ACTIVE.md                   # human notes + script-managed slot table
