@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "captured_utc": "2026-08-02T08:57:12Z",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 #1 SMP PREEMPT Mon Jul 20 10:58:40 PDT 2026 x86_64",
   "cpu_model": "AMD EPYC 9D85 158-Core Processor",
   "logical_cpus": 316,

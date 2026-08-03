@@ -46,8 +46,8 @@ blog's scaled-latency metric has not been established.
 | counter2 | **24.070 s** | n/a | n/a | **~1.12x** | timeout **>37.4x** |
 | relaxed | **24.070 s** | n/a | n/a | **~4.67x** | n/a |
 
-All successful rows produced the expected output file. Runsc has three measured
-samples; the earlier Hermit application cells have one.
+All successful rows produced the expected output file. Runsc and the successful
+earlier Hermit ffmpeg cells each have three measured samples.
 
 ## Coverage-limited applications
 

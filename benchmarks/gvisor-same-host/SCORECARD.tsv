@@ -35,8 +35,8 @@ ffmpeg	runsc	native	24681.582487	ms	1.000000	3	pass	results/20260802-short-matri
 ffmpeg	runsc	systrap	25933.675899	ms	1.050730	3	pass	results/20260802-short-matrix/summary.tsv
 ffmpeg	runsc	kvm	25686.832271	ms	1.040729	3	pass	results/20260802-short-matrix/summary.tsv
 ffmpeg	runsc	ptrace	25941.521744	ms	1.051048	3	pass	results/20260802-short-matrix/summary.tsv
-ffmpeg	counter2	ptrace	26860.000	ms	1.116	1	pass	experiments/gvisor-systrap-benchmark-repro-20260802/raw/application-summary.tsv
-ffmpeg	relaxed	ptrace	112460.000	ms	4.672	1	pass	experiments/gvisor-systrap-benchmark-repro-20260802/raw/application-summary.tsv
+ffmpeg	counter2	ptrace	26860.000	ms	1.116	3	pass	experiments/gvisor-systrap-benchmark-repro-20260802/raw/ffmpeg-summary.tsv
+ffmpeg	relaxed	ptrace	112460.000	ms	4.672	3	pass	experiments/gvisor-systrap-benchmark-repro-20260802/raw/ffmpeg-summary.tsv
 ffmpeg	counter2	dbi	900000.000	ms	37.391	1	timeout	experiments/gvisor-systrap-benchmark-repro-20260802/raw/application-summary.tsv
 absl	runsc	native	91773.778331	ms	1.000000	1	pass	results/20260802-absl-matrix/summary.tsv
 absl	runsc	systrap	103183.537002	ms	1.124325	1	pass	results/20260802-absl-matrix/summary.tsv
