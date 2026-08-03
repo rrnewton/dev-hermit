@@ -29,9 +29,19 @@ integration starts clean.
 
 ## Constraints
 
+- **Admin/speculative merge and arm are one transaction.** Never invoke the
+  merge as a standalone command. Wrap the bounded merge operation with
+  `ci-hub/remediation/land_and_arm.py run --repo <repo> --pr <n>
+  --land-mode admin --source <checkout> -- <merge-command>` inside the bounded
+  `ci-hub/ci-hub land-lock run` lease. The wrapper persists an intent before
+  merge and does not report success until exact-SHA local and GitHub
+  verification are armed; ORC recovers a wrapper killed between those points.
+
 - **Never push directly to `main`; never force-push a shared branch or `main`.**
-  Land via `gh pr merge --squash --admin` only when the authoritative gate is
-  green at the exact PR head.
+  When an owner-authorized admin land is required, pass `gh pr merge
+  --squash --admin` as the child of the land-and-arm transaction above, and
+  only when the authoritative gate is green at the exact PR head. Ordinary
+  queue drains use the current non-admin merge protocol.
 - **Know the real gates.** Hermit: `Regular tests (GitHub-hosted)` (authoritative
   after the CI split); `PMU and CPUID (self-hosted)` non-blocking (main
   unprotected); `merge-gate` is a re-fire placeholder. Reverie: `Regular tests`

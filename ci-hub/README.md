@@ -16,8 +16,12 @@ Run `./ci-hub/ci-hub help` for the command list. The core workflows are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
-# Immediately after an admin/speculative land, arm both exact-SHA verifiers.
-./ci-hub/ci-hub arm-land <40-hex-landed-sha> --land-mode admin
+# Atomically run an admin/speculative land and arm both exact-SHA verifiers.
+./ci-hub/ci-hub land-lock run --agent hermit-lander --pr 123 \
+  --wait 900 --hold 1500 -- \
+  ./ci-hub/remediation/land_and_arm.py run --repo rrnewton/hermit --pr 123 \
+    --land-mode admin --command-timeout 1200 -- \
+    with-proxy gh pr merge 123 -R rrnewton/hermit --rebase --admin
 
 # Inspect or recover polling for obligations that are still open.
 ./ci-hub/ci-hub obligations
@@ -91,14 +95,20 @@ generic, add it there and link/use it here.
 The outer ORC workflow calls `bin/health-tick` every five minutes. The pinned
 tick engine reads `health/tick-hub.yaml`; dev-hermit probes live beside it. A
 detached per-obligation watcher records terminal state continuously, while the
-dedicated ORC workflow `hermit-dev-speculative-land-remediation-v1` polls every
-15 seconds and sends a deduplicated coordinator wakeup on failure. The
-five-minute tick is the recovery path if either fast watcher is lost.
+dedicated ORC workflow `hermit-dev-speculative-land-remediation-v1` first
+recovers any transaction interrupted after merge but before arm, then polls
+every 15 seconds. A failure atomically records a remediation dispatch and wakes
+the live `hermit-lander` (or the coordinator if no lander exists). The
+five-minute tick is another recovery path if either fast watcher is lost.
 
 ## Speculative-land obligation contract
 
-`arm-land` is mandatory immediately after an admin/speculative land. It first
-appends an OPEN event to `ignored/ci-hub/obligations.jsonl`, then concurrently:
+Admin/speculative lands must use `remediation/land_and_arm.py run`; raw
+`gh pr merge` is not the protocol. The wrapper writes a durable intent before
+executing the bounded land command. Once GitHub exposes the merged SHA it calls
+`arm-land` in-process. If the wrapper dies in that interval, the restartable ORC
+workflow recovers the intent and arms it. Arming appends an OPEN event to
+`ignored/ci-hub/obligations.jsonl`, then concurrently:
 
 1. clones Hermit into `ignored/ci-hub/obligations/<id>/hermit`, checks out the
    exact landed commit detached, and runs full `./validate.sh --no-label-pr`;
@@ -116,11 +126,13 @@ are `landed_sha → gha-runs.csv:head_sha`, `landed_sha → local-runs.csv:git_s
 and `github.run_ids → gha-runs.csv:run_id`.
 
 The first failing verifier immediately changes the obligation to
-`remediation_required`: revert is recommended when the bad land is still the
-main tip; fix-forward is recommended after main has advanced. The fast ORC
-workflow raises that recommendation within one 15-second poll. The mechanism
-never performs a blind automatic revert. After the chosen repair lands, close
-the obligation with:
+`remediation_required` and atomically records `remediation.state=triggered`:
+revert is dispatched when the bad land is still the main tip; fix-forward is
+dispatched after main has advanced. The fast ORC workflow assigns that dispatch
+to the live landing agent within one 15-second poll. It never performs a blind
+source rewrite: the dispatched agent executes the recorded action against
+current main and supplies the repair SHA. After the repair lands, close the
+obligation with:
 
 ```bash
 ./ci-hub/ci-hub resolve-obligation <id> --kind fix-forward --ref <repair-sha>

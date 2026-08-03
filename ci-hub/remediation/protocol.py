@@ -404,7 +404,7 @@ def evaluate_obligation(
                 file=sys.stderr,
                 flush=True,
             )
-        return record
+        return trigger_remediation(record, store_path=store_path)
 
     if states == ("green", "green"):
         if record.get("overall_state") != "satisfied":
@@ -429,6 +429,68 @@ def evaluate_obligation(
             store_path,
         )
     return record
+
+
+def trigger_remediation(
+    record: Mapping[str, Any], *, store_path: Path
+) -> dict[str, Any]:
+    """Persist an idempotent, executable remediation dispatch.
+
+    The ORC heartbeat consumes this dispatch and wakes the dedicated lander.
+    Recording it here, in the same append-only store as the failure, means an
+    agent recycle cannot turn a completed failure into an unowned suggestion.
+    """
+    if record.get("overall_state") != "remediation_required":
+        return dict(record)
+    remediation = record.get("remediation")
+    if isinstance(remediation, Mapping) and remediation.get("state") in {
+        "triggered",
+        "completed",
+    }:
+        return dict(record)
+    recommendation = record.get("recommendation")
+    action = (
+        recommendation.get("action") if isinstance(recommendation, Mapping) else None
+    )
+    if action not in {"fix-forward", "revert"}:
+        raise ProtocolError("cannot trigger remediation without a concrete action")
+    now = obligations.utc_now()
+    instruction = (
+        f"Act immediately on obligation {record['obligation_id']}: {action} "
+        f"{record['repo']}@{record['landed_sha']}. Failure: "
+        f"{record.get('failure_summary') or 'see obligation record'}. "
+        "After the repair lands, run resolve-obligation with its full SHA."
+    )
+    triggered = obligations.transition(
+        str(record["obligation_id"]),
+        "remediation-triggered",
+        {
+            "alert": {
+                "state": "dispatched",
+                "dispatched_at": now,
+                "target": "hermit-lander",
+            },
+            "remediation": {
+                "state": "triggered",
+                "kind": action,
+                "started_at": now,
+                "dispatch": {
+                    "state": "pending",
+                    "target": "hermit-lander",
+                    "requested_at": now,
+                    "instruction": instruction,
+                },
+            },
+        },
+        store_path,
+    )
+    print(
+        f"REMEDIATION TRIGGERED: obligation={record['obligation_id']} "
+        f"action={action} target=hermit-lander",
+        file=sys.stderr,
+        flush=True,
+    )
+    return triggered
 
 
 def _spawn_detached(arguments: Sequence[str], log_path: Path) -> int:
@@ -677,10 +739,15 @@ def _summary_line(record: Mapping[str, Any]) -> str:
         if isinstance(recommendation, Mapping)
         else "-"
     )
+    remediation = record.get("remediation") or {}
+    remediation_state = (
+        remediation.get("state", "-") if isinstance(remediation, Mapping) else "-"
+    )
     return (
         f"{record['obligation_id']} {record['repo']}@{record['landed_sha'][:12]} "
         f"overall={record['overall_state']} local={record['local']['state']} "
-        f"github={record['github']['state']} recommendation={action}"
+        f"github={record['github']['state']} recommendation={action} "
+        f"remediation={remediation_state}"
     )
 
 
@@ -705,6 +772,11 @@ def print_status(
         for record in unresolved
         if record["overall_state"] == "remediation_required"
     ]
+    triggered = [
+        record
+        for record in remediation
+        if (record.get("remediation") or {}).get("state") == "triggered"
+    ]
     if json_output:
         print(json.dumps({"obligations": records}, sort_keys=True))
     elif gate:
@@ -714,6 +786,7 @@ def print_status(
         print(f"state={state}")
         print(f"count={len(unresolved)}")
         print(f"remediation_count={len(remediation)}")
+        print(f"triggered_count={len(triggered)}")
         print(
             "ids="
             + (",".join(record["obligation_id"] for record in unresolved) or "none")

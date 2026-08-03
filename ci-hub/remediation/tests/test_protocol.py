@@ -48,9 +48,24 @@ class ProtocolTest(unittest.TestCase):
 
     def test_github_parser_requires_exact_sha_and_workflow(self) -> None:
         payload = [
-            {"databaseId": 1, "headSha": SHA, "workflowName": protocol.DEFAULT_WORKFLOW, "createdAt": "2026-08-03T01:00:00Z"},
-            {"databaseId": 2, "headSha": NEXT_SHA, "workflowName": protocol.DEFAULT_WORKFLOW, "createdAt": "2026-08-03T02:00:00Z"},
-            {"databaseId": 3, "headSha": SHA, "workflowName": "Docs", "createdAt": "2026-08-03T03:00:00Z"},
+            {
+                "databaseId": 1,
+                "headSha": SHA,
+                "workflowName": protocol.DEFAULT_WORKFLOW,
+                "createdAt": "2026-08-03T01:00:00Z",
+            },
+            {
+                "databaseId": 2,
+                "headSha": NEXT_SHA,
+                "workflowName": protocol.DEFAULT_WORKFLOW,
+                "createdAt": "2026-08-03T02:00:00Z",
+            },
+            {
+                "databaseId": 3,
+                "headSha": SHA,
+                "workflowName": "Docs",
+                "createdAt": "2026-08-03T03:00:00Z",
+            },
         ]
         runs = protocol._parse_github_runs(json.dumps(payload), SHA)
         self.assertEqual([run["databaseId"] for run in runs], [1])
@@ -59,7 +74,14 @@ class ProtocolTest(unittest.TestCase):
         ledger = self.root / "ledger.jsonl"
         ledger.write_text(
             "\n".join(
-                json.dumps({"profile": "full", "real_seconds": wall, "user_seconds": cpu, "sys_seconds": 1})
+                json.dumps(
+                    {
+                        "profile": "full",
+                        "real_seconds": wall,
+                        "user_seconds": cpu,
+                        "sys_seconds": 1,
+                    }
+                )
                 for wall, cpu in ((100, 200), (5000, 9000), (2000, 8000))
             )
             + "\n"
@@ -97,8 +119,11 @@ class ProtocolTest(unittest.TestCase):
             )
         self.assertEqual(record["overall_state"], "remediation_required")
         self.assertEqual(record["recommendation"]["action"], "revert")
-        self.assertEqual(record["alert"]["state"], "raised")
+        self.assertEqual(record["remediation"]["state"], "triggered")
+        self.assertEqual(record["remediation"]["dispatch"]["target"], "hermit-lander")
+        self.assertEqual(record["alert"]["state"], "dispatched")
         self.assertIn("HARD WARNING", stderr.getvalue())
+        self.assertIn("REMEDIATION TRIGGERED", stderr.getvalue())
 
     def test_failure_recommends_fix_forward_after_main_advances(self) -> None:
         self.create()
@@ -110,6 +135,23 @@ class ProtocolTest(unittest.TestCase):
                 "test-obligation", store_path=self.store, main_sha=NEXT_SHA
             )
         self.assertEqual(record["recommendation"]["action"], "fix-forward")
+        self.assertEqual(record["remediation"]["state"], "triggered")
+
+    def test_remediation_trigger_is_idempotent(self) -> None:
+        self.create()
+        self.transition({"local": {"state": "red", "exit_code": 1}})
+        with redirect_stderr(io.StringIO()):
+            first = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+            second = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        self.assertEqual(first["event_id"], second["event_id"])
+        events = [json.loads(line) for line in self.store.read_text().splitlines()]
+        self.assertEqual(
+            sum(event["event_type"] == "remediation-triggered" for event in events), 1
+        )
 
     def test_two_green_verifiers_satisfy_obligation(self) -> None:
         self.create()
@@ -124,16 +166,22 @@ class ProtocolTest(unittest.TestCase):
         self.create()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(
-                protocol.print_status(self.store, include_closed=False, json_output=False, gate=True),
+                protocol.print_status(
+                    self.store, include_closed=False, json_output=False, gate=True
+                ),
                 1,
             )
         self.transition({"local": {"state": "red", "exit_code": 1}})
         with redirect_stderr(io.StringIO()):
-            protocol.evaluate_obligation("test-obligation", store_path=self.store, main_sha=SHA)
+            protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
         output = io.StringIO()
         with redirect_stdout(output):
             self.assertEqual(
-                protocol.print_status(self.store, include_closed=False, json_output=False, gate=True),
+                protocol.print_status(
+                    self.store, include_closed=False, json_output=False, gate=True
+                ),
                 2,
             )
         self.assertIn("state=remediation-required", output.getvalue())
@@ -154,7 +202,11 @@ class ProtocolTest(unittest.TestCase):
                 "local": {
                     "state": "running",
                     "log_path": str(log_path),
-                    "cost": {"estimate": estimate, "actual": None, "record_path": str(cost_path)},
+                    "cost": {
+                        "estimate": estimate,
+                        "actual": None,
+                        "record_path": str(cost_path),
+                    },
                 }
             }
         )
@@ -162,9 +214,13 @@ class ProtocolTest(unittest.TestCase):
         def fake_run(command, **_kwargs):
             command = list(command)
             if command[:2] == ["git", "clone"]:
-                (self.root / "ignored/ci-hub/obligations/test-obligation/hermit").mkdir(parents=True)
+                (self.root / "ignored/ci-hub/obligations/test-obligation/hermit").mkdir(
+                    parents=True
+                )
             if "rev-parse" in command:
-                return subprocess.CompletedProcess(command, 0, stdout=SHA + "\n", stderr="")
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=SHA + "\n", stderr=""
+                )
             if "tool-cost" in command[0]:
                 payload = {
                     "schema_version": 1,

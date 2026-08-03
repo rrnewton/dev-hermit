@@ -44,6 +44,7 @@ const OPERATIONAL_TICK_WORKFLOW_NAME = "hermit-dev-operational-health-v1";
 const SPECULATIVE_LAND_SCRIPT_NAME = "hermitSpeculativeLandObligations";
 const SPECULATIVE_LAND_COMMAND =
   'cd "' + WORKSPACE_ROOT + '" && ' +
+  'python3 ci-hub/remediation/land_and_arm.py recover --observe-timeout 5 && ' +
   './ci-hub/ci-hub watch-obligations --once --gate';
 const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
 const SPECULATIVE_LAND_WORKFLOW_NAME =
@@ -255,13 +256,27 @@ export async function speculativeLandRemediationHeartbeat(
       const signature = stableAlertSignature(report);
       if (orc.kvGet(SPECULATIVE_LAND_ALERT_CACHE_KEY) !== signature) {
         const title = remediationRequired
-          ? "HARD WARNING: speculative land requires immediate remediation"
+          ? "REMEDIATION DISPATCHED: speculative land failed verification"
           : "HARD WARNING: speculative-land obligation watcher failed";
+        const agents = await orc.listAgents();
+        const landerAlive = agents.some((agent: any) =>
+          String(agent.name || "") === "hermit-lander" &&
+          !["dead", "failed", "retired", "terminated"].includes(
+            String(agent.status || "").toLowerCase(),
+          )
+        );
+        const targets = remediationRequired && landerAlive
+          ? ["hermit-lander"]
+          : [];
         await orc.sendWakeup(
-          [],
+          targets,
           title,
           (report || "speculative-land watcher returned no diagnostic output") +
-            "\nRun " + PR_STATUS_COMMAND + " and act on the fix-forward/revert recommendation now.",
+            (remediationRequired
+              ? "\nThis is an active remediation dispatch, not a status suggestion. " +
+                "Execute the recorded fix-forward/revert action now, then close it with " +
+                "ci-hub resolve-obligation."
+              : "\nRun " + PR_STATUS_COMMAND + " and repair the watcher now."),
         );
         orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, signature);
       }
@@ -294,7 +309,7 @@ orc.registerScript(OPERATIONAL_TICK_SCRIPT_NAME, {
 orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
   script: SPECULATIVE_LAND_COMMAND,
   description: "Poll exact-SHA speculative-land obligations for immediate remediation",
-  timeoutSec: 120,
+  timeoutSec: 240,
 });
 
 orc.exposeFunction(
