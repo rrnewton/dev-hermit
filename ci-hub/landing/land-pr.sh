@@ -27,15 +27,18 @@
 # Usage:
 #   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union] [--agent NAME]
 #                             [--gate-deadline SECS] [--child-deadline SECS]
+#                             [--foreground]
 #   --union          use the additive manifest union-rebase (union-rebase.sh);
 #                    default is a plain `git rebase origin/main`.
 #   --agent NAME     lock holder + PR-comment role tag (default: hermit-lander).
 #   --gate-deadline  bound on the merge-gate poll (default 600).
 #   --child-deadline hard ceiling for the whole land subtree (default 1800);
 #                    passed to `land-lock run`, which kills + releases on breach.
+#   --foreground     diagnostic escape hatch; default launches under nohup+setsid
+#                    with a durable timestamped log and returns immediately.
 set -uo pipefail
 
-PR=""; BR=""; UNION=0; INNER=0
+PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
 GATE_DEADLINE=600
@@ -46,8 +49,10 @@ while [ $# -gt 0 ]; do
     --agent) AGENT="$2"; shift ;;
     --gate-deadline) GATE_DEADLINE="$2"; shift ;;
     --child-deadline) CHILD_DEADLINE="$2"; shift ;;
+    --foreground) FOREGROUND=1 ;;
+    --_detached) DETACHED_CHILD=1 ;;
     --_inner) INNER=1 ;;
-    -h|--help) sed -n '1,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,50p' "$0"; exit 0 ;;
     -*) echo "land-pr: unknown flag $1" >&2; exit 2 ;;
     *) if [ -z "$PR" ]; then PR="$1"; elif [ -z "$BR" ]; then BR="$1"; else echo "land-pr: extra arg $1" >&2; exit 2; fi ;;
   esac
@@ -72,10 +77,36 @@ comment_abandon(){
     >/dev/null 2>&1 || say "WARN: could not post ABANDON comment"
 }
 
+# A real land exceeds the agent shell's foreground time budget. Launch the
+# entire self-healing lock/land/arm sequence in a new session by default; the
+# timestamped log is the durable observation surface across agent recycling.
+if [ "$INNER" -eq 0 ] && [ "$DETACHED_CHILD" -eq 0 ] && [ "$FOREGROUND" -eq 0 ]; then
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  safe_pr=${PR//[^A-Za-z0-9_.-]/_}
+  log_dir="${CI_HUB_LANDING_LOG_DIR:-$ROOT/ignored/ci-hub/landing}"
+  log="$log_dir/land-pr${safe_pr}-${stamp}-$$.log"
+  mkdir -p "$log_dir"
+  detached_args=(--_detached "$PR" "$BR" --agent "$AGENT" \
+    --gate-deadline "$GATE_DEADLINE" --child-deadline "$CHILD_DEADLINE")
+  [ "$UNION" -eq 1 ] && detached_args+=(--union)
+  printf 'DETACHED LAND START pr=%s branch=%s agent=%s started_at=%s\n' \
+    "$PR" "$BR" "$AGENT" "$stamp" >"$log"
+  nohup setsid "$0" "${detached_args[@]}" </dev/null >>"$log" 2>&1 &
+  detached_pid=$!
+  printf 'DETACHED LAND PID pid=%s\n' "$detached_pid" >>"$log"
+  printf 'DETACHED LAND: pid=%s log=%s\n' "$detached_pid" "$log"
+  exit 0
+fi
+
 # --- outer: self-wrap in land-lock run so the lease is bound to this bounded ---
 # child. `run` acquires (FIFO), heartbeats only while we live, and ALWAYS releases
 # on exit; --child-deadline hard-kills + releases if we ever wedge.
 if [ "$INNER" -eq 0 ]; then
+  # A replacement lander inherits durable remediation from state, without
+  # depending on a wake sent to its predecessor. This acknowledges discovery;
+  # the obligation remains open until the repair SHA is explicitly resolved.
+  "$ROOT/ci-hub/ci-hub" inherit-obligations --agent "$AGENT" \
+    --session "${ORC_AGENT_SESSION_ID:-${HOSTNAME:-unknown}:$$}"
   args=(--_inner "$PR" "$BR" --agent "$AGENT" --gate-deadline "$GATE_DEADLINE")
   [ "$UNION" -eq 1 ] && args+=(--union)
   # Persist the exact-SHA verification obligation intent before the bounded

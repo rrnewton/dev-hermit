@@ -71,6 +71,10 @@ enum HubCommand {
     ArmLand(ArmLandArgs),
     /// Show speculative-land obligations from the typed JSONL store.
     Obligations(ObligationsArgs),
+    /// Discover and acknowledge remediation inherited by this lander instance.
+    InheritObligations(InheritObligationsArgs),
+    /// Record that ORC sent a wake which has not yet been acknowledged.
+    RecordObligationWake(RecordObligationWakeArgs),
     /// Poll open obligations and record verifier transitions.
     WatchObligations(WatchObligationsArgs),
     /// Record a completed fix-forward or revert.
@@ -182,9 +186,31 @@ struct ObligationsArgs {
     #[arg(long)]
     all: bool,
     #[arg(long)]
+    actionable: bool,
+    #[arg(long)]
     json: bool,
     #[arg(long)]
     gate: bool,
+    #[arg(long)]
+    store: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct InheritObligationsArgs {
+    #[arg(long)]
+    agent: String,
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long)]
+    store: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct RecordObligationWakeArgs {
+    #[arg(long)]
+    target: String,
+    #[arg(long, default_value = "orc")]
+    source: String,
     #[arg(long)]
     store: Option<PathBuf>,
 }
@@ -351,6 +377,8 @@ impl HubCommand {
                     .into(),
             },
             Self::Obligations(_)
+            | Self::InheritObligations(_)
+            | Self::RecordObligationWake(_)
             | Self::ResolveObligation(_)
             | Self::LandLock(_) => return None,
         };
@@ -505,6 +533,7 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 root,
                 ObligationsArgs {
                     all: false,
+                    actionable: false,
                     json: false,
                     gate: false,
                     store: None,
@@ -611,6 +640,26 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/remediation/protocol.py", protocol_args)
         }
         HubCommand::Obligations(args) => print_obligations(root, args),
+        HubCommand::InheritObligations(args) => {
+            let mut protocol_args = vec![OsString::from("inherit")];
+            push_option(&mut protocol_args, "--agent", args.agent);
+            if let Some(session) = args.session {
+                push_option(&mut protocol_args, "--session", session);
+            }
+            if let Some(store) = args.store {
+                push_option(&mut protocol_args, "--store", store);
+            }
+            run_python(root, "ci-hub/remediation/protocol.py", protocol_args)
+        }
+        HubCommand::RecordObligationWake(args) => {
+            let mut protocol_args = vec![OsString::from("wake-sent")];
+            push_option(&mut protocol_args, "--target", args.target);
+            push_option(&mut protocol_args, "--source", args.source);
+            if let Some(store) = args.store {
+                push_option(&mut protocol_args, "--store", store);
+            }
+            run_python(root, "ci-hub/remediation/protocol.py", protocol_args)
+        }
         HubCommand::WatchObligations(args) => {
             let mut protocol_args = vec![OsString::from("watch")];
             if let Some(id) = args.id {
@@ -770,6 +819,9 @@ fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubErr
         .or_else(|| env::var_os("CI_HUB_OBLIGATIONS_STORE").map(PathBuf::from))
         .unwrap_or_else(|| root.join("ignored/ci-hub/obligations.jsonl"));
     let mut records = latest_obligations(&store)?;
+    if args.actionable {
+        records.retain(|record| record.remediation_required());
+    }
     if !args.all {
         records.retain(|record| !record.is_closed());
     }
@@ -784,6 +836,14 @@ fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubErr
         .iter()
         .filter(|record| record.remediation_required())
         .collect();
+    let sent_unacknowledged = remediation
+        .iter()
+        .filter(|record| record.dispatch_state() == "sent_unacknowledged")
+        .count();
+    let acknowledged = remediation
+        .iter()
+        .filter(|record| record.dispatch_state() == "acknowledged")
+        .count();
 
     if args.json {
         #[derive(Serialize)]
@@ -808,6 +868,8 @@ fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubErr
         println!("state={state}");
         println!("count={}", unresolved.len());
         println!("remediation_count={}", remediation.len());
+        println!("sent_unacknowledged_count={sent_unacknowledged}");
+        println!("acknowledged_count={acknowledged}");
         println!(
             "ids={}",
             if unresolved.is_empty() {
@@ -904,14 +966,15 @@ fn latest_obligations(path: &Path) -> Result<Vec<ObligationRecord>, CiHubError> 
 
 fn obligation_summary(record: &ObligationRecord) -> String {
     format!(
-        "{} {}@{} overall={} local={} github={} recommendation={}",
+        "{} {}@{} overall={} local={} github={} recommendation={} dispatch={}",
         record.obligation_id,
         record.repo,
         &record.landed_sha[..record.landed_sha.len().min(12)],
         record.overall_state,
         record.local.state,
         record.github.state,
-        record.recommendation_action()
+        record.recommendation_action(),
+        record.dispatch_state()
     )
 }
 
@@ -1024,6 +1087,26 @@ mod tests {
             .unwrap()
             .command;
         assert!(obligations.cost_spec().is_none());
+        let inherit = Cli::try_parse_from([
+            "ci-hub",
+            "inherit-obligations",
+            "--agent",
+            "hermit-lander",
+            "--session",
+            "session-1",
+        ])
+        .unwrap()
+        .command;
+        assert!(inherit.cost_spec().is_none());
+        let wake = Cli::try_parse_from([
+            "ci-hub",
+            "record-obligation-wake",
+            "--target",
+            "hermit-lander",
+        ])
+        .unwrap()
+        .command;
+        assert!(wake.cost_spec().is_none());
         let status = Cli::try_parse_from(["ci-hub", "land-lock", "status"])
             .unwrap()
             .command;

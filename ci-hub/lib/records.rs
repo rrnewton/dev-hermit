@@ -18,6 +18,8 @@ pub struct ObligationRecord {
     pub failure_summary: Option<String>,
     #[serde(default)]
     pub recommendation: Option<Recommendation>,
+    #[serde(default)]
+    pub remediation: Option<RemediationState>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -37,6 +39,14 @@ impl ObligationRecord {
             .and_then(|recommendation| recommendation.action.as_deref())
             .unwrap_or("-")
     }
+
+    pub fn dispatch_state(&self) -> &str {
+        self.remediation
+            .as_ref()
+            .and_then(|remediation| remediation.dispatch.as_ref())
+            .and_then(|dispatch| dispatch.state.as_deref())
+            .unwrap_or("-")
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -50,6 +60,30 @@ pub struct VerificationState {
 pub struct Recommendation {
     #[serde(default)]
     pub action: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RemediationState {
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub dispatch: Option<DispatchState>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DispatchState {
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub acknowledged_by: Option<String>,
+    #[serde(default)]
+    pub acknowledged_session: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -111,6 +145,7 @@ mod tests {
                 "overall_state":"open",
                 "local":{"state":"running","pid":42},
                 "github":{"state":"pending","run_ids":[]},
+                "remediation":{"state":"triggered","dispatch":{"state":"sent_unacknowledged","wake_id":"w1"}},
                 "future_field":"preserved"
             }"#,
         )
@@ -118,6 +153,11 @@ mod tests {
         assert!(!record.is_closed());
         assert_eq!(record.local.extra["pid"], 42);
         assert_eq!(record.extra["future_field"], "preserved");
+        assert_eq!(record.dispatch_state(), "sent_unacknowledged");
+        assert_eq!(
+            record.remediation.unwrap().dispatch.unwrap().extra["wake_id"],
+            "w1"
+        );
     }
 
     #[test]

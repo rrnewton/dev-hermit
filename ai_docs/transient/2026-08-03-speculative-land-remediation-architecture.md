@@ -4,6 +4,22 @@ This note describes what commit
 `6cbc776b4c770f7c97716ddc563c9a99f8cab7a9` actually implements. All
 `file:line` references below are to that commit.
 
+## Follow-on status
+
+The unacknowledged-delivery defect documented here is addressed by the later
+self-healing obligation lifecycle. The JSONL obligation remains the authority:
+
+- `ci-hub obligations --actionable` enumerates every remediation still owed;
+- an ORC wake is recorded as `sent_unacknowledged`, never as delivered;
+- `ci-hub inherit-obligations --agent ... --session ...` records that a specific
+  fresh reader discovered the work, and a replacement session rediscovers it;
+- `ci-hub health` remains nonzero and shows the delivery state until an explicit
+  repair SHA closes the obligation.
+
+The landing guarantee is unchanged and intentionally described as write-ahead,
+crash-recoverable rather than atomic. A GitHub merge can still precede local
+arming; the durable machine-local intent is what repairs that window.
+
 ## Bottom line
 
 The Python remediation code does **not** message `hermit-lander`. It writes an

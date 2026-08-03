@@ -16,11 +16,12 @@ registers it as the `hermit-dev` skill.
   The versioned config is `ci-hub/health/tick-hub.yaml`; the plugin only supplies the
   live `orc.listAgents()` snapshot, invokes `ci-hub/bin/health-tick`, and sends a
   `HARD WARNING` wakeup when the hub emits an action/error or fails.
-- Recover any land intent interrupted between merge and arm, poll obligations
-  every fifteen seconds, and dispatch the recorded fix-forward/revert action to
-  the live `hermit-lander` as soon as either exact-SHA verifier fails. If the
-  lander is absent the coordinator receives the dispatch. The five-minute tick
-  remains another recovery path for a lost detached watcher.
+- Recover any write-ahead land intent interrupted between merge and arm, poll
+  obligations every fifteen seconds, and send an advisory wake when an exact-SHA
+  verifier fails. A completed send is recorded as `sent_unacknowledged`; a
+  lander's startup `inherit-obligations` scan records acknowledgment. Durable
+  state, the five-minute tick, and fresh-reader discovery own correctness, so a
+  wake lost during recycling costs latency rather than losing the obligation.
 - Through that tick, gently fast-forward clean product primaries and publish a
   coherent parent gitlink snapshot; dirty or inconsistent state is preserved
   and surfaced as a hard warning.

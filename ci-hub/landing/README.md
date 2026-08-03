@@ -39,8 +39,10 @@ origin/main` confirms your commit actually landed.
   across old and new processes.
 - The held state is a **lease with an expiry**, not a held fd — so acquire in one
   shell and release in another Just Work, and **(a) a dead holder cannot wedge
-  the pack**: once its lease lapses (`--hold` seconds, default 900), the next
-  waiter reclaims it and logs `reclaimed lapsed lease from <agent>`.
+  the pack**. Supervised `run` leases record host, boot ID, PID, and process
+  start time in a sidecar. A waiter can reclaim immediately when that exact
+  process is proven gone; legacy/manual leases remain protected until their
+  lease lapses (`--hold` seconds, default 900).
 - **(b)** The lockfile records holder **agent + PR + host + timestamps** for
   debuggability; `status` prints them.
 - **(c)** Waiters enqueue in a **FIFO**, so ordering is deterministic and each
@@ -53,6 +55,7 @@ Runtime state (all machine-local, gitignored):
 | file | role |
 | --- | --- |
 | `~/work/dev-hermit/.landing-lock`        | holder metadata — the lock |
+| `~/work/dev-hermit/.landing-lock.owner`  | supervised owner identity; does not alter the legacy holder format |
 | `~/work/dev-hermit/.landing-lock.guard`  | `flock` target (impl detail) |
 | `~/work/dev-hermit/.landing-lock.queue`  | FIFO waiter list |
 
@@ -63,6 +66,9 @@ cd ~/work/dev-hermit
 
 # Inspect
 ci-hub/ci-hub land-lock status
+
+# Canonical land: detached by default; prints the durable log path and PID
+ci-hub/landing/land-pr.sh 1533 codex/my-branch
 
 # Manual acquire / release around your land sequence
 ci-hub/ci-hub land-lock acquire --agent hermit-ci --pr 1533   # blocks until yours
@@ -83,7 +89,8 @@ ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
 | `acquire --agent NAME --pr N [--wait S] [--hold S]` | block until acquired (FIFO); reclaims a lapsed lease |
 | `renew --agent NAME [--hold S]` | heartbeat — extend your lease during a long land |
 | `release --agent NAME` | free the lock (owner only); signals the next waiter |
-| `status` | print holder metadata, seconds left, and the FIFO queue |
+| `status` | print holder metadata, process liveness, seconds left, and the FIFO queue |
+| `reclaim-dead` | release only when the supervised owner process is proven gone |
 | `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → always release |
 
 Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
@@ -110,13 +117,28 @@ loop that outlives a dead agent defeats the lease-lapse safety net and is exactl
 what produced the zombie-held lock. Always land under `land-lock run` (directly,
 or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
 
+### Abnormal termination and evidence-based recovery
+
+`run` removes the lock on every path it can observe: child success, nonzero
+exit, launch failure, and hard deadline. SIGKILL and machine loss cannot run
+cleanup code, so supervised leases also persist an owner sidecar. `status`
+reports `owner_process=alive`, `dead:...`, or `unknown:...`; a proven-dead live
+lease is shown as `ORPHANED (reclaimable)`. The next FIFO acquire reclaims it
+automatically, or an operator can run `land-lock reclaim-dead`. Reclamation is
+refused while the process is alive or its identity cannot be verified. This
+preserves the rule that one lander never force-releases another lander's lock.
+
+The holder file format is byte-compatible with pre-sidecar landers. A legacy
+bare `acquire` has no process evidence and therefore remains lease-only: it is
+never declared dead merely because a PID was not recorded.
+
 ## Shared landers (`land-pr.sh`, `union-rebase.sh`)
 
 The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | full single-PR lander: self-wraps in `land-lock run --child-deadline`, rebases (plain or additive-union) onto fresh main, re-stamps `locally-validated`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, rebases (plain or additive-union) onto fresh main, re-stamps `locally-validated`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
@@ -140,7 +162,13 @@ GitHub verification; ORC recovery closes the merge-before-arm crash window.
 ```bash
 cd ~/work/dev-hermit
 ci-hub/landing/land-pr.sh 1470 codex/backend-parity-contract --union
+# DETACHED LAND: pid=... log=.../land-pr1470-<UTC timestamp>-<pid>.log
 ```
+
+The default launcher uses `nohup` plus a new session and returns immediately,
+before lock acquisition. The printed timestamped log is the durable observation
+surface across the agent shell's 120-second cap and agent recycling. Use
+`--foreground` only for short diagnostics; it does not change any deadline.
 
 ## Verifying your land (before you release)
 
@@ -161,8 +189,9 @@ and `mergeCommit`, not the merge-state. Also note the merged SHA is the
 
 ## Notes
 
-- `run` is preferred over bare `acquire`/`release`: it releases even if your land
-  script fails or is killed, and its heartbeat prevents a genuinely long (but
+- `run` is preferred over bare `acquire`/`release`: it releases on every observed
+  child termination, and evidence-based recovery clears a lease if the
+  supervisor itself is killed. Its heartbeat prevents a genuinely long (but
   live) land from having its lease reclaimed out from under it.
 - The lease is a **safety net**, not a schedule: keep `--hold` comfortably above
   your real land time, and prefer `run` so releases happen promptly.

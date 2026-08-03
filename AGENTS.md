@@ -573,6 +573,19 @@ entry and implementation region; only a human reviewer removes them.
 
 ### Landing Authorization
 
+On startup or replacement, `hermit-lander` must discover durable inherited
+remediation before taking new queue work; wake messages are advisory and may be
+lost during recycling. Run:
+
+```bash
+ci-hub/ci-hub inherit-obligations --agent hermit-lander \
+  --session "${ORC_AGENT_SESSION_ID:-$(hostname -s):$$}"
+```
+
+This acknowledges discovery, not completion. Every listed obligation remains
+open in `ci-hub health` until its fix-forward or revert SHA is recorded with
+`ci-hub resolve-obligation`.
+
 Merge only when the task explicitly authorizes landing, required adversarial
 review is resolved, and the authoritative checks are green at the current head
 SHA. Human-owner review is post-facto and does not block landing. After landing,

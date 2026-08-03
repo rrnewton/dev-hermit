@@ -121,7 +121,7 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(record["recommendation"]["action"], "revert")
         self.assertEqual(record["remediation"]["state"], "triggered")
         self.assertEqual(record["remediation"]["dispatch"]["target"], "hermit-lander")
-        self.assertEqual(record["alert"]["state"], "dispatched")
+        self.assertEqual(record["alert"]["state"], "pending")
         self.assertIn("HARD WARNING", stderr.getvalue())
         self.assertIn("REMEDIATION TRIGGERED", stderr.getvalue())
 
@@ -153,6 +153,76 @@ class ProtocolTest(unittest.TestCase):
             sum(event["event_type"] == "remediation-triggered" for event in events), 1
         )
 
+    def test_wake_delivery_is_unhandled_until_reader_acknowledges(self) -> None:
+        self.create()
+        self.transition({"local": {"state": "red", "exit_code": 1}})
+        with redirect_stderr(io.StringIO()):
+            protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        with redirect_stdout(io.StringIO()):
+            protocol.record_wake_sent(
+                store_path=self.store, target="hermit-lander", source="test-orc"
+            )
+        sent = obligations.get_record("test-obligation", self.store)
+        dispatch = sent["remediation"]["dispatch"]
+        self.assertEqual(dispatch["state"], "sent_unacknowledged")
+        self.assertEqual(dispatch["wake_attempt"], 1)
+        self.assertIsNone(dispatch["acknowledged_at"])
+
+        with redirect_stdout(io.StringIO()):
+            first = protocol.inherit_actionable(
+                store_path=self.store, agent="hermit-lander", session="replacement-1"
+            )
+            second = protocol.inherit_actionable(
+                store_path=self.store, agent="hermit-lander", session="replacement-1"
+            )
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(second), 1)
+        acknowledged = obligations.get_record("test-obligation", self.store)
+        dispatch = acknowledged["remediation"]["dispatch"]
+        self.assertEqual(dispatch["state"], "acknowledged")
+        self.assertEqual(dispatch["acknowledged_by"], "hermit-lander")
+        self.assertEqual(dispatch["acknowledged_session"], "replacement-1")
+        events = [json.loads(line) for line in self.store.read_text().splitlines()]
+        self.assertEqual(
+            sum(event["event_type"] == "remediation-inherited" for event in events), 1
+        )
+
+    def test_new_lander_session_rediscovers_acknowledged_obligation(self) -> None:
+        self.create()
+        self.transition({"github": {"state": "red"}})
+        with redirect_stderr(io.StringIO()):
+            protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=NEXT_SHA
+            )
+        with redirect_stdout(io.StringIO()):
+            protocol.inherit_actionable(
+                store_path=self.store, agent="hermit-lander", session="old-session"
+            )
+            protocol.inherit_actionable(
+                store_path=self.store, agent="hermit-lander", session="fresh-session"
+            )
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(
+            record["remediation"]["dispatch"]["acknowledged_session"],
+            "fresh-session",
+        )
+        self.assertEqual(record["overall_state"], "remediation_required")
+
+        # A later advisory wake must not turn already-handled durable work back
+        # into an unhandled state.
+        with redirect_stdout(io.StringIO()):
+            protocol.record_wake_sent(
+                store_path=self.store, target="hermit-lander", source="late-orc"
+            )
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["remediation"]["dispatch"]["state"], "acknowledged")
+        self.assertEqual(
+            record["remediation"]["dispatch"]["acknowledged_session"],
+            "fresh-session",
+        )
+
     def test_two_green_verifiers_satisfy_obligation(self) -> None:
         self.create()
         self.transition({"local": {"state": "green"}, "github": {"state": "green"}})
@@ -167,7 +237,11 @@ class ProtocolTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(
                 protocol.print_status(
-                    self.store, include_closed=False, json_output=False, gate=True
+                    self.store,
+                    include_closed=False,
+                    json_output=False,
+                    gate=True,
+                    actionable_only=False,
                 ),
                 1,
             )
@@ -180,11 +254,16 @@ class ProtocolTest(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(
                 protocol.print_status(
-                    self.store, include_closed=False, json_output=False, gate=True
+                    self.store,
+                    include_closed=False,
+                    json_output=False,
+                    gate=True,
+                    actionable_only=True,
                 ),
                 2,
             )
         self.assertIn("state=remediation-required", output.getvalue())
+        self.assertIn("sent_unacknowledged_count=0", output.getvalue())
 
     def test_local_run_persists_tool_cost_payload(self) -> None:
         self.create()

@@ -48,6 +48,8 @@ pub enum LandLockCommand {
     Release(ReleaseArgs),
     /// Print holder metadata and the FIFO queue.
     Status,
+    /// Reclaim a lease only when its recorded owner process is proven dead.
+    ReclaimDead,
     /// Acquire, run one command with a heartbeat, then release.
     Run(RunArgs),
 }
@@ -113,6 +115,63 @@ pub struct LockState {
     pub acquired_human: String,
     pub expires_at: i64,
     pub reclaimed_from: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProcessOwner {
+    host: String,
+    boot_id: String,
+    pid: u32,
+    start_ticks: u64,
+}
+
+impl ProcessOwner {
+    fn parse(content: &str) -> Result<Self, LandLockError> {
+        let mut host = None;
+        let mut boot_id = None;
+        let mut pid = None;
+        let mut start_ticks = None;
+        for (line_number, line) in content.lines().enumerate() {
+            let (key, value) = line.split_once('=').ok_or_else(|| {
+                LandLockError::InvalidState(format!(
+                    "owner line {} is not key=value",
+                    line_number + 1
+                ))
+            })?;
+            match key {
+                "host" => host = Some(value.to_string()),
+                "boot_id" => boot_id = Some(value.to_string()),
+                "pid" => pid = Some(parse_unsigned(key, value)?),
+                "start_ticks" => start_ticks = Some(parse_unsigned(key, value)?),
+                unknown => {
+                    return Err(LandLockError::InvalidState(format!(
+                        "unknown owner field {unknown:?}"
+                    )));
+                }
+            }
+        }
+        Ok(Self {
+            host: required(host, "owner host")?,
+            boot_id: required(boot_id, "owner boot_id")?,
+            pid: u32::try_from(required(pid, "owner pid")?)
+                .map_err(|_| LandLockError::InvalidState("owner pid exceeds u32".into()))?,
+            start_ticks: required(start_ticks, "owner start_ticks")?,
+        })
+    }
+
+    fn render(&self) -> String {
+        format!(
+            "host={}\nboot_id={}\npid={}\nstart_ticks={}\n",
+            self.host, self.boot_id, self.pid, self.start_ticks
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnerLiveness {
+    Alive,
+    Dead(String),
+    Unknown(String),
 }
 
 impl LockState {
@@ -223,6 +282,12 @@ pub enum LandLockError {
         "landing-lock: --child-deadline must be positive; unbounded lock holders are forbidden"
     )]
     UnboundedChildDeadline,
+    #[error(
+        "landing-lock: {operation}: process {pid} owns the supervised lease, not this process"
+    )]
+    ProcessNotOwner { operation: &'static str, pid: u32 },
+    #[error("landing-lock: cannot reclaim lease: {0}")]
+    ReclaimNotProven(String),
 }
 
 impl LandLockError {
@@ -230,6 +295,8 @@ impl LandLockError {
         match self {
             Self::RenewNotOwner { .. }
             | Self::ReleaseNotOwner { .. }
+            | Self::ProcessNotOwner { .. }
+            | Self::ReclaimNotProven(_)
             | Self::GuardTimeout
             | Self::InvalidState(_) => 3,
             Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline => 2,
@@ -242,6 +309,7 @@ struct LockPaths {
     lock: PathBuf,
     guard: PathBuf,
     queue: PathBuf,
+    owner: PathBuf,
 }
 
 impl LockPaths {
@@ -252,6 +320,7 @@ impl LockPaths {
         Self {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
+            owner: suffix(&lock, ".owner"),
             lock,
         }
     }
@@ -286,6 +355,7 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
             lock.status()?;
             Ok(0)
         }
+        LandLockCommand::ReclaimDead => lock.reclaim_dead(),
         LandLockCommand::Run(args) => lock.run(args),
     }
 }
@@ -306,7 +376,7 @@ impl LandingLock {
                 }
                 AcquireToken::AcquiredReclaimed(previous) => {
                     eprintln!(
-                        "landing-lock: ACQUIRED by {} for PR #{}; reclaimed lapsed lease from {}",
+                        "landing-lock: ACQUIRED by {} for PR #{}; evidence-reclaimed lease from {}",
                         args.agent, args.pr, previous
                     );
                     return Ok(0);
@@ -358,13 +428,18 @@ impl LandingLock {
         queue.retain(|entry| entry.enqueued_at >= cutoff);
 
         let holder = self.read_holder()?;
-        if let Some(holder) = holder.as_ref().filter(|holder| holder.live_at(now)) {
-            if holder.agent == args.agent {
-                self.write_holder(&new_holder(&args.agent, &args.pr, args.hold, None)?)?;
-                queue.retain(|entry| entry.agent != args.agent);
-                self.write_queue(&queue)?;
-                return Ok(AcquireToken::Acquired);
+        let dead_owner = if holder.as_ref().is_some_and(|holder| holder.live_at(now)) {
+            match self.owner_liveness()? {
+                OwnerLiveness::Dead(reason) => Some(reason),
+                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) => None,
             }
+        } else {
+            None
+        };
+        if let Some(holder) = holder
+            .as_ref()
+            .filter(|holder| holder.live_at(now) && dead_owner.is_none())
+        {
             self.write_queue(&queue)?;
             return Ok(AcquireToken::Held {
                 agent: holder.agent.clone(),
@@ -380,13 +455,20 @@ impl LandingLock {
             }
         }
 
-        let reclaimed = holder.map(|holder| holder.agent);
+        let reclaimed = holder.map(|holder| {
+            if let Some(reason) = &dead_owner {
+                format!("{} (dead owner: {reason})", holder.agent)
+            } else {
+                holder.agent
+            }
+        });
         self.write_holder(&new_holder(
             &args.agent,
             &args.pr,
             args.hold,
             reclaimed.clone(),
         )?)?;
+        remove_if_exists(&self.paths.owner)?;
         queue.retain(|entry| entry.agent != args.agent);
         self.write_queue(&queue)?;
         Ok(match reclaimed {
@@ -407,6 +489,7 @@ impl LandingLock {
                     agent: agent.to_string(),
                 });
             }
+            self.assert_current_process_owner("renew")?;
             self.write_holder(&new_holder(agent, &holder.pr, hold, None)?)?;
             Ok(())
         })?;
@@ -419,6 +502,7 @@ impl LandingLock {
     fn release(&self, agent: &str, announce: bool) -> Result<(), LandLockError> {
         let (released, next) = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
+                remove_if_exists(&self.paths.owner)?;
                 return Ok((false, None));
             };
             if holder.agent != agent {
@@ -427,7 +511,9 @@ impl LandingLock {
                     holder: holder.agent,
                 });
             }
+            self.assert_current_process_owner("release")?;
             remove_if_exists(&self.paths.lock)?;
+            remove_if_exists(&self.paths.owner)?;
             self.remove_from_queue(agent)?;
             Ok((
                 true,
@@ -450,12 +536,23 @@ impl LandingLock {
 
     fn status(&self) -> Result<(), LandLockError> {
         let now = epoch_seconds()?;
-        match self.read_holder()? {
+        let holder = self.read_holder()?;
+        let liveness = self.owner_liveness()?;
+        match holder {
+            Some(holder) if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) => {
+                println!("ORPHANED (reclaimable):");
+                for line in holder.render().lines() {
+                    println!("  {line}");
+                }
+                println!("  owner_process={}", render_liveness(&liveness));
+                println!("  secs_left={}", holder.expires_at - now);
+            }
             Some(holder) if holder.live_at(now) => {
                 println!("HELD:");
                 for line in holder.render().lines() {
                     println!("  {line}");
                 }
+                println!("  owner_process={}", render_liveness(&liveness));
                 println!("  secs_left={}", holder.expires_at - now);
             }
             Some(holder) => {
@@ -463,6 +560,7 @@ impl LandingLock {
                 for line in holder.render().lines() {
                     println!("  {line}");
                 }
+                println!("  owner_process={}", render_liveness(&liveness));
             }
             None => println!("FREE"),
         }
@@ -474,6 +572,33 @@ impl LandingLock {
             }
         }
         Ok(())
+    }
+
+    fn reclaim_dead(&self) -> Result<i32, LandLockError> {
+        let reclaimed = self.with_guard(|| {
+            let Some(holder) = self.read_holder()? else {
+                remove_if_exists(&self.paths.owner)?;
+                return Ok(None);
+            };
+            match self.owner_liveness()? {
+                OwnerLiveness::Dead(reason) => {
+                    remove_if_exists(&self.paths.lock)?;
+                    remove_if_exists(&self.paths.owner)?;
+                    Ok(Some((holder.agent, holder.pr, reason)))
+                }
+                OwnerLiveness::Alive => Err(LandLockError::ReclaimNotProven(
+                    "recorded owner process is alive".into(),
+                )),
+                OwnerLiveness::Unknown(reason) => Err(LandLockError::ReclaimNotProven(reason)),
+            }
+        })?;
+        match reclaimed {
+            Some((agent, pr, reason)) => eprintln!(
+                "landing-lock: evidence-reclaimed dead owner agent={agent} pr={pr}: {reason}"
+            ),
+            None => eprintln!("landing-lock: reclaim-dead: no lock held"),
+        }
+        Ok(0)
     }
 
     fn run(&self, args: RunArgs) -> Result<i32, LandLockError> {
@@ -492,6 +617,10 @@ impl LandingLock {
         let acquire_status = self.acquire(&acquire)?;
         if acquire_status != 0 {
             return Ok(acquire_status);
+        }
+        if let Err(error) = self.with_guard(|| self.write_current_process_owner()) {
+            let _ = self.release(&args.agent, true);
+            return Err(error);
         }
 
         let (stop_tx, stop_rx) = mpsc::channel();
@@ -529,16 +658,14 @@ impl LandingLock {
 
         match outcome {
             Ok(ChildOutcome::Exited(status)) => {
-                if status.success() {
-                    release_result?;
-                }
+                release_result?;
                 Ok(exit_status_code(status))
             }
             Ok(ChildOutcome::TimedOut) => {
                 // The lock was just released above so the next FIFO waiter can
                 // proceed. Emit a loud, single-line ABANDON signal so the stuck
                 // land does not silently languish (the #244 pattern).
-                let _ = release_result;
+                release_result?;
                 eprintln!(
                     "landing-lock: ABANDON PR #{}: child exceeded --child-deadline {}s; \
                      killed the land subtree and RELEASED the lock so the FIFO can proceed. \
@@ -548,7 +675,7 @@ impl LandingLock {
                 Ok(CHILD_DEADLINE_EXIT_CODE)
             }
             Err(source) => {
-                let _ = release_result;
+                release_result?;
                 Err(LandLockError::Io {
                     action: "launch child from",
                     path: PathBuf::from(&args.child[0]),
@@ -605,6 +732,70 @@ impl LandingLock {
         Ok(Some(LockState::parse(&content)?))
     }
 
+    fn read_process_owner(&self) -> Result<Option<ProcessOwner>, LandLockError> {
+        if !self.paths.owner.exists() {
+            return Ok(None);
+        }
+        let content = read_to_string(&self.paths.owner)?;
+        Ok(Some(ProcessOwner::parse(&content)?))
+    }
+
+    fn write_current_process_owner(&self) -> Result<(), LandLockError> {
+        let owner = current_process_owner()?;
+        write_truncated(&self.paths.owner, owner.render().as_bytes())
+    }
+
+    fn owner_liveness(&self) -> Result<OwnerLiveness, LandLockError> {
+        let Some(owner) = self.read_process_owner()? else {
+            return Ok(OwnerLiveness::Unknown(
+                "no process evidence (legacy/manual lease)".into(),
+            ));
+        };
+        let host = current_host();
+        if owner.host != host {
+            return Ok(OwnerLiveness::Unknown(format!(
+                "owner host {} differs from local host {host}",
+                owner.host
+            )));
+        }
+        let boot_id = current_boot_id()?;
+        if owner.boot_id != boot_id {
+            return Ok(OwnerLiveness::Dead(format!(
+                "host rebooted (owner boot_id={} current={boot_id})",
+                owner.boot_id
+            )));
+        }
+        match process_start_ticks(owner.pid) {
+            Ok(start_ticks) if start_ticks == owner.start_ticks => Ok(OwnerLiveness::Alive),
+            Ok(start_ticks) => Ok(OwnerLiveness::Dead(format!(
+                "pid {} was reused (owner start_ticks={} current={start_ticks})",
+                owner.pid, owner.start_ticks
+            ))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(OwnerLiveness::Dead(format!("pid {} is absent", owner.pid)))
+            }
+            Err(error) => Ok(OwnerLiveness::Unknown(format!(
+                "cannot inspect pid {}: {error}",
+                owner.pid
+            ))),
+        }
+    }
+
+    fn assert_current_process_owner(&self, operation: &'static str) -> Result<(), LandLockError> {
+        let Some(owner) = self.read_process_owner()? else {
+            return Ok(());
+        };
+        let current = current_process_owner()?;
+        if owner == current {
+            Ok(())
+        } else {
+            Err(LandLockError::ProcessNotOwner {
+                operation,
+                pid: owner.pid,
+            })
+        }
+    }
+
     fn write_holder(&self, holder: &LockState) -> Result<(), LandLockError> {
         write_truncated(&self.paths.lock, holder.render().as_bytes())
     }
@@ -653,15 +844,7 @@ fn new_holder(
         .ok_or_else(|| LandLockError::InvalidState("current timestamp is out of range".into()))?
         .format("%Y-%m-%dT%H:%M:%S%z")
         .to_string();
-    let host = Command::new("hostname")
-        .arg("-s")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|host| host.trim().to_string())
-        .filter(|host| !host.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    let host = current_host();
     Ok(LockState {
         agent: agent.to_string(),
         pr: pr.to_string(),
@@ -688,6 +871,78 @@ fn parse_integer(name: &str, value: &str) -> Result<i64, LandLockError> {
     value.parse().map_err(|error| {
         LandLockError::InvalidState(format!("{name} must be an integer, got {value:?}: {error}"))
     })
+}
+
+fn parse_unsigned(name: &str, value: &str) -> Result<u64, LandLockError> {
+    value.parse().map_err(|error| {
+        LandLockError::InvalidState(format!("{name} must be an integer, got {value:?}: {error}"))
+    })
+}
+
+fn current_host() -> String {
+    Command::new("hostname")
+        .arg("-s")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|host| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn current_boot_id() -> Result<String, LandLockError> {
+    let path = Path::new("/proc/sys/kernel/random/boot_id");
+    fs::read_to_string(path)
+        .map(|value| value.trim().to_string())
+        .map_err(|source| io_error("read", path, source))
+}
+
+fn process_start_ticks(pid: u32) -> io::Result<u64> {
+    let path = PathBuf::from(format!("/proc/{pid}/stat"));
+    let stat = fs::read_to_string(path)?;
+    let close = stat.rfind(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no closing comm",
+        )
+    })?;
+    let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
+    let value = fields.get(19).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no starttime field",
+        )
+    })?;
+    value.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid process starttime {value:?}: {error}"),
+        )
+    })
+}
+
+fn current_process_owner() -> Result<ProcessOwner, LandLockError> {
+    let pid = std::process::id();
+    let start_ticks = process_start_ticks(pid).map_err(|source| LandLockError::Io {
+        action: "read process identity from",
+        path: PathBuf::from(format!("/proc/{pid}/stat")),
+        source,
+    })?;
+    Ok(ProcessOwner {
+        host: current_host(),
+        boot_id: current_boot_id()?,
+        pid,
+        start_ticks,
+    })
+}
+
+fn render_liveness(liveness: &OwnerLiveness) -> String {
+    match liveness {
+        OwnerLiveness::Alive => "alive".into(),
+        OwnerLiveness::Dead(reason) => format!("dead:{reason}"),
+        OwnerLiveness::Unknown(reason) => format!("unknown:{reason}"),
+    }
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T, LandLockError> {
@@ -828,6 +1083,7 @@ mod tests {
         LockPaths {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
+            owner: suffix(&lock, ".owner"),
             lock,
         }
     }
@@ -860,6 +1116,19 @@ mod tests {
             QueueEntry::parse(entry.render().trim_end(), 1).unwrap(),
             entry
         );
+    }
+
+    #[test]
+    fn process_owner_sidecar_round_trips_without_changing_holder_format() {
+        let owner = ProcessOwner {
+            host: "devbig014".into(),
+            boot_id: "boot-1".into(),
+            pid: 42,
+            start_ticks: 123_456,
+        };
+        let rendered = "host=devbig014\nboot_id=boot-1\npid=42\nstart_ticks=123456\n";
+        assert_eq!(owner.render(), rendered);
+        assert_eq!(ProcessOwner::parse(rendered).unwrap(), owner);
     }
 
     #[test]
@@ -974,6 +1243,72 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, LandLockError::UnboundedChildDeadline));
         assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn proven_dead_owner_is_reclaimed_before_lease_expiry() {
+        let paths = temp_paths("dead-owner-reclaim");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        assert_eq!(
+            lock.acquire(&AcquireArgs {
+                agent: "dead-lander".into(),
+                pr: "100".into(),
+                wait: 0,
+                hold: 3_600,
+            })
+            .unwrap(),
+            0
+        );
+        let mut owner = current_process_owner().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert!(matches!(
+            lock.owner_liveness().unwrap(),
+            OwnerLiveness::Dead(_)
+        ));
+        assert_eq!(
+            lock.acquire(&AcquireArgs {
+                agent: "replacement-lander".into(),
+                pr: "101".into(),
+                wait: 0,
+                hold: 60,
+            })
+            .unwrap(),
+            0
+        );
+        let holder = lock.read_holder().unwrap().unwrap();
+        assert_eq!(holder.agent, "replacement-lander");
+        assert!(holder.reclaimed_from.unwrap().contains("dead owner"));
+        lock.release("replacement-lander", false).unwrap();
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn live_owner_cannot_be_evidence_reclaimed() {
+        let paths = temp_paths("live-owner-protected");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        lock.acquire(&AcquireArgs {
+            agent: "live-lander".into(),
+            pr: "102".into(),
+            wait: 0,
+            hold: 60,
+        })
+        .unwrap();
+        lock.write_current_process_owner().unwrap();
+        assert!(matches!(
+            lock.owner_liveness().unwrap(),
+            OwnerLiveness::Alive
+        ));
+        assert!(matches!(
+            lock.reclaim_dead().unwrap_err(),
+            LandLockError::ReclaimNotProven(_)
+        ));
+        lock.release("live-lander", false).unwrap();
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 }

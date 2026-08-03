@@ -24,6 +24,22 @@ def _limit_cpu() -> None:
 
 
 class OperationalBoundsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # The shard measures command behavior, not a cold rustc bootstrap. Build
+        # the rust-script front door before applying the per-command 5s CPU box;
+        # subsequent --force checks still detect changed #[path] modules but use
+        # Cargo's no-op path when the binary is current.
+        subprocess.run(
+            [str(CI_HUB), "--help"],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+        )
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.temp = Path(self.temporary.name)
@@ -135,6 +151,37 @@ class OperationalBoundsTest(unittest.TestCase):
             ),
             (("obligations", "--store", str(self.store)), {0}, self.env),
             (
+                ("obligations", "--actionable", "--store", str(self.store)),
+                {0},
+                self.env,
+            ),
+            (
+                (
+                    "inherit-obligations",
+                    "--agent",
+                    "test-lander",
+                    "--session",
+                    "test-session",
+                    "--store",
+                    str(self.store),
+                ),
+                {0},
+                self.env,
+            ),
+            (
+                (
+                    "record-obligation-wake",
+                    "--target",
+                    "test-lander",
+                    "--source",
+                    "test",
+                    "--store",
+                    str(self.store),
+                ),
+                {0},
+                self.env,
+            ),
+            (
                 ("watch-obligations", "--once", "--store", str(self.store)),
                 {0},
                 self.env,
@@ -189,6 +236,36 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("DEGRADED", output)
         self.assertIn("UNAVAILABLE", output)
         self.assertGreaterEqual(output.count("PARTIAL RESULT"), 2)
+
+    def test_composite_health_surfaces_unacknowledged_remediation(self) -> None:
+        self.store.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "obligation_id": "owed-remediation",
+                    "repo": "rrnewton/hermit",
+                    "landed_sha": "a" * 40,
+                    "opened_at": "2026-08-03T00:00:00Z",
+                    "overall_state": "remediation_required",
+                    "local": {"state": "red"},
+                    "github": {"state": "running"},
+                    "recommendation": {"action": "revert"},
+                    "remediation": {
+                        "state": "triggered",
+                        "dispatch": {"state": "sent_unacknowledged"},
+                    },
+                }
+            )
+            + "\n"
+        )
+        env = self.env | {
+            "CI_HUB_AGENT_TOOL": str(self.stall),
+            "CI_HUB_OBLIGATIONS_STORE": str(self.store),
+        }
+        result = self.run_bounded("health", expected={2}, env=env)
+        output = result.stdout + result.stderr
+        self.assertIn("Speculative-land obligations: REMEDIATION REQUIRED", output)
+        self.assertIn("dispatch=sent_unacknowledged", output)
 
     def test_land_lock_full_protocol_is_bounded(self) -> None:
         env = self.env | {"CI_HUB_LANDING_LOCK": str(self.temp / "landing.lock")}
@@ -282,23 +359,119 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("must be positive", unbounded.stdout + unbounded.stderr)
         self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
 
-    def test_shared_lander_preserves_atomic_arm_and_durable_abandonment(self) -> None:
+    def test_land_lock_reclaims_a_killed_supervisor_from_process_evidence(
+        self,
+    ) -> None:
+        lock = self.temp / "killed-supervisor.lock"
+        owner = Path(f"{lock}.owner")
+        child_pid_file = self.temp / "land-child.pid"
+        child = self._script(
+            "long-land",
+            f"printf '%s\\n' \"$$\" > {child_pid_file!s}; exec sleep 30",
+        )
+        env = self.env | {"CI_HUB_LANDING_LOCK": str(lock)}
+        process = subprocess.Popen(
+            [
+                str(CI_HUB),
+                "land-lock",
+                "run",
+                "--agent",
+                "killed-lander",
+                "--pr",
+                "test-killed",
+                "--wait",
+                "0",
+                "--hold",
+                "300",
+                "--child-deadline",
+                "60",
+                "--",
+                str(child),
+            ],
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=_limit_cpu,
+        )
+        child_pid: int | None = None
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if owner.exists() and child_pid_file.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(owner.exists(), "supervised lock did not record its owner")
+            self.assertTrue(child_pid_file.exists(), "supervised child did not start")
+            child_pid = int(child_pid_file.read_text().strip())
+            owner_pid = int(
+                next(
+                    line.removeprefix("pid=")
+                    for line in owner.read_text().splitlines()
+                    if line.startswith("pid=")
+                )
+            )
+            live = self.run_bounded("land-lock", "status", env=env)
+            self.assertIn("owner_process=alive", live.stdout)
+
+            os.kill(owner_pid, signal.SIGKILL)
+            process.wait(timeout=5)
+
+            orphaned = self.run_bounded("land-lock", "status", env=env)
+            self.assertIn("ORPHANED (reclaimable)", orphaned.stdout)
+            self.assertIn("owner_process=dead:", orphaned.stdout)
+            reclaimed = self.run_bounded("land-lock", "reclaim-dead", env=env)
+            self.assertIn(
+                "evidence-reclaimed dead owner",
+                reclaimed.stdout + reclaimed.stderr,
+            )
+            self.assertIn(
+                "FREE", self.run_bounded("land-lock", "status", env=env).stdout
+            )
+        finally:
+            if process.poll() is None:
+                process.kill()
+            if child_pid is not None:
+                try:
+                    os.killpg(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.communicate(timeout=5)
+
+    def test_shared_lander_preserves_recoverable_arm_and_durable_abandonment(
+        self,
+    ) -> None:
         front_door = (ROOT / "ci-hub/ci-hub.rs").read_text()
         self.assertTrue(
             front_door.startswith("#!/usr/bin/env -S rust-script --force\n")
         )
         script = (ROOT / "ci-hub/landing/land-pr.sh").read_text()
+        detached = script.index('nohup setsid "$0"')
+        inherit = script.index('"$ROOT/ci-hub/ci-hub" inherit-obligations')
         prepare = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" prepare')
         acquire = script.index('"$ROOT/ci-hub/ci-hub" land-lock run')
         merge = script.index('gh pr merge "$PR"')
         ancestry = script.index("merge-base --is-ancestor")
         complete = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" complete')
+        self.assertLess(detached, inherit)
+        self.assertLess(inherit, prepare)
         self.assertLess(prepare, acquire)
         self.assertLess(acquire, merge)
         self.assertLess(merge, ancestry)
         self.assertLess(ancestry, complete)
         self.assertIn("124) comment_abandon", script)
         self.assertIn("[coordinator, $MODEL] ABANDONED", script)
+        self.assertIn("CI_HUB_LANDING_LOG_DIR", script)
+        self.assertIn("DETACHED LAND: pid=%s log=%s", script)
+
+        plugin = (ROOT / ".orc/plugins/hermit-dev/index.ts").read_text()
+        heartbeat = plugin[plugin.index("speculativeLandRemediationHeartbeat") :]
+        wake = heartbeat.index("await orc.sendWakeup(")
+        record = heartbeat.index("hermitSpeculativeLandWakeSent", wake)
+        self.assertLess(wake, record)
+        self.assertIn("sent but not yet acknowledged", plugin)
 
 
 if __name__ == "__main__":

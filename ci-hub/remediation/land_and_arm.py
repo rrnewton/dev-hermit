@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one land command and make exact-SHA dual verification inseparable from it."""
+"""Run one land command with write-ahead recovery for exact-SHA verification."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ DEFAULT_OBSERVE_TIMEOUT = 60
 
 
 class LandError(RuntimeError):
-    """The atomic land-and-arm transaction could not complete."""
+    """The crash-recoverable land-and-arm protocol could not complete."""
 
 
 def default_intent_dir() -> Path:

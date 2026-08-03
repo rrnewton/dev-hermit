@@ -16,7 +16,8 @@ Run `./ci-hub/ci-hub help` for the command list. The core workflows are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
-# Atomically run an admin/speculative land and arm both exact-SHA verifiers.
+# Run an admin/speculative land with write-ahead crash recovery, then arm both
+# exact-SHA verifiers. GitHub merge plus local arm is not atomic.
 ./ci-hub/ci-hub land-lock run --agent hermit-lander --pr 123 \
   --wait 900 --hold 1500 -- \
   ./ci-hub/remediation/land_and_arm.py run --repo rrnewton/hermit --pr 123 \
@@ -25,6 +26,8 @@ Run `./ci-hub/ci-hub help` for the command list. The core workflows are:
 
 # Inspect or recover polling for obligations that are still open.
 ./ci-hub/ci-hub obligations
+./ci-hub/ci-hub obligations --actionable
+./ci-hub/ci-hub inherit-obligations --agent hermit-lander --session "$HOSTNAME:$$"
 ./ci-hub/ci-hub watch-obligations --once
 
 # Incrementally refresh the local GitHub/local-run history store.
@@ -96,10 +99,12 @@ The outer ORC workflow calls `bin/health-tick` every five minutes. The pinned
 tick engine reads `health/tick-hub.yaml`; dev-hermit probes live beside it. A
 detached per-obligation watcher records terminal state continuously, while the
 dedicated ORC workflow `hermit-dev-speculative-land-remediation-v1` first
-recovers any transaction interrupted after merge but before arm, then polls
-every 15 seconds. A failure atomically records a remediation dispatch and wakes
-the live `hermit-lander` (or the coordinator if no lander exists). The
-five-minute tick is another recovery path if either fast watcher is lost.
+recovers any write-ahead intent interrupted after merge but before arm, then
+polls every 15 seconds. A failure records durable remediation state and may send
+an advisory wake to the live `hermit-lander` (or coordinator). The wake is
+recorded as `sent_unacknowledged`; only a reader's `inherit-obligations` scan
+changes it to `acknowledged`. The five-minute tick and every fresh lander's
+startup scan recover from a lost wake.
 
 ## Speculative-land obligation contract
 
@@ -125,14 +130,19 @@ wall/CPU JSON are copied into the obligation record. Stable cross-store joins
 are `landed_sha → gha-runs.csv:head_sha`, `landed_sha → local-runs.csv:git_sha`,
 and `github.run_ids → gha-runs.csv:run_id`.
 
+This is a write-ahead, crash-recoverable protocol, **not an atomic transaction
+with GitHub**. A merge can complete before arming; the machine-local intent lets
+ORC recover that window when the same workspace returns. Raw merges bypass the
+intent, and loss of the workspace/disk loses its machine-local recovery state.
+
 The first failing verifier immediately changes the obligation to
-`remediation_required` and atomically records `remediation.state=triggered`:
-revert is dispatched when the bad land is still the main tip; fix-forward is
-dispatched after main has advanced. The fast ORC workflow assigns that dispatch
-to the live landing agent within one 15-second poll. It never performs a blind
-source rewrite: the dispatched agent executes the recorded action against
-current main and supplies the repair SHA. After the repair lands, close the
-obligation with:
+`remediation_required` and appends `remediation.state=triggered`: revert is
+recommended when the bad land is still the main tip; fix-forward is recommended
+after main has advanced. Outstanding work is enumerable from state alone with
+`obligations --actionable`. A replacement lander acknowledges inherited work at
+startup with `inherit-obligations`; no notification delivery is required. The
+obligation remains visible and unhealthy even after acknowledgment, until the
+repair lands and is closed with:
 
 ```bash
 ./ci-hub/ci-hub resolve-obligation <id> --kind fix-forward --ref <repair-sha>

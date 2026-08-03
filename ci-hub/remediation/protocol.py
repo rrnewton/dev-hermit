@@ -8,9 +8,11 @@ import json
 import math
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -436,9 +438,9 @@ def trigger_remediation(
 ) -> dict[str, Any]:
     """Persist an idempotent, executable remediation dispatch.
 
-    The ORC heartbeat consumes this dispatch and wakes the dedicated lander.
-    Recording it here, in the same append-only store as the failure, means an
-    agent recycle cannot turn a completed failure into an unowned suggestion.
+    The ORC heartbeat may send a best-effort wake, but the append-only dispatch
+    is the authority. Every fresh lander can discover and acknowledge the same
+    record without receiving that wake.
     """
     if record.get("overall_state") != "remediation_required":
         return dict(record)
@@ -466,8 +468,8 @@ def trigger_remediation(
         "remediation-triggered",
         {
             "alert": {
-                "state": "dispatched",
-                "dispatched_at": now,
+                "state": "pending",
+                "raised_at": now,
                 "target": "hermit-lander",
             },
             "remediation": {
@@ -479,6 +481,12 @@ def trigger_remediation(
                     "target": "hermit-lander",
                     "requested_at": now,
                     "instruction": instruction,
+                    "wake_attempt": 0,
+                    "wake_id": None,
+                    "wake_sent_at": None,
+                    "acknowledged_at": None,
+                    "acknowledged_by": None,
+                    "acknowledged_session": None,
                 },
             },
         },
@@ -491,6 +499,131 @@ def trigger_remediation(
         flush=True,
     )
     return triggered
+
+
+def actionable_records(store_path: Path) -> list[dict[str, Any]]:
+    """Return every remediation still owed, independent of notification state."""
+    return [
+        record
+        for record in obligations.unresolved_records(store_path)
+        if record.get("overall_state") == "remediation_required"
+    ]
+
+
+def record_wake_sent(
+    *, store_path: Path, target: str, source: str
+) -> list[dict[str, Any]]:
+    """Record that notification was attempted, not that anybody handled it."""
+    now = obligations.utc_now()
+    wake_id = uuid.uuid4().hex
+    updated: list[dict[str, Any]] = []
+    for record in actionable_records(store_path):
+        remediation = record.get("remediation") or {}
+        dispatch = remediation.get("dispatch") or {}
+        attempt = int(dispatch.get("wake_attempt") or 0) + 1
+        already_acknowledged = dispatch.get("state") == "acknowledged"
+        alert_patch = (
+            {
+                "state": "handled",
+                "target": target,
+                "wake_id": wake_id,
+                "wake_sent_at": now,
+            }
+            if already_acknowledged
+            else {
+                "state": "sent_unacknowledged",
+                "target": target,
+                "wake_id": wake_id,
+                "wake_sent_at": now,
+            }
+        )
+        dispatch_patch: dict[str, Any] = {
+            "state": "acknowledged" if already_acknowledged else "sent_unacknowledged",
+            "target": target,
+            "source": source,
+            "wake_attempt": attempt,
+            "wake_id": wake_id,
+            "wake_sent_at": now,
+        }
+        if not already_acknowledged:
+            dispatch_patch.update(
+                acknowledged_at=None,
+                acknowledged_by=None,
+                acknowledged_session=None,
+            )
+        updated.append(
+            obligations.transition(
+                record["obligation_id"],
+                "remediation-wake-sent",
+                {
+                    "alert": alert_patch,
+                    "remediation": {"dispatch": dispatch_patch},
+                },
+                store_path,
+            )
+        )
+    unacknowledged = sum(
+        ((record.get("remediation") or {}).get("dispatch") or {}).get("state")
+        == "sent_unacknowledged"
+        for record in updated
+    )
+    print(
+        f"WAKE RECORDED: wake_id={wake_id} target={target} count={len(updated)} "
+        f"unacknowledged={unacknowledged} ids="
+        + (",".join(record["obligation_id"] for record in updated) or "none")
+    )
+    return updated
+
+
+def inherit_actionable(
+    *, store_path: Path, agent: str, session: str
+) -> list[dict[str, Any]]:
+    """Let a fresh reader discover and acknowledge all inherited remediation."""
+    now = obligations.utc_now()
+    inherited: list[dict[str, Any]] = []
+    for record in actionable_records(store_path):
+        remediation = record.get("remediation") or {}
+        dispatch = remediation.get("dispatch") or {}
+        if (
+            dispatch.get("state") == "acknowledged"
+            and dispatch.get("acknowledged_by") == agent
+            and dispatch.get("acknowledged_session") == session
+        ):
+            inherited.append(record)
+            continue
+        inherited.append(
+            obligations.transition(
+                record["obligation_id"],
+                "remediation-inherited",
+                {
+                    "alert": {
+                        "state": "handled",
+                        "handled_at": now,
+                        "handled_by": agent,
+                        "handled_session": session,
+                    },
+                    "remediation": {
+                        "dispatch": {
+                            "state": "acknowledged",
+                            "acknowledged_at": now,
+                            "acknowledged_by": agent,
+                            "acknowledged_session": session,
+                            "acknowledged_wake_id": dispatch.get("wake_id"),
+                        }
+                    },
+                },
+                store_path,
+            )
+        )
+    print(f"INHERITED REMEDIATION OBLIGATIONS: {len(inherited)}")
+    for record in inherited:
+        dispatch = (record.get("remediation") or {}).get("dispatch") or {}
+        print(
+            f"  {record['obligation_id']} {record['repo']}@{record['landed_sha']} "
+            f"action={(record.get('recommendation') or {}).get('action', '-')}"
+        )
+        print(f"    {dispatch.get('instruction') or 'inspect the obligation record'}")
+    return inherited
 
 
 def _spawn_detached(arguments: Sequence[str], log_path: Path) -> int:
@@ -743,18 +876,33 @@ def _summary_line(record: Mapping[str, Any]) -> str:
     remediation_state = (
         remediation.get("state", "-") if isinstance(remediation, Mapping) else "-"
     )
+    dispatch = remediation.get("dispatch") if isinstance(remediation, Mapping) else None
+    dispatch_state = (
+        dispatch.get("state", "-") if isinstance(dispatch, Mapping) else "-"
+    )
     return (
         f"{record['obligation_id']} {record['repo']}@{record['landed_sha'][:12]} "
         f"overall={record['overall_state']} local={record['local']['state']} "
         f"github={record['github']['state']} recommendation={action} "
-        f"remediation={remediation_state}"
+        f"remediation={remediation_state} dispatch={dispatch_state}"
     )
 
 
 def print_status(
-    store_path: Path, *, include_closed: bool, json_output: bool, gate: bool
+    store_path: Path,
+    *,
+    include_closed: bool,
+    json_output: bool,
+    gate: bool,
+    actionable_only: bool = False,
 ) -> int:
     records = list(obligations.latest_records(store_path).values())
+    if actionable_only:
+        records = [
+            record
+            for record in records
+            if record.get("overall_state") == "remediation_required"
+        ]
     if not include_closed:
         records = [
             record
@@ -777,6 +925,18 @@ def print_status(
         for record in remediation
         if (record.get("remediation") or {}).get("state") == "triggered"
     ]
+    sent_unacknowledged = [
+        record
+        for record in remediation
+        if ((record.get("remediation") or {}).get("dispatch") or {}).get("state")
+        == "sent_unacknowledged"
+    ]
+    acknowledged = [
+        record
+        for record in remediation
+        if ((record.get("remediation") or {}).get("dispatch") or {}).get("state")
+        == "acknowledged"
+    ]
     if json_output:
         print(json.dumps({"obligations": records}, sort_keys=True))
     elif gate:
@@ -787,6 +947,8 @@ def print_status(
         print(f"count={len(unresolved)}")
         print(f"remediation_count={len(remediation)}")
         print(f"triggered_count={len(triggered)}")
+        print(f"sent_unacknowledged_count={len(sent_unacknowledged)}")
+        print(f"acknowledged_count={len(acknowledged)}")
         print(
             "ids="
             + (",".join(record["obligation_id"] for record in unresolved) or "none")
@@ -1007,9 +1169,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     status_parser = subparsers.add_parser("status", help="show unresolved obligations")
     status_parser.add_argument("--all", action="store_true")
+    status_parser.add_argument(
+        "--actionable", action="store_true", help="show only remediation still owed"
+    )
     status_parser.add_argument("--json", action="store_true")
     status_parser.add_argument("--gate", action="store_true")
     status_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
+
+    wake_parser = subparsers.add_parser(
+        "wake-sent", help="record a best-effort wake as sent but unacknowledged"
+    )
+    wake_parser.add_argument("--target", required=True)
+    wake_parser.add_argument("--source", default="unknown")
+    wake_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
+
+    inherit_parser = subparsers.add_parser(
+        "inherit", help="discover and acknowledge inherited remediation"
+    )
+    inherit_parser.add_argument("--agent", required=True)
+    inherit_parser.add_argument(
+        "--session", default=f"{socket.gethostname()}:{os.getpid()}"
+    )
+    inherit_parser.add_argument(
         "--store", type=Path, default=obligations.default_store_path()
     )
 
@@ -1062,7 +1247,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 include_closed=args.all,
                 json_output=args.json,
                 gate=args.gate,
+                actionable_only=args.actionable,
             )
+        if args.command == "wake-sent":
+            record_wake_sent(
+                store_path=args.store, target=args.target, source=args.source
+            )
+            return 0
+        if args.command == "inherit":
+            inherit_actionable(
+                store_path=args.store, agent=args.agent, session=args.session
+            )
+            return 0
         if args.command == "resolve":
             return resolve_obligation(args)
         if args.command == "_local-run":

@@ -46,6 +46,10 @@ const SPECULATIVE_LAND_COMMAND =
   'cd "' + WORKSPACE_ROOT + '" && ' +
   'python3 ci-hub/remediation/land_and_arm.py recover --observe-timeout 5 && ' +
   './ci-hub/ci-hub watch-obligations --once --gate';
+const SPECULATIVE_LAND_WAKE_SCRIPT_NAME = "hermitSpeculativeLandWakeSent";
+const SPECULATIVE_LAND_WAKE_COMMAND =
+  'cd "' + WORKSPACE_ROOT + '" && ' +
+  './ci-hub/ci-hub record-obligation-wake --target "$1" --source orc';
 const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
 const SPECULATIVE_LAND_WORKFLOW_NAME =
   "hermit-dev-speculative-land-remediation-v1";
@@ -236,6 +240,13 @@ function stableAlertSignature(report: string): string {
   return report.split("\n").filter((line) => !line.startsWith("COST ")).join("\n");
 }
 
+function remediationAlertSignature(report: string): string {
+  const lines = report.split("\n");
+  const state = lines.find((line) => line.startsWith("state=")) || "state=unknown";
+  const ids = lines.find((line) => line.startsWith("ids=")) || "ids=unknown";
+  return state + "\n" + ids;
+}
+
 export async function speculativeLandRemediationHeartbeat(
   wf: WfContext,
 ): Promise<void> {
@@ -253,10 +264,13 @@ export async function speculativeLandRemediationHeartbeat(
       exitCode === 2 && stdout.includes("state=remediation-required");
     const pollFailed = exitCode > 1 && !remediationRequired;
     if (remediationRequired || pollFailed) {
-      const signature = stableAlertSignature(report);
+      const signature = remediationRequired
+        ? remediationAlertSignature(stdout)
+        : stableAlertSignature(report);
       if (orc.kvGet(SPECULATIVE_LAND_ALERT_CACHE_KEY) !== signature) {
+        let deliveryRecorded = !remediationRequired;
         const title = remediationRequired
-          ? "REMEDIATION DISPATCHED: speculative land failed verification"
+          ? "REMEDIATION WAKE SENT (ACK PENDING): speculative land failed verification"
           : "HARD WARNING: speculative-land obligation watcher failed";
         const agents = await orc.listAgents();
         const landerAlive = agents.some((agent: any) =>
@@ -273,12 +287,32 @@ export async function speculativeLandRemediationHeartbeat(
           title,
           (report || "speculative-land watcher returned no diagnostic output") +
             (remediationRequired
-              ? "\nThis is an active remediation dispatch, not a status suggestion. " +
-                "Execute the recorded fix-forward/revert action now, then close it with " +
-                "ci-hub resolve-obligation."
+              ? "\nThis wake is advisory; the durable obligation is authoritative. " +
+                "Discover and acknowledge it with ci-hub inherit-obligations, execute " +
+                "the recorded fix-forward/revert action, then close it with ci-hub " +
+                "resolve-obligation."
               : "\nRun " + PR_STATUS_COMMAND + " and repair the watcher now."),
         );
-        orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, signature);
+        if (remediationRequired) {
+          const target = targets.length > 0 ? targets[0] : "coordinator";
+          const delivery = await orc.scripts.hermitSpeculativeLandWakeSent(target) as {
+            exitCode: number;
+            stdout?: string;
+            stderr?: string;
+          };
+          deliveryRecorded = Number(delivery.exitCode) === 0;
+          if (!deliveryRecorded) {
+            await orc.sendWakeup(
+              [],
+              "HARD WARNING: speculative-land wake was not recorded",
+              [delivery.stdout, delivery.stderr].filter(Boolean).join("\n") ||
+                "record-obligation-wake returned no diagnostic output",
+            );
+          }
+        }
+        if (deliveryRecorded) {
+          orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, signature);
+        }
       }
     } else {
       orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, "");
@@ -310,6 +344,12 @@ orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
   script: SPECULATIVE_LAND_COMMAND,
   description: "Poll exact-SHA speculative-land obligations for immediate remediation",
   timeoutSec: 240,
+});
+
+orc.registerScript(SPECULATIVE_LAND_WAKE_SCRIPT_NAME, {
+  script: SPECULATIVE_LAND_WAKE_COMMAND,
+  description: "Record an ORC wake as sent but not yet acknowledged",
+  timeoutSec: 30,
 });
 
 orc.exposeFunction(
@@ -348,6 +388,7 @@ orc.exposeFunction(
       operationalTickConfig: WORKSPACE_ROOT + "/ci-hub/health/tick-hub.yaml",
       operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
       speculativeLandCommand: SPECULATIVE_LAND_COMMAND,
+      speculativeLandWakeCommand: SPECULATIVE_LAND_WAKE_COMMAND,
       speculativeLandPollIntervalSeconds: SPECULATIVE_LAND_INTERVAL_MS / 1000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,
