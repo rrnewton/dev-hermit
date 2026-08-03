@@ -112,6 +112,15 @@ Add `--only <lane> <group.job>[,...]` that delegates straight to
 Filed as a direct PR against `rrnewton/hermit:main` (see task
 `main-green-recovery`).
 
+## Codified as a skill
+
+The tight-iteration lesson from this review is now a first-class Hermit task
+skill: `hermit/.claude/skills/ci-debugging.md` (also surfaced via
+`.llms/skills/ci-debugging.md`), cross-linked from the `hermit-ci` role skill.
+Filed as a direct docs PR against `rrnewton/hermit:main`
+([PR #1493](https://github.com/rrnewton/hermit/pull/1493)); it pairs with the
+`validate.sh --only` selector ([PR #1492](https://github.com/rrnewton/hermit/pull/1492)).
+
 ## Bottom line
 
 Wall-clock is burned by cancel-thrash and full-DAG-per-iteration, not by a
