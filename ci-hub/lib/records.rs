@@ -103,6 +103,10 @@ pub struct HistoryRow {
     pub host: Option<String>,
     #[serde(default)]
     pub slot: Option<String>,
+    /// Product the run validated: "hermit" or "reverie". Absent on pre-`repo`
+    /// hermit ledger rows (aggregate.py defaults those to "hermit").
+    #[serde(default)]
+    pub repo: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]

@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Machine-wide validate-run visibility.
 
-Sweeps and aggregates EVERY `hermit validate` run on this machine into one view,
-regardless of which worktree/agent/slot produced it. It unifies three data
-sources that today live in disconnected places:
+Sweeps and aggregates EVERY validate run on this machine into one view,
+regardless of which repo (hermit or reverie), worktree, agent, or slot produced
+it. Each record carries a `repo` discriminator so the two products are queryable
+through one command and comparable over time. It unifies three data sources that
+today live in disconnected places:
 
-  1. Structured JSONL ledgers written by hermit/validate.sh
-     (append_validation_ledger). Default path is
+  1. Structured JSONL ledgers written by hermit/validate.sh and reverie/validate.sh
+     (append_validation_ledger). hermit's default path is
      `$DEV_HERMIT_PARENT/ignored/validate-run-ledger.jsonl`, but a run whose
      DEV_HERMIT_PARENT is unset (most worktree / standalone runs) skips the
      append entirely, so the parent ledger only ever sees a fraction of runs.
-  2. Raw per-run logs `$TMPDIR/hermit-validate.XXXXXX.log` (always written by
-     validate.sh via mktemp, for EVERY run). These are the ground truth: this
-     tool reconstructs a ledger-equivalent record for any log not covered by a
-     JSONL ledger, recovering the otherwise-invisible worktree/standalone runs.
+     reverie instead writes to its own checkout-local `<root>/ignored/` (no
+     DEV_HERMIT_PARENT dependence), which the per-worktree/primary globs below
+     already discover, so a detached reverie run is recorded, not reconstructed.
+  2. Raw per-run logs `$TMPDIR/{hermit,reverie}-validate.XXXXXX.log` (always
+     written via mktemp, for EVERY run). These are the ground truth: this tool
+     reconstructs a ledger-equivalent record for any log not covered by a JSONL
+     ledger, recovering the otherwise-invisible worktree/standalone runs.
   3. safe-ci-dag-runner per-node profiling CSVs under
      `<checkout>/.safe-ci-dag-runner/profiles/` (aggregate + per-step). These
      are retained and appended across runs; this tool indexes them and links
@@ -101,9 +106,30 @@ def slot_from_cwd(cwd: str | None) -> str:
         return m.group(1)
     if cwd.startswith("/tmp") or "/tmp/" in cwd:
         return "standalone"
-    if cwd.rstrip("/").endswith("/dev-hermit/hermit"):
+    if cwd.rstrip("/").endswith(("/dev-hermit/hermit", "/dev-hermit/reverie")):
         return "primary"
     return os.path.basename(cwd.rstrip("/")) or "unknown"
+
+
+def repo_from(cwd: str | None, path: str | None, header_repo: str | None) -> str:
+    """Attribute a run to hermit or reverie.
+
+    Trust order: the log header's own product line (`Hermit/Reverie validation`),
+    then the raw-log filename prefix, then the checkout basename, defaulting to
+    hermit so pre-`repo` ledger records (only hermit ever wrote them) stay
+    correctly attributed.
+    """
+    if header_repo in ("hermit", "reverie"):
+        return header_repo
+    base = os.path.basename(path or "")
+    if base.startswith("reverie-validate"):
+        return "reverie"
+    if base.startswith("hermit-validate"):
+        return "hermit"
+    tail = (cwd or "").rstrip("/")
+    if tail.endswith("/reverie"):
+        return "reverie"
+    return "hermit"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +168,9 @@ def load_ledger_records(parent: str):
                         continue
                     rec["_source"] = "ledger"
                     rec["_ledger_file"] = lf
+                    # Only reverie/validate.sh writes `repo`; a record without it
+                    # is a hermit ledger row (hermit never emitted the field).
+                    rec.setdefault("repo", "hermit")
                     key = rec.get("log_file") or f"{lf}:{rec.get('started_at')}"
                     records[key] = rec
         except OSError:
@@ -202,10 +231,15 @@ def parse_raw_log(path: str) -> dict:
     gates = []
     cur = None
     commit = None
+    header_repo = None
     try:
         with open(path, errors="replace") as fh:
             for ln in fh:
                 ln = ln.rstrip("\n")
+                if header_repo is None and ln.startswith("Hermit validation"):
+                    header_repo = "hermit"
+                elif header_repo is None and ln.startswith("Reverie validation"):
+                    header_repo = "reverie"
                 if root is None and ln.startswith("Root:"):
                     root = ln.split(":", 1)[1].strip()
                 elif level is None and ln.startswith("Level:"):
@@ -269,6 +303,7 @@ def parse_raw_log(path: str) -> dict:
         "started_at": None,
         "host": os.uname().nodename,
         "slot": slot_from_cwd(root),
+        "repo": repo_from(root, path, header_repo),
         "cwd": root,
         "profile": level,
         "commit": commit or "unknown",
@@ -293,12 +328,14 @@ def parse_raw_log(path: str) -> dict:
 
 def load_all_runs(parent: str) -> list[dict]:
     records = load_ledger_records(parent)
-    # Add reconstructed records for every raw log not already covered.
+    # Add reconstructed records for every raw log not already covered. Both
+    # products write `<product>-validate.XXXXXX.log` via mktemp on every run.
     for d in tmpdirs():
-        for path in glob.glob(os.path.join(d, "hermit-validate.*.log")):
-            if path in records:
-                continue
-            records[path] = parse_raw_log(path)
+        for prefix in ("hermit-validate", "reverie-validate"):
+            for path in glob.glob(os.path.join(d, f"{prefix}.*.log")):
+                if path in records:
+                    continue
+                records[path] = parse_raw_log(path)
     # Also scan committed worktree run logs (validate-run-*.log) under any
     # ignored/ dir, pruning heavy build trees.
     def is_run_log(fn: str) -> bool:
@@ -332,11 +369,13 @@ def discover_profiles(parent: str) -> list[dict]:
         if "/.safe-ci-dag-runner/profiles/" not in path:
             continue
         checkout = path.split("/.safe-ci-dag-runner/")[0]
+        checkout_repo = "reverie" if checkout.rstrip("/").endswith("/reverie") else "hermit"
         try:
             with open(path, errors="replace") as fh:
                 for row in csvmod.DictReader(fh):
                     row["_checkout"] = checkout
                     row["_slot"] = slot_from_cwd(checkout + "/")
+                    row["_repo"] = checkout_repo
                     row["_file"] = path
                     rows.append(row)
         except OSError:
@@ -360,8 +399,14 @@ def link_profiling(runs: list[dict], profiles: list[dict], window_s: int = 90) -
         by_sha.setdefault((p.get("git_sha") or "")[:12], []).append(p)
     linked = 0
     for r in runs:
+        # Never link across products: a reverie run must not borrow a hermit
+        # profile that merely shares a slot+timestamp (reverie has no
+        # safe-ci-dag-runner profiling of its own today, so its runs stay
+        # unlinked rather than mis-attributed).
+        r_repo = r.get("repo") or "hermit"
         sha = (r.get("commit") or "")[:12]
-        cands = by_sha.get(sha, []) if sha and sha != "unknown"[:12] else []
+        cands = ([c for c in by_sha.get(sha, []) if c.get("_repo") == r_repo]
+                 if sha and sha != "unknown"[:12] else [])
         match_kind = "git_sha"
         if not cands:
             # Fallback: same slot + profiling timestamp within window of the run.
@@ -371,6 +416,7 @@ def link_profiling(runs: list[dict], profiles: list[dict], window_s: int = 90) -
             if rt is not None:
                 cands = [p for p in profiles
                          if p.get("_slot") == r.get("slot")
+                         and p.get("_repo") == r_repo
                          and (pt := _epoch(p.get("timestamp"))) is not None
                          and abs(pt - rt) <= window_s]
                 match_kind = "slot+time"
@@ -404,7 +450,7 @@ def render_table(runs: list[dict]) -> str:
     # WALL/USER/SYS carry an explicit `(s)` so a bare number is never unit-less.
     # PROFILE is never truncated: a clipped identifier (`portable-stric`) is not
     # an identifier.
-    hdr = ("TIME (UTC)", "SLOT", "COMMIT", "PROFILE", "RESULT",
+    hdr = ("TIME (UTC)", "REPO", "SLOT", "COMMIT", "PROFILE", "RESULT",
            "GATES", "WALL(s)", "USER(s)", "SYS(s)", "SRC", "PROF")
     lines = []
     rows = []
@@ -424,6 +470,7 @@ def render_table(runs: list[dict]) -> str:
         t = (r.get("started_at") or r.get("finished_at") or "?")[:19]
         rows.append((
             t,
+            (r.get("repo") or "hermit")[:7],
             (r.get("slot") or "?")[:16],
             (r.get("commit") or "?")[:8],
             (r.get("profile") or "?"),
@@ -448,11 +495,13 @@ def render_table(runs: list[dict]) -> str:
 
 
 def summarize(runs, profiles, linked) -> str:
-    by_result, by_slot, by_src = {}, {}, {}
+    by_result, by_slot, by_src, by_repo = {}, {}, {}, {}
     for r in runs:
         by_result[r.get("result")] = by_result.get(r.get("result"), 0) + 1
         by_slot[r.get("slot")] = by_slot.get(r.get("slot"), 0) + 1
         by_src[r.get("_source")] = by_src.get(r.get("_source"), 0) + 1
+        repo = r.get("repo") or "hermit"
+        by_repo[repo] = by_repo.get(repo, 0) + 1
     # De-conflate the old catch-all: killed-by-a-bound (resource story) vs
     # product failures vs cut-off runs are separate attributions.
     killed = sum(r.get("killed_by_bound") or 0 for r in runs)
@@ -460,6 +509,8 @@ def summarize(runs, profiles, linked) -> str:
     prod_fail = sum(r.get("failures") or 0 for r in runs)
     out = ["", "=== Machine-wide validate-run summary ==="]
     out.append(f"  total runs        : {len(runs)}")
+    out.append(f"  by repo           : " +
+               ", ".join(f"{k}={v}" for k, v in sorted(by_repo.items())))
     out.append(f"  by result         : " +
                ", ".join(f"{k}={v}" for k, v in sorted(by_result.items(), key=lambda x: str(x[0]))))
     out.append(f"  gate attribution  : "
@@ -530,13 +581,14 @@ def main() -> int:
             # Units: real_s/user_s/sys_s are seconds. failures = product
             # failures only; killed_by_bound (timeout/cgroup/contention) and
             # incomplete (run cut off) are separate columns, not folded in.
-            w.writerow(["time", "slot", "commit", "profile", "result",
+            w.writerow(["time", "repo", "slot", "commit", "profile", "result",
                         "checks", "failures", "killed_by_bound", "incomplete",
                         "real_s", "user_s", "sys_s",
                         "source", "profiling_linked", "log_file"])
             for r in runs:
                 w.writerow([
-                    r.get("started_at") or r.get("finished_at"), r.get("slot"),
+                    r.get("started_at") or r.get("finished_at"),
+                    r.get("repo") or "hermit", r.get("slot"),
                     r.get("commit"), r.get("profile"), r.get("result"),
                     r.get("checks"), r.get("failures"),
                     r.get("killed_by_bound"), r.get("incomplete_gates"),

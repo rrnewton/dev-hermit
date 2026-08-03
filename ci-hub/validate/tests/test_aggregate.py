@@ -21,16 +21,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import aggregate as agg
 
 
-def parse(body: str) -> dict:
+def parse(body: str, name: str = "hermit-validate.test.log") -> dict:
     """Reconstruct a run record from `body`.
 
     The temp file is written under a private directory and unlinked immediately
     after parsing (parse_raw_log reads the file and its mtime synchronously), so
-    the test never leaves a `hermit-validate.*.log` in a real TMPDIR that the
+    the test never leaves a `*-validate.*.log` in a real TMPDIR that the
     machine-wide sweep would then ingest.
     """
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "hermit-validate.test.log")
+        path = os.path.join(d, name)
         with open(path, "w") as fh:
             fh.write(body)
         return agg.parse_raw_log(path)
@@ -198,6 +198,84 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(agg.gate_kind({"result": "pass"}), "pass")
         self.assertEqual(agg.gate_kind({"result": "fail"}), "fail")
         self.assertEqual(agg.gate_kind({"exit_code": 0}), "pass")
+
+
+# A full reverie run in the shape reverie/validate.sh emits: `Reverie validation
+# log` product line, Root/Level/Host OS header, a commit SHA line, then the same
+# `=== name ===` / Command: / Exit: / Duration: gate markers hermit writes. The
+# killed-vs-crashed classification is DERIVED here at aggregation (a VIEW
+# property), matching hermit — the record stores only exit_code, not a kind.
+REVERIE_HEADER = (
+    "Reverie validation log\n"
+    "Root: /home/newton/work/dev-hermit/worktrees/slot01/reverie\n"
+    "Level: reverie-full\n"
+    "Host OS: Linux\n"
+    "Commit: 0123456789abcdef0123456789abcdef01234567 (clean tree, commit-anchored)\n"
+    "\n"
+)
+REVERIE_GATE_PASS = """\
+=== Build workspace ===
+Command: cargo build --workspace --all-features
+   Compiling reverie v0.1.0
+Exit: 0
+Duration: 120s
+
+"""
+REVERIE_GATE_FAIL = """\
+=== Clippy ===
+Command: cargo clippy --workspace --all-targets --all-features -- -D warnings
+error: unused variable
+Exit: 101
+Duration: 18s
+
+"""
+
+
+class RepoAttributionTest(unittest.TestCase):
+    def test_reverie_header_wins(self):
+        # Header product line decides repo even when the filename says hermit.
+        run = parse(REVERIE_HEADER + REVERIE_GATE_PASS,
+                    name="hermit-validate.test.log")
+        self.assertEqual(run["repo"], "reverie")
+
+    def test_reverie_filename_when_no_header(self):
+        run = parse(HEADER + PASS, name="reverie-validate.test.log")
+        self.assertEqual(run["repo"], "reverie")
+
+    def test_hermit_default(self):
+        run = parse(HEADER + PASS, name="hermit-validate.test.log")
+        self.assertEqual(run["repo"], "hermit")
+
+    def test_reverie_cwd_fallback(self):
+        # No product header, ambiguous filename -> attribute by reverie checkout.
+        run = parse("Root: /x/worktrees/slot01/reverie\nLevel: reverie-full\n"
+                    + PASS, name="validate-run.test.log")
+        self.assertEqual(run["repo"], "reverie")
+
+    def test_reverie_primary_slot(self):
+        self.assertEqual(agg.slot_from_cwd("/home/x/dev-hermit/reverie"), "primary")
+
+
+class ReverieReconstructionTest(unittest.TestCase):
+    def test_full_reverie_run_reconstructs(self):
+        run = parse(REVERIE_HEADER + REVERIE_GATE_PASS + REVERIE_GATE_FAIL,
+                    name="reverie-validate.abc123.log")
+        self.assertEqual(run["repo"], "reverie")
+        self.assertEqual(run["profile"], "reverie-full")
+        self.assertEqual(run["commit"],
+                         "0123456789abcdef0123456789abcdef01234567")
+        self.assertEqual(run["slot"], "slot01")
+        self.assertEqual(run["result"], "fail")          # product fail present
+        self.assertEqual(run["failures"], 1)
+        self.assertEqual(run["checks"], 2)
+        self.assertEqual(run["real_seconds"], 138)        # 120 + 18
+
+    def test_reverie_repo_in_table(self):
+        run = parse(REVERIE_HEADER + REVERIE_GATE_PASS,
+                    name="reverie-validate.abc123.log")
+        out = agg.render_table([run])
+        self.assertIn("REPO", out.splitlines()[0])
+        self.assertIn("reverie", out)
 
 
 if __name__ == "__main__":
