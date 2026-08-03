@@ -9,6 +9,34 @@ whether a current official runsc release reproduces the performance reported in
 gVisor's 2023 [systrap release post][systrap-blog]. Every local slowdown uses the
 native result from the same collection as its denominator.
 
+**If we trust our gVisor numbers on this machine, Reverie achieves better
+performance with its best available thin `counter2` backends[^hermit-cost] than
+the fastest runsc platform on two of the three directly comparable workloads.**
+For `getpid`, `counter2` LiteInst
+at **719 ns/call** (counter2 native: **91.7 ns/call**) is **~1.74x faster** than
+runsc KVM at **1.25 us/call** (runsc native: **101 ns/call**) and **~5.64x
+faster** than runsc systrap at **4.06 us/call**. For Redis, `counter2` SaBRe at
+**1.59 s** (counter2 native: **1.16 s**) is **~8.0x faster** than the fastest
+runsc result, systrap at **12.7 s** (runsc native: **1.13 s**). For ffmpeg,
+`counter2` ptrace at **26.9 s** (counter2 native: **24.1 s**) is within **~4.6%**
+of the fastest runsc result, KVM at **25.7 s** (runsc native: **24.7 s**), but
+is slightly slower. These are performance comparisons, not claims of semantic
+equivalence: `counter2` counts interceptions, whereas runsc provides an
+application-kernel sandbox.
+
+The two collections ran on the same host but at different times. The
+`counter2` `getpid` cells used 200,000 calls per sample and the runsc cells used
+1,000,000; both report three-sample medians, and runsc also used one warmup.
+Both Redis collections report `250000 / QPS` for 250,000 SET operations and
+five clients, and the ffmpeg comparison uses the same input with three measured
+samples per engine. ABSL is not ranked because the `counter2` build used
+unbounded jobs while runsc used 16; TensorFlow is not ranked because no matching
+eight-program Reverie result completed. An earlier, different 40-million-call
+steady-state study on this host (two warmups and nine measured samples) found
+**1.01 us/call** for gVisor KVM, **8.08 us/call** for gVisor systrap, **29.3
+us/call** for Reverie KVM, and **40.5 us/call** for Reverie ptrace. That study is
+a qualitative sanity check, not pooled evidence for the ratios above.[^v2-check]
+
 It does not reproduce the blog's gVisor results. The clearest mismatch is
 `getpid`: local systrap is **~40.2x** its native anchor, while the post reports
 **~4.26x**. The local **100.789 ns/call native anchor** is not a direct timing of
@@ -30,6 +58,27 @@ that local runsc overhead varies sharply with workload, from about
 TensorFlow. Hermit/Reverie measurements later in this report are separate
 same-host context; they do not change the finding that the gVisor numbers here
 failed to reproduce the blog.
+
+[^hermit-cost]: `counter2` is not Hermit. Hermit is currently much slower on
+    these cells even in relaxed mode. The best completed `getpid` result in
+    **Hermit relaxed** mode is KVM at **21.3 us/call** (relaxed native: **91.7
+    ns/call**), **~17x slower** than runsc KVM at **1.25 us/call**; the best
+    **Hermit strict** result is DBI at **4.66 us/call** (strict native: **276
+    ns/call**), **~3.72x slower** than that same runsc result. For Redis, the
+    best relaxed result is e9patch at **38.1 s** and the best strict result is
+    DBI at **93.7 s** (Hermit native: **1.16 s**), respectively **~3.01x** and
+    **~7.40x slower** than runsc systrap at **12.7 s**. For ffmpeg, relaxed
+    ptrace takes **112 s** (Hermit native: **24.1 s**), **~4.38x slower** than
+    runsc KVM at **25.7 s**; no strict ffmpeg cell completed. Relaxed mode
+    determinizes syscalls without deterministic thread scheduling; strict mode
+    adds deterministic scheduling. The best available backend differs by tier,
+    so none of these relaxed measurements is presented as strict. No comparable
+    relaxed or strict ABSL or TensorFlow cell completed.
+
+[^v2-check]: See the tracked
+    [steady-state v2 benchmark](../../experiments/gvisor-reverie-benchmark_20260725/README.md).
+    Its `getpid` native median was **4.14 s** for 40,000,000 calls; the quoted
+    values are `(backend median - native median) / 40,000,000`.
 
 [systrap-blog]: https://gvisor.dev/blog/2023/04/28/systrap-release/
 
