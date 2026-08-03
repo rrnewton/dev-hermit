@@ -46,6 +46,7 @@ Networked commands use `with-proxy` internally.
 | `remediation/` | Mandatory post-land dual verification, exact-SHA local execution, watcher, and remediation recommendation. | CI-history ingestion or automatic source-code reverts. |
 | `validate/` | Legacy/local `validate.sh` ledger aggregation and linkage to retained profiles. | The generic DAG runner/profile format. |
 | `runners/` | Self-hosted runner image, lifecycle, and host status tooling. | Generic CI scheduling. |
+| `landing/` | Shared-file **landing mutex** (`land-lock`) that serializes PR landings touching the shared manifest registries. | The land sequence itself (re-union/push/stamp/merge). |
 
 Runtime data is untracked under `ignored/ci-hub/`; versioned code and schemas
 live here. Reproducible experiment producers and their frozen outputs remain

@@ -899,15 +899,27 @@ gitlink mismatch, or commits unreachable from every fetched `origin/*` ref.
 Generic changes such as runner cgroups/CPU-time budgets, `tick-hub`, and PR
 planning belong in `rrnewton/agent-utils`:
 
-1. create a dedicated feature branch in an isolated agent-utils worktree;
-2. commit and push it explicitly to `origin`, then open a PR against `main`;
-3. validate and merge that PR in agent-utils before changing the parent pin;
-4. fetch `origin/main`, update the canonical checkout to the merged commit, run
+1. serialize agent-utils work: finish and land one change before starting the
+   next so the repository never accumulates a second queue of open changes;
+2. run the complete intra-agent-utils validation before landing, including the
+   Python tests/typecheck, Rust workspace tests/lints, and the Python-Rust
+   differential cross-check;
+3. commit and push the validated change directly to `rrnewton/agent-utils:main`;
+4. fetch `origin/main`, update the canonical checkout to the landed commit, run
    `make check-agent-utils-pin`, and commit the exact gitlink in the parent.
+
+A PR is an exception, not the default. Open one only when either (a) a genuinely
+high-risk change needs review before it reaches main, or (b) the change must be
+coordinated with an in-flight parent change and cannot safely land independently.
+Record which exception applies in the PR description, keep at most that one
+agent-utils PR in flight, and land or close it before starting another change.
+Convenience, habit, or ordinary implementation size is not a reason to open a PR.
 
 Never leave generic fixes as uncommitted edits, local-only commits, or copied
 implementations under `dev-hermit`. A pushed feature branch is recoverable but
-does not satisfy the main peg until its PR merges and the parent pin advances.
+does not satisfy the main peg until its commit reaches main and the parent pin
+advances. Direct-to-main is not unvalidated-to-main: if any required check is
+red, fix it before pushing main.
 
 ## Binary And Large-File Policy
 
