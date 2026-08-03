@@ -247,18 +247,53 @@ complete all of these checks:
    callback, so a stale or substituted `.so` cannot pass merely because
    `plugin.json` looks current.
 
-For 0.2 the policy is **exact package version plus exact ABI tag**. Git SHAs and
-build dates are printed for diagnosis, but do not substitute for the generated
-ABI tag. Semver compatibility may be considered only after the plugin boundary
-has an intentionally stable ABI and cross-version tests; it must not be assumed
-for internal Detcore structures today.
+Hashes prove that installed bytes match a manifest; they do **not** prove that
+the manifest truthfully describes the source used to build those bytes. A
+mislabelled bundle could otherwise carry a matching version and ABI tag. Close
+that gap with an exact `detcore_build_id`, generated independently from the
+actual build inputs rather than supplied as release metadata. Its canonical
+input set includes the Detcore and plugin-protocol source-tree hashes,
+`Cargo.lock`, enabled features, generated RPC/schema and callback descriptors,
+Reverie revision, target triple, compiler identity, and code-generation flags.
+
+Both the static coordinator and `libdetcore_dbt.so` embed the build ID computed
+by their own build. The release manifest is generated after the build and binds
+the package version, ABI tag, build ID, source revisions, lockfile digest,
+target, and SHA-256 of every output in one signed provenance statement. The
+helper verifies the signature and artifact hashes, reads the build ID from the
+actual `.so` descriptor, and compares it with both the manifest and host. The
+native client repeats the descriptor-to-host comparison. An operator cannot
+make mismatched code compatible by copying labels into `plugin.json`.
+
+These invariants are mechanical gates, not documentation promises:
+
+| Invariant | Mechanical check | Failure |
+| --- | --- | --- |
+| Helper protocol is understood | Parse and compare protocol major | Exit 78 before payload use |
+| Host and plugin are one release | Exact runtime comparison of `CARGO_PKG_VERSION` | Exit 78 |
+| Detcore interfaces agree | Exact runtime comparison of generated ABI tags | Exit 78 |
+| Detcore implementations correspond | Exact comparison of independently generated build IDs embedded in host and `.so` | Exit 78 |
+| Manifest describes the released build | Verify signed provenance binding inputs, build ID, and output hashes | Reject installation or exit 78 |
+| Installed payload is the released payload | Hash every file before activation and on probe | Reject installation or exit 78 |
+| `.so` agrees with its manifest | Read exported descriptor in both helper and native client | Exit 78 |
+| Core excludes third-party DBT dependencies | CI inspects the packaged `cargo tree` and archive contents | Block publication |
+| Absence is actionable | Clean-home integration test asserts exact stderr, exit 69, and no guest start | Block publication |
+| Installation needs no activation | Clean-home test installs both crates and runs DBT without extra configuration | Block publication |
+| Recordings remain discoverable | Filesystem test checks `$HERMIT_DIR/recordings` resolves to the configured cache | Block publication |
+
+For 0.2 the policy is **exact package version plus exact ABI tag plus exact
+Detcore build ID**. Git SHAs and build dates are printed for diagnosis, but do
+not substitute for these generated identities. Semver compatibility may be
+considered only after the plugin boundary has an intentionally stable ABI and
+cross-version tests; it must not be assumed for internal Detcore structures
+today.
 
 On a mismatch Hermit exits with status 78 (`EX_CONFIG`) before guest execution:
 
 ```text
 error: incompatible hermit-dynamorio plugin; refusing backend 'dbt'
-host:   hermit-run 0.2.0, detcore ABI hdt1:<host-tag>
-plugin: hermit-dynamorio 0.2.0, detcore ABI hdt1:<plugin-tag>
+host:   hermit-run 0.2.0, detcore ABI hdt1:<host-tag>, build <host-build-id>
+plugin: hermit-dynamorio 0.2.0, detcore ABI hdt1:<plugin-tag>, build <plugin-build-id>
 selected plugin: <absolute helper path>
 repair with:
   cargo install --force --locked hermit-dynamorio@=0.2.0
@@ -360,26 +395,28 @@ release artifacts:
    absent-plugin diagnostic and exits 69 without starting the guest.
 4. After `cargo install hermit-dynamorio`, the same command automatically
    materializes the pinned payload and runs without another user step.
-5. A host/plugin exact-version mismatch fails with the exact mismatch
-   diagnostic and exits 78.
-6. A forged manifest, replaced `.so`, missing descriptor, truncated download,
+5. A host/plugin exact-version, ABI-tag, or build-ID mismatch fails with the
+   exact mismatch diagnostic and exits 78.
+6. A plugin built from a different Detcore revision is rejected even if its
+   manifest is edited to copy the host's version and ABI tag.
+7. A forged manifest, replaced `.so`, missing descriptor, truncated download,
    missing `drrun`, and helper timeout each fail before guest execution.
-7. The DBT native client independently refuses an ABI-tag mismatch even when a
-   manifest is edited to claim compatibility.
-8. An interrupted install leaves the prior `current` payload usable and never
+8. The DBT native client independently refuses an ABI-tag or build-ID mismatch
+   even when a manifest is edited to claim compatibility.
+9. An interrupted install leaves the prior `current` payload usable and never
    exposes the partial replacement.
-9. `$HERMIT_DIR` relocation works without consulting unrelated host paths, and
+10. `$HERMIT_DIR` relocation works without consulting unrelated host paths, and
    the recordings symlink resolves to the actual cache store.
-10. Validation runs from the primary checkout and two worktrees append to one
+11. Validation runs from the primary checkout and two worktrees append to one
     checkout-partitioned ledger under `$HERMIT_DIR`; an interrupted run leaves
     an explicit start event and durable log, with no `/tmp` reconstruction.
-11. Strict and verify coverage runs against the packaged DBT path, not a
+12. Strict and verify coverage runs against the packaged DBT path, not a
     workspace-relative `target/` tree.
 
 ## Rollout sequence
 
-1. Define the dependency-light plugin protocol, generated Detcore ABI tag, and
-   exported shared-object descriptor.
+1. Define the dependency-light plugin protocol, generated Detcore ABI and build
+   identities, signed provenance, and exported shared-object descriptor.
 2. Produce the signed, content-addressed DynamoRIO release payload and the
    `hermit-dynamorio` helper that validates/materializes it.
 3. Change the compiled DBT adapter to discover the helper and consume only its
