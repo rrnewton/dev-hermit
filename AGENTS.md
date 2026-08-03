@@ -879,6 +879,27 @@ heavy nested submodules without a task that needs them. Worktree-specific
 initialization must run inside the owning child checkout, never by repointing a
 shared nested submodule worktree.
 
+### Agent-Utils Main Peg And Contributions
+
+`agent-utils` is shared upstream tooling, not a parent-local patch surface. The
+parent gitlink and the canonical `agent-utils/` checkout must equal the fetched
+`rrnewton/agent-utils:main` commit. Run `make check-agent-utils-pin`; it fetches
+and prunes `origin`, then rejects a stale/ahead/diverged checkout, a parent
+gitlink mismatch, or commits unreachable from every fetched `origin/*` ref.
+
+Generic changes such as runner cgroups/CPU-time budgets, `tick-hub`, and PR
+planning belong in `rrnewton/agent-utils`:
+
+1. create a dedicated feature branch in an isolated agent-utils worktree;
+2. commit and push it explicitly to `origin`, then open a PR against `main`;
+3. validate and merge that PR in agent-utils before changing the parent pin;
+4. fetch `origin/main`, update the canonical checkout to the merged commit, run
+   `make check-agent-utils-pin`, and commit the exact gitlink in the parent.
+
+Never leave generic fixes as uncommitted edits, local-only commits, or copied
+implementations under `dev-hermit`. A pushed feature branch is recoverable but
+does not satisfy the main peg until its PR merges and the parent pin advances.
+
 ## Binary And Large-File Policy
 
 Never commit binaries to the parent, Hermit, or Reverie: compiled executables,

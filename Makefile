@@ -5,7 +5,7 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-deps check-portability clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-deps check-portability clean \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
@@ -126,6 +126,9 @@ check-deps:
 check-portability:
 	@scripts/check-portable-paths.sh
 
+check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
+	@scripts/check-agent-utils-pin.rs
+
 list-rust-scripts: ## Inventory executable Rust and rust-script source files
 	@scripts/list-rust-scripts.rs
 
@@ -138,6 +141,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	python3 -m py_compile scripts/*.py
 	python3 -m unittest discover -s scripts -p 'test_*.py'
 	@scripts/check-parent-gitmodules.sh
+	@scripts/check-agent-utils-pin.rs
 	@scripts/primary_checkout.py check
 	@$(MAKE) --no-print-directory check-portability
 
@@ -226,6 +230,7 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make check-agent-utils-pin  Require parent pin and checkout at agent-utils origin/main"
 	@echo "make list-rust-scripts Inventory executable Rust and rust-script source files"
 	@echo "make lint               Lint parent scripts, tests, paths, and submodule policy"
 	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"

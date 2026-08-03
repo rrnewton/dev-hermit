@@ -8,7 +8,7 @@ expected=(
     "hermit|hermit|https://github.com/rrnewton/hermit.git|checkout"
     "reverie|reverie|https://github.com/rrnewton/reverie.git|checkout"
     "liteinst2|liteinst2|https://github.com/rrnewton/liteinst2.git|checkout"
-    "agent-utils|agent-utils|https://github.com/rrnewton/agent-utils.git|none"
+    "agent-utils|agent-utils|https://github.com/rrnewton/agent-utils.git|checkout"
 )
 
 mapfile -t configured < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$')
@@ -42,4 +42,4 @@ for spec in "${expected[@]}"; do
     }
 done
 
-echo "Parent submodule policy is valid: product gitlinks default to checkout; agent-utils is on demand."
+echo "Parent submodule policy is valid: product and shared-tool gitlinks use checkout."
