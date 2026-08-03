@@ -34,6 +34,7 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | `collect-envelope.rs` | **Hermit** collector. Drives `hermit/ci/test_harness.sh`, consumes its JSONL, and appends rows to `scorecard.csv`. Two modes (below). `--assert-green` turns it into the regression gate. |
 | `collect-reverie-compat.rs` | **Reverie** collector (owner directive #1, run first). Runs the shared Reverie counter Tool through the ptrace and KVM launchers and records ptrace-vs-kvm parity into `reverie-scorecard.csv`. |
 | `collect-e9patch-compat.rs` | **e9patch** collector. Runs the freestanding raw-syscall corpus through the ptrace backend both un-rewritten (golden) and e9tool-rewritten, and records preprocessing-invariance (golden-vs-e9 parity) with honest L1/L2 levels into `e9patch-scorecard.csv`. e9patch is NOT a Detcore backend (see below), so it lives in its own CSV like reverie. |
+| `hermit/tests/backend-parity/run_matrix.py` | Runs the focused ptrace/DBI/KVM contracts and appends live `backend-parity` rows directly to this outer `scorecard.csv`; no generated matrix is tracked in the inner Hermit repository. |
 | `expansion-dag.rs` | Generates the **expansion-mode** safe-ci-dag-runner DAG: one boxed step per cell with per-cell wall-time + memory budgets, plus a dated evidence run dir. |
 | `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by all collectors. |
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
@@ -96,6 +97,7 @@ make validate → compat-envelope-fullcorpus
 | CI DAG JSONL + JUnit | `hermit/ignored/e2e/<lane>/<category>/{results.jsonl,junit.xml}` |
 | Collector JSONL | `hermit/ignored/e2e/compat-envelope/<lane>/<bucket>/<backend>.jsonl` |
 | CSV compat-logs | `compat-envelope/{scorecard,fullcorpus-scorecard,reverie-scorecard}.csv` (this outer repo) |
+| Backend-parity observations | appended directly to `compat-envelope/scorecard.csv` by Hermit's `run_matrix.py` |
 | Raw logs / scratch | `compat-envelope/ignored/` (gitignored) |
 
 ## Local full-corpus gate (`collect-fullcorpus.sh`)

@@ -459,8 +459,8 @@ fn main() {
 
         // Determinism (L2): DBI's --verify double-run passed. NOTE: for a guest
         // that deterministically exits non-zero, hermit --verify may short-circuit
-        // to a single run (see matrix.tsv exit_status), so a non-zero rc here can
-        // also mean "verify skipped"; the reason string records the exact rc.
+        // to a single run (see run_matrix.py's exit_status L2 gap), so a non-zero
+        // rc here can also mean "verify skipped"; the reason records the exact rc.
         let dbi_det = db2.ran && db2.rc == 0;
 
         // Parity (L1, guest-visible): DBI guest stdout == ptrace guest stdout, AND
