@@ -312,26 +312,41 @@ def memory_skill_sync_gate() -> int:
 
     summary = (
         f"structural problems={problems}, contradictions={contradictions}, "
-        f"scanner-drift={scan_drift}"
+        f"scanner-drift={scan_drift}; "
+        "run ./scripts/memory-skill-contradiction-scan.rs for the per-file proposal "
+        "(REPORT-ONLY: coordinator applies; sessionForget is 1-based positional, "
+        "delete DESCENDING)"
     )
 
-    # Forward each tool's own report so the wakeup body is actionable.
-    if not healthy:
-        if lint_rc != 0 and lint_out.strip():
-            print("--- lint-memory-skill-sync.rs ---")
-            print(lint_out.rstrip())
-        if scan_rc != 0 and scan_out.strip():
-            print("--- memory-skill-contradiction-scan.rs (REPORT-ONLY) ---")
-            print(scan_out.rstrip())
+    # Build a single-line `detail` proposal from the tools' human output. It must
+    # be ONE captured field: the tick-hub gate parser (parse_kv_lines) treats EVERY
+    # stdout line containing '=' as a key=value pair, so emitting multi-line detail
+    # would leak phantom fields and clobber state/summary. Packing it into one
+    # collapsed value keeps embedded '=' safe (partition splits on the first only).
+    detail_lines: list[str] = []
+    if lint_rc != 0:
+        for line in lint_out.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("OK "):
+                detail_lines.append(f"[lint] {stripped}")
+    for line in scan_out.splitlines():
+        stripped = line.strip()
+        # keep the human report; drop the scanner's own key=value gate fields.
+        if not stripped:
+            continue
+        if stripped.split("=", 1)[0] in {"state", "summary", "contradictions", "drift"}:
+            continue
+        detail_lines.append(stripped)
 
-    _emit(
-        {
-            "state": state,
-            "problems": problems,
-            "contradictions": contradictions,
-            "summary": summary,
-        }
-    )
+    fields: dict[str, object] = {
+        "state": state,
+        "problems": problems,
+        "contradictions": contradictions,
+        "summary": summary,
+    }
+    if not healthy and detail_lines:
+        fields["detail"] = " | ".join(detail_lines)
+    _emit(fields)
     return 0 if healthy else 1
 
 

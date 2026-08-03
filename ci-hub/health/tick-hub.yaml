@@ -82,4 +82,30 @@ reminders:
         component: agents
       title: "agent fleet needs attention: {summary}"
 
+  # Memory <-> skill sync: the sync/lint scripts existed but nothing invoked them,
+  # so being in-sync was luck. This reminder runs the authoritative structural
+  # linter + the report-only contradiction scanner every hour. It PROPOSES a
+  # reconciliation via the wakeup; the coordinator APPLIES it. Deletion hazard:
+  # ORC sessionForget() is 1-based positional (indices shift) -> apply any memory
+  # deletions in DESCENDING order. Details in the scanner's own report body.
+  #
+  # >>> INACTIVE / NOT YET WIRED <<<  This reminder is committed but DISABLED.
+  # Uncommenting the block below is what takes the mechanical layer LIVE: the
+  # existing operationalHealthHeartbeat re-reads this file every 5 min and will
+  # begin firing the hourly memory<->skill hard-warn. Activation is the owner's
+  # call. TO ACTIVATE: remove the leading '# ' from the block below (no ORC
+  # restart needed; the next heartbeat tick picks it up).
+  # - name: memory_skill_sync
+  #   cadence_secs: 3600
+  #   gate:
+  #     cmd: ./ci-hub/health/operational_health.py memory-skill-sync
+  #     when: failure
+  #     capture: true
+  #   emit:
+  #     kind: action
+  #     skill: hard-warn-coordinator
+  #     fields:
+  #       component: memory-skill-sync
+  #     title: "memory<->skill sync is {state} (REPORT-ONLY, coordinator reconciles): {summary}"
+
 health_checks: []

@@ -1,0 +1,28 @@
+# Memory <-> skill CONTRADICTION denylist (read by scripts/memory-skill-contradiction-scan.rs).
+#
+# Each non-comment line is one entry:
+#
+#     scope | needles | reason
+#
+#   scope    = skill | memory | slug
+#              skill  -> match against the BODY of every active .claude/skills/*.md
+#              memory -> match against the BODY of every memory .md
+#              slug   -> match against the FILENAME STEM of every skill AND memory
+#   needles  = one or more case-insensitive substrings joined by '+'.
+#              ALL must be present (document-scope AND) for the entry to fire.
+#   reason   = why this is stale/false and what the current truth is. Shown to the
+#              coordinator verbatim; keep it a single actionable line.
+#
+# This catches KNOWN, high-confidence contradictions (a regression guard for
+# claims we have already proven false). It is DELIBERATELY conservative — a
+# noisy false positive erodes trust in the wakeup. NEW/unknown contradictions
+# are for the woken coordinator to judge against `orc.sessionMemories()`; this
+# file is the mechanical floor, not the ceiling. Add an entry only once a memory
+# has established the current truth. Prefer specific multi-needle AND-matches
+# over broad single substrings.
+#
+# The scanner is REPORT-ONLY. It never edits skills or memories.
+
+skill | main+unprotected | main IS protected since 2026-08-03: two rulesets (history=non_fast_forward+deletion, ZERO bypass; check-gating=admin-bypass). `--admin` bypasses FAILING CHECKS only, never rewinds history. "main unprotected" as a landing rationale is now false. Current truth: memory [[main-forcepush-lockdown-dual-layer]].
+
+slug | validate-sh-cannot-be-green-on-devserver | STALE PREMISE: a green full `validate.sh` ran on the devserver 2026-08-03 (owner run a034f39c, real 499s, PASS). The "cannot be green on devserver" claim is false. Demote/rewrite this skill. Current truth: experiments/validate_parallelism_audit_20260803/ + memory [[validate-full-profile-already-dag-orchestrated]].
