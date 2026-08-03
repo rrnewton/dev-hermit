@@ -85,6 +85,23 @@ Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
 
 Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal.
 
+## Verifying your land (before you release)
+
+Release only after the commit is on `origin/main`:
+
+```bash
+with-proxy gh pr view <N> -R rrnewton/hermit --json state,mergeCommit \
+  -q '{state:.state, sha:.mergeCommit.oid}'          # want state=MERGED
+git fetch -q origin main
+git merge-base --is-ancestor <mergeCommit-sha> origin/main && echo LANDED
+```
+
+**Do not poll `mergeStateStatus` to decide you've landed.** If auto-merge is
+armed (REBASE), the PR merges the instant merge-gate goes green, and
+`mergeStateStatus` then reads `UNKNOWN` for a merged PR — check `state == MERGED`
+and `mergeCommit`, not the merge-state. Also note the merged SHA is the
+**rebased** commit (a fresh 40-hex), not your pre-merge branch head.
+
 ## Notes
 
 - `run` is preferred over bare `acquire`/`release`: it releases even if your land
