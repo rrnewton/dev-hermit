@@ -56,6 +56,19 @@ reminders:
         component: pull-requests
       title: "open PR CI needs attention: {summary}"
 
+  - name: ci_queue_health
+    cadence_secs: 900
+    gate:
+      cmd: ./ci-hub/health/operational_health.py queue-health
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: ci-queue-health
+      title: "CI queue health is {state}: {summary}"
+
   - name: stuck_agents
     cadence_secs: 300
     gate:

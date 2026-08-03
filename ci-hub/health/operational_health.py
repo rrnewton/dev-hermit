@@ -14,10 +14,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "runners"))
 
 import github_main_health
 import pr_status
 import primary_checkout
+import queue_health
 
 
 BROKEN_AGENT_STATES = frozenset(
@@ -115,6 +117,22 @@ def primary_snapshot_gate() -> int:
         }
     )
     return result
+
+
+def queue_health_gate() -> int:
+    """Fail-loud tick gate for CI queue depth, wait times, and staleness of the
+    last green run. Delegates to the shared queue_health analysis so the tick and
+    the human `runner-health` report never diverge."""
+    import os
+
+    gh_cmd = os.environ.get("GH", "with-proxy gh")
+    limit = int(os.environ.get("CI_QUEUE_HEALTH_LIMIT", "100"))
+    repos = [os.environ.get("CI_QUEUE_HEALTH_REPO", "rrnewton/hermit")]
+    try:
+        return queue_health.gate(repos, gh_cmd, limit)
+    except Exception as error:  # never let a probe crash the tick silently
+        _emit({"state": "unknown", "summary": _field(f"queue-health-error:{error}")})
+        return 1
 
 
 def _last_activity_seconds(raw: object) -> float | None:
@@ -219,9 +237,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return primary_snapshot_gate()
     if args == ["agents"]:
         return agent_gate()
+    if args == ["queue-health"]:
+        return queue_health_gate()
     print(
         "usage: operational_health.py "
-        "<github-main|pull-requests|primary-snapshot|agents>",
+        "<github-main|pull-requests|primary-snapshot|agents|queue-health>",
         file=sys.stderr,
     )
     return 2
