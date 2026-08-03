@@ -221,9 +221,10 @@ def render_node_budgets(rows: list[dict], fmt: str) -> str:
         for r in rows:
             w.writerow({c: ("" if r.get(c) is None else r.get(c)) for c in cols})
         return buf.getvalue().rstrip("\n")
-    # text table
-    hdr = ("NODE", "N", "MAX_CPU", "P95_CPU", "P50_CPU", "MAX_WALL",
-           "SUGGEST_TIMEOUT", "THIN")
+    # text table. CPU/WALL columns are seconds; the header says so, so a bare
+    # number is never unit-less (matches the JSON/CSV `_s` field names).
+    hdr = ("NODE", "N", "MAX_CPU(s)", "P95_CPU(s)", "P50_CPU(s)", "MAX_WALL(s)",
+           "SUGGEST_TIMEOUT(s)", "THIN")
     body = [(r["node"], str(r["n_samples"]),
              _s(r["max_cpu_s"]), _s(r["p95_cpu_s"]), _s(r["p50_cpu_s"]),
              _s(r["max_wall_s"]),

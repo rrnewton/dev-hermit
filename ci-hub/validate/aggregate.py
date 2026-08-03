@@ -149,6 +149,54 @@ def load_ledger_records(parent: str):
     return records
 
 
+# Faithful per-gate classes. Each is anchored ONLY on markers hermit/validate.sh
+# writes itself, never on workload text (a test named "panic" or a program that
+# prints "timeout" must not sway the class). See hermit/validate.sh:
+#   * real gate  -> `=== name ===`, `Command: ...`, [output], then ALWAYS
+#     `Exit: <status>` + `Duration: <n>s`
+#     (run_check_with_timeout / wait_for_background_checks / *_compatibility_probe).
+#   * killed by a bound -> a real gate whose body carries `Gate timed out after`
+#     (run_timed_command) and/or Exit 124 (a bare `timeout` in a compat probe).
+#     This is the RESOURCE story: timeouts / cgroup caps / contention.
+#   * deferred    -> `=== name ===` + `Skipped: ...`, no Exit (not run).
+#   * section banner -> `=== name ===` alone, no `Command:`/`Exit:` (the
+#     Record/replay, SaBRe, e9patch, and Strict-envelope headers).
+# A real gate with a `Command:` but no `Exit:` means the log was cut off mid-gate
+# (the run did not finish) -> `incomplete`, which is NOT a product failure.
+GATE_KINDS = ("pass", "fail", "timeout", "incomplete", "skipped", "banner")
+# Verdict-bearing gates: the ones that count toward the pass/total denominator.
+VERDICT_KINDS = ("pass", "fail", "timeout", "incomplete")
+# Legacy per-gate `result` (pass/fail/skip/unknown/banner) kept for any external
+# reader; the killed-by-a-bound vs product-fail split is carried by `kind`.
+_KIND_TO_RESULT = {"pass": "pass", "fail": "fail", "timeout": "fail",
+                   "skipped": "skip", "incomplete": "unknown", "banner": "banner"}
+
+
+def _classify_gate(g: dict) -> str:
+    if g.get("_has_exit"):
+        if g.get("exit_code") == 0:
+            return "pass"
+        if g.get("_timed_out") or g.get("exit_code") == 124:
+            return "timeout"
+        return "fail"
+    if g.get("_skipped"):
+        return "skipped"
+    if g.get("_has_command"):
+        return "incomplete"
+    return "banner"
+
+
+def gate_kind(g: dict) -> str:
+    """Class of a gate, tolerant of ledger rows that only carry `result`."""
+    k = g.get("kind")
+    if k in GATE_KINDS:
+        return k
+    return {"pass": "pass", "fail": "fail", "skip": "skipped",
+            "banner": "banner", "unknown": "incomplete"}.get(
+                g.get("result"),
+                "pass" if g.get("exit_code") == 0 else "incomplete")
+
+
 def parse_raw_log(path: str) -> dict:
     root = level = None
     gates = []
@@ -163,17 +211,25 @@ def parse_raw_log(path: str) -> dict:
                 elif level is None and ln.startswith("Level:"):
                     level = ln.split(":", 1)[1].strip()
                 elif ln.startswith("=== ") and ln.endswith(" ==="):
-                    if cur is not None:  # previous gate never closed (in-progress/crash)
-                        cur.setdefault("result", "unknown")
+                    if cur is not None:  # previous gate never got its Duration footer
                         gates.append(cur)
                     cur = {"name": ln[4:-4].strip()}
-                elif ln.startswith("Exit:") and cur is not None:
+                elif cur is not None and ln.startswith("Command:"):
+                    cur["_has_command"] = True
+                elif cur is not None and ln.startswith("Skipped:"):
+                    cur["_skipped"] = True
+                elif cur is not None and ln.startswith("Gate timed out after"):
+                    # validate.sh writes this as its own line (run_timed_command);
+                    # requiring the line prefix keeps guest stdout from ever
+                    # forging the marker.
+                    cur["_timed_out"] = True
+                elif cur is not None and ln.startswith("Exit:"):
                     try:
                         cur["exit_code"] = int(ln.split(":", 1)[1].strip())
                     except ValueError:
                         cur["exit_code"] = -1
-                    cur["result"] = "pass" if cur.get("exit_code") == 0 else "fail"
-                elif ln.startswith("Duration:") and cur is not None:
+                    cur["_has_exit"] = True
+                elif cur is not None and ln.startswith("Duration:"):
                     m = DUR_RE.search(ln)
                     cur["real_seconds"] = int(m.group(1)) if m else None
                     gates.append(cur)
@@ -184,12 +240,28 @@ def parse_raw_log(path: str) -> dict:
                         commit = m.group(0)
     except OSError:
         pass
-    if cur is not None:  # trailing open gate
-        cur.setdefault("result", "unknown")
+    if cur is not None:  # trailing gate with no Duration footer (run cut off)
         gates.append(cur)
-    failures = sum(1 for g in gates if g.get("result") == "fail")
-    partial = any(g.get("result") == "unknown" for g in gates)
-    result = "fail" if failures else ("partial" if partial else "pass")
+    counts = {k: 0 for k in GATE_KINDS}
+    for g in gates:
+        g["kind"] = _classify_gate(g)
+        g["result"] = _KIND_TO_RESULT[g["kind"]]
+        counts[g["kind"]] += 1
+        for k in ("_has_command", "_skipped", "_timed_out", "_has_exit"):
+            g.pop(k, None)
+    # Run verdict, most-severe first. Killed-by-a-bound (`timeout`: a RESOURCE
+    # story) is deliberately kept distinct from a product `fail` and from an
+    # `incomplete` (cut-off) run, so attribution is never conflated. Banners and
+    # skipped gates cannot decide the verdict.
+    if counts["fail"]:
+        result = "fail"
+    elif counts["timeout"]:
+        result = "timeout"
+    elif counts["incomplete"]:
+        result = "incomplete"
+    else:
+        result = "pass"
+    non_banner = sum(counts[k] for k in GATE_KINDS if k != "banner")
     mtime = os.path.getmtime(path)
     return {
         "schema_version": 1,
@@ -201,8 +273,13 @@ def parse_raw_log(path: str) -> dict:
         "profile": level,
         "commit": commit or "unknown",
         "result": result,
-        "checks": len(gates),
-        "failures": failures,
+        "checks": non_banner,
+        "failures": counts["fail"],            # product failures only
+        "killed_by_bound": counts["timeout"],  # resource story: timeout/cgroup/contention
+        "incomplete_gates": counts["incomplete"],  # run cut off before the gate footer
+        "skipped_gates": counts["skipped"],
+        "banner_lines": counts["banner"],
+        "gate_classification": counts,
         "real_seconds": sum(g.get("real_seconds") or 0 for g in gates),
         "user_seconds": None,
         "sys_seconds": None,
@@ -324,21 +401,34 @@ def fmt_secs(v):
 
 
 def render_table(runs: list[dict]) -> str:
+    # WALL/USER/SYS carry an explicit `(s)` so a bare number is never unit-less.
+    # PROFILE is never truncated: a clipped identifier (`portable-stric`) is not
+    # an identifier.
     hdr = ("TIME (UTC)", "SLOT", "COMMIT", "PROFILE", "RESULT",
-           "GATES", "WALL", "USER", "SYS", "SRC", "PROF")
+           "GATES", "WALL(s)", "USER(s)", "SYS(s)", "SRC", "PROF")
     lines = []
     rows = []
     for r in runs:
         gates = r.get("gates") or []
-        npass = sum(1 for g in gates if g.get("result") == "pass")
+        verdict = [g for g in gates if gate_kind(g) in VERDICT_KINDS]
+        npass = sum(1 for g in verdict if gate_kind(g) == "pass")
+        # GATES denominator counts only verdict-bearing gates, so section banners
+        # never inflate it. Fall back to the run's own tallies for ledger rows
+        # whose gate list is absent.
+        if verdict:
+            ngates = f"{npass}/{len(verdict)}"
+        else:
+            checks = r.get("checks")
+            fails = r.get("failures") or 0
+            ngates = f"{(checks - fails)}/{checks}" if checks is not None else "-"
         t = (r.get("started_at") or r.get("finished_at") or "?")[:19]
         rows.append((
             t,
             (r.get("slot") or "?")[:16],
             (r.get("commit") or "?")[:8],
-            (r.get("profile") or "?")[:14],
+            (r.get("profile") or "?"),
             r.get("result") or "?",
-            f"{npass}/{len(gates)}",
+            ngates,
             fmt_secs(r.get("real_seconds")),
             fmt_secs(r.get("user_seconds")),
             fmt_secs(r.get("sys_seconds")),
@@ -363,10 +453,19 @@ def summarize(runs, profiles, linked) -> str:
         by_result[r.get("result")] = by_result.get(r.get("result"), 0) + 1
         by_slot[r.get("slot")] = by_slot.get(r.get("slot"), 0) + 1
         by_src[r.get("_source")] = by_src.get(r.get("_source"), 0) + 1
+    # De-conflate the old catch-all: killed-by-a-bound (resource story) vs
+    # product failures vs cut-off runs are separate attributions.
+    killed = sum(r.get("killed_by_bound") or 0 for r in runs)
+    incomplete = sum(r.get("incomplete_gates") or 0 for r in runs)
+    prod_fail = sum(r.get("failures") or 0 for r in runs)
     out = ["", "=== Machine-wide validate-run summary ==="]
     out.append(f"  total runs        : {len(runs)}")
     out.append(f"  by result         : " +
                ", ".join(f"{k}={v}" for k, v in sorted(by_result.items(), key=lambda x: str(x[0]))))
+    out.append(f"  gate attribution  : "
+               f"product-fail={prod_fail}, killed-by-bound={killed} "
+               f"(timeout/cgroup/contention), incomplete={incomplete} (run cut off)"
+               "   (RESULT values: pass/fail/timeout/incomplete)")
     out.append(f"  by source         : " +
                ", ".join(f"{k}={v}" for k, v in sorted(by_src.items(), key=lambda x: str(x[0]))) +
                "   (L=ledger, R=reconstructed-from-raw-log)")
@@ -428,14 +527,20 @@ def main() -> int:
     if args.csv:
         with open(args.csv, "w", newline="") as fh:
             w = csvmod.writer(fh)
+            # Units: real_s/user_s/sys_s are seconds. failures = product
+            # failures only; killed_by_bound (timeout/cgroup/contention) and
+            # incomplete (run cut off) are separate columns, not folded in.
             w.writerow(["time", "slot", "commit", "profile", "result",
-                        "checks", "failures", "real_s", "user_s", "sys_s",
+                        "checks", "failures", "killed_by_bound", "incomplete",
+                        "real_s", "user_s", "sys_s",
                         "source", "profiling_linked", "log_file"])
             for r in runs:
                 w.writerow([
                     r.get("started_at") or r.get("finished_at"), r.get("slot"),
                     r.get("commit"), r.get("profile"), r.get("result"),
-                    r.get("checks"), r.get("failures"), r.get("real_seconds"),
+                    r.get("checks"), r.get("failures"),
+                    r.get("killed_by_bound"), r.get("incomplete_gates"),
+                    r.get("real_seconds"),
                     r.get("user_seconds"), r.get("sys_seconds"), r.get("_source"),
                     bool(r.get("_profiling")), r.get("log_file")])
         print(f"wrote CSV -> {args.csv}")

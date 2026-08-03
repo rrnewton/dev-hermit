@@ -66,6 +66,7 @@ jobs:
             ci-hub/lib/tests \
             ci-hub/remediation/tests \
             ci-hub/runners/tests \
+            ci-hub/validate/tests \
             ci-hub/tests; do
             timeout --signal=KILL 1m \
               python3 -m unittest discover -s "$suite" -p "test_*.py"
