@@ -1,331 +1,350 @@
-# Related Work: Resource-Aware CI Execution and Untrusted-Compute Containment
+# Survey: Resource-Aware DAG Scheduling and Resource Containment
 
-_Survey for task `safe-ci-dag-runner-related-work-survey`, 2026-08-03._
-_Grounded in the runner source at dev-hermit `agent-utils/{rs,py}/safe(_)ci(_)dag(_)runner/` and the boxing proposal `ai_docs/enshrine-box-all-untrusted-compute-proposal.md`._
+_Updated 2026-08-03. Claims about the local prototype are bound to dev-hermit
+`c5f57f7`, agent-utils `81614e6`, and the Hermit gitlink `3e4367e`._
 
-We are about to invest heavily in `safe-ci-dag-runner` — library mode, cgroup
-boxing on by default, and using it as the sole execution substrate for CI /
-validation / benchmark compute — having **never surveyed the prior art on the
-CI-execution side**. We have surveyed deterministic Linux boot, virtual time
-(Kendo/dettrace/DThreads/dOS/Determinator), and gVisor systrap; nothing on
-resource-aware build/test scheduling or untrusted-compute boxing. This document
-fixes that gap and answers one blunt question up front: **where does a mature
-tool already do what we are building, so "extend the library as needed" does not
-quietly become "reimplement nsjail, worse"?**
+The Hermit project is about to invest substantially in `safe-ci-dag-runner`:
+using it as the common execution layer for CI, validation, experiments, and
+benchmarks. The project has surveyed deterministic Linux execution, virtual
+time, and syscall-interception systems, but not resource-aware build/test
+scheduling. This survey fills that gap and asks one blunt question: **which
+mature systems already implement the scheduling, learning, and
+resource-control algorithms that Hermit needs?**
 
-**The spine of this survey is a feature checklist (§2): rows = every capability we
-have built or discussed, columns = our honest status + the closest prior art +
-a STEAL / DIVERGE / GENUINELY-NOVEL verdict.** It is deliberately not a tool tour;
-it answers, per capability, "how does a mature system already do this, and should
-we copy it or diverge?" §0 states our baseline; §1 profiles each surveyed system
-once (referenced from the table); §3 is the blunt bounded finding.
+Two different problems are in scope:
 
-We survey two families of prior art:
+1. **DAG scheduling:** choose which dependency-ready step runs next, subject to
+   finite CPU, memory, and named resources.
+2. **Resource containment:** keep trusted but potentially faulty project code
+   from running forever, leaking all memory, or creating an unbounded number of
+   processes.
 
-- **Family A — resource-aware build/test DAG schedulers**: Bazel, Buck2, BuildXL,
-  Pants, cargo-nextest, Nix, Please, Taskcluster. How do they separate scheduler
-  WIDTH from resource QUOTA from CORE-BUDGET, express per-node demand, and profile?
-- **Family B — containment for untrusted compute**: nsjail, systemd-run `--scope`,
-  raw cgroup-v2, bubblewrap, Firejail, gVisor. How do they enforce, KILL CLEANLY
-  on breach, and ATTRIBUTE a breach?
+Resource containment is not a security sandbox. The code being run is trusted;
+only its resource use is not. This survey therefore does not treat filesystem,
+network, namespace, or syscall isolation as requirements. Tools such as nsjail,
+bubblewrap, and gVisor solve a broader security problem.
 
-Our own status vocabulary in the table is exact: **IMPLEMENTED** (exists and is
-actually enabled in a real workflow/manifest/cron), **BUILT-UNUSED** (works but
-nothing in production engages it), **PARTIAL**, **PLANNED** (design/branch only,
-not on `main`), **ABSENT**. The BUILT-UNUSED/PLANNED distinction is load-bearing:
-several of our headline features are coded but dark.
+The systems compared are BuildXL, Bazel, Buck2, cargo-nextest, Pants, Nix,
+Please, and Taskcluster. Linux cgroup v2 and systemd are considered separately
+as enforcement mechanisms rather than schedulers.
 
----
+## 1. Terms and evaluation questions
 
-## 0. What we actually built (the baseline the prior art is measured against)
+A **directed acyclic graph (DAG)** contains steps and dependency edges. A step
+is **ready** when all its dependencies have completed. A scheduler then applies
+two kinds of policy:
 
-Before comparing, state our real requirements precisely — from the source, not
-the brief — because the comparison is only useful against the concrete model.
+- **Priority:** which ready step should run first?
+- **Admission:** does that step fit the resources still available?
 
-### 0.1 The three concurrency/quota gates conflated as "-j 2"
+The resource terms used below are deliberately distinct:
 
-The `-j 2` confusion — "we thought we had no scheduler when we had one
-configured to two lanes" — is really a conflation of **three independent gates**,
-all live in `scheduler.rs`:
+- **Outer width:** the maximum number of steps running concurrently.
+- **Step demand:** the CPU, memory, or named-resource amount a step claims.
+- **Resource capacity:** the total amount of one resource available to the DAG.
+- **Inner width:** the parallelism used inside a step, such as `cargo -j 8`.
+- **Outer resource envelope:** the CPU and memory assigned to an entire DAG.
 
-1. **Outer scheduler WIDTH** — `jobs` (`-j` / `CI_DAG_JOBS`). The greedy
-   longest-processing-time (LPT) ready-set loop launches steps until
-   `running.len() >= jobs`. This is the single number people saw and mistook for
-   the whole story.
-2. **Named-resource QUOTA** — each `Step` declares `hint.resources` DEMAND (a
-   `BTreeMap<String,i64>`, e.g. `{"hermit_guest":1}`); `DagConfig.resource_caps`
-   is the per-resource CAP. `res_free()` refuses to launch a step whose demand
-   would push summed concurrent demand over the cap. This is a **second,
-   independent admission gate** — `hermit_guest:1` serializes all hermit-guest
-   steps *regardless* of how wide `-j` is (intentional PMU-contention safety in
-   the shared CI DAG).
-3. **CPA core-budget** — `core_budget` (`P`): the summed inner-parallelism
-   (`preferred_inner_jobs`) of concurrently running steps must not exceed `P`
-   (`cores_free()`), with a "run alone if wider than the whole budget" escape so
-   it never deadlocks.
+For each scheduler, the central question is not whether it can emit a profile.
+It is whether the next run **learns from prior runs**:
 
-Plus two finer knobs: **inner width** (`preferred_inner_jobs` → the step's own
-`-j` fan-out, appended to its command) and **memory-aware sizing**
-(`step_mem_cap_bytes` = `hard_mem_max_bytes`, else `rss_baseline_bytes *
-mem_cap_factor`, floored) which becomes the cgroup `memory.max`.
+1. What measurements persist?
+2. How are those measurements converted into an expected cost?
+3. Which scheduling decision changes because of that expectation?
 
-So WIDTH (gates 1, 3, inner) and QUOTA (gate 2, memory) are genuinely distinct
-axes in our model — the design lesson we want to check against prior art is
-whether the mature tools keep them distinct or also collapse them.
+Build caches are not a learned cost model. A cache can remove completed work
+from the next run without predicting the cost of the work that remains.
 
-### 0.2 The containment mechanism (`cgroup.rs`)
+## 2. Scheduling algorithms and cross-run learning
 
-Two-level cgroup-v2 boxing, default-ON in the `run` CLI:
+### 2.1 Comparison
 
-- **Outer:** re-exec inside a transient `systemd-run --user --scope` with
-  `Delegate=yes`, `MemorySwapMax=0`, optional `CPUQuota`, under a shared
-  `safe-ci.slice` whose aggregate `CPUQuota` (~90% of cores) bounds the SUM
-  across concurrent runs.
-- **Inner:** carve one child cgroup per step; the step's bash leader self-moves
-  (`echo $$ > cgroup.procs`) BEFORE forking, so every descendant inherits the
-  cgroup at fork.
-- **Enforce:** per-step `memory.max` + `memory.swap.max=0` (OOM-kill at cap),
-  `cpu.max` (rate).
-- **Clean kill:** `cgroup.kill` = atomic SIGKILL of the whole subtree, catching
-  `setsid`/double-fork escapees a process-group kill misses; `killpg` follows as
-  belt-and-suspenders; a normal-exit backstop reaps leftover step cgroups; a
-  SIGINT/SIGTERM handler tears the whole outer scope down.
-- **Attribution:** `memory.events` `oom_kill` count → `step_failure_reason`
-  precedence OOM > timeout > pids-guard > signal > exit, surfacing
-  `OOM-KILLED (hit inner MemoryMax; N oom_kill event(s))`; plus per-step
-  `memory.peak`, `cpu.stat`, `cpu.pressure` (PSI avg10/avg60), `cgroup.threads`
-  as profiling rows.
-- **No silent failure:** every degraded cgroupfs write emits a visible `warn`;
-  on a host without cgroup-v2 + a systemd `--user` scope the runner refuses to
-  run advisory-only (exit 3) unless `--allow-cgroup-failure`.
+| System | Current-run scheduling algorithm | Learns cost from prior runs? | Persisted model and scheduling effect |
+|---|---|---:|---|
+| **BuildXL** | Assigns each process, called a *pip*, a bottom-level priority: its expected duration plus the longest expected downstream path. The highest-priority ready pip runs first. Admission also observes process slots, pip weights, semaphores, and projected memory. | **Yes** | Persists per-pip execution/run duration, maximum duration, CPU utilization, peak/average working set, and disk I/O. New observations are merged 50:50 with the old average and entries have a time-to-live. Historical duration replaces the file-count heuristic in critical-path priority; historical CPU becomes a process-slot weight; historical RAM throttles admission. |
+| **Bazel** | Executes dependency-ready actions subject to a fixed job count and declared local resource pools. Rule implementations provide action resource estimates. Dynamic execution can race a local and remote copy of the same action. | **No documented cross-run cost feedback** | The JSON trace records one invocation for post-run diagnosis: action durations, critical path, concurrent actions, CPU, memory, load, and optional network data. Bazel's documentation tells the operator to inspect or compare traces; the next scheduler invocation does not read the trace to predict action cost. |
+| **Buck2** | Uses the current dependency graph, executor choice, a machine-permit semaphore, optional percentage weights, named mutual-exclusion tokens, and exclusive-host requests. Event logs can reconstruct the critical path after a build. | **No documented cross-run cost feedback** | Event logs and `buck2 log` are observability inputs. Public Buck2 does not document a persisted per-action duration or memory model that changes the next run's ready queue or permit request. Caches and incremental computation reduce the work set, but do not estimate the remaining actions' cost. |
+| **cargo-nextest** | Runs ready test binaries under a global test-thread budget. A test may require multiple threads and may also belong to a test group with its own concurrency ceiling. | **No** | Reports test duration and can emit JUnit data, but does not use a retained duration history to prioritize the next run. Thread demands and group membership come from configuration. |
+| **Pants** | The rule engine schedules available processes. Local parallelism is a configured global capacity; a process may request an exact/ranged concurrency value or exclusive access. | **No documented cross-run cost feedback** | Execution-log entries, called *workunits*, support diagnosis. Process concurrency is declared for the current run, not learned from retained duration or memory samples. Pants' caches remove work rather than reprioritize remaining work by learned cost. |
+| **Nix** | Builds dependency-ready build units, called *derivations*, up to `max-jobs`. Each derivation receives a `cores` hint for its own internal build, but Nix does not sum those hints into a host CPU budget. | **No** | The Nix store and cached results, called *substitutes*, avoid already-built derivations. Nix does not retain per-derivation duration or memory measurements to order uncached derivations. |
+| **Please** | Walks the current build graph with a fixed worker-thread count. | **No documented cross-run cost feedback** | Build caches avoid repeated work. No public profile-driven duration, memory, or critical-path model changes the next schedule. |
+| **Taskcluster** | Queues independent tasks by priority/deadline and assigns them to compatible worker pools. Worker Manager can grow or shrink a pool from queue demand. | **Not at per-task DAG-cost level** | Operational history can drive pool autoscaling, but Taskcluster does not learn a per-node cost model for one DAG. Scaling changes worker count; it does not reprioritize a DAG using learned step duration or memory. |
 
-**Known gap (from our own audit):** we enforce a WALL timeout + `cpu.max` RATE,
-but there is **no per-step CPU-TIME budget** (total CPU-seconds). Two other gaps:
-the GitHub portable lane bypasses the runner via raw `bash` (`ci/run-node.sh`),
-and the Python library entry point defaults to `NoopCgroups`.
+### 2.2 BuildXL: the clearest profile-driven scheduler
 
----
+BuildXL answers the profile-driven scheduling question directly. Before
+execution it computes a priority for every pip. That priority represents the
+expected time from the pip through the longest downstream chain. When multiple
+pips are ready, the highest value runs first. Without history, BuildXL estimates
+duration from declared input and output counts. After a build, it serializes
+actual per-pip runtimes; future builds use those runtimes instead.
 
-## 1. The surveyed systems (one profile each)
+The retained record is broader than duration. `ProcessPipHistoricPerfData`
+stores execution and total run duration, maximum observed duration, CPU use as
+a percentage of one processor, peak and average working set, and disk I/O.
+Each new record is merged with the old record using equal old/new weight. An
+entry also ages out through a time-to-live counter.
 
-Cited by the feature table in §2. Primary sources in-line.
+That history changes three decisions:
 
-### Family A — resource-aware build/test DAG schedulers
+1. **Ready-queue priority:** historical duration weights the downstream
+   critical-path calculation.
+2. **CPU admission:** historical average CPU use can become the pip's `weight`;
+   concurrent weights may not exceed the process-slot budget.
+3. **Memory admission:** projected historical working sets can stop new pips
+   from launching before the machine reaches its RAM threshold.
 
-- **BuildXL** (Microsoft) — *the strongest overall match.* Implements all three
-  gates as distinct concepts: `/maxProc` = WIDTH; per-pip **`weight`** = CORE-BUDGET
-  ("total weight of concurrent processes must be < process slots"; `weight ≥
-  maxProc` ⇒ run alone; can be **dynamic from historic CPU** via
-  `/UseHistoricalCpuUsageInfo`); and `acquireSemaphores?: SemaphoreInfo[]` where
-  `SemaphoreInfo = {name, limit, incrementBy}` — a **named** resource, per-pip
-  **variable demand** (`incrementBy`), per-name **cap** (`limit`), with
-  `Contract.Requires(value ≤ limit)` — exactly our gate-2. `acquireMutexes` =
-  the limit-1 sugar. RAM-based throttling + historic-runtime critical-path
-  prioritization; filesystem sandbox w/ timeouts. (Pip-Weight.md,
-  Transformer.Execute.dsc, ProcessSemaphoreInfo.cs, Scheduler-Prioritization.md.)
-- **Bazel** — *strongest for boxing + profiling.* `--jobs` (WIDTH) is orthogonal
-  to `--local_resources name=value` pools: `--local_cpu_resources` (core budget),
-  `--local_ram_resources`, and `--local_extra_resources` = **arbitrary named
-  pools** (our `hermit_guest:1`). Per-action demand via Starlark `resource_set`
-  callback `(os,num_inputs)->{cpu,memory,local_test}` or test **tags**
-  (`cpu:3`, `resources:<name>:<n>`). Per-action cgroup boxing:
-  `--experimental_sandbox_limits`, `--experimental_sandbox_memory_limit_mb`,
-  `--experimental_sandbox_enforce_resources_regexp` (turns a declared request into
-  an enforced cgroup limit + OOM-kill), `--experimental_cgroup_parent`. **JSON
-  trace profile** (`--profile`): per-action `dur`, an in-flight `action count`
-  row, a CPU-usage counter row — `jq`-queryable. Affected-test selection is exact
-  (it owns the build graph). Flaky handling = `--runs_per_test` /
-  `--flaky_test_attempts` (retry-to-tolerate).
-- **cargo-nextest** — *closest same-ecosystem analogue.* Cleanly separates all
-  three: `--test-threads` (WIDTH) vs per-test `threads-required = N|"num-cpus"`
-  (CORE-BUDGET weight vs the global budget) vs `[test-groups] name={max-threads}`
-  + `filter`/`test-group` (a **named cap**, `max-threads=1` = mutex). A test
-  consumes within *both* global and group limits. Slow-timeout + retries; no
-  cgroup metering; "resource" unit is always threads (no arbitrary named cap like
-  BuildXL).
-- **Buck2** — WIDTH `--num-threads`; hybrid local/remote executor. Named quota =
-  `LocalResourceInfo` (**tests only**): a setup command emits N concrete
-  instances as a "pool of homogeneous local resources"; the scheduler leases one
-  and injects it as an env var (`IDB_COMPANION=…`). No documented global CPU/RAM
-  or inner-`-j` budget for local build actions (leans on RE Platform properties +
-  `resource_units`). `buck2 log what-ran` / critical-path; Starlark-only profiler;
-  per-action local cgroup boxing not in public docs.
-- **Pants v2** — global `process_execution_local_parallelism` (≈ combined
-  width/core budget); per-process `ProcessConcurrency {exactly|range|exclusive}`
-  with `{pants_concurrency}` **templated into argv** and range-processes
-  preemptible. No user-facing named quota beyond cores.
-- **Nix** — only two *global* knobs: `max-jobs` (WIDTH) and `cores`
-  (`NIX_BUILD_CORES` per-derivation hint); explicitly **no summed core budget**
-  ("max consumed cores = max-jobs × cores", oversubscription is the user's
-  problem). Distributed builds route by `requiredSystemFeatures` vs a machine's
-  `supportedFeatures`/`mandatoryFeatures` = **capability matching, not a quota**.
-- **Please** — global `NumThreads` only; no per-target demand/quota/budget.
-  Weakest.
-- **Taskcluster** — cluster-scale: per-worker `capacity` (WIDTH) distinct from
-  autoscaled pool min/max ceilings; resource-fit by **routing to a sized worker
-  pool** (`taskQueueId`), not a scheduler quota. Scopes = authorization, not
-  resource quota. Strong per-task VM/container isolation.
+This is genuine closed-loop scheduling, not merely profile visualization.
+Primary sources: [schedule prioritization](https://github.com/microsoft/BuildXL/blob/main/Documentation/Wiki/Advanced-Features/Scheduler-Prioritization.md),
+[pip weight](https://github.com/microsoft/BuildXL/blob/main/Documentation/Wiki/Advanced-Features/Pip-Weight.md),
+[historical record](https://github.com/microsoft/BuildXL/blob/main/Public/Src/Engine/Scheduler/ProcessPipHistoricPerfData.cs),
+and [memory throttling](https://github.com/microsoft/BuildXL/blob/main/Documentation/Wiki/Advanced-Features/Performance-Tuning.md#memory-throttling).
 
-### Family B — containment for untrusted compute
+### 2.3 Bazel: profiling is diagnostic, not scheduler feedback
 
-- **raw cgroup-v2** — *validates our mechanism.* `cgroup.kill` = atomic subtree
-  SIGKILL, migration-proof (catches `setsid`/double-fork escapees a killpg
-  misses) — exactly our choice. Full attribution fields we already read
-  (`memory.events` oom_kill, `memory.peak`, `cpu.stat`, `cpu.pressure` PSI,
-  `cgroup.threads`). **No native CPU-time kill** (use RLIMIT_CPU); `memory.oom.group=1`
-  and `cpu.stat` nr_throttled/throttled_usec are worth adding.
-- **systemd-run `--scope`** — our exact outer mechanism: transient scope,
-  `Delegate=yes`, cgroup-v2 directives; `RuntimeMaxSec` = **wall** (no CPU-seconds);
-  `Result=oom-kill` + `MemoryPeak` = clean attribution.
-- **nsjail** — *the "are we reimplementing this, worse?" benchmark.* One
-  cgroup-per-exec enforcer: writes cgroup files directly
-  (`cgroup_mem_max`→memory.max, etc.), CLONE_NEWPID kill (not `cgroup.kill`),
-  **`rlimit_cpu` = RLIMIT_CPU CPU-seconds = exactly our missing gap, for free** —
-  but **ZERO cgroup-counter attribution** (no memory.peak/events/cpu.stat), and it
-  *is* a real sandbox (namespaces/seccomp/mount/net) which we are **not**.
-- **Firejail** — rlimits (`--rlimit-cpu` CPU-seconds kill, `--timeout` wall);
-  **`--cgroup=` was REMOVED**; weak attribution; SUID liability. Steal the
-  wall-timeout + CPU-seconds-kill ergonomics only.
-- **bubblewrap** — namespace/FS sandbox, **NO cgroup resource limits** (delegates
-  to caller); strong PID-1 **reaper** clean-kill; `--die-with-parent`. Steal the
-  PID-namespace-init reaper as a clean-kill backstop.
-- **gVisor** — syscall-interception app-kernel (a *different axis*); delegates
-  resource limits to host cgroups (literally our approach); memfd/shmem
-  accounting trap (don't key attribution on `anon`); high per-step overhead =
-  wrong tool for short CI steps.
+Bazel's profile is easy to misread as an input to its scheduler. It is not.
+`--profile` writes a trace of the current invocation. The trace helps a human or
+an external tool identify the critical path, insufficient parallelism, expensive
+actions, CPU pressure, memory growth, worker behavior, and network use. Bazel's
+own performance guide recommends collecting and comparing traces when wall time
+regresses.
 
----
+For the next invocation, local scheduling still uses the current build graph,
+`--jobs`, configured local capacities, and resource estimates supplied by rules
+or test tags. Bazel does not document reading the previous JSON trace to infer a
+duration distribution, memory percentile, or priority. Its strong incremental
+cache can make the next build much smaller, but the remaining actions are not
+ordered by a learned profile.
 
-## 2. Feature checklist (the spine)
+Primary sources: [JSON trace profile](https://bazel.build/advanced/performance/json-trace-profile),
+[performance analysis](https://bazel.build/advanced/performance/build-performance-breakdown),
+and [`ResourceManager`](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/actions/ResourceManager.java).
 
-Rows = our capabilities. **Us** = honest status (§ vocabulary). **Closest prior
-art** names the system(s) and how they do it. **Verdict**: STEAL (copy it),
-DIVERGE (do it differently, with reason), or NOVEL (no adequate prior art). Our
-status evidence is from a file:line audit of the pinned tree.
+### 2.4 Buck2: strong current-run resource arbitration, no public feedback loop
 
-### 2.1 Resource control / boxing
+Buck2 has a useful host-sharing abstraction. A command can request a fixed
+number of permits, a percentage of machine permits, exclusive access, or one of
+several named tokens. A semaphore admits commands under a fixed permit count.
+This is a current-run capacity model; the request is supplied by the command,
+not learned from its earlier CPU or memory use.
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| cgroup-v2 boxing default-on in `run` | **PARTIAL** — default-on in the CLI (`cgroup.rs`), but the **required** portable gate bypasses the runner via raw `bash` (`ci/run-node.sh`); only the non-required privileged lane actually boxes | Bazel per-action cgroup (`--experimental_sandbox_limits`, `--cgroup_parent`); systemd-run `Delegate=yes` scope (our exact outer); nsjail writes cgroup files directly | **DIVERGE** — mechanism is industry-standard (systemd/cgroup-v2); our gap is *deployment* (wire the required lane), not design |
-| opt-out default limits "1 core / 1 GB / 10 s" | **ABSENT as stated** — real defaults are 0.90 CPU fraction / 8 GiB mem floor / 600 s step timeout; opt-out = `--allow-cgroup-failure` | Bazel/systemd ship *no* implicit tiny cap; nsjail requires explicit limits | **DIVERGE** — a tiny default cap is our own policy idea; no prior art argues for it. Decide it deliberately, don't inherit |
-| `cpu_timeout` — per-step CPU-seconds budget | **PLANNED** — not on `main`; only branches `codex/cpu-time-timeout` & `origin/ci/cpu-time-rlimit-timeout`; **0/54** nodes set it | **nsjail `rlimit_cpu`** & **Firejail `--rlimit-cpu`** = RLIMIT_CPU CPU-seconds kill, for free; systemd `RuntimeMaxSec` is wall-only | **STEAL** — set `RLIMIT_CPU` via `prlimit`/`setrlimit` in the bash leader (the Rust branch already does this); the cleanest, most portable path |
-| wall timeouts (per-step + global) | **PARTIAL** — per-step on all 54 nodes (runner-native); **no** runner-native whole-run timeout (only OS `timeout`/workflow `timeout-minutes`) | Firejail `--timeout`; systemd `RuntimeMaxSec`; every CI platform | **STEAL** — add a runner-native global deadline; trivial and standard |
-| advisory memory sizing (`rss_baseline × mem_cap_factor`) | **IMPLEMENTED** (`sizing.rs`; factor 1.25, floor 8 GiB) — but advisory-only on raw-bash/Noop paths | Bazel `resource_set` memory demand; BuildXL RAM throttling | **STEAL/keep** — align with Bazel's per-action memory-demand model |
-| `--max-mem` = sizes WIDTH, not per-step MemoryMax | **IMPLEMENTED** (`sizing.rs jobs_for_budget`) — picks largest outer `-j` whose worst-case RAM fits | Bazel `--local_ram_resources` bounds concurrency by summed demand (same idea, per-pool) | **STEAL/converge** — same intuition as Bazel's RAM pool; our whole-run framing is a reasonable variant |
-| clean-kill-on-breach (`cgroup.kill` + killpg) | **IMPLEMENTED** (`cgroup.rs`) — but fires only when boxed (privileged lane) | **raw cgroup-v2 `cgroup.kill`** (our choice, migration-proof); bubblewrap PID-1 reaper; nsjail CLONE_NEWPID | **STEAL (add)** — add bubblewrap-style PID-namespace init reaper as a second backstop |
-| structured breach/attribution records | **IMPLEMENTED** (`cgroup.rs`: oom_kill, memory.peak, cpu.stat, cpu.pressure PSI, cgroup.threads) — boxed lane only | systemd `Result=oom-kill`+`MemoryPeak`; raw cgroup fields; **nsjail = ZERO attribution**; gVisor memfd/shmem trap | **NOVEL** (integration) — per-step attribution *rows folded into the DAG profile* is beyond any surveyed containment tool; **STEAL** `memory.oom.group=1` + `cpu.stat nr_throttled` as extra fields |
+Buck2 event logs preserve enough information for `buck2 log critical-path` and
+other post-run analysis. The public implementation and documentation do not
+describe feeding those event logs back into the next run's permit request or
+ready-queue priority. This conclusion is deliberately limited to public Buck2;
+it makes no claim about private deployment systems.
 
-### 2.2 Scheduling
+Primary sources: [Buck2 overview and installation](https://github.com/facebook/buck2),
+[`HostSharingBroker`](https://github.com/facebook/buck2/blob/main/host_sharing/src/host_sharing.rs),
+and [the host-sharing protocol](https://github.com/facebook/buck2/blob/main/app/buck2_host_sharing_proto/host_sharing.proto).
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| `-j` / `CI_DAG_JOBS` outer WIDTH | **IMPLEMENTED** (`cli.rs`; `-j 2` in privileged lane) | Everyone: Bazel `--jobs`, nextest `--test-threads`, Buck2 `--num-threads`, BuildXL `/maxProc` | **STEAL/standard** — keep WIDTH explicitly named and separate (the `-j 2` confusion was ours) |
-| named-resource QUOTA (`hint.resources` vs `resource_caps`) | **IMPLEMENTED** (`scheduler.rs`; `hermit_guest:1`, `manifest_guest:4`; 29/47 nodes) | **BuildXL `SemaphoreInfo{name,incrementBy,limit}`** (near-exact); Bazel `--local_extra_resources`; nextest `test-groups`; Buck2 `LocalResourceInfo` (named-instance pool w/ env handle) | **STEAL** — adopt BuildXL's `{name,incrementBy,limit}` schema verbatim (we hard-code demand=1; `incrementBy` gives variable demand); add Buck2's **handle injection** for addressable resources (a `/dev/kvm` slot, a socket) |
-| CPA core-budget `P` (Σ inner-jobs ≤ P) | **BUILT-UNUSED** (`scheduler.rs`; `core_budget` defaults `None`; no caller sets `--planner cpa`) | **BuildXL `weight`** (static or **historic-CPU-derived**); Pants `ProcessConcurrency`; Bazel `cpu` pool; nextest `threads-required` | **STEAL** — turn it on, and derive weight from **historic CPU** like BuildXL instead of hand-tuning |
-| inner width (`preferred_inner_jobs` appended to cmd) | **BUILT-UNUSED in the Hermit DAG** (mechanism in `model.*`; **0/54** nodes set it) | Pants `{pants_concurrency}` argv templating; Bazel `resource_set(num_inputs)` | **STEAL** — Pants' argv-templating + range-picking is the exact ergonomics to copy when we enable it |
-| ~54-node DAG manifest | **IMPLEMENTED** (`ci/dag/portable.json` 47 + `privileged.json` 7) | Bazel/Buck2 derive the DAG from build files; ours is hand-authored | **DIVERGE** — a hand-authored CI DAG is fine for a fixed pipeline; don't over-engineer toward a full build graph |
-| critical-path / theoretical-max | **IMPLEMENTED** (`estimates.rs` makespan `max(T_cp, area/P)`; `viz.rs`) — computed, not gating | **BuildXL** historic-runtime **critical-path prioritization**; Buck2 `log critical-path` | **STEAL** — use it to *prioritize* ready steps (order by expected downstream), not just to display |
-| widening-vs-workers distinction | **IMPLEMENTED** (docs + `scheduler.rs step_width`) | nextest `threads-required` vs `--test-threads`; Pants concurrency vs parallelism | **STEAL/validated** — the exact split nextest/BuildXL also make; keep it |
-| PMU exclusivity | **IMPLEMENTED** (`flock` + `hermit_guest:1` cap) | Nix `requiredSystemFeatures` (`benchmark`) capability routing; Bazel `exclusive` tag | **NOVEL/DIVERGE** — PMU-contention determinism is Hermit-specific; the *mechanism* (a cap of 1 + Bazel-style `exclusive` tag) is standard |
-| GitHub-Actions fan-out | **IMPLEMENTED** (`ci-portable.yml` matrix shards + `portable-shards.json` + fail-closed coverage) | Taskcluster autoscaled pools; Bazel/Buck2 remote execution farms | **DIVERGE** — we shard one DAG across ephemeral GH runners rather than a persistent RE farm; correct for our infra |
-| leaf / sub-DAG semantics | **IMPLEMENTED** (`run_dag_boxed`, `run_dag_boxed_ordered`; node-subset exec) | Bazel/Buck2 target patterns / RE partitioning | **STEAL/standard** |
+## 3. Resource containment
 
-### 2.3 Observability
+Resource containment needs four explicit axes:
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| per-node profiling history (cross-run) | **PARTIAL** — store + sync backends built (`perflog.rs`, `sync.rs`), but CI writes ephemeral `$RUNNER_TEMP` and sets no `--profile-sync` ⇒ no persistence in GH CI (persists locally) | BuildXL historic per-pip runtime store (drives prioritization); Bazel JSON trace (per-run) | **STEAL** — persist it (BuildXL proves the payoff: feed history back into weight/critical-path) |
-| cost estimate + actual | **IMPLEMENTED** (`ci-hub/lib/tool_cost.py`; `estimates.rs`) | Bazel JSON trace `dur`; BuildXL historic runtime | **STEAL/keep** |
-| live progress renderer | **PARTIAL** — line-based status stream + static ASCII/DOT (`viz.rs`); no in-place ANSI redraw in the pinned tree | **Buck2 superconsole**; Bazel `--curses` | **STEAL** — Buck2's superconsole is the reference for the in-place renderer we've designed |
-| queue depth / time-in-queue / time-since-last-green | **IMPLEMENTED** (`ci-hub/health/*.py`, tick-wired) | Taskcluster queue metrics; GitHub Actions insights | **NOVEL** (for a build-DAG tool) — build tools don't own queue health; ours is a CI-platform concern we track |
-| performance ratchet | **PARTIAL** — power-to-weight ranking (`power-to-weight.rs`), no enforcing gate | Bazel/Buck2 have none; benchmark CI (e.g. Criterion+bencher) is the closest external | **NOVEL** — an enforcing perf-ratchet on CI-node cost is not in the surveyed set |
-| green-time % | **PARTIAL** — green/red/pending counts + staleness (`github_main_health.py`); % derivable, not first-class | CI dashboards (Taskcluster); DORA-style metrics | **DIVERGE/keep** — standard reliability metric, just formalize it |
+A Linux **control group (cgroup)** is a process hierarchy to which the kernel
+applies and accounts resource limits. The controller files below are part of
+the cgroup-v2 interface.
 
-### 2.4 Test selection & correctness
+| Axis | Failure being bounded | Kernel/runner mechanism |
+|---|---|---|
+| **CPU** | A CPU-bound command runs forever or consumes more CPU than assigned | `cpu.max` limits rate; a separate cumulative CPU-time budget terminates work after a fixed amount of CPU service. A rate limit alone does not stop an infinite job. |
+| **Memory** | A process leaks or allocates until the host becomes unusable | `memory.high` applies reclaim pressure; `memory.max` is the hard ceiling and may invoke the cgroup OOM killer. |
+| **PIDs** | A command fork-bombs the host | `pids.max` rejects further forks in the cgroup. Merely enabling the pids controller is not a ceiling. |
+| **Wall time** | A command blocks, deadlocks, sleeps, or otherwise consumes little CPU forever | A generous deadline kills the full process subtree. This is a defense-in-depth backstop, not a substitute for CPU accounting. |
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| fail-open test selection | **IMPLEMENTED** (`select-tests.rs`; any doubt ⇒ full; wired into required lane; kill-switch) | Bazel/Buck2 select affected tests **exactly** from the build graph | **DIVERGE (honest)** — Bazel/Buck2 do this *precisely* for free because they own the dep graph; we **heuristically reconstruct** footprints and **fail open** because Hermit's cargo tests aren't in a build graph. Ours is a pragmatic approximation, strictly weaker than a true graph — worth stating plainly |
-| cargo-derived footprints | **IMPLEMENTED** (`test-footprints.json`) | Bazel `query rdeps` (precise) | **DIVERGE** — same as above; a footprint map is the best available without a build graph |
-| incremental-vs-total (skip/selective/full) | **IMPLEMENTED** (`select-tests.rs` trinary) | Bazel test caching (skips unaffected automatically) | **DIVERGE** |
-| commit-anchoring (`--base origin/main`) | **IMPLEMENTED** | Standard `git diff base…HEAD` in CI selection everywhere | **STEAL/standard** |
+Applying these limits is mechanically straightforward: cgroup v2 exposes the
+control files, and `systemd-run --user --scope -p Delegate=yes` is a standard
+way to place a transient process tree inside a delegated cgroup. The difficult
+part is **coverage**: every local command, CI shard, workflow, experiment, and
+agent-spawned child must actually pass through the containment entry point.
 
-### 2.5 Flakiness
+The distinction matters. Adding a `memory.max` writer to a library does not
+contain a workflow that bypasses the library and invokes `bash` directly. A
+deprecated `--cgroups` flag also proves nothing by its presence or absence when
+the CLI already enables containment by default. Coverage must be established by
+following each launch path and reading back the applied limits.
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| matched-load probing | **IMPLEMENTED** (`ci-hub/stress/matched-burst.sh` → multisect `matched.sh`; nightly) | **None** surveyed co-schedule subjects under matched instantaneous load; Bazel `--runs_per_test` just repeats in isolation | **NOVEL** |
-| validity calibrator | **IMPLEMENTED** (`matched-burst.sh`; a wave counts only if a known-flaky binary flakes) | **None** — no surveyed tool proves its probe was powerful enough before trusting a clean result | **NOVEL** — the strongest genuinely-novel item in the survey |
-| trinary flaky-is-red | **IMPLEMENTED** (any hang ⇒ RED) | **Opposite** of Bazel `--flaky_test_attempts` / nextest retries, which **tolerate** flakiness (pass-on-retry) | **NOVEL/DIVERGE** — deliberately inverts the industry default; the inversion is the point (determinism of outcome) |
-| nightly stress cron | **IMPLEMENTED** (crontab `30 4 * * *`, parent host) | Bazel CI `--runs_per_test` nightly jobs; general soak testing | **DIVERGE** — must run on the loaded parent host (an idle runner false-greens); the *load-dependence* is the novel constraint |
-| multisect (git-range flake bisection) | **IMPLEMENTED** (`multisect/` standalone) | `git bisect` (single-shot, no rate model); Bazel has none | **NOVEL** — rate-based (trinary) bisection of a probabilistic flake |
+The relevant mechanisms are:
 
-### 2.6 Architecture
+- **cgroup v2:** the enforcement substrate. `cgroup.kill` also terminates a
+  whole descendant tree, including processes that changed session or process
+  group. [Kernel documentation](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+- **systemd transient scopes:** create and delegate the outer cgroup without a
+  custom privileged daemon. [systemd resource control](https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html).
+- **nsjail and Firejail:** demonstrate CPU-time rlimits and other useful
+  mechanics, but their security-isolation surface is outside this project's
+  resource-containment goal.
+- **bubblewrap and gVisor:** security-isolation systems, not replacements for a
+  resource-aware DAG scheduler. Both ultimately rely on host cgroups for CPU and
+  memory ceilings.
 
-| Our feature | Us | Closest prior art (how) | Verdict |
-|---|---|---|---|
-| Rust + Python cross-differential (byte-identical) | **IMPLEMENTED** (`cross/differential.py`; CI-run parity of list/ascii/dot/json + profile schema) | **None** — surveyed tools are single-implementation | **NOVEL** — idiosyncratic to our dual-impl need; unusual and defensible |
-| library mode | **IMPLEMENTED** (`run_dag`, `Step`, `DagConfig`; defaults NoopCgroups = unboxed) | Bazel/Buck2 daemons w/ APIs; BuildXL SDK | **STEAL (caution)** — library mode is standard, but our **unboxed-by-default library entry** contradicts "box all untrusted compute" (see proposal); make boxed the default |
-| shared types | **IMPLEMENTED** (parallel `model.rs`/`model.py`, kept identical by the harness) | Protobuf/Starlark single-source schemas (Bazel/Buck2) | **DIVERGE** — a single schema source (protobuf) would be cleaner than two hand-kept types; consider it |
-| land-lock mutex | **IMPLEMENTED** (`ci-hub/landing/landing-lock.sh` flock+lease FIFO) | GitHub merge queue, Bors, **Zuul** gate pipeline | **STEAL** — look at Zuul/Bors before extending; serialized landing is well-trodden |
-| speculative-land obligations | **IMPLEMENTED** (`ci-hub.rs` typed obligation store + verifier polling) | **Zuul speculative execution** (speculative merges + dependent pipelines) is the canonical prior art | **STEAL** — Zuul is the reference design here and was **not** in the surveyed set; recommend a dedicated look before investing further |
+## 4. Integration cost
 
-Cross-cutting BUILT-UNUSED/PLANNED honesty note: our three headline scheduling
-gates are **not all live** — named-quota is real, but **CPA core-budget and
-inner-width are coded-but-dark** (no manifest node engages them) and
-**`cpu_timeout` is unmerged**. The `enshrine-box-all-untrusted-compute-proposal`
-is effectively the owner's own writeup of exactly these gaps (raw-bash bypass,
-cpu-time budget, library NoopCgroups default).
+The table separates “can run locally” from “can be embedded as a Cargo
+dependency.” They are not the same.
 
----
+| Candidate | Build/runtime dependencies | Standalone local use without remote execution | Practical integration assessment |
+|---|---|---:|---|
+| **BuildXL** | Large .NET/C# application; building requires the .NET toolchain and BuildXL's bootstrap. Runtime is a separate CLI/server ecosystem. | **Yes** on supported Windows and Linux distributions. | **High cost.** Not a Cargo library. Adopting it means translating the project into a BuildXL frontend or driving a separate process and accepting its cache/configuration model. Best used as an algorithm source. |
+| **Bazel** | Native launcher plus a Java server and Bazel rule/toolchain ecosystem; normally installed through Bazelisk or a release binary. | **Yes.** Remote execution is optional. | **High cost.** Not a Cargo library. Hermit's CI DAG would need to become Bazel targets/actions, and the repository would acquire Bazel configuration and toolchains. |
+| **Buck2** | A large Rust workspace with many internal path crates, generated code, and a *prelude* (its standard rule library). Public releases provide a standalone binary; source builds require Buck2's documented Rust/build prerequisites. | **Yes.** Remote execution is optional, although the public README states local-only actions are not currently hermetic. | **Medium-to-high as a CLI; unsuitable as a small Cargo dependency.** There is no stable embedded scheduler API, no stable release line, and the workspace is an application rather than one reusable crate. Running the binary locally is viable; embedding it would import a build system. |
+| **cargo-nextest** | Published Rust crates and a standalone Cargo subcommand. `nextest-runner` exposes the core runner but has a broad dependency set. | **Yes.** | **Low for Rust test execution, high mismatch for an arbitrary CI DAG.** It is the easiest Rust dependency here, but its unit is a test binary, not an arbitrary dependency graph of shell/build steps. |
+| **Pants** | Python launcher, Pants engine, plugins, build metadata, and usually a persistent daemon. | **Yes.** Remote execution is optional. | **High cost.** Integration means expressing Hermit work as Pants targets/rules or maintaining a process boundary. Not a Cargo dependency. |
+| **Nix** | Nix store, evaluator, daemon or single-user install, derivation language, and sandbox/store conventions. | **Yes.** | **High operational cost.** Strong reproducibility and caching, but adopting Nix to schedule this DAG changes package/build ownership rather than adding a library. |
+| **Please** | Standalone Go binary and Please build definitions. | **Yes.** | **Medium cost.** Simple local deployment, but fixed-width scheduling and no learned model provide little reason to migrate. Not a Cargo dependency. |
+| **Taskcluster** | Queue, Worker Manager, authentication, workers, backing cloud/provider services, and operational storage. | **No, not as an in-process/local DAG runner.** | **Very high cost.** Appropriate for a CI service fleet, not a library inside a developer command. |
 
-## 3. Bounded honest finding
+**Direct answer for Buck2:** it can run builds locally without remote execution
+or Meta infrastructure. It cannot reasonably be added as a small Cargo
+dependency that supplies only its scheduler. The practical adoption boundary is
+the Buck2 executable plus Buck2 project definitions and prelude.
 
-**Does a mature tool already do what we are building? For most of the resource /
-scheduling substrate — yes, and we should copy rather than invent.**
+## 5. Dynamic outer resource scaling
 
-1. **The three-gate scheduler is BuildXL, almost exactly.** `/maxProc` (width) +
-   `weight` (core-budget, static or historic-CPU) + `SemaphoreInfo{name,
-   incrementBy, limit}` (named quota) is a near-superset of our design. **Steal
-   the semaphore schema verbatim**, adopt Bazel's `name=value` pool spelling, and
-   take nextest's "consume within both global and group limits" composition rule.
-   We are *not* reimplementing this worse — but we should stop hand-rolling and
-   converge on their vocabulary. Our genuine additions are the *integration*
-   (attribution rows folded into the DAG profile) and the Hermit-specific PMU
-   determinism cap.
+Consider two independent DAGs on one machine. The first initially receives most
+of the machine. When the second arrives, an outer coordinator wants to reduce
+the first DAG's envelope so both make progress while each scheduler still sees
+a defined capacity.
 
-2. **Per-step CPU-time budget is nsjail/Firejail's `rlimit_cpu`, for free.** Our
-   `cpu_timeout` gap is solved by `RLIMIT_CPU` in the leader — no new mechanism
-   needed. The Rust branch already does the portable thing; land it.
+CPU and memory behave differently:
 
-3. **Boxing is not the hard part; deployment is.** cgroup-v2 + systemd `--scope`
-   *is* the right, standard mechanism (Bazel and systemd agree). Our real problem
-   is that the **required** lane bypasses the runner (raw bash) and the **library
-   default is unboxed** — a wiring/policy gap, not a missing capability.
+- **CPU is work-conserving.** Oversubscribing runnable work lets the kernel share
+  CPU. Updating `cpu.max` or CPU weights can make the shares explicit, but it
+  does not require each running process to resize its thread pool immediately.
+- **Memory is not work-conserving in the same way.** A process that already owns
+  20 GiB does not give back 10 GiB because its scheduler capacity changed.
+  Lowering `memory.high` induces reclaim and throttling. Lowering `memory.max`
+  below current use can reclaim or OOM-kill work, and the kernel documents that
+  convergence may take an indefinite amount of time. Safe shrinkage normally
+  means stopping admission, waiting for memory-heavy steps to finish, or
+  canceling/suspending/restarting selected steps.
+- **Most inner steps are not moldable.** A compiler launched at `-j 32` usually
+  cannot become `-j 16` in place. A new envelope changes the next admissions;
+  full effect arrives only as existing steps turn over.
 
-4. **BLUNT: what we built is NOT a sandbox.** It is a resource-governor +
-   attribution layer. It has **no namespace, seccomp, mount, or network
-   isolation** — untrusted code under it still reaches the host FS, network,
-   `/proc`, and syscalls. nsjail and bubblewrap *are* sandboxes and we are not
-   competing with them. Decide honestly which we need: if the compute is merely
-   *our own, possibly-buggy* CI steps, resource-governance + attribution is the
-   right scope and we should keep extending it (adding RLIMIT_CPU, oom.group,
-   reaper) — **not** reimplement nsjail. If any step runs genuinely untrusted
-   code, adopt **nsjail or bubblewrap per-leaf** for the isolation and keep our
-   layer for the budget/attribution on top. "Extend the library" is the right
-   call for gates 1–3, profiling, and CPU-time; it is the *wrong* call for real
-   isolation — there, adopt, don't rebuild.
+### 5.1 What the surveyed systems do
 
-5. **Genuinely novel, keep and lead with:** matched-load probing, the validity
-   calibrator, trinary flaky-is-red, and rate-based multisect. No surveyed
-   system co-schedules under matched load, proves probe power before trusting a
-   clean result, or treats flakiness as red-by-default (Bazel/nextest do the
-   opposite — retry-to-tolerate). The dual Rust/Python byte-identical harness is
-   also unusual. These are our defensible originality; the scheduler/boxing
-   substrate is not.
+| System | Can it rescale one running DAG's outer envelope? | Memory behavior |
+|---|---:|---|
+| **BuildXL** | **Partial, pressure-reactive rather than externally resizable.** It monitors actual/projected machine RAM and stops admitting pips. | When a threshold is exceeded it can cancel and retry processes; on Windows it can instead empty working sets or suspend/resume processes. This is the closest surveyed response to memory shrink, but it does not expose fair, explicit envelopes across independent BuildXL invocations. |
+| **Bazel** | **No.** `--jobs` and local resource capacities are fixed for an invocation. An external cgroup may change CPU/memory limits, but Bazel does not replan its declared capacity from that change. | No scheduler-level turnover protocol for shrinking a running invocation. |
+| **Buck2** | **No public live-resize API.** `HostSharingBroker` is created with a fixed machine-permit count. Percentage requests are percentages of that fixed count. | The source explicitly describes memory-aware weighting as future work. No memory-reclaim/turnover protocol is documented. |
+| **cargo-nextest, Pants, Nix, Please** | **No.** Their local concurrency capacities are fixed for the run. | External pressure may slow or kill work; the scheduler does not renegotiate an outer memory envelope. |
+| **Taskcluster** | **Scales the worker pool, not a running task/DAG envelope.** New workers help queued work; draining workers removes capacity after tasks turn over. | Does not reclaim memory from a running task to admit another task on the same worker. |
 
-6. **Look before investing further (not in the surveyed set):** **Zuul** for
-   speculative-land/obligations and **Bors/GitHub merge queue** for the land-lock
-   — serialized + speculative landing is well-trodden and worth a dedicated read
-   before we extend our own.
+No surveyed DAG scheduler fully implements the stated two-DAG contract. Linux
+provides live cgroup knobs, but a higher-level broker must connect them to
+scheduler admission and step turnover.
+
+### 5.2 Recommended outer broker
+
+A minimal design should keep one machine-wide broker above all DAG runs:
+
+1. Give each DAG an explicit CPU share and memory ceiling.
+2. On a new arrival, change CPU shares immediately; allow normal CPU
+   oversubscription rather than waiting for steps to resize.
+3. For memory, first lower the DAG scheduler's capacity so it launches no new
+   steps that exceed the new envelope.
+4. Wait a bounded interval for running steps to turn over. Use `memory.high` to
+   signal pressure, not as proof that memory has been reclaimed.
+5. If capacity is still required, apply a declared policy: cancel/retry a
+   restartable step, suspend a chosen process tree, or reject/delay the new DAG.
+   Do not silently lower `memory.max` and call the result graceful scaling.
+6. Read back cgroup usage and expose the transition state so the outer planner
+   knows the requested envelope is not yet the effective footprint.
+
+BuildXL's stop-admitting plus cancel/suspend policy is the best algorithmic
+reference for the memory half. cgroup v2 supplies the enforcement and
+measurement, but not the turnover policy.
+
+## 6. Recommendation
+
+Do not adopt a full build system solely to replace `safe-ci-dag-runner`. Buck2
+can run locally, but importing Buck2 as a Cargo dependency is not a realistic
+small integration. Bazel, BuildXL, Pants, Nix, and Taskcluster have still larger
+repository or operational ownership costs.
+
+Continue the focused runner, but copy the mature algorithms rather than merely
+their vocabulary:
+
+1. **Use BuildXL's closed loop:** learned per-step duration for bottom-level
+   priority, learned CPU demand for admission weight, and a conservative memory
+   estimate for admission.
+2. **Keep Bazel-style profiles as evidence, not as a model by themselves:** the
+   document must state exactly how retained measurements become estimates and
+   which decision consumes them.
+3. **Use BuildXL's memory-pressure response as the starting point for outer
+   rescaling:** stop admission first; then explicitly cancel, suspend, or wait.
+4. **Keep resource containment narrow:** CPU, memory, PIDs, cumulative CPU time,
+   wall backstop, full-tree teardown, and attribution. Do not grow namespace or
+   syscall isolation unless the trust model changes.
+5. **Prove launch-path coverage:** a feature is deployed only when every claimed
+   path invokes it and the applied cgroup limits are read back.
+
+The distinctive project-specific work is the combination of retained
+resource-attribution data with deterministic validation, matched-load flaky
+testing, and rate-aware multisect. The basic scheduler and cgroup mechanisms
+are established prior art.
+
+## 7. Current prototype status
+
+[`safe-ci-dag-runner`](https://github.com/rrnewton/agent-utils/tree/81614e69bb556da5d2d1008d350b8e7c79578142/rs/safe-ci-dag-runner)
+is a small DAG runner in the
+[`rrnewton/agent-utils`](https://github.com/rrnewton/agent-utils) repository. It
+ships both a Rust crate/binary and a
+[Python package](https://github.com/rrnewton/agent-utils/tree/81614e69bb556da5d2d1008d350b8e7c79578142/py/safe_ci_dag_runner).
+A DAG declares commands, dependencies, duration and memory hints, inner
+parallelism, and named-resource demands. The runner executes ready steps
+concurrently and records per-step resource data. The
+[`USER_GUIDE`](https://github.com/rrnewton/agent-utils/blob/81614e69bb556da5d2d1008d350b8e7c79578142/common/docs/safe-ci-dag-runner/USER_GUIDE.md)
+is the source-level interface description.
+
+Its scheduling algorithms are real, not aspirational:
+
+- `greedy-lpt` applies longest-processing-time-first ordering: the ready step
+  with the longest estimated duration is considered first.
+- `critical-path` computes each step's longest expected downstream path and
+  orders ready work by that bottom-level value.
+- `cpa` (critical-path-and-area planning) uses measured speedup curves to choose
+  inner widths, then applies critical-path list scheduling under CPU, memory,
+  and named-resource limits.
+
+It also has a genuine cross-run feedback model. For each step and inner width,
+the profile store records wall time, contention, CPU seconds, effective cores,
+throttling, and peak memory. Duration is a contention-adjusted robust median
+(the minimum while fewer than three samples exist, then a median trimmed by
+median absolute deviation, or MAD).
+Memory is the nearest-rank 90th percentile. Multi-width samples form a speedup
+curve with work-conservation guards. Learned duration changes LPT/critical-path
+priority; when a memory budget is supplied, learned memory changes
+memory-aware sizing and admission; speedup curves change the CPA inner-width
+allocation. A bounded 64-sample-per-bucket summary can be merged and
+synchronized across machines.
+
+The remaining gap is deployment coverage, not absence of scheduling code:
+
+- At agent-utils `81614e6`, both Rust and Python implement default-on cgroup CPU
+  rate and memory containment plus performance logging. `--cgroups` is a
+  deprecated no-op because the CLI already attempts containment; its absence at
+  a call site is not evidence that containment is off. Library callers can
+  still select the no-op cgroup implementation explicitly.
+- Rust implements cgroup containment and performance logging at this revision.
+  CPU-time enforcement, however, is currently Python-only; Rust preserves the
+  schema but records `cpu_timed_out=false`.
+- The Hermit tree at `3e4367e` has 53 DAG nodes. All 53 declare wall timeouts and
+  hard-memory hints; **0 of 53 declare `cpu_timeout`**.
+- Authoritative portable GitHub CI still runs those nodes through
+  `ci/run-node.sh`, which extracts commands and invokes `bash` directly. That
+  path bypasses runner scheduling, containment, wall deadlines, and profiling.
+  Privileged CI and local full validation do invoke the runner.
+- Neither implementation writes `pids.max`. The pids controller is enabled and
+  failure-reporting types mention a PID guard, but the scheduler currently
+  passes `pids_guard_tripped=false`. Fork-bomb containment is therefore absent.
+- The local profile reader/writer and shared-summary synchronization mechanisms
+  exist, but the Hermit CI paths do not yet provide a complete persistent
+  feedback loop for every run.
+
+The current prototype is therefore a capable learned DAG scheduler and partial
+resource-containment engine with incomplete launch-path coverage. It is **not a
+security sandbox**, and it should not be presented as one.
