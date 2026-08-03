@@ -320,7 +320,7 @@ fn main() {
     eprintln!("expansion-dag: evidence run dir -> {}", run_dir.display());
     eprintln!("expansion-dag: run it with 229's safe-ci-dag-runner, e.g.:");
     eprintln!(
-        "  {}/agent-utils/rs/safe-ci-dag-runner/target/release/safe-ci-dag-runner run \\\n    --dag {} --cgroups --max-mem <BUDGET>",
+        "  {}/agent-utils/rs/safe-ci-dag-runner/target/release/safe-ci-dag-runner run \\\n    --dag {} --max-mem <BUDGET>",
         repo.display(),
         dag_path.display()
     );
