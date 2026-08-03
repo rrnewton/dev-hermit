@@ -193,27 +193,72 @@ fn dirty(path: &Path) -> Option<String> {
     }
 }
 
-/// Number of commits on HEAD not reachable from its upstream. Returns None when
-/// the worktree is absent. Returns Some(n>0) when there are unpushed commits, and
-/// -1 (as Some) when there is no configured upstream at all (also "unpushed").
-fn unpushed(path: &Path) -> Option<i64> {
+/// Authoritative "is this worktree's committed work durable on origin?" check.
+///
+/// Verifies the worktree's HEAD against `origin` via `git ls-remote` (the same
+/// authoritative check the fleet sweep uses), NOT `@{upstream}` — a branch cut
+/// from `origin/main` tracks `origin/main`, so an `@{upstream}` count wrongly
+/// flags already-pushed feature commits. HEAD is durable iff origin carries the
+/// branch at exactly HEAD, or origin is strictly ahead of HEAD (all our commits
+/// are reachable from the remote tip).
+///
+/// Returns None when the work is safe (durable on origin, absent, or a detached
+/// checkout parked at a pinned gitlink). Returns Some(reason) when committed work
+/// would be lost by removal.
+fn missing_on_origin(path: &Path) -> Option<String> {
     if !path.exists() {
         return None;
     }
-    // Detached HEAD or no branch: nothing tracked to push, treat as pushed.
+    // Detached HEAD (parked at a pinned gitlink) has no branch to push; safe.
     let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     if !ok_b || branch.is_empty() {
-        return Some(0);
+        return None;
     }
-    let (ok_up, _, _) = git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
-    if !ok_up {
-        return Some(-1); // branch exists but has no upstream -> unpushed/unrecoverable
+    let (ok_h, local_head, _) = git(path, &["rev-parse", "HEAD"]);
+    if !ok_h || local_head.is_empty() {
+        return None;
     }
-    let (ok, out, _) = git(path, &["rev-list", "--count", "@{upstream}..HEAD"]);
-    if !ok {
-        return Some(-1);
+    // Fast path: if HEAD is already an ancestor of origin/main, every commit is
+    // on origin (nothing unique to this branch) -> durable, no network needed.
+    let (on_main, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, "origin/main"]);
+    if on_main {
+        return None;
     }
-    Some(out.trim().parse::<i64>().unwrap_or(0))
+    // Query origin authoritatively (network; with-proxy).
+    let out = Command::new("with-proxy")
+        .arg("git")
+        .arg("-C")
+        .arg(path)
+        .args(["ls-remote", "origin", &format!("refs/heads/{branch}")])
+        .output();
+    let remote_sha = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string(),
+        Ok(_) => return Some(format!("branch '{branch}' ls-remote failed (treat as unpushed)")),
+        Err(e) => return Some(format!("branch '{branch}' ls-remote could not run ({e})")),
+    };
+    if remote_sha.is_empty() {
+        return Some(format!("branch '{branch}' does not exist on origin"));
+    }
+    if remote_sha == local_head {
+        return None; // exact match: durable
+    }
+    // Remote differs. Safe ONLY if HEAD is an ancestor of the remote tip (origin
+    // is strictly ahead and carries all our commits). This requires the remote
+    // object locally; if it is not present we cannot prove safety -> at risk.
+    let (ok_anc, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, &remote_sha]);
+    if ok_anc {
+        None
+    } else {
+        Some(format!(
+            "HEAD {} not on origin/{branch} (remote tip {})",
+            &local_head[..local_head.len().min(12)],
+            &remote_sha[..remote_sha.len().min(12)]
+        ))
+    }
 }
 
 /// Push the worktree's current branch to `origin` via with-proxy. Returns true on success.
@@ -345,44 +390,62 @@ fn main() {
         }
     }
 
-    // Push-then-remove: never discard committed-but-unpushed work. Committed work
-    // survives `git worktree remove` (the branch ref stays in the primary), but if
-    // the only copy is a local branch it is not durably recoverable. So --clean
-    // requires every slot branch pushed, unless --push (push now) or --force.
+    // PRE-RECYCLE GUARDRAIL — push-then-remove: never discard committed-but-unpushed
+    // work. Committed work survives `git worktree remove` (the branch ref stays in
+    // the primary), but a purely-local branch is not durably recoverable if the box
+    // dies. So --clean REFUSES to release a slot whose HEAD is not on origin
+    // (verified authoritatively via git ls-remote), unless --push (push-then-verify)
+    // or --force (explicit override, discards durability guarantee).
     if clean {
-        let mut any_unpushed = false;
-        for (label, p) in [
+        let children = [
             ("hermit", &hpath),
             ("reverie", &rpath),
             ("liteinst2", &lpath),
-        ] {
-            match unpushed(p) {
-                Some(n) if n > 0 => {
-                    any_unpushed = true;
-                    eprintln!("⚠  {label} worktree has {n} unpushed commit(s).");
-                }
-                Some(-1) => {
-                    any_unpushed = true;
-                    eprintln!("⚠  {label} worktree branch has no upstream (nothing pushed).");
-                }
-                _ => {}
+        ];
+        let mut at_risk: Vec<&str> = Vec::new();
+        eprintln!("pre-recycle guardrail: verifying committed work is on origin (git ls-remote)...");
+        for (label, p) in children {
+            if let Some(reason) = missing_on_origin(p) {
+                at_risk.push(label);
+                eprintln!("⚠  {label}: {reason}");
             }
         }
-        if any_unpushed {
+        if !at_risk.is_empty() {
             if push {
-                println!("--push: pushing slot feature branches (with-proxy)...");
+                println!("--push: pushing at-risk slot branches (with-proxy)...");
                 let mut push_ok = true;
-                for p in [&hpath, &rpath, &lpath] {
-                    if matches!(unpushed(p), Some(n) if n != 0) && !push_branch(p) {
+                for (label, p) in children {
+                    if at_risk.contains(&label) && !push_branch(p) {
                         push_ok = false;
                     }
                 }
-                if !push_ok && !force {
-                    die("one or more branches failed to push; aborting --clean (pass --force to override)");
+                // Re-verify authoritatively AFTER pushing; only proceed if now durable.
+                let mut still_at_risk: Vec<&str> = Vec::new();
+                for (label, p) in children {
+                    if missing_on_origin(p).is_some() {
+                        still_at_risk.push(label);
+                    }
+                }
+                if !still_at_risk.is_empty() && !force {
+                    die(&format!(
+                        "push-then-verify failed; still not on origin: {}. Aborting --clean (pass --force to override).",
+                        still_at_risk.join(", ")
+                    ));
+                }
+                if push_ok && still_at_risk.is_empty() {
+                    println!("✓ all slot branches verified on origin; safe to release");
                 }
             } else if !force {
-                die("refusing --clean with unpushed commits; pass --push to push-then-remove, or --force to discard");
+                die(&format!(
+                    "REFUSING to release {slot}: committed work not on origin ({}). \
+                     Pass --push to push-then-remove, or --force to discard the durability guarantee.",
+                    at_risk.join(", ")
+                ));
+            } else {
+                eprintln!("⚠  --force: releasing {slot} despite work not on origin ({}).", at_risk.join(", "));
             }
+        } else {
+            eprintln!("✓ all committed work verified on origin");
         }
     }
 
