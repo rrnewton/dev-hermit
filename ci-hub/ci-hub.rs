@@ -740,6 +740,8 @@ impl HubCommand {
             | Self::Quickstart
             | Self::CiMode(_)
             | Self::Batch(_)
+            | Self::ValidateStatus(_)
+            | Self::ApplyLocalLabel(_)
             | Self::LandLock(_) => return None,
         };
         Some(spec)
@@ -819,6 +821,16 @@ enum CiHubError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("ci-hub: cannot read validate ledger {path}: {source}")]
+    LedgerRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("ci-hub: validate-status: {0}")]
+    ValidateStatus(String),
+    #[error("ci-hub: gh {context}: {message}")]
+    Gh { context: String, message: String },
     #[error(transparent)]
     LandingLock(#[from] landing_lock::LandLockError),
 }
@@ -1185,6 +1197,8 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             }
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
+        HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::ApplyLocalLabel(args) => run_apply_local_label(root, args),
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
         HubCommand::CiMode(args) => match args.command {
             CiModeCommand::Status(status_args) => ci_mode_status(root, status_args),
@@ -2132,6 +2146,277 @@ fn run_local_history(root: &Path, args: LocalHistoryArgs) -> Result<i32, CiHubEr
         return Ok(0);
     }
     run_python(root, "ci-hub/validate/aggregate.py", forwarded)
+}
+
+/// Resolve the validate ledger path, honoring an explicit override.
+fn ledger_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
+    override_path
+        .clone()
+        .unwrap_or_else(|| root.join(validate_status::LEDGER_REL))
+}
+
+/// Load and parse the validate ledger. A missing ledger is an empty history (a
+/// commit is simply NOT validated), never an error. Unparseable lines are
+/// skipped with a warning so one bad append never blinds the whole query.
+fn load_ledger_rows(path: &Path) -> Result<Vec<HistoryRow>, CiHubError> {
+    let buf = match std::fs::read_to_string(path) {
+        Ok(buf) => buf,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(CiHubError::LedgerRead {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let (rows, skipped) = validate_status::parse_ledger(&buf);
+    if skipped > 0 {
+        eprintln!(
+            "ci-hub: validate-status: skipped {skipped} unparseable ledger line(s) in {}",
+            path.display()
+        );
+    }
+    Ok(rows)
+}
+
+/// Read a PR's current head commit via gh (`with-proxy` when available).
+fn gh_pr_head(root: &Path, repo: &str, pr: u64) -> Result<String, CiHubError> {
+    let pr_arg = pr.to_string();
+    let output = gh_command(
+        root,
+        &[
+            "pr", "view", &pr_arg, "--repo", repo, "--json", "headRefOid", "-q", ".headRefOid",
+        ],
+    )
+    .output()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh pr view".into(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(CiHubError::Gh {
+            context: format!("pr view #{pr}"),
+            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_ascii_lowercase();
+    if sha.is_empty() {
+        return Err(CiHubError::Gh {
+            context: format!("pr view #{pr}"),
+            message: "empty headRefOid".into(),
+        });
+    }
+    Ok(sha)
+}
+
+/// List open PR numbers in the repo.
+fn gh_open_prs(root: &Path, repo: &str) -> Result<Vec<u64>, CiHubError> {
+    let output = gh_command(
+        root,
+        &[
+            "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number",
+            "-q", ".[].number",
+        ],
+    )
+    .output()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh pr list".into(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(CiHubError::Gh {
+            context: "pr list".into(),
+            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok())
+        .collect())
+}
+
+/// Read a PR's current label names.
+fn gh_pr_labels(root: &Path, repo: &str, pr: u64) -> Result<Vec<String>, CiHubError> {
+    let pr_arg = pr.to_string();
+    let output = gh_command(
+        root,
+        &[
+            "pr", "view", &pr_arg, "--repo", repo, "--json", "labels", "-q",
+            ".labels[].name",
+        ],
+    )
+    .output()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh pr view labels".into(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(CiHubError::Gh {
+            context: format!("pr view #{pr} labels"),
+            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect())
+}
+
+const LOCALLY_VALIDATED_LABEL: &str = "locally-validated";
+
+/// One qualifying record rendered for human/JSON output.
+fn describe_record(row: &HistoryRow) -> serde_json::Value {
+    serde_json::json!({
+        "finished_at": row.finished_at,
+        "host": row.host,
+        "profile": row.profile,
+        "selection_mode": row.extra.get("selection_mode"),
+        "result": row.result,
+        "real_seconds": row.real_seconds,
+        "user_seconds": row.user_seconds,
+        "sys_seconds": row.sys_seconds,
+        "slot": row.slot,
+    })
+}
+
+/// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
+/// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 NOT-VALIDATED.
+fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
+    let path = ledger_path(root, &args.ledger);
+    let rows = load_ledger_rows(&path)?;
+    let sha = match (&args.sha, args.pr) {
+        (Some(input), None) => {
+            validate_status::resolve_sha(&rows, input).map_err(CiHubError::ValidateStatus)?
+        }
+        (None, Some(pr)) => gh_pr_head(root, &args.repo, pr)?,
+        _ => {
+            return Err(CiHubError::ValidateStatus(
+                "exactly one of --sha or --pr is required".into(),
+            ))
+        }
+    };
+    let assessment = validate_status::assess(&rows, &sha);
+    let newest = validate_status::newest(&assessment.qualifying);
+
+    if args.json {
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "sha": assessment.sha,
+            "verdict": assessment.verdict.as_str(),
+            "exit_code": assessment.verdict.exit_code(),
+            "qualifying_count": assessment.qualifying.len(),
+            "disqualified_count": assessment.disqualified.len(),
+            "newest_qualifying": newest.map(describe_record),
+            "ledger": path.display().to_string(),
+        });
+        println!("{}", serde_json::to_string_pretty(&report).expect("serialize report"));
+    } else {
+        match assessment.verdict {
+            validate_status::Verdict::Validated => {
+                let row = newest.expect("validated implies a qualifying record");
+                println!(
+                    "# validate VALIDATED {} (passed {}, wall {}s, host {}, profile full/full) -- clean-tree commit-anchored full run",
+                    &assessment.sha,
+                    row.finished_at.as_deref().unwrap_or("?"),
+                    row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
+                    row.host.as_deref().unwrap_or("?"),
+                );
+            }
+            validate_status::Verdict::FailedOnRecord => {
+                println!(
+                    "# validate FAILED {} -- a clean full-coverage run exists but did NOT pass ({} record(s)); this commit is known-failing",
+                    &assessment.sha,
+                    assessment.disqualified.len(),
+                );
+            }
+            validate_status::Verdict::NotValidated => {
+                println!(
+                    "# validate NOT-VALIDATED {} -- no clean full-coverage PASS record ({} non-qualifying record(s) for this commit)",
+                    &assessment.sha,
+                    assessment.disqualified.len(),
+                );
+            }
+        }
+    }
+    Ok(assessment.verdict.exit_code())
+}
+
+/// `ci-hub apply-local-label --pr <N> | --all-open` — close the retroactive gap:
+/// when a commit was validated BEFORE its PR existed, validate.sh could not stamp
+/// `locally-validated`. This applies it to any PR whose head has a clean
+/// full-validate record and lacks the label. Never fabricates the label: a PR
+/// whose head is not VALIDATED is left untouched.
+fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, CiHubError> {
+    let path = ledger_path(root, &args.ledger);
+    let rows = load_ledger_rows(&path)?;
+    let prs = match (args.pr, args.all_open) {
+        (Some(pr), false) => vec![pr],
+        (None, true) => gh_open_prs(root, &args.repo)?,
+        _ => {
+            return Err(CiHubError::ValidateStatus(
+                "exactly one of --pr or --all-open is required".into(),
+            ))
+        }
+    };
+
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut applied = 0i32;
+    for pr in prs {
+        // In sweep mode a single unreadable PR must not abort the whole run.
+        let head = match gh_pr_head(root, &args.repo, pr) {
+            Ok(head) => head,
+            Err(error) => {
+                eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
+                actions.push(serde_json::json!({"pr": pr, "action": "error", "detail": error.to_string()}));
+                continue;
+            }
+        };
+        let verdict = validate_status::assess(&rows, &head).verdict;
+        if verdict != validate_status::Verdict::Validated {
+            println!("PR #{pr}: skip -- head {} is {}", &head[..12.min(head.len())], verdict.as_str());
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": verdict.as_str()}));
+            continue;
+        }
+        let labels = gh_pr_labels(root, &args.repo, pr).unwrap_or_default();
+        if labels.iter().any(|l| l == LOCALLY_VALIDATED_LABEL) {
+            println!("PR #{pr}: already labeled (head validated)");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "already-labeled"}));
+            continue;
+        }
+        if args.dry_run {
+            println!("PR #{pr}: WOULD add {LOCALLY_VALIDATED_LABEL} (head validated)");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "would-add"}));
+            continue;
+        }
+        let pr_arg = pr.to_string();
+        let status = gh_command(
+            root,
+            &[
+                "pr", "edit", &pr_arg, "--repo", &args.repo, "--add-label",
+                LOCALLY_VALIDATED_LABEL,
+            ],
+        )
+        .status()
+        .map_err(|source| CiHubError::Launch {
+            tool: "gh pr edit".into(),
+            source,
+        })?;
+        if status.success() {
+            println!("PR #{pr}: applied {LOCALLY_VALIDATED_LABEL} (head validated)");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "added"}));
+            applied += 1;
+        } else {
+            eprintln!("ci-hub: apply-local-label: PR #{pr}: gh pr edit exited nonzero");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "edit-failed"}));
+        }
+    }
+
+    if args.json {
+        let report = serde_json::json!({"schema_version": 1, "applied": applied, "actions": actions});
+        println!("{}", serde_json::to_string_pretty(&report).expect("serialize report"));
+    }
+    Ok(0)
 }
 
 fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubError> {
