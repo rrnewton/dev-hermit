@@ -60,6 +60,9 @@ elif args and args[0] == "stop":
     with log_path.open("a") as log:
         log.write(f"stop {item['Id']}\n")
     save()
+    if os.environ.get("FAKE_PODMAN_STOP_FAIL_AFTER_STOP") == "1":
+        print("stop command timed out after container exited", file=sys.stderr)
+        sys.exit(124)
 elif args and args[0] == "rm":
     item = find(args[-1])
     with log_path.open("a") as log:
@@ -171,6 +174,26 @@ class AgentPodmanTests(unittest.TestCase):
         self.assertEqual(
             self.podman_log.read_text().splitlines(),
             [f"stop {'a' * 64}", f"rm {'a' * 64}"],
+        )
+        self.assertEqual(json.loads(self.podman_state.read_text()), [])
+
+    def test_remove_continues_when_stop_times_out_after_container_exits(self) -> None:
+        container_id = "e" * 64
+        self.podman_state.write_text(
+            json.dumps(
+                [container(container_id, "slow-stop", labels("hermit-old", "inv-old"))]
+            )
+        )
+        self.write_live_state([], {})
+        self.environment["FAKE_PODMAN_STOP_FAIL_AFTER_STOP"] = "1"
+
+        result = self.reconcile()
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(json.loads(result.stdout)["reclaimed"], 1)
+        self.assertEqual(
+            self.podman_log.read_text().splitlines(),
+            [f"stop {container_id}", f"rm {container_id}"],
         )
         self.assertEqual(json.loads(self.podman_state.read_text()), [])
 

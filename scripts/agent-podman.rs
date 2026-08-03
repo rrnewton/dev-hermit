@@ -1127,19 +1127,23 @@ fn container_process_evidence(container: &Container) -> (usize, Option<String>) 
 }
 
 fn gracefully_remove(container: &Container) -> Result<()> {
+    let mut stop_error = None;
     if container.state == "running" {
         let stop = bounded_podman(&["stop", "--time", "10", &container.id], STOP_TIMEOUT_SECS)?;
         if !stop.status.success() {
-            return Err(AppError::Message(format!(
+            stop_error = Some(format!(
                 "podman stop failed: {}",
                 String::from_utf8_lossy(&stop.stderr).trim()
-            )));
+            ));
         }
     }
     let remove = bounded_podman(&["rm", &container.id], REMOVE_TIMEOUT_SECS)?;
     if !remove.status.success() {
+        let stop_context = stop_error
+            .map(|error| format!("{error}; "))
+            .unwrap_or_default();
         return Err(AppError::Message(format!(
-            "podman rm failed: {}",
+            "{stop_context}podman rm failed: {}",
             String::from_utf8_lossy(&remove.stderr).trim()
         )));
     }
