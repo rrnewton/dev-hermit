@@ -1,0 +1,55 @@
+{
+  "run_id": "s1-inguest-rcb-preemption-determinism-spike_20260803",
+  "utc_date": "2026-08-03",
+  "question": "Can an in-guest PMU retired-branch-overflow interrupt (guest fields its own signal, no external ptrace tracer) land the guest deterministically across identical runs, or is it provably the DBI in-process re-entrancy wall again?",
+  "verdict": "NO on this host: nondeterministic landing (9 distinct RIPs / skid 15-90 over 20 identical runs) via the only available (non-precise) path; PEBS precise sampling that would remove skid is unavailable (precise_ip>0 => EOPNOTSUPP); the software skid-correction requires guest self-single-step = the DBI re-entrancy dead-end.",
+  "short_hostname": "devbig014",
+  "cpu": "AMD EPYC 9D85 158-Core Processor (Zen)",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "parent_sha": "faf95129d9b7b28504899ee7bd0c53dbc94c1307",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "host_pmu_facts": {
+    "perf_event_paranoid": 1,
+    "perf_event_paranoid_meaning": "own-process perf_event_open(pid=0,cpu=-1) permitted; cross-process/system-wide constrained. Spike stays own-process so it runs unprivileged and does not touch the pmu-serial flock.",
+    "cpu_caps_max_precise": 0,
+    "cpu_caps_branches_lbr_depth": 16,
+    "generic_pmc_usable_per_core_K": 5,
+    "K_note": "measured via kprobe.c: 5 pinned per-task generic counters run full-time on one core, 6th+ go to PERF_EVENT_STATE_ERROR = 6 hardware PMCs minus 1 NMI-watchdog. NOT 16 (that is LBR stack depth). reverie uses 2 pinned counters/guest thread => ~2 fully-RCB-instrumented threads co-schedule per core before panic.",
+    "pebs_precise_available": false,
+    "precise_ip_probe": {"0": "OK", "1": "FAIL ENOENT(2)", "2": "FAIL ENOENT(2)", "3": "FAIL EOPNOTSUPP(95)"},
+    "amd_precise_facility": "IBS (ibs_fetch/ibs_op present) = statistical sampling, not per-event precise-RIP capture; not what reverie set_timer_precise needs"
+  },
+  "spike": {
+    "source": "spike.c",
+    "guest": "single process, ASLR off (ADDR_NO_RANDOMIZE + re-exec), pinned cpu3, deterministic loop of 5,000,000 iterations x 1 conditional branch",
+    "counter": "PERF_COUNT_HW_BRANCH_INSTRUCTIONS, pinned=1 (matches reverie perf.rs:210), sample_period=1,000,000, precise_ip=0 (forced by host max_precise=0)",
+    "delivery": "SIGRTMIN on overflow via O_ASYNC + F_SETSIG + F_SETOWN_EX(F_OWNER_TID); handler reads RIP from ucontext, exact counter value, and loop iteration",
+    "runs": 20
+  },
+  "results_summary": {
+    "fired_all_runs": true,
+    "ctr_at_sig_skid_min": 15,
+    "ctr_at_sig_skid_max": 90,
+    "ctr_at_sig_skid_spread": 75,
+    "iter_at_sig_min": 400001,
+    "iter_at_sig_max": 400031,
+    "distinct_rips": 9,
+    "counter_value_readable_exact": true
+  },
+  "three_legs_of_the_no": [
+    "leg1 FUNDAMENTAL: non-precise counter-overflow delivery is nondeterministic on any hardware (skid 15-90 measured); margin tuning cannot fix landing RIP",
+    "leg2 HOST-SCOPED (AMD/no-PEBS): precise_ip>0 = EOPNOTSUPP; the precise facility that removes skid is unavailable here; reverie set_timer_precise cannot run on this host",
+    "leg3 FUNDAMENTAL: the ptrace skid-correction (fire-early + single-step to exact count) requires the guest to self-single-step from its own handler = DBI in-process re-entrancy dead-end (dbi-preemption-in-process-reentrancy-blocker)"
+  ],
+  "what_would_change_the_answer": [
+    "re-run leg2 on an Intel host WITH PEBS (precise_ip>0 succeeds) to test whether precise delivery gives a deterministic landing RIP without single-stepping",
+    "even a precise-landing YES leaves leg3 (safe park+RPC / re-entrancy from an in-guest signal context) untested by this spike"
+  ],
+  "related_memory": [
+    "pmu-exhaustion-hardfail-not-silent",
+    "dbi-preemption-in-process-reentrancy-blocker",
+    "s1-liteinst-mode-a-inguest-trap-win-but-detcore-blocked",
+    "demo5-fix-pmu-skid (skid-margin + single-step correction)"
+  ],
+  "mode_b_untouched": true
+}
