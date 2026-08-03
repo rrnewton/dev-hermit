@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,7 +12,10 @@ TOOL = ROOT / "ci-hub/bin/tool-cost"
 
 
 class ToolCostTest(unittest.TestCase):
-    def run_tool(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+    def run_tool(
+        self, command: list[str], *, actual_json: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        options = ["--actual-json", str(actual_json)] if actual_json else []
         return subprocess.run(
             [
                 str(TOOL),
@@ -22,6 +27,7 @@ class ToolCostTest(unittest.TestCase):
                 "3",
                 "--basis",
                 "3 items x 4 seconds",
+                *options,
                 "--",
                 *command,
             ],
@@ -55,6 +61,23 @@ class ToolCostTest(unittest.TestCase):
         self.assertIn("cannot launch", result.stderr)
         self.assertIn("COST ACTUAL", result.stderr)
         self.assertIn("exit=127", result.stderr)
+
+    def test_actual_json_is_atomic_structured_cost_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            actual_path = Path(directory) / "nested" / "cost.json"
+            result = self.run_tool(
+                [sys.executable, "-c", "raise SystemExit(3)"],
+                actual_json=actual_path,
+            )
+            self.assertEqual(result.returncode, 3)
+            payload = json.loads(actual_path.read_text())
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["tool"], "test/tool")
+            self.assertEqual(payload["estimate"]["wall_seconds"], 12.0)
+            self.assertEqual(payload["estimate"]["cpu_seconds"], 3.0)
+            self.assertEqual(payload["actual"]["exit"], "3")
+            self.assertGreaterEqual(payload["actual"]["wall_seconds"], 0)
+            self.assertGreaterEqual(payload["actual"]["cpu_seconds"], 0)
 
 
 if __name__ == "__main__":

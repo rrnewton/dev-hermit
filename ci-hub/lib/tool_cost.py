@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
 
 
 def _seconds(value: float) -> str:
@@ -45,6 +51,57 @@ def print_actual(
     )
 
 
+def _write_actual_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _actual_payload(
+    *,
+    tool: str,
+    estimate_wall_seconds: float,
+    estimate_cpu_seconds: float,
+    basis: str,
+    wall_seconds: float,
+    cpu_user_seconds: float,
+    cpu_system_seconds: float,
+    exit_description: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "tool": tool,
+        "estimate": {
+            "wall_seconds": estimate_wall_seconds,
+            "cpu_seconds": estimate_cpu_seconds,
+            "basis": basis,
+        },
+        "actual": {
+            "wall_seconds": wall_seconds,
+            "cpu_seconds": cpu_user_seconds + cpu_system_seconds,
+            "cpu_user_seconds": cpu_user_seconds,
+            "cpu_system_seconds": cpu_system_seconds,
+            "exit": exit_description,
+        },
+    }
+
+
 def _exit_description(status: int) -> tuple[int, str]:
     if os.WIFEXITED(status):
         code = os.WEXITSTATUS(status)
@@ -62,6 +119,7 @@ def run_command(
     estimate_wall_seconds: float,
     estimate_cpu_seconds: float,
     basis: str,
+    actual_json: Path | None = None,
 ) -> int:
     print_estimate(
         tool=tool,
@@ -89,13 +147,28 @@ def run_command(
             process = subprocess.Popen(list(command), start_new_session=True)
         except OSError as error:
             print(f"tool-cost: cannot launch {command[0]!r}: {error}", file=sys.stderr)
+            wall_seconds = time.monotonic() - started
             print_actual(
                 tool=tool,
-                wall_seconds=time.monotonic() - started,
+                wall_seconds=wall_seconds,
                 cpu_user_seconds=0.0,
                 cpu_system_seconds=0.0,
                 exit_description="127",
             )
+            if actual_json is not None:
+                _write_actual_json(
+                    actual_json,
+                    _actual_payload(
+                        tool=tool,
+                        estimate_wall_seconds=estimate_wall_seconds,
+                        estimate_cpu_seconds=estimate_cpu_seconds,
+                        basis=basis,
+                        wall_seconds=wall_seconds,
+                        cpu_user_seconds=0.0,
+                        cpu_system_seconds=0.0,
+                        exit_description="127",
+                    ),
+                )
             return 127
 
         while True:
@@ -106,13 +179,28 @@ def run_command(
                 continue
         code, description = _exit_description(status)
         process.returncode = code
+        wall_seconds = time.monotonic() - started
         print_actual(
             tool=tool,
-            wall_seconds=time.monotonic() - started,
+            wall_seconds=wall_seconds,
             cpu_user_seconds=usage.ru_utime,
             cpu_system_seconds=usage.ru_stime,
             exit_description=description,
         )
+        if actual_json is not None:
+            _write_actual_json(
+                actual_json,
+                _actual_payload(
+                    tool=tool,
+                    estimate_wall_seconds=estimate_wall_seconds,
+                    estimate_cpu_seconds=estimate_cpu_seconds,
+                    basis=basis,
+                    wall_seconds=wall_seconds,
+                    cpu_user_seconds=usage.ru_utime,
+                    cpu_system_seconds=usage.ru_stime,
+                    exit_description=description,
+                ),
+            )
         return code
     finally:
         for signum, handler in old_handlers.items():
@@ -127,6 +215,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--estimate-wall-seconds", type=float, required=True)
     parser.add_argument("--estimate-cpu-seconds", type=float, required=True)
     parser.add_argument("--basis", required=True, help="parameters/history behind the estimate")
+    parser.add_argument(
+        "--actual-json",
+        type=Path,
+        help="atomically persist the estimate and final wall/CPU result as JSON",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.command and args.command[0] == "--":
@@ -146,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         estimate_wall_seconds=args.estimate_wall_seconds,
         estimate_cpu_seconds=args.estimate_cpu_seconds,
         basis=args.basis,
+        actual_json=args.actual_json,
     )
 
 

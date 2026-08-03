@@ -36,8 +36,15 @@ ci-hub/bin/tool-cost \
   --estimate-wall-seconds 7200 \
   --estimate-cpu-seconds 14400 \
   --basis '12 probes x 3 reps x 600s / parallelism 3' \
+  --actual-json ignored/ci-hub/multisect-cost.json \
   -- ./multisect ...
 ```
+
+`--actual-json` is optional. When supplied, the helper atomically writes schema
+v1 containing the same estimate plus actual wall, total/user/system CPU, and
+exit fields. Long-lived stores should ingest or reference that JSON instead of
+parsing human-facing log lines. The speculative-land obligation store uses this
+path for its detached local `validate.sh` run.
 
 For a self-contained product tool that cannot depend on the parent checkout,
 keep its calculation local but use the same output contract. Parent launchers
