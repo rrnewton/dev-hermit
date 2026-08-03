@@ -7,17 +7,27 @@ Reads only the file-contract stores that ingest.py maintains
 internals.
 
 Commands:
+  (default)          summary (queue vs run-time shape) PLUS the K most-recent
+                     individual runs, so a bare `ci-hub history` shows both the
+                     distribution and the runs behind it. `--since` works here.
   node-cpu-budgets   per DAG-node CPU-second budgets for the cpu_timeout
                      derivation (round(max_cpu_s * 1.5), n>=5 else thin/UNSET).
   green-time         % of main-branch wall-clock time whose authoritative CI
                      conclusion was success, DERIVED from the store (never
                      estimated).
-  runs               summary of gha-runs.csv (queue vs run time split).
+  runs               same summary + recent-runs listing (alias of the default).
 
 Usage:
+  ci-hub/history/query.py [--repo R] [--since DATE] [--branch B] [--status S]
+                          [--limit K] [--summary-only] [--json]
   ci-hub/history/query.py node-cpu-budgets [--repo R] [--since SHA|DATE] [--format csv|json]
   ci-hub/history/query.py green-time [--repo R] [--since DATE] [--workflow NAME] [--format text|json]
-  ci-hub/history/query.py runs [--repo R] [--since DATE] [--branch B]
+  ci-hub/history/query.py runs [--repo R] [--since DATE] [--branch B] [--status S] [--limit K]
+
+The `--since`/`--repo`/`--branch`/`--limit`/`--json` flag names deliberately match
+`ci-hub local-history` so the two history subcommands do not diverge. Every view
+reads the SAME ignored/ci-hub/gha-runs.csv store, so this listing and any other
+consumer of the store (e.g. queued-run analyses) report the same numbers.
 """
 from __future__ import annotations
 
@@ -345,11 +355,173 @@ def runs_summary(parent: str, repo: str | None, since: str | None,
 
 
 # ---------------------------------------------------------------------------
+# recent runs listing (individual runs behind the summary shape)
+# ---------------------------------------------------------------------------
+
+# A run is flagged as a queue outlier when it waited longer than this floor AND
+# above the window's p95 queue time. The floor keeps a p95 of 0 (the common case
+# — most runs start instantly) from flagging every run; only genuinely stuck
+# runs (waiting on a runner) get marked.
+QUEUE_OUTLIER_FLOOR_S = 300.0
+
+
+def _effective_conclusion(r: dict) -> str:
+    """What actually happened: the terminal conclusion, else the live status."""
+    return (r.get("conclusion") or r.get("status") or "?")
+
+
+def _branch_or_pr(r: dict) -> str:
+    """Prefer the PR reference over the raw branch when the run has one."""
+    prs = (r.get("pull_requests") or "").strip()
+    if prs:
+        first = prs.split()[0].split(",")[0].strip()
+        if first:
+            return f"#{first}"
+    return r.get("head_branch") or "-"
+
+
+def _short_utc(s: str | None) -> str:
+    """2026-08-02T00:00:44Z -> '08-02 00:00' (compact, still UTC)."""
+    if not s or len(s) < 16:
+        return s or "-"
+    return f"{s[5:10]} {s[11:16]}"
+
+
+def _is_queue_outlier(q: float | None, thresh: float) -> bool:
+    return q is not None and q > thresh and q > 0
+
+
+def recent_runs(parent: str, repo: str | None, since: str | None,
+                branch: str | None, status: str | None, limit: int,
+                slowest: bool = False) -> dict:
+    """K runs plus the window's queue/run shape they came from.
+
+    Ordered newest-first by default, or by descending queue wait with
+    ``slowest=True`` (surfaces the handful of runs stuck for hours behind the
+    p95=0 median). The queue-outlier flag is computed against the p95 of the
+    FILTERED window, so it means "slow relative to this selection".
+    """
+    rows = load_gha_rows(parent, repo, since, branch)
+    if status:
+        rows = [r for r in rows if _effective_conclusion(r) == status]
+    queues = sorted(q for q in (_float(r.get("queue_s")) for r in rows)
+                    if q is not None)
+    p95_queue = percentile(queues, 95) or 0.0
+    thresh = max(QUEUE_OUTLIER_FLOOR_S, p95_queue)
+    # Count outliers across the WHOLE matched window, not just the shown K, so
+    # the "handful stuck for hours" is visible even when the newest K were fast.
+    window_outliers = sum(1 for q in queues if _is_queue_outlier(q, thresh))
+    if slowest:
+        rows.sort(key=lambda r: _float(r.get("queue_s")) or -1.0, reverse=True)
+    else:
+        # created_at is a fixed-width ISO string, so lexical == chronological.
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    out = []
+    for r in rows[:max(0, limit)]:
+        q = _float(r.get("queue_s"))
+        out.append({
+            "created_at": r.get("created_at") or "",
+            "repo": r.get("repo") or "?",
+            "run_id": r.get("run_id") or "",
+            "workflow": r.get("workflow_name") or "?",
+            "ref": _branch_or_pr(r),
+            "conclusion": _effective_conclusion(r),
+            "queue_s": q,
+            "run_s": _float(r.get("run_s")),
+            "url": r.get("html_url") or "",
+            "queue_outlier": _is_queue_outlier(q, thresh),
+        })
+    return {
+        "total_matched": len(rows),
+        "shown": len(out),
+        "order": "slowest-queue" if slowest else "newest",
+        "queue_p95_s": round(p95_queue, 1),
+        "queue_outlier_threshold_s": round(thresh, 1),
+        "window_outliers": window_outliers,
+        "runs": out,
+    }
+
+
+def render_recent(res: dict, limit: int) -> str:
+    runs = res["runs"]
+    if not runs:
+        return "  (no individual runs match this filter)"
+    hdr = ("", "TIME(UTC)", "REPO", "RUN_ID", "WORKFLOW", "BRANCH/PR",
+           "CONCL", "QUEUE(s)", "RUN(s)", "URL")
+    body = []
+    for r in runs:
+        mark = "!" if r["queue_outlier"] else ""
+        body.append((
+            mark,
+            _short_utc(r["created_at"]),
+            r["repo"],
+            str(r["run_id"]),
+            r["workflow"],
+            r["ref"],
+            r["conclusion"],
+            _s(r["queue_s"]),
+            _s(r["run_s"]),
+            r["url"],
+        ))
+    n_out = sum(1 for r in runs if r["queue_outlier"])
+    order = "slowest-queue first" if res.get("order") == "slowest-queue" \
+        else "newest first"
+    head = (f"--- {res['shown']} of {res['total_matched']} matched "
+            f"runs ({order}) ---")
+    legend = (f"! = queued > {res['queue_outlier_threshold_s']:.0f}s "
+              f"(floor {QUEUE_OUTLIER_FLOOR_S:.0f}s, window p95 "
+              f"{res['queue_p95_s']:.0f}s) — waiting on a runner; "
+              f"{n_out} of {res['shown']} shown flagged, "
+              f"{res['window_outliers']} of {res['total_matched']} in window "
+              f"(use --slowest to see them)")
+    return "\n".join([head, _table(hdr, body), legend])
+
+
+# ---------------------------------------------------------------------------
+
+def emit_history(parent: str, args) -> int:
+    """Shared renderer for the default view and the `runs` alias."""
+    repo = getattr(args, "repo", None)
+    since = getattr(args, "since", None)
+    branch = getattr(args, "branch", None)
+    status = getattr(args, "status", None)
+    limit = getattr(args, "limit", 20)
+    slowest = getattr(args, "slowest", False)
+    summary_only = getattr(args, "summary_only", False)
+    as_json = getattr(args, "json", False)
+
+    if as_json:
+        res = recent_runs(parent, repo, since, branch, status, limit, slowest)
+        print(json.dumps(res, indent=2))
+        return 0
+    print(runs_summary(parent, repo, since, branch))
+    if not summary_only:
+        res = recent_runs(parent, repo, since, branch, status, limit, slowest)
+        print()
+        print(render_recent(res, limit))
+    return 0
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Top-level filters so a bare `ci-hub history --since ...` works (the flag
+    # was previously only defined on subparsers, so `history --since` errored).
+    # Names mirror `ci-hub local-history` for a consistent surface.
+    ap.add_argument("--repo")
+    ap.add_argument("--since", help="YYYY-MM-DD (or full ISO timestamp)")
+    ap.add_argument("--branch")
+    ap.add_argument("--status",
+                    help="filter by conclusion/status, e.g. queued, failure")
+    ap.add_argument("--limit", type=int, default=20,
+                    help="show this many runs (default 20)")
+    ap.add_argument("--slowest", action="store_true",
+                    help="order by descending queue wait instead of recency")
+    ap.add_argument("--summary-only", action="store_true",
+                    help="print only the queue/run shape, omit the run listing")
+    ap.add_argument("--json", action="store_true",
+                    help="emit the recent-runs listing as JSON")
     sub = ap.add_subparsers(dest="cmd")
 
     p_nb = sub.add_parser("node-cpu-budgets",
@@ -367,10 +539,16 @@ def main() -> int:
                       help="authoritative workflow name (repeatable)")
     p_gt.add_argument("--format", choices=["text", "json"], default="text")
 
-    p_ru = sub.add_parser("runs", help="summary of gha-runs.csv")
+    p_ru = sub.add_parser("runs",
+                          help="summary + recent-runs listing (alias of default)")
     p_ru.add_argument("--repo")
     p_ru.add_argument("--since", help="YYYY-MM-DD")
     p_ru.add_argument("--branch")
+    p_ru.add_argument("--status")
+    p_ru.add_argument("--limit", type=int, default=20)
+    p_ru.add_argument("--slowest", action="store_true")
+    p_ru.add_argument("--summary-only", action="store_true")
+    p_ru.add_argument("--json", action="store_true")
 
     args = ap.parse_args()
     parent = parent_root()
@@ -396,11 +574,7 @@ def main() -> int:
                 print(f"  runs by conclusion: {res['runs_by_conclusion']}")
         return 0
     if args.cmd == "runs" or args.cmd is None:
-        repo = getattr(args, "repo", None)
-        since = getattr(args, "since", None)
-        branch = getattr(args, "branch", None)
-        print(runs_summary(parent, repo, since, branch))
-        return 0
+        return emit_history(parent, args)
     ap.print_help()
     return 2
 

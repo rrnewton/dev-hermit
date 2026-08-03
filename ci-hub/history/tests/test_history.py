@@ -162,6 +162,68 @@ class TempParentTest(unittest.TestCase):
         self.assertIsNone(res["green_pct"])
 
 
+    def _gha_run(self, **over):
+        base = {
+            "repo": "rrnewton/hermit", "run_id": "1", "run_attempt": "1",
+            "workflow_name": "CI", "head_branch": "main", "pull_requests": "",
+            "status": "completed", "conclusion": "success",
+            "created_at": "2026-08-03T00:00:00Z", "queue_s": "0", "run_s": "10",
+            "html_url": "https://x/1",
+        }
+        base.update(over)
+        return base
+
+    def test_recent_runs_newest_first_and_pr_ref(self):
+        self._write_gha([
+            self._gha_run(run_id="a", created_at="2026-08-03T01:00:00Z"),
+            self._gha_run(run_id="b", created_at="2026-08-03T03:00:00Z",
+                          pull_requests="1561"),
+            self._gha_run(run_id="c", created_at="2026-08-03T02:00:00Z"),
+        ])
+        res = query.recent_runs(str(self.parent), None, None, None, None, 10)
+        ids = [r["run_id"] for r in res["runs"]]
+        self.assertEqual(ids, ["b", "c", "a"])           # newest first
+        self.assertEqual(res["runs"][0]["ref"], "#1561")  # PR beats branch
+        self.assertEqual(res["runs"][1]["ref"], "main")
+
+    def test_recent_runs_since_status_and_limit(self):
+        self._write_gha([
+            self._gha_run(run_id="old", created_at="2026-08-01T00:00:00Z"),
+            self._gha_run(run_id="q1", created_at="2026-08-03T01:00:00Z",
+                          status="queued", conclusion=""),
+            self._gha_run(run_id="q2", created_at="2026-08-03T02:00:00Z",
+                          status="queued", conclusion=""),
+        ])
+        # since drops the 08-01 row; status keeps only queued; limit caps output.
+        res = query.recent_runs(str(self.parent), None, "2026-08-02",
+                                None, "queued", 1)
+        self.assertEqual(res["total_matched"], 2)   # both queued survive filter
+        self.assertEqual(res["shown"], 1)           # limit
+        self.assertEqual(res["runs"][0]["run_id"], "q2")
+        self.assertEqual(res["runs"][0]["conclusion"], "queued")  # falls back to status
+
+    def test_recent_runs_queue_outlier_and_slowest(self):
+        # A realistic shape: many instant-start runs (p95 stays 0, so the 300s
+        # floor governs) plus one stuck-for-hours run that must be flagged.
+        rows = [self._gha_run(run_id=f"fast{i}",
+                              created_at=f"2026-08-03T03:{i:02d}:00Z",
+                              queue_s="0") for i in range(30)]
+        rows.append(self._gha_run(run_id="stuck",
+                                  created_at="2026-08-03T01:00:00Z",
+                                  queue_s="26558", run_s="137"))
+        self._write_gha(rows)
+        res = query.recent_runs(str(self.parent), None, None, None, None, 10,
+                                slowest=True)
+        self.assertEqual(res["runs"][0]["run_id"], "stuck")   # slowest first
+        self.assertTrue(res["runs"][0]["queue_outlier"])
+        self.assertFalse(res["runs"][1]["queue_outlier"])
+        self.assertEqual(res["window_outliers"], 1)
+        # Rendered table marks the outlier and never truncates the workflow name.
+        out = query.render_recent(res, 10)
+        self.assertIn("!", out)
+        self.assertIn("26558", out)
+
+
 class HelperTest(unittest.TestCase):
     def test_percentile_nearest_rank(self):
         self.assertEqual(query.percentile([1, 2, 3, 4], 50), 2)

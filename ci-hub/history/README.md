@@ -67,9 +67,27 @@ ci-hub/history/query.py node-cpu-budgets --repo rrnewton/hermit --format csv
 ci-hub/history/query.py green-time --repo rrnewton/hermit
 # state timeline over authoritative main runs; fraction of time conclusion==success.
 
-# gha-runs.csv summary with the queue/run split.
-ci-hub/history/query.py runs --repo rrnewton/hermit --branch main
+# Default view: queue/run summary (the shape) PLUS the K most-recent individual
+# runs behind it. `--since` works here (previously only on subparsers).
+ci-hub history --repo rrnewton/hermit --limit 20
+# columns: TIME(UTC) REPO RUN_ID WORKFLOW BRANCH/PR CONCL QUEUE(s) RUN(s) URL
+# `!` marks a queue outlier: waited > max(300s floor, window p95) for a runner.
+
+# Surface the handful of runs stuck for hours (the tail behind a p95=0 median):
+ci-hub history --repo rrnewton/hermit --slowest --limit 10
+# View the current queued backlog individually (agrees with the summary's
+# queued=N count — same gha-runs.csv store, so no divergent numbers):
+ci-hub history --status queued
+# JSON for tooling (mirrors the local-history flag surface: --since/--json/--limit):
+ci-hub history --repo rrnewton/hermit --slowest --limit 10 --json
 ```
+
+The `--since` / `--repo` / `--branch` / `--limit` / `--json` flag names match
+`ci-hub local-history` on purpose so the two history subcommands do not diverge.
+The recent-runs listing and every other store consumer read the SAME
+`ignored/ci-hub/gha-runs.csv`, so counts agree by construction; a currently
+`queued` run shows `queue_s=0` until it starts (the store can only measure a wait
+once `run_started_at` exists), so use `--slowest` to see historically long waits.
 
 `green-time` counts only `conclusion == success` as green; `cancelled`,
 `failure`, etc. are non-green. The store preserves every conclusion and
