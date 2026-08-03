@@ -29,6 +29,19 @@ for spec in "${specs[@]}"; do
   [ -x "$b" ] || { echo "MISSING BIN $l: $b" >&2; exit 3; }
 done
 
+# Optional evidence capture (attribution). STRESS_CAPTURE_DIR set => each FAILING
+# instance preserves a bundle (stdout/stderr/exit/host-conditions) so a flake
+# gets a CAUSE, not just a rate. Off by default => the hot loop below stays the
+# exact old >/dev/null idiom. Pure bash so the loop never forks per-instance
+# Python (BPFJailer exec-rate). Resolve capture-run.sh from the repo root.
+CAPTURE_DIR="${STRESS_CAPTURE_DIR:-}"
+CAPTURE_SH="$(cd "$EXP/../.." 2>/dev/null && pwd)/ci-hub/attribution/capture-run.sh"
+if [ -n "$CAPTURE_DIR" ] && [ ! -x "$CAPTURE_SH" ]; then
+  echo "matched.sh: STRESS_CAPTURE_DIR set but $CAPTURE_SH missing/x; capture OFF" >&2
+  CAPTURE_DIR=""
+fi
+[ -n "$CAPTURE_DIR" ] && mkdir -p "$CAPTURE_DIR"
+
 classify() { # <file> -> echo "PASS|FAIL|FLAKY hangs passes other total"
   local f="$1" h p o t
   h=$(grep -cx 124 "$f" 2>/dev/null); h=${h:-0}
@@ -52,7 +65,13 @@ for w in $(seq 1 "$WAVES"); do
   # Interleave launches: round-robin across labels so all share the same window.
   for i in $(seq 1 "$CONC"); do
     for l in "${labels[@]}"; do
-      ( timeout "$TMO" "${BIN[$l]}" "$TEST" --exact --test-threads=1 >/dev/null 2>&1; echo $? >> "$WD/w$w.$l" ) &
+      if [ -n "$CAPTURE_DIR" ]; then
+        ( ec="$("$CAPTURE_SH" "$CAPTURE_DIR" "w$w-$l" "$TMO" -- \
+                 "${BIN[$l]}" "$TEST" --exact --test-threads=1)"
+          echo "$ec" >> "$WD/w$w.$l" ) &
+      else
+        ( timeout "$TMO" "${BIN[$l]}" "$TEST" --exact --test-threads=1 >/dev/null 2>&1; echo $? >> "$WD/w$w.$l" ) &
+      fi
     done
   done
   wait
