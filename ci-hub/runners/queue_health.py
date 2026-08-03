@@ -22,9 +22,25 @@ poisons every downstream analysis):
   3. TIME SINCE LAST GREEN         — per workflow, both the elapsed wall time and
                                      HOW MANY RUNS BACK the last success was, so a
                                      green that is three pages deep surfaces here.
-  4. SELF-HOSTED RUNNER HEALTH     — count, busy/idle, labels, and whether the
-                                     single serial PMU lane (`pmu-serial`) is the
-                                     binding constraint.
+  4. SELF-HOSTED RUNNER HEALTH     — CONFIGURED vs LIVE (a registered-but-offline
+                                     runner is silently-dead capacity), busy/idle,
+                                     labels, and whether the single serial PMU
+                                     lane (`pmu-serial`) is the binding
+                                     constraint.
+  5. NAMED IN-FLIGHT RUNS          — "run X on branch Y", not "something is
+                                     running".
+  6. LAST-WINDOW RUN AGGREGATES    — started/completed/success/failure/cancelled
+                                     over a fixed window, with MERGE-GATE runs
+                                     counted SEPARATELY so gate churn never swamps
+                                     the real test-failure count.
+  7. SELF-HOSTED UTILIZATION       — busy-runner-time as a PERCENTAGE OF CAPACITY,
+                                     and PEAK observed concurrent jobs vs the
+                                     runner count (the "can we delete a runner?"
+                                     signal). Both are computed over a fixed
+                                     window from the bounded jobs-API sample, so a
+                                     truncated sample yields a strict LOWER BOUND;
+                                     each figure states the DIRECTION of its own
+                                     error and never a bare percentage.
 
 Every number is derived with its basis stated, per the workspace honesty rule.
 
@@ -136,7 +152,7 @@ def gh_json(args: list[str], gh_cmd: str):
 
 def fetch_runs(repo: str, gh_cmd: str, limit: int) -> list[dict] | None:
     fields = ("databaseId,workflowName,status,conclusion,createdAt,updatedAt,"
-              "headBranch,event")
+              "headBranch,event,displayTitle")
     return gh_json(
         ["run", "list", "--repo", repo, "--limit", str(limit), "--json", fields],
         gh_cmd,
@@ -182,6 +198,11 @@ def fetch_job_timings(repo: str, gh_cmd: str, run_ids: list[int]) -> list[dict]:
                 "conclusion": j.get("conclusion"),
                 "wait": wait,
                 "duration": dur,
+                # Absolute timestamps for utilization / peak-concurrency sweeps.
+                # `completed` is None for a still-running job (count it up to now).
+                "created": created,
+                "started": started,
+                "completed": completed,
             })
     return jobs
 
@@ -265,8 +286,8 @@ def analyze_last_green(runs: list[dict]) -> dict[str, LastGreen]:
 
 @dataclass
 class RunnerHealth:
-    total: int
-    online: int
+    total: int                       # CONFIGURED runners registered at repo scope
+    online: int                      # LIVE (status == online)
     idle: int
     busy: int
     runners: list[dict]              # raw runner objects
@@ -274,6 +295,18 @@ class RunnerHealth:
     pmu_idle: int
     serial_runners: list[str]        # names carrying pmu-serial
     serial_busy: bool
+
+    @property
+    def offline(self) -> int:
+        """CONFIGURED - LIVE: a registered-but-offline runner is silently dead
+        capacity — invisible unless configured and live are compared."""
+        return max(0, self.total - self.online)
+
+    @property
+    def names(self) -> set[str]:
+        """Names of every configured runner (the repo runners API lists only
+        self-hosted runners, so this set identifies self-hosted jobs)."""
+        return {r.get("name") for r in self.runners if r.get("name")}
 
 
 def analyze_runners(runner_api: dict | None) -> RunnerHealth | None:
@@ -357,21 +390,215 @@ def analyze_waits(jobs: list[dict], run_workflow: dict[int, str]
     return out
 
 
+# --- Utilization + peak concurrency (owner's top-priority capacity signal) -----
+# Both derive from the SAME bounded jobs-API sample as the wait distribution, and
+# both are computed over a FIXED window [now - window_hours, now]. Fixing the
+# window is what makes truncation honest: the sample can only ever OMIT busy time
+# / overlapping intervals, never invent them, so a truncated sample yields a
+# strict LOWER BOUND on true utilization and true peak concurrency. Every result
+# carries `lower_bound` and a `basis` string stating the direction of its error.
+
+def _overlap_secs(start: datetime, end: datetime,
+                  win_start: datetime, win_end: datetime) -> float:
+    lo = max(start, win_start)
+    hi = min(end, win_end)
+    return (hi - lo).total_seconds() if hi > lo else 0.0
+
+
+@dataclass
+class Utilization:
+    n_runners: int                   # self-hosted capacity denominator
+    window_secs: float
+    capacity_secs: float             # n_runners * window_secs
+    busy_secs: float                 # self-hosted busy-runner-seconds in window
+    util_pct: float
+    n_jobs: int                      # self-hosted jobs contributing
+    lower_bound: bool
+    basis: str
+
+
+def analyze_utilization(jobs: list[dict], selfhosted: set[str], n_runners: int,
+                        window_start: datetime, now: datetime,
+                        lower_bound: bool, basis: str) -> Utilization:
+    """Self-hosted busy-runner-time as a percentage of capacity over the window.
+
+    capacity = n_runners * window_secs. busy = sum of each self-hosted job's
+    [started, completed] overlap with the window (a still-running job counts up to
+    `now`). Only jobs whose runner is a known self-hosted runner contribute, so
+    GitHub-hosted work never inflates self-hosted utilization.
+    """
+    window_secs = max(0.0, (now - window_start).total_seconds())
+    busy = 0.0
+    n = 0
+    for j in jobs:
+        if j.get("runner") not in selfhosted:
+            continue
+        started = j.get("started")
+        if started is None:
+            continue
+        end = j.get("completed") or now
+        ov = _overlap_secs(started, end, window_start, now)
+        if ov > 0:
+            busy += ov
+            n += 1
+    capacity = n_runners * window_secs if n_runners else 0.0
+    util = (100.0 * busy / capacity) if capacity > 0 else 0.0
+    return Utilization(
+        n_runners=n_runners, window_secs=window_secs, capacity_secs=capacity,
+        busy_secs=busy, util_pct=util, n_jobs=n,
+        lower_bound=lower_bound, basis=basis,
+    )
+
+
+@dataclass
+class PeakConcurrency:
+    peak: int                        # max self-hosted jobs running at once
+    at: datetime | None
+    n_runners: int
+    n_intervals: int
+    lower_bound: bool
+    basis: str
+
+
+def analyze_peak_concurrency(jobs: list[dict], selfhosted: set[str],
+                             n_runners: int, window_start: datetime,
+                             now: datetime, lower_bound: bool,
+                             basis: str) -> PeakConcurrency:
+    """Peak observed concurrent self-hosted jobs via a sweep line over the
+    sampled [started, completed] intervals clipped to the window.
+
+    Directly answers "can we delete a runner?": a peak strictly below the runner
+    count means capacity went unused even at the busiest observed instant — but
+    only as a LOWER BOUND when the sample is truncated (unsampled jobs could add
+    overlap), which the basis states.
+    """
+    events: list[tuple[datetime, int]] = []
+    n_int = 0
+    for j in jobs:
+        if j.get("runner") not in selfhosted:
+            continue
+        started = j.get("started")
+        if started is None:
+            continue
+        end = j.get("completed") or now
+        lo = max(started, window_start)
+        hi = min(end, now)
+        if hi <= lo:
+            continue
+        events.append((lo, 1))
+        events.append((hi, -1))
+        n_int += 1
+    # At an equal timestamp, close (-1) before open (+1) so back-to-back jobs on
+    # one runner are not miscounted as concurrent.
+    events.sort(key=lambda e: (e[0], e[1]))
+    cur = peak = 0
+    at: datetime | None = None
+    for ts, delta in events:
+        cur += delta
+        if cur > peak:
+            peak = cur
+            at = ts
+    return PeakConcurrency(
+        peak=peak, at=at, n_runners=n_runners, n_intervals=n_int,
+        lower_bound=lower_bound, basis=basis,
+    )
+
+
+# --- 24h window run aggregates (merge-gate kept SEPARATE from failures) --------
+def _is_merge_gate(workflow: str | None, event: str | None) -> bool:
+    """A merge-queue / merge-gate run. Kept out of the main failure tally so gate
+    churn does not swamp real test failures (owner capability #7)."""
+    if (event or "") == "merge_group":
+        return True
+    w = (workflow or "").lower()
+    return "merge" in w and "gate" in w
+
+
+@dataclass
+class RunWindow:
+    window_hours: float
+    covers_window: bool              # run list reached back past window start
+    oldest_created_iso: str | None
+    # Non-gate main-branch/PR runs:
+    started: int                     # created in window (any status)
+    completed: int                   # reached terminal in window
+    success: int
+    failure: int
+    cancelled: int
+    # Merge-gate runs, counted SEPARATELY:
+    gate_started: int
+    gate_completed: int
+    gate_failure: int
+
+
+def analyze_run_window(runs: list[dict], now: datetime,
+                       window_hours: float) -> RunWindow:
+    win_start = now.timestamp() - window_hours * 3600
+    started = completed = success = failure = cancelled = 0
+    gate_started = gate_completed = gate_failure = 0
+    oldest: datetime | None = None
+    for r in runs:
+        created = _parse_ts(r.get("createdAt"))
+        if created is None:
+            continue
+        if oldest is None or created < oldest:
+            oldest = created
+        if created.timestamp() < win_start:
+            continue
+        gate = _is_merge_gate(r.get("workflowName"), r.get("event"))
+        terminal = r.get("status") == "completed"
+        concl = r.get("conclusion") or ""
+        if gate:
+            gate_started += 1
+            if terminal:
+                gate_completed += 1
+                if concl == "failure":
+                    gate_failure += 1
+            continue
+        started += 1
+        if terminal:
+            completed += 1
+            if concl == "success":
+                success += 1
+            elif concl == "failure":
+                failure += 1
+            elif concl == "cancelled":
+                cancelled += 1
+    covers = oldest is not None and oldest.timestamp() <= win_start
+    return RunWindow(
+        window_hours=window_hours, covers_window=covers,
+        oldest_created_iso=(oldest.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if oldest else None),
+        started=started, completed=completed, success=success,
+        failure=failure, cancelled=cancelled,
+        gate_started=gate_started, gate_completed=gate_completed,
+        gate_failure=gate_failure,
+    )
+
+
 # --- Human report -------------------------------------------------------------
-def report_repo(repo: str, gh_cmd: str, limit: int, sample: int) -> None:
+def report_repo(repo: str, gh_cmd: str, limit: int, sample: int,
+                window_hours: float = 24.0) -> None:
     print(f"\n================ {repo} ================")
     now = _now()
     runs = fetch_runs(repo, gh_cmd, limit)
     runner_api = fetch_runners(repo, gh_cmd)
     rh = analyze_runners(runner_api)
 
-    # (4) Runner health.
+    # (4)+(8) Runner health — CONFIGURED vs LIVE, so a silently-dead runner shows.
     if rh is None:
         print("  runners: (none at repo scope, or no access)")
     else:
-        print(f"  runners: total={rh.total} online={rh.online} idle={rh.idle} "
-              f"busy={rh.busy} | pmu={rh.pmu_total} (idle {rh.pmu_idle}) | "
+        dead = (f" | OFFLINE (silently-dead capacity) {rh.offline}"
+                if rh.offline else "")
+        print(f"  runners: CONFIGURED={rh.total} LIVE(online)={rh.online}"
+              f"{dead} | idle={rh.idle} busy={rh.busy} | "
+              f"pmu={rh.pmu_total} (idle {rh.pmu_idle}) | "
               f"pmu-serial={','.join(rh.serial_runners) or 'none'}")
+        if rh.offline:
+            print(f"    ! FINDING: {rh.offline} configured runner(s) are NOT "
+                  f"online — registered but dead capacity (invisible without "
+                  f"the configured-vs-live comparison).")
         for r in rh.runners:
             labels = ",".join(l["name"] for l in r.get("labels", []))
             job = "busy" if r.get("busy") else "idle"
@@ -403,6 +630,39 @@ def report_repo(repo: str, gh_cmd: str, limit: int, sample: int) -> None:
     if bc:
         print(f"  ^ BINDING CONSTRAINT: {bc}")
 
+    # (5) NAMED in-flight runs — "run X on branch Y", not "something is running".
+    inflight = [r for r in runs if r.get("status") in INFLIGHT_STATUSES]
+    if inflight:
+        inflight.sort(key=lambda r: (r.get("status") != "in_progress",
+                                     r.get("createdAt") or ""))
+        shown = inflight[:25]
+        print(f"  in-flight runs, named ({len(inflight)} total):")
+        for r in shown:
+            created = _parse_ts(r.get("createdAt"))
+            age = (humanize_secs((now - created).total_seconds())
+                   if created else "n/a")
+            title = (r.get("displayTitle") or r.get("workflowName") or "")[:48]
+            print(f"    - #{r['databaseId']} {r.get('status'):<11} "
+                  f"{(r.get('workflowName') or '?'):<28} "
+                  f"[{r.get('headBranch') or '?'}] {title} (age {age})")
+        if len(inflight) > len(shown):
+            print(f"    (+{len(inflight) - len(shown)} more in-flight runs not "
+                  f"listed)")
+
+    # (6) 24h window aggregates — merge-gate counted SEPARATELY from failures.
+    rw = analyze_run_window(runs, now, window_hours)
+    coverage = ("" if rw.covers_window else
+                f" — COVERAGE WARNING: the {len(runs)}-run window only reaches "
+                f"back to {rw.oldest_created_iso}, NOT a full {window_hours:g}h; "
+                f"counts are a LOWER BOUND (raise --limit)")
+    print(f"  last {window_hours:g}h (basis: gh run list, {len(runs)} runs; "
+          f"created-in-window){coverage}:")
+    print(f"    - non-gate: started={rw.started} completed={rw.completed} "
+          f"success={rw.success} failure={rw.failure} cancelled={rw.cancelled}")
+    print(f"    - merge-gate (SEPARATE, excluded from the failure count above): "
+          f"started={rw.gate_started} completed={rw.gate_completed} "
+          f"failure={rw.gate_failure}")
+
     # (3) Time since last green + runs back.
     print("  last green per workflow (basis: newest-first scan of the window):")
     for wf in sorted(greens):
@@ -418,27 +678,81 @@ def report_repo(repo: str, gh_cmd: str, limit: int, sample: int) -> None:
             print(f"    - {wf:<32} GREEN {elapsed} ago, {back} "
                   f"(id {g.green_id})")
 
-    # (2b) Historical time-in-queue vs run duration (jobs API sample).
-    if sample > 0:
-        completed_ids = [r["databaseId"] for r in runs
-                         if r.get("status") == "completed"][:sample]
-        jobs = fetch_job_timings(repo, gh_cmd, completed_ids)
-        run_wf = {r["databaseId"]: r.get("workflowName", "?") for r in runs}
-        waits = analyze_waits(jobs, run_wf)
-        print(f"  time-in-queue vs run duration (basis: jobs API over "
-              f"{len(completed_ids)} completed runs, {len(jobs)} jobs; wait = "
-              f"job.started-created, SEPARATE from duration):")
-        if not waits:
-            print("    (no completed jobs sampled)")
-        for wf in sorted(waits):
-            w = waits[wf]
-            print(f"    - {wf:<32} n={w.n} wait med/p90/max "
-                  f"{humanize_secs(w.wait_median)}/{humanize_secs(w.wait_p90)}/"
-                  f"{humanize_secs(w.wait_max)} | dur med/p90 "
-                  f"{humanize_secs(w.dur_median)}/{humanize_secs(w.dur_p90)}")
-    else:
-        print("  time-in-queue distribution: skipped (--sample 0); "
-              "current queue age above is the free lower-bound signal")
+    # (2b)+(7) Jobs-API sample: wait/duration distribution, utilization, peak.
+    if sample <= 0:
+        print("  time-in-queue distribution / utilization / peak concurrency: "
+              "skipped (--sample 0); current queue age above is the free "
+              "lower-bound signal")
+        return
+
+    running_ids = [r["databaseId"] for r in runs
+                   if r.get("status") in RUNNING_STATUSES]
+    completed_all = [r["databaseId"] for r in runs
+                     if r.get("status") == "completed"]
+    completed_ids = completed_all[:sample]
+    sampled_ids = running_ids + completed_ids
+    jobs = fetch_job_timings(repo, gh_cmd, sampled_ids)
+    run_wf = {r["databaseId"]: r.get("workflowName", "?") for r in runs}
+    waits = analyze_waits(jobs, run_wf)
+
+    print(f"  time-in-queue vs run duration (basis: jobs API over "
+          f"{len(completed_ids)} completed + {len(running_ids)} running runs, "
+          f"{len(jobs)} jobs; wait = job.started-created, SEPARATE from "
+          f"duration):")
+    if not waits:
+        print("    (no jobs sampled)")
+    for wf in sorted(waits):
+        w = waits[wf]
+        print(f"    - {wf:<32} n={w.n} wait med/p90/max "
+              f"{humanize_secs(w.wait_median)}/{humanize_secs(w.wait_p90)}/"
+              f"{humanize_secs(w.wait_max)} | dur med/p90 "
+              f"{humanize_secs(w.dur_median)}/{humanize_secs(w.dur_p90)}")
+
+    # Utilization + peak concurrency over a FIXED window, self-hosted only.
+    if rh is None or rh.total == 0:
+        print("  utilization / peak concurrency: n/a (no self-hosted runners "
+              "visible at repo scope)")
+        return
+    truncated = len(completed_all) > len(completed_ids)
+    if not rw.covers_window:
+        truncated = True
+    window_start = datetime.fromtimestamp(
+        now.timestamp() - window_hours * 3600, tz=timezone.utc)
+    trunc_note = (f"sample truncated ({len(completed_ids)} of "
+                  f"{len(completed_all)} completed runs in the {len(runs)}-run "
+                  f"list, NEWEST-FIRST — biased toward frequently-completing "
+                  f"short workflows, so long runs are under-represented; run "
+                  f"list itself "
+                  f"{'does NOT' if not rw.covers_window else 'does'} span the "
+                  f"full {window_hours:g}h)"
+                  if truncated else
+                  f"sample covers all {len(completed_all)} completed runs in the "
+                  f"{len(runs)}-run list")
+    selfhosted = rh.names
+    util = analyze_utilization(jobs, selfhosted, rh.total, window_start, now,
+                               lower_bound=truncated, basis=trunc_note)
+    peak = analyze_peak_concurrency(jobs, selfhosted, rh.total, window_start,
+                                    now, lower_bound=truncated, basis=trunc_note)
+    bound = "LOWER BOUND" if truncated else "measured"
+    print(f"  self-hosted utilization over last {window_hours:g}h "
+          f"({bound}; basis: {util.basis}):")
+    print(f"    - {util.util_pct:.1f}% = {humanize_secs(util.busy_secs)} busy / "
+          f"{humanize_secs(util.capacity_secs)} capacity "
+          f"({rh.total} runner(s) x {window_hours:g}h), from "
+          f"{util.n_jobs} self-hosted job(s)")
+    if truncated:
+        print(f"      ^ direction of error: UNDER-counts busy time (omitted "
+              f"jobs are never added), so TRUE utilization is >= this figure.")
+    verdict = ("peak < runners: spare capacity existed even at the busiest "
+               "SAMPLED instant" if peak.peak < rh.total else
+               "peak >= runners: capacity was fully committed at the busiest "
+               "sampled instant")
+    print(f"  peak observed concurrent self-hosted jobs: {peak.peak} vs "
+          f"{rh.total} configured runner(s) ({bound}) — {verdict}")
+    if truncated:
+        print(f"      ^ direction of error: unsampled overlapping jobs can only "
+              f"RAISE the peak, so TRUE peak is >= {peak.peak}. Do NOT conclude "
+              f"a runner is deletable from a truncated peak alone.")
 
 
 # --- Tick gate ----------------------------------------------------------------
@@ -554,7 +868,11 @@ def main(argv=None) -> int:
                    help="recent runs to summarize (default 100)")
     p.add_argument("--sample", type=int, default=15,
                    help="completed runs to sample via the jobs API for the "
-                        "time-in-queue distribution (0 disables; default 15)")
+                        "time-in-queue distribution, utilization, and peak "
+                        "concurrency (0 disables; default 15)")
+    p.add_argument("--window-hours", type=float, default=24.0,
+                   help="window (hours) for the run aggregates, utilization, "
+                        "and peak-concurrency figures (default 24)")
     p.add_argument("--gate", action="store_true",
                    help="emit key=value tick fields; exit 1 when unhealthy "
                         "(no jobs-API sampling)")
@@ -570,7 +888,7 @@ def main(argv=None) -> int:
 
     print(f"Hermit CI queue health — gh via: {gh_cmd!r}")
     for repo in repos:
-        report_repo(repo, gh_cmd, args.limit, args.sample)
+        report_repo(repo, gh_cmd, args.limit, args.sample, args.window_hours)
     print("\n(Remediation options: ci-hub/runners/README.md)")
     return 0
 

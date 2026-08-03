@@ -116,6 +116,119 @@ class WaitDistributionTests(unittest.TestCase):
         self.assertEqual(w.dur_median, 45.0)
 
 
+def job(runner, started_min_ago, dur_min, rid=1):
+    """A jobs-API-shaped record with absolute datetimes, as fetch_job_timings
+    now returns. dur_min=None => still running (completed is None)."""
+    started = NOW - timedelta(minutes=started_min_ago)
+    completed = None if dur_min is None else started + timedelta(minutes=dur_min)
+    return {"run_id": rid, "runner": runner, "started": started,
+            "completed": completed, "wait": 0.0,
+            "duration": None if dur_min is None else dur_min * 60.0}
+
+
+class ConfiguredVsLiveTests(unittest.TestCase):
+    def _api(self, statuses):
+        return {"total_count": len(statuses), "runners": [
+            {"name": f"r{i}", "status": s, "busy": False, "labels": []}
+            for i, s in enumerate(statuses)]}
+
+    def test_offline_is_configured_minus_live(self) -> None:
+        # 3 configured, 1 offline => the silently-dead-runner finding.
+        rh = qh.analyze_runners(self._api(["online", "online", "offline"]))
+        self.assertEqual(rh.total, 3)
+        self.assertEqual(rh.online, 2)
+        self.assertEqual(rh.offline, 1)
+
+    def test_no_offline_when_all_online(self) -> None:
+        rh = qh.analyze_runners(self._api(["online", "online"]))
+        self.assertEqual(rh.offline, 0)
+
+
+class UtilizationTests(unittest.TestCase):
+    def test_busy_over_capacity_and_selfhosted_filter(self) -> None:
+        selfhosted = {"sh1", "sh2"}
+        # Over the last 1h, two self-hosted jobs run 30m each (=1h busy), plus a
+        # GitHub-hosted job that must NOT count toward self-hosted capacity.
+        jobs = [
+            job("sh1", started_min_ago=40, dur_min=30, rid=1),
+            job("sh2", started_min_ago=20, dur_min=20, rid=2),
+            job("GitHub Actions 3", started_min_ago=50, dur_min=45, rid=3),
+        ]
+        win_start = NOW - timedelta(hours=1)
+        u = qh.analyze_utilization(jobs, selfhosted, n_runners=2,
+                                   window_start=win_start, now=NOW,
+                                   lower_bound=False, basis="test")
+        # busy = 30m + 20m = 50m; capacity = 2 runners * 60m = 120m.
+        self.assertAlmostEqual(u.busy_secs, 50 * 60, delta=1)
+        self.assertAlmostEqual(u.capacity_secs, 120 * 60, delta=1)
+        self.assertAlmostEqual(u.util_pct, 100.0 * 50 / 120, delta=0.1)
+        self.assertEqual(u.n_jobs, 2)  # hosted job excluded
+
+    def test_running_job_counts_up_to_now_and_clips_to_window(self) -> None:
+        # A job that started 90m ago and is still running: only the last 60m fall
+        # in a 1h window, so it contributes 60m of busy time, not 90m.
+        jobs = [job("sh1", started_min_ago=90, dur_min=None, rid=1)]
+        win_start = NOW - timedelta(hours=1)
+        u = qh.analyze_utilization(jobs, {"sh1"}, n_runners=1,
+                                   window_start=win_start, now=NOW,
+                                   lower_bound=True, basis="test")
+        self.assertAlmostEqual(u.busy_secs, 60 * 60, delta=1)
+        self.assertTrue(u.lower_bound)
+
+
+class PeakConcurrencyTests(unittest.TestCase):
+    def test_overlap_counts_touching_does_not(self) -> None:
+        selfhosted = {"a", "b", "c"}
+        # a: [-50,-30), b: [-40,-20) overlap a on [-40,-30) => peak 2.
+        # c: [-20,-10) touches b's end at -20 => NOT concurrent with b.
+        jobs = [
+            job("a", started_min_ago=50, dur_min=20, rid=1),
+            job("b", started_min_ago=40, dur_min=20, rid=2),
+            job("c", started_min_ago=20, dur_min=10, rid=3),
+        ]
+        win_start = NOW - timedelta(hours=2)
+        p = qh.analyze_peak_concurrency(jobs, selfhosted, n_runners=3,
+                                        window_start=win_start, now=NOW,
+                                        lower_bound=False, basis="test")
+        self.assertEqual(p.peak, 2)
+        self.assertEqual(p.n_intervals, 3)
+
+
+class RunWindowTests(unittest.TestCase):
+    def test_merge_gate_separated_and_window_filter(self) -> None:
+        runs = [
+            run("CI", "completed", "success", created_min_ago=10, rid=1),
+            run("CI", "completed", "failure", created_min_ago=20, rid=2),
+            run("CI", "completed", "cancelled", created_min_ago=30, rid=3),
+            run("Merge Gate", "completed", "failure", created_min_ago=15, rid=4),
+            {**run("x", "completed", "success", rid=5), "event": "merge_group"},
+            # Older than the 1h window => excluded from counts.
+            run("CI", "completed", "failure", created_min_ago=120, rid=6),
+        ]
+        rw = qh.analyze_run_window(runs, NOW, window_hours=1.0)
+        self.assertEqual(rw.started, 3)       # 3 non-gate CI runs in window
+        self.assertEqual(rw.success, 1)
+        self.assertEqual(rw.failure, 1)       # gate failure NOT counted here
+        self.assertEqual(rw.cancelled, 1)
+        self.assertEqual(rw.gate_started, 2)  # Merge Gate + merge_group event
+        self.assertEqual(rw.gate_failure, 1)
+        # Oldest run (120m) predates the 1h window => coverage is satisfied.
+        self.assertTrue(rw.covers_window)
+
+    def test_coverage_warning_when_window_not_spanned(self) -> None:
+        runs = [run("CI", "completed", "success", created_min_ago=10, rid=1)]
+        rw = qh.analyze_run_window(runs, NOW, window_hours=24.0)
+        self.assertFalse(rw.covers_window)  # only 10m of history for a 24h window
+
+
+class MergeGateClassifyTests(unittest.TestCase):
+    def test_markers(self) -> None:
+        self.assertTrue(qh._is_merge_gate("Merge Gate", "push"))
+        self.assertTrue(qh._is_merge_gate("anything", "merge_group"))
+        self.assertFalse(qh._is_merge_gate("Rust", "push"))
+        self.assertFalse(qh._is_merge_gate("CI (portable)", "push"))
+
+
 class GateTests(unittest.TestCase):
     def _patch(self, runs, api):
         self.addCleanup(setattr, qh, "fetch_runs", qh.fetch_runs)

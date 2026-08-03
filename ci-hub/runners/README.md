@@ -26,8 +26,13 @@ devserver proxy without changing the machine-global `gh` account. Override with
 The report shows, per repo (analysis lives in the importable `queue_health.py`;
 `ci-status.py` is the stable entrypoint that renders it):
 
-- **runner health** — count + per-runner status/busy/labels, with a `pmu` /
-  `pmu-serial` breakdown; flags when there is no idle runner.
+- **runner health — CONFIGURED vs LIVE** — the configured runner count next to
+  the live (online) count, so a **registered-but-offline runner shows up as
+  silently-dead capacity** instead of vanishing; plus per-runner
+  status/busy/labels, a `pmu` / `pmu-serial` breakdown, and a flag when there is
+  no idle runner.
+- **named in-flight runs** — each queued/running run by id, workflow, branch, and
+  title ("run X on branch Y"), not one opaque "something is running" count.
 - **queue depth, per workflow** — queued vs running counts split out for each
   workflow (not one aggregate number), plus the **current queue age**
   (`now − createdAt`) median/max, an honest *lower bound* on each run's final
@@ -45,6 +50,23 @@ The report shows, per repo (analysis lives in the importable `queue_health.py`;
   cannot supply this; the jobs API is the only faithful source. Control the
   sample with `--sample N` (`0` disables it; the current-queue-age above is the
   free lower-bound signal).
+- **last-window run aggregates** — over a fixed window (`--window-hours`, default
+  24) the counts of runs started / completed / success / failure / cancelled,
+  with **merge-gate runs counted SEPARATELY** (a `Merge Gate` workflow or a
+  `merge_group` event) so high-frequency gate churn never swamps the real
+  test-failure count. A short run list that does not span the window prints a
+  **COVERAGE WARNING** and the counts are labelled a lower bound.
+- **self-hosted utilization + peak concurrency** — the owner's "can we delete a
+  runner?" signal. **Utilization** is busy-runner-time as a *percentage of
+  capacity* (`self-hosted busy-job-seconds ÷ (runner count × window)`), and
+  **peak** is the maximum observed concurrent self-hosted jobs vs the runner
+  count, both over the same fixed window. Only jobs whose runner is a known
+  self-hosted runner contribute, so GitHub-hosted work never inflates them. Both
+  derive from the bounded jobs-API sample over a *fixed* window, which makes the
+  error one-directional: a truncated sample can only omit busy time / overlaps,
+  so each figure is a strict **LOWER BOUND** that prints the **direction of its
+  own error** ("TRUE utilization is ≥ this", "TRUE peak is ≥ this") and its
+  sampling basis — never a bare percentage. Raise `--sample` for a tighter bound.
 
 ### Ops-tick integration
 
@@ -73,8 +95,24 @@ carries only the single-runner lifecycle targets (`build`/`init`/`start`/
 reimplementation (`ci-status.py`: runner counts + one aggregate in-flight number
 + last-green), off the tick and missing per-workflow depth, wait-time
 distribution, runs-back, and the binding-constraint verdict. This directory now
-ports the **capability** (the four items above) into ci-hub and wires it to the
-tick, rather than porting the target.
+ports the **capability** (all of the items above) into ci-hub and wires the cheap
+core to the tick, rather than porting the target.
+
+The reference `stats` output's defining discipline was that it stated the
+direction of its own error — "job sample truncated at N jobs — utilization is a
+LOWER BOUND", "merge_group run sample reached 100; count may be low". The
+utilization, peak-concurrency, and last-window figures here follow that rule
+exactly: every one prints its sampling basis and, when the sample or run list is
+truncated, whether the true value is higher or lower. A number that knows its
+limits beats one that only looks authoritative.
+
+Data-source reuse (no third accumulator): live snapshots come from the `gh` API
+directly, exactly as the existing per-workflow/queue/runner sections already did;
+the durable multi-day history lives in the ci-hub history store
+(`ci-hub/history/query.py runs` / `green-time`, over `ignored/ci-hub/gha-runs.csv`)
+and open-PR health in `ci-hub/health/pr_status.py`. Use `--window-hours` here for
+same-session capacity questions; use the history store for windows longer than the
+live run list reaches.
 
 ## The Hermit CI situation (2026-07-24)
 
