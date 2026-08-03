@@ -430,6 +430,9 @@ def _run_costed(argv: Sequence[str]) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(raw)
+    if os.environ.get("CI_HUB_DOCS_PARSE_ONLY") is not None:
+        print(f"DOCS PARSE OK: land_and_arm.py {' '.join(raw)}")
+        return 0
     if (
         args.operation in {"run", "complete"}
         and os.environ.get("CI_HUB_TOOL_COST_ACTIVE") is None

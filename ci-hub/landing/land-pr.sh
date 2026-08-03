@@ -64,6 +64,11 @@ if [ -z "$PR" ] || [ -z "$BR" ]; then
 fi
 case "$GATE_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: gate deadline must be positive seconds" >&2; exit 2 ;; esac
 case "$CHILD_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: child deadline must be positive seconds" >&2; exit 2 ;; esac
+if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
+  printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s agent=%s\n' \
+    "$PR" "$BR" "$UNION" "$AGENT"
+  exit 0
+fi
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)

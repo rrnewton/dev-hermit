@@ -7,9 +7,15 @@ an experiment directory.
 
 ## Public entrypoints
 
-Run `./ci-hub/ci-hub help` for the command list. The core workflows are:
+Every fenced shell invocation in this README and `landing/README.md` is extracted
+and exercised by the docs-as-tests check. Read-only commands execute; mutating
+commands must pass their exact argument parser without performing the action.
+The core workflows are:
 
 ```bash
+# Print the command list without network or filesystem writes.
+./ci-hub/ci-hub help
+
 # Pull fresh open-PR CI state from GitHub and classify it.
 ./ci-hub/ci-hub fresh
 
@@ -145,8 +151,8 @@ obligation remains visible and unhealthy even after acknowledgment, until the
 repair lands and is closed with:
 
 ```bash
-./ci-hub/ci-hub resolve-obligation <id> --kind fix-forward --ref <repair-sha>
-# or: --kind revert --ref <revert-sha>
+./ci-hub/ci-hub resolve-obligation OBLIGATION_ID --kind fix-forward --ref REPAIR_SHA
+# or: --kind revert --ref REVERT_SHA
 ```
 
 ## Why this exists

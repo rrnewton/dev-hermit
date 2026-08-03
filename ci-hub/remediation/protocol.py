@@ -850,6 +850,19 @@ def watch(
             poll_obligation(record["obligation_id"], store_path) for record in records
         ]
         if once or all(_watch_complete(record) for record in updated):
+            remediation = sum(
+                record["overall_state"] == "remediation_required" for record in updated
+            )
+            unresolved = sum(
+                record["overall_state"] not in obligations.CLOSED_STATES
+                for record in updated
+            )
+            print(
+                f"WATCH OBLIGATIONS: checked={len(updated)} "
+                f"unresolved={unresolved} remediation_required={remediation}"
+            )
+            for record in updated:
+                print(f"  {_summary_line(record)}")
             if any(
                 record["overall_state"] == "remediation_required" for record in updated
             ):

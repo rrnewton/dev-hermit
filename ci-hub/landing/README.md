@@ -175,10 +175,11 @@ surface across the agent shell's 120-second cap and agent recycling. Use
 Release only after the commit is on `origin/main`:
 
 ```bash
-with-proxy gh pr view <N> -R rrnewton/hermit --json state,mergeCommit \
+with-proxy gh pr view PR_NUMBER -R rrnewton/hermit --json state,mergeCommit \
   -q '{state:.state, sha:.mergeCommit.oid}'          # want state=MERGED
-git fetch -q origin main
-git merge-base --is-ancestor <mergeCommit-sha> origin/main && echo LANDED
+with-proxy gh api \
+  "repos/rrnewton/hermit/compare/$(with-proxy gh pr view PR_NUMBER -R rrnewton/hermit --json mergeCommit -q .mergeCommit.oid)...main" \
+  --jq 'select(.status == "ahead" or .status == "identical") | "LANDED"'
 ```
 
 **Do not poll `mergeStateStatus` to decide you've landed.** If auto-merge is

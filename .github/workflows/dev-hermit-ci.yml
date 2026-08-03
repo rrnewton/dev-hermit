@@ -71,6 +71,13 @@ jobs:
               python3 -m unittest discover -s "$suite" -p "test_*.py"
           done
 
+      - name: Exercise documented ci-hub commands without side effects
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m python3 ci-hub/tests/documented_commands.py
+
       - name: Materialize the pinned live-query dependency
         shell: bash
         run: |
@@ -99,6 +106,15 @@ jobs:
             --wall-seconds 30 \
             --cpu-seconds 15 \
             --log "$RUNNER_TEMP/ci-hub-live-health.log"
+
+      - name: Exercise networked documented commands
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 300
+          timeout --signal=KILL 5m python3 ci-hub/tests/documented_commands.py --live
 
       - name: Upload live health evidence
         if: always()

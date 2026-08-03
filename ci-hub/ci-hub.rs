@@ -452,6 +452,17 @@ fn main() -> ExitCode {
             return to_exit_code(code);
         }
     };
+    if env::var_os("CI_HUB_DOCS_PARSE_ONLY").is_some() {
+        println!(
+            "DOCS PARSE OK: {}",
+            raw[1..]
+                .iter()
+                .map(|argument| argument.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        return ExitCode::SUCCESS;
+    }
     let root = match workspace_root() {
         Ok(root) => root,
         Err(error) => {

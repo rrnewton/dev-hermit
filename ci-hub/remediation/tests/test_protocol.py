@@ -265,6 +265,23 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("state=remediation-required", output.getvalue())
         self.assertIn("sent_unacknowledged_count=0", output.getvalue())
 
+    def test_empty_one_shot_watch_reports_a_domain_result(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(
+                protocol.watch(
+                    store_path=self.store,
+                    obligation_id=None,
+                    once=True,
+                    poll_seconds=1,
+                ),
+                0,
+            )
+        self.assertEqual(
+            output.getvalue().strip(),
+            "WATCH OBLIGATIONS: checked=0 unresolved=0 remediation_required=0",
+        )
+
     def test_local_run_persists_tool_cost_payload(self) -> None:
         self.create()
         workspace = self.root / "ignored/ci-hub/obligations/test-obligation"

@@ -14,6 +14,12 @@ tests. It deliberately has two evidence layers:
   accepted only with an explicit unavailable/incomplete marker. A timeout,
   crash, missing health section, missing final wall/CPU report, or any other
   exit is a ci-hub failure.
+- `documented_commands.py` extracts every fenced shell invocation from the two
+  ci-hub READMEs. Local read-only examples execute against isolated state,
+  mutating examples must parse their literal argv without side effects, and the
+  live CI phase executes networked read-only examples through `with-proxy`.
+  Cost-only output is treated as silent failure; auth/import/path/usage errors
+  and any write to a clean checkout fail the shard.
 
 The split prevents GitHub latency from being reported as a ci-hub regression
 without allowing a broken or stalled ci-hub process to pass as infrastructure
