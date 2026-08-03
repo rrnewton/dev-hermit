@@ -10,7 +10,7 @@ SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
-	install-deps-core install-deps-full install-deps-qemu lint validate
+	install-deps-core install-deps-full install-deps-qemu lint list-rust-scripts validate
 
 build: init-hermit
 	@$(MAKE) --no-print-directory doctor-core
@@ -126,6 +126,9 @@ check-deps:
 check-portability:
 	@scripts/check-portable-paths.sh
 
+list-rust-scripts: ## Inventory executable Rust and rust-script source files
+	@scripts/list-rust-scripts.rs
+
 lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@command -v rustfmt >/dev/null 2>&1 || { echo 'ERROR: rustfmt is required.' >&2; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
@@ -223,6 +226,7 @@ help:
 	@echo "make doctor-{core,full,qemu}  Check one dependency profile"
 	@echo "make check-deps           Verify required native pkg-config modules"
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
+	@echo "make list-rust-scripts Inventory executable Rust and rust-script source files"
 	@echo "make lint               Lint parent scripts, tests, paths, and submodule policy"
 	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"
 	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
