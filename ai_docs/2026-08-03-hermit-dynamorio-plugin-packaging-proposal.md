@@ -14,9 +14,11 @@ that binary, but remove DynamoRIO, `reverie-dbi`, the DBT native client, and the
 DBT Detcore shared object from its dependency and installation closure.
 
 Ship one additional Cargo package, `hermit-dynamorio`, which installs a helper
-executable named `hermit-dynamorio`. For the 0.2 Linux x86-64 target, the helper
-embeds a compressed, prebuilt DBT payload and owns its validation and atomic
-materialization:
+executable named `hermit-dynamorio`. For the 0.2 Linux x86-64 target, its build
+script compiles the vendored, pinned DynamoRIO source in `OUT_DIR`, strips and
+packs the required runtime files with the DBT Detcore tool, and embeds that
+compressed archive in the helper. The helper owns validation and atomic
+materialization of:
 
 - the pinned DynamoRIO runtime, including `drrun` and its required libraries;
 - the native Reverie DBT client;
@@ -181,11 +183,11 @@ selected.
 
 ## What `cargo install` can actually install
 
-**The payload can and should be shipped prebuilt.** DynamoRIO needs CMake when
-building from source, but it does not need CMake on the machine that runs a
-matching prebuilt runtime. The current Reverie build compiles a pinned vendored
-source tree because it is a developer build path, not because runtime loading
-requires local compilation.
+**`cargo install` is the source-install channel.** The recommended design builds
+DynamoRIO and the DBT payload from the source carried by the Cargo package. It
+does not fetch a prebuilt payload at install time or runtime. Users choosing
+this channel need the declared native build prerequisites; users who want a
+prebuilt installation belong on a separate binary-package channel.
 
 Cargo has no `data_files` installation mechanism. Its
 [`cargo install` documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html#description)
@@ -193,23 +195,26 @@ says that only packages with executable targets can be installed and that all
 installed executables go in the installation root's `bin` directory. It does
 not copy arbitrary package resources beside them. crates.io also has a
 [10 MB `.crate` limit](https://doc.rust-lang.org/cargo/reference/publishing.html#packaging-a-crate),
-which rules out publishing the current payload as an ordinary resource inside
-one crate if the resource exceeds that limit.
+which the source package must satisfy.
 
 Measurements on 2026-08-03 distinguish the developer install tree from the
 runtime payload that `hermit-install/build.rs` already selects:
 
 | Artifact or operation | Measured result | Basis |
 | --- | ---: | --- |
-| Vendored DynamoRIO source | 128,694,015 bytes | Pinned source tree including submodules |
+| Vendored DynamoRIO source | 128,694,015 apparent bytes | Pinned source tree including submodules |
 | Vendored source as gzip tar | 34,658,452 bytes | Same tree; exceeds crates.io limit |
+| Curated, build-proven source subset | 24,686,088 apparent bytes | Core, tools, API, build support, licenses, and only the five required extension directories |
+| Curated subset as deterministic gzip tar | 5,234,435 bytes | Clean configure, build, install, and DBT-client smoke test passed |
 | Full current CMake install | 511,470,114 bytes | Clients, extensions, and tools enabled |
 | Full install as gzip tar | 142,467,790 bytes | Existing equivalent release install |
 | Minimal viable CMake install | 155,312,369 bytes | Clients off, extensions and tools on; includes build-only files |
 
-The minimal runtime was measured file by file using apparent byte size from
-`stat`, not allocated blocks from `du`; btrfs compression therefore does not
-understate these numbers:
+Uncompressed source and runtime figures use apparent byte size, not allocated
+blocks from `du`; btrfs compression therefore does not understate what a crate,
+embedded payload, or network transfer must carry. Compressed tar figures are the
+actual regular-file byte lengths. The minimal runtime was measured file by file
+with `stat`:
 
 | Runtime file | Unstripped | `strip --strip-unneeded` |
 | --- | ---: | ---: |
@@ -243,40 +248,55 @@ install, or 49.13 seconds total. The minimal viable configuration with
 DynamoRIO clients disabled took 4.74 plus 14.13 seconds, or 18.87 seconds total.
 Thus local compilation is measurable overhead but not the deciding problem.
 
-The build-and-install-directly option is rejected for two independent reasons:
+Source distribution has one measured blocker that must not be hidden: the
+unpruned vendored source compresses to 34.66 MB, above crates.io's 10 MB
+`.crate` limit. A concrete source-level reduction is viable: a curated tree
+containing top-level CMake and license files, `core`, `tools`, `api`, `libutil`,
+`make`, required configuration helpers, and only `drcontainers`, `drmgr`,
+`drx`, `drwrap`, and `drreg` compresses to 5,234,435 bytes. Its extension CMake
+list was reduced to those five directories. From a fresh build directory it
+configured, built, and installed in 14.54 seconds with the same 16-job cap, and
+its `drrun` successfully ran the existing DBT client through `/bin/true`.
 
-1. It is not self-contained on crates.io. The vendored source compresses to
-   34.66 MB, above the 10 MB `.crate` limit. Fetching the source during the
-   build merely reintroduces the network dependency.
-2. It is outside Cargo's installation contract. Cargo requires build-script
-   output to stay in
-   [`OUT_DIR`](https://doc.rust-lang.org/cargo/reference/build-scripts.html#outputs-of-the-build-script),
-   and registry install artifacts default to a
-   [temporary target directory](https://doc.rust-lang.org/cargo/commands/cargo-install.html#option-cargo-install---target-dir).
-   A local probe showed both sides: a file written to `OUT_DIR` disappeared and
-   was not installed, while a second build script could write directly to an
-   externally supplied `$HERMIT_DIR` because Cargo does not sandbox it. “Can
-   write” is not “Cargo installs”: the external write is discouraged,
-   untracked, non-transactional, survives a later compilation failure, and is
-   not removed by Cargo. It also makes `cargo install` require CMake, a C/C++
-   toolchain, Perl, and the native build dependencies.
+That 5.23 MB result proves the DynamoRIO source subset, not the complete
+`hermit-dynamorio` `.crate`: Rust source, build glue, and licenses still count
+toward crates.io's limit. The packaging gate remains `cargo package` below 10 MB
+plus a clean source build of the exact runtime set. If the complete crate cannot
+meet the limit, an explicit crates.io limit exception or a different source
+registry is required; silently fetching the submodule is not an air-gapped
+source install.
 
-Fetch-on-first-use is worse at this measured size. It saves about 3.23 MB in the
-installed helper but makes air-gapped first use a hard failure, requires hosting
-immutable target artifacts for every supported release indefinitely, and adds
-download, retry, partial-file, and transport-diagnostic states to the runtime.
+The build script then compiles entirely within `OUT_DIR`, strips the measured
+runtime set, creates a deterministic compressed archive there, and exposes it to
+the Rust compilation with `include_bytes!`. This turns Cargo's one installed
+artifact, the helper executable, into the carrier for the source-built payload.
 
-**Recommendation: embed the 3.23 MB compressed, stripped, prebuilt runtime in
-`hermit-dynamorio` and atomically self-extract it.** At this measured size the
-fat helper is less complex than release fetching, works offline, creates no
-permanent artifact-hosting obligation, and meets “install it and it just works.”
-It is also materially safer than abusing `build.rs` as an installer. A release
-gate must still run `cargo package` and prove the complete `.crate`, including
-Rust source and the embedded bundle, remains below crates.io's 10 MB limit.
+Writing the CMake outputs directly into `$HERMIT_DIR` during `cargo install` is
+technically possible but rejected. Cargo's documented build-script contract says
+scripts should not modify files outside
+[`OUT_DIR`](https://doc.rust-lang.org/cargo/reference/build-scripts.html#outputs-of-the-build-script),
+and registry install artifacts default to a
+[temporary target directory](https://doc.rust-lang.org/cargo/commands/cargo-install.html#option-cargo-install---target-dir).
+A local probe confirmed that Cargo does not sandbox a build script: it could
+write a 16-byte marker directly to an externally supplied `$HERMIT_DIR`.
+However, Cargo did not install or track that file. Such a write is
+non-transactional, survives a later compilation failure, is not removed by
+Cargo, and can target the wrong user's runtime root under privileged builds.
+“Can write” is not “Cargo installs.”
+
+**Recommendation: source-build in `OUT_DIR`, embed the measured 3.23 MB stripped
+archive, and atomically self-extract it.** This follows Cargo's source-build and
+single-executable installation model, has no runtime network or permanent
+artifact-hosting requirement, works from a fully pre-staged Cargo dependency
+set in an air-gapped environment, and meets “install it and it just works.” The
+native prerequisites are CMake, a C/C++ toolchain, Perl, and the libraries
+identified by the clean configure; `make install-deps` should expose them as a
+separate DynamoRIO/source-install dependency group.
 
 On first DBT use, the helper performs an implicit `ensure` operation:
 
-1. derive the exact version, target, ABI tag, and build ID embedded in itself;
+1. derive the exact version, target, ABI tag, and build ID embedded by its own
+   source build;
 2. use an already-materialized exact payload when every check passes;
 3. take a per-payload extraction lock;
 4. unpack the embedded archive into a sibling temporary directory beneath
@@ -306,6 +326,12 @@ There is no network path and no normal setup command. After `cargo install
 hermit-dynamorio`, the first `hermit --backend dbt run` transparently extracts
 the embedded payload and runs; subsequent invocations only validate and reuse
 it.
+
+Prebuilt distribution is separate future work, not part of the Cargo design.
+An apt, dnf, Homebrew, Conda, or release-artifact installer may later install
+the same versioned payload and helper without compiling, while preserving the
+same ABI/build-ID handshake and `$HERMIT_DIR` layout. That channel is additive
+and does not gate the source package.
 
 ## Detcore compatibility handshake
 
@@ -345,13 +371,15 @@ input set includes the Detcore and plugin-protocol source-tree hashes,
 Reverie revision, target triple, compiler identity, and code-generation flags.
 
 Both the static coordinator and `libdetcore_dbt.so` embed the build ID computed
-by their own build. The release manifest is generated after the build and binds
-the package version, ABI tag, build ID, source revisions, lockfile digest,
-target, and SHA-256 of every output in one signed provenance statement. The
-helper verifies the signature and artifact hashes, reads the build ID from the
-actual `.so` descriptor, and compares it with both the manifest and host. The
-native client repeats the descriptor-to-host comparison. An operator cannot
-make mismatched code compatible by copying labels into `plugin.json`.
+by their own build. For the Cargo source channel, the registry checksum
+authenticates the source package and the build script generates a build record
+binding the package version, ABI tag, build ID, source revisions, lockfile
+digest, target, and SHA-256 of every output. The helper verifies the embedded
+record and artifact hashes, reads the build ID from the actual `.so` descriptor,
+and compares it with both the record and host. The native client repeats the
+descriptor-to-host comparison. An operator cannot make mismatched code
+compatible by copying labels into `plugin.json`. A future prebuilt binary
+channel must add signed provenance binding the same inputs and outputs.
 
 These invariants are mechanical gates, not documentation promises:
 
@@ -361,7 +389,7 @@ These invariants are mechanical gates, not documentation promises:
 | Host and plugin are one release | Exact runtime comparison of `CARGO_PKG_VERSION` | Exit 78 |
 | Detcore interfaces agree | Exact runtime comparison of generated ABI tags | Exit 78 |
 | Detcore implementations correspond | Exact comparison of independently generated build IDs embedded in host and `.so` | Exit 78 |
-| Manifest describes the released build | Verify signed provenance binding inputs, build ID, and output hashes | Reject installation or exit 78 |
+| Build record describes the source build | Compare generated input identity, build ID, descriptors, and output hashes | Reject extraction or exit 78 |
 | Installed payload is the released payload | Hash every file before activation and on probe | Reject installation or exit 78 |
 | `.so` agrees with its manifest | Read exported descriptor in both helper and native client | Exit 78 |
 | Core excludes third-party DBT dependencies | CI inspects the packaged `cargo tree` and archive contents | Block publication |
@@ -482,14 +510,15 @@ release artifacts:
 1. `cargo tree -p hermit-run` contains no DynamoRIO, `reverie-dbi`, DBT tool,
    or DBT installer dependency.
 2. `cargo package -p hermit-dynamorio` stays below crates.io's 10 MB limit and
-   contains the exact prebuilt payload, licenses, manifest, and provenance.
+   contains the minimal vendored source, licenses, and build-record generator;
+   a clean install builds the measured runtime without fetching another source.
 3. A clean `cargo install hermit-run` produces the flagship `hermit` and its
    ptrace, LiteInst, and KVM paths retain their existing tests.
 4. On a clean home, `hermit --backend dbt run -- /bin/true` emits the exact
    absent-plugin diagnostic and exits 69 without starting the guest.
 5. After `cargo install hermit-dynamorio`, the same command automatically
-   materializes the pinned payload and runs without another user step or
-   network access.
+   materializes the source-built embedded payload and runs without another user
+   step or network access.
 6. A host/plugin exact-version, ABI-tag, or build-ID mismatch fails with the
    exact mismatch diagnostic and exits 78.
 7. A plugin built from a different Detcore revision is rejected even if its
@@ -499,8 +528,7 @@ release artifacts:
 9. The DBT native client independently refuses an ABI-tag or build-ID mismatch
    even when a manifest is edited to claim compatibility.
 10. An interrupted or concurrent extraction leaves the prior `current` payload
-    usable and never
-   exposes the partial replacement.
+    usable and never exposes the partial replacement.
 11. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
     recordings symlink resolves to the actual cache store, and neither package
     installation nor developer validation writes developer artifacts there.
@@ -514,9 +542,10 @@ release artifacts:
 ## Rollout sequence
 
 1. Define the dependency-light plugin protocol, generated Detcore ABI and build
-   identities, signed provenance, and exported shared-object descriptor.
-2. Produce the signed, content-addressed, runtime-pruned DynamoRIO payload and
-   embed it in the `hermit-dynamorio` helper that validates/materializes it.
+   identities, source-build record, and exported shared-object descriptor.
+2. Produce the crates.io-sized minimal source distribution and deterministic
+   source-build pipeline that strips and embeds the runtime-pruned payload in
+   `hermit-dynamorio`.
 3. Change the compiled DBT adapter to discover the helper and consume only its
    validated manifest; remove third-party dependencies from `hermit-run`.
 4. Add absent, mismatch, corruption, interruption, and packaged end-to-end CI
