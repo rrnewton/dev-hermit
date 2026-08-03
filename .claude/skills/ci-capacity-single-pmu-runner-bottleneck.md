@@ -1,6 +1,6 @@
 ---
 name: ci-capacity-single-pmu-runner-bottleneck
-description: "rrnewton/hermit Rust CI is chronically queued/never-green because ONE pmu self-hosted runner can't drain its heavy determinism suite x high PR volume; reverie has the same 1-runner setup but drains (light job). Not broken tests — a capacity mismatch. Status tool: ci-hub/runners/ci-status.py."
+description: "rrnewton/hermit Rust CI can queue behind scarce PMU runners while Reverie's lighter lane drains. Load for historical runner-capacity context; live commands come from ci-hub quickstart."
 ---
 
 > **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
@@ -64,14 +64,11 @@ This is the documented workaround, consistent with
 [[validate-sh-cannot-be-green-on-devserver]] (main is unprotected; gate =
 GitHub-hosted green + locally-validated).
 
-TOOL BUILT: `$HOME/<repo>/ci-hub/runners/ci-status.py` (+ README.md) — a
-non-mutating status reporter (Python3 stdlib; shells out via `$GH` default
-`with-proxy gh`). `./ci-status.py --all` reports runner health, queue depth,
-last-green-per-workflow, and open-PR label compliance for all 3 repos. Modeled
-on but much smaller than a full cloud fleet/shepherd toolkit — NOT ported;
-hermit uses host-local PMU runners, not a cloud fleet). ci-hub/runners/ is TRACKED
-in the parent superproject (not committed;
-no commit step was in the task).
+The historical runner reporter was consolidated behind the typed ci-hub front
+door. Do not copy its old path or flags from this dated memory: run
+`./ci-hub/ci-hub quickstart`, which owns the current runner-health workflow and
+proxy behavior. Hermit still uses host-local PMU runners rather than a cloud
+fleet; that architectural finding remains current.
 
 Remediation for the human: (1) add N>1 pmu runners for hermit, (2) split the
 Rust job so non-PMU parts (build/clippy/fmt/unit) run GitHub-hosted in parallel,

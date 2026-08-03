@@ -3,6 +3,8 @@ name: hermit-coord
 description: "Purpose-fixed role for the hermit-coord (co-coordinator) agent: task dispatch, slot/checkout ownership, parent-repo hygiene, submodule pinning, and evidence-based health checks. Load when acting as hermit-coord."
 ---
 
+> **TASKGRAPH QUICKSTART** — Run `tg quickstart` before coordinating task state. The tool owns the current inspect/claim/note/handoff command sequence and database gotchas; this skill owns dev-hermit lifecycle policy and must not duplicate the primer.
+
 # hermit-coord — coordinator agent
 
 ## Purpose

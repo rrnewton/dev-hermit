@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,7 @@ class DocumentedCommandsTest(unittest.TestCase):
             {"setup", "parse", "local-read", "live-read"},
         )
         self.assertTrue(any("land_and_arm.py" in command.text for command in commands))
+        self.assertTrue(any("ci-hub/ci-hub quickstart" in command.text for command in commands))
 
     def test_unclassified_command_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -46,6 +48,32 @@ class DocumentedCommandsTest(unittest.TestCase):
             documented_commands._changed_mtimes({"a": 1, "b": 2}, {"a": 3, "b": 2}),
             ["a"],
         )
+
+    def test_tg_quickstart_contract_rejects_home_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "tg"
+            binary.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' 'TaskGraph agent quickstart' "
+                "'tg claim TASK_ID' 'tg note TASK_ID' 'TG_DB_PATH'\n"
+            )
+            binary.chmod(0o755)
+            reports = documented_commands._run_tg_quickstart(
+                str(binary),
+                root=documented_commands.ROOT,
+                environment=os.environ.copy(),
+                verify_purity=False,
+            )
+            self.assertIn("PASS quickstart tg", reports[0])
+
+            binary.write_text(binary.read_text() + "touch \"$HOME/side-effect\"\n")
+            with self.assertRaises(documented_commands.DocsCommandError):
+                documented_commands._run_tg_quickstart(
+                    str(binary),
+                    root=documented_commands.ROOT,
+                    environment=os.environ.copy(),
+                    verify_purity=False,
+                )
 
     def test_closeout_requires_push_and_dirty_tree_accounting(self) -> None:
         with self.assertRaises(documented_commands.DocsCommandError):

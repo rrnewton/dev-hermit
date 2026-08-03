@@ -7,6 +7,7 @@ import argparse
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = (ROOT / "ci-hub/README.md", ROOT / "ci-hub/landing/README.md")
-EXPECTED_COMMANDS = 24
+EXPECTED_COMMANDS = 25
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -78,6 +79,7 @@ def _classify(text: str) -> str:
             return "live-read"
         if command in {
             "help",
+            "quickstart",
             "obligations",
             "inherit-obligations",
             "watch-obligations",
@@ -304,6 +306,71 @@ def _run_one(
     return reports
 
 
+def _run_tg_quickstart(
+    binary: str,
+    *,
+    root: Path,
+    environment: dict[str, str],
+    verify_purity: bool,
+) -> list[str]:
+    """Exercise the source-owned TaskGraph primer without opening its database."""
+    before = _workspace_state(root, include_ignored=True) if verify_purity else ""
+    before_mtimes = _tracked_mtimes(root) if verify_purity else {}
+    with tempfile.TemporaryDirectory(prefix="tg-quickstart-") as temporary:
+        home = Path(temporary)
+        run_environment = environment | {
+            "HOME": str(home),
+            "TG_DB_PATH": str(home / "must-not-exist.db"),
+        }
+        try:
+            result = subprocess.run(
+                [binary, "quickstart"],
+                cwd=root,
+                env=run_environment,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise DocsCommandError("tg quickstart exceeded 15s") from error
+        output = result.stdout + result.stderr
+        if result.returncode != 0:
+            raise DocsCommandError(
+                f"tg quickstart exited {result.returncode}\noutput:\n{output}"
+            )
+        business = _business_output(output)
+        required = (
+            "TaskGraph agent quickstart",
+            "tg claim TASK_ID",
+            "tg note TASK_ID",
+            "TG_DB_PATH",
+        )
+        missing = [marker for marker in required if marker not in business]
+        if missing:
+            raise DocsCommandError(
+                f"tg quickstart is missing agent workflow markers {missing}\noutput:\n{output}"
+            )
+        created = sorted(str(path.relative_to(home)) for path in home.rglob("*"))
+        if created:
+            raise DocsCommandError(
+                "tg quickstart mutated its isolated HOME: " + ", ".join(created)
+            )
+    if verify_purity:
+        after = _workspace_state(root, include_ignored=True)
+        changed_mtimes = _changed_mtimes(before_mtimes, _tracked_mtimes(root))
+        if after != before or changed_mtimes:
+            raise DocsCommandError(
+                "tg quickstart mutated the checkout\n"
+                f"status before:\n{before}\nstatus after:\n{after}"
+                f"\ntracked mtimes changed: {changed_mtimes or 'none'}"
+            )
+    return [
+        "PASS quickstart tg external-source exit=0 "
+        f"output={len(_business_output(output).splitlines())} line(s) purity=verified"
+    ]
+
+
 def _evaluate_closeout(
     *,
     head: str,
@@ -426,6 +493,20 @@ def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
                     live=live,
                     verify_purity=verify_purity,
                 )
+            )
+        tg_binary = os.environ.get("CI_HUB_TG_BIN") or shutil.which("tg")
+        if tg_binary:
+            reports.extend(
+                _run_tg_quickstart(
+                    tg_binary,
+                    root=root,
+                    environment=environment,
+                    verify_purity=verify_purity,
+                )
+            )
+        else:
+            reports.append(
+                "SKIP quickstart tg tool-unavailable; fbsource tg integration owns its purity test"
             )
     reports.append(
         "PASS checkout-purity "

@@ -41,6 +41,44 @@ const DEFAULT_WARN_THRESHOLD: usize = 10;
 const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
 const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
+const AGENT_QUICKSTART: &str = r#"ci-hub agent quickstart
+
+FOR: dev-hermit operational CI truth, local validation receipts, landing locks,
+and mandatory post-land remediation. NOT FOR: product test implementation or a
+portable CI engine; those stay in Hermit and pinned agent-utils.
+
+1. Start with the composite health signal; never translate pending into green:
+     ./ci-hub/ci-hub health
+   Nonzero means open remediation, red CI, or unavailable evidence. Read the
+   named component before acting.
+
+2. Inspect the narrower source of truth when triaging:
+     ./ci-hub/ci-hub fresh
+     ./ci-hub/ci-hub main-health
+     ./ci-hub/ci-hub runner-health --all
+
+3. Recover local validation evidence after an agent or pane disappears:
+     ./ci-hub/ci-hub local-history --since YYYY-MM-DD
+     ./ci-hub/ci-hub validate-worktrees --runs 10
+   Receipts live under ignored/ci-hub and identify slot, SHA, profile, dirty
+   state, result, wall seconds, and CPU seconds.
+
+4. Treat post-land obligations as durable work, not notification delivery:
+     ./ci-hub/ci-hub obligations --actionable
+     ./ci-hub/ci-hub inherit-obligations --agent AGENT --session "$HOSTNAME:$$"
+   Do not raw-admin-merge; use the documented land-and-arm path so local and
+   GitHub exact-SHA verification are armed together.
+
+5. Serialize fleet landings through the evidence-based mutex:
+     ./ci-hub/ci-hub land-lock status
+     ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
+   Never force-release another owner. Dead-owner reclamation requires process
+   evidence and is built into the lock.
+
+Run from the dev-hermit root. Networked subcommands apply with-proxy internally.
+Meaningful work prints estimated and actual wall+CPU cost; quickstart itself is
+pure and performs no workspace discovery, filesystem writes, or network calls.
+"#;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -56,6 +94,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum HubCommand {
+    /// Print the opinionated agent workflow (pure: no files or network).
+    Quickstart,
     /// Summarize current-main, open-PR, and speculative-land health.
     Health(HealthArgs),
     /// Reconcile TaskGraph state, task ownership, and live ORC agents.
@@ -399,6 +439,7 @@ impl HubCommand {
             | Self::RecordObligationWake(_)
             | Self::ResolveObligation(_)
             | Self::ValidateWorktrees(_)
+            | Self::Quickstart
             | Self::LandLock(_) => return None,
         };
         Some(spec)
@@ -471,6 +512,12 @@ fn main() -> ExitCode {
             return to_exit_code(code);
         }
     };
+    // Agent primers are exploratory documentation. Keep this before workspace
+    // discovery, cost wrapping, and every subprocess so it is safe anywhere.
+    if matches!(&cli.command, HubCommand::Quickstart) {
+        print!("{AGENT_QUICKSTART}");
+        return ExitCode::SUCCESS;
+    }
     if env::var_os("CI_HUB_DOCS_PARSE_ONLY").is_some() {
         println!(
             "DOCS PARSE OK: {}",
@@ -558,6 +605,7 @@ fn run_costed(root: &Path, original_args: &[OsString], spec: CostSpec) -> Result
 
 fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
     match command {
+        HubCommand::Quickstart => unreachable!("quickstart returns before workspace discovery"),
         HubCommand::Health(args) => {
             let obligation_code = print_obligations(
                 root,
@@ -1149,6 +1197,20 @@ mod tests {
         assert_eq!(args.stale_hours, 6.0);
         assert_eq!(args.data_dir, Some(PathBuf::from("/tmp/ci-hub")));
         assert!(args.json);
+    }
+
+    #[test]
+    fn quickstart_is_short_pure_agent_workflow() {
+        let command = Cli::try_parse_from(["ci-hub", "quickstart"])
+            .unwrap()
+            .command;
+        assert!(matches!(command, HubCommand::Quickstart));
+        assert!(AGENT_QUICKSTART.starts_with("ci-hub agent quickstart\n"));
+        assert!(AGENT_QUICKSTART.contains("ci-hub/ci-hub health"));
+        assert!(AGENT_QUICKSTART.contains("validate-worktrees"));
+        assert!(AGENT_QUICKSTART.contains("obligations --actionable"));
+        assert!(AGENT_QUICKSTART.contains("land-lock run"));
+        assert!(AGENT_QUICKSTART.lines().count() < 45);
     }
 
     #[test]

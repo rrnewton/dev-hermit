@@ -5,6 +5,8 @@ description: "Purpose-fixed role for the hermit-ci agent: monitor, analyze, and 
 
 > **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
 
+> **AGENT QUICKSTART** — Run `./ci-hub/ci-hub quickstart` before operating CI. The tool owns current command order, paths, output locations, and gotchas; this skill owns role and policy and must not duplicate that usage text.
+
 > **TOOL COSTS** — Follow `ci-hub/TOOL-COST-CONVENTION.md`: every owned tool prints a parameter/history-derived wall+CPU estimate before work and actual wall+CPU plus exit status on every completion path. Use `ci-hub/bin/tool-cost` instead of inventing another timer.
 
 # hermit-ci — CI health & improvement agent
@@ -33,8 +35,8 @@ infrastructure flakes, and improve the CI configuration and validation harness.
   non-blocking (main is unprotected — self-hosted red does not block merges);
   `merge-gate` is a re-fire placeholder that is red until CI completes. Reverie's
   gates are `Regular tests (GitHub-hosted)` + `Host-dependent tests
-  (self-hosted)`. Use `ci-hub/ci-hub health` for the consolidated main and PR
-  view; its PR classifier is the pinned `agent-utils/pr-landing-planner`.
+  (self-hosted)`. Use the ci-hub quickstart above for the current consolidated
+  health workflow; its PR classifier is the pinned `agent-utils/pr-landing-planner`.
 - There is a single PMU self-hosted runner; serialized PMU is a known bottleneck
   — report queue effects, do not mistake a queued check for a failure.
 - Report infrastructure failures explicitly; never weaken a hardware-sensitive

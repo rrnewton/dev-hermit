@@ -18,6 +18,9 @@ are:
 # Print the command list without network or filesystem writes.
 ./ci-hub/ci-hub help
 
+# Read the opinionated 5-step agent workflow without touching local state.
+./ci-hub/ci-hub quickstart
+
 # Pull fresh open-PR CI state from GitHub and classify it.
 ./ci-hub/ci-hub fresh
 

@@ -44,6 +44,10 @@ implementations under `.claude/skills`, `scripts/`, `ops/`, or a dated memory;
 link the hub instead. Generic engines remain pinned in `agent-utils` and are
 used through `ci-hub/bin/agent-tool`, never copied into this repository.
 
+Agent-facing command primers live with their tools. Skills point to
+`./ci-hub/ci-hub quickstart` or `tg quickstart`; they do not duplicate flag lists
+or multi-step usage recipes that can drift from the executable.
+
 `human-review-first` is dormant and archived at
 `.claude/archived_skills/human-review-first/SKILL.md`. Archived skills are not
 part of normal discovery or the active memory coverage gate.
