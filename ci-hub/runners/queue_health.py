@@ -90,6 +90,110 @@ GREEN_GATE_EXCLUDE = [s.strip() for s in
                       if s.strip()]
 
 
+# --- Fetch-outcome classification (VISIBLE, classified failures) --------------
+# A health check that runs automatically and fails silently is the same
+# non-mechanism in a new costume. Every gh fetch that cannot complete is recorded
+# as a FetchFailure and folded into the EXIT CODE, split into the two
+# operator-actionable buckets the auto-invoker must tell apart:
+#
+#   CI-HUB BROKEN  — our token / config / tooling is wrong: auth (401/403), gh
+#                    missing, unparseable output, 404. FIX US.  -> report exit 2.
+#   UPSTREAM SLOW  — GitHub itself was slow or unavailable: subprocess timeout,
+#                    5xx, rate-limit. RETRY, don't touch ci-hub. -> report exit 3.
+#
+# This split is exactly the "is ci-hub broken, or was GitHub just slow?" question.
+FETCH_TIMEOUT = "timeout"
+FETCH_AUTH = "auth"
+FETCH_NOTFOUND = "notfound"
+FETCH_RATELIMIT = "ratelimit"
+FETCH_UPSTREAM = "upstream"
+FETCH_TOOLING = "tooling"
+FETCH_BADJSON = "badjson"
+FETCH_ERROR = "error"
+
+CI_HUB_BROKEN_CLASSES = frozenset({FETCH_AUTH, FETCH_NOTFOUND, FETCH_TOOLING,
+                                   FETCH_BADJSON, FETCH_ERROR})
+UPSTREAM_CLASSES = frozenset({FETCH_TIMEOUT, FETCH_RATELIMIT, FETCH_UPSTREAM})
+
+# Exit codes for the HUMAN report path (`runner-health` / `ci-status.py`). The
+# tick gate stays binary (0/1) but carries the same split in its emitted fields.
+EXIT_OK = 0
+EXIT_CI_HUB_BROKEN = 2      # actionable now: fix token / config / tooling
+EXIT_UPSTREAM_DEGRADED = 3  # transient: GitHub slow / unavailable, retry
+
+# Repos whose self-hosted runner inventory we actually administer. The repo-scope
+# runners API needs admin, so querying it on any OTHER repo is STRUCTURALLY a 403
+# — a false alarm we used to print to stderr while exiting 0. For a
+# non-administered repo the runner inventory is reported N/A BY DESIGN and never
+# fetched, so no spurious 403 is generated; run/queue/green signals still work.
+SELF_HOSTED_REPOS = frozenset(
+    s.strip() for s in os.environ.get(
+        "CI_SELFHOSTED_REPOS", "rrnewton/hermit,rrnewton/reverie").split(",")
+    if s.strip())
+
+
+@dataclass
+class FetchFailure:
+    repo: str
+    endpoint: str        # "run-list" | "runners-api" | "jobs-api"
+    klass: str           # one of the FETCH_* classes
+    detail: str          # short human string (already truncated)
+
+    @property
+    def is_ci_hub_broken(self) -> bool:
+        return self.klass in CI_HUB_BROKEN_CLASSES
+
+    def line(self) -> str:
+        bucket = "CI-HUB-BROKEN" if self.is_ci_hub_broken else "UPSTREAM"
+        return (f"[{bucket}] {self.repo} {self.endpoint}: "
+                f"{self.klass} — {self.detail}")
+
+
+def classify_gh_failure(returncode: int | None, stderr: str,
+                        exc: Exception | None) -> tuple[str, str]:
+    """Map a gh failure to (class, short_detail). Pure; unit-tested.
+
+    Distinguishes our-side breakage (auth/tooling/badjson/404) from upstream
+    slowness/unavailability (timeout/5xx/rate-limit) so the caller can pick the
+    right response instead of collapsing everything to a silent None.
+    """
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return FETCH_TIMEOUT, "gh call timed out (GitHub slow / unreachable)"
+    if isinstance(exc, FileNotFoundError):
+        return FETCH_TOOLING, "gh executable not found (tooling misconfigured)"
+    s = " ".join((stderr or "").split())
+    low = s.lower()
+    detail = s[:200] or f"gh exit {returncode}"
+    if "rate limit" in low or "abuse" in low or "429" in s:
+        return FETCH_RATELIMIT, detail
+    if "403" in s or "401" in s or "permission" in low or "not accessible" in low:
+        return FETCH_AUTH, detail
+    if "404" in s or "not found" in low:
+        return FETCH_NOTFOUND, detail
+    if any(c in s for c in ("500", "502", "503", "504")) or "server error" in low:
+        return FETCH_UPSTREAM, detail
+    return FETCH_ERROR, detail
+
+
+def fetch_verdict(failures: list[FetchFailure]) -> tuple[int, str, str]:
+    """(exit_code, state, summary) for a set of fetch failures. Pure; tested.
+
+    ci-hub-side breakage dominates upstream slowness because it is the one a human
+    must act on now; a bare timeout is a retry, not a page.
+    """
+    if not failures:
+        return EXIT_OK, "ok", "all fetches completed"
+    broken = [f for f in failures if f.is_ci_hub_broken]
+    upstream = [f for f in failures if not f.is_ci_hub_broken]
+    if broken:
+        return (EXIT_CI_HUB_BROKEN, "ci-hub-broken",
+                f"{len(broken)} ci-hub-broken + {len(upstream)} upstream fetch "
+                f"failure(s); ci-hub-side breakage dominates (fix token/config)")
+    return (EXIT_UPSTREAM_DEGRADED, "upstream-degraded",
+            f"{len(upstream)} upstream fetch failure(s): GitHub slow/unavailable "
+            f"(retry; ci-hub itself is fine)")
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -131,39 +235,74 @@ def _pct(sorted_vals: list[float], q: float) -> float:
 
 
 # --- gh plumbing --------------------------------------------------------------
-def gh_json(args: list[str], gh_cmd: str):
-    """Run a gh subcommand and parse JSON stdout. Returns None on failure."""
+# Default per-gh-call wall-clock bound. The human report path uses this generous
+# value; the auto-invoked tick gate passes a much SMALLER bound (see
+# compute_gate/gate `per_call_timeout`) so the whole gate resolves and reports a
+# CLASSIFIED result before tick-hub's 30s SubprocessGateRunner guillotine — a
+# hard-kill at 30s would surface a bare "timed out" indistinguishable from
+# "ci-hub is broken", which is exactly the ambiguity this module exists to remove.
+DEFAULT_GH_CALL_TIMEOUT = 120
+
+
+def gh_json(args: list[str], gh_cmd: str,
+            sink: list[FetchFailure] | None = None,
+            repo: str = "", endpoint: str = "",
+            timeout: float = DEFAULT_GH_CALL_TIMEOUT):
+    """Run a gh subcommand and parse JSON stdout. Returns None on failure.
+
+    When `sink` is provided, every failure is ALSO recorded as a classified
+    FetchFailure so a caller can turn "returned None" into a visible, attributed
+    exit code instead of silently swallowing it. `timeout` bounds the call; on
+    expiry the failure is classified as an UPSTREAM timeout, not our-side breakage.
+    """
     cmd = shlex.split(gh_cmd) + args
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         print(f"  ! gh call failed ({exc.__class__.__name__}): {' '.join(args)}",
               file=sys.stderr)
+        if sink is not None:
+            klass, detail = classify_gh_failure(None, "", exc)
+            sink.append(FetchFailure(repo, endpoint, klass, detail))
         return None
     if out.returncode != 0:
         print(f"  ! gh returned {out.returncode}: {out.stderr.strip()[:200]}",
               file=sys.stderr)
+        if sink is not None:
+            klass, detail = classify_gh_failure(out.returncode, out.stderr, None)
+            sink.append(FetchFailure(repo, endpoint, klass, detail))
         return None
     try:
         return json.loads(out.stdout)
     except json.JSONDecodeError:
+        print(f"  ! gh returned unparseable JSON: {' '.join(args)}",
+              file=sys.stderr)
+        if sink is not None:
+            sink.append(FetchFailure(repo, endpoint, FETCH_BADJSON,
+                                     "gh returned unparseable JSON"))
         return None
 
 
-def fetch_runs(repo: str, gh_cmd: str, limit: int) -> list[dict] | None:
+def fetch_runs(repo: str, gh_cmd: str, limit: int,
+               sink: list[FetchFailure] | None = None,
+               timeout: float = DEFAULT_GH_CALL_TIMEOUT) -> list[dict] | None:
     fields = ("databaseId,workflowName,status,conclusion,createdAt,updatedAt,"
               "headBranch,event,displayTitle")
     return gh_json(
         ["run", "list", "--repo", repo, "--limit", str(limit), "--json", fields],
-        gh_cmd,
+        gh_cmd, sink=sink, repo=repo, endpoint="run-list", timeout=timeout,
     )
 
 
-def fetch_runners(repo: str, gh_cmd: str) -> dict | None:
-    return gh_json(["api", f"repos/{repo}/actions/runners"], gh_cmd)
+def fetch_runners(repo: str, gh_cmd: str,
+                  sink: list[FetchFailure] | None = None,
+                  timeout: float = DEFAULT_GH_CALL_TIMEOUT) -> dict | None:
+    return gh_json(["api", f"repos/{repo}/actions/runners"], gh_cmd,
+                   sink=sink, repo=repo, endpoint="runners-api", timeout=timeout)
 
 
-def fetch_job_timings(repo: str, gh_cmd: str, run_ids: list[int]) -> list[dict]:
+def fetch_job_timings(repo: str, gh_cmd: str, run_ids: list[int],
+                      sink: list[FetchFailure] | None = None) -> list[dict]:
     """Per-job (wait, duration, runner, workflow) over the given runs.
 
     wait     = job.started_at - job.created_at  (runner-pickup latency)
@@ -174,7 +313,8 @@ def fetch_job_timings(repo: str, gh_cmd: str, run_ids: list[int]) -> list[dict]:
     """
     jobs: list[dict] = []
     for rid in run_ids:
-        data = gh_json(["api", f"repos/{repo}/actions/runs/{rid}/jobs"], gh_cmd)
+        data = gh_json(["api", f"repos/{repo}/actions/runs/{rid}/jobs"], gh_cmd,
+                       sink=sink, repo=repo, endpoint="jobs-api")
         if not data:
             continue
         for j in data.get("jobs", []):
@@ -578,17 +718,29 @@ def analyze_run_window(runs: list[dict], now: datetime,
 
 # --- Human report -------------------------------------------------------------
 def report_repo(repo: str, gh_cmd: str, limit: int, sample: int,
-                window_hours: float = 24.0) -> None:
+                window_hours: float = 24.0,
+                sink: list[FetchFailure] | None = None) -> None:
     print(f"\n================ {repo} ================")
     now = _now()
-    runs = fetch_runs(repo, gh_cmd, limit)
-    runner_api = fetch_runners(repo, gh_cmd)
-    rh = analyze_runners(runner_api)
+    runs = fetch_runs(repo, gh_cmd, limit, sink=sink)
 
     # (4)+(8) Runner health — CONFIGURED vs LIVE, so a silently-dead runner shows.
-    if rh is None:
-        print("  runners: (none at repo scope, or no access)")
+    # Only the repos we administer have a meaningful repo-scope runner inventory;
+    # querying any other repo is a structural 403 (needs admin), so we report N/A
+    # BY DESIGN there rather than fetch it and print a misleading auth error.
+    if repo not in SELF_HOSTED_REPOS:
+        rh = None
+        print(f"  runners: N/A by design — no self-hosted runners administered "
+              f"for {repo} (repo-scope runners API needs admin; not fetched, so "
+              f"no spurious 403). Runner health is not a signal for this repo.")
     else:
+        runner_api = fetch_runners(repo, gh_cmd, sink=sink)
+        rh = analyze_runners(runner_api)
+    if repo in SELF_HOSTED_REPOS and rh is None:
+        print("  runners: COULD NOT FETCH self-hosted inventory (see DEGRADED "
+              "summary below) — runner health UNKNOWN for this ADMINISTERED "
+              "repo; this is a real failure, not an expected access limit.")
+    elif rh is not None:
         dead = (f" | OFFLINE (silently-dead capacity) {rh.offline}"
                 if rh.offline else "")
         print(f"  runners: CONFIGURED={rh.total} LIVE(online)={rh.online}"
@@ -691,7 +843,7 @@ def report_repo(repo: str, gh_cmd: str, limit: int, sample: int,
                      if r.get("status") == "completed"]
     completed_ids = completed_all[:sample]
     sampled_ids = running_ids + completed_ids
-    jobs = fetch_job_timings(repo, gh_cmd, sampled_ids)
+    jobs = fetch_job_timings(repo, gh_cmd, sampled_ids, sink=sink)
     run_wf = {r["databaseId"]: r.get("workflowName", "?") for r in runs}
     waits = analyze_waits(jobs, run_wf)
 
@@ -760,7 +912,9 @@ def _field(value: object) -> str:
     return " ".join(str(value).split()) or "none"
 
 
-def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
+def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None,
+                 sink: list[FetchFailure] | None = None,
+                 per_call_timeout: float = DEFAULT_GH_CALL_TIMEOUT
                  ) -> tuple[int, dict[str, object]]:
     """Return (exit_code, fields) for the ops tick. Cheap: no jobs-API sampling.
 
@@ -771,11 +925,15 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
     constraint. Every emitted number carries its basis in `summary`.
     """
     now = now or _now()
-    runs = fetch_runs(repo, gh_cmd, limit)
-    runner_api = fetch_runners(repo, gh_cmd)
+    runs = fetch_runs(repo, gh_cmd, limit, sink=sink, timeout=per_call_timeout)
+    # Same admin gate as the human report: only fetch the runner inventory where
+    # we administer runners, so a non-administered repo never emits a false 403.
+    runner_api = (fetch_runners(repo, gh_cmd, sink=sink, timeout=per_call_timeout)
+                  if repo in SELF_HOSTED_REPOS else None)
     rh = analyze_runners(runner_api)
     if runs is None:
-        return 1, {"state": "unknown", "summary": "gh-run-list-failed"}
+        return 1, {"state": "unknown", "summary": "gh-run-list-failed",
+                   "repo": repo}
 
     queues = analyze_queue(runs, now=now)
     greens = analyze_last_green(runs)
@@ -832,23 +990,49 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
     return (1 if reasons else 0), fields
 
 
-def gate(repos: list[str], gh_cmd: str, limit: int) -> int:
+def gate(repos: list[str], gh_cmd: str, limit: int,
+         per_call_timeout: float = DEFAULT_GH_CALL_TIMEOUT) -> int:
     rc = 0
     agg: dict[str, object] = {}
+    failures: list[FetchFailure] = []
     for repo in repos:
-        code, fields = compute_gate(repo, gh_cmd, limit)
+        code, fields = compute_gate(repo, gh_cmd, limit, sink=failures,
+                                    per_call_timeout=per_call_timeout)
         rc = rc or code
         if len(repos) > 1:
             agg[repo] = fields["state"]
         else:
             agg = fields
+    # Any fetch failure trips the gate so the auto-invoker cannot mistake an
+    # unreachable check for a healthy one; the fetch_* fields state WHICH side
+    # ("ci-hub broken" vs "GitHub slow") so the tick message routes correctly.
+    _fcode, fstate, fsummary = fetch_verdict(failures)
+    if failures:
+        rc = rc or 1
     if len(repos) > 1:
-        # Multi-repo: emit a compact per-repo state map plus overall.
-        print(f"state={'red' if rc else 'ok'}")
-        print("summary=" + _field(",".join(f"{r}:{s}" for r, s in agg.items())))
+        # Multi-repo: emit a compact per-repo state map plus overall. A fetch
+        # degradation becomes the overall state so the tick title is not "ok".
+        overall = fstate if failures else ("red" if rc else "ok")
+        per_repo = ",".join(f"{r}:{s}" for r, s in agg.items())
+        summary = f"{fsummary}; per-repo: {per_repo}" if failures else per_repo
+        print(f"state={_field(overall)}")
+        print("summary=" + _field(summary))
     else:
+        # Single repo: fold the fetch verdict into the emitted state/summary so
+        # the tick TITLE ("{state}: {summary}") never reads "ok" while a wakeup
+        # fires for a check that could not actually reach GitHub. A genuine queue
+        # problem (state red/unknown) is more urgent and is kept as-is.
+        if failures:
+            agg = dict(agg)
+            if str(agg.get("state", "ok")) == "ok":
+                agg["state"] = fstate
+            agg["summary"] = f"{fsummary} | queue: {agg.get('summary', '')}"
         for k, v in agg.items():
             print(f"{k}={_field(v)}")
+    print(f"fetch_state={_field(fstate)}")
+    print(f"fetch_detail={_field(fsummary)}")
+    if failures:
+        print("fetch_failures=" + _field("; ".join(f.line() for f in failures)))
     return rc
 
 
@@ -887,10 +1071,22 @@ def main(argv=None) -> int:
         return gate(repos, gh_cmd, args.limit)
 
     print(f"Hermit CI queue health — gh via: {gh_cmd!r}")
+    failures: list[FetchFailure] = []
     for repo in repos:
-        report_repo(repo, gh_cmd, args.limit, args.sample, args.window_hours)
+        report_repo(repo, gh_cmd, args.limit, args.sample, args.window_hours,
+                    sink=failures)
     print("\n(Remediation options: ci-hub/runners/README.md)")
-    return 0
+
+    # VISIBILITY: a fetch we could not complete becomes a classified, non-zero
+    # exit instead of a stderr line the auto-invoker would swallow while exiting 0.
+    code, state, summary = fetch_verdict(failures)
+    if code != EXIT_OK:
+        print(f"\n!! DEGRADED ({state}, exit {code}): {summary}")
+        for f in failures:
+            print(f"   {f.line()}")
+        print("   Interpretation: CI-HUB-BROKEN = our token/config/tooling — fix "
+              "ci-hub; UPSTREAM = GitHub slow/unavailable — retry, ci-hub is fine.")
+    return code
 
 
 if __name__ == "__main__":

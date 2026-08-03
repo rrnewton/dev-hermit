@@ -49,6 +49,15 @@ DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
 DEFAULT_PR_GATE_TIMEOUT_SECS = float(
     os.environ.get("CI_HUB_PR_GATE_TIMEOUT", "12")
 )
+# Per-gh-call bound for the auto-invoked CI queue-health gate, same rationale as
+# the PR gate above: the gate makes at most two gh calls (run-list + runners API)
+# per repo, so 12s each keeps a single default-repo tick to ~24s worst case,
+# under tick-hub's 30s guillotine. On expiry queue_health classifies an UPSTREAM
+# timeout ("GitHub slow") rather than being hard-killed into a bare failure that
+# reads as "ci-hub broken".
+DEFAULT_QUEUE_GATE_TIMEOUT_SECS = float(
+    os.environ.get("CI_HUB_QUEUE_GATE_TIMEOUT", "12")
+)
 DEFAULT_AGENT_SNAPSHOT = ROOT / "ignored" / "ci-hub" / "agent-snapshot.json"
 TERMINAL_AGENT_STATES = frozenset(
     (
@@ -273,7 +282,11 @@ def queue_health_gate() -> int:
     limit = int(os.environ.get("CI_QUEUE_HEALTH_LIMIT", "100"))
     repos = [os.environ.get("CI_QUEUE_HEALTH_REPO", "rrnewton/hermit")]
     try:
-        return queue_health.gate(repos, gh_cmd, limit)
+        # Bound each gh call so the whole gate resolves under tick-hub's 30s
+        # guillotine and reports a CLASSIFIED result (upstream-slow vs
+        # ci-hub-broken) instead of being hard-killed into a bare timeout.
+        return queue_health.gate(repos, gh_cmd, limit,
+                                 per_call_timeout=DEFAULT_QUEUE_GATE_TIMEOUT_SECS)
     except Exception as error:  # never let a probe crash the tick silently
         _emit({"state": "unknown", "summary": _field(f"queue-health-error:{error}")})
         return 1

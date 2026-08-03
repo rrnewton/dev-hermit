@@ -263,5 +263,116 @@ class GateTests(unittest.TestCase):
         self.assertEqual(fields["state"], "ok")
 
 
+class ClassifyFetchFailureTests(unittest.TestCase):
+    def test_403_is_ci_hub_broken_auth(self) -> None:
+        klass, _ = qh.classify_gh_failure(
+            1, "gh: You must have repository read permissions ... (HTTP 403)",
+            None)
+        self.assertEqual(klass, qh.FETCH_AUTH)
+        self.assertIn(klass, qh.CI_HUB_BROKEN_CLASSES)
+
+    def test_401_is_auth(self) -> None:
+        klass, _ = qh.classify_gh_failure(1, "HTTP 401 Unauthorized", None)
+        self.assertEqual(klass, qh.FETCH_AUTH)
+
+    def test_timeout_is_upstream(self) -> None:
+        exc = __import__("subprocess").TimeoutExpired(cmd="gh", timeout=120)
+        klass, _ = qh.classify_gh_failure(None, "", exc)
+        self.assertEqual(klass, qh.FETCH_TIMEOUT)
+        self.assertIn(klass, qh.UPSTREAM_CLASSES)
+
+    def test_missing_gh_is_tooling(self) -> None:
+        klass, _ = qh.classify_gh_failure(None, "", FileNotFoundError())
+        self.assertEqual(klass, qh.FETCH_TOOLING)
+        self.assertIn(klass, qh.CI_HUB_BROKEN_CLASSES)
+
+    def test_5xx_is_upstream(self) -> None:
+        klass, _ = qh.classify_gh_failure(1, "HTTP 503 Service Unavailable", None)
+        self.assertEqual(klass, qh.FETCH_UPSTREAM)
+
+    def test_rate_limit_is_upstream(self) -> None:
+        klass, _ = qh.classify_gh_failure(
+            1, "API rate limit exceeded (HTTP 403)", None)
+        # Rate-limit is transient upstream pressure, NOT a token/config error,
+        # even though GitHub returns it as a 403.
+        self.assertEqual(klass, qh.FETCH_RATELIMIT)
+        self.assertIn(klass, qh.UPSTREAM_CLASSES)
+
+    def test_404_is_ci_hub_broken(self) -> None:
+        klass, _ = qh.classify_gh_failure(1, "HTTP 404 Not Found", None)
+        self.assertEqual(klass, qh.FETCH_NOTFOUND)
+        self.assertIn(klass, qh.CI_HUB_BROKEN_CLASSES)
+
+
+class FetchVerdictTests(unittest.TestCase):
+    def _f(self, klass):
+        return qh.FetchFailure("r", "run-list", klass, "d")
+
+    def test_clean_is_exit_0(self) -> None:
+        code, state, _ = qh.fetch_verdict([])
+        self.assertEqual(code, qh.EXIT_OK)
+        self.assertEqual(state, "ok")
+
+    def test_upstream_only_is_exit_3(self) -> None:
+        code, state, _ = qh.fetch_verdict([self._f(qh.FETCH_TIMEOUT)])
+        self.assertEqual(code, qh.EXIT_UPSTREAM_DEGRADED)
+        self.assertEqual(state, "upstream-degraded")
+
+    def test_ci_hub_broken_dominates(self) -> None:
+        # A mix of a timeout and a 403 must report ci-hub-broken (exit 2): the
+        # actionable failure wins over the retryable one.
+        code, state, _ = qh.fetch_verdict(
+            [self._f(qh.FETCH_TIMEOUT), self._f(qh.FETCH_AUTH)])
+        self.assertEqual(code, qh.EXIT_CI_HUB_BROKEN)
+        self.assertEqual(state, "ci-hub-broken")
+
+    def test_failure_line_labels_bucket(self) -> None:
+        self.assertIn("CI-HUB-BROKEN", self._f(qh.FETCH_AUTH).line())
+        self.assertIn("UPSTREAM", self._f(qh.FETCH_TIMEOUT).line())
+
+
+class SelfHostedSkipTests(unittest.TestCase):
+    """A non-administered repo must NOT hit the runners API (the old 403 source)."""
+
+    def _patch(self, runs):
+        self.addCleanup(setattr, qh, "fetch_runs", qh.fetch_runs)
+        self.addCleanup(setattr, qh, "fetch_runners", qh.fetch_runners)
+        self.calls = []
+        qh.fetch_runs = lambda *a, **k: runs
+        qh.fetch_runners = lambda *a, **k: self.calls.append(a) or None
+
+    def test_non_administered_repo_skips_runner_fetch(self) -> None:
+        self._patch([run("CI", "completed", "success", rid=1)])
+        # facebookexperimental/hermit is not in SELF_HOSTED_REPOS by default.
+        self.assertNotIn("facebookexperimental/hermit", qh.SELF_HOSTED_REPOS)
+        qh.report_repo("facebookexperimental/hermit", "gh", 10, 0, 24.0, sink=[])
+        self.assertEqual(self.calls, [],
+                         "runners API must not be queried on a non-admin repo")
+
+    def test_administered_repo_does_fetch_runners(self) -> None:
+        self._patch([run("CI", "completed", "success", rid=1)])
+        self.assertIn("rrnewton/hermit", qh.SELF_HOSTED_REPOS)
+        qh.report_repo("rrnewton/hermit", "gh", 10, 0, 24.0, sink=[])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_run_list_403_surfaces_as_ci_hub_broken(self) -> None:
+        # Even on a non-admin repo, a run-list auth failure is a real, visible
+        # ci-hub-broken failure — it is the core signal, not the admin-only one.
+        self.addCleanup(setattr, qh, "fetch_runs", qh.fetch_runs)
+
+        def failing_runs(repo, gh_cmd, limit, sink=None):
+            if sink is not None:
+                sink.append(qh.FetchFailure(repo, "run-list", qh.FETCH_AUTH,
+                                            "HTTP 403"))
+            return None
+        qh.fetch_runs = failing_runs
+        sink: list = []
+        qh.report_repo("facebookexperimental/hermit", "gh", 10, 0, 24.0,
+                       sink=sink)
+        code, state, _ = qh.fetch_verdict(sink)
+        self.assertEqual(code, qh.EXIT_CI_HUB_BROKEN)
+        self.assertEqual(state, "ci-hub-broken")
+
+
 if __name__ == "__main__":
     unittest.main()
