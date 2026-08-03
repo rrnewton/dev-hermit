@@ -5,7 +5,7 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-agent-utils-pin check-deps check-portability clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-deps check-harness-help check-portability clean \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
@@ -128,6 +128,9 @@ check-deps:
 check-portability:
 	@scripts/check-portable-paths.sh
 
+check-harness-help: ## Assert every harness entrypoint's -h/--help/--version is a pure safe probe
+	@scripts/check-harness-help.py
+
 check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
 	@scripts/check-agent-utils-pin.rs
 
@@ -149,6 +152,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@scripts/check-agent-utils-pin.rs
 	@scripts/primary_checkout.py check
 	@$(MAKE) --no-print-directory check-portability
+	@$(MAKE) --no-print-directory check-harness-help
 
 # compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
 # RELEASE hermit binary with the in-process DBI backend and asserts every

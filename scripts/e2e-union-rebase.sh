@@ -26,6 +26,24 @@
 # Prints one status line: CLEAN|UNIONED|HUMAN:<reason>|LINT-FAIL:*|REBASE-FAIL:*
 set -uo pipefail
 
+# Safe probes must be pure: show usage and exit 0 before the mandatory-arg
+# checks below and before any git rebase/push work.
+case "${1:-}" in
+    -h | --help)
+        cat <<'EOF'
+e2e-union-rebase.sh — rebase one e2e-manifest PR branch and additively union its managed registries
+
+USAGE:
+  scripts/e2e-union-rebase.sh <hermit-worktree> <pr-branch> [--push]
+  scripts/e2e-union-rebase.sh -h|--help        show this help and exit (no side effects)
+
+Prints one status line: CLEAN|UNIONED|HUMAN:<reason>|LINT-FAIL:*|REBASE-FAIL:*.
+Additive-only: a conflicting key or a conflict outside the managed set ABORTS as HUMAN.
+EOF
+        exit 0
+        ;;
+esac
+
 WT=${1:?hermit worktree path}
 BR=${2:?pr branch (e.g. codex/e2e-foo)}
 PUSH=${3:-}

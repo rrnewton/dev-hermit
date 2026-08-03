@@ -6,6 +6,25 @@ set -euo pipefail
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 readonly ROOT_DIR
 
+# Safe probes must be pure: show usage before treating arguments as repo paths.
+for arg in "$@"; do
+    case "$arg" in
+        -h | --help)
+            cat <<'EOF'
+check-portable-paths.sh — reject owner/machine-specific paths in tracked build & run files
+
+USAGE:
+  scripts/check-portable-paths.sh                 check parent + hermit/reverie/liteinst2
+  scripts/check-portable-paths.sh <repo>...       check the given repository roots instead
+  scripts/check-portable-paths.sh -h|--help       show this help and exit (no side effects)
+
+Exit 0 when no non-portable paths are found, 1 otherwise.
+EOF
+            exit 0
+            ;;
+    esac
+done
+
 if (($#)); then
     repos=("$@")
 else

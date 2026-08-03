@@ -63,9 +63,30 @@ struct Finding {
     detail: String,
 }
 
+const USAGE: &str = "\
+memory-skill-contradiction-scan.rs — report memory<->skill contradictions and drift (never edits)
+
+USAGE:
+  scripts/memory-skill-contradiction-scan.rs           human report
+  scripts/memory-skill-contradiction-scan.rs --gate    tick-hub gate: state=/summary=, nonzero on any finding
+  scripts/memory-skill-contradiction-scan.rs --list    one line per memory (name<TAB>slug<TAB>core)
+  scripts/memory-skill-contradiction-scan.rs -h|--help show this help and exit (no side effects)
+  scripts/memory-skill-contradiction-scan.rs --version print version and exit (no side effects)
+
+Report-only: proposes, never applies. Memory store is file-based Markdown; override with HERMIT_MEMORY_DIR.";
+
 fn main() {
-    let gate = std::env::args().any(|a| a == "--gate");
-    let list = std::env::args().any(|a| a == "--list");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return;
+    }
+    if args.iter().any(|a| a == "--version") {
+        println!("memory-skill-contradiction-scan.rs 1.0");
+        return;
+    }
+    let gate = args.iter().any(|a| a == "--gate");
+    let list = args.iter().any(|a| a == "--list");
     let root = find_root();
     let memory_dir = memory_dir(&root);
     let skill_dir = root.join(SKILL_DIR);
@@ -85,8 +106,15 @@ fn main() {
             }
             let content = std::fs::read_to_string(&entry).unwrap_or_default();
             let meta = parse_meta(&content);
-            let name = if meta.name.is_empty() { slug.clone() } else { meta.name.clone() };
-            println!("{name}\t{slug}\t{}", if meta.core_memory { "core" } else { "plain" });
+            let name = if meta.name.is_empty() {
+                slug.clone()
+            } else {
+                meta.name.clone()
+            };
+            println!(
+                "{name}\t{slug}\t{}",
+                if meta.core_memory { "core" } else { "plain" }
+            );
         }
         return;
     }
@@ -229,7 +257,10 @@ fn main() {
     }
 
     // ---- output ----
-    let contradictions = findings.iter().filter(|f| f.kind == "CONTRADICTION").count();
+    let contradictions = findings
+        .iter()
+        .filter(|f| f.kind == "CONTRADICTION")
+        .count();
     let drift = findings.len() - contradictions;
 
     if gate {
@@ -275,14 +306,14 @@ fn main() {
         memories.len(),
         denylist.len()
     );
-    println!(
-        "findings: {contradictions} contradiction(s), {drift} drift"
-    );
+    println!("findings: {contradictions} contradiction(s), {drift} drift");
     if findings.is_empty() {
         println!("RESULT: CLEAN");
         std::process::exit(0);
     }
-    println!("RESULT: FINDINGS (report-only — coordinator reconciles; see deletion hazard in header)");
+    println!(
+        "RESULT: FINDINGS (report-only — coordinator reconciles; see deletion hazard in header)"
+    );
     std::process::exit(1);
 }
 
@@ -319,7 +350,9 @@ fn print_report(findings: &[Finding], denylist_note: &str, gate: bool) {
 
 fn all_needles_present(haystack: &str, needles: &[String]) -> bool {
     let lower = haystack.to_ascii_lowercase();
-    needles.iter().all(|n| lower.contains(&n.to_ascii_lowercase()))
+    needles
+        .iter()
+        .all(|n| lower.contains(&n.to_ascii_lowercase()))
 }
 
 /// Up to two example lines from `content` containing the rarest needle, for context.
@@ -359,13 +392,11 @@ fn load_denylist(path: &Path) -> (Vec<DenyEntry>, String) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => {
-            return (
-                Vec::new(),
-                format!(
-                    "denylist {} not found — contradiction detection disabled (drift check still runs)",
-                    path.display()
-                ),
-            )
+            let note = format!(
+                "denylist {} not found — contradiction detection disabled (drift check still runs)",
+                path.display()
+            );
+            return (Vec::new(), note);
         }
     };
     let mut entries = Vec::new();
@@ -387,7 +418,10 @@ fn load_denylist(path: &Path) -> (Vec<DenyEntry>, String) {
             "memory" => Scope::Memory,
             "slug" => Scope::Slug,
             other => {
-                eprintln!("denylist:{}: unknown scope '{other}' (skill|memory|slug)", lineno + 1);
+                eprintln!(
+                    "denylist:{}: unknown scope '{other}' (skill|memory|slug)",
+                    lineno + 1
+                );
                 continue;
             }
         };
@@ -516,7 +550,10 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
             if name != "README.md" && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
                 out.push(path);
             }
@@ -541,7 +578,10 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn stem(p: &Path) -> String {
-    p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
+    p.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn find_root() -> PathBuf {

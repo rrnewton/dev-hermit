@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Safe probes must be pure: print usage and exit 0 before any git/filesystem work.
+for arg in "$@"; do
+    case "$arg" in
+        -h | --help)
+            cat <<'EOF'
+check-parent-gitmodules.sh — verify .gitmodules matches the pinned parent submodule policy
+
+USAGE:
+  scripts/check-parent-gitmodules.sh            check hermit/reverie/liteinst2/agent-utils entries
+  scripts/check-parent-gitmodules.sh -h|--help  show this help and exit (no side effects)
+
+Exit 0 when policy holds, 1 on any mismatch. Takes no other arguments.
+EOF
+            exit 0
+            ;;
+    esac
+done
+
 root=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 cd "$root"
 

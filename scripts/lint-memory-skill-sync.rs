@@ -25,8 +25,29 @@ use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
 
+const USAGE: &str = "\
+lint-memory-skill-sync.rs — verify every active coordinator skill has one in-sync source memory
+
+USAGE:
+  scripts/lint-memory-skill-sync.rs            lint and print a human report
+  scripts/lint-memory-skill-sync.rs --quiet    print only problems and the summary
+  scripts/lint-memory-skill-sync.rs -h|--help  show this help and exit (no side effects)
+  scripts/lint-memory-skill-sync.rs --version  print version and exit (no side effects)
+
+Read-only: never edits memories or skills. Exit 0 when in sync, 1 on any drift.
+Memory store is file-based Markdown; override its location with HERMIT_MEMORY_DIR.";
+
 fn main() {
-    let quiet = std::env::args().any(|a| a == "--quiet");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return;
+    }
+    if args.iter().any(|a| a == "--version") {
+        println!("lint-memory-skill-sync.rs 1.0");
+        return;
+    }
+    let quiet = args.iter().any(|a| a == "--quiet");
     let root = find_root();
     let memory_dir = memory_dir(&root);
     let skill_dir = root.join(SKILL_DIR);

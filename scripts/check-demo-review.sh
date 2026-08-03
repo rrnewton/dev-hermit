@@ -29,6 +29,25 @@ set -uo pipefail
 POLICY="demos/ADVERSARIAL-REVIEW-POLICY.md"
 TRAILER_RE='^[[:space:]]*Demo-Green-Review:.*reviewer=[^[:space:]]+.*result=GREEN.*evidence=[^[:space:]]+'
 
+# Clean help for the safe probe: stdout, exit 0, no leaked raw comment header.
+help() {
+    cat <<'EOF'
+check-demo-review.sh — require an adversarial green-demo attestation for any demos/** change
+
+USAGE:
+  scripts/check-demo-review.sh --range <BASE>..<HEAD>          scan a commit range (CI / lander)
+  scripts/check-demo-review.sh --staged --message-file <FILE>  staged diff + this message (commit-msg hook)
+  scripts/check-demo-review.sh --commit <SHA>                  a single commit
+  scripts/check-demo-review.sh -h|--help                       show this help and exit (no side effects)
+
+Passes (exit 0) when no runnable demo is touched, or a valid trailer is present:
+  Demo-Green-Review: reviewer=<agent> demo=<demos/path|all> result=GREEN evidence=<url|path|sha>
+HERMIT_DEMO_REVIEW_OVERRIDE=1 allows a LOCAL commit (never --range). Policy: demos/ADVERSARIAL-REVIEW-POLICY.md.
+EOF
+    exit 0
+}
+
+# Usage error: message to stderr, nonzero exit (kept distinct from --help).
 usage() { sed -n '2,30p' "$0" >&2; exit 2; }
 
 # Is a changed path a runnable demo file that requires attestation?
@@ -61,7 +80,7 @@ while (($#)); do
         --staged) mode=staged; shift ;;
         --message-file) msgfile="$2"; shift 2 ;;
         --commit) mode=commit; commit="$2"; shift 2 ;;
-        -h|--help) usage ;;
+        -h|--help) help ;;
         *) echo "unknown arg: $1" >&2; usage ;;
     esac
 done

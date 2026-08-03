@@ -19,8 +19,36 @@ use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
 
+const USAGE: &str = "\
+sync-memory-skill.rs — keep every mapped coordinator skill in sync with its source memory
+
+USAGE:
+  scripts/sync-memory-skill.rs                          regenerate all mapped skills (WRITES files)
+  scripts/sync-memory-skill.rs --check                  dry-run; report what would change, write nothing
+  scripts/sync-memory-skill.rs --adopt-skill <path>..   create source memories from active skills
+  scripts/sync-memory-skill.rs --promote <slug>..       promote memories to flat mapped skills
+  scripts/sync-memory-skill.rs --demote <slug>..        unmap memories and remove their skills
+  scripts/sync-memory-skill.rs -h | --help              show this help and exit (no side effects)
+  scripts/sync-memory-skill.rs --version                print version and exit (no side effects)
+
+Memory store is file-based Markdown; override its location with HERMIT_MEMORY_DIR.
+Companion linter: scripts/lint-memory-skill-sync.rs.";
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Safe probes must be PURE: no root lookup, no filesystem writes, no state
+    // changes. A user runs --help precisely because they do not yet know what
+    // this tool does; it must never mutate the working tree on the discovery path.
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return;
+    }
+    if args.iter().any(|a| a == "--version") {
+        println!("sync-memory-skill.rs 1.0");
+        return;
+    }
+
     let root = find_root();
     let memory_dir = memory_dir(&root);
 
