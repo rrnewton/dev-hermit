@@ -25,7 +25,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
 use records::{HistoryRow, ObligationRecord};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -134,6 +134,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Operate the shared-file landing mutex.
     LandLock(landing_lock::LandLockArgs),
+    /// Inspect or switch the committed CI-constrained mode and its GitHub projection.
+    CiMode(CiModeArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -372,6 +374,120 @@ struct LoadProbeArgs {
     json: bool,
 }
 
+/// Name of the committed source-of-truth mode file, relative to the workspace root.
+const CI_MODE_STATE_PATH: &str = "ci-hub/health/ci-mode.json";
+/// GitHub repository variable that projects the mode where workflows can read it.
+const CI_MODE_VARIABLE: &str = "CI_MODE";
+/// Repositories whose auto-fan-out is gated by the mode; both carry the projection.
+const CI_MODE_REPOS: [&str; 2] = ["rrnewton/hermit", "rrnewton/reverie"];
+
+#[derive(Args, Clone, Debug)]
+struct CiModeArgs {
+    #[command(subcommand)]
+    command: CiModeCommand,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum CiModeCommand {
+    /// Print the committed mode and report drift against the GitHub projection.
+    Status(CiModeStatusArgs),
+    /// Write the mode, project it to GitHub, and commit the state file to main.
+    Set(CiModeSetArgs),
+    /// Dispatch targeted CI for one PR head without auto-arming any fan-out.
+    Fire(CiModeFireArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+struct CiModeStatusArgs {
+    /// Emit the machine-readable mode-and-drift report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CiModeValue {
+    /// Every PR push auto-fans-out the hosted CI workflows.
+    Auto,
+    /// Auto-fan-out is suppressed; hosted CI runs only when explicitly fired.
+    Constrained,
+}
+
+impl CiModeValue {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Constrained => "constrained",
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug)]
+struct CiModeSetArgs {
+    /// New mode to record and project.
+    #[arg(value_enum)]
+    mode: CiModeValue,
+    /// Operator-supplied justification recorded in the state file.
+    #[arg(long)]
+    reason: String,
+    /// Optional evidence string, e.g. "queued=6 max-age=2h03m".
+    #[arg(long)]
+    evidence: Option<String>,
+    /// Compute and print the intended write without touching files, GitHub, or git.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CiModeLane {
+    Portable,
+    Privileged,
+}
+
+impl CiModeLane {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Portable => "portable",
+            Self::Privileged => "privileged",
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug)]
+struct CiModeFireArgs {
+    /// PR number whose head branch receives the targeted dispatch.
+    #[arg(long)]
+    pr: u64,
+    /// Which validation lane to dispatch.
+    #[arg(long, value_enum, default_value_t = CiModeLane::Portable)]
+    lane: CiModeLane,
+    /// Repository owning the PR and the dispatch-only DAG workflow.
+    #[arg(long, default_value = "rrnewton/hermit")]
+    repo: String,
+}
+
+/// Committed source of truth for the CI-constrained mode. Absent file == auto.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct CiModeState {
+    mode: String,
+    reason: String,
+    since: String,
+    actor: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    evidence: Option<String>,
+}
+
+impl CiModeState {
+    fn default_auto() -> Self {
+        Self {
+            mode: "auto".into(),
+            reason: "default: no committed CI-mode state on disk; treated as auto".into(),
+            since: String::new(),
+            actor: String::new(),
+            evidence: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CostSpec {
     tool: &'static str,
@@ -464,6 +580,7 @@ impl HubCommand {
             | Self::ResolveObligation(_)
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
+            | Self::CiMode(_)
             | Self::LandLock(_) => return None,
         };
         Some(spec)
@@ -507,6 +624,24 @@ enum CiHubError {
     },
     #[error("ci-hub: local-history --json returned an invalid typed history row: {0}")]
     HistoryJson(#[source] serde_json::Error),
+    #[error("ci-hub: cannot read CI-mode state {path}: {source}")]
+    CiModeRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("ci-hub: cannot write CI-mode state {path}: {source}")]
+    CiModeWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("ci-hub: CI-mode state {path} is not valid JSON: {source}")]
+    CiModeJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error(transparent)]
     LandingLock(#[from] landing_lock::LandLockError),
 }
@@ -874,6 +1009,468 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
+        HubCommand::CiMode(args) => match args.command {
+            CiModeCommand::Status(status_args) => ci_mode_status(root, status_args),
+            CiModeCommand::Set(set_args) => ci_mode_set(root, set_args),
+            CiModeCommand::Fire(fire_args) => ci_mode_fire(root, fire_args),
+        },
+    }
+}
+
+fn ci_mode_path(root: &Path) -> PathBuf {
+    root.join(CI_MODE_STATE_PATH)
+}
+
+/// Load the committed mode. Returns `(state, present)`; an absent file is auto.
+fn load_ci_mode(root: &Path) -> Result<(CiModeState, bool), CiHubError> {
+    let path = ci_mode_path(root);
+    if !path.exists() {
+        return Ok((CiModeState::default_auto(), false));
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|source| CiHubError::CiModeRead {
+        path: path.clone(),
+        source,
+    })?;
+    let state = serde_json::from_str(&raw).map_err(|source| CiHubError::CiModeJson { path, source })?;
+    Ok((state, true))
+}
+
+fn ci_mode_actor() -> String {
+    if let Ok(session) = env::var("ORC_AGENT_SESSION_ID") {
+        if !session.is_empty() {
+            return session;
+        }
+    }
+    let host = env::var("HOSTNAME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            Command::new("hostname")
+                .arg("-s")
+                .output()
+                .ok()
+                .filter(|out| out.status.success())
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
+    match host {
+        Some(host) => format!("{host}:{}", std::process::id()),
+        None => "unknown".into(),
+    }
+}
+
+fn on_path(binary: &str) -> bool {
+    env::var_os("PATH")
+        .map(|paths| env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
+        .unwrap_or(false)
+}
+
+/// Build a `gh` invocation, prefixing `with-proxy` for external egress when
+/// available (mirrors the Python health probes' `with-proxy gh` default).
+fn gh_command(root: &Path, args: &[&str]) -> Command {
+    let mut command = if on_path("with-proxy") {
+        let mut command = Command::new("with-proxy");
+        command.arg("gh");
+        command
+    } else {
+        Command::new("gh")
+    };
+    command.args(args).current_dir(root);
+    command
+}
+
+#[derive(Deserialize)]
+struct GhVariableRow {
+    name: String,
+    value: String,
+}
+
+/// Read the projected mode variable. `Ok(None)` means the variable is not set
+/// (treated as auto); `Err` means the query itself failed (network/auth).
+fn read_ci_mode_variable(root: &Path, repo: &str) -> Result<Option<String>, String> {
+    let output = gh_command(
+        root,
+        &["variable", "list", "--repo", repo, "--json", "name,value"],
+    )
+    .output()
+    .map_err(|source| format!("launch gh: {source}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gh variable list exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let rows: Vec<GhVariableRow> =
+        serde_json::from_slice(&output.stdout).map_err(|source| format!("parse gh json: {source}"))?;
+    Ok(rows
+        .into_iter()
+        .find(|row| row.name == CI_MODE_VARIABLE)
+        .map(|row| row.value))
+}
+
+fn set_ci_mode_variable(root: &Path, repo: &str, value: &str) -> Result<(), String> {
+    let output = gh_command(
+        root,
+        &[
+            "variable",
+            "set",
+            CI_MODE_VARIABLE,
+            "--repo",
+            repo,
+            "--body",
+            value,
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh: {source}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh variable set exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn ci_mode_status(root: &Path, args: CiModeStatusArgs) -> Result<i32, CiHubError> {
+    let (state, present) = load_ci_mode(root)?;
+
+    #[derive(Serialize)]
+    struct Projection {
+        repo: String,
+        value: Option<String>,
+        projected_mode: String,
+        drift: bool,
+        error: Option<String>,
+    }
+
+    let mut projections = Vec::new();
+    let mut any_drift = false;
+    let mut any_error = false;
+    for repo in CI_MODE_REPOS {
+        match read_ci_mode_variable(root, repo) {
+            Ok(value) => {
+                let projected = value.clone().unwrap_or_else(|| "auto".into());
+                let drift = projected != state.mode;
+                any_drift |= drift;
+                projections.push(Projection {
+                    repo: repo.to_string(),
+                    value,
+                    projected_mode: projected,
+                    drift,
+                    error: None,
+                });
+            }
+            Err(error) => {
+                any_error = true;
+                projections.push(Projection {
+                    repo: repo.to_string(),
+                    value: None,
+                    projected_mode: "unknown".into(),
+                    drift: false,
+                    error: Some(error),
+                });
+            }
+        }
+    }
+
+    if args.json {
+        #[derive(Serialize)]
+        struct Report<'a> {
+            file_present: bool,
+            mode: &'a str,
+            reason: &'a str,
+            since: &'a str,
+            actor: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            evidence: &'a Option<String>,
+            drift: bool,
+            projection_error: bool,
+            projections: &'a [Projection],
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&Report {
+                file_present: present,
+                mode: &state.mode,
+                reason: &state.reason,
+                since: &state.since,
+                actor: &state.actor,
+                evidence: &state.evidence,
+                drift: any_drift,
+                projection_error: any_error,
+                projections: &projections,
+            })
+            .expect("ci-mode status report is serializable")
+        );
+    } else {
+        println!("CI mode: {}", state.mode.to_uppercase());
+        println!(
+            "  source: {}",
+            if present {
+                ci_mode_path(root).display().to_string()
+            } else {
+                format!("(no {CI_MODE_STATE_PATH}; default auto)")
+            }
+        );
+        if present {
+            println!("  reason: {}", state.reason);
+            if !state.since.is_empty() {
+                println!("  since:  {}", state.since);
+            }
+            if !state.actor.is_empty() {
+                println!("  actor:  {}", state.actor);
+            }
+            if let Some(evidence) = &state.evidence {
+                println!("  evidence: {evidence}");
+            }
+        }
+        println!("GitHub projection ({CI_MODE_VARIABLE}):");
+        for projection in &projections {
+            match &projection.error {
+                Some(error) => println!("  {}: QUERY FAILED: {error}", projection.repo),
+                None => {
+                    let displayed = projection
+                        .value
+                        .clone()
+                        .unwrap_or_else(|| "<not set> (auto)".into());
+                    let marker = if projection.drift { "  <-- DRIFT" } else { "" };
+                    println!("  {}: {displayed}{marker}", projection.repo);
+                }
+            }
+        }
+        if any_drift {
+            println!(
+                "DRIFT: committed mode is {} but the GitHub projection disagrees; re-run `ci-hub ci-mode set {}` to reconcile.",
+                state.mode, state.mode
+            );
+        }
+        if any_error {
+            println!("WARNING: at least one projection query failed; drift is undetermined for those repos.");
+        }
+    }
+
+    Ok(if any_error {
+        2
+    } else if any_drift {
+        1
+    } else {
+        0
+    })
+}
+
+fn ci_mode_set(root: &Path, args: CiModeSetArgs) -> Result<i32, CiHubError> {
+    let value = args.mode.as_str();
+    let state = CiModeState {
+        mode: value.to_string(),
+        reason: args.reason,
+        since: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        actor: ci_mode_actor(),
+        evidence: args.evidence,
+    };
+    let json = serde_json::to_string_pretty(&state).expect("ci-mode state is serializable") + "\n";
+    let path = ci_mode_path(root);
+
+    if args.dry_run {
+        println!("DRY RUN: no files, GitHub variables, or commits changed.");
+        println!("Would write {}:", path.display());
+        println!("{json}");
+        println!("Would project {CI_MODE_VARIABLE}={value} to: {}", CI_MODE_REPOS.join(", "));
+        println!("Would commit {CI_MODE_STATE_PATH} to parent main and push origin HEAD:main.");
+        return Ok(0);
+    }
+
+    // 1. Write the source of truth first so a projection or git failure never
+    //    loses the recorded decision.
+    std::fs::write(&path, &json).map_err(|source| CiHubError::CiModeWrite {
+        path: path.clone(),
+        source,
+    })?;
+    println!("Wrote {} (mode={value}).", path.display());
+
+    let mut failures: Vec<String> = Vec::new();
+
+    // 2. Project to the GitHub variable on every gated repo.
+    for repo in CI_MODE_REPOS {
+        match set_ci_mode_variable(root, repo, value) {
+            Ok(()) => println!("Projected {CI_MODE_VARIABLE}={value} to {repo}."),
+            Err(error) => {
+                eprintln!("PROJECTION FAILED for {repo}: {error}");
+                failures.push(format!("{repo}: {error}"));
+            }
+        }
+    }
+
+    // 3. Commit the state file to parent main (path-scoped; never disturbs
+    //    another agent's staged work). Push follows; a rejected push is
+    //    reported, not force-resolved, on the shared checkout.
+    match commit_ci_mode_state(root, value) {
+        Ok(true) => {
+            println!("Committed {CI_MODE_STATE_PATH} to parent main.");
+            match push_parent_main(root) {
+                Ok(()) => println!("Pushed origin HEAD:main."),
+                Err(error) => {
+                    eprintln!("PUSH FAILED: {error}");
+                    failures.push(format!("push: {error}"));
+                }
+            }
+        }
+        Ok(false) => println!("No state change to commit (file already matches)."),
+        Err(error) => {
+            eprintln!("COMMIT FAILED: {error}");
+            failures.push(format!("commit: {error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        println!("CI mode set to {value}.");
+        Ok(0)
+    } else {
+        eprintln!(
+            "ci-hub ci-mode set: committed decision is {value}, but {} projection/publish step(s) failed: {}",
+            failures.len(),
+            failures.join("; ")
+        );
+        Ok(2)
+    }
+}
+
+/// Returns Ok(true) if a commit was created, Ok(false) if the file was unchanged.
+fn commit_ci_mode_state(root: &Path, value: &str) -> Result<bool, String> {
+    let dirty = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain", "--", CI_MODE_STATE_PATH])
+        .output()
+        .map_err(|source| format!("launch git status: {source}"))?;
+    if !dirty.status.success() {
+        return Err(format!(
+            "git status exited {}: {}",
+            exit_status_code(dirty.status),
+            String::from_utf8_lossy(&dirty.stderr).trim()
+        ));
+    }
+    if dirty.stdout.is_empty() {
+        return Ok(false);
+    }
+    let message = format!("ci-hub: set CI mode to {value}");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", &message, "-o", "--", CI_MODE_STATE_PATH])
+        .output()
+        .map_err(|source| format!("launch git commit: {source}"))?;
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(format!(
+            "git commit exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn push_parent_main(root: &Path) -> Result<(), String> {
+    let mut command = if on_path("with-proxy") {
+        let mut command = Command::new("with-proxy");
+        command.arg("git");
+        command
+    } else {
+        Command::new("git")
+    };
+    let output = command
+        .arg("-C")
+        .arg(root)
+        .args(["push", "origin", "HEAD:main"])
+        .output()
+        .map_err(|source| format!("launch git push: {source}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git push exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn ci_mode_fire(root: &Path, args: CiModeFireArgs) -> Result<i32, CiHubError> {
+    let pr = args.pr.to_string();
+    // 1. Resolve the PR head branch; the dispatch-only DAG runs at that ref.
+    let view = gh_command(
+        root,
+        &[
+            "pr",
+            "view",
+            &pr,
+            "--repo",
+            &args.repo,
+            "--json",
+            "headRefName",
+            "-q",
+            ".headRefName",
+        ],
+    )
+    .output()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh pr view".into(),
+        source,
+    })?;
+    if !view.status.success() {
+        eprintln!(
+            "ci-hub ci-mode fire: gh pr view #{pr} on {} failed (exit {}): {}",
+            args.repo,
+            exit_status_code(view.status),
+            String::from_utf8_lossy(&view.stderr).trim()
+        );
+        return Ok(2);
+    }
+    let head_ref = String::from_utf8_lossy(&view.stdout).trim().to_string();
+    if head_ref.is_empty() {
+        eprintln!("ci-hub ci-mode fire: could not resolve head branch for PR #{pr} on {}.", args.repo);
+        return Ok(2);
+    }
+
+    // 2. Dispatch the workflow_dispatch-only DAG at that head; arm nothing else.
+    let lane_arg = format!("lane={}", args.lane.as_str());
+    let dispatch = gh_command(
+        root,
+        &[
+            "workflow",
+            "run",
+            "ci-dag.yml",
+            "--repo",
+            &args.repo,
+            "--ref",
+            &head_ref,
+            "-f",
+            &lane_arg,
+        ],
+    )
+    .status()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh workflow run".into(),
+        source,
+    })?;
+    if dispatch.success() {
+        println!(
+            "Dispatched ci-dag.yml (lane={}) on {} at {} (PR #{pr}).",
+            args.lane.as_str(),
+            args.repo,
+            head_ref
+        );
+        Ok(0)
+    } else {
+        eprintln!(
+            "ci-hub ci-mode fire: gh workflow run failed (exit {}).",
+            exit_status_code(dispatch)
+        );
+        Ok(2)
     }
 }
 
@@ -1319,6 +1916,54 @@ mod tests {
             .unwrap()
             .command;
         assert!(worktrees.cost_spec().is_none());
+    }
+
+    #[test]
+    fn parses_typed_ci_mode_commands() {
+        let set = Cli::try_parse_from([
+            "ci-hub",
+            "ci-mode",
+            "set",
+            "constrained",
+            "--reason",
+            "queued=6 max-age=2h03m",
+            "--dry-run",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::CiMode(args) = set else {
+            panic!("wrong command variant")
+        };
+        let CiModeCommand::Set(set_args) = args.command else {
+            panic!("wrong subcommand variant")
+        };
+        assert!(matches!(set_args.mode, CiModeValue::Constrained));
+        assert_eq!(set_args.reason, "queued=6 max-age=2h03m");
+        assert!(set_args.dry_run);
+
+        let fire = Cli::try_parse_from([
+            "ci-hub",
+            "ci-mode",
+            "fire",
+            "--pr",
+            "1563",
+            "--lane",
+            "privileged",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::CiMode(args) = fire else {
+            panic!("wrong command variant")
+        };
+        let CiModeCommand::Fire(fire_args) = args.command.clone() else {
+            panic!("wrong subcommand variant")
+        };
+        assert_eq!(fire_args.pr, 1563);
+        assert!(matches!(fire_args.lane, CiModeLane::Privileged));
+        assert_eq!(fire_args.repo, "rrnewton/hermit");
+
+        // ci-mode is a trivial local read/write dispatcher: no cost wrapper.
+        assert!(HubCommand::CiMode(args).cost_spec().is_none());
     }
 
     #[test]
