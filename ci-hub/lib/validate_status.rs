@@ -30,9 +30,15 @@
 use crate::records::HistoryRow;
 use std::collections::BTreeSet;
 
-/// Canonical ledger path relative to the workspace root. `validate.sh` appends
-/// here (schema_version >= 3 carries commit_anchored/tree_dirty/selection_mode).
-pub const LEDGER_REL: &str = "ignored/ci-hub/validate-runs.jsonl";
+/// Canonical ledger path relative to the workspace root. This is the exact file
+/// `validate.sh` appends to: it sets `VALIDATION_LEDGER_FILE` to
+/// `$DEV_HERMIT_PARENT/ignored/validate-run-ledger.jsonl` (validate.sh line ~350)
+/// and `append_validation_ledger()` writes one JSONL record per run there. The
+/// landing gate MUST read this same file or it sees an empty history and reports
+/// "no clean validate" for every PR. (`ci-hub/validate-runs.jsonl` is a stale
+/// path; `ci-hub/validate/worktrees.py`'s `validate-runs.jsonl` is a different,
+/// data-dir-scoped per-run registry, not this ledger.)
+pub const LEDGER_REL: &str = "ignored/validate-run-ledger.jsonl";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
