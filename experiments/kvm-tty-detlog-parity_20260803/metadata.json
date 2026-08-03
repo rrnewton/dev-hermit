@@ -1,0 +1,33 @@
+{
+  "experiment": "kvm-tty-detlog-parity",
+  "date": "2026-08-03",
+  "task": "kvm-stdout-tty-winsize-divergence",
+  "question": "Verify hermit#1445 tty/winsize determinization to full cross-backend depth: --log INFO + --detlog-stack + --detlog-heap match, KVM vs ptrace, --strict, under a real pty. Report stack/heap/INFO separately.",
+  "hermit_sha": "39e95cf8d48ae10710b57818b7d8a446c5995b8d",
+  "hermit_pr": "rrnewton/hermit#1445",
+  "reverie_cargo_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90",
+  "reverie_pin_includes_pr332": true,
+  "reverie_pr332_merge": "c1355d17581216492d3d0101888a59fa2867c9b6",
+  "binary": "worktrees/kvm/hermit/target/release/hermit",
+  "build_profile": "release",
+  "guest_command": "hermit --log info --log-file <log> run --strict --backend <b> --detlog-stack --detlog-heap -- /bin/ls ignored/lsdir",
+  "input": "ignored/lsdir/ = 30 short fixed filenames file01..file30",
+  "harness": "ignored/run_parity.py (pty.openpty + TIOCSWINSZ; guest stdout->pty slave so isatty(1)==true; trace->--log-file)",
+  "cells": {
+    "ptrace_c40x24": {"measured": true, "rc": 0, "stdout_sha256": "a593ad5618846da6712ceae28e2c14428e233dabd5d0ef67d207817cbab71c7d", "detlog_lines": 593},
+    "ptrace_c80x24": {"measured": true, "rc": 0, "stdout_sha256": "a593ad5618846da6712ceae28e2c14428e233dabd5d0ef67d207817cbab71c7d", "detlog_lines": 593},
+    "ptrace_c200x50": {"measured": true, "rc": 0, "stdout_sha256": "a593ad5618846da6712ceae28e2c14428e233dabd5d0ef67d207817cbab71c7d", "detlog_lines": 593},
+    "kvm_c80x24": {"measured": false, "reason": "wedged at guest-startup under host load (~470 concurrent hermit procs, load 110-276); exit 124 at 90s cap"},
+    "kvm_c200x50": {"measured": false, "reason": "wedged at guest-startup under host load; exit 124 at 90s cap"}
+  },
+  "results": {
+    "ptrace_width_independence": "PASS: stdout byte-identical across 40/80/200 col; INFO-match and detlog(stack+heap)-match byte-identical across 40 vs 200 col (log-diff --skip-commit: 'no substantive differences found', 593/593 DETLOG lines).",
+    "ptrace_isatty": "PASS: multi-column tab-separated output; ioctl(1,TCGETS)=Ok(0) and ioctl(1,TIOCGWINSZ)=Ok(0) on pty.",
+    "kvm_vs_ptrace_stack_match": "not measured",
+    "kvm_vs_ptrace_heap_match": "not measured",
+    "kvm_vs_ptrace_info_match": "not measured"
+  },
+  "host": {"kernel": "6.18.39-0_fbk0_hardened", "load_at_run": "110-276", "concurrent_hermit_procs": 470},
+  "blocker": "KVM guest-startup load wedge (kvm-python-examples-busywait-gate-timeout finding #2). Rerun KVM cells on quiet host or privileged /dev/kvm CI lane against the same binary.",
+  "scorecard_gap": "compat-envelope parity = piped guest-stdout hash only (isatty=false both backends); cannot see tty divergence or any trace-depth divergence with matching stdout."
+}
