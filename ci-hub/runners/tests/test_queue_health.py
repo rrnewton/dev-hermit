@@ -374,5 +374,71 @@ class SelfHostedSkipTests(unittest.TestCase):
         self.assertEqual(state, "ci-hub-broken")
 
 
+class GreenTimeFieldTests(unittest.TestCase):
+    """green_time_field formats the derived integral and degrades honestly."""
+
+    def _with_fake_query(self, fake):
+        # green_time_field imports the history query module via
+        # _load_history_query; swap it for a fake so the test needs no store.
+        orig = qh._load_history_query
+        qh._load_history_query = lambda: fake
+        self.addCleanup(lambda: setattr(qh, "_load_history_query", orig))
+
+    def test_formats_available_integral(self):
+        class Q:
+            @staticmethod
+            def parent_root():
+                return "/nonexistent"
+
+            @staticmethod
+            def green_time(parent, repo, since, workflows):
+                return {"green_pct": 87.5, "green_hours": 21.0,
+                        "total_hours": 24.0, "samples": 42,
+                        "current_state": "success"}
+        self._with_fake_query(Q)
+        out = qh.green_time_field("rrnewton/hermit")
+        self.assertIn("87.5% green over 24.0h", out)
+        self.assertIn("n=42", out)
+        self.assertIn("current=success", out)
+        self.assertNotIn("UNAVAILABLE", out)
+
+    def test_thin_store_degrades_to_unavailable(self):
+        class Q:
+            @staticmethod
+            def parent_root():
+                return "/nonexistent"
+
+            @staticmethod
+            def green_time(parent, repo, since, workflows):
+                return {"green_pct": None, "note": "no terminal runs in store"}
+        self._with_fake_query(Q)
+        out = qh.green_time_field("rrnewton/hermit")
+        self.assertTrue(out.startswith("UNAVAILABLE"))
+        self.assertIn("no terminal runs in store", out)
+
+    def test_import_failure_never_raises(self):
+        def boom():
+            raise ImportError("history module missing")
+        orig = qh._load_history_query
+        qh._load_history_query = boom
+        self.addCleanup(lambda: setattr(qh, "_load_history_query", orig))
+        out = qh.green_time_field("rrnewton/hermit")
+        self.assertTrue(out.startswith("UNAVAILABLE"))
+
+    def test_green_time_raising_is_swallowed(self):
+        class Q:
+            @staticmethod
+            def parent_root():
+                return "/nonexistent"
+
+            @staticmethod
+            def green_time(parent, repo, since, workflows):
+                raise RuntimeError("store corrupt")
+        self._with_fake_query(Q)
+        out = qh.green_time_field("rrnewton/hermit")
+        self.assertTrue(out.startswith("UNAVAILABLE"))
+        self.assertIn("store corrupt", out)
+
+
 if __name__ == "__main__":
     unittest.main()

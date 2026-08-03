@@ -194,6 +194,53 @@ def fetch_verdict(failures: list[FetchFailure]) -> tuple[int, str, str]:
             f"(retry; ci-hub itself is fine)")
 
 
+# --- Green-time integral (owner headline metric) -----------------------------
+# Instantaneous state answers "is main green right NOW?"; the owner is explicit
+# that what we actually optimize is the INTEGRAL — "what fraction of main
+# wall-clock time has authoritative CI been green?" A check that measures only
+# the point sample cannot tell us whether we are improving. That integral is
+# already derived (never estimated) by ci-hub/history/query.py from the LOCAL run
+# store (no GitHub call, so it is cheap enough for every tick and immune to the
+# gh-fetch timeout path above). We surface it here so the AUTO-INVOKED tick
+# reports the scoreboard, not just the referee. It is a REPORTED metric, not a
+# gate input: a lagging integral should not flap the fail-loud tick, and its
+# freshness depends on ingest.py having refreshed the store.
+def _load_history_query():
+    """Import ci-hub/history/query.py by path (no sys.path pollution / name clash)."""
+    import importlib.util
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "history", "query.py")
+    spec = importlib.util.spec_from_file_location("ci_hub_history_query", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def green_time_field(repo: str, since: str | None = None) -> str:
+    """Compact 'green-time' string for the tick / report. Never raises.
+
+    Degrades to a STATED 'UNAVAILABLE (<why>)' — a thin/absent history store or an
+    import failure must read as "we don't know yet", never as a crash and never
+    as a fabricated number.
+    """
+    try:
+        q = _load_history_query()
+    except Exception as exc:  # history module unavailable
+        return f"UNAVAILABLE (history query import failed: {exc})"
+    try:
+        res = q.green_time(q.parent_root(), repo, since, None)
+    except Exception as exc:  # store missing/corrupt/unreadable
+        return f"UNAVAILABLE (green_time failed: {exc})"
+    if res.get("green_pct") is None:
+        return f"UNAVAILABLE ({res.get('note', 'no data')})"
+    return (f"{res['green_pct']}% green over {res['total_hours']}h "
+            f"(green {res['green_hours']}h, n={res['samples']} authoritative "
+            f"runs, current={res['current_state']})")
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -830,6 +877,13 @@ def report_repo(repo: str, gh_cmd: str, limit: int, sample: int,
             print(f"    - {wf:<32} GREEN {elapsed} ago, {back} "
                   f"(id {g.green_id})")
 
+    # (8) GREEN-TIME INTEGRAL — the headline metric: not "is main green now?" but
+    # "what fraction of main wall-clock time has it been green?". Derived from the
+    # local history store (ci-hub/history), so it reflects ingest freshness, not a
+    # live GitHub read.
+    print(f"  main green-time (integral, authoritative workflow, from local "
+          f"history store): {green_time_field(repo)}")
+
     # (2b)+(7) Jobs-API sample: wait/duration distribution, utilization, peak.
     if sample <= 0:
         print("  time-in-queue distribution / utilization / peak concurrency: "
@@ -983,6 +1037,10 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
         "stale_green": ",".join(stale_green) or "none",
         "binding_constraint": bc or "none",
         "runners": runners_txt,
+        # Headline INTEGRAL, reported alongside the instantaneous queue state so a
+        # tick shows both "green right now?" and "green over time?". Derived from
+        # the local history store; does NOT affect the gate exit code.
+        "green_time": green_time_field(repo),
         "summary": (f"depth<= {max_depth}, age<= {humanize_secs(max_age)}, "
                     f"reasons=[{'; '.join(reasons) or 'none'}] "
                     f"(basis: last {len(runs)} runs; queue age=now-createdAt)"),
