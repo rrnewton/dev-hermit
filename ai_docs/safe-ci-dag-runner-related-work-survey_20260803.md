@@ -1,7 +1,7 @@
 # Survey: Resource-Aware DAG Scheduling and Resource Containment
 
 _Updated 2026-08-03. Claims about the local prototype are bound to dev-hermit
-`c5f57f7`, agent-utils `81614e6`, and the Hermit gitlink `3e4367e`._
+`c5f57f7`, agent-utils `0eb4203`, and the Hermit gitlink `3e4367e`._
 
 The Hermit project is about to invest substantially in `safe-ci-dag-runner`:
 using it as the common execution layer for CI, validation, experiments, and
@@ -153,6 +153,12 @@ the cgroup-v2 interface.
 | **PIDs** | A command fork-bombs the host | `pids.max` rejects further forks in the cgroup. Merely enabling the pids controller is not a ceiling. |
 | **Wall time** | A command blocks, deadlocks, sleeps, or otherwise consumes little CPU forever | A generous deadline kills the full process subtree. This is a defense-in-depth backstop, not a substitute for CPU accounting. |
 
+CPU rate and CPU placement are separate controls. `cpu.max` limits aggregate
+CPU service but lets the Linux scheduler move work across every permitted core.
+CPU affinity (`sched_setaffinity`) or `cpuset.cpus` instead keeps work on named
+cores. Pinning is necessary for a same-core contention experiment; it is not
+implied by a quota.
+
 Applying these limits is mechanically straightforward: cgroup v2 exposes the
 control files, and `systemd-run --user --scope -p Delegate=yes` is a standard
 way to place a transient process tree inside a delegated cgroup. The difficult
@@ -289,15 +295,15 @@ are established prior art.
 
 ## 7. Current prototype status
 
-[`safe-ci-dag-runner`](https://github.com/rrnewton/agent-utils/tree/81614e69bb556da5d2d1008d350b8e7c79578142/rs/safe-ci-dag-runner)
+[`safe-ci-dag-runner`](https://github.com/rrnewton/agent-utils/tree/0eb4203ae59aa006c6382d50c3cdc43b10be3fed/rs/safe-ci-dag-runner)
 is a small DAG runner in the
 [`rrnewton/agent-utils`](https://github.com/rrnewton/agent-utils) repository. It
 ships both a Rust crate/binary and a
-[Python package](https://github.com/rrnewton/agent-utils/tree/81614e69bb556da5d2d1008d350b8e7c79578142/py/safe_ci_dag_runner).
+[Python package](https://github.com/rrnewton/agent-utils/tree/0eb4203ae59aa006c6382d50c3cdc43b10be3fed/py/safe_ci_dag_runner).
 A DAG declares commands, dependencies, duration and memory hints, inner
 parallelism, and named-resource demands. The runner executes ready steps
 concurrently and records per-step resource data. The
-[`USER_GUIDE`](https://github.com/rrnewton/agent-utils/blob/81614e69bb556da5d2d1008d350b8e7c79578142/common/docs/safe-ci-dag-runner/USER_GUIDE.md)
+[`USER_GUIDE`](https://github.com/rrnewton/agent-utils/blob/0eb4203ae59aa006c6382d50c3cdc43b10be3fed/common/docs/safe-ci-dag-runner/USER_GUIDE.md)
 is the source-level interface description.
 
 Its scheduling algorithms are real, not aspirational:
@@ -324,14 +330,23 @@ synchronized across machines.
 
 The remaining gap is deployment coverage, not absence of scheduling code:
 
-- At agent-utils `81614e6`, both Rust and Python implement default-on cgroup CPU
+- At agent-utils `0eb4203`, both Rust and Python implement default-on cgroup CPU
   rate and memory containment plus performance logging. `--cgroups` is a
   deprecated no-op because the CLI already attempts containment; its absence at
   a call site is not evidence that containment is off. Library callers can
   still select the no-op cgroup implementation explicitly.
-- Rust implements cgroup containment and performance logging at this revision.
-  CPU-time enforcement, however, is currently Python-only; Rust preserves the
-  schema but records `cpu_timed_out=false`.
+- Both engines enforce the per-step cumulative `cpu_timeout` budget and the
+  differential test cross-checks their timeout outcomes.
+- Neither engine pins work to cores at this revision. Python reads an ambient
+  `cpuset.cpus.effective` and both engines write `cpu.max`, but neither writes a
+  cpuset or invokes `taskset`/`sched_setaffinity`. There is no stateful registry
+  assigning disjoint cores across runner processes.
+- A [standalone Python allocator prototype](https://github.com/rrnewton/agent-utils/blob/15dbf8091647e9861ee4b3b415e04ddadf23442e/py/safe_ci_dag_runner/coreallocator.py)
+  can lease *K* disjoint cores and pin a process tree with
+  `sched_setaffinity`; a live child was measured on its assigned core. It is
+  pushed but not merged, is not wired into either DAG scheduler, has no Rust
+  counterpart, and its kernel-thread confound ranking still has a known
+  `kworker/N:M` false positive. The current runner therefore remains unpinned.
 - The Hermit tree at `3e4367e` has 53 DAG nodes. All 53 declare wall timeouts and
   hard-memory hints; **0 of 53 declare `cpu_timeout`**.
 - Authoritative portable GitHub CI still runs those nodes through
