@@ -1,0 +1,53 @@
+{
+  "task": "vtime-global-vs-local-audit-overnight",
+  "tg_id": 161,
+  "date": "2026-08-03",
+  "question": "Does detcore's per-thread LOCAL virtual clock get bumped FORWARD to the GLOBAL (committed) time at every thread<->scheduler interaction, as the time-model's designer states the invariant? Measure the actual global-minus-local gap distribution; determine where the invariant holds and where it does not; check whether any recent time-policy change (#1095/#1190/vtime-jump/--no-rcb-time) blunted or froze virtual time.",
+  "kind": "research/audit only -- NO source changes (virtual time is SACRED)",
+  "repos": {
+    "hermit_sha": "4274144dfe5141178fdd925af7ce623fed6d0d1f",
+    "hermit_branch": "origin/main (worktrees/vtime/hermit)",
+    "note": "prior source-level audit ai_docs/detcore-global-vs-local-vtime-audit_20260801.md ground SHA hermit 09207d80; this run re-verifies at 4274144d and adds empirical + unit-test evidence the earlier audit could not run (compile break fixed by 36ee7e70)."
+  },
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "logical_cpus": 316,
+    "shared": true
+  },
+  "backend": "ptrace",
+  "mode": "hermit run --strict (L1); guest-visible determinism cross-checked",
+  "instrumentation": "RUST_LOG=detcore=trace; NO source modification. GLOBAL from 'advancing committed_time from X to Y' / '[sched-step3] ... committed_time C' lines; LOCAL from '[dtid N] updated rcb clock, new logical time' lines.",
+  "method": "parse_gap.py pairs each per-dtid LOCAL sample with the most recent GLOBAL committed_time; gap = global - local; reports min/med/p90/p99/max per dtid and pooled (ALL).",
+  "key_source_locations": {
+    "NANOS_PER_SCHED_500us_floor": "detcore-model/src/time.rs:98",
+    "add_scheduler_time": "detcore-model/src/time.rs:793",
+    "extra_time_global_only_accumulator": "detcore-model/src/time.rs:782 (sum_up: sum + extra_time)",
+    "threads_time_own_slice": "detcore-model/src/time.rs:813",
+    "GlobalTime_as_nanos_total": "detcore-model/src/time.rs:861",
+    "DetTime_advance_to_local_forward_bump": "detcore-model/src/time.rs:592",
+    "rpc_reconciliation_send_and_update_time": "detcore/src/tool_global.rs:2066-2097",
+    "bump_block_time_from_sched_vs_guest": "detcore/src/tool_global.rs:1034-1044",
+    "guest_clock_read_config_gate": "detcore/src/syscalls/time.rs:96-107",
+    "observe_guest_clock_max_floor": "detcore/src/tool_local.rs (observe_guest_clock, self.now = self.now.max(raw))",
+    "use_thread_local_clock_reads_default_false": "detcore-model/src/config.rs:62-67"
+  },
+  "git_blame": {
+    "NANOS_PER_SCHED / add_scheduler_time / extra_time / threads_time": "c6d05ef2 2022-11-12 Initial commit (foundational; 4 years old)",
+    "DetTime::advance_to (local forward-bump on RPC)": "602a9b2a 2026-07-24 PR #257 add target and maximum timeslice controls",
+    "observe_guest_clock max-floor": "c4a4bba2 2026-07-28 detcore: normalize guest clock after exec (#1190)",
+    "use_thread_local_clock_reads": "a520b67c 2026-07-27 PR #845 Improve SaBRe exec and inherited descriptor compatibility"
+  },
+  "unit_tests_run": {
+    "cargo test -p detcore --lib guest_clock": "4/4 PASS",
+    "cargo test -p detcore --lib forked_process_shares_guest_clock_domain": "1/1 PASS",
+    "cargo test -p detcore --lib exec_reconnect_retires_siblings_and_reuses_live_scheduler_and_clock_state": "1/1 PASS"
+  },
+  "findings_summary": {
+    "invariant_literal_bump_local_to_global_TOTAL": "FALSE (by design) -- local clock never rises to GlobalTime total; gap = Sigma(other threads) + extra_time never collapses at interactions.",
+    "real_forward_bump_exists": "TRUE -- send_and_update_time advance_to(lower_bound); but target is per-thread lower bound (own-slice threads_time), not the global total.",
+    "per_turn_global_advance_floor": "exact 500000 ns = NANOS_PER_SCHED (measured; median per-turn ~604020 ns).",
+    "guest_visible_clock_reflects_global_monotonic": "TRUE -- default use_thread_local_clock_reads=false -> reads global lower bound -> observe_guest_clock max-floor pins monotonic across the shared Arc process tree.",
+    "fake_determinism_check": "PASS -- guest-observed times NOT round/blunted (first read 1767225600.233056510, not .000000000); no exact-integer-second values; first post-exec read carries committed time forward (refutes #1095 origin-reset).",
+    "recent_changes_weakened_continuity": "NO -- #1190 max-floor supersedes #1095 reset; unit tests green; values un-blunted; the structural global>local gap predates all suspects."
+  }
+}

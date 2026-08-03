@@ -1,0 +1,5 @@
+workload,description,dtids,committed_time_updates,global_span_s,gap_samples,gap_min_ms,gap_med_ms,gap_p90_ms,gap_p99_ms,gap_max_ms
+probe,single-thread baseline (sh -c true loop),1,35,0.023085,250,-0.0904,11.2104,16.3422,16.4673,16.5000
+w1_multiproc,4-task branch-bound multiproc (subshell loops),4,52,0.103866,352,-0.0904,15.4821,72.4722,94.7558,94.7588
+w3_syscall,syscall-heavy multiproc,~10,127,0.104285,1981,-0.0904,65.3960,74.0681,93.9280,95.7711
+clockread,50+ dtid deep fork tree of clock readers (2 subshells x8 date),53,2981,2.594875,16158,-0.0904,1202.2854,2291.7483,2526.0606,2585.8604
