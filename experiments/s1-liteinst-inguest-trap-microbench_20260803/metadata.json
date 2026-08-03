@@ -1,0 +1,62 @@
+{
+  "run_id": "s1-liteinst-inguest-trap-microbench_20260803",
+  "utc_timestamp": "2026-08-03T18:40:00Z",
+  "question": "Does the LiteInst in-guest direct-Backend path (Mode A) win the instrumentation trap-round-trip cost axis (b) against a ptrace round-trip, on a syscall (getpid) whose sequentialization cost (a) is zero?",
+  "short_hostname": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "cpu": "AMD EPYC 9D85 158-Core Processor",
+  "nproc_host": 316,
+  "rustc": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "repos": {
+    "reverie_build_sha": "d2fb9a055693bec30e8d48333c5694050b22e869",
+    "reverie_doc_note": "BACKENDS.md Mode A/B labels landed later at 1787127266ba88e566242a1c0b8dc76913b1c489 on branch codex/s1-liteinst-inguest-trap-microbench; doc-only, does not affect the measured .so built at d2fb9a0",
+    "hermit_primary_sha": "bfb0a9ef1c303d1977f5f02903b70cc93e514cb5",
+    "parent_sha": "b00c3505afb9c4d1faacb7b34b749b6aecbeb32a"
+  },
+  "dirty_state": "reverie worktree carried the S1 microbench guest/counter binaries in target/ (build artifacts, uncommitted, not part of evidence); BACKENDS.md committed at 1787127",
+  "cgroup": {
+    "mechanism": "systemd-run --user --scope -q -p AllowedCPUs=3",
+    "K": 1,
+    "cpu_set": "3",
+    "pinning": "none (kernel schedules within the 1-CPU set)",
+    "note": "host is a shared 316-CPU box; K=1 holds the sequentialization axis (a) constant across arms but does NOT provide exclusive hardware"
+  },
+  "arms": {
+    "native": "getpid_loop guest run directly; no instrumentation",
+    "liteinst": "REVERIE_LITEINST_PRELOAD=libreverie_liteinst.so reverie-liteinst-strace getpid_loop N  (Mode A in-guest warm hook; strace tool does per-hook formatting+write I/O => conservative UPPER BOUND on axis (b))",
+    "ptrace": "counter2 -- getpid_loop N  (reverie-ptrace counter tool; one ptrace round-trip per syscall)"
+  },
+  "guest": {
+    "source": "/tmp/s1bench/getpid_loop.c (scratch)",
+    "site": "dedicated padded asm site s1_getpid/s1_getpid_site (mov $NR,%eax; site: syscall; .fill 6,1,0x90; ret) — libc generic syscall() wrapper is unpatchable by liteinst",
+    "compile": "cc -std=gnu11 -O0 -fno-pie -no-pie",
+    "workload": "volatile long acc += s1_getpid() in a loop of N iterations; getpid needs no scheduling decision so axis (a)=0"
+  },
+  "sampling": {
+    "warmups_per_point": 2,
+    "measured_reps_per_point": 10,
+    "timer": "date +%s%N wall-clock deltas around each process run",
+    "two_point_slope": "per-syscall ns = (median(T(N_b)) - median(T(N_a))) / (N_b - N_a); removes fixed per-process startup overhead",
+    "N_points": {"native": [500000, 2500000], "liteinst": [100000, 600000], "ptrace": [10000, 50000]}
+  },
+  "results_ns_per_syscall": {
+    "native": 64.3,
+    "liteinst_mode_a_upper_bound": 845.7,
+    "ptrace": 26393.7
+  },
+  "ratios": {
+    "liteinst_over_native": 13.1,
+    "ptrace_over_native": 410.3,
+    "ptrace_over_liteinst_b_gate": 31.2
+  },
+  "digests": {
+    "results.csv_sha256": "c44ccf6a813e22ba4c4ae7c313d556c33b02089dc03aae2800a956b88a03f972",
+    "harness.sh_sha256": "acdeea1ecdf867a881739610f1bb3ebbde344b3cfb1c9f05cafd897a1a3b5b4f"
+  },
+  "scope_caveats": [
+    "measures axis (b) only, on getpid where axis (a)=0; does NOT prove a full-Detcore fast path (Mode A full Detcore is build-gated: clock/timer/scheduler stubbed Unsupported in tool_host.rs)",
+    "in-guest arm carries strace per-hook I/O => its 845.7 ns/syscall is an UPPER BOUND; the null-hook path (proven to exist via trap_count_guest counters) is faster",
+    "ptrace arm is reverie-ptrace + counter tool; a full Detcore-on-ptrace tool would add tool work on top of the round-trip",
+    "shared 316-CPU box; K=1 holds (a) constant but not exclusive"
+  ]
+}
