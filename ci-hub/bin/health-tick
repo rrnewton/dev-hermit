@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+case ${1:-} in
+    help|-h|--help) export CI_HUB_TOOL_COST_ACTIVE=1 ;;
+esac
 if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
     exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
         --tool ci-hub/health-tick \

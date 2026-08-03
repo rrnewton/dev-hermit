@@ -8,7 +8,7 @@ small generated artifacts are not separate operator entrypoints.
 
 | Surface | Estimate | Final wall + CPU | Notes |
 | --- | --- | --- | --- |
-| `ci-hub/ci-hub` commands | explicit unknown | yes | No retained per-command cost history; no timeout or guessed constant is presented as an estimate. |
+| Substantive `ci-hub/ci-hub` commands | explicit unknown | yes | Typed dispatch arms cost reporting only after argument parsing; help/version/usage and instant local status reads are intentionally silent. |
 | `ci-hub/bin/main-health` | explicit unknown | yes | Repository count is stated, but no per-repository cost is invented. |
 | `ci-hub/bin/pr-status` | explicit unknown | yes | Repository count is stated, but no planner/API cost is invented. |
 | `ci-hub/bin/health-tick` | explicit unknown | yes | Due gates vary and no tick history exists. |
@@ -18,7 +18,7 @@ small generated artifacts are not separate operator entrypoints.
 
 | Violation | Replacement or disposition |
 | --- | --- |
-| `ci-hub` front door and direct wrappers printed invented wall/CPU constants, including a one-second `land-lock` estimate even though acquisition may queue and `run` includes an arbitrary child command. | `wall=unknown cpu=unknown`, with an operation-specific `not measured:` basis. Actual wall/CPU remains measured on every exit. |
+| `ci-hub` front door and direct wrappers printed invented wall/CPU constants, including a one-second `land-lock` estimate even though acquisition may queue and `run` includes an arbitrary child command. | Substantive operations use `wall=unknown cpu=unknown`, with an operation-specific `not measured:` basis, and measured actuals. Trivial control/status paths print no cost lines. |
 | Speculative-land local validation used invented 30-minute wall / 2-hour CPU floors, including when no ledger rows existed. | With history: p90 of the last at most 50 usable successful full-profile ledger rows, with `n` in the basis. Without history: explicit unknown and JSON `null`, never a floor. |
 | Full history refresh described “approximately 19000” runs and converted that constant into a four-hour estimate without counting or profiling the query. | Explicit unknown; the GitHub result count and runtime history do not exist before the query. |
 | `hermit/validate.sh` printed a static per-profile ETA table. | Owned by `hermit-227b`: same-profile/cache/host ledger estimate with sample size/range, or explicit insufficient history. |
@@ -59,9 +59,10 @@ Every row below lacks both required outputs unless noted.
 | P1 | `hermit/scripts/stage-liteinst-runtime.sh` | estimate + actual | Build profile, cache state, artifact size. |
 | P2 | `scripts/primary_checkout.py`, `scripts/doctor.sh`, `scripts/resource_audit.sh`, `scripts/verify-slot-pushed.sh` | estimate + actual | Checkout/slot/process counts and remote queries. |
 | P2 | `scripts/lint-memory-skill-sync.rs`, `scripts/sync-memory-skill.rs`, `scripts/check-demo-review.sh`, `scripts/check-parent-gitmodules.sh` | estimate + actual | Skill/file/diff counts. |
-| P2 | `ci-hub/bin/agent-tool`, direct `ci-hub/landing/landing-lock.sh`, and direct `ci-hub/runners/*` commands | estimate + actual | Wrapped through the front door where available; direct invocation still lacks the contract. |
+| P2 | `ci-hub/bin/agent-tool` and direct `ci-hub/runners/*` substantive commands | estimate + actual | Wrapped through the front door where available; direct invocation still lacks the contract. `landing-lock.sh` now execs the typed front door. |
 | P2 | `reverie/scripts/backend-submodule.sh`, `reverie/scripts/dump-vdso.py` | estimate + actual | Backend/submodule count or input image size. |
 
-Fast syntax-only checkers can legitimately estimate near-zero cost, but they
-still need the final line: the convention is valuable only when callers can
-depend on it uniformly, including failure and early-exit paths.
+Fast syntax-only checkers need cost reporting only when they scan enough input
+to affect a caller's plan. Help/version/usage and instant local status reads are
+outside the convention by design; substantive failures and early exits still
+require the final actual line.

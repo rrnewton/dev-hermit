@@ -32,7 +32,11 @@ origin/main` confirms your commit actually landed.
 
 ## Design (small + deterministic)
 
-- **`flock(1)`** makes each check-and-set on the lockfile atomic across processes.
+- Typed Rust command variants in `ci-hub/ci-hub.rs` own acquire, renew,
+  release, status, and run. `landing-lock.sh` is an exec-only compatibility
+  path for landers and heartbeats that started before the Rust cutover.
+- An advisory **`flock`** on the guard file makes each check-and-set atomic
+  across old and new processes.
 - The held state is a **lease with an expiry**, not a held fd — so acquire in one
   shell and release in another Just Work, and **(a) a dead holder cannot wedge
   the pack**: once its lease lapses (`--hold` seconds, default 900), the next

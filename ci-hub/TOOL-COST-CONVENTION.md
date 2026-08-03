@@ -1,7 +1,19 @@
 # Tool cost awareness
 
-Every user-facing tool owned by dev-hermit must make its time cost visible.
-The caller should never discover after launch that a command needs hours.
+Every substantive user-facing operation owned by dev-hermit must make its time
+cost visible. The caller should never discover after launch that a command
+needs hours.
+
+## Scope
+
+Cost reporting applies only when an operation performs meaningful work: a
+network query, repository scan, build/test, queue wait, durable background
+launch, or another action whose wall/CPU cost can affect the caller's plan.
+Trivial control paths MUST print no cost lines. This includes `--help`,
+`--version`, usage/argument errors rejected before work starts, static text,
+and instant status reads of an already-local small state file. Parse and
+validate the command first; arm cost reporting only after selecting a
+substantive operation. Do not wrap a multi-command front door indiscriminately.
 
 ## Required output
 
@@ -11,7 +23,7 @@ The caller should never discover after launch that a command needs hours.
    parallelism. Print that basis. If the required measurements do not exist,
    print `unknown` and state what data is missing. A static broad guess is
    prohibited, including as a bootstrap.
-2. **Actual on every completion path.** Print elapsed wall and total CPU
+2. **Actual on every completion path of substantive work.** Print elapsed wall and total CPU
    (user + system) with the exit status on success, failure, signal, and bounded
    early exit. Preserve the command's exit status.
 3. **Every displayed number is accountable.** A number shown to a human must be
@@ -78,8 +90,10 @@ should still use the shared wrapper rather than adding another timer.
 - **Network work:** derive queue/API retry allowance from measured history when
   available. A configured timeout or retry cap is a bound, not an estimate; label
   it as a bound and keep the estimate unknown when no runtime data exists.
-- **Early rejection:** estimate first when parameters are valid enough to size
-  the work; otherwise report an unknown estimate and the measured actual.
+- **Early rejection after work begins:** estimate first when parameters are
+  valid enough to size substantive work; otherwise report an unknown estimate
+  and the measured actual. Argument parsing, help, version, and usage errors
+  happen before cost reporting and print no cost lines.
 - **Nested tools:** report the outer operation once. Set
   `CI_HUB_TOOL_COST_ACTIVE=1` when an already-timed parent invokes another
   wrapped ci-hub entrypoint.

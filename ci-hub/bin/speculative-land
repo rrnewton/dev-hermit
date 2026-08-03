@@ -1,27 +1,5 @@
 #!/usr/bin/env bash
+# Compatibility path; typed dispatch and cost scoping live in ci-hub.rs.
 set -euo pipefail
 ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
-
-if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
-    command=${1:-status}
-    basis="not measured: obligation-store operation cost history is not retained"
-    case "$command" in
-        arm)
-            basis="not measured: exact-SHA fetch, verifier launch, and GitHub dispatch cost history is not retained"
-            ;;
-        watch)
-            basis="not measured: verifier completion time is unknown; polling bounds are not estimates"
-            for arg in "$@"; do
-                if [[ $arg == --once ]]; then
-                    basis="not measured: one exact-SHA obligation poll has no retained cost history"
-                fi
-            done
-            ;;
-    esac
-    exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
-        --tool "speculative-land/$command" \
-        --estimate-unknown \
-        --basis "$basis" -- "$0" "$@"
-fi
-
 exec python3 "$ROOT/ci-hub/remediation/protocol.py" "$@"

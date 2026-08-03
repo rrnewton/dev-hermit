@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+case ${1:-} in
+    help|-h|--help) exec python3 "$ROOT/ci-hub/health/github_main_health.py" "$@" ;;
+esac
 if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
     repo_count=0
     previous=""
