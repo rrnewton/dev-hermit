@@ -96,6 +96,55 @@ class PlannerAdapterTests(unittest.TestCase):
         self.assertEqual(status.open, 0)
         sleep.assert_called_once_with(1)
 
+    @mock.patch("pr_status.subprocess.run")
+    def test_timeout_yields_unavailable_not_hang(self, run: mock.Mock) -> None:
+        run.side_effect = subprocess.TimeoutExpired(cmd="planner", timeout=1.0)
+        with self.assertRaises(pr_status.RepoUnavailable):
+            pr_status.fetch_repo_status("rrnewton/hermit", timeout=1.0)
+        run.assert_called_once()  # a timeout is terminal, not retried
+
+    @mock.patch("pr_status.subprocess.run")
+    def test_collect_records_partial_result_on_timeout(self, run: mock.Mock) -> None:
+        run.side_effect = subprocess.TimeoutExpired(cmd="planner", timeout=1.0)
+        statuses = pr_status.collect_statuses(
+            ["rrnewton/hermit"],
+            warn_threshold=10,
+            per_repo_timeout=1.0,
+            overall_deadline=5.0,
+        )
+        self.assertEqual(len(statuses), 1)
+        self.assertFalse(statuses[0].available)
+        self.assertFalse(statuses[0].unhealthy)
+        self.assertIn("exceeded", statuses[0].reason)
+
+    def test_collect_marks_unavailable_when_deadline_exhausted(self) -> None:
+        statuses = pr_status.collect_statuses(
+            ["rrnewton/hermit", "rrnewton/reverie"],
+            warn_threshold=10,
+            per_repo_timeout=300.0,
+            overall_deadline=-1.0,  # already past the deadline
+        )
+        self.assertEqual(len(statuses), 2)
+        self.assertTrue(all(not status.available for status in statuses))
+        self.assertIn("deadline", statuses[0].reason)
+
+    def test_render_degraded_reports_partial(self) -> None:
+        available = pr_status.RepoStatus(
+            repo="rrnewton/reverie",
+            open=1,
+            green=1,
+            red=0,
+            pending=0,
+            real_reds=0,
+            outage_suspected=False,
+            prs=(),
+        )
+        unavailable = pr_status._unavailable("rrnewton/hermit", "planner exceeded 300s")
+        report = pr_status.render_report([available, unavailable], warn_threshold=10)
+        self.assertIn("DEGRADED", report)
+        self.assertIn("UNAVAILABLE", report)
+        self.assertIn("PARTIAL RESULT", report)
+
     def test_render_distinguishes_benign_red_from_unhealthy(self) -> None:
         status = pr_status.RepoStatus(
             repo="rrnewton/hermit",
