@@ -30,8 +30,12 @@ Options:
   --agent NAME        If the slot is shared, drop only this agent. When other
                       agents remain, the slot stays active.
   --clean             Physically remove the git worktree(s) and the slot dir.
-                      Refused if a worktree has uncommitted work unless --force.
-  --force             Allow --clean despite uncommitted changes (dangerous).
+                      Refused if a worktree has uncommitted work OR unpushed
+                      commits, unless --push (safe) or --force (dangerous).
+  --push              Before removal, push any unpushed slot feature branches to
+                      their upstream (with-proxy) so removal is fully recoverable
+                      (the "push-then-remove" safe reclaim protocol).
+  --force             Allow --clean despite uncommitted/unpushed work (dangerous).
   -h, --help          Show this help.
 
 Without --clean the physical worktree is left in place (cache retained) and the
@@ -189,12 +193,70 @@ fn dirty(path: &Path) -> Option<String> {
     }
 }
 
+/// Number of commits on HEAD not reachable from its upstream. Returns None when
+/// the worktree is absent. Returns Some(n>0) when there are unpushed commits, and
+/// -1 (as Some) when there is no configured upstream at all (also "unpushed").
+fn unpushed(path: &Path) -> Option<i64> {
+    if !path.exists() {
+        return None;
+    }
+    // Detached HEAD or no branch: nothing tracked to push, treat as pushed.
+    let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if !ok_b || branch.is_empty() {
+        return Some(0);
+    }
+    let (ok_up, _, _) = git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    if !ok_up {
+        return Some(-1); // branch exists but has no upstream -> unpushed/unrecoverable
+    }
+    let (ok, out, _) = git(path, &["rev-list", "--count", "@{upstream}..HEAD"]);
+    if !ok {
+        return Some(-1);
+    }
+    Some(out.trim().parse::<i64>().unwrap_or(0))
+}
+
+/// Push the worktree's current branch to `origin` via with-proxy. Returns true on success.
+fn push_branch(path: &Path) -> bool {
+    let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if !ok_b || branch.is_empty() {
+        eprintln!("  cannot push {}: detached HEAD / no branch", path.display());
+        return false;
+    }
+    let refspec = format!("HEAD:refs/heads/{branch}");
+    let out = Command::new("with-proxy")
+        .arg("git")
+        .arg("-C")
+        .arg(path)
+        .args(["push", "origin", &refspec])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            println!("  pushed {} -> origin/{branch}", path.display());
+            true
+        }
+        Ok(o) => {
+            eprintln!(
+                "  push failed for {}: {}",
+                path.display(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("  could not spawn with-proxy git push for {}: {e}", path.display());
+            false
+        }
+    }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut slot = String::new();
     let mut agent: Option<String> = None;
     let mut clean = false;
     let mut force = false;
+    let mut push = false;
 
     let mut i = 0;
     let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
@@ -210,6 +272,7 @@ fn main() {
             "--agent" => agent = Some(take(&mut i, &argv, "--agent")),
             "--clean" => clean = true,
             "--force" => force = true,
+            "--push" => push = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return;
@@ -279,6 +342,47 @@ fn main() {
         eprintln!("⚠  {slot} has uncommitted changes. Commit and push to a feature branch first.");
         if clean && !force {
             die("refusing --clean with uncommitted work; pass --force to override");
+        }
+    }
+
+    // Push-then-remove: never discard committed-but-unpushed work. Committed work
+    // survives `git worktree remove` (the branch ref stays in the primary), but if
+    // the only copy is a local branch it is not durably recoverable. So --clean
+    // requires every slot branch pushed, unless --push (push now) or --force.
+    if clean {
+        let mut any_unpushed = false;
+        for (label, p) in [
+            ("hermit", &hpath),
+            ("reverie", &rpath),
+            ("liteinst2", &lpath),
+        ] {
+            match unpushed(p) {
+                Some(n) if n > 0 => {
+                    any_unpushed = true;
+                    eprintln!("⚠  {label} worktree has {n} unpushed commit(s).");
+                }
+                Some(-1) => {
+                    any_unpushed = true;
+                    eprintln!("⚠  {label} worktree branch has no upstream (nothing pushed).");
+                }
+                _ => {}
+            }
+        }
+        if any_unpushed {
+            if push {
+                println!("--push: pushing slot feature branches (with-proxy)...");
+                let mut push_ok = true;
+                for p in [&hpath, &rpath, &lpath] {
+                    if matches!(unpushed(p), Some(n) if n != 0) && !push_branch(p) {
+                        push_ok = false;
+                    }
+                }
+                if !push_ok && !force {
+                    die("one or more branches failed to push; aborting --clean (pass --force to override)");
+                }
+            } else if !force {
+                die("refusing --clean with unpushed commits; pass --push to push-then-remove, or --force to discard");
+            }
         }
     }
 
