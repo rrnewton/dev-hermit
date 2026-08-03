@@ -67,7 +67,7 @@ current LiteInst task, or explicitly record why the lane remains paused.
 At this snapshot the parent pins Hermit
 `3e4367ec206c756c9eca5b5427826e30d5a42074`, while fetched
 `rrnewton/hermit:main` is
-`6505f0b5141f719c1520ce6aba62d4e1722b8bae`: the pin is 84 commits behind and
+`0ac1c1d7cd9380cae76bb596788e8ba6e35e2c2d`: the pin is 85 commits behind and
 is an ancestor (0 commits divergent). Do **not** re-pin while
 `test.detcore_misc` is the known hanging cell; advance the gitlink deliberately
 after that main failure is fixed and the intended validation is green.
