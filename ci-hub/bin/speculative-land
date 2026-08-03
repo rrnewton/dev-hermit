@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+
+if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
+    command=${1:-status}
+    wall=1
+    cpu=1
+    basis="one local obligation-store operation"
+    case "$command" in
+        arm)
+            wall=150
+            cpu=15
+            basis="exact-SHA fetch, detached verifier launch, and GitHub-run confirmation"
+            ;;
+        watch)
+            wall=7200
+            cpu=300
+            basis="poll until both local and GitHub verifiers reach terminal state"
+            for arg in "$@"; do
+                if [[ $arg == --once ]]; then
+                    wall=60
+                    cpu=5
+                    basis="one exact-SHA local/GitHub obligation poll"
+                fi
+            done
+            ;;
+    esac
+    exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
+        --tool "speculative-land/$command" \
+        --estimate-wall-seconds "$wall" \
+        --estimate-cpu-seconds "$cpu" \
+        --basis "$basis" -- "$0" "$@"
+fi
+
+exec python3 "$ROOT/ci-hub/remediation/protocol.py" "$@"

@@ -16,6 +16,9 @@ registers it as the `hermit-dev` skill.
   The versioned config is `ci-hub/health/tick-hub.yaml`; the plugin only supplies the
   live `orc.listAgents()` snapshot, invokes `ci-hub/bin/health-tick`, and sends a
   `HARD WARNING` wakeup when the hub emits an action/error or fails.
+- Poll speculative-land obligations every fifteen seconds and send a deduplicated
+  `HARD WARNING` wakeup as soon as either exact-SHA verifier requires remediation.
+  The five-minute tick remains the recovery path for a lost detached watcher.
 - Through that tick, gently fast-forward clean product primaries and publish a
   coherent parent gitlink snapshot; dirty or inconsistent state is preserved
   and surfaced as a hard warning.
@@ -57,5 +60,6 @@ HERMIT_AGENT_SNAPSHOT_JSON='[]' ./ci-hub/bin/health-tick --no-header
 
 A live session's `orc.hermit-dev.status()` must report the five-minute tick
 interval and `ci-hub/health/tick-hub.yaml` config. `orc.listWorkflows()` must show the
-sleeping `hermit-dev-operational-health-v1` workflow and must not show
+sleeping `hermit-dev-operational-health-v1` and
+`hermit-dev-speculative-land-remediation-v1` workflows and must not show
 `hermit-dev-pr-health`.

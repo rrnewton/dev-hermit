@@ -4,6 +4,19 @@ description: |-
   cadence and only emits actions when a hard warning is required.
 
 reminders:
+  - name: speculative_land_obligations
+    cadence_secs: 300
+    gate:
+      cmd: ./ci-hub/ci-hub watch-obligations --once --gate
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: speculative-land-obligation
+      title: "speculative land requires immediate attention: {summary}"
+
   - name: primary_checkout_snapshot
     cadence_secs: 300
     gate:

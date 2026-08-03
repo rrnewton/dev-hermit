@@ -41,6 +41,15 @@ const OPERATIONAL_TICK_COMMAND =
   'HERMIT_AGENT_SNAPSHOT_JSON="$1" ./ci-hub/bin/health-tick --flush --no-header';
 const OPERATIONAL_TICK_INTERVAL_MS = 5 * 60 * 1000;
 const OPERATIONAL_TICK_WORKFLOW_NAME = "hermit-dev-operational-health-v1";
+const SPECULATIVE_LAND_SCRIPT_NAME = "hermitSpeculativeLandObligations";
+const SPECULATIVE_LAND_COMMAND =
+  'cd "' + WORKSPACE_ROOT + '" && ' +
+  './ci-hub/ci-hub watch-obligations --once --gate';
+const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
+const SPECULATIVE_LAND_WORKFLOW_NAME =
+  "hermit-dev-speculative-land-remediation-v1";
+const SPECULATIVE_LAND_ALERT_CACHE_KEY =
+  "hermit-dev.speculative-land-remediation-alert";
 const LEGACY_PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
 
 const SKILL_DESCRIPTION = "Project-specific coordination, fork-only issue, " +
@@ -222,6 +231,47 @@ export async function operationalHealthHeartbeat(wf: WfContext): Promise<void> {
   });
 }
 
+function stableAlertSignature(report: string): string {
+  return report.split("\n").filter((line) => !line.startsWith("COST ")).join("\n");
+}
+
+export async function speculativeLandRemediationHeartbeat(
+  wf: WfContext,
+): Promise<void> {
+  await wf.loop(async () => {
+    const result = await orc.scripts.hermitSpeculativeLandObligations() as {
+      exitCode: number;
+      stdout?: string;
+      stderr?: string;
+    };
+    const exitCode = Number(result.exitCode);
+    const stdout = String(result.stdout || "").trim();
+    const stderr = String(result.stderr || "").trim();
+    const report = [stdout, stderr].filter(Boolean).join("\n");
+    const remediationRequired =
+      exitCode === 2 && stdout.includes("state=remediation-required");
+    const pollFailed = exitCode > 1 && !remediationRequired;
+    if (remediationRequired || pollFailed) {
+      const signature = stableAlertSignature(report);
+      if (orc.kvGet(SPECULATIVE_LAND_ALERT_CACHE_KEY) !== signature) {
+        const title = remediationRequired
+          ? "HARD WARNING: speculative land requires immediate remediation"
+          : "HARD WARNING: speculative-land obligation watcher failed";
+        await orc.sendWakeup(
+          [],
+          title,
+          (report || "speculative-land watcher returned no diagnostic output") +
+            "\nRun " + PR_STATUS_COMMAND + " and act on the fix-forward/revert recommendation now.",
+        );
+        orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, signature);
+      }
+    } else {
+      orc.kvSet(SPECULATIVE_LAND_ALERT_CACHE_KEY, "");
+    }
+    await wf.sleep(SPECULATIVE_LAND_INTERVAL_MS);
+  });
+}
+
 // Top-level plugin evaluation registers the placeholder skill and durable
 // PR-health heartbeat. Startup replaces the placeholder with current policy.
 registerHermitDevSkill(
@@ -239,6 +289,12 @@ orc.registerScript(OPERATIONAL_TICK_SCRIPT_NAME, {
   script: OPERATIONAL_TICK_COMMAND,
   description: "Run the version-pinned dev-hermit tick-hub operational poll",
   timeoutSec: 180,
+});
+
+orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
+  script: SPECULATIVE_LAND_COMMAND,
+  description: "Poll exact-SHA speculative-land obligations for immediate remediation",
+  timeoutSec: 120,
 });
 
 orc.exposeFunction(
@@ -276,6 +332,8 @@ orc.exposeFunction(
       operationalTickCommand: OPERATIONAL_TICK_COMMAND,
       operationalTickConfig: WORKSPACE_ROOT + "/ci-hub/health/tick-hub.yaml",
       operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
+      speculativeLandCommand: SPECULATIVE_LAND_COMMAND,
+      speculativeLandPollIntervalSeconds: SPECULATIVE_LAND_INTERVAL_MS / 1000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,
       maxAgents: 15,
@@ -293,6 +351,15 @@ orc.workflow(
   "Run tick-hub operational checks and hard-warn the coordinator on failures",
   {
     name: OPERATIONAL_TICK_WORKFLOW_NAME,
+    restartable: {} as any,
+  },
+);
+
+orc.workflow(
+  speculativeLandRemediationHeartbeat,
+  "Hard-warn immediately when an exact-SHA speculative-land verifier fails",
+  {
+    name: SPECULATIVE_LAND_WORKFLOW_NAME,
     restartable: {} as any,
   },
 );

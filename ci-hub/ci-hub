@@ -17,6 +17,20 @@ if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
         local-history|history) estimate_wall=15; estimate_cpu=12; basis="one local ledger/store scan" ;;
         land-lock) estimate_wall=1; estimate_cpu=1; basis="one local lock-state operation" ;;
         runner-health) estimate_wall=60; estimate_cpu=5; basis="runner inventory + recent GitHub workflows" ;;
+        arm-land) estimate_wall=150; estimate_cpu=15; basis="detached verifier launch + exact-SHA GitHub run confirmation" ;;
+        obligations|resolve-obligation) estimate_wall=1; estimate_cpu=1; basis="one local obligation-store operation" ;;
+        watch-obligations)
+            estimate_wall=7200
+            estimate_cpu=300
+            basis="poll until both exact-SHA verifiers reach terminal state"
+            for arg in "$@"; do
+                if [[ $arg == --once ]]; then
+                    estimate_wall=60
+                    estimate_cpu=5
+                    basis="one exact-SHA local/GitHub obligation poll"
+                fi
+            done
+            ;;
         refresh-history)
             estimate_wall=300
             estimate_cpu=60
@@ -41,6 +55,7 @@ fi
 case "$command" in
     health)
         rc=0
+        "$ROOT/ci-hub/bin/speculative-land" status || rc=$?
         "$ROOT/ci-hub/bin/main-health" "$@" || rc=$?
         pr_rc=0
         "$ROOT/ci-hub/bin/pr-status" "$@" || pr_rc=$?
@@ -50,6 +65,10 @@ case "$command" in
     main-health) exec "$ROOT/ci-hub/bin/main-health" "$@" ;;
     pr-status|fresh) exec "$ROOT/ci-hub/bin/pr-status" "$@" ;;
     tick) exec "$ROOT/ci-hub/bin/health-tick" "$@" ;;
+    arm-land) exec "$ROOT/ci-hub/bin/speculative-land" arm "$@" ;;
+    obligations) exec "$ROOT/ci-hub/bin/speculative-land" status "$@" ;;
+    watch-obligations) exec "$ROOT/ci-hub/bin/speculative-land" watch "$@" ;;
+    resolve-obligation) exec "$ROOT/ci-hub/bin/speculative-land" resolve "$@" ;;
     local-history) exec python3 "$ROOT/ci-hub/validate/aggregate.py" "$@" ;;
     land-lock) exec "$ROOT/ci-hub/landing/landing-lock.sh" "$@" ;;
     runner-health) exec python3 "$ROOT/ci-hub/runners/ci-status.py" "$@" ;;
@@ -76,6 +95,10 @@ usage: ci-hub/ci-hub <command> [args]
   main-health      current-main workflow health only
   pr-status|fresh  pull fresh open-PR CI status via agent-utils
   tick             run the version-pinned tick-hub operational poll
+  arm-land         arm local + GitHub verification for a speculative land
+  obligations      show unresolved speculative-land obligations
+  watch-obligations poll and update unresolved obligations
+  resolve-obligation record a completed fix-forward or revert
   refresh-history  incrementally ingest GitHub/local CI history
   history          query the local commit/CI history store
   local-history    query legacy/local validate-run records

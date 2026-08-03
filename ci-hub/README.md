@@ -16,6 +16,13 @@ Run `./ci-hub/ci-hub help` for the command list. The core workflows are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
+# Immediately after an admin/speculative land, arm both exact-SHA verifiers.
+./ci-hub/ci-hub arm-land <40-hex-landed-sha> --land-mode admin
+
+# Inspect or recover polling for obligations that are still open.
+./ci-hub/ci-hub obligations
+./ci-hub/ci-hub watch-obligations --once
+
 # Incrementally refresh the local GitHub/local-run history store.
 ./ci-hub/ci-hub refresh-history
 
@@ -36,6 +43,7 @@ Networked commands use `with-proxy` internally.
 | `bin/` | Stable wrappers and pinned shared-tool materialization. | CI classification, scheduling, or history logic. |
 | `health/` | Dev-hermit-specific current-main, PR, primary, and agent health adapters plus tick configuration. | Generic cadence or PR-CI classification engines. |
 | `history/` | Incremental/idempotent GitHub Actions and local commit/CI knowledge store, ingestion, and queries. | Current-live status presentation. |
+| `remediation/` | Mandatory post-land dual verification, exact-SHA local execution, watcher, and remediation recommendation. | CI-history ingestion or automatic source-code reverts. |
 | `validate/` | Legacy/local `validate.sh` ledger aggregation and linkage to retained profiles. | The generic DAG runner/profile format. |
 | `runners/` | Self-hosted runner image, lifecycle, and host status tooling. | Generic CI scheduling. |
 
@@ -76,9 +84,48 @@ generic, add it there and link/use it here.
   are not silently relabeled as product failures;
 - pending current-main work is displayed as pending and must not be claimed
   green.
+- every unresolved speculative-land obligation makes `health` nonzero. A
+  verification failure remains unresolved until an explicit fix-forward or
+  revert is recorded with `resolve-obligation`.
 
 The outer ORC workflow calls `bin/health-tick` every five minutes. The pinned
-tick engine reads `health/tick-hub.yaml`; dev-hermit probes live beside it.
+tick engine reads `health/tick-hub.yaml`; dev-hermit probes live beside it. A
+detached per-obligation watcher records terminal state continuously, while the
+dedicated ORC workflow `hermit-dev-speculative-land-remediation-v1` polls every
+15 seconds and sends a deduplicated coordinator wakeup on failure. The
+five-minute tick is the recovery path if either fast watcher is lost.
+
+## Speculative-land obligation contract
+
+`arm-land` is mandatory immediately after an admin/speculative land. It first
+appends an OPEN event to `ignored/ci-hub/obligations.jsonl`, then concurrently:
+
+1. clones Hermit into `ignored/ci-hub/obligations/<id>/hermit`, checks out the
+   exact landed commit detached, and runs full `./validate.sh --no-label-pr`;
+2. confirms `CI (GitHub-managed portable)` exists for the same SHA, dispatching
+   it only when GitHub `main` still equals that SHA; and
+3. launches a detached watcher whose durable log lives beside the local
+   validation log.
+
+The event log is append-only and locked. Every transition retains timestamps,
+verification scope (`total` here), GitHub run IDs, local log path, and failure
+recommendation for the history and green-time consumers. The local verifier is
+wrapped by `bin/tool-cost`; its history-derived estimate and atomic actual
+wall/CPU JSON are copied into the obligation record. Stable cross-store joins
+are `landed_sha → gha-runs.csv:head_sha`, `landed_sha → local-runs.csv:git_sha`,
+and `github.run_ids → gha-runs.csv:run_id`.
+
+The first failing verifier immediately changes the obligation to
+`remediation_required`: revert is recommended when the bad land is still the
+main tip; fix-forward is recommended after main has advanced. The fast ORC
+workflow raises that recommendation within one 15-second poll. The mechanism
+never performs a blind automatic revert. After the chosen repair lands, close
+the obligation with:
+
+```bash
+./ci-hub/ci-hub resolve-obligation <id> --kind fix-forward --ref <repair-sha>
+# or: --kind revert --ref <revert-sha>
+```
 
 ## Why this exists
 
