@@ -767,4 +767,43 @@ mod tests {
         assert!(!paths.lock.exists());
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
+
+    #[test]
+    fn full_protocol_acquire_renew_status_release_and_run() {
+        let paths = temp_paths("full-protocol");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        assert_eq!(
+            lock.acquire(&AcquireArgs {
+                agent: "ci-shard".into(),
+                pr: "test".into(),
+                wait: 0,
+                hold: 30,
+            })
+            .unwrap(),
+            0
+        );
+        lock.renew("ci-shard", 60, false).unwrap();
+        let holder = lock.read_holder().unwrap().unwrap();
+        assert_eq!(holder.agent, "ci-shard");
+        assert!(holder.expires_at > holder.acquired_at);
+        lock.status().unwrap();
+        lock.release("ci-shard", false).unwrap();
+        assert!(lock.read_holder().unwrap().is_none());
+
+        assert_eq!(
+            lock.run(RunArgs {
+                agent: "ci-shard-run".into(),
+                pr: "test-run".into(),
+                wait: 0,
+                hold: 30,
+                child: vec![OsString::from("/bin/true")],
+            })
+            .unwrap(),
+            0
+        );
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
 }

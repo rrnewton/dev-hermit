@@ -141,18 +141,23 @@ def _emit(fields: Mapping[str, object]) -> None:
 
 def github_main_gate() -> int:
     try:
-        health = [
-            github_main_health.evaluate_repo(repo)
-            for repo in github_main_health.DEFAULT_REPOS
-        ]
+        health = github_main_health.collect_health(
+            github_main_health.DEFAULT_REPOS,
+            github_main_health.DEFAULT_RUN_LIMIT,
+            per_call_timeout=github_main_health.DEFAULT_CALL_TIMEOUT,
+            overall_deadline=github_main_health.DEFAULT_OVERALL_DEADLINE,
+        )
         state = github_main_health.overall_state(health)
-        summary = ",".join(f"{repo.repo}:{repo.state}" for repo in health)
+        summary = ",".join(
+            f"{repo.repo}:{repo.state if repo.available else 'unavailable'}"
+            for repo in health
+        )
     except RuntimeError as error:
         _emit({"state": "unknown", "summary": _field(error)})
         return 1
 
     _emit({"state": state, "summary": summary})
-    return 1 if state in {"red", "none"} else 0
+    return 1 if state in {"red", "none", "degraded"} else 0
 
 
 def pull_request_gate() -> int:

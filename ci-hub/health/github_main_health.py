@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from typing import Sequence
 
@@ -16,6 +18,13 @@ DEFAULT_REPOS = (
     "rrnewton/reverie",
 )
 DEFAULT_RUN_LIMIT = 100
+# Basis: the complete three-repository main-health query measured 7.28s on
+# devbig014 on 2026-08-03. Each repository makes two gh calls. A 15s call cap
+# gives more than 6x the measured average call time; the 60s overall deadline
+# gives more than 8x the measured complete-query time while remaining useful to
+# an interactive health command. CI deliberately overrides these lower.
+DEFAULT_CALL_TIMEOUT = float(os.environ.get("CI_HUB_MAIN_HEALTH_TIMEOUT", "15"))
+DEFAULT_OVERALL_DEADLINE = float(os.environ.get("CI_HUB_MAIN_HEALTH_DEADLINE", "60"))
 RED_CONCLUSIONS = frozenset(
     (
         "failure",
@@ -46,15 +55,31 @@ class RepoMainHealth:
     main_sha: str
     state: str
     runs: tuple[MainRun, ...]
+    available: bool = True
+    reason: str = ""
 
 
-def _run_gh(command: Sequence[str]) -> str:
+class RepoUnavailable(RuntimeError):
+    """One live GitHub query exceeded its explicit wall-time budget."""
+
+
+def _run_gh(command: Sequence[str], *, timeout: float) -> str:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
     except FileNotFoundError as error:
         raise RuntimeError(
             "with-proxy was not found; GitHub queries must use the proxy wrapper"
         ) from error
+    except subprocess.TimeoutExpired:
+        raise RepoUnavailable(
+            f"{' '.join(command)} exceeded the {timeout:.1f}s call timeout"
+        ) from None
 
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
@@ -62,7 +87,7 @@ def _run_gh(command: Sequence[str]) -> str:
     return result.stdout
 
 
-def fetch_main_sha(repo: str) -> str:
+def fetch_main_sha(repo: str, *, timeout: float = DEFAULT_CALL_TIMEOUT) -> str:
     output = _run_gh(
         (
             "with-proxy",
@@ -71,7 +96,8 @@ def fetch_main_sha(repo: str) -> str:
             f"repos/{repo}/commits/main",
             "--jq",
             ".sha",
-        )
+        ),
+        timeout=timeout,
     )
     sha = output.strip()
     if len(sha) != 40:
@@ -79,7 +105,12 @@ def fetch_main_sha(repo: str) -> str:
     return sha
 
 
-def fetch_main_runs(repo: str, limit: int = DEFAULT_RUN_LIMIT) -> list[MainRun]:
+def fetch_main_runs(
+    repo: str,
+    limit: int = DEFAULT_RUN_LIMIT,
+    *,
+    timeout: float = DEFAULT_CALL_TIMEOUT,
+) -> list[MainRun]:
     output = _run_gh(
         (
             "with-proxy",
@@ -96,7 +127,8 @@ def fetch_main_runs(repo: str, limit: int = DEFAULT_RUN_LIMIT) -> list[MainRun]:
             str(limit),
             "--json",
             "workflowName,headSha,status,conclusion,url,createdAt",
-        )
+        ),
+        timeout=timeout,
     )
     try:
         payload = json.loads(output)
@@ -135,9 +167,36 @@ def classify_current_runs(runs: Sequence[MainRun]) -> str:
     return "green"
 
 
-def evaluate_repo(repo: str, limit: int = DEFAULT_RUN_LIMIT) -> RepoMainHealth:
-    main_sha = fetch_main_sha(repo)
-    candidates = [run for run in fetch_main_runs(repo, limit) if run.head_sha == main_sha]
+def _remaining_timeout(deadline: float, per_call_timeout: float, repo: str) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RepoUnavailable(f"{repo}: overall GitHub-main deadline exhausted")
+    return min(per_call_timeout, remaining)
+
+
+def evaluate_repo(
+    repo: str,
+    limit: int = DEFAULT_RUN_LIMIT,
+    *,
+    per_call_timeout: float = DEFAULT_CALL_TIMEOUT,
+    deadline: float | None = None,
+) -> RepoMainHealth:
+    deadline = (
+        time.monotonic() + (2 * per_call_timeout) if deadline is None else deadline
+    )
+    main_sha = fetch_main_sha(
+        repo,
+        timeout=_remaining_timeout(deadline, per_call_timeout, repo),
+    )
+    candidates = [
+        run
+        for run in fetch_main_runs(
+            repo,
+            limit,
+            timeout=_remaining_timeout(deadline, per_call_timeout, repo),
+        )
+        if run.head_sha == main_sha
+    ]
 
     # gh returns newest first. Keep only the newest attempt for each workflow so
     # a successful rerun supersedes an older failed/cancelled attempt.
@@ -157,15 +216,63 @@ def evaluate_repo(repo: str, limit: int = DEFAULT_RUN_LIMIT) -> RepoMainHealth:
     )
 
 
+def collect_health(
+    repos: Sequence[str],
+    limit: int,
+    *,
+    per_call_timeout: float,
+    overall_deadline: float,
+) -> list[RepoMainHealth]:
+    deadline = time.monotonic() + overall_deadline
+    health: list[RepoMainHealth] = []
+    for repo in repos:
+        if deadline - time.monotonic() <= 0:
+            health.append(
+                RepoMainHealth(
+                    repo=repo,
+                    main_sha="",
+                    state="unknown",
+                    runs=(),
+                    available=False,
+                    reason=f"overall deadline {overall_deadline:.1f}s exhausted",
+                )
+            )
+            continue
+        try:
+            health.append(
+                evaluate_repo(
+                    repo,
+                    limit,
+                    per_call_timeout=per_call_timeout,
+                    deadline=deadline,
+                )
+            )
+        except (RepoUnavailable, RuntimeError) as error:
+            health.append(
+                RepoMainHealth(
+                    repo=repo,
+                    main_sha="",
+                    state="unknown",
+                    runs=(),
+                    available=False,
+                    reason=str(error),
+                )
+            )
+    return health
+
+
 def overall_state(health: Sequence[RepoMainHealth]) -> str:
-    states = {repo.state for repo in health}
+    available = [repo for repo in health if repo.available]
+    states = {repo.state for repo in available}
     if "red" in states:
         return "red"
+    if len(available) != len(health):
+        return "degraded"
     if "pending" in states:
         return "pending"
     if "none" in states:
         return "none"
-    return "green"
+    return "green" if available else "degraded"
 
 
 def render_report(health: Sequence[RepoMainHealth]) -> str:
@@ -176,11 +283,20 @@ def render_report(health: Sequence[RepoMainHealth]) -> str:
         heading = "GitHub main health: GREEN"
     elif state == "pending":
         heading = "GitHub main health: PENDING (do not claim green)"
+    elif state == "degraded":
+        unavailable = sum(not repo.available for repo in health)
+        heading = (
+            "GitHub main health: DEGRADED "
+            f"(partial: {unavailable} of {len(health)} repos unavailable)"
+        )
     else:
         heading = "GitHub main health: NO CURRENT-TIP RUNS (do not claim green)"
 
     lines = [heading, "Ground truth: gh run list --branch main --event push"]
     for repo in health:
+        if not repo.available:
+            lines.append(f"  {repo.repo}: UNAVAILABLE — {repo.reason}")
+            continue
         lines.append(f"  {repo.repo} main={repo.main_sha[:12]} state={repo.state}")
         if not repo.runs:
             lines.append("    no push workflow runs found at the current main SHA")
@@ -191,6 +307,11 @@ def render_report(health: Sequence[RepoMainHealth]) -> str:
             lines.append(
                 f"    {marker:<9} {run.workflow}: {run.status}/{conclusion} {run.url}"
             )
+    if any(not repo.available for repo in health):
+        lines.append(
+            "PARTIAL RESULT: unavailable repositories are UNKNOWN, not red; "
+            "the command returned within its configured time budget."
+        )
     return "\n".join(lines)
 
 
@@ -208,21 +329,46 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_RUN_LIMIT,
         help=f"main-branch push runs to inspect per repo (default: {DEFAULT_RUN_LIMIT})",
     )
-    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON"
+    )
+    parser.add_argument(
+        "--per-call-timeout",
+        type=float,
+        default=DEFAULT_CALL_TIMEOUT,
+        help=(
+            "seconds allowed for one gh call before that repo is unavailable "
+            f"(default: {DEFAULT_CALL_TIMEOUT:g}; env CI_HUB_MAIN_HEALTH_TIMEOUT)"
+        ),
+    )
+    parser.add_argument(
+        "--overall-deadline",
+        type=float,
+        default=DEFAULT_OVERALL_DEADLINE,
+        help=(
+            "seconds allowed for all repositories before remaining results are unavailable "
+            f"(default: {DEFAULT_OVERALL_DEADLINE:g}; env CI_HUB_MAIN_HEALTH_DEADLINE)"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.limit <= 0:
         parser.error("--limit must be positive")
+    if args.per_call_timeout <= 0:
+        parser.error("--per-call-timeout must be positive")
+    if args.overall_deadline <= 0:
+        parser.error("--overall-deadline must be positive")
     return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     repos = tuple(args.repos) if args.repos else DEFAULT_REPOS
-    try:
-        health = [evaluate_repo(repo, args.limit) for repo in repos]
-    except RuntimeError as error:
-        print(f"HARD WARNING: CANNOT VERIFY GITHUB MAIN HEALTH: {error}", file=sys.stderr)
-        return 2
+    health = collect_health(
+        repos,
+        args.limit,
+        per_call_timeout=args.per_call_timeout,
+        overall_deadline=args.overall_deadline,
+    )
 
     if args.json:
         print(
@@ -236,7 +382,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     else:
         print(render_report(health))
-    return 1 if overall_state(health) == "red" else 0
+    state = overall_state(health)
+    if state == "red":
+        return 1
+    if state in {"degraded", "none"}:
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

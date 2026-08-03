@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import github_main_health
 
 
-def run(*, workflow: str, conclusion: str, created_at: str = "2026-08-02T00:00:00Z") -> dict[str, str]:
+def run(
+    *, workflow: str, conclusion: str, created_at: str = "2026-08-02T00:00:00Z"
+) -> dict[str, str]:
     return {
         "workflowName": workflow,
         "headSha": "a" * 40,
@@ -28,8 +30,12 @@ def run(*, workflow: str, conclusion: str, created_at: str = "2026-08-02T00:00:0
 class MainHealthTests(unittest.TestCase):
     def test_red_wins(self) -> None:
         runs = (
-            github_main_health.MainRun("docs", "a" * 40, "completed", "success", "u1", "1"),
-            github_main_health.MainRun("ci", "a" * 40, "completed", "failure", "u2", "1"),
+            github_main_health.MainRun(
+                "docs", "a" * 40, "completed", "success", "u1", "1"
+            ),
+            github_main_health.MainRun(
+                "ci", "a" * 40, "completed", "failure", "u2", "1"
+            ),
         )
         self.assertEqual(github_main_health.classify_current_runs(runs), "red")
 
@@ -40,14 +46,20 @@ class MainHealthTests(unittest.TestCase):
         self.assertEqual(github_main_health.classify_current_runs(runs), "pending")
 
     @mock.patch("github_main_health.subprocess.run")
-    def test_evaluate_uses_proxy_and_latest_attempt(self, run_command: mock.Mock) -> None:
+    def test_evaluate_uses_proxy_and_latest_attempt(
+        self, run_command: mock.Mock
+    ) -> None:
         payload = [
             run(workflow="ci", conclusion="success", created_at="2026-08-02T00:01:00Z"),
             run(workflow="ci", conclusion="failure", created_at="2026-08-02T00:00:00Z"),
         ]
         run_command.side_effect = (
-            subprocess.CompletedProcess(args=[], returncode=0, stdout="a" * 40 + "\n", stderr=""),
-            subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr=""),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="a" * 40 + "\n", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+            ),
         )
         health = github_main_health.evaluate_repo("rrnewton/hermit")
         self.assertEqual(health.state, "green")
@@ -74,6 +86,39 @@ class MainHealthTests(unittest.TestCase):
         report = github_main_health.render_report(health)
         self.assertIn("HARD WARNING: GITHUB MAIN IS RED", report)
         self.assertIn("RED", report)
+
+    @mock.patch("github_main_health.subprocess.run")
+    def test_stalling_service_becomes_partial_not_hang(
+        self, run_command: mock.Mock
+    ) -> None:
+        run_command.side_effect = subprocess.TimeoutExpired(cmd="gh", timeout=0.01)
+        health = github_main_health.collect_health(
+            ["rrnewton/hermit"],
+            10,
+            per_call_timeout=0.01,
+            overall_deadline=0.1,
+        )
+        self.assertEqual(len(health), 1)
+        self.assertFalse(health[0].available)
+        self.assertEqual(github_main_health.overall_state(health), "degraded")
+        report = github_main_health.render_report(health)
+        self.assertIn("DEGRADED", report)
+        self.assertIn("UNAVAILABLE", report)
+        self.assertIn("PARTIAL RESULT", report)
+        run_command.assert_called_once()
+
+    def test_exhausted_deadline_marks_every_remaining_repo_unavailable(self) -> None:
+        with mock.patch(
+            "github_main_health.time.monotonic", side_effect=[100.0, 101.0, 101.0]
+        ):
+            health = github_main_health.collect_health(
+                ["rrnewton/hermit", "rrnewton/reverie"],
+                10,
+                per_call_timeout=1.0,
+                overall_deadline=0.0,
+            )
+        self.assertTrue(all(not repo.available for repo in health))
+        self.assertTrue(all("deadline" in repo.reason for repo in health))
 
 
 if __name__ == "__main__":

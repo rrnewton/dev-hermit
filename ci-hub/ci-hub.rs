@@ -560,7 +560,7 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             pr_status_arguments(&args),
         ),
         HubCommand::Tick(args) => {
-            let mut command = Command::new(root.join("ci-hub/bin/agent-tool"));
+            let mut command = Command::new(agent_tool(root));
             command
                 .current_dir(root)
                 .args(["tick-hub", "tick", "--config"])
@@ -680,6 +680,12 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
         }
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
     }
+}
+
+fn agent_tool(root: &Path) -> PathBuf {
+    env::var_os("CI_HUB_AGENT_TOOL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("ci-hub/bin/agent-tool"))
 }
 
 fn main_health_arguments(args: &MainHealthArgs) -> Vec<OsString> {

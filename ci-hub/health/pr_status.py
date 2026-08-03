@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
+AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
 DEFAULT_WARN_THRESHOLD = 10
 MAX_FETCH_ATTEMPTS = 3
@@ -93,7 +94,7 @@ def _checkout_for(repo: str) -> Path:
 
 def planner_command(repo: str, warn_threshold: int) -> list[str]:
     return [
-        str(ROOT / "ci-hub/bin/agent-tool"),
+        str(AGENT_TOOL),
         "pr-landing-planner",
         "status",
         "--repo",
@@ -226,9 +227,7 @@ def collect_statuses(
             continue
         budget = min(per_repo_timeout, remaining)
         try:
-            statuses.append(
-                fetch_repo_status(repo, warn_threshold, timeout=budget)
-            )
+            statuses.append(fetch_repo_status(repo, warn_threshold, timeout=budget))
         except RepoUnavailable as unavailable:
             statuses.append(_unavailable(repo, str(unavailable)))
         except RuntimeError as error:
@@ -331,7 +330,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         overall_deadline=args.overall_deadline,
     )
     if args.json:
-        print(json.dumps({"repos": [asdict(status) for status in statuses]}, sort_keys=True))
+        print(
+            json.dumps(
+                {"repos": [asdict(status) for status in statuses]}, sort_keys=True
+            )
+        )
     else:
         print(render_report(statuses, args.warn_threshold))
     if any(status.unhealthy for status in statuses):

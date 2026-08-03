@@ -1,0 +1,110 @@
+name: Dev-hermit operational tooling
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: dev-hermit-tooling-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  parent-tooling:
+    name: Parent tooling shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check parent scripts and path policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 300
+          timeout --signal=KILL 1m python3 -m py_compile scripts/*.py
+          timeout --signal=KILL 3m python3 -m unittest discover -s scripts -p "test_*.py"
+
+  ci-hub:
+    name: ci-hub bounded operations shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install rust-script
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rust-script >/dev/null 2>&1 || cargo install rust-script
+
+      - name: Compile the typed front door
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m ci-hub/ci-hub --help >/dev/null
+          timeout --signal=KILL 2m rust-script --test ci-hub/ci-hub.rs
+
+      - name: Run deterministic ci-hub suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 1m python3 -m compileall -q ci-hub
+          timeout --signal=KILL 1m \
+            rustfmt --edition 2021 --check ci-hub/ci-hub.rs ci-hub/lib/*.rs
+          for suite in \
+            ci-hub/health/tests \
+            ci-hub/history/tests \
+            ci-hub/lib/tests \
+            ci-hub/remediation/tests \
+            ci-hub/runners/tests \
+            ci-hub/tests; do
+            timeout --signal=KILL 1m \
+              python3 -m unittest discover -s "$suite" -p "test_*.py"
+          done
+
+      - name: Materialize the pinned live-query dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c submodule.agent-utils.update=checkout \
+            submodule update --init --checkout -- agent-utils
+          python3 -m pip install --disable-pip-version-check PyYAML
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' \
+            >"$RUNNER_TEMP/bin/with-proxy"
+          chmod +x "$RUNNER_TEMP/bin/with-proxy"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+
+      - name: Classify bounded live GitHub health
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_HUB_MAIN_HEALTH_TIMEOUT: "4"
+          CI_HUB_MAIN_HEALTH_DEADLINE: "6"
+          CI_HUB_PR_STATUS_TIMEOUT: "8"
+          CI_HUB_PR_STATUS_DEADLINE: "10"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci-hub/tests/live_health_probe.py \
+            --repo rrnewton/dev-hermit \
+            --wall-seconds 30 \
+            --cpu-seconds 15 \
+            --log "$RUNNER_TEMP/ci-hub-live-health.log"
+
+      - name: Upload live health evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-hub-live-health-${{ github.run_id }}
+          path: ${{ runner.temp }}/ci-hub-live-health.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -25,11 +25,11 @@ class OperationalHealthTest(unittest.TestCase):
         return int(result), output.getvalue()
 
     def test_github_main_red_is_a_warning(self) -> None:
-        repos = [SimpleNamespace(repo="example/project", state="red")]
+        repos = [SimpleNamespace(repo="example/project", state="red", available=True)]
         with mock.patch.object(
             operational_health.github_main_health,
-            "evaluate_repo",
-            return_value=repos[0],
+            "collect_health",
+            return_value=repos,
         ), mock.patch.object(
             operational_health.github_main_health,
             "overall_state",
@@ -41,11 +41,13 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("summary=example/project:red", output)
 
     def test_github_main_pending_is_not_a_hard_warning(self) -> None:
-        repos = [SimpleNamespace(repo="example/project", state="pending")]
+        repos = [
+            SimpleNamespace(repo="example/project", state="pending", available=True)
+        ]
         with mock.patch.object(
             operational_health.github_main_health,
-            "evaluate_repo",
-            return_value=repos[0],
+            "collect_health",
+            return_value=repos,
         ), mock.patch.object(
             operational_health.github_main_health,
             "overall_state",

@@ -25,6 +25,9 @@ DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
 DEFAULT_WORKFLOW_FILE = "ci-portable.yml"
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
+DEFAULT_NETWORK_TIMEOUT = float(
+    os.environ.get("CI_HUB_REMEDIATION_NETWORK_TIMEOUT", "120")
+)
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 
 
@@ -90,6 +93,7 @@ def _run(
     check: bool = False,
     capture_output: bool = True,
     env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -99,7 +103,12 @@ def _run(
             capture_output=capture_output,
             text=True,
             env=dict(env) if env is not None else None,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as error:
+        raise ProtocolError(
+            f"command timed out after {timeout:.1f}s: {' '.join(command)}"
+        ) from error
     except (OSError, subprocess.CalledProcessError) as error:
         if isinstance(error, subprocess.CalledProcessError):
             detail = (error.stderr or error.stdout or "").strip()
@@ -111,11 +120,26 @@ def _run(
 def resolve_landed_sha(source: Path, requested: str) -> str:
     if not source.is_dir():
         raise ProtocolError(f"Hermit source checkout is missing: {source}")
-    _run(("with-proxy", "git", "-C", str(source), "fetch", "origin", "main"), check=True)
-    resolved = _run(
-        ("git", "-C", str(source), "rev-parse", "--verify", f"{requested}^{{commit}}"),
+    _run(
+        ("with-proxy", "git", "-C", str(source), "fetch", "origin", "main"),
         check=True,
-    ).stdout.strip().lower()
+        timeout=DEFAULT_NETWORK_TIMEOUT,
+    )
+    resolved = (
+        _run(
+            (
+                "git",
+                "-C",
+                str(source),
+                "rev-parse",
+                "--verify",
+                f"{requested}^{{commit}}",
+            ),
+            check=True,
+        )
+        .stdout.strip()
+        .lower()
+    )
     if not obligations.SHA_RE.fullmatch(resolved):
         raise ProtocolError(f"cannot resolve a full commit SHA from {requested!r}")
     ancestry = _run(
@@ -151,7 +175,10 @@ def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
     ]
     return sorted(
         runs,
-        key=lambda run: (str(run.get("createdAt", "")), int(run.get("databaseId") or 0)),
+        key=lambda run: (
+            str(run.get("createdAt", "")),
+            int(run.get("databaseId") or 0),
+        ),
         reverse=True,
     )
 
@@ -175,6 +202,7 @@ def github_runs(repo: str, sha: str) -> list[dict[str, Any]]:
             "databaseId,status,conclusion,createdAt,startedAt,updatedAt,url,event,headSha,workflowName",
         ),
         check=True,
+        timeout=DEFAULT_NETWORK_TIMEOUT,
     )
     return _parse_github_runs(result.stdout, sha)
 
@@ -183,6 +211,7 @@ def github_main_sha(repo: str) -> str:
     result = _run(
         ("with-proxy", "gh", "api", f"repos/{repo}/commits/main", "--jq", ".sha"),
         check=True,
+        timeout=DEFAULT_NETWORK_TIMEOUT,
     )
     sha = result.stdout.strip().lower()
     if not obligations.SHA_RE.fullmatch(sha):
@@ -204,7 +233,9 @@ def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
         "github": {
             "state": state,
             "started_at": run.get("startedAt") or run.get("createdAt"),
-            "finished_at": run.get("updatedAt") if state in TERMINAL_VERIFICATION_STATES else None,
+            "finished_at": (
+                run.get("updatedAt") if state in TERMINAL_VERIFICATION_STATES else None
+            ),
             "run_ids": [int(run["databaseId"])],
             "urls": [str(run.get("url") or "")],
             "workflow_name": DEFAULT_WORKFLOW,
@@ -236,7 +267,11 @@ def ensure_github_verification(
             return evaluate_obligation(obligation_id, store_path=store_path)
         if time.monotonic() >= deadline:
             break
-        if allow_dispatch and not dispatched and deadline - time.monotonic() <= max(0, wait_seconds - 30):
+        if (
+            allow_dispatch
+            and not dispatched
+            and deadline - time.monotonic() <= max(0, wait_seconds - 30)
+        ):
             if github_main_sha(repo) == sha:
                 _run(
                     (
@@ -251,6 +286,7 @@ def ensure_github_verification(
                         "main",
                     ),
                     check=True,
+                    timeout=DEFAULT_NETWORK_TIMEOUT,
                 )
                 dispatched = True
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
@@ -294,7 +330,9 @@ def _failure_details(record: Mapping[str, Any]) -> tuple[str, str]:
     return source, summary
 
 
-def remediation_recommendation(record: Mapping[str, Any], main_sha: str | None) -> dict[str, str]:
+def remediation_recommendation(
+    record: Mapping[str, Any], main_sha: str | None
+) -> dict[str, str]:
     if main_sha == record["landed_sha"] or main_sha is None:
         return {
             "action": "revert",
@@ -324,7 +362,9 @@ def evaluate_obligation(
     states = (record["local"]["state"], record["github"]["state"])
     now = obligations.utc_now()
     first_terminal_at = record.get("first_terminal_at")
-    if first_terminal_at is None and any(state in TERMINAL_VERIFICATION_STATES for state in states):
+    if first_terminal_at is None and any(
+        state in TERMINAL_VERIFICATION_STATES for state in states
+    ):
         first_terminal_at = now
 
     if any(state in {"red", "error"} for state in states):
@@ -350,7 +390,10 @@ def evaluate_obligation(
                     "failure_summary": summary,
                     "recommendation": recommendation,
                     "alert": {"state": "raised", "raised_at": now},
-                    "remediation": {"state": "recommended", "kind": recommendation["action"]},
+                    "remediation": {
+                        "state": "recommended",
+                        "kind": recommendation["action"],
+                    },
                 },
                 store_path,
             )
@@ -430,8 +473,14 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
     try:
         workspace.mkdir(parents=True, exist_ok=True)
         if checkout.exists():
-            raise ProtocolError(f"isolated validation checkout already exists: {checkout}")
-        _run(("git", "clone", "--shared", "--no-checkout", str(source), str(checkout)), check=True, capture_output=False)
+            raise ProtocolError(
+                f"isolated validation checkout already exists: {checkout}"
+            )
+        _run(
+            ("git", "clone", "--shared", "--no-checkout", str(source), str(checkout)),
+            check=True,
+            capture_output=False,
+        )
         _run(
             ("git", "-C", str(checkout), "checkout", "--detach", record["landed_sha"]),
             check=True,
@@ -450,15 +499,22 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
             ),
             check=True,
             capture_output=False,
+            timeout=DEFAULT_NETWORK_TIMEOUT,
         )
-        actual = _run(("git", "-C", str(checkout), "rev-parse", "HEAD"), check=True).stdout.strip()
+        actual = _run(
+            ("git", "-C", str(checkout), "rev-parse", "HEAD"), check=True
+        ).stdout.strip()
         if actual != record["landed_sha"]:
-            raise ProtocolError(f"isolated checkout is {actual}, expected {record['landed_sha']}")
+            raise ProtocolError(
+                f"isolated checkout is {actual}, expected {record['landed_sha']}"
+            )
         environment = os.environ.copy()
         environment.update(
             {
                 "CI_HUB_OBLIGATION_ID": obligation_id,
-                "HERMIT_VALIDATE_LEDGER": str(ROOT / "ignored/validate-run-ledger.jsonl"),
+                "HERMIT_VALIDATE_LEDGER": str(
+                    ROOT / "ignored/validate-run-ledger.jsonl"
+                ),
                 "VALIDATE_LABEL_PR": "0",
             }
         )
@@ -496,7 +552,9 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
         try:
             measured_cost = json.loads(cost_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
-            raise ProtocolError(f"tool-cost result is unavailable: {cost_path}: {error}") from error
+            raise ProtocolError(
+                f"tool-cost result is unavailable: {cost_path}: {error}"
+            ) from error
         measured_cost["record_path"] = str(cost_path)
     except ProtocolError as error:
         print(f"local verification setup failed: {error}", file=sys.stderr, flush=True)
@@ -551,7 +609,9 @@ def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
                 {"github": {"last_poll_error": str(error)}},
                 store_path,
             )
-    if record["local"]["state"] == "running" and not _pid_alive(record["local"].get("pid")):
+    if record["local"]["state"] == "running" and not _pid_alive(
+        record["local"].get("pid")
+    ):
         record = obligations.get_record(obligation_id, store_path)
         if record["local"]["state"] == "running":
             record = obligations.transition(
@@ -572,7 +632,10 @@ def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
 def _watch_complete(record: Mapping[str, Any]) -> bool:
     if record["overall_state"] in obligations.CLOSED_STATES:
         return True
-    return all(record[source]["state"] in TERMINAL_VERIFICATION_STATES for source in ("local", "github"))
+    return all(
+        record[source]["state"] in TERMINAL_VERIFICATION_STATES
+        for source in ("local", "github")
+    )
 
 
 def watch(
@@ -588,17 +651,32 @@ def watch(
             if obligation_id
             else obligations.unresolved_records(store_path)
         )
-        updated = [poll_obligation(record["obligation_id"], store_path) for record in records]
+        updated = [
+            poll_obligation(record["obligation_id"], store_path) for record in records
+        ]
         if once or all(_watch_complete(record) for record in updated):
-            if any(record["overall_state"] == "remediation_required" for record in updated):
+            if any(
+                record["overall_state"] == "remediation_required" for record in updated
+            ):
                 return 2
-            return 1 if any(record["overall_state"] not in obligations.CLOSED_STATES for record in updated) else 0
+            return (
+                1
+                if any(
+                    record["overall_state"] not in obligations.CLOSED_STATES
+                    for record in updated
+                )
+                else 0
+            )
         time.sleep(poll_seconds)
 
 
 def _summary_line(record: Mapping[str, Any]) -> str:
     recommendation = record.get("recommendation") or {}
-    action = recommendation.get("action", "-") if isinstance(recommendation, Mapping) else "-"
+    action = (
+        recommendation.get("action", "-")
+        if isinstance(recommendation, Mapping)
+        else "-"
+    )
     return (
         f"{record['obligation_id']} {record['repo']}@{record['landed_sha'][:12]} "
         f"overall={record['overall_state']} local={record['local']['state']} "
@@ -606,21 +684,40 @@ def _summary_line(record: Mapping[str, Any]) -> str:
     )
 
 
-def print_status(store_path: Path, *, include_closed: bool, json_output: bool, gate: bool) -> int:
+def print_status(
+    store_path: Path, *, include_closed: bool, json_output: bool, gate: bool
+) -> int:
     records = list(obligations.latest_records(store_path).values())
     if not include_closed:
-        records = [record for record in records if record["overall_state"] not in obligations.CLOSED_STATES]
+        records = [
+            record
+            for record in records
+            if record["overall_state"] not in obligations.CLOSED_STATES
+        ]
     records.sort(key=lambda record: (record["opened_at"], record["obligation_id"]))
-    unresolved = [record for record in records if record["overall_state"] not in obligations.CLOSED_STATES]
-    remediation = [record for record in unresolved if record["overall_state"] == "remediation_required"]
+    unresolved = [
+        record
+        for record in records
+        if record["overall_state"] not in obligations.CLOSED_STATES
+    ]
+    remediation = [
+        record
+        for record in unresolved
+        if record["overall_state"] == "remediation_required"
+    ]
     if json_output:
         print(json.dumps({"obligations": records}, sort_keys=True))
     elif gate:
-        state = "remediation-required" if remediation else "open" if unresolved else "clear"
+        state = (
+            "remediation-required" if remediation else "open" if unresolved else "clear"
+        )
         print(f"state={state}")
         print(f"count={len(unresolved)}")
         print(f"remediation_count={len(remediation)}")
-        print("ids=" + (",".join(record["obligation_id"] for record in unresolved) or "none"))
+        print(
+            "ids="
+            + (",".join(record["obligation_id"] for record in unresolved) or "none")
+        )
         print(
             "summary="
             + (
@@ -633,9 +730,11 @@ def print_status(store_path: Path, *, include_closed: bool, json_output: bool, g
         heading = (
             "Speculative-land obligations: REMEDIATION REQUIRED"
             if remediation
-            else "Speculative-land obligations: OPEN"
-            if unresolved
-            else "Speculative-land obligations: CLEAR"
+            else (
+                "Speculative-land obligations: OPEN"
+                if unresolved
+                else "Speculative-land obligations: CLEAR"
+            )
         )
         print(heading)
         for record in records:
@@ -661,7 +760,9 @@ def arm(args: argparse.Namespace) -> int:
     except obligations.DuplicateOpenObligation as error:
         record = error.record
         print(str(error), file=sys.stderr)
-        return print_status(store_path, include_closed=False, json_output=False, gate=False)
+        return print_status(
+            store_path, include_closed=False, json_output=False, gate=False
+        )
 
     obligation_id = record["obligation_id"]
     workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
@@ -688,7 +789,14 @@ def arm(args: argparse.Namespace) -> int:
         store_path,
     )
     local_pid = _spawn_detached(
-        ("_local-run", obligation_id, "--source", str(source), "--store", str(store_path)),
+        (
+            "_local-run",
+            obligation_id,
+            "--source",
+            str(source),
+            "--store",
+            str(store_path),
+        ),
         local_log,
     )
     obligations.transition(
@@ -792,36 +900,58 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    arm_parser = subparsers.add_parser("arm", help="arm dual verification for a landed SHA")
+    arm_parser = subparsers.add_parser(
+        "arm", help="arm dual verification for a landed SHA"
+    )
     arm_parser.add_argument("sha")
     arm_parser.add_argument("--repo", default=DEFAULT_REPO)
     arm_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
-    arm_parser.add_argument("--land-mode", choices=("admin", "speculative"), default="speculative")
-    arm_parser.add_argument("--actor", default=os.environ.get("AGENT", os.environ.get("USER", "unknown")))
-    arm_parser.add_argument("--github-wait-seconds", type=int, default=DEFAULT_GITHUB_WAIT_SECONDS)
+    arm_parser.add_argument(
+        "--land-mode", choices=("admin", "speculative"), default="speculative"
+    )
+    arm_parser.add_argument(
+        "--actor", default=os.environ.get("AGENT", os.environ.get("USER", "unknown"))
+    )
+    arm_parser.add_argument(
+        "--github-wait-seconds", type=int, default=DEFAULT_GITHUB_WAIT_SECONDS
+    )
     arm_parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS)
     arm_parser.add_argument("--no-dispatch", action="store_true")
-    arm_parser.add_argument("--store", type=Path, default=obligations.default_store_path())
+    arm_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
 
-    watch_parser = subparsers.add_parser("watch", help="poll open obligations and record transitions")
+    watch_parser = subparsers.add_parser(
+        "watch", help="poll open obligations and record transitions"
+    )
     watch_parser.add_argument("--id")
     watch_parser.add_argument("--once", action="store_true")
     watch_parser.add_argument("--gate", action="store_true")
     watch_parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS)
-    watch_parser.add_argument("--store", type=Path, default=obligations.default_store_path())
+    watch_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
 
     status_parser = subparsers.add_parser("status", help="show unresolved obligations")
     status_parser.add_argument("--all", action="store_true")
     status_parser.add_argument("--json", action="store_true")
     status_parser.add_argument("--gate", action="store_true")
-    status_parser.add_argument("--store", type=Path, default=obligations.default_store_path())
+    status_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
 
-    resolve_parser = subparsers.add_parser("resolve", help="record completed remediation")
+    resolve_parser = subparsers.add_parser(
+        "resolve", help="record completed remediation"
+    )
     resolve_parser.add_argument("id")
-    resolve_parser.add_argument("--kind", choices=("fix-forward", "revert"), required=True)
+    resolve_parser.add_argument(
+        "--kind", choices=("fix-forward", "revert"), required=True
+    )
     resolve_parser.add_argument("--ref", required=True)
     resolve_parser.add_argument("--started-at")
-    resolve_parser.add_argument("--store", type=Path, default=obligations.default_store_path())
+    resolve_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
 
     local_parser = subparsers.add_parser("_local-run", help=argparse.SUPPRESS)
     local_parser.add_argument("id")
@@ -835,7 +965,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "arm":
             if args.github_wait_seconds < 0 or args.poll_seconds <= 0:
-                raise ProtocolError("wait must be non-negative and poll interval must be positive")
+                raise ProtocolError(
+                    "wait must be non-negative and poll interval must be positive"
+                )
             return arm(args)
         if args.command == "watch":
             if args.poll_seconds <= 0:
@@ -847,10 +979,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 poll_seconds=args.poll_seconds,
             )
             if args.gate:
-                return print_status(args.store, include_closed=False, json_output=False, gate=True)
+                return print_status(
+                    args.store, include_closed=False, json_output=False, gate=True
+                )
             return result
         if args.command == "status":
-            return print_status(args.store, include_closed=args.all, json_output=args.json, gate=args.gate)
+            return print_status(
+                args.store,
+                include_closed=args.all,
+                json_output=args.json,
+                gate=args.gate,
+            )
         if args.command == "resolve":
             return resolve_obligation(args)
         if args.command == "_local-run":

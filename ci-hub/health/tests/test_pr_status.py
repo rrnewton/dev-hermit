@@ -24,7 +24,9 @@ class PlannerAdapterTests(unittest.TestCase):
         self.assertIn("json", command)
 
     @mock.patch("pr_status.subprocess.run")
-    def test_fetch_uses_planner_schema_without_reimplementing_ci(self, run: mock.Mock) -> None:
+    def test_fetch_uses_planner_schema_without_reimplementing_ci(
+        self, run: mock.Mock
+    ) -> None:
         payload = {
             "summary": {
                 "open": 3,
@@ -61,7 +63,9 @@ class PlannerAdapterTests(unittest.TestCase):
             "prs": [],
         }
         run.side_effect = [
-            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 504"),
+            subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="HTTP 504"
+            ),
             subprocess.CompletedProcess(
                 args=[], returncode=0, stdout=json.dumps(payload), stderr=""
             ),
@@ -72,7 +76,9 @@ class PlannerAdapterTests(unittest.TestCase):
 
     @mock.patch("pr_status.time.sleep")
     @mock.patch("pr_status.subprocess.run")
-    def test_fetch_retries_identity_race(self, run: mock.Mock, sleep: mock.Mock) -> None:
+    def test_fetch_retries_identity_race(
+        self, run: mock.Mock, sleep: mock.Mock
+    ) -> None:
         payload = {
             "summary": {
                 "open": 0,
@@ -86,7 +92,10 @@ class PlannerAdapterTests(unittest.TestCase):
         }
         run.side_effect = [
             subprocess.CompletedProcess(
-                args=[], returncode=1, stdout="", stderr="PR #1 changed during collection"
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr="PR #1 changed during collection",
             ),
             subprocess.CompletedProcess(
                 args=[], returncode=0, stdout=json.dumps(payload), stderr=""
@@ -95,6 +104,19 @@ class PlannerAdapterTests(unittest.TestCase):
         status = pr_status.fetch_repo_status("rrnewton/hermit")
         self.assertEqual(status.open, 0)
         sleep.assert_called_once_with(1)
+
+    @mock.patch("pr_status.time.sleep")
+    @mock.patch("pr_status.subprocess.run")
+    def test_retryable_service_error_stops_at_attempt_bound(
+        self, run: mock.Mock, sleep: mock.Mock
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="HTTP 504"
+        )
+        with self.assertRaisesRegex(RuntimeError, "HTTP 504"):
+            pr_status.fetch_repo_status("rrnewton/hermit")
+        self.assertEqual(run.call_count, pr_status.MAX_FETCH_ATTEMPTS)
+        self.assertEqual(sleep.call_count, pr_status.MAX_FETCH_ATTEMPTS - 1)
 
     @mock.patch("pr_status.subprocess.run")
     def test_timeout_yields_unavailable_not_hang(self, run: mock.Mock) -> None:
