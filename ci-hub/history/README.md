@@ -109,10 +109,14 @@ invalidates it. Use `--no-fetch` only for an intentionally offline snapshot.
 
 `first-bad` reports both endpoints, unobserved commits between them, the files
 touched by the candidate, and a conservative plausibility statement. Inner DAG
-nodes and Rust test functions are recovered through the log path stored in the
-same ledger row. If that log is gone, the command says the cell detail was not
-retained; it never turns missing evidence into a pass. Host load was not stored
-by schema 3, so only the measured run CPU/wall ratio can currently be reported.
+nodes, Rust test functions, and their error excerpt are recovered through the
+log path stored in the same ledger row. Once observed, that detail is retained
+without time-based expiry in `ignored/ci-hub/local-cell-evidence-cache.json`,
+keyed to the source ledger row; it cannot create a verdict for a missing row.
+If a historical log vanished before its first indexing, the command says the
+cell detail was not retained and never turns absence into a pass. Host load was
+not stored by schema 3, so only the measured run CPU/wall ratio can currently be
+reported.
 
 Both commands follow `validate-status` exit codes: `0` found the requested
 evidence, `3` found failure evidence without the required green boundary, and

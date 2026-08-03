@@ -28,7 +28,10 @@ mod validate_status;
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
-use history_queries::{FirstBadOutcome, HistoryQueryEngine, NewestGreenCache, NewestGreenOutcome};
+use history_queries::{
+    CellEvidenceCache, FirstBadOutcome, HistoryQueryEngine, NewestGreenCache,
+    NewestGreenOutcome,
+};
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -2475,6 +2478,80 @@ fn write_newest_green_cache(path: &Path, cache: &NewestGreenCache) -> Result<(),
     })
 }
 
+fn retain_cell_evidence(root: &Path, rows: &mut [HistoryRow]) -> Result<(), CiHubError> {
+    let path = history_queries::cell_evidence_cache_path(root);
+    let cache: CellEvidenceCache = match std::fs::read(&path) {
+        Ok(raw) => match serde_json::from_slice::<CellEvidenceCache>(&raw) {
+            Ok(cache) if cache.schema_version == 2 => cache,
+            Ok(cache) => {
+                eprintln!(
+                    "ci-hub: rebuilding cell-evidence cache {} (schema {} != 2)",
+                    path.display(),
+                    cache.schema_version
+                );
+                CellEvidenceCache::default()
+            }
+            Err(error) => {
+                eprintln!(
+                    "ci-hub: ignoring invalid cell-evidence cache {}: {error}",
+                    path.display()
+                );
+                CellEvidenceCache::default()
+            }
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => CellEvidenceCache::default(),
+        Err(source) => {
+            return Err(CiHubError::HistoryQuery(format!(
+                "read cell-evidence cache {}: {source}",
+                path.display()
+            )))
+        }
+    };
+    let indexed: std::collections::BTreeSet<(&str, Option<&str>)> = cache
+        .records
+        .iter()
+        .map(|record| (record.commit.as_str(), record.finished_at.as_deref()))
+        .collect();
+    history_queries::merge_retained_cell_evidence(rows, &cache);
+    for row in rows.iter_mut() {
+        let Some(commit) = row.commit.as_deref() else {
+            continue;
+        };
+        if !indexed.contains(&(commit, row.finished_at.as_deref())) {
+            history_queries::enrich_rows_from_logs(std::slice::from_mut(row));
+        }
+    }
+    let updated = history_queries::retained_cell_evidence(rows);
+    if updated.records.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| {
+            CiHubError::HistoryQuery(format!(
+                "create cell-evidence cache directory {}: {source}",
+                parent.display()
+            ))
+        })?;
+    }
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    let mut bytes = serde_json::to_vec_pretty(&updated).map_err(|error| {
+        CiHubError::HistoryQuery(format!("serialize cell-evidence cache: {error}"))
+    })?;
+    bytes.push(b'\n');
+    std::fs::write(&temporary, bytes).map_err(|source| {
+        CiHubError::HistoryQuery(format!(
+            "write cell-evidence cache {}: {source}",
+            temporary.display()
+        ))
+    })?;
+    std::fs::rename(&temporary, &path).map_err(|source| {
+        CiHubError::HistoryQuery(format!(
+            "replace cell-evidence cache {}: {source}",
+            path.display()
+        ))
+    })
+}
+
 fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bool, json: bool) {
     if json {
         println!(
@@ -2537,11 +2614,12 @@ fn run_newest_green_main(root: &Path, args: NewestGreenMainArgs) -> Result<i32, 
         }
     }
 
-    let rows = load_ledger_rows(&ledger)?;
+    let mut rows = load_ledger_rows(&ledger)?;
+    retain_cell_evidence(root, &mut rows)?;
     match HistoryQueryEngine::new(commits, rows).newest_green(&args.query.main_ref) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 1,
+                schema_version: 2,
                 main_tip: report.main_tip.clone(),
                 main_ref: args.query.main_ref,
                 ledger_path: ledger.display().to_string(),
@@ -2634,12 +2712,16 @@ fn print_first_bad(report: &history_queries::FirstBadReport, json: bool) {
         report.first_bad.selection_mode,
     );
     println!(
-        "LAST-GOOD {} observed={} commits-between={} no-cell-record={}",
+        "LAST-GOOD {} observed={} commits-between={} no-cell-record={} first-bad-mixed={}",
         report.last_good.sha,
         report.last_good.finished_at.as_deref().unwrap_or("unknown"),
         report.commits_between,
         report.commits_without_cell_record,
+        report.first_bad_commit_has_mixed_outcomes,
     );
+    if report.first_bad_commit_has_mixed_outcomes {
+        println!("FLAKE-SIGNAL: the same first-bad SHA has both PASS and FAIL records for this cell; the failure is real evidence but not a deterministic commit regression");
+    }
     println!("FILES-TOUCHED {}", if report.files_touched.is_empty() { "(none)".into() } else { report.files_touched.join(" ") });
     println!("PLAUSIBILITY {}", report.plausibility);
     println!(
@@ -2672,7 +2754,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             .map(|commit| main_set.contains(commit))
             .unwrap_or(false)
     });
-    history_queries::enrich_rows_from_logs(&mut rows);
+    retain_cell_evidence(root, &mut rows)?;
     match HistoryQueryEngine::new(commits, rows).first_bad(&args.cell_or_gate) {
         FirstBadOutcome::Found(mut report) => {
             report.files_touched = files_touched(&repo, &report.first_bad.sha)?;

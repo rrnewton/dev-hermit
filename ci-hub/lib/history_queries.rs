@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const NEWEST_GREEN_CACHE_REL: &str = "ignored/ci-hub/newest-green-main-cache.json";
+pub const CELL_EVIDENCE_CACHE_REL: &str = "ignored/ci-hub/local-cell-evidence-cache.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -61,6 +62,7 @@ pub struct FirstBadReport {
     pub last_good: ValidationEvidence,
     pub commits_between: usize,
     pub commits_without_cell_record: usize,
+    pub first_bad_commit_has_mixed_outcomes: bool,
     pub files_touched: Vec<String>,
     pub plausibility: String,
     pub source_node: Option<String>,
@@ -77,6 +79,22 @@ pub struct NewestGreenCache {
     pub ledger_len: u64,
     pub ledger_modified_ns: u128,
     pub report: NewestGreenReport,
+}
+
+/// Durable derived detail for a row in the append-only validation ledger. This
+/// is not a parallel verdict store: a cached record is used only when its
+/// `(commit, finished_at)` ledger row still exists.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RetainedCellEvidence {
+    pub commit: String,
+    pub finished_at: Option<String>,
+    pub gates: Vec<GateHistoryRow>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CellEvidenceCache {
+    pub schema_version: u32,
+    pub records: Vec<RetainedCellEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -178,17 +196,22 @@ impl HistoryQueryEngine {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
             };
-            let Some(row) = latest_row_with_named_observation(rows, &normalized, &mut available)
-            else {
-                continue;
-            };
-            let gate = row
-                .gates
+            for row in rows
                 .iter()
-                .find(|gate| normalize(&gate.name) == normalized)
-                .expect("row selected because it has this gate")
-                .clone();
-            observations.push((index, sha.clone(), gate, row.clone()));
+                .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
+            {
+                for gate in &row.gates {
+                    available.insert(gate.name.clone());
+                }
+                let Some(gate) = row
+                    .gates
+                    .iter()
+                    .find(|gate| normalize(&gate.name) == normalized)
+                else {
+                    continue;
+                };
+                observations.push((index, sha.clone(), gate.clone(), row.clone()));
+            }
         }
 
         if observations.is_empty() {
@@ -206,18 +229,34 @@ impl HistoryQueryEngine {
             };
         }
 
-        // Convert newest->oldest main order into chronological observations,
-        // then retain the newest recorded PASS -> FAIL transition.
-        observations.reverse();
+        // Commit chronology first, then run chronology within one commit. A
+        // later PASS must not erase an earlier FAIL at the same SHA: that is
+        // positive flake evidence, not a reason to rewrite history as green.
+        observations.sort_by(|a, b| {
+            b.0.cmp(&a.0).then_with(|| {
+                a.3.finished_at
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.3.finished_at.as_deref().unwrap_or(""))
+            })
+        });
         let matched_name = observations[0].2.name.clone();
-        let mut transition = None;
-        for pair in observations.windows(2) {
-            let good = &pair[0];
-            let bad = &pair[1];
-            if gate_passed(&good.2) && gate_failed(&bad.2) {
-                transition = Some((good.clone(), bad.clone()));
+        let mut latest_transition = None;
+        let mut open_failure_epoch = None;
+        let mut last_good = None;
+        for observation in &observations {
+            if gate_passed(&observation.2) {
+                if let Some(epoch) = open_failure_epoch.take() {
+                    latest_transition = Some(epoch);
+                }
+                last_good = Some(observation.clone());
+            } else if gate_failed(&observation.2) && open_failure_epoch.is_none() {
+                if let Some(good) = &last_good {
+                    open_failure_epoch = Some((good.clone(), observation.clone()));
+                }
             }
         }
+        let transition = open_failure_epoch.or(latest_transition);
         if let Some((good, bad)) = transition {
             let lower = bad.0.min(good.0);
             let upper = bad.0.max(good.0);
@@ -227,6 +266,11 @@ impl HistoryQueryEngine {
             let missing = (lower + 1..upper)
                 .filter(|index| !observed_indices.contains(index))
                 .count();
+            let bad_results: BTreeSet<&str> = observations
+                .iter()
+                .filter(|item| item.0 == bad.0)
+                .filter_map(|item| item.2.result.as_deref().or(item.2.kind.as_deref()))
+                .collect();
             return FirstBadOutcome::Found(Box::new(FirstBadReport {
                 schema_version: 1,
                 query: query.to_string(),
@@ -235,6 +279,8 @@ impl HistoryQueryEngine {
                 last_good: gate_evidence(&good.1, &good.3, &good.2),
                 commits_between: between,
                 commits_without_cell_record: missing,
+                first_bad_commit_has_mixed_outcomes: bad_results.contains("pass")
+                    && (bad_results.contains("fail") || bad_results.contains("timeout")),
                 files_touched: Vec::new(),
                 plausibility: "not-assessed".into(),
                 source_node: bad.2.source_node.clone(),
@@ -263,24 +309,6 @@ impl HistoryQueryEngine {
 fn latest_trustworthy_row(rows: &[HistoryRow]) -> Option<&HistoryRow> {
     rows.iter()
         .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
-        .max_by_key(|row| row.finished_at.as_deref().unwrap_or(""))
-}
-
-fn latest_row_with_named_observation<'a>(
-    rows: &'a [HistoryRow],
-    normalized: &str,
-    available: &mut BTreeSet<String>,
-) -> Option<&'a HistoryRow> {
-    rows.iter()
-        .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
-        .filter(|row| {
-            for gate in &row.gates {
-                available.insert(gate.name.clone());
-            }
-            row.gates
-                .iter()
-                .any(|gate| normalize(&gate.name) == normalized)
-        })
         .max_by_key(|row| row.finished_at.as_deref().unwrap_or(""))
 }
 
@@ -355,15 +383,89 @@ pub fn enrich_rows_from_logs(rows: &mut [HistoryRow]) {
                 )
             })
             .collect();
-        for gate in parse_log_observations(&raw) {
+        for mut gate in parse_log_observations(&raw) {
+            if gate_failed(&gate) {
+                let excerpt = scoped_error_excerpt(&raw, &gate);
+                if !excerpt.is_empty() {
+                    gate.extra
+                        .insert("error_excerpt".into(), serde_json::json!(excerpt));
+                }
+            }
             let key = (
                 normalize(&gate.name),
                 gate.result.clone().unwrap_or_default(),
             );
             if seen.insert(key) {
                 row.gates.push(gate);
+            } else if let Some(existing) = row.gates.iter_mut().find(|existing| {
+                normalize(&existing.name) == normalize(&gate.name) && existing.result == gate.result
+            }) {
+                existing.extra.extend(gate.extra);
             }
         }
+    }
+}
+
+pub fn merge_retained_cell_evidence(rows: &mut [HistoryRow], cache: &CellEvidenceCache) {
+    let retained: BTreeMap<(&str, Option<&str>), &RetainedCellEvidence> = cache
+        .records
+        .iter()
+        .map(|record| {
+            (
+                (record.commit.as_str(), record.finished_at.as_deref()),
+                record,
+            )
+        })
+        .collect();
+    for row in rows {
+        let Some(commit) = row.commit.as_deref() else {
+            continue;
+        };
+        let Some(record) = retained.get(&(commit, row.finished_at.as_deref())) else {
+            continue;
+        };
+        let mut names: BTreeSet<(String, String)> = row
+            .gates
+            .iter()
+            .map(|gate| {
+                (
+                    normalize(&gate.name),
+                    gate.result.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        for gate in &record.gates {
+            let key = (
+                normalize(&gate.name),
+                gate.result.clone().unwrap_or_default(),
+            );
+            if names.insert(key) {
+                row.gates.push(gate.clone());
+            }
+        }
+    }
+}
+
+pub fn retained_cell_evidence(rows: &[HistoryRow]) -> CellEvidenceCache {
+    let records = rows
+        .iter()
+        .filter_map(|row| {
+            let gates: Vec<GateHistoryRow> = row
+                .gates
+                .iter()
+                .filter(|gate| gate.source_node.is_some())
+                .cloned()
+                .collect();
+            Some(RetainedCellEvidence {
+                commit: row.commit.clone()?,
+                finished_at: row.finished_at.clone(),
+                gates,
+            })
+        })
+        .collect();
+    CellEvidenceCache {
+        schema_version: 2,
+        records,
     }
 }
 
@@ -444,22 +546,59 @@ fn strip_ansi(line: &str) -> String {
 }
 
 fn error_excerpt(row: &HistoryRow, query: &str) -> Vec<String> {
+    if let Some(lines) = row
+        .gates
+        .iter()
+        .find(|gate| normalize(&gate.name) == normalize(query))
+        .and_then(|gate| gate.extra.get("error_excerpt"))
+        .and_then(|value| value.as_array())
+    {
+        return lines
+            .iter()
+            .filter_map(|line| line.as_str().map(str::to_string))
+            .collect();
+    }
     let Some(path) = row.log_file.as_deref() else {
         return Vec::new();
     };
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
+    let gate = row
+        .gates
+        .iter()
+        .find(|gate| normalize(&gate.name) == normalize(query))
+        .cloned()
+        .unwrap_or(GateHistoryRow {
+            name: query.to_string(),
+            result: Some("fail".into()),
+            kind: None,
+            exit_code: None,
+            real_seconds: None,
+            source_node: None,
+            extra: BTreeMap::new(),
+        });
+    scoped_error_excerpt(&raw, &gate)
+}
+
+fn scoped_error_excerpt(raw: &str, gate: &GateHistoryRow) -> Vec<String> {
+    let source_prefix = gate.source_node.as_deref().map(|node| format!("[{node}]"));
     raw.lines()
         .map(strip_ansi)
         .filter(|line| {
-            line.contains(query)
+            let belongs = line.contains(&gate.name)
+                || source_prefix
+                    .as_deref()
+                    .map(|prefix| line.starts_with(prefix))
+                    .unwrap_or(false);
+            let diagnostic = line.contains(&gate.name)
                 || line.contains("panicked at")
                 || line.contains("error:")
-                || line.contains("\u{2717} FAIL")
+                || line.contains("\u{2717} FAIL");
+            belongs && diagnostic
         })
         .map(|line| line.chars().take(300).collect())
-        .take(12)
+        .take(20)
         .collect()
 }
 
@@ -487,7 +626,7 @@ pub fn cache_matches(
     ledger_len: u64,
     ledger_modified_ns: u128,
 ) -> bool {
-    cache.schema_version == 1
+    cache.schema_version == 2
         && cache.main_tip == main_tip
         && cache.main_ref == main_ref
         && cache.ledger_path == ledger_path.display().to_string()
@@ -499,6 +638,10 @@ pub fn cache_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
     override_path
         .clone()
         .unwrap_or_else(|| root.join(NEWEST_GREEN_CACHE_REL))
+}
+
+pub fn cell_evidence_cache_path(root: &Path) -> PathBuf {
+    root.join(CELL_EVIDENCE_CACHE_REL)
 }
 
 #[cfg(test)]
@@ -582,6 +725,36 @@ mod tests {
     }
 
     #[test]
+    fn later_pass_on_same_sha_is_reported_as_mixed_not_erased() {
+        let commits = vec!["tip".into(), "good".into()];
+        let rows = vec![
+            gate(
+                row("good", "2026-08-03T01:00:00Z", "full", "full", "pass"),
+                "cell",
+                "pass",
+            ),
+            gate(
+                row("tip", "2026-08-03T02:00:00Z", "full", "full", "fail"),
+                "cell",
+                "fail",
+            ),
+            gate(
+                row("tip", "2026-08-03T03:00:00Z", "full", "full", "pass"),
+                "cell",
+                "pass",
+            ),
+        ];
+        let FirstBadOutcome::Found(report) =
+            HistoryQueryEngine::new(commits, rows).first_bad("cell")
+        else {
+            panic!("expected retained historical transition")
+        };
+        assert_eq!(report.first_bad.sha, "tip");
+        assert_eq!(report.last_good.sha, "good");
+        assert!(report.first_bad_commit_has_mixed_outcomes);
+    }
+
+    #[test]
     fn parses_runner_nodes_and_rust_test_functions() {
         let rows = parse_log_observations(
             "[lint.clippy] \u{2717} FAIL Clippy\n[test.liteinst_strict] test liteinst_detcore_strict_verify_micro_suite ... FAILED\n",
@@ -621,7 +794,7 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 1,
+            schema_version: 2,
             main_tip: "tip-a".into(),
             main_ref: "origin/main".into(),
             ledger_path: "/tmp/ledger".into(),
@@ -654,5 +827,43 @@ mod tests {
             101,
             201
         ));
+    }
+
+    #[test]
+    fn retained_cell_evidence_is_used_only_for_a_matching_ledger_row() {
+        let original = gate(
+            row("sha", "2026-08-03T01:00:00Z", "full", "full", "fail"),
+            "outer",
+            "fail",
+        );
+        let mut cached_gate = GateHistoryRow {
+            name: "inner.cell".into(),
+            result: Some("fail".into()),
+            kind: None,
+            exit_code: None,
+            real_seconds: None,
+            source_node: Some("test.inner".into()),
+            extra: BTreeMap::new(),
+        };
+        cached_gate.extra.insert(
+            "error_excerpt".into(),
+            serde_json::json!(["panicked at source.rs:1"]),
+        );
+        let cache = CellEvidenceCache {
+            schema_version: 2,
+            records: vec![RetainedCellEvidence {
+                commit: "sha".into(),
+                finished_at: Some("2026-08-03T01:00:00Z".into()),
+                gates: vec![cached_gate],
+            }],
+        };
+        let mut rows = vec![original];
+        merge_retained_cell_evidence(&mut rows, &cache);
+        assert!(rows[0].gates.iter().any(|gate| gate.name == "inner.cell"));
+
+        rows[0].finished_at = Some("different-run".into());
+        rows[0].gates.retain(|gate| gate.name != "inner.cell");
+        merge_retained_cell_evidence(&mut rows, &cache);
+        assert!(!rows[0].gates.iter().any(|gate| gate.name == "inner.cell"));
     }
 }
