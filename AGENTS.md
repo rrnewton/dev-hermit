@@ -966,6 +966,20 @@ does not satisfy the main peg until its commit reaches main and the parent pin
 advances. Direct-to-main is not unvalidated-to-main: if any required check is
 red, fix it before pushing main.
 
+### Self-Hosted Runner Security
+
+Never run a GitHub Actions runner as root on a Meta dev box or other Meta
+data-center host, even when technically possible: a runner executes arbitrary
+repository-controlled workflow content, so root would give that code elevated
+privileges on internal infrastructure. This makes moving work off privileged
+self-hosted execution the required architecture, not merely an optimization:
+user-namespace tests are portable with the required `sysctl`, while the genuine
+residue is KVM (`/dev/kvm`) and real-PMU counters, each of which must receive only
+its minimum required privilege rather than a root runner. Treat the authorization,
+ownership, and disposition of `hermit-gate-newton` as an open security question:
+an agent session provisioned it without owner awareness, after which it executed
+1,006 gate jobs.
+
 ## Binary And Large-File Policy
 
 Never commit binaries to the parent, Hermit, or Reverie: compiled executables,
