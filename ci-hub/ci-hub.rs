@@ -393,7 +393,9 @@ struct ValidateStatusArgs {
     /// Repository used to resolve --pr head SHAs.
     #[arg(long, default_value = "rrnewton/hermit")]
     repo: String,
-    /// Override the validate ledger path (default: ignored/ci-hub/validate-runs.jsonl).
+    /// Override the validate ledger path. Default: the parent-repo ledger named
+    /// by validate_status::LEDGER_REL (resolved against the repo root by
+    /// ledger_path); the literal lives only in that const, never restated here.
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// Emit the machine-readable verdict report.
@@ -412,7 +414,9 @@ struct ApplyLocalLabelArgs {
     /// Repository whose PRs are labeled.
     #[arg(long, default_value = "rrnewton/hermit")]
     repo: String,
-    /// Override the validate ledger path (default: ignored/ci-hub/validate-runs.jsonl).
+    /// Override the validate ledger path. Default: the parent-repo ledger named
+    /// by validate_status::LEDGER_REL (resolved against the repo root by
+    /// ledger_path); the literal lives only in that const, never restated here.
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// Report intended label actions without editing any label.
