@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -227,6 +229,112 @@ def agent_gate(
     return 1 if stuck else 0
 
 
+MEMORY_SKILL_LINTER = ROOT / "scripts" / "lint-memory-skill-sync.rs"
+MEMORY_SKILL_SCANNER = ROOT / "scripts" / "memory-skill-contradiction-scan.rs"
+
+
+def _run_tool(cmd: Sequence[str]) -> tuple[int, str, str]:
+    """Run a checker; return (returncode, stdout, stderr). Non-runnable -> rc 127."""
+    try:
+        proc = subprocess.run(
+            list(cmd),
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except FileNotFoundError as error:
+        return 127, "", str(error)
+    except OSError as error:  # e.g. not executable, rust-script missing
+        return 127, "", str(error)
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout after 300s"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _scan_fields(stdout: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if "=" in line and not line.startswith((" ", "\t")):
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key in {"state", "summary", "contradictions", "drift"}:
+                fields.setdefault(key, value.strip())
+    return fields
+
+
+def memory_skill_sync_gate() -> int:
+    """Schedule the memory<->skill sync checks so being in-sync is enforced, not luck.
+
+    Runs the authoritative structural linter (lint-memory-skill-sync.rs) AND the
+    report-only contradiction scanner (memory-skill-contradiction-scan.rs), and
+    emits combined tick-hub fields. Fires (non-zero) on any structural problem or
+    contradiction. Report-only: neither tool edits memories or skills.
+    """
+    lint_rc, lint_out, lint_err = _run_tool([str(MEMORY_SKILL_LINTER), "--quiet"])
+    scan_rc, scan_out, scan_err = _run_tool([str(MEMORY_SKILL_SCANNER), "--gate"])
+
+    # A checker that cannot even run means drift detection is DOWN -> alert.
+    if lint_rc in (124, 127) or scan_rc in (124, 127):
+        which = "linter" if lint_rc in (124, 127) else "scanner"
+        detail = (lint_err if which == "linter" else scan_err).strip() or "unavailable"
+        print(lint_out or scan_out, end="")
+        _emit(
+            {
+                "state": "error",
+                "problems": 0,
+                "contradictions": 0,
+                "summary": f"memory-skill-{which}-unrunnable: {detail} (is rust-script installed?)",
+            }
+        )
+        return 1
+
+    problems = 0
+    match = re.search(r"problems:\s*(\d+)", lint_out)
+    if match:
+        problems = int(match.group(1))
+    elif lint_rc != 0:
+        problems = 1  # linter failed but count unparsed
+
+    scan = _scan_fields(scan_out)
+    contradictions = int(scan.get("contradictions", "0") or "0")
+    scan_drift = int(scan.get("drift", "0") or "0")
+
+    healthy = lint_rc == 0 and scan_rc == 0 and problems == 0 and contradictions == 0
+    if healthy:
+        state = "ok"
+    elif contradictions and problems:
+        state = "both"
+    elif contradictions:
+        state = "contradiction"
+    else:
+        state = "drift"
+
+    summary = (
+        f"structural problems={problems}, contradictions={contradictions}, "
+        f"scanner-drift={scan_drift}"
+    )
+
+    # Forward each tool's own report so the wakeup body is actionable.
+    if not healthy:
+        if lint_rc != 0 and lint_out.strip():
+            print("--- lint-memory-skill-sync.rs ---")
+            print(lint_out.rstrip())
+        if scan_rc != 0 and scan_out.strip():
+            print("--- memory-skill-contradiction-scan.rs (REPORT-ONLY) ---")
+            print(scan_out.rstrip())
+
+    _emit(
+        {
+            "state": state,
+            "problems": problems,
+            "contradictions": contradictions,
+            "summary": summary,
+        }
+    )
+    return 0 if healthy else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if args == ["github-main"]:
@@ -239,9 +347,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return agent_gate()
     if args == ["queue-health"]:
         return queue_health_gate()
+    if args == ["memory-skill-sync"]:
+        return memory_skill_sync_gate()
     print(
         "usage: operational_health.py "
-        "<github-main|pull-requests|primary-snapshot|agents|queue-health>",
+        "<github-main|pull-requests|primary-snapshot|agents|queue-health|"
+        "memory-skill-sync>",
         file=sys.stderr,
     )
     return 2
