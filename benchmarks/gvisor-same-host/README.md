@@ -2,38 +2,34 @@
 
 ## Introduction
 
-This experiment measures five workloads on one machine under native Linux and
-official gVisor `runsc` with the systrap, KVM, and ptrace platforms. The goal is
-to establish a same-host overhead comparison: every slowdown in the primary
-table is computed against the native result from this collection, not against a
-number from another machine.
+gVisor is an application-kernel sandbox whose `runsc` runtime can intercept
+guest system calls through systrap, KVM, or ptrace. This experiment runs five
+workloads under those three platforms and native Linux on one machine. It asks
+whether a current official runsc release reproduces the performance reported in
+gVisor's 2023 [systrap release post][systrap-blog]. Every local slowdown uses the
+native result from the same collection as its denominator.
 
-The main result is workload-dependent. A tight `getpid` loop magnifies
-interception cost: relative to the **100.789 ns native anchor**, runsc KVM is
-about **12.4x**, systrap **40.2x**, and ptrace **70.5x**. Redis remains sensitive
-to kernel-facing work at roughly **11.2x-20.5x** its **1.128 s native anchor**.
-The CPU-heavy ffmpeg transcode is only **1.04x-1.05x** its **24.682 s native
-anchor**. The longer ABSL and TensorFlow cells are directional one-sample
-measurements, not distribution estimates.
+It does not reproduce the blog's gVisor results. The clearest mismatch is
+`getpid`: local systrap is **~40.2x** its native anchor, while the post reports
+**~4.26x**. The local **100.789 ns/call native anchor** is not a direct timing of
+one syscall. Each sample launches a program that issues exactly 1,000,000 raw
+`getpid` syscalls, measures the complete process wall time, and divides by
+1,000,000; the reported anchor is the median of three such quotients. The runner
+checks process completion every 50 ms, so this is a coarse batch-average metric
+that includes launch cost amortized over the batch, not a Criterion-style
+line-fit or a precise single-call latency.
 
-### Related work
-
-The motivating comparison is the gVisor team's April 2023 post,
-["Releasing Systrap - A high-performance gVisor platform"][systrap-blog]. It
-explains systrap's shared-memory and syscall-patching design and reports both a
-tight `getpid` microbenchmark and application workloads. Its optimized systrap
-`getpid` result was 1,017 ns against a **239 ns blog-native anchor**, or about
-**4.26x**. Those results were collected on a four-vCPU GCE `n2-standard-4` VM
-with a 2023 gVisor revision. They are historical context, not inputs to any
-local ratio or ranking in this report.
-
-Earlier Hermit/Reverie measurements from `devbig014` provide additional
-same-machine context in [`SCORECARD.tsv`](SCORECARD.tsv) and
-[`HEAD_TO_HEAD.md`](HEAD_TO_HEAD.md). They were collected at a different time
-and provide different semantics: counter2 counts interceptions, Hermit relaxed
-determinizes syscalls without deterministic thread scheduling, Hermit strict
-adds deterministic scheduling, and runsc supplies an application-kernel
-sandbox. Similar timing does not imply equivalent behavior.
+Redis also does not establish a reproduction: the local metric is
+`250000 / QPS`, whereas the blog describes scaled median request latency. The
+QPS-derived native anchor is **1.128 s**, but the full native sample, including
+Redis server startup, readiness, benchmark execution, and shutdown, ran for a
+median **1.302 s**. Full sample medians were **12.917 s** for systrap,
+**14.520 s** for KVM, and **23.328 s** for ptrace. The remaining workloads show
+that local runsc overhead varies sharply with workload, from about
+**1.04x-1.05x** native for ffmpeg to multi-fold slowdowns for ABSL and
+TensorFlow. Hermit/Reverie measurements later in this report are separate
+same-host context; they do not change the finding that the gVisor numbers here
+failed to reproduce the blog.
 
 [systrap-blog]: https://gvisor.dev/blog/2023/04/28/systrap-release/
 
@@ -55,8 +51,6 @@ timeouts, and exact configuration:
 - [ABSL metadata](results/20260802-absl-matrix/metadata.json)
 - [TensorFlow metadata](results/20260802-tensorflow-matrix/metadata.json)
 - [getpid/Redis/ffmpeg metadata](results/20260802-short-matrix/metadata.json)
-
-This is a writeup-only revision. No benchmark was rerun or regenerated.
 
 ### Procedure
 
@@ -105,25 +99,30 @@ snapshot, not a hardware-independent performance claim.
 
 ## Evaluation
 
-| Workload | What runs | Resource and duration intuition |
+| Workload | Metric and workload | Resource and duration intuition |
 | --- | --- | --- |
-| getpid | One million raw `getpid` syscalls in a tight C loop, with a checksum gate. | Almost no useful work per call; isolates interception/dispatch. Native completes in about 0.10 s, while runsc engines take about 1.25-7.11 s. |
-| Redis SET 250k/c5 | An in-sandbox Redis server and `redis-benchmark -t set -n 250000 -c 5`; the metric is `250000 / QPS`. | Event-loop, futex, timer, loopback, and syscall-heavy throughput. The native derived metric is about 1.13 s. |
-| ffmpeg | Transcode the pinned video with libx264 `veryslow`; output size is checked. | CPU-heavy codec work amortizes syscall overhead; all completed cells take about 25-26 s. |
-| Build ABSL | Offline `bazel build //...`, with build jobs and loading threads both fixed at 16. | Process creation, compiler execution, filesystem metadata, and bounded parallelism; cells take about 92-186 s. |
-| TensorFlow-8 | Sequentially execute eight TensorFlow 1.x examples and require the final `TF_OK`. | Python startup, threads, filesystem activity, and CPU numerical kernels; completed cells take about 162-423 s. |
+| getpid | End-to-end wall time for one process issuing 1,000,000 raw syscalls, divided by 1,000,000; a checksum gates completion. | Almost no useful work per call; emphasizes interception and dispatch. Complete batches take about 0.10 s native and 1.25-7.11 s under runsc. |
+| Redis SET 250k/c5 | `redis-benchmark -t set -n 250000 -c 5`; the reported value is `250000 / QPS`, not process wall time. | Event-loop, futex, timer, loopback, and syscall-heavy throughput. Complete samples run for 1.30-23.33 s depending on engine. |
+| ffmpeg | End-to-end wall time to transcode the pinned video with libx264 `veryslow`; output size gates completion. | CPU-heavy codec work amortizes syscall overhead; completed samples run for about 25-26 s. |
+| Build ABSL | End-to-end wall time for offline `bazel build //...`, with build jobs and loading threads fixed at 16. | Process creation, compiler execution, filesystem metadata, and bounded parallelism; samples run for about 92-186 s. |
+| TensorFlow-8 | End-to-end wall time to execute eight TensorFlow 1.x examples sequentially and emit `TF_OK`. | Python startup, threads, filesystem activity, and CPU numerical kernels; completed samples run for about 162-423 s. |
 
 ## Results and discussion
 
 ### Local runsc matrix
+
+**Reproduction result: failed.** The local systrap `getpid` ratio is about ten
+times the blog's ratio, and the Redis measurements do not use a demonstrably
+equivalent metric. The table below is valid as a same-run local comparison, but
+not as a reproduction of the blog's absolute values or ratios.
 
 Absolute medians are shown before slowdown. The **native anchor column is the
 denominator for every ratio in its row**.
 
 | Workload | Native anchor | systrap | KVM | ptrace | Samples |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| getpid | **100.789 ns** | 4,056.209 ns (**~40.2x**) | 1,252.276 ns (**~12.4x**) | 7,109.977 ns (**~70.5x**) | 3 |
-| Redis SET 250k/c5 | **1.128 s** | 12.668 s (**~11.2x**) | 14.089 s (**~12.5x**) | 23.076 s (**~20.5x**) | 3 |
+| getpid | **100.789 ns/call (batched)** | 4,056.209 ns (**~40.2x**) | 1,252.276 ns (**~12.4x**) | 7,109.977 ns (**~70.5x**) | 3 |
+| Redis SET 250k/c5 | **1.128 s (250k/QPS)** | 12.668 s (**~11.2x**) | 14.089 s (**~12.5x**) | 23.076 s (**~20.5x**) | 3 |
 | ffmpeg | **24.682 s** | 25.934 s (**~1.05x**) | 25.687 s (**~1.04x**) | 25.942 s (**~1.05x**) | 3 |
 | Build ABSL | **91.774 s** | 103.184 s (**~1.12x**) | 185.942 s (**~2.03x**) | 121.826 s (**~1.33x**) | 1 |
 | TensorFlow-8 | **162.182 s** | 423.370 s (**~2.61x**) | 400.048 s (**~2.47x**) | timeout >900 s (**>5.55x**) | 1 |
@@ -145,36 +144,30 @@ ordering: systrap is closest to native for this ABSL cell, while KVM is slightly
 faster than systrap for TensorFlow. The latter two conclusions are directional
 because each engine has only one sample.
 
-### Why does systrap rise from ~4x (239 ns blog native) to ~40x (100.789 ns local native)?
+### getpid does not reproduce the blog
 
-The measured discrepancy is real in the recorded numbers: this collection has
-4,056.209 ns systrap against a **100.789 ns native anchor** (**~40.2x**), while
-the 2023 post has 1,017 ns systrap against a **239 ns blog-native anchor**
-(**~4.26x**). The experiment does **not** isolate a cause. Plausible hypotheses
-include:
+This collection records 4,056.209 ns/call for systrap against its batched
+**100.789 ns/call native anchor** (**~40.2x**). The 2023 post reports 1,017 ns
+against a **239 ns blog-native anchor** (**~4.26x**). Both the absolute values
+and the ratio differ substantially.
 
-- the two getpid binaries may expose different instruction shapes and therefore
-  different coverage of systrap's syscall-patching fast path;
-- runsc, kernel, compiler, and hardware changes between the 2023 GCE VM and the
-  2026 shared AMD host may change both absolute paths;
-- the fixed-count harness and the blog's benchmark framework may account for
-  setup and timing differently; and
-- shared-host load may add noise, although the tight three-sample range suggests
-  it is unlikely to explain the full tenfold ratio gap by itself.
-
-These are hypotheses for follow-up, not findings from this dataset. The
-absolute values show that both sides move: local native is 100.789 ns versus
-239 ns in the blog, while local systrap is 4,056.209 ns versus 1,017 ns. No
-single denominator effect explains the whole gap.
+The experiment does not isolate why. Candidate hypotheses are different guest
+instruction shapes and syscall-patching coverage; changes in runsc, kernels,
+compilers, or hardware; different accounting between this fixed-count,
+50-ms-polled batch harness and the blog's benchmark framework; and shared-host
+load. These are follow-up hypotheses, not explanations established by this
+dataset.
 
 ### Does the Redis cell reproduce the blog workload?
 
 It is not established. This harness definitely invokes
 `redis-benchmark -t set -n 250000 -c 5`, derives `250000 / QPS`, and records a
-**1.128 s local-native anchor**. The blog describes five clients but says it
-reports median per-request latency scaled by 250,000; its native bar is 17.250
-s. Those descriptions may not define the same metric even though both mention
-250,000 and five clients.
+**1.128 s local-native anchor**. The full native sample actually ran for a
+median **1.302 s** including server lifecycle; the corresponding systrap, KVM,
+and ptrace wall durations were **12.917 s**, **14.520 s**, and **23.328 s**. The
+blog describes five clients but says it reports median per-request latency
+scaled by 250,000; its native bar is 17.250 s. Those descriptions may not define
+the same metric even though both mention 250,000 and five clients.
 
 The leading hypothesis is a metric mismatch: aggregate QPS-derived completion
 time here versus scaled median request latency in the blog. Redis/image
@@ -186,7 +179,9 @@ blog bars as a reproduction.
 ### Hermit/Reverie context
 
 Earlier measurements on `devbig014` are useful context but are not simultaneous
-with the runsc matrix. Each ratio below names its own native denominator.
+with the runsc matrix and are not part of the gVisor reproduction result. They
+measure different execution semantics. Each ratio below names its own native
+denominator.
 
 | Workload/tier | Native anchor | Selected backend slowdowns |
 | --- | ---: | --- |
