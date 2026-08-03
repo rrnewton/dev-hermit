@@ -70,8 +70,10 @@ ci-hub/ci-hub land-lock acquire --agent hermit-ci --pr 1533   # blocks until you
 ci-hub/ci-hub land-lock release --agent hermit-ci
 
 # Crash-safe wrapper (RECOMMENDED): acquire, run, always release, with a
-# background heartbeat that renews the lease so a long land keeps the lock.
-ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 -- ./my-land-sequence.sh
+# background heartbeat that renews the lease so a long land keeps the lock, and
+# a HARD --child-deadline that kills a wedged land subtree and releases the lock.
+ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
+  --child-deadline 1800 -- ./my-land-sequence.sh
 ```
 
 ### Subcommands
@@ -82,12 +84,58 @@ ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 -- ./my-land-sequence.sh
 | `renew --agent NAME [--hold S]` | heartbeat — extend your lease during a long land |
 | `release --agent NAME` | free the lock (owner only); signals the next waiter |
 | `status` | print holder metadata, seconds left, and the FIFO queue |
-| `run --agent NAME --pr N [...] -- CMD...` | acquire → run CMD (auto-heartbeat) → always release |
+| `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → always release |
 
 Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
-15 min so a dead holder self-clears). Poll interval 3s.
+15 min so a dead holder self-clears), `--child-deadline 1800` (kill a wedged
+land subtree after 30 min). Poll interval 3s.
 
-Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal.
+Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal ·
+`124` child-deadline breach (land subtree killed, lock released).
+
+### `--child-deadline`: no unbounded wait may hold the queue
+
+`run`'s heartbeat renews the lease **for as long as the child lives** — so a land
+script that hangs at a failing/UNKNOWN gate would renew forever and **wedge the
+FIFO permanently** (the observed ~2040-minute head-of-line starvation). The fix:
+`run` supervises the child against `--child-deadline`; on breach it SIGTERMs the
+whole child process group (then SIGKILL after a short grace), **releases the
+lock**, prints a loud `ABANDON PR #N` line, and exits `124`. The PR is left open
+for retry. An unbounded wait is unboxed compute; every wait here is bounded.
+
+**Never hand-roll a renewer.** A bare `acquire` plus an external `renewer.sh`
+loop that outlives a dead agent defeats the lease-lapse safety net and is exactly
+what produced the zombie-held lock. Always land under `land-lock run` (directly,
+or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
+
+## Shared landers (`land-pr.sh`, `union-rebase.sh`)
+
+The land sequence itself lives here too, not only in `scratch/`:
+
+| script | role |
+| --- | --- |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | full single-PR lander: self-wraps in `land-lock run --child-deadline`, rebases (plain or additive-union) onto fresh main, re-stamps `locally-validated`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
+| `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
+
+`land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
+never wedges a land:
+
+1. **Race-tolerant gate poll** — evaluate the *latest* merge-gate run by
+   `startedAt` and ride through a transient `FAILURE`/`IN_PROGRESS` to `SUCCESS`;
+   bounded by `--gate-deadline` (default 600s), then ABANDON.
+2. **The merge command is the mergeability arbiter** — do not gate on
+   `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
+   a bounded retry loop, which forces GitHub to recompute mergeability.
+3. **Self-heal the lagging label strip** — on a `COMPLETED/FAILURE` gate run with
+   `locally-validated` now absent, re-add it; the `labeled` event refires green.
+
+Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
+PR comment — so an abandoned PR never silently languishes (the #244 pattern).
+
+```bash
+cd ~/work/dev-hermit
+ci-hub/landing/land-pr.sh 1470 codex/backend-parity-contract --union
+```
 
 ## Verifying your land (before you release)
 

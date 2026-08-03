@@ -235,6 +235,30 @@ class OperationalBoundsTest(unittest.TestCase):
             env=env,
         )
         self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
+        # A wedged land subtree must NOT hold the lock forever (the head-of-line
+        # starvation bug): --child-deadline hard-kills the child, exits 124, and
+        # RELEASES the lock so the FIFO can proceed -- all well within the wall.
+        deadline_run = self.run_bounded(
+            "land-lock",
+            "run",
+            "--agent",
+            "ci-shard-wedged",
+            "--pr",
+            "test-wedged",
+            "--wait",
+            "0",
+            "--hold",
+            "30",
+            "--child-deadline",
+            "1",
+            "--",
+            "/bin/sleep",
+            "30",
+            expected={124},
+            env=env,
+        )
+        self.assertIn("ABANDON", deadline_run.stdout + deadline_run.stderr)
+        self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
 
 
 if __name__ == "__main__":

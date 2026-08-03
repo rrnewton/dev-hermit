@@ -7,9 +7,9 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -19,6 +19,18 @@ const DEFAULT_WAIT_SECONDS: u64 = 1_800;
 const DEFAULT_HOLD_SECONDS: u64 = 900;
 const POLL_SECONDS: u64 = 3;
 const GUARD_WAIT_SECONDS: u64 = 30;
+/// Hard ceiling on how long a `run` child may execute before it is killed and the
+/// lock is released. A stuck land holding the lock is a head-of-line block for
+/// every other FIFO waiter (the ~2040-minute starvation this bounds against): an
+/// unbounded wait is unboxed compute. A real land is minutes; 30 min is a
+/// generous ceiling far below any starvation. `0` disables the bound (discouraged).
+const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 1_800;
+/// Exit code reported when a `run` child is killed for exceeding its deadline.
+const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
+/// Grace period between SIGTERM and SIGKILL when terminating a timed-out child.
+const CHILD_TERM_GRACE_SECONDS: u64 = 5;
+/// Interval at which `run` polls a live child for completion or deadline breach.
+const CHILD_POLL_MILLIS: u64 = 500;
 
 #[derive(Args, Clone, Debug)]
 pub struct LandLockArgs {
@@ -76,6 +88,11 @@ pub struct RunArgs {
     pub wait: u64,
     #[arg(long, default_value_t = DEFAULT_HOLD_SECONDS)]
     pub hold: u64,
+    /// Kill the child and release the lock if it runs longer than this many
+    /// seconds. Bounds the head-of-line block a stuck lander would otherwise
+    /// impose on the FIFO queue. `0` disables the bound (discouraged).
+    #[arg(long, default_value_t = DEFAULT_CHILD_DEADLINE_SECONDS)]
+    pub child_deadline: u64,
     #[arg(last = true, required = true)]
     pub child: Vec<OsString>,
 }
@@ -488,17 +505,39 @@ impl LandingLock {
             }
         });
 
-        let child_result = Command::new(&args.child[0]).args(&args.child[1..]).status();
+        // Run the child in its own process group so a deadline kill reaches the
+        // whole land subtree (gh / git / cargo), not just the wrapper shell.
+        let spawn_result = Command::new(&args.child[0])
+            .args(&args.child[1..])
+            .process_group(0)
+            .spawn();
+        let outcome = match spawn_result {
+            Ok(mut child) => Ok(supervise_child(&mut child, args.child_deadline, &args.pr)),
+            Err(source) => Err(source),
+        };
         let _ = stop_tx.send(());
         let _ = heartbeat.join();
         let release_result = self.release(&args.agent, true);
 
-        match child_result {
-            Ok(status) => {
+        match outcome {
+            Ok(ChildOutcome::Exited(status)) => {
                 if status.success() {
                     release_result?;
                 }
                 Ok(exit_status_code(status))
+            }
+            Ok(ChildOutcome::TimedOut) => {
+                // The lock was just released above so the next FIFO waiter can
+                // proceed. Emit a loud, single-line ABANDON signal so the stuck
+                // land does not silently languish (the #244 pattern).
+                let _ = release_result;
+                eprintln!(
+                    "landing-lock: ABANDON PR #{}: child exceeded --child-deadline {}s; \
+                     killed the land subtree and RELEASED the lock so the FIFO can proceed. \
+                     PR left open for retry.",
+                    args.pr, args.child_deadline
+                );
+                Ok(CHILD_DEADLINE_EXIT_CODE)
             }
             Err(source) => {
                 let _ = release_result;
@@ -689,6 +728,79 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> LandLockErr
     }
 }
 
+/// How a supervised `run` child ended.
+enum ChildOutcome {
+    /// The child exited on its own with this status.
+    Exited(ExitStatus),
+    /// The child exceeded its deadline and was killed.
+    TimedOut,
+}
+
+/// Wait for `child`, killing it if it runs longer than `deadline_secs`.
+///
+/// `deadline_secs == 0` waits forever (the pre-guardrail behaviour, discouraged
+/// because a hung land then wedges the whole FIFO). Otherwise the child subtree
+/// is signalled SIGTERM, given a short grace period, then SIGKILLed, and the
+/// child is reaped so no zombie is left behind.
+fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutcome {
+    let deadline = (deadline_secs > 0)
+        .then(|| Instant::now() + Duration::from_secs(deadline_secs));
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return ChildOutcome::Exited(status),
+            Ok(None) => {}
+            Err(source) => {
+                // Cannot supervise a child we can't wait on; block on it so we do
+                // not spin, and report whatever status it finally yields.
+                match child.wait() {
+                    Ok(status) => return ChildOutcome::Exited(status),
+                    Err(_) => {
+                        eprintln!("landing-lock: cannot wait on child: {source}");
+                        return ChildOutcome::TimedOut;
+                    }
+                }
+            }
+        }
+        if let Some(deadline) = deadline {
+            if Instant::now() >= deadline {
+                terminate_child_group(child, pr);
+                return ChildOutcome::TimedOut;
+            }
+        }
+        thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
+    }
+}
+
+/// SIGTERM then (after a grace period) SIGKILL the child's process group, and
+/// reap the direct child. The child was spawned with `process_group(0)`, so its
+/// pid equals its pgid and signalling `-pid` reaches the whole land subtree
+/// (gh / git / cargo), not just the wrapper shell. Uses `/bin/kill`, whose
+/// negative-pid convention targets a process group, to avoid a libc dependency
+/// in the shared cargo manifest.
+fn terminate_child_group(child: &mut Child, pr: &str) {
+    let group = format!("-{}", child.id());
+    eprintln!("landing-lock: child-deadline reached for PR #{pr}; SIGTERM process group {group}");
+    signal_group("TERM", &group);
+    let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
+    while Instant::now() < grace {
+        thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
+        if let Ok(Some(_)) = child.try_wait() {
+            return;
+        }
+    }
+    eprintln!("landing-lock: grace expired for PR #{pr}; SIGKILL process group {group}");
+    signal_group("KILL", &group);
+    let _ = child.wait();
+}
+
+/// Send `signal` to the process `group` (a negative pid string) via `/bin/kill`.
+fn signal_group(signal: &str, group: &str) {
+    let _ = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(group)
+        .status();
+}
+
 fn exit_status_code(status: ExitStatus) -> i32 {
     status
         .code()
@@ -798,11 +910,43 @@ mod tests {
                 pr: "test-run".into(),
                 wait: 0,
                 hold: 30,
+                child_deadline: 30,
                 child: vec![OsString::from("/bin/true")],
             })
             .unwrap(),
             0
         );
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn run_child_deadline_kills_child_and_releases_the_lock() {
+        let paths = temp_paths("child-deadline");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let started = Instant::now();
+        // A child that would otherwise sleep far past the test must be killed at
+        // the deadline, the lock released, and the queue freed.
+        let code = lock
+            .run(RunArgs {
+                agent: "stuck-lander".into(),
+                pr: "9999".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 1,
+                child: vec![OsString::from("sleep"), OsString::from("120")],
+            })
+            .unwrap();
+        assert_eq!(code, CHILD_DEADLINE_EXIT_CODE);
+        // Bounded: killed near the 1s deadline + short grace, nowhere near 120s.
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "child-deadline run took {:?}",
+            started.elapsed()
+        );
+        // Head-of-line block is cleared: the lock is free for the next waiter.
         assert!(lock.read_holder().unwrap().is_none());
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
