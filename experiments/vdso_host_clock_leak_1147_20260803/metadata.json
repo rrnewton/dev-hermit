@@ -1,0 +1,13 @@
+{
+  "date": "2026-08-03",
+  "host": "devbig014",
+  "hermit_runtime_sha": "bfb0a9ef1c303d1977f5f02903b70cc93e514cb5",
+  "reverie_runtime_sha": "d973a85b328610c14c41c39fa57495b9f77c3c90",
+  "pr_1147_head_sha": "683fb5ca25b6b4af2391c634a01f5245349a46ad",
+  "pr_1147_reverie_pin": "2afd1ecc576085332f71f02dfcea0de635d7026b",
+  "native_benchmark_iterations_per_sample": 10000000,
+  "native_benchmark_repetitions_per_path": 5,
+  "ptrace_benchmark_iterations_per_sample": 10000,
+  "ptrace_benchmark_repetitions_per_path": 5,
+  "host_load_range": "approximately 114-121"
+}
