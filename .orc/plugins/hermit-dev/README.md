@@ -25,6 +25,11 @@ registers it as the `hermit-dev` skill.
 - Through that tick, gently fast-forward clean product primaries and publish a
   coherent parent gitlink snapshot; dirty or inconsistent state is preserved
   and surfaced as a hard warning.
+- Through that tick, reconcile containers created by
+  `scripts/agent-podman.rs`. Only a labelled `agent`-lifetime container whose
+  exact creator invocation is gone is gracefully stopped and removed.
+  Task-retained, owner-unknown, and legacy containers are surfaced without
+  deletion; see `ci-hub/containers/README.md`.
 - Kill the obsolete `hermit-dev-pr-health` reminder workflow at startup. The
   replacement workflow has the distinct ID
   `hermit-dev-operational-health-v1`, so an old durable source cannot be

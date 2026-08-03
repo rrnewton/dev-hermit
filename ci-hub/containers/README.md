@@ -1,0 +1,70 @@
+# Agent-owned Podman containers
+
+An agent can disappear while its Podman container keeps running. The container
+then continues holding processes, PID namespaces, mounts, and storage without
+any live agent being responsible for it. `scripts/agent-podman.rs` prevents that
+for new containers and reports older containers that lack ownership metadata.
+
+Run the pure primer before using the tool:
+
+```bash
+./scripts/agent-podman.rs quickstart
+```
+
+## Ownership contract
+
+Agents must create Podman containers through this wrapper, including foreground
+`--rm` commands. `--rm` alone is insufficient: a hung command never exits, so
+Podman never reaches its automatic removal step.
+
+```bash
+./scripts/agent-podman.rs run --task TASK -- --rm IMAGE COMMAND
+```
+
+The wrapper records the agent name, exact 3pai invocation, task, pane, and
+lifetime as Podman labels. It also writes a transferable ownership record under
+`ignored/ci-hub/`. The exact invocation matters because ORC reuses agent names;
+seeing a new `hermit-238b` does not prove it owns containers created by an older
+`hermit-238b` process.
+
+The default `agent` lifetime means the operational tick may gracefully stop and
+remove the container after that exact agent invocation disappears. There is no
+force-remove fallback. A failed graceful cleanup is a hard warning.
+
+Use `task` lifetime only for a deliberately retained environment:
+
+```bash
+./scripts/agent-podman.rs run --task TASK --lifetime task -- -d --name NAME IMAGE sleep infinity
+```
+
+When responsibility changes, the new live owner claims it explicitly:
+
+```bash
+./scripts/agent-podman.rs transfer NAME --task TASK --lifetime task
+```
+
+A task-retained container whose creator is gone is reported as
+`transfer-required`; it is never deleted automatically. A legacy unlabelled
+container is also report-only, even when idle or zombie-bearing. Idle state is
+not evidence that an environment is abandoned.
+
+## Reconciliation
+
+The five-minute operational tick runs the applying form against its fresh ORC
+agent snapshot:
+
+```bash
+./scripts/agent-podman.rs reconcile --agents-json ignored/ci-hub/agent-snapshot.json --apply
+```
+
+Use `audit` for a read-only inventory. Both commands state which containers are
+live, reclaimable, awaiting transfer, owner-unknown, or legacy/unmanaged, plus
+the zombie count and PID namespace when available.
+
+```bash
+./scripts/agent-podman.rs audit --agents-json ignored/ci-hub/agent-snapshot.json
+```
+
+The reconciler refuses to act on a stale agent snapshot. If a live agent's exact
+invocation cannot be established, the result is `owner-unknown` and no removal
+occurs. These fail-closed cases distinguish “safe to clean” from “looks idle.”

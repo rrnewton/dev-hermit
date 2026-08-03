@@ -16,8 +16,12 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCS = (ROOT / "ci-hub/README.md", ROOT / "ci-hub/landing/README.md")
-EXPECTED_COMMANDS = 25
+DOCS = (
+    ROOT / "ci-hub/README.md",
+    ROOT / "ci-hub/landing/README.md",
+    ROOT / "ci-hub/containers/README.md",
+)
+EXPECTED_COMMANDS = 31
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -95,6 +99,9 @@ def _classify(text: str) -> str:
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
     if normalized.startswith("with-proxy gh "):
         return "live-read"
+    match = re.match(r"^(?:\./)?scripts/agent-podman\.rs\s+(\S+)", normalized)
+    if match:
+        return "local-read" if match.group(1) == "quickstart" else "parse"
     raise DocsCommandError(f"unclassified shell command: {normalized}")
 
 
@@ -455,7 +462,11 @@ def closeout_guard(*, root: Path, dirty_note: str | None) -> list[str]:
 
 def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
     commands = extract_commands(
-        (root / "ci-hub/README.md", root / "ci-hub/landing/README.md")
+        (
+            root / "ci-hub/README.md",
+            root / "ci-hub/landing/README.md",
+            root / "ci-hub/containers/README.md",
+        )
     )
     reports: list[str] = []
     verify_purity = not _workspace_state(root, include_ignored=False).strip()
@@ -557,7 +568,11 @@ def main(argv: list[str] | None = None) -> int:
             raise DocsCommandError("--dirty-note requires --closeout")
         if args.list:
             for command in extract_commands(
-                (args.root / "ci-hub/README.md", args.root / "ci-hub/landing/README.md")
+                (
+                    args.root / "ci-hub/README.md",
+                    args.root / "ci-hub/landing/README.md",
+                    args.root / "ci-hub/containers/README.md",
+                )
             ):
                 print(f"{command.mode:10} {command.label} {shlex.join([command.text])}")
             return 0
