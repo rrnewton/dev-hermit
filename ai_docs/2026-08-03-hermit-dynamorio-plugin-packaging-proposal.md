@@ -14,8 +14,9 @@ that binary, but remove DynamoRIO, `reverie-dbi`, the DBT native client, and the
 DBT Detcore shared object from its dependency and installation closure.
 
 Ship one additional Cargo package, `hermit-dynamorio`, which installs a helper
-executable named `hermit-dynamorio`. The helper owns acquisition and validation
-of the heavy DBT payload:
+executable named `hermit-dynamorio`. For the 0.2 Linux x86-64 target, the helper
+embeds a compressed, prebuilt DBT payload and owns its validation and atomic
+materialization:
 
 - the pinned DynamoRIO runtime, including `drrun` and its required libraries;
 - the native Reverie DBT client;
@@ -97,7 +98,6 @@ $HERMIT_DIR/
         lib/libreverie_dbt_client.so
         lib/dynamorio/...
         licenses/...
-  downloads/                         # content-addressed temporary/cache data
   recordings -> <cache recording directory>
 ```
 
@@ -181,33 +181,131 @@ selected.
 
 ## What `cargo install` can actually install
 
-Cargo installs executable targets into its root's `bin` directory; it does not
-install an arbitrary DynamoRIO resource tree. Embedding the full payload in the
-published crate is also a poor default because the payload is large and
-platform-specific.
+**The payload can and should be shipped prebuilt.** DynamoRIO needs CMake when
+building from source, but it does not need CMake on the machine that runs a
+matching prebuilt runtime. The current Reverie build compiles a pinned vendored
+source tree because it is a developer build path, not because runtime loading
+requires local compilation.
 
-Therefore `cargo install hermit-dynamorio` installs the small helper executable.
-The Cargo package and the exact signed release bundle it names are one plugin
-distribution owned by `hermit-dynamorio`; moving the large platform payload out
-of the `.crate` does not transfer its versioning, provenance, or support
-responsibility elsewhere.
-On the first DBT invocation, the helper performs an implicit `ensure` operation:
+Cargo has no `data_files` installation mechanism. Its
+[`cargo install` documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html#description)
+says that only packages with executable targets can be installed and that all
+installed executables go in the installation root's `bin` directory. It does
+not copy arbitrary package resources beside them. crates.io also has a
+[10 MB `.crate` limit](https://doc.rust-lang.org/cargo/reference/publishing.html#packaging-a-crate),
+which rules out publishing the current payload as an ordinary resource inside
+one crate if the resource exceeds that limit.
 
-1. derive the one allowed payload release from its own immutable package
-   version and target triple;
-2. use an already-materialized exact payload when it is valid;
-3. otherwise download the versioned release bundle named by the helper;
-4. verify the signed manifest and every declared SHA-256 before extraction;
-5. unpack into a new temporary directory beneath `$HERMIT_DIR/plugins`;
-6. verify file type, permissions, hashes, ABI descriptors, and required paths;
-7. atomically rename the complete directory into `releases/...`; and
-8. update `current` last with an atomic symlink replacement.
+Measurements on 2026-08-03 distinguish the developer install tree from the
+runtime payload that `hermit-install/build.rs` already selects:
 
-Interrupted downloads and partial directories are never eligible for
-discovery. A site that cannot download at runtime can pre-seed the same signed
-bundle under `$HERMIT_DIR`; the validation and handshake are identical. The
-helper must never download `latest`, follow a mutable branch, or accept an
-unhashed library from the host.
+| Artifact or operation | Measured result | Basis |
+| --- | ---: | --- |
+| Vendored DynamoRIO source | 128,694,015 bytes | Pinned source tree including submodules |
+| Vendored source as gzip tar | 34,658,452 bytes | Same tree; exceeds crates.io limit |
+| Full current CMake install | 511,470,114 bytes | Clients, extensions, and tools enabled |
+| Full install as gzip tar | 142,467,790 bytes | Existing equivalent release install |
+| Minimal viable CMake install | 155,312,369 bytes | Clients off, extensions and tools on; includes build-only files |
+
+The minimal runtime was measured file by file using apparent byte size from
+`stat`, not allocated blocks from `du`; btrfs compression therefore does not
+understate these numbers:
+
+| Runtime file | Unstripped | `strip --strip-unneeded` |
+| --- | ---: | ---: |
+| `bin64/drrun` | 737,680 | 699,896 |
+| `lib64/release/libdynamorio.so` | 2,106,832 | 2,069,816 |
+| `lib64/release/libdrpreload.so` | 43,696 | 42,728 |
+| `ext/lib64/release/libdrx.so` | 78,600 | 68,608 |
+| `ext/lib64/release/libdrmgr.so` | 88,000 | 76,320 |
+| `ext/lib64/release/libdrreg.so` | 58,040 | 51,632 |
+| `ext/lib64/release/libdrwrap.so` | 58,656 | 51,648 |
+| **DynamoRIO runtime subtotal** | **3,171,504** | **3,060,648** |
+| `libdetcore_dbi.so` | 7,405,576 | 5,452,128 |
+| `libreverie_dbi_client.so` | 62,904 | 52,312 |
+| **Runtime total** | **10,639,984** | **8,565,088** |
+| Runtime plus required licenses | 10,685,488 | 8,610,592 |
+| Same set as gzip tar | 3,542,511 | 3,228,825 |
+
+The complete runtime bundle was not inferred from filenames: the existing
+packager names the seven DynamoRIO files, and both the unstripped and stripped
+bundles successfully ran `/bin/true` through `drrun` and the packaged native
+client. The stripped runtime plus licenses is 8.61 MB unpacked and 3.23 MB as an
+actual gzip archive. The earlier roughly 136 MiB figure described the entire
+compressed developer install, including static archives, debug companions,
+headers, and unrelated tools; it is not the payload that must be embedded.
+
+Clean CMake timings used pinned DynamoRIO
+`929840ad9190e5086775e8debc0f0b79b4208d59`, CMake 3.31.8, GCC 11.5.0, and
+an explicit 16-job cap on this 316-logical-CPU host. The current full
+configuration took 5.07 seconds to configure and 44.06 seconds to build and
+install, or 49.13 seconds total. The minimal viable configuration with
+DynamoRIO clients disabled took 4.74 plus 14.13 seconds, or 18.87 seconds total.
+Thus local compilation is measurable overhead but not the deciding problem.
+
+The build-and-install-directly option is rejected for two independent reasons:
+
+1. It is not self-contained on crates.io. The vendored source compresses to
+   34.66 MB, above the 10 MB `.crate` limit. Fetching the source during the
+   build merely reintroduces the network dependency.
+2. It is outside Cargo's installation contract. Cargo requires build-script
+   output to stay in
+   [`OUT_DIR`](https://doc.rust-lang.org/cargo/reference/build-scripts.html#outputs-of-the-build-script),
+   and registry install artifacts default to a
+   [temporary target directory](https://doc.rust-lang.org/cargo/commands/cargo-install.html#option-cargo-install---target-dir).
+   A local probe showed both sides: a file written to `OUT_DIR` disappeared and
+   was not installed, while a second build script could write directly to an
+   externally supplied `$HERMIT_DIR` because Cargo does not sandbox it. “Can
+   write” is not “Cargo installs”: the external write is discouraged,
+   untracked, non-transactional, survives a later compilation failure, and is
+   not removed by Cargo. It also makes `cargo install` require CMake, a C/C++
+   toolchain, Perl, and the native build dependencies.
+
+Fetch-on-first-use is worse at this measured size. It saves about 3.23 MB in the
+installed helper but makes air-gapped first use a hard failure, requires hosting
+immutable target artifacts for every supported release indefinitely, and adds
+download, retry, partial-file, and transport-diagnostic states to the runtime.
+
+**Recommendation: embed the 3.23 MB compressed, stripped, prebuilt runtime in
+`hermit-dynamorio` and atomically self-extract it.** At this measured size the
+fat helper is less complex than release fetching, works offline, creates no
+permanent artifact-hosting obligation, and meets “install it and it just works.”
+It is also materially safer than abusing `build.rs` as an installer. A release
+gate must still run `cargo package` and prove the complete `.crate`, including
+Rust source and the embedded bundle, remains below crates.io's 10 MB limit.
+
+On first DBT use, the helper performs an implicit `ensure` operation:
+
+1. derive the exact version, target, ABI tag, and build ID embedded in itself;
+2. use an already-materialized exact payload when every check passes;
+3. take a per-payload extraction lock;
+4. unpack the embedded archive into a sibling temporary directory beneath
+   `$HERMIT_DIR/plugins/dynamorio/releases`;
+5. verify file type, permissions, hashes, provenance, ABI descriptors, and
+   required paths;
+6. atomically rename the complete directory to its content-addressed release
+   path; and
+7. update `current` last with an atomic symlink replacement.
+
+Concurrent first runs either perform the extraction under the lock or wait and
+validate the winner's completed directory. An upgrade selects a new
+version/target/ABI/build-ID path and never overwrites an older extraction, so a
+stale directory cannot satisfy the handshake. Old versions remain available
+for explicit garbage collection.
+
+A read-only or full `$HERMIT_DIR` is the remaining first-use failure. Hermit
+exits 73 (`EX_CANTCREAT`) before guest execution with the resolved path and an
+actionable remedy:
+
+```text
+error: cannot materialize backend 'dbt' payload under <resolved HERMIT_DIR>: <os error>
+repair: set HERMIT_DIR to a writable directory or have an administrator materialize this exact hermit-dynamorio version
+```
+
+There is no network path and no normal setup command. After `cargo install
+hermit-dynamorio`, the first `hermit --backend dbt run` transparently extracts
+the embedded payload and runs; subsequent invocations only validate and reuse
+it.
 
 ## Detcore compatibility handshake
 
@@ -269,6 +367,9 @@ These invariants are mechanical gates, not documentation promises:
 | Core excludes third-party DBT dependencies | CI inspects the packaged `cargo tree` and archive contents | Block publication |
 | Absence is actionable | Clean-home integration test asserts exact stderr, exit 69, and no guest start | Block publication |
 | Installation needs no activation | Clean-home test installs both crates and runs DBT without extra configuration | Block publication |
+| Embedded distribution fits crates.io | `cargo package` verifies the complete `.crate` is below 10 MB | Block publication |
+| First use is offline | Clean-home integration test disables network and runs DBT after `cargo install` | Block publication |
+| Extraction is atomic | Concurrent first-use and interrupted-extraction tests expose only a complete hashed payload | Block publication |
 | Recordings remain discoverable | Filesystem test checks `$HERMIT_DIR/recordings` resolves to the configured cache | Block publication |
 | End-user state excludes developer artifacts | Install and developer-validation tests assert no validation output is written beneath `$HERMIT_DIR` | Block publication or developer-tooling change |
 
@@ -361,7 +462,7 @@ dispatch code stays in the core binary:
 
 - remove DBT/DynamoRIO dependencies and build scripts from `hermit-run`'s
   publication graph;
-- make `hermit-dynamorio` own its payload acquisition, licenses, provenance,
+- make `hermit-dynamorio` own its embedded payload, licenses, provenance,
   hashes, and target support;
 - split the combined install artifact into a core layout and a versioned DBT
   payload;
@@ -380,38 +481,42 @@ release artifacts:
 
 1. `cargo tree -p hermit-run` contains no DynamoRIO, `reverie-dbi`, DBT tool,
    or DBT installer dependency.
-2. A clean `cargo install hermit-run` produces the flagship `hermit` and its
+2. `cargo package -p hermit-dynamorio` stays below crates.io's 10 MB limit and
+   contains the exact prebuilt payload, licenses, manifest, and provenance.
+3. A clean `cargo install hermit-run` produces the flagship `hermit` and its
    ptrace, LiteInst, and KVM paths retain their existing tests.
-3. On a clean home, `hermit --backend dbt run -- /bin/true` emits the exact
+4. On a clean home, `hermit --backend dbt run -- /bin/true` emits the exact
    absent-plugin diagnostic and exits 69 without starting the guest.
-4. After `cargo install hermit-dynamorio`, the same command automatically
-   materializes the pinned payload and runs without another user step.
-5. A host/plugin exact-version, ABI-tag, or build-ID mismatch fails with the
+5. After `cargo install hermit-dynamorio`, the same command automatically
+   materializes the pinned payload and runs without another user step or
+   network access.
+6. A host/plugin exact-version, ABI-tag, or build-ID mismatch fails with the
    exact mismatch diagnostic and exits 78.
-6. A plugin built from a different Detcore revision is rejected even if its
+7. A plugin built from a different Detcore revision is rejected even if its
    manifest is edited to copy the host's version and ABI tag.
-7. A forged manifest, replaced `.so`, missing descriptor, truncated download,
-   missing `drrun`, and helper timeout each fail before guest execution.
-8. The DBT native client independently refuses an ABI-tag or build-ID mismatch
+8. A forged manifest, replaced `.so`, missing descriptor, truncated embedded
+   archive, missing `drrun`, and helper timeout each fail before guest execution.
+9. The DBT native client independently refuses an ABI-tag or build-ID mismatch
    even when a manifest is edited to claim compatibility.
-9. An interrupted install leaves the prior `current` payload usable and never
+10. An interrupted or concurrent extraction leaves the prior `current` payload
+    usable and never
    exposes the partial replacement.
-10. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
+11. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
     recordings symlink resolves to the actual cache store, and neither package
     installation nor developer validation writes developer artifacts there.
-11. Validation runs from the primary checkout and two worktrees append to
+12. Validation runs from the primary checkout and two worktrees append to
     `$DEV_HERMIT_PARENT/ignored/validate-run-ledger.jsonl`; an
     interrupted run leaves an explicit start event and durable log, with no
     `/tmp` reconstruction.
-12. Strict and verify coverage runs against the packaged DBT path, not a
+13. Strict and verify coverage runs against the packaged DBT path, not a
     workspace-relative `target/` tree.
 
 ## Rollout sequence
 
 1. Define the dependency-light plugin protocol, generated Detcore ABI and build
    identities, signed provenance, and exported shared-object descriptor.
-2. Produce the signed, content-addressed DynamoRIO release payload and the
-   `hermit-dynamorio` helper that validates/materializes it.
+2. Produce the signed, content-addressed, runtime-pruned DynamoRIO payload and
+   embed it in the `hermit-dynamorio` helper that validates/materializes it.
 3. Change the compiled DBT adapter to discover the helper and consume only its
    validated manifest; remove third-party dependencies from `hermit-run`.
 4. Add absent, mismatch, corruption, interruption, and packaged end-to-end CI
