@@ -1,14 +1,25 @@
 # Hermit CI runner / status tooling
 
 On-demand visibility into the Hermit repos' GitHub Actions state, sized to
-Hermit's reality: Hermit does **not** run a container fleet - it uses a single,
-permanently-installed PMU self-hosted runner per repo. This directory currently
-provides a **non-mutating status reporter**, not fleet provisioning.
+Hermit's reality: Hermit does **not** run a dynamic cloud fleet - it uses a
+small, fixed set of host-local self-hosted runners. This directory provides the
+non-mutating status reporter and the scripts/images used to manage those fixed
+runners.
 
-> Scope note: Fleet provisioning, a CI shepherd/reconciler, and a runner
-> container image are deliberately out of scope. Hermit's runners are host-local
-> PMU machines (they need `perf` RCB counters), so cloud-fleet scale-out does not
-> apply. Add those capabilities only if Hermit moves to on-demand runners.
+> Scope note: Dynamic fleet provisioning and a CI shepherd/reconciler are out of
+> scope. Hermit's test runners are host-local PMU machines (they need `perf` RCB
+> counters), so cloud-fleet scale-out does not apply.
+
+## Runner identities
+
+`hermit-gate-newton` is the dedicated `rrnewton/hermit` self-hosted GitHub
+Actions runner registered with the `gate` label and **without** `pmu`. It runs
+the control-plane-only Merge Gate jobs from the slim image defined by
+[`Containerfile.gate`](Containerfile.gate), keeping those jobs off the PMU
+build/test queue; it is not a test runner or a separate CI service. The name is
+GitHub's runner registration identity, while `gate` is the workflow scheduling
+label. Use `./ci-status.py` for current online/busy state rather than inferring
+state from the name.
 
 ## Quick start
 
@@ -122,7 +133,8 @@ This is a **capacity** problem, not a broken-tests problem.
   retired-branch counters, so these jobs **cannot fall back to GitHub-hosted
   runners**. (Update — basis: `gh api .../actions/runners`, 2026-08-03:
   `rrnewton/hermit` now has **three** PMU runners `hermit-ci-newton{,-2,-3}` plus
-  a gate-only `hermit-gate-newton`; exactly one, `hermit-ci-newton`, carries
+  a gate-only [`hermit-gate-newton`](#runner-identities); exactly one,
+  `hermit-ci-newton`, carries
   `pmu-serial` — the single serial lane. `runner-health` reports the live count,
   so prefer it over this prose.)
 - **reverie** drains fine: its Rust job runs ~2–3 min, so one runner stays idle
