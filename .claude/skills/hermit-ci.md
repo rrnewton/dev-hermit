@@ -5,6 +5,8 @@ description: "Purpose-fixed role for the hermit-ci agent: monitor, analyze, and 
 
 > **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
 
+> **TOOL COSTS** — Follow `ci-hub/TOOL-COST-CONVENTION.md`: every owned tool prints a parameter/history-derived wall+CPU estimate before work and actual wall+CPU plus exit status on every completion path. Use `ci-hub/bin/tool-cost` instead of inventing another timer.
+
 # hermit-ci — CI health & improvement agent
 
 ## Purpose

@@ -2,6 +2,13 @@
 set -euo pipefail
 
 ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
+    exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
+        --tool ci-hub/health-tick \
+        --estimate-wall-seconds 180 \
+        --estimate-cpu-seconds 15 \
+        --basis "one cadence-filtered tick across due operational-health gates" -- "$0" "$@"
+fi
 cd "$ROOT"
 exec "$ROOT/ci-hub/bin/agent-tool" tick-hub tick \
     --config "$ROOT/ci-hub/health/tick-hub.yaml" \

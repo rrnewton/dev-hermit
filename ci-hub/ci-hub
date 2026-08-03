@@ -5,6 +5,39 @@ ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 command=${1:-help}
 if [[ $# -gt 0 ]]; then shift; fi
 
+if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
+    estimate_wall=30
+    estimate_cpu=5
+    basis="one bounded ci-hub operation"
+    case "$command" in
+        health) estimate_wall=180; estimate_cpu=20; basis="3 main repos + 2 PR repos" ;;
+        main-health) estimate_wall=40; estimate_cpu=4; basis="3 repos x commit and workflow API queries" ;;
+        pr-status|fresh) estimate_wall=120; estimate_cpu=10; basis="2 repos x planner graph and GitHub checks" ;;
+        tick) estimate_wall=180; estimate_cpu=15; basis="one cadence-filtered operational-health tick" ;;
+        local-history|history) estimate_wall=15; estimate_cpu=12; basis="one local ledger/store scan" ;;
+        land-lock) estimate_wall=1; estimate_cpu=1; basis="one local lock-state operation" ;;
+        runner-health) estimate_wall=60; estimate_cpu=5; basis="runner inventory + recent GitHub workflows" ;;
+        refresh-history)
+            estimate_wall=300
+            estimate_cpu=60
+            basis="incremental history overlap window"
+            for arg in "$@"; do
+                if [[ $arg == --full ]]; then
+                    estimate_wall=14400
+                    estimate_cpu=1800
+                    basis="full backfill of approximately 19000 GitHub Actions runs"
+                fi
+            done
+            ;;
+        help|-h|--help) estimate_wall=0.01; estimate_cpu=0.01; basis="static help text" ;;
+    esac
+    exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
+        --tool "ci-hub/$command" \
+        --estimate-wall-seconds "$estimate_wall" \
+        --estimate-cpu-seconds "$estimate_cpu" \
+        --basis "$basis" -- "$ROOT/ci-hub/ci-hub" "$command" "$@"
+fi
+
 case "$command" in
     health)
         rc=0

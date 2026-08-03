@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
+    repo_count=0
+    previous=""
+    for arg in "$@"; do
+        if [[ $previous == --repo ]]; then repo_count=$((repo_count + 1)); fi
+        previous=$arg
+    done
+    if ((repo_count == 0)); then repo_count=2; fi
+    exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
+        --tool ci-hub/pr-status \
+        --estimate-wall-seconds "$((repo_count * 60))" \
+        --estimate-cpu-seconds "$((repo_count * 5))" \
+        --basis "$repo_count repos x planner graph and GitHub check collection" -- "$0" "$@"
+fi
 exec python3 "$ROOT/ci-hub/health/pr_status.py" "$@"
