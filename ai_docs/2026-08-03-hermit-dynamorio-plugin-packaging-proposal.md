@@ -110,8 +110,8 @@ conflict fails with the two paths and a repair instruction.
 
 This root belongs to people who install and run Hermit. Developer build output,
 including validation ledgers and logs, must never appear here. A user who never
-checks out the repository or runs its developer validation must not acquire a
-`$HERMIT_DIR/validate` directory.
+checks out the repository or runs its developer validation must not acquire
+developer validation artifacts beneath `$HERMIT_DIR`.
 
 The flagship package still has a first-party LiteInst runtime requirement in
 today's architecture. Calling the product a single static executable must not
@@ -122,26 +122,24 @@ as a third-party plugin.
 
 ## Developer validation state
 
-Validation has a disjoint audience and lifetime. It is developer build evidence
-tied to a source checkout, not installed-product state. In a managed dev-hermit
-workspace, every primary and worktree validation writes to the primary parent
-repository's ignored tree:
+Validation has a disjoint audience and lifetime. `$HERMIT_DIR` is what a user
+who installed Hermit has; `$DEV_HERMIT_PARENT` is what a developer working on
+Hermit has. A user never runs developer validation. Every primary and worktree
+validation writes to the existing developer parent root:
 
 ```text
-<primary-dev-hermit-parent>/ignored/
+$DEV_HERMIT_PARENT/ignored/
   validate-run-ledger.jsonl          # the only durable ledger write target
   validate-runs/<run-id>/validate.log
   validate-run-global.jsonl          # rebuildable aggregate, never a source
 ```
 
-The resolver follows the Hermit checkout's superproject and canonicalizes the
-parent repository's Git common directory, so a nested parent worktree resolves
-back to the same primary parent. `DEV_HERMIT_PARENT` is not a condition for
-writing. Failure to resolve the managed parent is an actionable error before
-validation begins, never permission to run without recording. A standalone
-Hermit clone has no dev-hermit parent and uses its own checkout-local
-`ignored/` directory; it does not participate in the parent workspace's global
-aggregate.
+`DEV_HERMIT_PARENT` is required for developer validation and must name a valid
+developer parent repository. Missing or invalid configuration is an actionable
+error before validation begins, never permission to run without recording.
+There is no fallback write destination. The two environment variables remain
+separate because they serve separate audiences; neither is inferred from or
+redirected into the other.
 
 This replaces the current split controlled by `DEV_HERMIT_PARENT`: the primary
 ledger under `<parent>/ignored`, per-worktree `ignored` ledgers, ad hoc ledgers
@@ -272,7 +270,7 @@ These invariants are mechanical gates, not documentation promises:
 | Absence is actionable | Clean-home integration test asserts exact stderr, exit 69, and no guest start | Block publication |
 | Installation needs no activation | Clean-home test installs both crates and runs DBT without extra configuration | Block publication |
 | Recordings remain discoverable | Filesystem test checks `$HERMIT_DIR/recordings` resolves to the configured cache | Block publication |
-| End-user state excludes developer artifacts | Install and developer-validation tests assert `$HERMIT_DIR/validate` is never created | Block publication or developer-tooling change |
+| End-user state excludes developer artifacts | Install and developer-validation tests assert no validation output is written beneath `$HERMIT_DIR` | Block publication or developer-tooling change |
 
 For 0.2 the policy is **exact package version plus exact ABI tag plus exact
 Detcore build ID**. Git SHAs and build dates are printed for diagnosis, but do
@@ -400,9 +398,9 @@ release artifacts:
    exposes the partial replacement.
 10. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
     recordings symlink resolves to the actual cache store, and neither package
-    installation nor developer validation creates `$HERMIT_DIR/validate`.
+    installation nor developer validation writes developer artifacts there.
 11. Validation runs from the primary checkout and two worktrees append to
-    `<primary-dev-hermit-parent>/ignored/validate-run-ledger.jsonl`; an
+    `$DEV_HERMIT_PARENT/ignored/validate-run-ledger.jsonl`; an
     interrupted run leaves an explicit start event and durable log, with no
     `/tmp` reconstruction.
 12. Strict and verify coverage runs against the packaged DBT path, not a
