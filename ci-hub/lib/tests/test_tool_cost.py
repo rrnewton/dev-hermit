@@ -52,28 +52,30 @@ class ToolCostTest(unittest.TestCase):
         result = self.run_tool([sys.executable, "-c", "print('payload')"])
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "payload\n")
-        self.assertIn("COST ESTIMATE tool=test/tool wall=12.000s cpu=3.000s", result.stderr)
+        self.assertIn(
+            "# test/tool tool COST ESTIMATE wall=12.000s cpu=3.000s", result.stderr
+        )
         self.assertIn(
             "basis='derived from 3 fixture items x 4 measured seconds/item'",
             result.stderr,
         )
         self.assertRegex(
             result.stderr,
-            r"COST ACTUAL tool=test/tool wall=[0-9.]+s cpu=[0-9.]+s .* exit=0",
+            r"# test/tool tool COST ACTUAL wall=[0-9.]+s cpu=[0-9.]+s .* exit=0",
         )
 
     def test_failure_preserves_exit_and_reports_actual(self) -> None:
         result = self.run_tool([sys.executable, "-c", "raise SystemExit(7)"])
         self.assertEqual(result.returncode, 7)
-        self.assertIn("COST ESTIMATE", result.stderr)
-        self.assertIn("COST ACTUAL", result.stderr)
+        self.assertIn("# test/tool tool COST ESTIMATE", result.stderr)
+        self.assertIn("# test/tool tool COST ACTUAL", result.stderr)
         self.assertIn("exit=7", result.stderr)
 
     def test_launch_failure_still_reports_actual(self) -> None:
         result = self.run_tool(["/definitely/not/a/command"])
         self.assertEqual(result.returncode, 127)
         self.assertIn("cannot launch", result.stderr)
-        self.assertIn("COST ACTUAL", result.stderr)
+        self.assertIn("# test/tool tool COST ACTUAL", result.stderr)
         self.assertIn("exit=127", result.stderr)
 
     def test_actual_json_is_atomic_structured_cost_record(self) -> None:
@@ -104,7 +106,7 @@ class ToolCostTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn(
-                "COST ESTIMATE tool=test/tool wall=unknown cpu=unknown",
+                "# test/tool tool COST ESTIMATE wall=unknown cpu=unknown",
                 result.stderr,
             )
             self.assertIn("basis='not measured: test has no history'", result.stderr)

@@ -55,7 +55,7 @@ them:
    parallelism, or use a lighter build config). Canonical line:
 
    ```
-   COST ESTIMATE tool=multisect/search wall=<s>s cpu=<s>s basis='<...>'
+   # multisect/search tool COST ESTIMATE wall=<s>s cpu=<s>s basis='<...>'
    ```
 
 2. **Actual wall and CPU on completion — always.** The whole search is wrapped in
@@ -63,8 +63,8 @@ them:
    in a `finally` block, so the numbers appear even on failure/abort:
 
    ```
-   COST ACTUAL tool=multisect/search      wall=<s>s cpu=<s>s ... exit=<code>
-   COST ACTUAL tool=multisect/orchestrator wall=<s>s cpu=<s>s exit=<code>
+   # multisect/search tool COST ACTUAL       wall=<s>s cpu=<s>s ... exit=<code>
+   # multisect/orchestrator tool COST ACTUAL wall=<s>s cpu=<s>s exit=<code>
    ```
 
    **CPU vs wall is diagnostic:** CPU ≫ wall means real parallel work; CPU ≈ 0

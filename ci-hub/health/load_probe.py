@@ -502,7 +502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     usage_started = resource.getrusage(resource.RUSAGE_SELF)
     if self_costed:
         print(
-            "COST ESTIMATE tool=ci-hub/load-probe wall=unknown cpu=unknown "
+            "# ci-hub/load-probe tool COST ESTIMATE wall=unknown cpu=unknown "
             f"basis='not measured: requested sample={args.sample_seconds:.3f}s "
             "plus /proc+cgroup scan; retained history not established'",
             file=sys.stderr,
@@ -523,7 +523,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             user = usage.ru_utime - usage_started.ru_utime
             system = usage.ru_stime - usage_started.ru_stime
             print(
-                "COST ACTUAL tool=ci-hub/load-probe "
+                "# ci-hub/load-probe tool COST ACTUAL "
                 f"wall={time.perf_counter() - wall_started:.6f}s "
                 f"cpu={user + system:.6f}s cpu_user={user:.6f}s "
                 f"cpu_system={system:.6f}s exit={code}",

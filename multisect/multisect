@@ -338,7 +338,7 @@ def do_run(args) -> int:
         # Always print actual wall+CPU, including on failure/abort. tool-cost
         # emits the canonical line; this is the orchestrator's own guarantee.
         eprint(
-            f"COST ACTUAL tool=multisect/orchestrator wall={wall:.3f}s "
+            f"# multisect/orchestrator tool COST ACTUAL wall={wall:.3f}s "
             f"cpu={child_cpu:.3f}s exit={rc}"
         )
         markers = list(pool.glob("build-failed-*")) if pool.exists() else []

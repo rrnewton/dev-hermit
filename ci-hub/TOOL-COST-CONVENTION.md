@@ -34,10 +34,22 @@ substantive operation. Do not wrap a multi-command front door indiscriminately.
 Canonical lines are stable and machine-readable enough for future ingestion:
 
 ```text
-COST ESTIMATE tool=<name> wall=<seconds>s cpu=<seconds>s basis='<parameters/history>'
-COST ESTIMATE tool=<name> wall=unknown cpu=unknown basis='not measured: <missing data>'
-COST ACTUAL tool=<name> wall=<seconds>s cpu=<seconds>s cpu_user=<seconds>s cpu_system=<seconds>s exit=<code|signal:N>
+# <name> tool COST ESTIMATE wall=<seconds>s cpu=<seconds>s basis='<parameters/history>'
+# <name> tool COST ESTIMATE wall=unknown cpu=unknown basis='not measured: <missing data>'
+# <name> tool COST ACTUAL wall=<seconds>s cpu=<seconds>s cpu_user=<seconds>s cpu_system=<seconds>s exit=<code|signal:N>
 ```
+
+Every cost line MUST begin with `# ` and MUST name the reporting tool as its
+first field (`# <name> tool COST ...`). The two requirements are load-bearing,
+not cosmetic:
+
+- The `# ` comment-like prefix makes the line unmistakably **meta-output** — the
+  price of running the *reporting* tool — rather than a value belonging to the
+  thing being reported on. A bare `COST: 3.2s` is a number with an unstated
+  subject, the same class of error as reading a process count as load. The
+  prefix also makes cost lines trivially greppable and filterable.
+- Naming the tool keeps the subject unambiguous even when several tools'
+  output is interleaved in one CI log — the normal case, not the edge case.
 
 Write estimates and actuals to stderr so structured stdout remains usable. A
 tool may print richer detail, but it must retain these fields and meanings.

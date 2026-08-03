@@ -8,7 +8,7 @@ and if that cost is enormous, say so prominently and name the levers.
 
 This module is the calculation. It emits the canonical ci-hub cost line
 
-    COST ESTIMATE tool=<name> wall=<s>s cpu=<s>s basis='<...>'
+    # <name> tool COST ESTIMATE wall=<s>s cpu=<s>s basis='<...>'
 
 (see ci-hub/TOOL-COST-CONVENTION.md) so the estimate is machine-readable and
 consistent with every other dev-hermit tool. The orchestrator wraps the actual
@@ -187,7 +187,7 @@ def _hms(seconds: float) -> str:
 
 
 def render(est: Estimate, tool: str = "multisect/search") -> str:
-    """Human-facing block; the canonical COST ESTIMATE line goes via cost_line()."""
+    """Human-facing block; the canonical `# ... COST ESTIMATE` line goes via cost_line()."""
     lines = [
         "==================== multisect ETA-to-blame ====================",
         f"  rounds:       {est.rounds}",
@@ -209,6 +209,6 @@ def render(est: Estimate, tool: str = "multisect/search") -> str:
 def cost_line(est: Estimate, tool: str = "multisect/search") -> str:
     """The canonical ci-hub COST ESTIMATE line (machine-readable)."""
     return (
-        f"COST ESTIMATE tool={tool} wall={est.wall_s:.3f}s cpu={est.cpu_s:.3f}s "
+        f"# {tool} tool COST ESTIMATE wall={est.wall_s:.3f}s cpu={est.cpu_s:.3f}s "
         f"basis={est.basis!r}"
     )

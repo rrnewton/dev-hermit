@@ -154,11 +154,19 @@ def _render(text: str) -> str:
     )
 
 
+def _is_cost_line(line: str) -> bool:
+    # Canonical form is `# <tool> tool COST ESTIMATE ...` / `# <tool> tool COST ACTUAL ...`
+    # (see ci-hub/TOOL-COST-CONVENTION.md): a `# ` prefix marks it meta-output.
+    return line.startswith("# ") and (
+        " tool COST ESTIMATE " in line or " tool COST ACTUAL " in line
+    )
+
+
 def _business_output(output: str) -> str:
     return "\n".join(
         line
         for line in output.splitlines()
-        if line.strip() and not line.startswith(("COST ESTIMATE ", "COST ACTUAL "))
+        if line.strip() and not _is_cost_line(line)
     )
 
 

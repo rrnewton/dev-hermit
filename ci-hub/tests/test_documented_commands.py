@@ -38,8 +38,8 @@ class DocumentedCommandsTest(unittest.TestCase):
 
     def test_cost_lines_do_not_count_as_domain_output(self) -> None:
         output = (
-            "COST ESTIMATE tool=x wall=unknown cpu=unknown basis='unknown'\n"
-            "COST ACTUAL tool=x wall=0.1s cpu=0.1s exit=0\n"
+            "# x tool COST ESTIMATE wall=unknown cpu=unknown basis='unknown'\n"
+            "# x tool COST ACTUAL wall=0.1s cpu=0.1s exit=0\n"
         )
         self.assertEqual(documented_commands._business_output(output), "")
 

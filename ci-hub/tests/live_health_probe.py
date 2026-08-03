@@ -16,7 +16,7 @@ CI_HUB = ROOT / "ci-hub/ci-hub"
 
 
 def classify(returncode: int, output: str) -> tuple[bool, str]:
-    if "COST ACTUAL tool=ci-hub/health" not in output:
+    if "# ci-hub/health tool COST ACTUAL" not in output:
         return False, "ci-hub did not report final wall/CPU cost"
     if "GitHub main health:" not in output or "CI health:" not in output:
         return False, "ci-hub did not emit both live health sections"

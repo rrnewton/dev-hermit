@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_health_probe import classify
 
-COST = "COST ACTUAL tool=ci-hub/health wall=1.000s cpu=0.100s"
+COST = "# ci-hub/health tool COST ACTUAL wall=1.000s cpu=0.100s"
 SECTIONS = "GitHub main health: GREEN\nCI health: HEALTHY"
 
 

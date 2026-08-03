@@ -27,8 +27,8 @@ def print_estimate(
     *, tool: str, wall_seconds: float | None, cpu_seconds: float | None, basis: str
 ) -> None:
     print(
-        "COST ESTIMATE "
-        f"tool={tool} wall={_seconds(wall_seconds)} cpu={_seconds(cpu_seconds)} "
+        f"# {tool} tool COST ESTIMATE "
+        f"wall={_seconds(wall_seconds)} cpu={_seconds(cpu_seconds)} "
         f"basis={basis!r}",
         file=sys.stderr,
         flush=True,
@@ -45,8 +45,8 @@ def print_actual(
 ) -> None:
     cpu_seconds = cpu_user_seconds + cpu_system_seconds
     print(
-        "COST ACTUAL "
-        f"tool={tool} wall={_seconds(wall_seconds)} cpu={_seconds(cpu_seconds)} "
+        f"# {tool} tool COST ACTUAL "
+        f"wall={_seconds(wall_seconds)} cpu={_seconds(cpu_seconds)} "
         f"cpu_user={_seconds(cpu_user_seconds)} cpu_system={_seconds(cpu_system_seconds)} "
         f"exit={exit_description}",
         file=sys.stderr,
