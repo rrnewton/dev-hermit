@@ -35,6 +35,7 @@ const DEFAULT_MAIN_RUN_LIMIT: usize = 100;
 const DEFAULT_WARN_THRESHOLD: usize = 10;
 const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
+const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -52,6 +53,8 @@ struct Cli {
 enum HubCommand {
     /// Summarize current-main, open-PR, and speculative-land health.
     Health(HealthArgs),
+    /// Reconcile TaskGraph state, task ownership, and live ORC agents.
+    ActiveWork(ActiveWorkArgs),
     /// Query current-main GitHub workflow health.
     MainHealth(MainHealthArgs),
     /// Pull fresh open-PR CI status via pinned agent-utils.
@@ -89,6 +92,22 @@ struct HealthArgs {
     warn_threshold: usize,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ActiveWorkArgs {
+    /// Read a fresh orc.listAgents() JSON array from this file.
+    #[arg(long)]
+    agent_snapshot: Option<PathBuf>,
+    /// Reject the cached ORC snapshot after this many seconds.
+    #[arg(long, default_value_t = DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS)]
+    max_snapshot_age: u64,
+    /// Emit the versioned machine-readable report.
+    #[arg(long)]
+    json: bool,
+    /// Emit tick-hub key/value fields.
+    #[arg(long)]
+    gate: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -259,6 +278,11 @@ impl HubCommand {
             Self::Health(_) => CostSpec {
                 tool: "ci-hub/health",
                 basis: "not measured: composite repository/API query cost has no retained history"
+                    .into(),
+            },
+            Self::ActiveWork(_) => CostSpec {
+                tool: "ci-hub/active-work",
+                basis: "not measured: one local TaskGraph scan plus ORC snapshot reconciliation"
                     .into(),
             },
             Self::MainHealth(args) => CostSpec {
@@ -506,6 +530,24 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             } else {
                 pr_code
             })
+        }
+        HubCommand::ActiveWork(args) => {
+            let mut forwarded = vec![OsString::from("active-work")];
+            if let Some(snapshot) = args.agent_snapshot {
+                push_option(&mut forwarded, "--agent-snapshot", snapshot);
+            }
+            push_option(
+                &mut forwarded,
+                "--max-snapshot-age",
+                args.max_snapshot_age.to_string(),
+            );
+            if args.json {
+                forwarded.push("--json".into());
+            }
+            if args.gate {
+                forwarded.push("--gate".into());
+            }
+            run_python(root, "ci-hub/health/operational_health.py", forwarded)
         }
         HubCommand::MainHealth(args) => run_python(
             root,
@@ -942,6 +984,27 @@ mod tests {
             .unwrap()
             .command;
         assert!(matches!(history, HubCommand::History(_)));
+    }
+
+    #[test]
+    fn parses_typed_active_work_command() {
+        let command = Cli::try_parse_from([
+            "ci-hub",
+            "active-work",
+            "--agent-snapshot",
+            "/tmp/agents.json",
+            "--max-snapshot-age",
+            "300",
+            "--json",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::ActiveWork(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.agent_snapshot, Some(PathBuf::from("/tmp/agents.json")));
+        assert_eq!(args.max_snapshot_age, 300);
+        assert!(args.json);
     }
 
     #[test]

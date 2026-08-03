@@ -24,6 +24,22 @@ broken, or when an active agent has no activity for at least 60 minutes. Green
 ticks stay quiet; an `ACTION:` or `ERROR:` wakes the coordinator with a
 `HARD WARNING`.
 
+The same five-minute tick reconciles TaskGraph state, TaskGraph ownership, and
+the live `orc.listAgents()` snapshot. `./ci-hub/ci-hub active-work` reports:
+
+- `ORPHANED`: non-implemented in-progress task owned by a dead/retired agent;
+- `STALE`: non-implemented in-progress task with no owner;
+- `AWAITING-LAND`: in-progress task tagged `implemented`, counted separately
+  from active work and not treated as a warning by itself;
+- `OFF-BOOK`: busy live agent with no `current_task`; and
+- `MISROUTED`: task owner and the agent's actual `current_task` disagree.
+
+The tick atomically retains its latest agent snapshot under
+`ignored/ci-hub/agent-snapshot.json`, so the manual command uses the same ORC
+view for at most ten minutes. It fails unknown rather than classifying against
+a missing or stale snapshot. Use `--json` for the versioned full report and
+`--gate` for tick-hub key/value output.
+
 Hub cadence data lives in the gitignored `.tick-hub/fired-state`. Health and PR
 probes are read-only. The primary-snapshot reminder is intentionally mutating,
 but only through clean fast-forwards and a path-limited parent gitlink commit;

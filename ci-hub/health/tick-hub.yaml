@@ -82,6 +82,19 @@ reminders:
         component: agents
       title: "agent fleet needs attention: {summary}"
 
+  - name: active_work_reconciliation
+    cadence_secs: 300
+    gate:
+      cmd: ./ci-hub/ci-hub active-work --gate
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: active-work-reconciliation
+      title: "task/owner/agent reality diverged: {summary}"
+
   # Memory <-> skill sync: the sync/lint scripts existed but nothing invoked them,
   # so being in-sync was luck. This reminder runs the authoritative structural
   # linter + the report-only contradiction scanner every hour. It PROPOSES a

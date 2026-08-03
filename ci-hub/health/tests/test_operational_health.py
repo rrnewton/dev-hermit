@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,9 @@ import operational_health
 
 
 class OperationalHealthTest(unittest.TestCase):
-    def capture(self, function: object, *args: object, **kwargs: object) -> tuple[int, str]:
+    def capture(
+        self, function: object, *args: object, **kwargs: object
+    ) -> tuple[int, str]:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             result = function(*args, **kwargs)  # type: ignore[operator]
@@ -148,6 +151,131 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("state=stuck", output)
         self.assertIn("names=worker", output)
+
+    def test_active_work_reconciles_all_five_classes(self) -> None:
+        task = operational_health.TaskRecord
+        agent = operational_health.AgentRecord
+        report = operational_health.reconcile_active_work(
+            [
+                task("active", "Active", "alice", ()),
+                task("await", "Awaiting", "alice", ("implemented",)),
+                task("stale", "Stale", "", ()),
+                task("orphan", "Orphan", "retired-worker", ()),
+                task("mismatch", "Mismatch", "bob", ()),
+            ],
+            [
+                agent("alice", "busy", "active"),
+                agent("bob", "working", "different-task"),
+                agent("offbook", "running", None),
+                agent("retired-worker", "retired", "orphan"),
+            ],
+        )
+        self.assertEqual(report.counts()["in_progress"], 5)
+        self.assertEqual([item.id for item in report.actually_active], ["active"])
+        self.assertEqual([item.id for item in report.awaiting_land], ["await"])
+        self.assertEqual([item.id for item in report.stale], ["stale"])
+        self.assertEqual([item.id for item in report.orphaned], ["orphan"])
+        self.assertEqual([item.name for item in report.off_book], ["offbook"])
+        self.assertEqual(len(report.misrouted), 2)
+        self.assertGreater(report.actionable_count, 0)
+
+    def test_awaiting_land_alone_is_not_actionable(self) -> None:
+        report = operational_health.reconcile_active_work(
+            [
+                operational_health.TaskRecord(
+                    "await",
+                    "Awaiting",
+                    "worker",
+                    ("implemented",),
+                )
+            ],
+            [operational_health.AgentRecord("worker", "idle", None)],
+        )
+        self.assertEqual(report.actionable_count, 0)
+        self.assertEqual(report.counts()["awaiting_land"], 1)
+        self.assertEqual(report.counts()["actually_active"], 0)
+
+    def test_agent_snapshot_cache_is_freshness_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agents.json"
+            agents, captured_at = operational_health.load_agent_snapshot(
+                '[{"name":"worker","status":"busy","current_task":"task"}]',
+                snapshot_file=path,
+                now=1000,
+            )
+            self.assertEqual(agents[0].current_task, "task")
+            self.assertEqual(captured_at, 1000)
+            cached, _ = operational_health.load_agent_snapshot(
+                None,
+                snapshot_file=path,
+                max_age_secs=60,
+                now=1050,
+            )
+            self.assertEqual(cached, agents)
+            with self.assertRaisesRegex(RuntimeError, "agent-snapshot-stale"):
+                operational_health.load_agent_snapshot(
+                    None,
+                    snapshot_file=path,
+                    max_age_secs=60,
+                    now=1061,
+                )
+
+    def test_cache_agent_snapshot_validates_before_persisting(self) -> None:
+        snapshot = '[{"name":"worker","status":"busy","current_task":"task"}]'
+        with mock.patch.object(
+            operational_health,
+            "_persist_agent_snapshot",
+        ) as persist:
+            result, output = self.capture(
+                operational_health.cache_agent_snapshot,
+                snapshot,
+            )
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("count=1", output)
+        persist.assert_called_once()
+
+    def test_taskgraph_query_parses_exact_tag_array(self) -> None:
+        output = """task_json
+---------------
+{"id":"one","title":"One","owner":"worker","tags":["implemented"]}
+
+(1 rows)
+"""
+        completed = SimpleNamespace(returncode=0, stdout=output, stderr="")
+        with mock.patch.object(
+            operational_health.subprocess,
+            "run",
+            return_value=completed,
+        ):
+            tasks = operational_health._taskgraph_in_progress()
+        self.assertEqual(len(tasks), 1)
+        self.assertTrue(tasks[0].implemented)
+
+    def test_active_work_gate_emits_counts_and_items(self) -> None:
+        tasks = (
+            operational_health.TaskRecord("active", "Active", "worker", ()),
+            operational_health.TaskRecord("stale", "Stale", "", ()),
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            operational_health,
+            "_taskgraph_in_progress",
+            return_value=tasks,
+        ):
+            result, output = self.capture(
+                operational_health.active_work_gate,
+                snapshot=(
+                    '[{"name":"worker","status":"busy",' '"current_task":"active"}]'
+                ),
+                snapshot_file=Path(directory) / "agents.json",
+                gate_output=True,
+                now=1000,
+            )
+        self.assertEqual(result, 1)
+        self.assertIn("state=drift", output)
+        self.assertIn("actually_active=1", output)
+        self.assertIn("stale=1", output)
+        self.assertIn("detail=STALE stale", output)
 
 
 if __name__ == "__main__":
