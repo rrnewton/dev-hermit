@@ -1,0 +1,7 @@
+build.privileged_tests|60|cpu-bound|e2e.metadata|
+cpuid.faulting|15|cpu-bound|build.privileged_tests|
+pmu.preemption|5|cpu-bound|build.privileged_tests|pmu:1
+e2e.metadata|5|light||
+build.manifest_guests|75|cpu-bound|e2e.metadata|
+e2e.manifest_applications|90|latency-bound|build.privileged_tests,build.manifest_guests,e2e.metadata|kvm:1
+e2e.manifest_backend_parity_c|5|latency-bound|build.privileged_tests,build.manifest_guests,e2e.metadata|kvm:1

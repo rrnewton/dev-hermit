@@ -1,0 +1,47 @@
+175	test.strict_compat	Portable strict compatibility envelope (blocking L2 matrix with bounded diagnostics)
+65	build.dbi_release	Build release Hermit, the DBI plugin, and installed backend resources
+60	test.command_strict_verify	Portable command strict verification
+58	test.hermit_integration	Portable Hermit integration targets (batched compile, serial test binaries)
+38	e2e.manifest_language_runtimes	Portable manifest bucket: language-runtimes
+37	test.app_strict_verify	Portable application strict verification (skips java/javac)
+33	test.liteinst_strict	Portable LiteInst strict compatibility
+18	e2e.manifest_system_utils	Portable manifest bucket: system-utils
+17	build.manifest_guests	Prepare every CI-enabled portable manifest guest
+16	test.hermit_modes	Portable Hermit mode cases (skips default_ and chaos_buck_)
+15	e2e.manifest_c_programs	Portable manifest bucket: c-programs
+14	test.sabre_examples	SaBRe non-racy examples: per-backend time determinism and non-time ptrace parity
+14	e2e.manifest_determinism_stress	Portable manifest bucket: determinism-stress
+12	test.envelope_levels	Portable working-envelope levels (L1-L4 over true/echo/date; mirrors run_portable_envelope_levels, validate.sh:2573)
+10	test.applications_e2e	Run application end-to-end strict verification
+10	e2e.manifest_data_handling	Portable manifest bucket: data-handling
+7	test.cli	Portable CLI cases (skips KVM/DBI-backend-only cases)
+7	e2e.metadata	Validate multi-mode E2E metadata and required-cell plan
+7	e2e.manifest_determinism_stress_c	Portable manifest bucket: determinism-stress-c
+6	test.dbi_parity	DynamoRIO DBI strict backend parity matrix
+6	e2e.manifest_debugger_c	Portable manifest bucket: debugger-c
+6	e2e.manifest_applications	Portable manifest bucket: applications
+5	e2e.manifest_util_c	Portable manifest bucket: util-c
+5	build.workspace	Build workspace (cargo build --workspace --features third-party-backends)
+4	test.hermit_unit	Test Hermit unit and binary targets (-p hermit --lib --bins)
+4	e2e.manifest_shared_futex_c	Portable manifest bucket: shared-futex-c
+4	e2e.manifest_chaos_c	Portable manifest bucket: chaos-c
+4	e2e.manifest_bin_c	Portable manifest bucket: bin-c
+4	e2e.manifest_backend_parity_c	Portable manifest bucket: backend-parity-c
+4	doc.doctests	Test workspace documentation (cargo test --workspace --features third-party-backends --doc)
+2	test.regular_crates	Test regular workspace crates (nextest, excludes detcore/hermit/flaky)
+2	test.detcore_parallel	Detcore non-PMU parallel cases (tests_parallelism, --skip detcore, -j4)
+2	check.portability_paths	Reject developer-specific paths in build/run files
+1	test.ignored_syscall_regressions	Portable ignored syscall regressions (epoll_determinism, rcx_canonicalization)
+1	test.detcore_misc	Detcore non-CPUID miscellaneous cases (tests_misc, skips RDRAND host probes)
+1	test.arbitrary_binaries	Portable arbitrary-binary cases
+1	lint.rustfmt	Rustfmt (cargo fmt --all -- --check)
+1	lint.clippy	Clippy (cargo clippy --workspace --all-targets -D warnings)
+1	doc.rustdoc	Documentation (cargo doc --workspace --no-deps)
+0	test.rr_suite_contract	rr suite source contract (scratch dirs fresh and cleaned)
+0	test.detcore_unit	Test Detcore unit and binary targets (-p detcore --lib --bins)
+0	setup.nextest	cargo-nextest available
+0	check.script_sigpipe	Standalone scripts exit cleanly on downstream SIGPIPE (prog | head)
+0	check.backend_abstraction	Detcore backend-abstraction check
+0	build.sabre_release	Build the release Detcore SaBRe plugin and restage the pinned loader
+0	build.liteinst_runtime_release	Build and stage the release LiteInst runtime
+0	build.flaky_harnesses	Compile flaky guest test harnesses (--no-run)

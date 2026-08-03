@@ -1,0 +1,7 @@
+9	e2e.metadata	Validate multi-mode E2E metadata and required-cell plan
+6	e2e.manifest_applications	Privileged manifest bucket: applications
+5	e2e.manifest_backend_parity_c	Privileged manifest bucket: backend-parity-c
+5	build.manifest_guests	Prepare every CI-enabled privileged manifest guest
+0	pmu.preemption	PMU smoke: retired-conditional-branch overflow delivery and skid measurement
+0	cpuid.faulting	CPUID-faulting smoke: Detcore masks host RDRAND/RDSEED feature bits
+0	build.privileged_tests	Build Hermit and the focused test binaries used by the privileged lane

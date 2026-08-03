@@ -1,0 +1,56 @@
+{
+  "question": "Why is green full local validate.sh only 1.58x parallel (real 8m18.665s / user 13m09.104s) on a 316-thread host, and how to lower wall time while keeping user/real high?",
+  "date": "2026-08-03",
+  "parent_sha": "7ac72dee7c6c6b054f2c856a3cb8272b452924bd",
+  "hermit_sha": "baf1a7b7f3037b13d3bad2cf99701a83ea2739ad",
+  "owner_reference_run_commit": "a034f39c",
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+  "nproc": 316,
+  "python": "3.12.13+meta",
+  "inputs": {
+    "ledger": "ignored/validate-run-ledger.jsonl (hermit; machine-local, gitignored)",
+    "ledger_extract": "ledger_full_runs.jsonl (26 full-profile runs)",
+    "dag_manifests": ["hermit/ci/dag/portable.json (47 nodes)", "hermit/ci/dag/privileged.json (7 nodes)"],
+    "node_extracts": ["portable_nodes.txt", "privileged_nodes.txt"]
+  },
+  "commands": {
+    "ledger_query": "jq -c 'select(.profile==\"full\")|{commit:.commit[0:8],res:.result,real:.real_seconds,user:.user_seconds}' ignored/validate-run-ledger.jsonl",
+    "simulation": "python3 crit.py"
+  },
+  "key_results": {
+    "owner_run": {"commit": "a034f39c", "result": "PASS", "real_s": 499, "user_s": 789.095, "sys_s": 319.505, "user_over_real": 1.58},
+    "portable_dag_share_of_wall_pct": 91,
+    "cold_cache_run": {"commit": "4f4b8722", "real_s": 816, "user_s": 6272, "user_over_real": 9.12},
+    "portable_critical_path_s": 1265,
+    "portable_theoretical_max_speedup_x": 4.24,
+    "portable_hermit_guest_cap1_plateau_x": 1.78,
+    "portable_sim_cap4_j8_x": 5.55,
+    "portable_sim_cap8_j16_x": 6.83
+  },
+  "caveats": [
+    "est_duration_s hints are ~5x pessimistic vs warm-real; makespan ratios valid, absolutes not.",
+    "Live per-second concurrency timeline + A/B deferred: host at load 391/316 during audit."
+  ],
+  "measured_addendum": {
+    "file": "measured_owner_run_addendum.md",
+    "node_extracts": ["measured_portable_nodes.tsv (47 nodes)", "measured_privileged_nodes.tsv (7 nodes)"],
+    "source_log": "/tmp/hermit-validate.c02CCi.log (owner green run, commit a034f39c)",
+    "supersedes": "the est-hint absolutes above; measured warm per-node durations mined from the owner's actual PASS log",
+    "measured_results": {
+      "portable_node_wall_sum_s": 677,
+      "portable_dag_wall_s": 455,
+      "effective_concurrency_x": 1.49,
+      "latency_bound_nodes": 26,
+      "latency_bound_sum_s": 565,
+      "top6_pct_of_dag_wall": 95,
+      "dep_only_critical_path_s": 191,
+      "hermit_guest_cap1_measured_floor_s": 430,
+      "model_validation": "sim(cap1/manifest4/j2)=454s vs real 455s",
+      "measured_makespan_sim": {"cap1_j2_s": 454, "cap2_j8_s": 245, "cap4_j8_s": 203, "cap8_manif8_j16_s": 191},
+      "warm_ceiling_from_F2_x": 2.38,
+      "hard_floor_s": 191,
+      "hard_floor_cause": "single test.strict_compat node = 175s; F3 sharding required to go lower",
+      "user_time_verdict": "consistent; block-dominated (2.22 avg cores of 316), no spin, no phantom CPU"
+    }
+  }
+}
