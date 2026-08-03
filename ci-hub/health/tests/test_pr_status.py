@@ -174,6 +174,52 @@ class ReviewProtocolClassificationTests(unittest.TestCase):
         self.assertEqual(len(status.review_protocol), 1)
 
 
+class MechanismOverlapTests(unittest.TestCase):
+    def test_same_mechanism_on_two_open_prs_is_surfaced(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(1567, [], labels=("mechanism:cancel-in-progress",)),
+                _pr(
+                    1575,
+                    [],
+                    draft=True,
+                    labels=("mechanism:cancel-in-progress",),
+                ),
+            ],
+        )
+        self.assertEqual(len(status.mechanism_overlaps), 1)
+        overlap = status.mechanism_overlaps[0]
+        self.assertEqual(overlap.mechanism, "mechanism:cancel-in-progress")
+        self.assertEqual([pr.pr for pr in overlap.prs], [1567, 1575])
+        self.assertTrue(overlap.prs[1].draft)
+
+    def test_distinct_or_singleton_mechanisms_do_not_warn(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(1, [], labels=("mechanism:CI_DAG_JOBS",)),
+                _pr(2, [], labels=("mechanism:locally-validated",)),
+                _pr(3, [], labels=("mechanism:",)),
+            ],
+        )
+        self.assertEqual(status.mechanism_overlaps, ())
+
+    def test_report_names_every_pr_in_the_overlap(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(12, [], labels=("mechanism:locally-validated",)),
+                _pr(34, [], labels=("mechanism:locally-validated",)),
+            ],
+        )
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("Mechanism overlaps: 1", report)
+        self.assertIn("mechanism:locally-validated", report)
+        self.assertIn("#12", report)
+        self.assertIn("#34", report)
+
+
 class GhEngineLoudFailureTests(unittest.TestCase):
     """No output + zero exit must never look like 'no PRs'."""
 
@@ -310,6 +356,49 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(len(statuses), 1)
         self.assertFalse(statuses[0].available)
         self.assertFalse(statuses[0].unhealthy)
+
+    @mock.patch("pr_status.time.sleep")
+    @mock.patch("pr_status.subprocess.run")
+    def test_full_query_504_still_surfaces_mechanism_overlap(
+        self, run: mock.Mock, sleep: mock.Mock
+    ) -> None:
+        unavailable = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="HTTP 504: Gateway Timeout"
+        )
+        labels_only = [
+            _pr(1567, [], labels=("mechanism:cancel-in-progress",)),
+            _pr(
+                1575,
+                [],
+                draft=True,
+                labels=("mechanism:cancel-in-progress",),
+            ),
+        ]
+        run.side_effect = [
+            unavailable,
+            unavailable,
+            unavailable,
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(labels_only), stderr=""
+            ),
+        ]
+        statuses = pr_status.collect_statuses(
+            ["rrnewton/hermit"],
+            warn_threshold=10,
+            engine="gh",
+            net_wrapper=[],
+            per_repo_timeout=30.0,
+            overall_deadline=60.0,
+        )
+        self.assertFalse(statuses[0].available)
+        self.assertEqual(len(statuses[0].mechanism_overlaps), 1)
+        report = pr_status.render_report(statuses, warn_threshold=10, engine="gh")
+        self.assertIn("UNAVAILABLE", report)
+        self.assertIn("mechanism:cancel-in-progress", report)
+        self.assertIn("#1567", report)
+        self.assertIn("#1575", report)
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(sleep.call_count, 2)
 
     def test_collect_marks_unavailable_when_deadline_exhausted(self) -> None:
         statuses = pr_status.collect_statuses(

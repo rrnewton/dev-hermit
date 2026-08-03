@@ -84,6 +84,7 @@ GH_FIELDS = (
     "labels",
     "statusCheckRollup",
 )
+MECHANISM_GH_FIELDS = ("number", "title", "isDraft", "labels")
 
 # GitHub check/status vocabularies.
 _FAIL_STATES = {
@@ -119,6 +120,7 @@ _PASSED_REVIEW_LABELS = {
     "codex": "passed-review-codex",
     "claude": "passed-review-claude",
 }
+_MECHANISM_TAG_PREFIX = "mechanism:"
 
 
 class RepoUnavailable(RuntimeError):
@@ -142,6 +144,23 @@ class ReviewProtocolStatus:
 
 
 @dataclass(frozen=True)
+class MechanismPr:
+    """One open PR carrying a mechanism tag."""
+
+    pr: int | None
+    title: str
+    draft: bool
+
+
+@dataclass(frozen=True)
+class MechanismOverlap:
+    """Two or more open PRs that require joint coordinator inspection."""
+
+    mechanism: str
+    prs: tuple[MechanismPr, ...]
+
+
+@dataclass(frozen=True)
 class RepoStatus:
     repo: str
     open: int
@@ -152,6 +171,7 @@ class RepoStatus:
     outage_suspected: bool
     prs: tuple[dict[str, object], ...]
     review_protocol: tuple[ReviewProtocolStatus, ...] = ()
+    mechanism_overlaps: tuple[MechanismOverlap, ...] = ()
     undetermined_reds: int = 0
     available: bool = True
     reason: str = ""
@@ -163,7 +183,11 @@ class RepoStatus:
         return self.available and (self.real_reds > 0 or self.outage_suspected)
 
 
-def _unavailable(repo: str, reason: str) -> RepoStatus:
+def _unavailable(
+    repo: str,
+    reason: str,
+    mechanism_overlaps: tuple[MechanismOverlap, ...] = (),
+) -> RepoStatus:
     return RepoStatus(
         repo=repo,
         open=0,
@@ -173,6 +197,7 @@ def _unavailable(repo: str, reason: str) -> RepoStatus:
         real_reds=0,
         outage_suspected=False,
         prs=(),
+        mechanism_overlaps=mechanism_overlaps,
         available=False,
         reason=reason,
     )
@@ -332,9 +357,50 @@ def _review_protocol_status(entry: dict[str, object]) -> ReviewProtocolStatus | 
     )
 
 
+def _mechanism_overlaps(raw: Sequence[object]) -> tuple[MechanismOverlap, ...]:
+    """Group open PRs by exact ``mechanism:<slug>`` GitHub labels.
+
+    The query already contains only open PRs. Drafts stay in this audit because
+    a draft and a ready PR can still implement contradictory policies and later
+    merge cleanly. This deliberately detects overlap only; intent remains a
+    coordinator decision.
+    """
+    grouped: dict[str, list[MechanismPr]] = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get("number")
+        pr = MechanismPr(
+            pr=(
+                number
+                if isinstance(number, int) and not isinstance(number, bool)
+                else None
+            ),
+            title=str(entry.get("title") or ""),
+            draft=entry.get("isDraft") is True,
+        )
+        for label in _label_names(entry):
+            if (
+                label.startswith(_MECHANISM_TAG_PREFIX)
+                and label != _MECHANISM_TAG_PREFIX
+            ):
+                grouped.setdefault(label, []).append(pr)
+
+    overlaps: list[MechanismOverlap] = []
+    for mechanism, prs in sorted(grouped.items()):
+        if len(prs) < 2:
+            continue
+        ordered = tuple(
+            sorted(prs, key=lambda item: (item.pr is None, item.pr or 0))
+        )
+        overlaps.append(MechanismOverlap(mechanism=mechanism, prs=ordered))
+    return tuple(overlaps)
+
+
 def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
     prs: list[dict[str, object]] = []
     review_protocol: list[ReviewProtocolStatus] = []
+    mechanism_overlaps = _mechanism_overlaps(raw)
     green = red = pending = real_reds = undetermined_reds = 0
     for entry in raw:
         if not isinstance(entry, dict):
@@ -401,6 +467,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
+        mechanism_overlaps=mechanism_overlaps,
     )
 
 
@@ -436,6 +503,27 @@ def fetch_repo_status_gh(
     an unparseable/malformed response, so the caller records a partial result
     (UNAVAILABLE) instead of silently reporting zero open PRs.
     """
+    return _classify_gh_prs(
+        repo,
+        _fetch_open_prs_gh(
+            repo,
+            fields=GH_FIELDS,
+            net_wrapper=net_wrapper,
+            gh_cmd=gh_cmd,
+            timeout=timeout,
+        ),
+    )
+
+
+def _fetch_open_prs_gh(
+    repo: str,
+    *,
+    fields: Sequence[str],
+    net_wrapper: Sequence[str],
+    gh_cmd: str = "gh",
+    timeout: float | None = None,
+) -> list[object]:
+    """Fetch open PRs with a caller-selected bounded GraphQL field set."""
     command = [
         *net_wrapper,
         gh_cmd,
@@ -448,7 +536,7 @@ def fetch_repo_status_gh(
         "--limit",
         "500",
         "--json",
-        ",".join(GH_FIELDS),
+        ",".join(fields),
     ]
     result: subprocess.CompletedProcess[str] | None = None
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
@@ -506,7 +594,25 @@ def fetch_repo_status_gh(
         raise RepoUnavailable(f"{repo}: gh returned non-JSON: {text[:200]}") from error
     if not isinstance(raw, list):
         raise RepoUnavailable(f"{repo}: gh returned an unexpected schema (not a list)")
-    return _classify_gh_prs(repo, raw)
+    return raw
+
+
+def fetch_mechanism_overlaps_gh(
+    repo: str,
+    *,
+    net_wrapper: Sequence[str],
+    gh_cmd: str = "gh",
+    timeout: float | None = None,
+) -> tuple[MechanismOverlap, ...]:
+    """Fetch only labels needed to preserve semantic warnings during CI 504s."""
+    raw = _fetch_open_prs_gh(
+        repo,
+        fields=MECHANISM_GH_FIELDS,
+        net_wrapper=net_wrapper,
+        gh_cmd=gh_cmd,
+        timeout=timeout,
+    )
+    return _mechanism_overlaps(raw)
 
 
 # --------------------------------------------------------------------------- #
@@ -672,12 +778,45 @@ def collect_statuses(
                     )
                 )
         except RepoUnavailable as unavailable:
-            statuses.append(_unavailable(repo, str(unavailable)))
+            reason = str(unavailable)
+            mechanism_overlaps: tuple[MechanismOverlap, ...] = ()
+            if engine == "gh":
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    try:
+                        mechanism_overlaps = fetch_mechanism_overlaps_gh(
+                            repo,
+                            net_wrapper=net_wrapper,
+                            timeout=min(60.0, remaining),
+                        )
+                    except RepoUnavailable as fallback_error:
+                        reason += f"; mechanism-label fallback failed: {fallback_error}"
+            statuses.append(_unavailable(repo, reason, mechanism_overlaps))
         except RuntimeError as error:
             # A hard planner/schema error still yields a report line rather than
             # aborting the whole command with nothing printed.
             statuses.append(_unavailable(repo, f"query failed: {error}"))
     return statuses
+
+
+def _render_mechanism_overlaps(
+    lines: list[str], overlaps: Sequence[MechanismOverlap]
+) -> None:
+    if not overlaps:
+        return
+    lines.append(
+        "    Mechanism overlaps: "
+        f"{len(overlaps)} coordinator review required "
+        "(shared tag exposes overlap; it does not prove conflicting intent)"
+    )
+    for overlap in overlaps:
+        lines.append(f"      {overlap.mechanism}")
+        for pr in overlap.prs:
+            draft = " draft=yes" if pr.draft else ""
+            lines.append(
+                f"        #{pr.pr if pr.pr is not None else '?':<5}"
+                f"{draft} {pr.title}"
+            )
 
 
 def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: str) -> str:
@@ -693,13 +832,17 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
     else:
         heading = "CI health: HEALTHY"
     source = {
-        "gh": "gh pr list --json (single proxied API call per repo)",
+        "gh": (
+            "gh pr list --json (single proxied API call per repo; labels-only "
+            "fallback after a full-query failure)"
+        ),
         "planner": "pinned agent-utils/pr-landing-planner status (per-PR git fetch)",
     }.get(engine, engine)
     lines = [heading, f"Source: {source}"]
     for status in statuses:
         if not status.available:
             lines.append(f"  {status.repo}: UNAVAILABLE — {status.reason}")
+            _render_mechanism_overlaps(lines, status.mechanism_overlaps)
             continue
         undet = (
             f" undetermined_reds={status.undetermined_reds}"
@@ -722,6 +865,7 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 f"    #{pr.get('pr', '?'):<5} ci={pr.get('ci', 'unknown'):<7} "
                 f"class={pr.get('red_class') or '-':<23} {pr.get('title', '')}"
             )
+        _render_mechanism_overlaps(lines, status.mechanism_overlaps)
         if status.review_protocol:
             audits = status.review_protocol
             complete = sum(audit.complete for audit in audits)

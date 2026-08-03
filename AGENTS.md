@@ -13,6 +13,17 @@ ALL PR descriptions and comments MUST start with a role tag:
 
 Examples: `[impl agent, gpt-5.6-sol]`, `[adversarial-reviewer agent, opus-4.8]`
 
+## Mechanism Tags
+
+When a task or pull request changes a load-bearing mechanism, apply the same
+stable `mechanism:<slug>` tag to both (for example,
+`mechanism:cancel-in-progress`, `mechanism:CI_DAG_JOBS`, or
+`mechanism:locally-validated`). Create the repository label when needed. Before
+landing, run `ci-hub pr-status`: any mechanism shared by two open PRs requires
+coordinator review and must appear beside file conflicts in the landing plan.
+The shared tag only exposes semantic overlap; it does not claim the intentions
+conflict.
+
 ## Primary Checkout Invariant
 
 **~/work/dev-hermit/hermit and ~/work/dev-hermit/reverie must ALWAYS be on the latest main branch.**
