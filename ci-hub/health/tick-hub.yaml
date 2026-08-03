@@ -69,6 +69,27 @@ reminders:
         component: ci-queue-health
       title: "CI queue health is {state}: {summary}"
 
+  # Durable, recycle-surviving alarm for SUSTAINED PMU-lane saturation. Unlike
+  # ci_queue_health (which pages on any instantaneous red), this records every
+  # observation to an append-only store and only fires when saturation has
+  # persisted across N consecutive observations. `tick` exits 1 (sustained ->
+  # page) or 2 (could-not-measure -> surface, never silent); exit 0 stays quiet
+  # while still recording. The throttle a load-planner reads is
+  # `lane_health.py throttle-check` (read-only, no gh) -- it NEVER gates
+  # landings, because landing is what drains the lane.
+  - name: ci_lane_saturation
+    cadence_secs: 900
+    gate:
+      cmd: ./ci-hub/runners/lane_health.py tick
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: ci-lane-saturation
+      title: "CI PMU lane {state}: {summary}"
+
   - name: stuck_agents
     cadence_secs: 300
     gate:
