@@ -59,6 +59,28 @@ is the operational summary of the coordinator role.
 - Use `with-proxy` for all networked git/gh operations. Every PR comment starts
   with `[coordinator, <model>]`.
 
+## Plain-language status
+
+The coordinator is bound by AGENTS.md's
+[load-bearing shorthand](../../AGENTS.md#load-bearing-shorthand)
+rule both as an author and as a relay. Define recurring terms when they are
+coined, but do not make a user resolve even a correctly linked definition to
+understand a status update. Lead with the observable consequence and the
+decision it creates; put field names, formulas, and implementation mechanisms
+afterward as supporting detail.
+
+**Before (mechanism without meaning):** "Whether a queued run should expose
+`now - created_at` as a lower-bound wait instead of showing `queue_s=0`."
+
+**After (consequence first):** "A job that has waited three hours but has not
+started currently appears to have waited zero seconds. We could show 'waiting
+three hours and counting' instead, but that live value must not be mixed into
+historical averages."
+
+Ordinary field names and arithmetic can still be private jargon when the reader
+does not know their consequence. Brevity that costs comprehension is a private
+note, not a concise report.
+
 ## Post-facto human-review criteria
 
 Apply `post-facto-human-review` for any of the four triggers: (1) new syscall

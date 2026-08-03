@@ -32,6 +32,16 @@ writes to the parent validate-run ledger (`build_validation_record`). Runs are
 events and are never deduplicated. Records are `schema_version` >= 3; the fields
 that matter to `worktrees.py` are:
 
+**Validate-run schema version 3** (sometimes shortened internally to
+`schema-3`) is the third JSONL format written by `validate.sh`: it records the
+exact HEAD commit, whether the tree matched that commit, and what selection
+actually ran, while normal agent use refuses unstaged or untracked dirty work
+before a record can be created. Staged work or the explicit
+`--run-on-dirty-tree` escape can still run, but its record says
+`commit_anchored=false` and it cannot apply `locally-validated`. In user-facing
+status, state those consequences instead of saying only that "schema-3
+anchoring is live."
+
 | Field | Meaning |
 | --- | --- |
 | `finished_at` | UTC ISO-8601 completion time. |

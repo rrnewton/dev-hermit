@@ -141,12 +141,21 @@ remain valid and do not replace the work slug.
 Define a coined term beside the artifact that owns the concept: infrastructure
 names beside their implementation or configuration, product modes in the
 product architecture document, and workspace/environment terms in this guide.
-When a term appears in more than one task, document, or instruction, it must
-have exactly one canonical, one-sentence definition. Spell the literal term in
-that definition so repository search finds it, and link every later durable use
-to the definition instead of copying it. If no owning artifact exists, define
-the term beside its first durable use; do not create a separate glossary merely
-to hold it.
+This binds every writer, including coordinators, implementation agents,
+reviewers, and status aggregators. Define likely-to-recur shorthand when it is
+coined; at the latest, a term that appears in more than one task, document, or
+instruction must have exactly one canonical, one-sentence definition. Spell the
+literal term in that definition so repository search finds it, and link every
+later durable use to the definition instead of copying it. If no owning artifact
+exists, define the term beside its first durable use; do not create a separate
+glossary merely to hold it.
+
+A definition does not make shorthand acceptable in a user-facing update. Lead
+with the observable consequence and the decision it creates, in plain language;
+put internal names, fields, formulas, and mechanisms afterward as supporting
+detail. Do not make the reader follow a link or decode a reference to understand
+the point. Brevity that loses comprehension is a private note, not a concise
+status update.
 
 ## Canonical Layout
 
