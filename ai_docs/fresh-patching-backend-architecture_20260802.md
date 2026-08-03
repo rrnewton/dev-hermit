@@ -1,6 +1,6 @@
 # Fresh patching-backend architecture read: SaBRe, LiteInst, and e9patch
 
-Date: 2026-08-02
+Date: 2026-08-02; refreshed 2026-08-03
 
 ## Decision
 
@@ -17,8 +17,12 @@ This is the wrong steady-state architecture for a patching backend whose value
 is an in-process fast path. It is not an intrinsic limitation of e9patch: the
 tree already contains a separate direct AOT lane that constructs `T: Tool` in a
 preload DSO and calls it in ordinary guest context. That lane is not Hermit's
-production backend and is still bounded to one process/thread with incomplete
-lifecycle and residual-site coverage.
+production backend. An active, unlanded LiteInst PR stack extends the same model
+to plain fork, per-thread coordinator RPC, quiescent hot hooks, and a
+lifecycle-only ptrace supervisor. It still documents thread clone/clone3/vfork,
+exec rebootstrap, unpatchable-site fallback, PMU preemption, and end-to-end vDSO
+routing as unsupported. This is strong design evidence, not current-main
+behavior.
 
 The convergence target should be:
 
@@ -40,31 +44,23 @@ model**; mechanically, extract the **LiteInst/e9patch direct-lane common code**.
 This is a fresh source trace, not an inference from backend names or benchmark
 results. I read:
 
-- Hermit `c7531a837a65d388707e3b14642a6ba36b660267`.
+- Hermit main `e072d313ba62fdbd46c6708b40e5b407006946af`.
 - Hermit's actual Reverie dependency pin
-  `b9a7fa777e902ef937766e2db7c1a333b1e15e31`.
-- Current Reverie main `ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4`.
+  `d973a85b328610c14c41c39fa57495b9f77c3c90`.
+- Current Reverie main `d2fb9a055693bec30e8d48333c5694050b22e869`.
 - Current LiteInst2 main `8bffae9da68e0636ec4b6dc473a0fd29ac589d20`.
 
-The changes from Hermit's Reverie pin to current Reverie main add typed
-LiteInst/SaBRe statistics; they do not change the dispatch placement described
-below. The earlier architecture map in [Reverie PR #324][pr-324] was used only
-after retracing current launch, callback, trap, `Tool`, `Guest`, and DETLOG
-paths.
-
-One repository-state caveat is independent of the architecture conclusion:
-current `reverie-liteinst/Cargo.toml` requests LiteInst2 `95ee5e6`, while the
-committed Reverie `Cargo.lock` resolves `b21b248`; `cargo tree -p
-reverie-liteinst --locked --offline` rejects the lock update. The requested
-LiteInst2 tree matches current main for the files discussed here, but the pin
-and lock should be reconciled before treating a fresh `--locked` build as
-reproducible.
+The Hermit pin is an ancestor of current Reverie main. Both revisions retain
+the production placement described below. The active in-guest LiteInst stack is
+reviewed separately as proposed architecture, not silently treated as landed.
+The earlier architecture map in [Reverie PR #324][pr-324] was used only after
+retracing current launch, callback, trap, `Tool`, `Guest`, and DETLOG paths.
 
 ## Current production paths at a glance
 
 | Backend/path | Patch or event source | `Tool` / `ThreadState` | `Guest` | `GlobalTool` | Per-syscall `DETLOG` process |
 | --- | --- | --- | --- | --- | --- |
-| **Hermit SaBRe** | SaBRe loader rewrites sites; Hermit's ptrace supervisor converts missed raw `syscall` sites into SaBRe markers | In each injected guest process | `SabreGuest`, in guest | Hermit coordinator via UDS RPC | Guest plugin, but landed main has no plugin-local sink/subscriber |
+| **Hermit SaBRe** | SaBRe loader rewrites sites; Hermit's ptrace supervisor converts missed raw `syscall` sites into SaBRe markers | In each injected guest process | `SabreGuest`, in guest | Hermit coordinator via UDS RPC | Guest plugin; raw forwarded records are extracted during verification |
 | **Hermit LiteInst** | First seccomp stop installs a live hook; hot hook emits a validated `SIGTRAP` | Sole instance in ptrace host | Reverie ptrace task | Same host process | Ptrace host |
 | **Hermit e9patch** | CLI applies e9tool `before empty` to main ELF, then coerces runtime backend to ordinary ptrace | Sole instance in ptrace host | Reverie ptrace task | Same host process | Ptrace host |
 | **Reverie e9patch generic `Backend`** | AOT callback builds an injected frame and emits validated `SIGTRAP` | Sole instance in ptrace host | Reverie ptrace task | Same host process | Ptrace host |
@@ -148,10 +144,28 @@ replace-first LiteInst hook and defers execution to the trampoline; the
 trampoline later calls the tool host in ordinary context
 ([LiteInst dispatcher][lite-dispatcher]).
 
-That lane has the desired placement, but its documented generic-tool boundary
-is still single-process/single-thread. Generic Rust `Tool` code cannot run in
-SIGSYS context, so an unpatchable subscribed residual fails closed rather than
-falling back to the same tool. Hermit does not select this lane.
+That lane has the desired placement, but current main still rejects unsupported
+clone/fork/exec forms at its generic-tool boundary. Generic Rust `Tool` code
+cannot run in SIGSYS context, so an unpatchable subscribed residual fails closed
+rather than falling back to the same tool. Hermit does not select this lane.
+
+#### Active candidate stack, not current main
+
+The open [Reverie in-guest stack][lite-guest-pr] adds plain-fork state
+reconstruction and shared coordinator RPC, then layers per-thread RPC,
+quiescent patching, and a [lifecycle-only ptrace supervisor][lite-supervisor-pr].
+The supervisor deliberately runs `TracerBuilder<()>` with no syscall
+subscriptions: ptrace owns task discovery, vDSO patching, exact root status,
+descendant draining, and signal-death observation, while the guest-local `Tool`
+remains the sole syscall handler. The matching [Hermit integration
+stack][hermit-lite-guest-pr] stages a guest-resident `Detcore`.
+
+This is the strongest concrete model for e9patch convergence, but it is not yet
+landed. Its own PR boundary still lists thread clone/clone3/vfork, exec
+rebootstrap, an unpatchable-site slow path, PMU preemption, and end-to-end vDSO
+time routing as unsupported. It should be evaluated as an implementation
+candidate, not used to describe production LiteInst or make performance claims
+about current main.
 
 Backend-private LiteInst code includes LiteInst2 scanning, trampoline and live
 publication; guest patch allocation and straddler handling; the host handshake;
@@ -212,7 +226,7 @@ exceptions, direct-callback publication, residual classification, and
 
 ## DETLOG placement and transport
 
-`detlog!` is currently just `tracing::info!("DETLOG ...")`
+`detlog!` emits through tracing and, when installed, a process-local forwarder
 ([DETLOG macro][detlog-macro]). Detcore emits inbound and finish records inside
 `Tool::handle_syscall_event`
 ([inbound DETLOG][detlog-inbound], [finish DETLOG][detlog-finish]). Therefore the
@@ -223,19 +237,17 @@ physical process running the `Detcore` object is the emitting process:
 - **Hermit e9patch:** ptrace host.
 - **e9patch/LiteInst direct lanes:** guest preload DSO.
 
-Landed SaBRe main has a visibility defect rather than a placement ambiguity:
-the injected process does not install the controller's tracing subscriber, so
-plugin-local syscall DETLOG records are not forwarded into Hermit's verifier.
-The active SaBRe investigation produced [Hermit PR #1448][sabre-detlog-pr], which
-adds a process-local allocation-free/TLS-free raw sink and extracts those lines
-from diagnostic stderr. Its reported `/bin/ls` validation observed 281 DETLOG
-records and 138 finish records, and strict verify compared 277 syscall records
-per run. That PR is open and is not evidence about landed main behavior.
+SaBRe's guest plugin now installs a process-local allocation-free/TLS-free raw
+sink before constructing the adapter, and Hermit extracts those records from
+diagnostic stderr during verification ([landed SaBRe forwarder][sabre-forwarder],
+[Hermit PR #1448][sabre-detlog-pr]). Follow-up checks require syscall records
+and remove the forwarded lines from guest-visible stderr. This closes the prior
+visibility gap without moving the `Tool` out of the guest.
 
-The coordinated `audit_cross_backend_detlog` read also found that there is no
-true merged cross-process DETLOG stream today. PR #1448 appends captured guest
-records after the host log, so it establishes parity coverage but not semantic
-interleaving between host and guest events.
+The coordinated `audit_cross_backend_detlog` read still found no true merged
+cross-process DETLOG stream. The implementation appends normalized captured
+guest records after the host log, so it establishes parity coverage but not
+semantic interleaving between host and guest events.
 
 For convergence, copying diagnostic stderr is an acceptable short-term proof,
 not the final shared protocol. A common guest runtime should emit a framed
@@ -260,7 +272,7 @@ and framing belong in shared Reverie/Detcore transport.
 | Host launch/coordinator lifecycle | Hermit-private | Private `launch<T>` | Private `launch_direct<T>` | Duplicated between LiteInst/e9patch |
 | Patch implementation | External SaBRe loader | LiteInst2 live hooks | External e9tool/AOT payload | Intentionally private |
 | Signal/callback/thread lifecycle | SaBRe-private | Shared preload primitives plus LiteInst-private runtime | Shared preload primitives plus e9-private exceptions | Partial sharing only |
-| DETLOG forwarding | None on landed main; PR #1448 private sink | Host subscriber in production | Host subscriber in production | No guest-runtime transport shared by all three |
+| DETLOG forwarding | Landed backend-private raw stderr sink plus verifier extraction | Host subscriber in production | Host subscriber in production | No structured guest-runtime transport shared by all three |
 
 `reverie-preload` is already the correct mechanism/policy boundary for e9patch
 and LiteInst: it owns the seccomp filter, SIGSYS handler, trusted syscall gate,
@@ -288,6 +300,21 @@ level process-local tool session, coordinator contract, DETLOG sink, and
 lifecycle event model after those are separated from preload-specific frames.
 
 ## Recommendation: one guest-local tool runtime, three patch adapters
+
+The answer to "SaBRe-like or LiteInst-like?" is deliberately two-level:
+
+- **Placement and correctness model: SaBRe-like.** One process-local `Tool` and
+  `ThreadState` own every subscribed syscall; ptrace may supervise lifecycle and
+  coverage but never becomes a second policy owner.
+- **Implementation template: the in-guest LiteInst candidate.** Its direct
+  `ToolHost`, shared coordinator RPC, and no-subscription lifecycle supervisor
+  are already structurally close to e9patch's direct lane. E9patch should become
+  near-identical to that runtime, differing primarily in AOT patch creation,
+  provenance, residual discovery, and frame adaptation.
+
+Current production LiteInst is not the template: it has the same host-dispatch
+defect as e9patch. The target is specifically the guest-local LiteInst lane and
+its active lifecycle-supervisor work.
 
 ### 1. Extract behavior before changing placement
 
@@ -371,20 +398,25 @@ the same framing, filtering, and zero-record fail-closed check.
 
 ### 5. Migrate in controlled stages
 
-1. **Common-code extraction:** RPC wrapper, coordinator launcher, `ToolSession`,
-   and DETLOG transport. Prove no behavior change in existing direct lanes.
-2. **E9patch guest-local experimental lane in Hermit:** wire the existing direct
-   AOT callback to `Detcore`, initially behind an explicit non-default flag.
-3. **Lifecycle and residual completeness:** implement the thin supervisor and
-   ensure every subscribed event reaches the same guest tool session across
+1. **Stabilize the LiteInst candidate boundary:** land the guest-local Tool path
+   only with its lifecycle-only supervisor and explicit fail-closed unsupported
+   cases. Preserve a measured host-lane reference during migration.
+2. **Common-code extraction:** RPC wrapper, coordinator launcher, `ToolSession`,
+   and DETLOG transport. Prove no behavior change in LiteInst and both existing
+   direct lanes.
+3. **E9patch guest-local experimental lane in Hermit:** wire the existing direct
+   AOT callback to the exact shared session used by LiteInst, initially behind
+   an explicit non-default flag.
+4. **Lifecycle and residual completeness:** reuse the no-subscription supervisor
+   and ensure every subscribed event reaches the same guest tool session across
    DSOs, fork/clone/vfork, exec, vDSO, signals, and mapping changes.
-4. **Production switch:** require ptrace output parity, strict verify, full
+5. **Production switch:** require ptrace output parity, strict verify, full
    corpus compatibility, zero host `handle_syscall_event` calls, nonzero
    guest-forwarded DETLOG, and same-host performance attribution before making
    guest-local e9patch the default.
-5. **LiteInst migration:** replace Hermit's ptrace-owned LiteInst tool with the
-   same `ToolSession`; retain LiteInst2 only as its patch adapter.
-6. **SaBRe consolidation:** adapt `RemoteReverieAdapter` to the shared
+6. **Retire LiteInst host dispatch:** after the guest lane covers the supported
+   production envelope, retain LiteInst2 only as its patch adapter.
+7. **SaBRe consolidation:** adapt `RemoteReverieAdapter` to the shared
    coordinator/session/DETLOG pieces while retaining SaBRe callback, loader,
    memory, signal, and patch code.
 
@@ -434,14 +466,59 @@ policy in-process. Preserve e9patch's AOT rewriter and measure each migration
 stage; do not replace it with the SaBRe loader merely to obtain SaBRe-like
 placement.
 
+## Performance hypothesis and attribution protocol
+
+**Hypothesis, not a result:** a complete guest-local patching backend could be
+the performance leader for syscall-heavy steady-state workloads. Like gVisor's
+systrap/usertrap fast path, it can avoid a ptrace stop and host context switch,
+and unlike KVM it requires no hardware virtualization. SaBRe already has the
+right Tool placement; LiteInst can patch dynamically; e9patch can amortize an
+AOT rewrite. None is yet evidence that the full deterministic system wins:
+guest callbacks still execute Detcore policy, may block on coordinator UDS RPC,
+and must pay for residual handling, signals, mapping changes, and lifecycle
+coverage. The gVisor analogy also does not imply equivalent security or syscall
+coverage; systrap combines its patched fast path with a fail-closed interception
+floor.
+
+Future leader claims must report these costs separately:
+
+1. **Instrumentation cost:** run native, gVisor, and every backend under the
+   same one-CPU affinity/cpuset, with the same workload, warmup, repetitions,
+   and absolute wall-time or ns/op anchors. A minimal counter Tool isolates
+   event-transport cost; it does not represent Hermit determinization.
+2. **Determinization cost:** on that same single-CPU allocation, report Hermit
+   relaxed and strict modes separately. Attribute the delta from the matching
+   counter/direct lane to Detcore policy, scheduling, logging, and coordinator
+   RPC rather than to patching alone.
+3. **Sequentialization cost:** run a separate 1-to-N CPU scaling experiment.
+   Hermit serializes guest-thread execution, so a parallel program can lose its
+   N-core speedup before instrumentation overhead is counted. Report native and
+   backend absolute times at each CPU count and the lost scaling factor; never
+   fold this opportunity cost into an "instrumentation slowdown."
+4. **Startup versus steady state:** split cold e9tool preprocessing, first-hit
+   SIGSYS/patch installation, and already-patched syscall time. Report patch
+   coverage and residual/fallback counts beside timings.
+5. **Semantic envelope:** require comparable syscall/vDSO/signal/lifecycle
+   coverage, strict-verify evidence where claimed, zero host
+   `handle_syscall_event` calls for the guest-local configuration, and a
+   fail-closed account of every unpatchable subscribed site.
+
+This matrix may show that a patcher beats ptrace, DBI, or KVM on a particular
+steady-state workload. Until the single-core instrumentation result, the
+separate N-core sequentialization result, and the coverage counters all exist,
+that remains a workload-specific hypothesis rather than an architectural fact.
+
 ## Validation notes
 
 - Traced every production selector to the concrete `Tool::handle_syscall_event`
   call rather than relying on docs or backend enum names.
-- Compared Hermit's pinned Reverie code with current Reverie main; the placement
-  paths are unchanged.
-- Reviewed the active `audit_cross_backend_detlog` coordination task and open
-  SaBRe forwarder PR #1448. No contrary placement evidence was posted.
+- Compared Hermit's pinned Reverie code with current Reverie main; the production
+  placement paths are unchanged.
+- Reviewed the active in-guest LiteInst PR stack and kept it explicitly separate
+  from current-main architecture.
+- Rechecked the coordinated `audit_cross_backend_detlog` finding after the SaBRe
+  forwarder landed: visibility is fixed, but host/guest records are not a
+  semantically interleaved stream.
 - An exact Hermit `c7531a83` binary smoke was not suitable as independent
   multi-backend proof: its SaBRe feature was absent, LiteInst failed its runtime
   activation handshake in this environment, and `/bin/true` reported zero
@@ -451,31 +528,35 @@ placement.
 
 [pr-324]: https://github.com/rrnewton/reverie/pull/324
 [sabre-detlog-pr]: https://github.com/rrnewton/hermit/pull/1448
-[hermit-sabre-launch]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/lib.rs#L988-L1096
-[detcore-sabre-intro]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/detcore-sabre/src/lib.rs#L9-L27
-[detcore-sabre-plugin]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/detcore-sabre/src/lib.rs#L139-L250
-[sabre-callback]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/experimental/reverie-sabre/src/callbacks.rs#L497-L567
-[sabre-adapter]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/experimental/reverie-sabre/src/reverie_adapter.rs#L422-L568
-[sabre-guest]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/experimental/reverie-sabre/src/reverie_adapter.rs#L1071-L1119
-[sabre-supervisor]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/sabre_ptrace.rs#L351-L424
-[hermit-dispatch]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/lib.rs#L1509-L1545
-[lite-host-api]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-liteinst/src/backend.rs#L192-L274
-[lite-ptrace-trap]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-ptrace/src/task.rs#L2209-L2388
-[ptrace-injected-dispatch]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-ptrace/src/task.rs#L2010-L2088
-[lite-direct-launch]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-liteinst/src/backend.rs#L352-L446
-[lite-tool-host]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-liteinst/src/tool_host.rs#L72-L260
-[lite-dispatcher]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-liteinst/src/runtime.rs#L1620-L1701
-[hermit-e9-selection]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/bin/hermit/run.rs#L1639-L1650
-[hermit-e9-prep]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/bin/hermit/run.rs#L2296-L2339
-[hermit-e9-rewrite]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/hermit-cli/src/e9patch.rs#L264-L312
-[e9-rewrite]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/rewrite.rs#L197-L297
-[e9-backend-contract]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/backend.rs#L372-L458
-[e9-generic-run]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/backend.rs#L988-L1005
-[e9-direct-launch]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/backend.rs#L802-L935
-[e9-aot-callback]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/aot.rs#L162-L195
-[e9-tool-host]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-e9patch/src/tool_host.rs#L72-L373
-[detlog-macro]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/detcore/src/detlog.rs#L13-L29
-[detlog-inbound]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/detcore/src/lib.rs#L1413-L1428
-[detlog-finish]: https://github.com/rrnewton/hermit/blob/c7531a837a65d388707e3b14642a6ba36b660267/detcore/src/lib.rs#L2195-L2203
-[preload-dispatch]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-preload/src/dispatch.rs#L9-L30
-[preload-lifecycle]: https://github.com/rrnewton/reverie/blob/ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4/reverie-preload/src/lifecycle.rs#L9-L108
+[lite-guest-pr]: https://github.com/rrnewton/reverie/pull/326
+[lite-supervisor-pr]: https://github.com/rrnewton/reverie/pull/337
+[hermit-lite-guest-pr]: https://github.com/rrnewton/hermit/pull/1451
+[sabre-forwarder]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L34-L116
+[hermit-sabre-launch]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/lib.rs#L988-L1096
+[detcore-sabre-intro]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L9-L27
+[detcore-sabre-plugin]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L139-L250
+[sabre-callback]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/experimental/reverie-sabre/src/callbacks.rs#L497-L567
+[sabre-adapter]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/experimental/reverie-sabre/src/reverie_adapter.rs#L422-L568
+[sabre-guest]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/experimental/reverie-sabre/src/reverie_adapter.rs#L1071-L1119
+[sabre-supervisor]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/sabre_ptrace.rs#L351-L424
+[hermit-dispatch]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/lib.rs#L1509-L1545
+[lite-host-api]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-liteinst/src/backend.rs#L192-L274
+[lite-ptrace-trap]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-ptrace/src/task.rs#L2209-L2388
+[ptrace-injected-dispatch]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-ptrace/src/task.rs#L2010-L2088
+[lite-direct-launch]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-liteinst/src/backend.rs#L352-L446
+[lite-tool-host]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-liteinst/src/tool_host.rs#L72-L260
+[lite-dispatcher]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-liteinst/src/runtime.rs#L1620-L1701
+[hermit-e9-selection]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/bin/hermit/run.rs#L1710-L1719
+[hermit-e9-prep]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/bin/hermit/run.rs#L2513-L2555
+[hermit-e9-rewrite]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/e9patch.rs#L264-L312
+[e9-rewrite]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/rewrite.rs#L197-L297
+[e9-backend-contract]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/backend.rs#L372-L458
+[e9-generic-run]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/backend.rs#L988-L1005
+[e9-direct-launch]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/backend.rs#L802-L935
+[e9-aot-callback]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/aot.rs#L162-L195
+[e9-tool-host]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-e9patch/src/tool_host.rs#L72-L373
+[detlog-macro]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore/src/detlog.rs#L13-L53
+[detlog-inbound]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore/src/lib.rs#L1444-L1459
+[detlog-finish]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore/src/lib.rs#L2247-L2257
+[preload-dispatch]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-preload/src/dispatch.rs#L9-L30
+[preload-lifecycle]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-preload/src/lifecycle.rs#L9-L108
