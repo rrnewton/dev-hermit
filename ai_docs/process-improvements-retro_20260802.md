@@ -15,7 +15,7 @@ landed `98149f7f`).
 
 ---
 
-## The seven failure modes
+## The nine failure modes
 
 Each entry: **what happened** (with evidence) → **root cause** → **the rule** →
 **where it's wired**.
@@ -180,6 +180,75 @@ truth is verifiable.
 **Wired:** `AGENTS.md` Task Lifecycle (IMPLEMENTED-tag vs coordinator-close);
 `hermit-coord` skill (evidence bound to commits).
 
+### 8. CI-runner-queue-throttle misdiagnosed as a code regression
+
+**What happened.** The `Privileged capability and E2E tests` gate went red on
+main HEAD `c7531a83` — the `e2e.manifest_applications` KVM bucket
+(kvm-python-examples + kvm-shell-environment) **timed out at 120s**. It was
+initially suspected as a regression from the only code change in that commit
+(`tests/c/proc_fd_link_aliases.c`, a proc-fd fixture — a *different* category).
+Ground truth said otherwise: the **same** bucket ran in **38s** at `0c6cda68`
+(run 30740034325, 7/7 DAG pass in 141.7s) and **120s TIMEOUT** at `c7531a83`
+(run 30740048407) — two runs **27s apart on the same single self-hosted runner**.
+A burst of ~7 commits landed 08:32–08:34 (LiteInst ratchet series + `c7531a83`),
+so **4 superseded privileged runs were cancelled mid-build and hammered the one
+flock'd runner**; the KVM bucket inflated 38s→120s under that load. Fix-forward
+was `gh run rerun … --failed` on an unloaded runner (green), plus the systemic
+follow-up `timeout-headroom-and-load-relative` (agent-utils PR #4, load-relative
+`cpu_timeout`).
+
+**Root cause.** Hermit's privileged/PMU tests run on a **single serialized
+(flock'd) self-hosted runner**. A landing burst cancels in-flight runs and stacks
+concurrent builds on that one host, so wall-clock-sensitive buckets time out from
+**contention**, not correctness. A fixed 120s per-bucket wall is too thin under
+burst load.
+
+**The rule — diagnose the runner queue before blaming code.**
+- A timeout (not an assertion failure) on the single privileged/PMU runner during
+  a landing burst is a **load/queue artifact** until proven otherwise. Check for
+  concurrent/cancelled runs and the **same bucket's baseline timing on a quiet
+  runner** before calling it a regression.
+- A timeout in a bucket **unrelated to the commit's changed category** is a strong
+  contention signal.
+- Fix-forward with `rerun --failed` on a quiet runner; escalate the systemic wall
+  to **load-relative timeouts**, do not weaken the correctness assertion.
+- Structurally: **throttle** what fires at the serialized runner (serialize the
+  land/CI step; rebasing in parallel is fine, firing CI is not) rather than
+  letting N agents saturate it — the mass-parallel-drain cancellation cascade.
+
+**Wired:** `ci-debugging` skill (new "Runner-queue contention vs code" section);
+`hermit-ci` role skill references it.
+
+### 9. Per-PR rebase churn instead of fixing the common red cause
+
+**What happened.** With **224 open PRs** and main red, the tempting response is to
+rebase/re-run every PR. Ground truth showed the reds had **single common causes**,
+not per-PR causes: (a) the `Reverie pin is current` freshness gate flapped **every**
+PR and main red because one pin was stale (`b9a7fa77` vs reverie main `ef5ffebc`)
+— one product pin-bump clears it for all; (b) the "conflict-free-CI-refactor
+thesis" was **confirmed** by counting touched paths across all 224 PRs: only 3
+touch `.github/workflows/*`, 2 touch `ci/test_harness.sh`, **0** touch
+`run-dag.sh`/`safe-ci-dag`. A CI-DAG architecture fix can land to main **once**
+with near-zero rebase conflict, and the other ~222 product PRs **inherit** it on
+their normal rebase.
+
+**Root cause.** Treating a shared-infrastructure failure as N independent PR
+failures. Rebasing 224 branches to chase one stale pin or one CI bug is O(N)
+wasted cycles for an O(1) root fix.
+
+**The rule — fix the common cause once, at the root.**
+- When main or many PRs are red, first **classify shared-cause vs per-PR-cause**:
+  count which PRs actually touch the failing surface (`gh pr list` + path grep).
+- If the cause is shared (a stale pin, one broken commit, a CI-config bug), fix it
+  **once at the root** and let PRs inherit it on rebase — do not rebase each PR to
+  work around it.
+- Only genuinely per-PR failures (real content conflicts) get individual rebases.
+- Land shared CI/infra refactors **before** a big landing sprint so the fleet
+  inherits them conflict-free.
+
+**Wired:** `ci-debugging` skill (new "Common cause vs per-PR" section);
+`hermit-lander` skill (land shared fixes before sprints).
+
 ---
 
 ## Skill-wiring summary
@@ -193,17 +262,25 @@ truth is verifiable.
 | know-the-gating-model | ci-debugging, hermit-lander | ci-debugging done (#1493) |
 | install-deps-asserts-toolchain | Makefile + AGENTS.md | **landed** (`718d83d3`, `826f64e8`) |
 | ground-truth-not-chatter | AGENTS.md, hermit-coord | AGENTS.md done; coord to reinforce |
+| diagnose-runner-queue-before-code | ci-debugging, hermit-ci | wiring this pass |
+| fix-common-cause-once | ci-debugging, hermit-lander | wiring this pass |
 
-The highest-leverage remaining wiring is a single consolidated `hermit-coord`
-skill update covering rules 1, 2, 3, 4, and 7 (coordinator-facing); it is a
-docs-only PR against `rrnewton/hermit:main`.
+Wired this pass: `ci-debugging` skill gains "Runner-queue contention vs code" and
+"Common cause vs per-PR" sections; `hermit-coord` skill gains the coordinator
+rules 1, 2, 3, 4, and 7. Both land as one docs-only PR against
+`rrnewton/hermit:main`.
 
 ## Bottom line
 
-Today's blockers were overwhelmingly **process**, not product: warm-state
-misreads, deliberation instead of execution, poking healthy agents, unverified
-blocker narratives, gating-model confusion, a provisioning gap read as a code
-bug, and chatter read as ground truth. Six of seven now have a concrete rule; two
-(toolchain preflight, gating-model + blocker-interrogation) are already landed or
-wired. The structural fix for the gating confusion is `adopt-github-merge-queue`,
-which this retro unblocks.
+Today's and tonight's blockers were overwhelmingly **process**, not product:
+warm-state misreads, deliberation instead of execution, poking healthy agents,
+unverified blocker narratives, gating-model confusion, a provisioning gap read as
+a code bug, chatter read as ground truth, a runner-queue contention timeout
+misread as a regression, and per-PR rebase churn where one root fix would do.
+**Nine** failure modes now have a concrete rule; the toolchain preflight and
+gating-model fixes are landed, and the CI/coordinator rules are wired into the
+`ci-debugging`, `hermit-coord`, `hermit-ci`, and `hermit-lander` skills. The
+structural fix for the gating and mass-drain confusion is
+`adopt-github-merge-queue`, which this retro unblocks: a real merge queue both
+removes the dual-gate confusion **and** throttles what fires at the serialized
+runner, addressing modes 5, 8, and 9 at once.
