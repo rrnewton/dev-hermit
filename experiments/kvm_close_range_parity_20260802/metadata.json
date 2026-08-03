@@ -1,0 +1,14 @@
+{
+  "experiment": "kvm_close_range_parity_20260802",
+  "date": "2026-08-02",
+  "reverie_sha": "d740edd5e8baa9ddb971cc072d901a6ad1cb9f6d",
+  "reverie_base_sha": "b9a7fa777e902ef937766e2db7c1a333b1e15e31",
+  "pr": "https://github.com/rrnewton/reverie/pull/340",
+  "branch": "codex/kvm-close-range-parity",
+  "backend": "kvm",
+  "assurance_level": "L0",
+  "command": "cargo test -p reverie-kvm",
+  "result": "190/190 pass; fmt+clippy clean",
+  "corpus_cell": "c-programs/syscall-quick-wins",
+  "host": "devbig; real /dev/kvm"
+}

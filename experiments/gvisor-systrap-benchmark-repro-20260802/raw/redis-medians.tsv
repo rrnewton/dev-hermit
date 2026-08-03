@@ -1,0 +1,9 @@
+tier	backend	repetitions	median_scaled_250k_ms	local_native_slowdown	blog_same_tier_ms
+native	native	3	1158.000	1.000	17250
+counter2	ptrace	3	16920.004	14.611	58750
+counter2	dbi	3	4769.000	4.118	NA
+counter2	sabre	3	1586.000	1.370	NA
+relaxed	ptrace	3	40846.002	35.273	NA
+relaxed	sabre	3	87403.114	75.478	NA
+relaxed	e9patch	3	38114.985	32.915	NA
+strict	dbi	3	93731.957	80.943	NA

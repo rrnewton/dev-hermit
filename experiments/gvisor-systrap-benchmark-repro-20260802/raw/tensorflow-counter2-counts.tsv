@@ -1,0 +1,6 @@
+workload	total_syscalls	processes	threads
+2_BasicModels-gradient_boosted_decision_tree.py	14163955	5	1126
+2_BasicModels-kmeans.py	810768	5	1039
+2_BasicModels-logistic_regression.py	1355433	5	1036
+2_BasicModels-nearest_neighbor.py	737458	5	1029
+2_BasicModels-random_forest.py	1116342	5	1034

@@ -1,0 +1,9 @@
+tier	backend	workload	elapsed_seconds	rc
+native	native	2_BasicModels/gradient_boosted_decision_tree.py	86.19	0
+native	native	2_BasicModels/kmeans.py	6.77	0
+native	native	2_BasicModels/logistic_regression.py	6.99	0
+native	native	2_BasicModels/nearest_neighbor.py	1.71	0
+native	native	2_BasicModels/random_forest.py	3.35	0
+native	native	3_NeuralNetworks/convolutional_network.py	26.47	0
+native	native	3_NeuralNetworks/multilayer_perceptron.py	11.77	0
+native	native	3_NeuralNetworks/neural_network.py	3.25	0

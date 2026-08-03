@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "host": "devbig014.atn7.facebook.com",
+  "framework": {
+    "repository": "rrnewton/reverie",
+    "source_sha": "36ce950a5c4207046c62efbd2904d5c808a4238f",
+    "pull_request": "https://github.com/rrnewton/reverie/pull/331",
+    "merge_sha": "a9f25aa7a19faeb716b69e463e92c7160ab48c03",
+    "run_id": "20260802T042358Z"
+  },
+  "getpid": {
+    "hermit_source_sha": "8c83575217a341af17232e6f50c7717eb17a0211",
+    "reverie_consumer_sha": "2b2532314eefd90b92cca94f4294a4fed65de33f",
+    "source": "../gvisor-systrap-benchmark-repro-20260802/raw/getpid-summary.tsv"
+  },
+  "method": "difference of backend-minus-native overhead divided by the difference in exact counter2 totals",
+  "assurance": "Reverie-only performance/correctness measurement; no Hermit determinism level claimed"
+}
+

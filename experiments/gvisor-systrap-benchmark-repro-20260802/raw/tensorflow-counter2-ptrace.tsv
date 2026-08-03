@@ -1,0 +1,7 @@
+tier	backend	workload	elapsed_seconds	rc
+counter2	ptrace	2_BasicModels/gradient_boosted_decision_tree.py	692.69	0
+counter2	ptrace	2_BasicModels/kmeans.py	36.07	0
+counter2	ptrace	2_BasicModels/logistic_regression.py	47.60	0
+counter2	ptrace	2_BasicModels/nearest_neighbor.py	29.63	0
+counter2	ptrace	2_BasicModels/random_forest.py	47.38	0
+counter2	ptrace	3_NeuralNetworks/convolutional_network.py	900.03	124

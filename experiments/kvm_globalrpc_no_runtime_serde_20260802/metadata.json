@@ -1,0 +1,24 @@
+{
+  "experiment": "kvm_globalrpc_no_runtime_serde_20260802",
+  "date": "2026-08-02",
+  "task": "verify_kvm_global_state",
+  "question": "Does the KVM global-state RPC path invoke serde serialize/deserialize at runtime, or is it a direct in-address-space call (like ptrace release)?",
+  "verdict": "PROPERTY HOLDS — KVM global-state RPC is a direct in-process async call; no runtime serde in release or debug. Not a KVM perf bug.",
+  "reverie_origin_main_sha": "ef5ffebccb7e4bfd0e82a2bc7bc703c2ed6212a4",
+  "reverie_checkout_sha": "63f23f3fbefa311dfae9f8ac22e9312d1439be8e",
+  "rpc_path_files_vs_main": "reverie-kvm/src/runtime.rs, reverie-kvm/Cargo.toml, reverie-ptrace/src/task.rs are byte-identical to origin/main; finding is a property of main (checkout branch only adds an executor unit test elsewhere)",
+  "host": "devbig; /dev/kvm present + world-rw (crw-rw-rw- root kvm)",
+  "evidence": {
+    "source_kvm_send_rpc": "reverie-kvm/src/runtime.rs:333-336 (KvmGlobal) and :405-414 (KvmGuest) both call receive_rpc(tid, message) directly; message passed by value; global_state is &T::GlobalState / Arc<T::GlobalState> (same address space)",
+    "source_ptrace_debug_only": "reverie-ptrace/src/task.rs:5507 WrappedFrom::send_rpc round-trips through bincode ONLY under cfg!(debug_assertions); release passes args directly",
+    "dep_graph": "reverie-kvm/Cargo.toml has no reverie-rpc-transport dep; cargo tree -p reverie-kvm -i bincode shows bincode reaches kvm only via reverie-process (container bootstrap), not RPC",
+    "call_site_census": "grep -rn bincode::serde reverie*/src/ — RPC serialize sites are in reverie-rpc-transport/codec.rs, reverie-dbi/sync_rpc.rs, reverie-preload/rpc.rs, reverie-ptrace debug round-trip, gdbstub, container bootstrap; ZERO in reverie-kvm",
+    "runtime_test": "cargo test -p reverie-kvm --test counter => 3 passed in 0.06s incl hierarchical_counter_aggregates_per_process (cross-process global RPC via receive_rpc on real /dev/kvm guest)",
+    "link_artifact": "nm target/debug/deps/counter-<hash>: reverie_rpc_transport symbol count = 0; KvmGlobal/KvmGuest send_rpc symbols present + monomorphized"
+  },
+  "adjacent_findings": [
+    "reverie-dbi (sync_rpc.rs) and reverie-preload/liteinst (rpc.rs) DO serialize RPC at runtime in all builds (genuinely out-of-process); possible overhead contributor there, NOT KVM",
+    "reverie/CLAUDE.md architecture table is stale: claims KVM runs GlobalState in a coordinator process over reverie-rpc-transport (UDS+bincode); actual code runs it in-process via direct call — recommend doc correction"
+  ],
+  "assurance_level": "code-trace + dependency-graph + call-site census + runtime backend-test (real KVM guest) + link-level symbol check"
+}

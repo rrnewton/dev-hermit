@@ -23,7 +23,23 @@
   "method": "min-of-3 wall-clock via /usr/bin/time -o FILE -f %e; guest stdout/stderr to /dev/null; ratio (not absolute) is the trustworthy signal on a loaded shared host",
   "workloads": {
     "startup_tax": "/bin/true (fixed backend attach/teardown cost, ~no guest syscalls of interest)",
-    "per_syscall": "syscall_loop 100000 (tight raw SYS_getpid loop; every iteration crosses the backend)"
+    "per_syscall": "syscall_loop 100000 (tight raw SYS_getpid loop; every iteration crosses the backend)",
+    "branch_bound": "branch_heavy 2000000 (sum of Collatz step counts over 1..2e6; ~745M counted branches, ~37 syscalls; syscall-free hot loop that isolates DBI per-branch translation cost)"
   },
-  "caveat": "CPU-bound microbenchmarks (e.g. a pure arithmetic loop) measured 0.00s under both backends at 100M iters and are NOT reported here: they fall below /usr/bin/time's 10ms resolution and are an unreliable artifact. Only the syscall-interception numbers are reported."
+  "ab_counter_variants": {
+    "purpose": "Test whether the unconditional per-branch DRX_COUNTER_LOCK counter in reverie-dbi/native/client.c (~line 815) is the DBI compute-slowness. Refuted.",
+    "runtime_selector_env": "REVERIE_DBI_CLIENT (launcher CLIENT_ENV; NOT HERMIT_DBI_CLIENT, which the launcher ignores)",
+    "variants_min_of_5_branch_heavy_2e6_s": {
+      "baseline_DRX_COUNTER_64BIT_LOCK": 5.35,
+      "patched_DRX_COUNTER_64BIT_no_lock": 5.36,
+      "nocount_diagnostic_no_update": 5.37
+    },
+    "conclusion": "Removing the lock, and removing the entire counter update, both yield NO speedup (within noise). The counter is not the bottleneck; DynamoRIO per-branch code-cache dispatch is. No reverie-dbi lock-removal PR is warranted on perf grounds."
+  },
+  "results_branch_heavy_2e6_min_of_5_s": {
+    "native": 0.48,
+    "ptrace": 0.49,
+    "dbi": 5.35,
+    "dbi_vs_ptrace": "~11x slower (structural DBI translation cost on syscall-free compute; ptrace runs pure compute at native speed)"
+  }
 }

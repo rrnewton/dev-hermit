@@ -1,0 +1,2 @@
+counter2-local thread=2666150 syscalls=92
+ [counter tool] Total system calls in process tree: 92, from 1 processes, 1 thread(s).

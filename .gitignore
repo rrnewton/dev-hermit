@@ -68,6 +68,15 @@
 /experiments/**/vmlinux
 /experiments/**/initramfs*.cpio*
 
+# Compiled experiment fixtures are rebuilt from their checked-in *.c source;
+# never commit the extensionless ELF binaries produced next to it.
+/experiments/dbi_perf_leader_baseline_20260801/src/branch_heavy
+/experiments/dbi_perf_leader_baseline_20260801/src/syscall_loop
+
+# Heavy raw preempt-traces are bulk scratch evidence; keep the experiment's
+# README/CSV/JSON summary in-tree and leave multi-MiB traces untracked.
+/experiments/**/*.preempt-trace.txt
+
 # Transient tooling output
 **/__pycache__/
 /debug/

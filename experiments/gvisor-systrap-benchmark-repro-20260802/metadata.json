@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-08-02T08:57:12Z",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 #1 SMP PREEMPT Mon Jul 20 10:58:40 PDT 2026 x86_64",
+  "cpu_model": "AMD EPYC 9D85 158-Core Processor",
+  "logical_cpus": 316,
+  "load_average_at_capture": "36.21 54.64 75.01",
+  "repositories": {
+    "parent": "6db506a5678e1d6afe253610d4fdb084d25e59ea",
+    "reverie": "2b2532314eefd90b92cca94f4294a4fed65de33f",
+    "hermit_binary_source": "8c83575217a341af17232e6f50c7717eb17a0211",
+    "gvisor": "012cf0b0b14d7b8aa2a4424867ecec8e6121e69d",
+    "gvisor_blog_source": "1aa75b6714eeac860e52e4fb492b16964ff58fce"
+  },
+  "binaries": {
+    "hermit_version": "hermit 0.2.0 (2026-08-02, g8c83575217a3)",
+    "hermit_sha256": "7d6d3b9dbc830e4087e84d8397a3e06b6d4128b410e312755bc9b6e355328d1a",
+    "counter2_sha256": "51b4ae7e9ad75a9f0843192217bf444bf5a237e6174fa6c148ed067d78303820",
+    "counter2_workload_source_sha256": "aa899722f226dd21e85d04a3ecf728f9715309e1bb37de83b7dc68a40b36c191"
+  },
+  "images": {
+    "absl": "sha256:5f3c919fd4d1bef9c220345cb577efd3bfa6c3656420c82f63d6b3108ffe05a0",
+    "tensorflow": "sha256:7accf29be680e86d4cf0abe88fcc711cd6dac1d07b488466fcd73b21c54345f7",
+    "redis": "sha256:7f3745cd93de68d0cff864d37f409b1ff6abaa18b051f1b3248bfd530b35cb7e",
+    "ffmpeg": "sha256:14ddfe863d28ac20b27aceb4eaf3a2ed5a0dc9269fb3952d6995e4de3c99df46"
+  },
+  "workloads": {
+    "absl": {
+      "bazel": "7.3.2",
+      "abseil_commit": "79e414672f447ac1b27f8cb27ad61df315a3792b"
+    },
+    "tensorflow": {
+      "python": "2.7.15+",
+      "tensorflow": "1.13.2",
+      "examples_commit": "6dcbe14649163814e72a22a999f20c5e247ce988"
+    },
+    "redis": {
+      "server": "6.2.22",
+      "requests": 250000,
+      "clients": 5,
+      "operation": "SET"
+    },
+    "ffmpeg": {
+      "version": "4.4.2-0ubuntu0.22.04.1",
+      "input_sha256": "819674d370950776a26d740b0275fe04951f03fcb072fd165a23c1b444d69037"
+    }
+  },
+  "blog": {
+    "url": "https://gvisor.dev/blog/2023/04/28/systrap-release/",
+    "getpid_ns": {
+      "linux": 239,
+      "ptrace": 15400,
+      "systrap_unoptimized": 2376,
+      "systrap_optimized": 1017
+    },
+    "application_ms": {
+      "absl": {
+        "native": 21744,
+        "ptrace": 49316,
+        "systrap": 33277
+      },
+      "ffmpeg": {
+        "native": 74331,
+        "ptrace": 82084,
+        "systrap": 78970
+      },
+      "tensorflow": {
+        "native": 86056,
+        "ptrace": 110461,
+        "systrap": 100233
+      },
+      "redis_set_250k_c5": {
+        "native": 17250,
+        "ptrace": 58750,
+        "systrap": 24750
+      }
+    }
+  },
+  "limits": {
+    "application_timeout_seconds": 900,
+    "repetitions": "3 where practical; 1 plus timeout for expensive cells",
+    "raw_media_committed": false,
+    "container_roots_committed": false
+  }
+}

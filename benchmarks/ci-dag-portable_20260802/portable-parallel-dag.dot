@@ -1,0 +1,66 @@
+digraph portable_parallel {
+  rankdir=LR;
+  labelloc="t";
+  fontname="Helvetica"; fontsize=16;
+  label="Hermit portable CI — parallel fan-out (ci-portable-parallel.yml)\nnode label = GitHub job; est wall from step_profiles.csv @c7531a83 (cold rust-cache); target: every job < 10 min";
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11];
+  edge [color="#555555"];
+
+  // ---- cheap roots ----
+  plan       [label="plan\nshard matrices + coverage guard\n~1 min", fillcolor="#e8eaf6"];
+  preflight  [label="preflight\nfmt + backend-abstraction + portability\n~2 min", fillcolor="#e8eaf6"];
+
+  // ---- build stage (split so no build job > ~10 min) ----
+  subgraph cluster_build {
+    label="build once  (split: dbi long pole = 564s)"; style="rounded,filled"; fillcolor="#fff8e1"; fontname="Helvetica";
+    build_debug [label="build-debug\nworkspace(241) + guests + nextest\n+ enumerate e2e cells\n~6 min", fillcolor="#ffe0b2"];
+    build_dbi   [label="build-dbi\nbuild.dbi_release = 564s  (LONG POLE)\n~10 min (cold)", fillcolor="#ffcc80"];
+    build_aux   [label="build-aux\nsabre(68)+liteinst(79) release\nwarm on dbi cache+artifact\n~8 min", fillcolor="#ffe0b2"];
+  }
+  build_dbi -> build_aux;
+
+  // ---- debug-backed test shards (parallel; need build-debug) ----
+  subgraph cluster_debug {
+    label="test-debug shards  (prebuilt debug tree + rust-cache)"; style="rounded,filled"; fillcolor="#e8f5e9"; fontname="Helvetica";
+    s_unit    [label="unit\nhermit+detcore unit+misc\n~3 min", fillcolor="#c8e6c9"];
+    s_unitp   [label="unit-parallel\ndetcore_parallel+regular_crates\n~2 min", fillcolor="#c8e6c9"];
+    s_integ   [label="integration\nintegration+cli+arbitrary+apps_e2e\n~5 min", fillcolor="#c8e6c9"];
+    s_modes   [label="modes\nhermit_modes+app_strict_verify\n~3 min", fillcolor="#c8e6c9"];
+    s_sv      [label="strict-verify\ncmd_strict+ignored_syscall+envelope+rr\n~4 min", fillcolor="#c8e6c9"];
+    s_clippy  [label="clippy\n~3 min", fillcolor="#c8e6c9"];
+    s_docs    [label="docs\ndoctests+rustdoc\n~2 min", fillcolor="#c8e6c9"];
+    s_compat  [label="strict-compat\ntest.strict_compat = 235s\n~6 min", fillcolor="#a5d6a7"];
+  }
+
+  // ---- release-backed test shards ----
+  subgraph cluster_release {
+    label="test-release shards"; style="rounded,filled"; fillcolor="#e3f2fd"; fontname="Helvetica";
+    r_dbi   [label="dbi-parity\ntest.dbi_parity\n~2 min", fillcolor="#bbdefb"];
+    r_sabre [label="sabre\ntest.sabre_examples = 43s\n~2 min", fillcolor="#bbdefb"];
+    r_lite  [label="liteinst\ntest.liteinst_strict = 52s\n~2 min", fillcolor="#bbdefb"];
+  }
+
+  // ---- e2e cells (13, reuse #1447 --prebuilt pattern) ----
+  e2e [label="e2e matrix\n13 (category x backend) cells\ndebug+release prebuilt trees\n~3-5 min each", shape=box3d, fillcolor="#f3e5f5"];
+
+  cleanup [label="cleanup\ndelete short-lived artifacts", fillcolor="#eceff1"];
+
+  // ---- edges: build-debug -> debug shards ----
+  build_debug -> s_unit; build_debug -> s_unitp; build_debug -> s_integ; build_debug -> s_modes;
+  build_debug -> s_sv; build_debug -> s_clippy; build_debug -> s_docs; build_debug -> s_compat;
+  plan -> s_unit [style=dotted]; plan -> s_compat [style=dotted];
+
+  // ---- release shard deps ----
+  build_dbi -> r_dbi;
+  build_aux -> r_sabre; build_aux -> r_lite;
+
+  // ---- e2e deps ----
+  build_debug -> e2e; build_aux -> e2e;
+
+  // ---- cleanup collects everything ----
+  s_compat -> cleanup [style=dashed]; s_integ -> cleanup [style=dashed];
+  r_lite -> cleanup [style=dashed]; e2e -> cleanup [style=dashed];
+  build_dbi -> cleanup [style=dashed];
+
+  { rank=same; plan; preflight; build_debug; build_dbi; }
+}

@@ -1,0 +1,11 @@
+tier	backend	repetition	elapsed_seconds	rc	output_bytes
+native	native	1	24.07	0	11300986
+counter2	ptrace	1	26.86	0	11300986
+relaxed	ptrace	1	112.46	0	11293714
+native	native	2	24.10	0	11300986
+counter2	ptrace	2	27.02	0	11300986
+relaxed	ptrace	2	113.70	0	11293714
+native	native	3	23.93	0	11300986
+counter2	ptrace	3	26.64	0	11300986
+relaxed	ptrace	3	112.09	0	11293714
+counter2	dbi	1	900.00	124	10485808

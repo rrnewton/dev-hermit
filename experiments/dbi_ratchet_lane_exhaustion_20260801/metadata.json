@@ -1,0 +1,44 @@
+{
+  "experiment": "dbi_ratchet_lane_exhaustion_20260801",
+  "question": "Which previously-failing DBI compat cells can still be closed by a hermit-side, non-owner-gated backend-parity change from the hermit-only dbt-compat slot?",
+  "date": "2026-08-01",
+  "host": {
+    "name": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "logical_cpus": 316,
+    "note": "shared/load-noisy; outcomes are categorical pass/fail so load does not affect the conclusion"
+  },
+  "hermit": {
+    "sweep_sha": "b1867d8b2f85935b40527ebaaaccf654abc2f05d",
+    "branch": "codex/detcore-per-syscall-config-clone",
+    "base_main_sha": "0fdf9740",
+    "origin_main_now": "55fd251b8fbeec6e8c472a6ad4376d9489eebbf4",
+    "note": "sweep_sha = base_main + PR #1455 Config-clone perf commit; perf-only, does not affect compat outcomes"
+  },
+  "profile": "--strict --no-virtualize-cpuid --max-timeslice=disabled ; LC_ALL=C TZ=UTC ; parity@L1 det@L2(--verify)",
+  "driver": "compat-envelope/collect-dbi-corpus.rs --tests <47 previously-failing> --timeout 45 --run-id dbi-ratchet-recheck --emit-ptrace-ref",
+  "cells_rerun": 47,
+  "results": {
+    "pass": 1,
+    "parity_gap_det_but_output_diverges": 22,
+    "gap_nondet_or_hang": 22,
+    "parity_not_det": 2,
+    "still_failing_total": 46
+  },
+  "flipped_to_pass_since_13f3ee68": ["c-programs/uname (host-FQDN leak fixed on main)"],
+  "root_cause_partition": {
+    "reverie_dbi_userns_credentials": ["syscall-quick-wins", "openssl-passwd", "python-hash-determinism", "python-random"],
+    "dbi_pid_tid_allocation": ["dbi-pid-virtualization", "wait-on-child", "vforkexec", "pid-tid"],
+    "dbi_address_space_layout": ["print-memaddrs", "random-sources"],
+    "owner_gated_guest_clock_virtual_time": ["clock-determinism", "setitimer-determinism", "sysinfo", "sysinfo-uptime", "proc-uptime", "socket-timestamp-edge-cases", "socket-timestamp-timespec", "socket-timestamp-timeval", "date-nanoseconds"],
+    "dbi_stdout_pipe_plumbing": ["proc-fd-link-aliases"],
+    "expected_cpuid_off": ["cpuid-probe"],
+    "kvm_path_not_dbi": ["kvm-python-examples"],
+    "dbi_execveat_support_needed_reverie_side": ["dbi-execveat-unsupported"],
+    "owner_gated_no_preemption_threading_hangs": ["robust-futex-test", "nanosleep-threads-simple", "pselect6-simulation", "sigtimedwait-no-timeout", "writev-determinism", "mmap-fork-shared", "bash-loop-pipe-time", "python-io-subprocess-time"],
+    "owner_gated_syscall_reclassification": ["dbi-unsupported-syscall (restart_syscall Unsupported->passthrough, TODO-HUMAN-REVIEW(PR-644))"],
+    "backend_of_ptrace_or_downstream_nondet": ["arch-prctl-determinism", "get-robust-list-child", "pidfd-waitid-child", "ptrace-attach-eperm", "ptrace-seize-eperm", "resource-determinism", "sigpipe-siginfo", "tcp-info-client4", "pipe-chain", "thread-output", "perl-io-subprocess-time", "qemu-net-init"]
+  },
+  "conclusion": "hermit-side non-gated DBI parity lane is exhausted for this batch; remaining work is reverie-child-slot or owner-gated. Corroborates dbt-nongated-fd-hygiene-lane-exhausted.",
+  "artifacts": ["README.md", "dbi-ratchet-recheck.csv"]
+}

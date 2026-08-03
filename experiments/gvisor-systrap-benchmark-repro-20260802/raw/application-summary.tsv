@@ -1,0 +1,10 @@
+workload	tier	backend	measured_ms	local_native_ms	slowdown	status	blog_native_ms	blog_ptrace_ms	blog_systrap_ms
+Build ABSL	native	native	12110	12110	1.000	pass	21744	49316	33277
+Build ABSL	counter2	ptrace	198450	12110	16.387	pass	21744	49316	33277
+ffmpeg	native	native	24070	24070	1.000	pass	74331	82084	78970
+ffmpeg	counter2	ptrace	26860	24070	1.116	pass	74331	82084	78970
+ffmpeg	relaxed	ptrace	112460	24070	4.672	pass	74331	82084	78970
+ffmpeg	counter2	dbi	900000	24070	>37.391	timeout	74331	82084	78970
+TensorFlow-8	native	native	146500	146500	1.000	pass	86056	110461	100233
+TensorFlow-basic-5	counter2	ptrace	853370	105010	8.127	pass	NA	NA	NA
+TensorFlow-convolutional	counter2	ptrace	900000	26470	>34.001	timeout	NA	NA	NA

@@ -1,0 +1,5 @@
+2666150:C 02 Aug 2026 07:50:54.837 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2666150:C 02 Aug 2026 07:50:54.837 # Redis version=6.2.22, bits=64, commit=00000000, modified=0, pid=2666150, just started
+2666150:C 02 Aug 2026 07:50:54.837 # Configuration loaded
+2666150:M 02 Aug 2026 07:50:54.838 * monotonic clock: POSIX clock_gettime
+2666150:M 02 Aug 2026 07:50:54.838 # Failed creating the event loop. Error message: 'Operation not supported'

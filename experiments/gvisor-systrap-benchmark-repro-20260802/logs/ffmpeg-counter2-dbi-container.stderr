@@ -1,0 +1,3 @@
+bwrap: execvp /usr/bin/ffmpeg: No such file or directory
+counter2-local thread=4102223 syscalls=142
+ [counter2 exact] Process-local system calls: 142, exited threads: 1

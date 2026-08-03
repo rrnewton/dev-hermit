@@ -1,0 +1,4 @@
+tier	backend	elapsed_ns	rc
+native	native	49783094755	0
+counter2	ptrace	52800795552	0
+counter2	kvm	111489211533	0

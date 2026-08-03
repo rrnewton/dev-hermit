@@ -1,0 +1,57 @@
+# Slim self-hosted GitHub Actions runner for the Hermit **merge-gate** only.
+#
+# The merge-gate jobs are pure control-plane: `gh api` calls, `jq`, a shallow
+# `actions/checkout`, and one bash lint script. They need NO Rust toolchain and
+# NO PMU/ptrace privileges, so this image deliberately omits everything in the
+# full ci-runner Containerfile except the runner + git + gh + jq. That keeps the
+# image tiny (fast to build, cheap to keep an always-idle instance running) so a
+# `runs-on: [self-hosted, gate]` job is picked up in seconds and never queues
+# behind the 40-minute Rust builds on the GitHub-hosted / PMU pools.
+#
+# Build (proxy args required on a devserver behind fwdproxy):
+#   podman build --network=host \
+#     --build-arg http_proxy=http://fwdproxy:8080 \
+#     --build-arg https_proxy=http://fwdproxy:8080 \
+#     --build-arg RUNNER_VERSION=2.335.1 --build-arg RUNNER_ARCH=x64 \
+#     -t hermit-gate-runner:1 -f Containerfile.gate .
+FROM ubuntu:24.04
+
+ARG RUNNER_VERSION=2.335.1
+ARG RUNNER_ARCH=x64
+ENV DEBIAN_FRONTEND=noninteractive
+# The official actions/runner refuses to run as root unless this is set; the
+# bind-mounted state volume is simplest owned by root inside the container.
+ENV RUNNER_ALLOW_RUNASROOT=1
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Base packages + GitHub CLI. jq for JSON, gh for the gate's API reads, git for
+# the shallow checkout the core-review-protocol job performs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gnupg \
+      jq \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub Actions runner package.
+RUN mkdir -p /opt/actions-runner \
+    && curl -fsSL \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz" \
+      -o /tmp/actions-runner.tar.gz \
+    && tar -xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner \
+    && rm /tmp/actions-runner.tar.gz \
+    && /opt/actions-runner/bin/installdependencies.sh \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /runner-state
+CMD ["./run.sh"]

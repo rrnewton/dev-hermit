@@ -1,0 +1,7 @@
+reverie-sabre: counter2-exact coordinator /tmp/reverie-sabre-counter-SsAYuP/coordinator.sock unavailable (rpc i/o error: No such file or directory (os error 2)); using process-local state
+bwrap: execvp /usr/bin/ffmpeg: No such file or directory
+counter2-local thread=2 syscalls=28
+counter2-local thread=counter2-local thread=41224261 syscalls= syscalls=90334
+
+reverie-sabre: coordinator RPC failed: rpc i/o error: No such file or directory (os error 2)
+counter2-global syscalls=90 processes=1 threads=1
