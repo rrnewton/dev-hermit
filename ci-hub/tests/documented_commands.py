@@ -16,7 +16,7 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = (ROOT / "ci-hub/README.md", ROOT / "ci-hub/landing/README.md")
-EXPECTED_COMMANDS = 23
+EXPECTED_COMMANDS = 24
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -83,6 +83,7 @@ def _classify(text: str) -> str:
             "watch-obligations",
             "history",
             "local-history",
+            "validate-worktrees",
         }:
             return "local-read"
         if command == "land-lock" and re.search(r"\bland-lock\s+status\b", normalized):

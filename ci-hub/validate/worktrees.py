@@ -3,7 +3,7 @@
 
 `hermit/validate.sh` (as of the smart-selection / worktree-registration work)
 walks up from its checkout root, and when it finds this hub it reports every run
-into two gitignored artifacts under `ci-hub/ignored/`:
+into two gitignored artifacts under the parent `ignored/ci-hub/` store:
 
   1. `validate-runs.jsonl` -- append-only, one schema_version>=3 record per run
      (byte-identical to the parent validate-run ledger line). Runs are events,
@@ -18,17 +18,17 @@ surfaces them. This tool is that consumer -- it renders which worktrees exist,
 how fresh each is, and (optionally) the most recent runs. It is strictly
 read-only.
 
-The producer writes best-effort and silently: if `jq` is unavailable the run
-line is still appended but the registry is not updated, and if no hub is found
-nothing is written at all. This reader therefore tolerates a missing or partial
-artifact and simply reports what is present.
+The producer fails closed if the hub or its dependencies are unavailable. A
+standalone product checkout may opt out explicitly, but prints a loud warning.
+This reader still tolerates a missing or partial historical artifact and reports
+exactly what is present.
 
 Usage:
   ci-hub/validate/worktrees.py                 # registered-worktree table
   ci-hub/validate/worktrees.py --runs 10       # + 10 most-recent runs
   ci-hub/validate/worktrees.py --json          # machine-readable report
   ci-hub/validate/worktrees.py --stale-hours 6 # flag worktrees unseen >6h
-  ci-hub/validate/worktrees.py --data-dir DIR  # override ci-hub/ignored
+  ci-hub/validate/worktrees.py --data-dir DIR  # override ignored/ci-hub
 """
 from __future__ import annotations
 
@@ -42,12 +42,12 @@ from typing import Any
 
 
 def default_data_dir() -> str:
-    """Locate `ci-hub/ignored` (this script lives in `ci-hub/validate`)."""
+    """Locate parent `ignored/ci-hub` (this lives in `ci-hub/validate`)."""
     env = os.environ.get("CI_HUB_IGNORED_DIR")
     if env:
         return os.path.abspath(env)
-    hub = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(hub, "ignored")
+    parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(parent, "ignored", "ci-hub")
 
 
 def load_registry(path: str) -> list[dict[str, Any]]:
@@ -135,7 +135,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--data-dir",
         default=default_data_dir(),
-        help="Directory holding the hub artifacts (default: ci-hub/ignored).",
+        help="Directory holding the hub artifacts (default: parent ignored/ci-hub).",
     )
     parser.add_argument(
         "--runs",
@@ -196,15 +196,32 @@ def main(argv: list[str]) -> int:
                 [
                     str(entry.get("slot") or "-"),
                     str(entry.get("branch") or "-"),
+                    str(entry.get("state") or "-"),
                     str(entry.get("last_result") or "-"),
+                    str(entry.get("last_profile") or "-"),
                     str(entry.get("last_selection_mode") or "-"),
+                    "dirty" if entry.get("tree_dirty") else "clean",
+                    "yes" if entry.get("commit_anchored") else "no",
                     humanize_age(entry.get("last_seen_epoch"), now),
                     marker,
                     short_sha(entry.get("last_commit")),
                     str(entry.get("path") or "-"),
                 ]
             )
-        headers = ["SLOT", "BRANCH", "RESULT", "SEL", "AGE", "", "COMMIT", "PATH"]
+        headers = [
+            "SLOT",
+            "BRANCH",
+            "STATE",
+            "RESULT",
+            "PROFILE",
+            "SEL",
+            "TREE",
+            "ANCHORED",
+            "AGE",
+            "",
+            "COMMIT",
+            "PATH",
+        ]
         stale = sum(1 for entry in entries if entry.get("_stale"))
         print(
             f"{len(entries)} registered worktree(s), {stale} stale "
@@ -233,7 +250,7 @@ def main(argv: list[str]) -> int:
                         str(record.get("selection_mode") or "-"),
                         str(record.get("result") or "-"),
                         counts,
-                        f"{wall}s" if wall is not None else "-",
+                        str(wall) if wall is not None else "-",
                         short_sha(record.get("commit")),
                     ]
                 )
@@ -244,7 +261,7 @@ def main(argv: list[str]) -> int:
                 "SEL",
                 "RESULT",
                 "FAIL/CHK",
-                "WALL",
+                "WALL(s)",
                 "COMMIT",
             ]
             print(f"{len(runs)} most-recent hub-reported run(s), newest last:")

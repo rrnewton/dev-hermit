@@ -10,20 +10,20 @@ Two consumers live here:
 | Command | Reads | Answers |
 | --- | --- | --- |
 | `validate/aggregate.py` | Every `validate.sh` run on this machine (parent JSONL ledger + raw per-run logs + `safe-ci-dag-runner` profiling CSVs). | "What has every worktree/agent/slot validated, and where is the profiling?" |
-| `validate/worktrees.py` | This hub's two report artifacts under `ignored/`. | "Which worktrees are registered with this hub, how fresh is each, and how did their recent runs go?" |
+| `validate/worktrees.py` | This hub's two report artifacts under parent `ignored/ci-hub/`. | "Which worktrees are registered with this hub, how fresh is each, and how did their recent runs go?" |
 
-Both are read-only. `aggregate.py` is also reachable through the front door as
-`ci-hub local-history`; `worktrees.py` is invoked directly for now (a front-door
-subcommand may wrap it later).
+Both are read-only. The front door exposes them as `ci-hub local-history` and
+`ci-hub validate-worktrees`.
 
 ## Hub-report artifacts
 
-`hermit/validate.sh` walks up from its checkout root (max ~3 levels) looking for
-this hub. When it finds one, it reports every run here via `report_run_to_hub`;
-when it does not, it proceeds silently and **never fails the run for a missing
-hub**. Reporting is best-effort and never blocks or fails validation. Both
-artifacts land under `ci-hub/ignored/`, gitignored by the repo-wide
-`**/ignored/` rule.
+`hermit/validate.sh` walks up from its checkout root through at most three parent
+directories looking for `ci-hub/ci-hub`. It fails before validation when the hub
+or its required store dependencies are missing, so a run cannot silently lose
+its receipt. A standalone product checkout may pass `--allow-no-ci-hub` (or set
+`VALIDATE_ALLOW_NO_CI_HUB=1`), which emits a loud warning; dev-hermit agents must
+not opt out. Both artifacts land under parent `ignored/ci-hub/`, gitignored by
+the repo-wide `**/ignored/` rule.
 
 ### `ignored/validate-runs.jsonl`
 
@@ -38,9 +38,10 @@ that matter to `worktrees.py` are:
 | `slot` | Worktree slot (e.g. `ci`, `kvm`, `slot03`). |
 | `profile` | `quick` / `portable-only` / `full` / `super`. |
 | `selection_mode` | Actual selection outcome: `full`, `smart`, `selective`, `skip`, `only`. Records the outcome, not the intent. |
-| `result` / `exit_code` | `pass`/`fail` and the process exit code. |
+| `result` / `exit_code` | `pass`, product `fail`, bounded `timeout`, signal `killed`, or harness `incomplete`, plus the process exit code. |
 | `checks` / `failures` | Gate counts. |
-| `real_seconds` / `user_seconds` / `sys_seconds` | Wall and CPU time. |
+| `real_seconds` / `user_seconds` / `sys_seconds` | Wall and CPU time, all in seconds. |
+| `product_failures` / `killed_by_bound` / `killed_by_signal` / `incomplete_gates` | Explicit terminal attribution; resource kills never collapse into product failure or incomplete. |
 | `commit` / `commit_anchored` / `tree_dirty` | Validated commit and its anchoring state. |
 
 `selection_mode` never says `full` unless the complete suite actually ran, so a
@@ -48,10 +49,11 @@ that matter to `worktrees.py` are:
 
 ### `ignored/worktree-registry.json`
 
-A JSON object keyed by absolute worktree path, exactly one entry per worktree,
-upserted idempotently on every run (so re-running never creates duplicate
-entries). It requires `jq`; without it the run line is still appended and only
-the registry upsert is skipped. Each entry:
+A JSON object keyed by absolute worktree path, exactly one entry per worktree.
+It is upserted to `running` before gates begin and finalized from the EXIT trap,
+so a detached run remains attributable after its launching agent exits. Missing
+`jq`, `flock`, or a writable store refuses the run rather than skipping the
+receipt. Each entry:
 
 ```json
 {
@@ -63,38 +65,45 @@ the registry upsert is skipped. Each entry:
     "first_seen": "2026-08-01T09:00:00Z",
     "last_seen": "2026-08-03T17:00:00Z",
     "last_seen_epoch": 1785000000,
+    "state": "pass",
+    "active_pid": null,
+    "current_started_at": "2026-08-03T16:45:00Z",
     "last_commit": "3370d9c8c1caa85012ae10199293543c8871a5b9",
     "last_result": "pass",
+    "last_exit_code": 0,
     "last_profile": "full",
-    "last_selection_mode": "smart"
+    "last_selection_mode": "smart",
+    "commit_anchored": true,
+    "tree_dirty": false
   }
 }
 ```
 
-`first_seen` is preserved across runs; everything prefixed `last_` is refreshed.
+`first_seen` is preserved across runs; identity includes absolute path, slot,
+branch, exact SHA, full profile, selection mode, and dirty/anchoring state.
 
 ## Consuming the reports
 
 ```bash
 # Registered-worktree table (newest last; worktrees unseen > 24h flagged STALE).
-./ci-hub/validate/worktrees.py
+./ci-hub/ci-hub validate-worktrees
 
 # Add the 10 most-recent hub-reported runs.
-./ci-hub/validate/worktrees.py --runs 10
+./ci-hub/ci-hub validate-worktrees --runs 10
 
 # Tighten the staleness threshold to 6 hours.
-./ci-hub/validate/worktrees.py --stale-hours 6
+./ci-hub/ci-hub validate-worktrees --stale-hours 6
 
 # One machine-readable report (worktrees + runs + counts).
-./ci-hub/validate/worktrees.py --json
+./ci-hub/ci-hub validate-worktrees --json
 
 # Point at a non-default artifact directory (also honors $CI_HUB_IGNORED_DIR).
-./ci-hub/validate/worktrees.py --data-dir /path/to/ci-hub/ignored
+./ci-hub/ci-hub validate-worktrees --data-dir /path/to/ignored/ci-hub
 ```
 
-The reader tolerates a missing or partial artifact — a `jq`-less producer, a
-truncated JSONL line, or no report file at all — and prints only what is
-present, so it is always safe to run.
+The reader tolerates a missing historical artifact or truncated JSONL line and
+prints only what is present, so it is always safe to run. New producers fail
+closed before creating those gaps.
 
 ## Why a consumer matters
 

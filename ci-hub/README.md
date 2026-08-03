@@ -46,6 +46,7 @@ are:
 
 # Inspect local validate-run history, retained profiles, or runner health.
 ./ci-hub/ci-hub local-history --since 2026-08-03
+./ci-hub/ci-hub validate-worktrees --runs 10
 ./ci-hub/ci-hub runner-health --all
 ```
 

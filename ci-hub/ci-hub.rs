@@ -85,6 +85,8 @@ enum HubCommand {
     History(PassthroughArgs),
     /// Query legacy and machine-wide validate-run records.
     LocalHistory(LocalHistoryArgs),
+    /// Show validate runs currently registered by each worktree.
+    ValidateWorktrees(ValidateWorktreesArgs),
     /// Summarize self-hosted runners and recent workflows.
     RunnerHealth(RunnerHealthArgs),
     /// Operate the shared-file landing mutex.
@@ -282,6 +284,22 @@ struct LocalHistoryArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+struct ValidateWorktreesArgs {
+    /// Include this many most-recent registered runs.
+    #[arg(long, default_value_t = 0)]
+    runs: usize,
+    /// Mark a registered worktree stale after this many hours.
+    #[arg(long, default_value_t = 24.0)]
+    stale_hours: f64,
+    /// Emit the machine-readable worktree and run report.
+    #[arg(long)]
+    json: bool,
+    /// Override the canonical parent ignored/ci-hub store.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
 struct RunnerHealthArgs {
     #[arg(long, default_value = "rrnewton/hermit")]
     repo: String,
@@ -380,6 +398,7 @@ impl HubCommand {
             | Self::InheritObligations(_)
             | Self::RecordObligationWake(_)
             | Self::ResolveObligation(_)
+            | Self::ValidateWorktrees(_)
             | Self::LandLock(_) => return None,
         };
         Some(spec)
@@ -727,6 +746,22 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             }
         }
         HubCommand::LocalHistory(args) => run_local_history(root, args),
+        HubCommand::ValidateWorktrees(args) => {
+            let mut forwarded = Vec::new();
+            push_option(&mut forwarded, "--runs", args.runs.to_string());
+            push_option(
+                &mut forwarded,
+                "--stale-hours",
+                args.stale_hours.to_string(),
+            );
+            if args.json {
+                forwarded.push("--json".into());
+            }
+            if let Some(data_dir) = args.data_dir {
+                push_option(&mut forwarded, "--data-dir", data_dir);
+            }
+            run_python(root, "ci-hub/validate/worktrees.py", forwarded)
+        }
         HubCommand::RunnerHealth(args) => {
             let mut forwarded = Vec::new();
             push_option(&mut forwarded, "--repo", args.repo);
@@ -1093,6 +1128,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_typed_validate_worktrees_command() {
+        let command = Cli::try_parse_from([
+            "ci-hub",
+            "validate-worktrees",
+            "--runs",
+            "10",
+            "--stale-hours",
+            "6",
+            "--data-dir",
+            "/tmp/ci-hub",
+            "--json",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::ValidateWorktrees(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.runs, 10);
+        assert_eq!(args.stale_hours, 6.0);
+        assert_eq!(args.data_dir, Some(PathBuf::from("/tmp/ci-hub")));
+        assert!(args.json);
+    }
+
+    #[test]
     fn trivial_reads_have_no_cost_wrapper() {
         let obligations = Cli::try_parse_from(["ci-hub", "obligations"])
             .unwrap()
@@ -1122,6 +1181,10 @@ mod tests {
             .unwrap()
             .command;
         assert!(status.cost_spec().is_none());
+        let worktrees = Cli::try_parse_from(["ci-hub", "validate-worktrees"])
+            .unwrap()
+            .command;
+        assert!(worktrees.cost_spec().is_none());
     }
 
     #[test]
