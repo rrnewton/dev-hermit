@@ -1,5 +1,1 @@
-#!/usr/bin/env bash
-# Compatibility path; all command parsing and behavior live in typed Rust.
-set -euo pipefail
-HERE=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-exec "$HERE/ci-hub.rs" "$@"
+ci-hub.rs
