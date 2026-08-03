@@ -21,7 +21,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 31
+EXPECTED_COMMANDS = 33
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -102,6 +102,10 @@ def _classify(text: str) -> str:
     match = re.match(r"^(?:\./)?scripts/agent-podman\.rs\s+(\S+)", normalized)
     if match:
         return "local-read" if match.group(1) == "quickstart" else "parse"
+    if normalized.startswith("systemd-run --user "):
+        return "parse"
+    if normalized.startswith("systemctl --user status "):
+        return "parse"
     raise DocsCommandError(f"unclassified shell command: {normalized}")
 
 
@@ -184,6 +188,15 @@ def _external_help(command: str) -> str:
     return "gh pr view --help"
 
 
+def _parse_probe(command: str) -> str:
+    normalized = " ".join(command.replace("\\\n", " ").split())
+    if normalized.startswith("systemd-run --user "):
+        return "systemd-run --help"
+    if normalized.startswith("systemctl --user status "):
+        return "systemctl --help"
+    return command
+
+
 def _nested_land_and_arm(command: str) -> str | None:
     marker = "./ci-hub/remediation/land_and_arm.py"
     offset = command.find(marker)
@@ -244,7 +257,9 @@ def _run_one(
     allowed = {0}
     if command.mode == "parse" or (command.mode == "live-read" and not live):
         run_environment["CI_HUB_DOCS_PARSE_ONLY"] = "1"
-        if command.mode == "live-read" and rendered.startswith("with-proxy gh "):
+        if command.mode == "parse":
+            executed = _parse_probe(rendered)
+        elif rendered.startswith("with-proxy gh "):
             executed = _external_help(rendered)
     elif command.mode == "live-read":
         allowed = {0, 1, 2} if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered) else {0}

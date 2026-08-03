@@ -28,6 +28,12 @@ class DocumentedCommandsTest(unittest.TestCase):
         )
         self.assertTrue(any("land_and_arm.py" in command.text for command in commands))
         self.assertTrue(any("ci-hub/ci-hub quickstart" in command.text for command in commands))
+        self.assertTrue(any("systemd-run --user" in command.text for command in commands))
+
+    def test_systemd_activation_is_syntax_only(self) -> None:
+        command = "systemd-run --user --unit=fixture /bin/true"
+        self.assertEqual(documented_commands._classify(command), "parse")
+        self.assertEqual(documented_commands._parse_probe(command), "systemd-run --help")
 
     def test_unclassified_command_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
