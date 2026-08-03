@@ -18,6 +18,8 @@
 
 #[path = "lib/landing_lock.rs"]
 mod landing_lock;
+#[path = "lib/history_queries.rs"]
+mod history_queries;
 #[path = "lib/records.rs"]
 mod records;
 #[path = "lib/validate_status.rs"]
@@ -26,6 +28,7 @@ mod validate_status;
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
+use history_queries::{FirstBadOutcome, HistoryQueryEngine, NewestGreenCache, NewestGreenOutcome};
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -63,8 +66,11 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
 3. Recover local validation evidence after an agent or pane disappears:
      ./ci-hub/ci-hub local-history --since YYYY-MM-DD
      ./ci-hub/ci-hub validate-worktrees --runs 10
+     ./ci-hub/ci-hub newest-green-main
+     ./ci-hub/ci-hub first-bad CELL_OR_GATE
    Receipts live under ignored/ci-hub and identify slot, SHA, profile, dirty
-   state, result, wall seconds, and CPU seconds.
+   state, result, wall seconds, and CPU seconds. Newest-green reports whether
+   its guarantee is full or selected; first-bad reports unobserved commit gaps.
 
 4. Treat post-land obligations as durable work, not notification delivery:
      ./ci-hub/ci-hub obligations --actionable
@@ -136,6 +142,10 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Find the newest main commit whose latest local validation passed.
+    NewestGreenMain(NewestGreenMainArgs),
+    /// Find the newest recorded PASS -> FAIL transition for a local cell or gate.
+    FirstBad(FirstBadArgs),
     /// Apply `locally-validated` to PRs whose head has a clean full-validate record.
     ApplyLocalLabel(ApplyLocalLabelArgs),
     /// Operate the shared-file landing mutex.
@@ -401,6 +411,45 @@ struct ValidateStatusArgs {
     /// Emit the machine-readable verdict report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct HistoryQueryArgs {
+    /// Hermit checkout whose first-parent main history is queried.
+    #[arg(long, default_value = "hermit")]
+    repo_dir: PathBuf,
+    /// Main ref to walk, newest first.
+    #[arg(long, default_value = "origin/main")]
+    main_ref: String,
+    /// Override the canonical local validate ledger.
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+    /// Do not refresh origin/main before querying (offline/reproducible use).
+    #[arg(long)]
+    no_fetch: bool,
+    /// Emit a versioned machine-readable report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct NewestGreenMainArgs {
+    #[command(flatten)]
+    query: HistoryQueryArgs,
+    /// Override the cache path.
+    #[arg(long)]
+    cache: Option<PathBuf>,
+    /// Ignore a valid cache and recompute from the same ledger and main tip.
+    #[arg(long)]
+    no_cache: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct FirstBadArgs {
+    /// Exact local validate gate, DAG node, or Rust test-function name.
+    cell_or_gate: String,
+    #[command(flatten)]
+    query: HistoryQueryArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -720,6 +769,14 @@ impl HubCommand {
                 tool: "ci-hub/local-history",
                 basis: "not measured: ledger/store scan cost history is not retained".into(),
             },
+            Self::NewestGreenMain(_) => CostSpec {
+                tool: "ci-hub/newest-green-main",
+                basis: "not measured: one bounded main fetch plus local first-parent/ledger query; cache may avoid the query but not freshness check".into(),
+            },
+            Self::FirstBad(_) => CostSpec {
+                tool: "ci-hub/first-bad",
+                basis: "not measured: one bounded main fetch plus local ledger/log/diff query; no tests are executed".into(),
+            },
             Self::RunnerHealth(_) => CostSpec {
                 tool: "ci-hub/runner-health",
                 basis: "not measured: runner/workflow query cost history is not retained".into(),
@@ -833,6 +890,8 @@ enum CiHubError {
     },
     #[error("ci-hub: validate-status: {0}")]
     ValidateStatus(String),
+    #[error("ci-hub: history query: {0}")]
+    HistoryQuery(String),
     #[error("ci-hub: gh {context}: {message}")]
     Gh { context: String, message: String },
     #[error(transparent)]
@@ -1202,6 +1261,8 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::NewestGreenMain(args) => run_newest_green_main(root, args),
+        HubCommand::FirstBad(args) => run_first_bad(root, args),
         HubCommand::ApplyLocalLabel(args) => run_apply_local_label(root, args),
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
         HubCommand::CiMode(args) => match args.command {
@@ -2275,13 +2336,385 @@ fn describe_record(row: &HistoryRow) -> serde_json::Value {
         "finished_at": row.finished_at,
         "host": row.host,
         "profile": row.profile,
-        "selection_mode": row.extra.get("selection_mode"),
+        "selection_mode": row.selection_mode,
         "result": row.result,
         "real_seconds": row.real_seconds,
         "user_seconds": row.user_seconds,
         "sys_seconds": row.sys_seconds,
         "slot": row.slot,
     })
+}
+
+fn history_repo_path(root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
+}
+
+fn fetch_history_ref(repo: &Path, main_ref: &str) -> Result<(), CiHubError> {
+    let Some((remote, branch)) = main_ref.split_once('/') else {
+        return Err(CiHubError::HistoryQuery(format!(
+            "cannot refresh main ref '{main_ref}'; use REMOTE/BRANCH or pass --no-fetch"
+        )));
+    };
+    let refspec = format!("refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    let mut command = if on_path("with-proxy") {
+        let mut command = Command::new("with-proxy");
+        command.arg("git");
+        command
+    } else {
+        Command::new("git")
+    };
+    let output = command
+        .arg("-C")
+        .arg(repo)
+        .args(["fetch", "--quiet", remote, &refspec])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "git fetch main for history query".into(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(CiHubError::HistoryQuery(format!(
+            "git fetch {remote}/{branch} exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+fn main_history(repo: &Path, main_ref: &str) -> Result<Vec<String>, CiHubError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-list", "--first-parent", main_ref])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "git rev-list main for history query".into(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(CiHubError::HistoryQuery(format!(
+            "cannot walk {main_ref}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let commits: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    if commits.is_empty() {
+        return Err(CiHubError::HistoryQuery(format!(
+            "{main_ref} has no commits"
+        )));
+    }
+    Ok(commits)
+}
+
+fn ledger_stamp(path: &Path) -> Result<(u64, u128), CiHubError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(source) => {
+            return Err(CiHubError::LedgerRead {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok((metadata.len(), modified_ns))
+}
+
+fn read_newest_green_cache(path: &Path) -> Option<NewestGreenCache> {
+    let raw = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&raw) {
+        Ok(cache) => Some(cache),
+        Err(error) => {
+            eprintln!(
+                "ci-hub: ignoring invalid newest-green cache {}: {error}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+fn write_newest_green_cache(path: &Path, cache: &NewestGreenCache) -> Result<(), CiHubError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| {
+            CiHubError::HistoryQuery(format!(
+                "cannot create cache directory {}: {source}",
+                parent.display()
+            ))
+        })?;
+    }
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    let mut bytes = serde_json::to_vec_pretty(cache)
+        .map_err(|error| CiHubError::HistoryQuery(format!("serialize cache: {error}")))?;
+    bytes.push(b'\n');
+    std::fs::write(&temporary, bytes).map_err(|source| {
+        CiHubError::HistoryQuery(format!("write cache {}: {source}", temporary.display()))
+    })?;
+    std::fs::rename(&temporary, path).map_err(|source| {
+        CiHubError::HistoryQuery(format!(
+            "replace cache {} with {}: {source}",
+            path.display(),
+            temporary.display()
+        ))
+    })
+}
+
+fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bool, json: bool) {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "cache_hit": cache_hit,
+                "report": report,
+            }))
+            .expect("serialize newest-green report")
+        );
+        return;
+    }
+    println!(
+        "NEWEST-GREEN {} validated={} profile={} selection={} guarantee={}",
+        report.green.sha,
+        report.green.finished_at.as_deref().unwrap_or("unknown"),
+        report.green.profile,
+        report.green.selection_mode,
+        report.green.coverage.as_str(),
+    );
+    println!(
+        "MAIN-TIP {} commits-after-green={} recorded={} no-record={} cache={}",
+        report.main_tip,
+        report.commits_after_green,
+        report.commits_with_records,
+        report.commits_without_any_record,
+        if cache_hit { "hit" } else { "miss" },
+    );
+    if report.green.coverage != history_queries::CoverageStrength::Full {
+        println!(
+            "WEAKER-GUARANTEE: this was not a full-profile/full-selection validation; rebase decisions inherit only the stated {} evidence",
+            report.green.coverage.as_str()
+        );
+    }
+}
+
+fn run_newest_green_main(root: &Path, args: NewestGreenMainArgs) -> Result<i32, CiHubError> {
+    let repo = history_repo_path(root, &args.query.repo_dir);
+    if !args.query.no_fetch {
+        fetch_history_ref(&repo, &args.query.main_ref)?;
+    }
+    let commits = main_history(&repo, &args.query.main_ref)?;
+    let main_tip = commits.first().expect("nonempty history");
+    let ledger = ledger_path(root, &args.query.ledger);
+    let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
+    let cache_path = history_queries::cache_path(root, &args.cache);
+    if !args.no_cache {
+        if let Some(cache) = read_newest_green_cache(&cache_path) {
+            if history_queries::cache_matches(
+                &cache,
+                main_tip,
+                &args.query.main_ref,
+                &ledger,
+                ledger_len,
+                ledger_modified_ns,
+            ) {
+                print_newest_green(&cache.report, true, args.query.json);
+                return Ok(0);
+            }
+        }
+    }
+
+    let rows = load_ledger_rows(&ledger)?;
+    match HistoryQueryEngine::new(commits, rows).newest_green(&args.query.main_ref) {
+        NewestGreenOutcome::Found(report) => {
+            let cache = NewestGreenCache {
+                schema_version: 1,
+                main_tip: report.main_tip.clone(),
+                main_ref: args.query.main_ref,
+                ledger_path: ledger.display().to_string(),
+                ledger_len,
+                ledger_modified_ns,
+                report: report.clone(),
+            };
+            write_newest_green_cache(&cache_path, &cache)?;
+            print_newest_green(&report, false, args.query.json);
+            Ok(0)
+        }
+        NewestGreenOutcome::FailedOnly { main_tip, recorded } => {
+            if args.query.json {
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "main_tip": main_tip, "trustworthy_recorded_commits": recorded}));
+            } else {
+                println!("NEWEST-GREEN FAILED main-tip={main_tip} -- {recorded} main commit(s) have clean anchored records, but none has a latest PASS");
+            }
+            Ok(3)
+        }
+        NewestGreenOutcome::NoEvidence { main_tip } => {
+            if args.query.json {
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "main_tip": main_tip}));
+            } else {
+                println!("NEWEST-GREEN NOT-VALIDATED main-tip={main_tip} -- no clean commit-anchored main validation record exists");
+            }
+            Ok(4)
+        }
+    }
+}
+
+fn files_touched(repo: &Path, sha: &str) -> Result<Vec<String>, CiHubError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "git diff-tree first-bad".into(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(CiHubError::HistoryQuery(format!(
+            "cannot inspect files at {sha}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+fn assess_diff_plausibility(files: &[String], source_node: Option<&str>) -> String {
+    if files.is_empty() {
+        return "unknown: candidate commit has no retained file list".into();
+    }
+    if files.iter().all(|path| path.starts_with(".github/")) {
+        return format!(
+            "implausible: the commit changes only GitHub workflow files, which local validate{} does not execute",
+            source_node.map(|node| format!(" cell {node}")) .unwrap_or_default()
+        );
+    }
+    if files.iter().all(|path| {
+        path.ends_with(".md")
+            || path.starts_with("docs/")
+            || path.starts_with("ai_docs/")
+            || path.starts_with("experiments/")
+    }) {
+        return "implausible: the commit changes only documentation/evidence paths excluded by the test-footprint policy".into();
+    }
+    "not exonerated by the file-only check; inspect the listed paths against the cell's test footprint".into()
+}
+
+fn print_first_bad(report: &history_queries::FirstBadReport, json: bool) {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).expect("serialize first-bad report")
+        );
+        return;
+    }
+    println!(
+        "FIRST-BAD {} cell={} observed={} profile={} selection={}",
+        report.first_bad.sha,
+        report.matched_name,
+        report.first_bad.finished_at.as_deref().unwrap_or("unknown"),
+        report.first_bad.profile,
+        report.first_bad.selection_mode,
+    );
+    println!(
+        "LAST-GOOD {} observed={} commits-between={} no-cell-record={}",
+        report.last_good.sha,
+        report.last_good.finished_at.as_deref().unwrap_or("unknown"),
+        report.commits_between,
+        report.commits_without_cell_record,
+    );
+    println!("FILES-TOUCHED {}", if report.files_touched.is_empty() { "(none)".into() } else { report.files_touched.join(" ") });
+    println!("PLAUSIBILITY {}", report.plausibility);
+    println!(
+        "LOAD-CONTEXT {}",
+        report.load_context.as_deref().unwrap_or("not retained")
+    );
+    if report.error_excerpt.is_empty() {
+        println!("ERROR-DETAIL not retained (ledger has the outcome but its referenced log is absent or has no canonical error line)");
+    } else {
+        println!("ERROR-DETAIL");
+        for line in &report.error_excerpt {
+            println!("  {line}");
+        }
+    }
+}
+
+fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
+    let repo = history_repo_path(root, &args.query.repo_dir);
+    if !args.query.no_fetch {
+        fetch_history_ref(&repo, &args.query.main_ref)?;
+    }
+    let commits = main_history(&repo, &args.query.main_ref)?;
+    let main_set: std::collections::BTreeSet<&str> =
+        commits.iter().map(String::as_str).collect();
+    let ledger = ledger_path(root, &args.query.ledger);
+    let mut rows = load_ledger_rows(&ledger)?;
+    rows.retain(|row| {
+        row.commit
+            .as_deref()
+            .map(|commit| main_set.contains(commit))
+            .unwrap_or(false)
+    });
+    history_queries::enrich_rows_from_logs(&mut rows);
+    match HistoryQueryEngine::new(commits, rows).first_bad(&args.cell_or_gate) {
+        FirstBadOutcome::Found(mut report) => {
+            report.files_touched = files_touched(&repo, &report.first_bad.sha)?;
+            report.plausibility = assess_diff_plausibility(
+                &report.files_touched,
+                report.source_node.as_deref(),
+            );
+            print_first_bad(&report, args.query.json);
+            Ok(0)
+        }
+        FirstBadOutcome::FailureWithoutKnownGood {
+            query,
+            matched_name,
+            failure,
+        } => {
+            if args.query.json {
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "query": query, "matched_name": matched_name, "failure": failure, "reason": "failure exists but no earlier PASS is retained"}));
+            } else {
+                println!("FIRST-BAD FAILED cell={matched_name} sha={} -- failure exists but no earlier PASS is retained", failure.sha);
+            }
+            Ok(3)
+        }
+        FirstBadOutcome::NoEvidence { query, available_names } => {
+            if args.query.json {
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "query": query, "suggestions": available_names, "reason": "no retained cell/gate record"}));
+            } else {
+                println!("FIRST-BAD NOT-VALIDATED cell={query} -- no retained cell/gate record; absence is not PASS");
+                if !available_names.is_empty() {
+                    println!("SUGGESTIONS {}", available_names.join(" | "));
+                }
+            }
+            Ok(4)
+        }
+        FirstBadOutcome::NoTransition { query, matched_name, observations } => {
+            if args.query.json {
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "query": query, "matched_name": matched_name, "observations": observations, "reason": "no retained PASS-to-FAIL transition"}));
+            } else {
+                println!("FIRST-BAD NOT-VALIDATED cell={matched_name} observations={observations} -- no retained PASS-to-FAIL transition");
+            }
+            Ok(4)
+        }
+    }
 }
 
 /// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
@@ -2321,7 +2754,7 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                 let row = newest.expect("validated implies a qualifying record");
                 println!(
                     "# validate VALIDATED {} (passed {}, wall {}s, host {}, profile full/full) -- clean-tree commit-anchored full run",
-                    &assessment.sha,
+                    assessment.sha,
                     row.finished_at.as_deref().unwrap_or("?"),
                     row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
                     row.host.as_deref().unwrap_or("?"),
@@ -2330,14 +2763,14 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             validate_status::Verdict::FailedOnRecord => {
                 println!(
                     "# validate FAILED {} -- a clean full-coverage run exists but did NOT pass ({} record(s)); this commit is known-failing",
-                    &assessment.sha,
+                    assessment.sha,
                     assessment.disqualified.len(),
                 );
             }
             validate_status::Verdict::NotValidated => {
                 println!(
                     "# validate NOT-VALIDATED {} -- no clean full-coverage PASS record ({} non-qualifying record(s) for this commit)",
-                    &assessment.sha,
+                    assessment.sha,
                     assessment.disqualified.len(),
                 );
             }
@@ -2741,6 +3174,41 @@ mod tests {
     }
 
     #[test]
+    fn parses_shared_history_query_commands() {
+        let newest = Cli::try_parse_from([
+            "ci-hub",
+            "newest-green-main",
+            "--no-fetch",
+            "--no-cache",
+            "--json",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::NewestGreenMain(args) = newest else {
+            panic!("wrong command variant")
+        };
+        assert!(args.query.no_fetch);
+        assert!(args.no_cache);
+        assert!(args.query.json);
+        assert!(HubCommand::NewestGreenMain(args).cost_spec().is_some());
+
+        let first_bad = Cli::try_parse_from([
+            "ci-hub",
+            "first-bad",
+            "test.detcore_misc",
+            "--no-fetch",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::FirstBad(args) = first_bad else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.cell_or_gate, "test.detcore_misc");
+        assert!(args.query.no_fetch);
+        assert!(HubCommand::FirstBad(args).cost_spec().is_some());
+    }
+
+    #[test]
     fn quickstart_is_short_pure_agent_workflow() {
         let command = Cli::try_parse_from(["ci-hub", "quickstart"])
             .unwrap()
@@ -2749,6 +3217,8 @@ mod tests {
         assert!(AGENT_QUICKSTART.starts_with("ci-hub agent quickstart\n"));
         assert!(AGENT_QUICKSTART.contains("ci-hub/ci-hub health"));
         assert!(AGENT_QUICKSTART.contains("validate-worktrees"));
+        assert!(AGENT_QUICKSTART.contains("newest-green-main"));
+        assert!(AGENT_QUICKSTART.contains("first-bad CELL_OR_GATE"));
         assert!(AGENT_QUICKSTART.contains("obligations --actionable"));
         assert!(AGENT_QUICKSTART.contains("land-lock run"));
         assert!(AGENT_QUICKSTART.lines().count() < 45);

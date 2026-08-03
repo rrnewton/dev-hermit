@@ -204,6 +204,29 @@ class OperationalBoundsTest(unittest.TestCase):
             (("history", "--", "--help"), {0}, self.env),
             (("local-history", "--json", "--since", "2999-01-01"), {0}, self.env),
             (
+                (
+                    "newest-green-main",
+                    "--no-fetch",
+                    "--ledger",
+                    str(self.temp / "missing-ledger.jsonl"),
+                    "--cache",
+                    str(self.temp / "newest-green-cache.json"),
+                ),
+                {4},
+                self.env,
+            ),
+            (
+                (
+                    "first-bad",
+                    "missing.cell",
+                    "--no-fetch",
+                    "--ledger",
+                    str(self.temp / "missing-ledger.jsonl"),
+                ),
+                {4},
+                self.env,
+            ),
+            (
                 ("load-probe", "--sample-seconds", "0.1", "--top", "1"),
                 {0, 1},
                 self.env,
@@ -220,7 +243,7 @@ class OperationalBoundsTest(unittest.TestCase):
                     "--gh",
                     "/bin/false",
                 ),
-                {0},
+                {2},
                 self.env,
             ),
         )

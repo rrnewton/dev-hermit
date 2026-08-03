@@ -5,6 +5,7 @@
 //!     HEAD already has a pass record), and
 //!   * `lander-lands-on-local-validate-only` READS it (land iff a clean-validate
 //!     record exists for the exact PR head, GitHub-free).
+//!
 //! One store, one predicate: hermit/reverie `validate.sh` WRITE the JSONL ledger
 //! (`append_validation_ledger`), this module READS it. There is deliberately no
 //! second table.
@@ -72,11 +73,18 @@ impl Verdict {
 }
 
 fn field_bool(row: &HistoryRow, key: &str) -> Option<bool> {
-    row.extra.get(key).and_then(|value| value.as_bool())
+    match key {
+        "commit_anchored" => row.commit_anchored,
+        "tree_dirty" => row.tree_dirty,
+        _ => row.extra.get(key).and_then(|value| value.as_bool()),
+    }
 }
 
 fn field_str<'a>(row: &'a HistoryRow, key: &str) -> Option<&'a str> {
-    row.extra.get(key).and_then(|value| value.as_str())
+    match key {
+        "selection_mode" => row.selection_mode.as_deref(),
+        _ => row.extra.get(key).and_then(|value| value.as_str()),
+    }
 }
 
 /// A record that is clean, commit-anchored, full-profile, full-selection — the
@@ -146,7 +154,7 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
 
 /// Pick the most recent qualifying record (by `finished_at` string order, which
 /// is ISO-8601-Z and therefore lexicographically chronological).
-pub fn newest<'a>(rows: &'a [HistoryRow]) -> Option<&'a HistoryRow> {
+pub fn newest(rows: &[HistoryRow]) -> Option<&HistoryRow> {
     rows.iter().max_by(|a, b| {
         a.finished_at
             .as_deref()
@@ -240,7 +248,7 @@ mod tests {
     #[test]
     fn dirty_tree_is_never_a_hit() {
         let mut r = clean_full_pass(PASS_SHA);
-        r.extra.insert("tree_dirty".into(), serde_json::json!(true));
+        r.tree_dirty = Some(true);
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::NotValidated);
         assert_eq!(a.verdict.exit_code(), 4);
@@ -249,15 +257,14 @@ mod tests {
     #[test]
     fn unanchored_is_never_a_hit() {
         let mut r = clean_full_pass(PASS_SHA);
-        r.extra.insert("commit_anchored".into(), serde_json::json!(false));
+        r.commit_anchored = Some(false);
         assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NotValidated);
     }
 
     #[test]
     fn subset_selection_is_never_a_hit() {
         let mut r = clean_full_pass(PASS_SHA);
-        r.extra
-            .insert("selection_mode".into(), serde_json::json!("selective"));
+        r.selection_mode = Some("selective".into());
         assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NotValidated);
     }
 

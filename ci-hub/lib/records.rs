@@ -112,7 +112,13 @@ pub struct HistoryRow {
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
+    pub selection_mode: Option<String>,
+    #[serde(default)]
     pub commit: Option<String>,
+    #[serde(default)]
+    pub commit_anchored: Option<bool>,
+    #[serde(default)]
+    pub tree_dirty: Option<bool>,
     #[serde(default)]
     pub result: Option<String>,
     #[serde(default)]
@@ -129,6 +135,27 @@ pub struct HistoryRow {
     pub log_file: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub gates: Vec<GateHistoryRow>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct GateHistoryRow {
+    pub name: String,
+    #[serde(default)]
+    pub result: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub real_seconds: Option<f64>,
+    /// For a test function extracted from a retained DAG log, the manifest node
+    /// which emitted it. Ledger-native outer gates leave this unset.
+    #[serde(default)]
+    pub source_node: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

@@ -1,0 +1,658 @@
+//! Shared local-validate history query engine.
+//!
+//! Both owner-facing directions use this index: `newest-green-main` scans main
+//! newest-to-oldest for the latest passing evidence, while `first-bad` scans
+//! recorded observations for the newest PASS -> FAIL transition. Keeping the
+//! commit ordering and evidence rules here prevents the two answers drifting.
+
+use crate::records::{GateHistoryRow, HistoryRow};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+pub const NEWEST_GREEN_CACHE_REL: &str = "ignored/ci-hub/newest-green-main-cache.json";
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CoverageStrength {
+    Full,
+    SmartSelection,
+    NarrowerProfile,
+}
+
+impl CoverageStrength {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::SmartSelection => "smart-selection",
+            Self::NarrowerProfile => "narrower-profile",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ValidationEvidence {
+    pub sha: String,
+    pub finished_at: Option<String>,
+    pub profile: String,
+    pub selection_mode: String,
+    pub coverage: CoverageStrength,
+    pub result: String,
+    pub log_file: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct NewestGreenReport {
+    pub schema_version: u32,
+    pub main_tip: String,
+    pub main_ref: String,
+    pub green: ValidationEvidence,
+    pub commits_after_green: usize,
+    pub commits_without_any_record: usize,
+    pub commits_with_records: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct FirstBadReport {
+    pub schema_version: u32,
+    pub query: String,
+    pub matched_name: String,
+    pub first_bad: ValidationEvidence,
+    pub last_good: ValidationEvidence,
+    pub commits_between: usize,
+    pub commits_without_cell_record: usize,
+    pub files_touched: Vec<String>,
+    pub plausibility: String,
+    pub source_node: Option<String>,
+    pub error_excerpt: Vec<String>,
+    pub load_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NewestGreenCache {
+    pub schema_version: u32,
+    pub main_tip: String,
+    pub main_ref: String,
+    pub ledger_path: String,
+    pub ledger_len: u64,
+    pub ledger_modified_ns: u128,
+    pub report: NewestGreenReport,
+}
+
+#[derive(Clone, Debug)]
+pub enum NewestGreenOutcome {
+    Found(NewestGreenReport),
+    FailedOnly { main_tip: String, recorded: usize },
+    NoEvidence { main_tip: String },
+}
+
+#[derive(Clone, Debug)]
+pub enum FirstBadOutcome {
+    Found(Box<FirstBadReport>),
+    FailureWithoutKnownGood {
+        query: String,
+        matched_name: String,
+        failure: ValidationEvidence,
+    },
+    NoEvidence {
+        query: String,
+        available_names: Vec<String>,
+    },
+    NoTransition {
+        query: String,
+        matched_name: String,
+        observations: usize,
+    },
+}
+
+pub struct HistoryQueryEngine {
+    commits: Vec<String>,
+    rows_by_commit: BTreeMap<String, Vec<HistoryRow>>,
+}
+
+impl HistoryQueryEngine {
+    /// `commits` are first-parent main commits in newest-to-oldest order.
+    pub fn new(commits: Vec<String>, rows: Vec<HistoryRow>) -> Self {
+        let main: BTreeSet<&str> = commits.iter().map(String::as_str).collect();
+        let mut rows_by_commit: BTreeMap<String, Vec<HistoryRow>> = BTreeMap::new();
+        for row in rows {
+            let Some(commit) = row.commit.as_deref() else {
+                continue;
+            };
+            if main.contains(commit) {
+                rows_by_commit
+                    .entry(commit.to_string())
+                    .or_default()
+                    .push(row);
+            }
+        }
+        Self {
+            commits,
+            rows_by_commit,
+        }
+    }
+
+    pub fn newest_green(&self, main_ref: &str) -> NewestGreenOutcome {
+        let main_tip = self.commits.first().cloned().unwrap_or_default();
+        let mut recorded = 0usize;
+        for (index, sha) in self.commits.iter().enumerate() {
+            let Some(rows) = self.rows_by_commit.get(sha) else {
+                continue;
+            };
+            let Some(row) = latest_trustworthy_row(rows) else {
+                continue;
+            };
+            recorded += 1;
+            if row.result.as_deref() != Some("pass") {
+                continue;
+            }
+            let newer = &self.commits[..index];
+            let missing = newer
+                .iter()
+                .filter(|commit| !self.rows_by_commit.contains_key(*commit))
+                .count();
+            let report = NewestGreenReport {
+                schema_version: 1,
+                main_tip,
+                main_ref: main_ref.to_string(),
+                green: evidence(sha, row),
+                commits_after_green: newer.len(),
+                commits_without_any_record: missing,
+                commits_with_records: newer.len() - missing,
+            };
+            return NewestGreenOutcome::Found(report);
+        }
+        if recorded > 0 {
+            NewestGreenOutcome::FailedOnly { main_tip, recorded }
+        } else {
+            NewestGreenOutcome::NoEvidence { main_tip }
+        }
+    }
+
+    pub fn first_bad(&self, query: &str) -> FirstBadOutcome {
+        let normalized = normalize(query);
+        let mut available = BTreeSet::new();
+        let mut observations: Vec<(usize, String, GateHistoryRow, HistoryRow)> = Vec::new();
+
+        for (index, sha) in self.commits.iter().enumerate() {
+            let Some(rows) = self.rows_by_commit.get(sha) else {
+                continue;
+            };
+            let Some(row) = latest_row_with_named_observation(rows, &normalized, &mut available)
+            else {
+                continue;
+            };
+            let gate = row
+                .gates
+                .iter()
+                .find(|gate| normalize(&gate.name) == normalized)
+                .expect("row selected because it has this gate")
+                .clone();
+            observations.push((index, sha.clone(), gate, row.clone()));
+        }
+
+        if observations.is_empty() {
+            let suggestions = available
+                .into_iter()
+                .filter(|name| {
+                    let candidate = normalize(name);
+                    candidate.contains(&normalized) || normalized.contains(&candidate)
+                })
+                .take(12)
+                .collect();
+            return FirstBadOutcome::NoEvidence {
+                query: query.to_string(),
+                available_names: suggestions,
+            };
+        }
+
+        // Convert newest->oldest main order into chronological observations,
+        // then retain the newest recorded PASS -> FAIL transition.
+        observations.reverse();
+        let matched_name = observations[0].2.name.clone();
+        let mut transition = None;
+        for pair in observations.windows(2) {
+            let good = &pair[0];
+            let bad = &pair[1];
+            if gate_passed(&good.2) && gate_failed(&bad.2) {
+                transition = Some((good.clone(), bad.clone()));
+            }
+        }
+        if let Some((good, bad)) = transition {
+            let lower = bad.0.min(good.0);
+            let upper = bad.0.max(good.0);
+            let between = upper.saturating_sub(lower + 1);
+            let observed_indices: BTreeSet<usize> =
+                observations.iter().map(|item| item.0).collect();
+            let missing = (lower + 1..upper)
+                .filter(|index| !observed_indices.contains(index))
+                .count();
+            return FirstBadOutcome::Found(Box::new(FirstBadReport {
+                schema_version: 1,
+                query: query.to_string(),
+                matched_name: bad.2.name.clone(),
+                first_bad: gate_evidence(&bad.1, &bad.3, &bad.2),
+                last_good: gate_evidence(&good.1, &good.3, &good.2),
+                commits_between: between,
+                commits_without_cell_record: missing,
+                files_touched: Vec::new(),
+                plausibility: "not-assessed".into(),
+                source_node: bad.2.source_node.clone(),
+                error_excerpt: error_excerpt(&bad.3, &bad.2.name),
+                load_context: load_context(&bad.3),
+            }));
+        }
+
+        if let Some((_, sha, gate, row)) =
+            observations.iter().rev().find(|item| gate_failed(&item.2))
+        {
+            return FirstBadOutcome::FailureWithoutKnownGood {
+                query: query.to_string(),
+                matched_name,
+                failure: gate_evidence(sha, row, gate),
+            };
+        }
+        FirstBadOutcome::NoTransition {
+            query: query.to_string(),
+            matched_name,
+            observations: observations.len(),
+        }
+    }
+}
+
+fn latest_trustworthy_row(rows: &[HistoryRow]) -> Option<&HistoryRow> {
+    rows.iter()
+        .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
+        .max_by_key(|row| row.finished_at.as_deref().unwrap_or(""))
+}
+
+fn latest_row_with_named_observation<'a>(
+    rows: &'a [HistoryRow],
+    normalized: &str,
+    available: &mut BTreeSet<String>,
+) -> Option<&'a HistoryRow> {
+    rows.iter()
+        .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
+        .filter(|row| {
+            for gate in &row.gates {
+                available.insert(gate.name.clone());
+            }
+            row.gates
+                .iter()
+                .any(|gate| normalize(&gate.name) == normalized)
+        })
+        .max_by_key(|row| row.finished_at.as_deref().unwrap_or(""))
+}
+
+fn coverage(row: &HistoryRow) -> CoverageStrength {
+    match (row.profile.as_deref(), row.selection_mode.as_deref()) {
+        (Some("full"), Some("full")) => CoverageStrength::Full,
+        (Some("full"), _) => CoverageStrength::SmartSelection,
+        _ => CoverageStrength::NarrowerProfile,
+    }
+}
+
+fn evidence(sha: &str, row: &HistoryRow) -> ValidationEvidence {
+    ValidationEvidence {
+        sha: sha.to_string(),
+        finished_at: row.finished_at.clone(),
+        profile: row.profile.clone().unwrap_or_else(|| "unknown".into()),
+        selection_mode: row
+            .selection_mode
+            .clone()
+            .unwrap_or_else(|| "unknown".into()),
+        coverage: coverage(row),
+        result: row.result.clone().unwrap_or_else(|| "unknown".into()),
+        log_file: row.log_file.clone(),
+    }
+}
+
+fn gate_evidence(sha: &str, row: &HistoryRow, gate: &GateHistoryRow) -> ValidationEvidence {
+    let mut value = evidence(sha, row);
+    value.result = gate
+        .result
+        .clone()
+        .or_else(|| gate.kind.clone())
+        .unwrap_or_else(|| "unknown".into());
+    value
+}
+
+fn gate_passed(gate: &GateHistoryRow) -> bool {
+    gate.result.as_deref() == Some("pass") || gate.kind.as_deref() == Some("pass")
+}
+
+fn gate_failed(gate: &GateHistoryRow) -> bool {
+    matches!(gate.result.as_deref(), Some("fail") | Some("failed"))
+        || matches!(gate.kind.as_deref(), Some("fail") | Some("timeout"))
+}
+
+fn normalize(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Add DAG-node and Rust-test observations from the retained log named by the
+/// ledger. The ledger remains the index/source of truth; an absent log simply
+/// means cell detail was not retained and is reported as such.
+pub fn enrich_rows_from_logs(rows: &mut [HistoryRow]) {
+    for row in rows {
+        let Some(path) = row.log_file.as_deref() else {
+            continue;
+        };
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let mut seen: BTreeSet<(String, String)> = row
+            .gates
+            .iter()
+            .map(|gate| {
+                (
+                    normalize(&gate.name),
+                    gate.result.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        for gate in parse_log_observations(&raw) {
+            let key = (
+                normalize(&gate.name),
+                gate.result.clone().unwrap_or_default(),
+            );
+            if seen.insert(key) {
+                row.gates.push(gate);
+            }
+        }
+    }
+}
+
+pub fn parse_log_observations(raw: &str) -> Vec<GateHistoryRow> {
+    let mut observations = Vec::new();
+    for raw_line in raw.lines() {
+        let line = strip_ansi(raw_line);
+        let source_node = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once(']'))
+            .map(|(node, _)| node.to_string());
+        if let Some(node) = source_node.as_deref() {
+            let result = if line.contains("\u{2713} PASS") {
+                Some("pass")
+            } else if line.contains("\u{2717} FAIL") {
+                Some("fail")
+            } else {
+                None
+            };
+            if let Some(result) = result {
+                observations.push(GateHistoryRow {
+                    name: node.to_string(),
+                    result: Some(result.into()),
+                    kind: None,
+                    exit_code: None,
+                    real_seconds: None,
+                    source_node: Some(node.to_string()),
+                    extra: BTreeMap::new(),
+                });
+            }
+        }
+        let Some(test_at) = line.find("test ") else {
+            continue;
+        };
+        let test = &line[test_at + 5..];
+        let Some((name, suffix)) = test.split_once(" ... ") else {
+            continue;
+        };
+        if name == "result:" || name.is_empty() {
+            continue;
+        }
+        let result = if suffix.starts_with("ok") {
+            "pass"
+        } else if suffix.starts_with("FAILED") {
+            "fail"
+        } else {
+            continue;
+        };
+        observations.push(GateHistoryRow {
+            name: name.to_string(),
+            result: Some(result.into()),
+            kind: None,
+            exit_code: None,
+            real_seconds: None,
+            source_node,
+            extra: BTreeMap::new(),
+        });
+    }
+    observations
+}
+
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if ('@'..='~').contains(&code) {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn error_excerpt(row: &HistoryRow, query: &str) -> Vec<String> {
+    let Some(path) = row.log_file.as_deref() else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .map(strip_ansi)
+        .filter(|line| {
+            line.contains(query)
+                || line.contains("panicked at")
+                || line.contains("error:")
+                || line.contains("\u{2717} FAIL")
+        })
+        .map(|line| line.chars().take(300).collect())
+        .take(12)
+        .collect()
+}
+
+fn load_context(row: &HistoryRow) -> Option<String> {
+    row.extra
+        .get("load_context")
+        .map(|value| value.to_string())
+        .or_else(|| {
+            let cpu = row.user_seconds? + row.sys_seconds?;
+            let wall = row.real_seconds?;
+            (wall > 0.0).then(|| {
+                format!(
+                    "run CPU/wall={:.1}; host-load-at-run-time not retained",
+                    cpu / wall
+                )
+            })
+        })
+}
+
+pub fn cache_matches(
+    cache: &NewestGreenCache,
+    main_tip: &str,
+    main_ref: &str,
+    ledger_path: &Path,
+    ledger_len: u64,
+    ledger_modified_ns: u128,
+) -> bool {
+    cache.schema_version == 1
+        && cache.main_tip == main_tip
+        && cache.main_ref == main_ref
+        && cache.ledger_path == ledger_path.display().to_string()
+        && cache.ledger_len == ledger_len
+        && cache.ledger_modified_ns == ledger_modified_ns
+}
+
+pub fn cache_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
+    override_path
+        .clone()
+        .unwrap_or_else(|| root.join(NEWEST_GREEN_CACHE_REL))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(sha: &str, at: &str, profile: &str, selection: &str, result: &str) -> HistoryRow {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 3,
+            "finished_at": at,
+            "profile": profile,
+            "selection_mode": selection,
+            "commit": sha,
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": result,
+            "gates": []
+        }))
+        .unwrap()
+    }
+
+    fn gate(mut row: HistoryRow, name: &str, result: &str) -> HistoryRow {
+        row.gates.push(GateHistoryRow {
+            name: name.into(),
+            result: Some(result.into()),
+            kind: None,
+            exit_code: None,
+            real_seconds: None,
+            source_node: None,
+            extra: BTreeMap::new(),
+        });
+        row
+    }
+
+    #[test]
+    fn newest_green_uses_latest_state_and_reports_gaps_and_profile() {
+        let commits = vec!["tip".into(), "gap".into(), "green".into()];
+        let rows = vec![
+            row("tip", "2026-08-03T03:00:00Z", "full", "full", "fail"),
+            row("green", "2026-08-03T01:00:00Z", "full", "selective", "pass"),
+        ];
+        let NewestGreenOutcome::Found(report) =
+            HistoryQueryEngine::new(commits, rows).newest_green("origin/main")
+        else {
+            panic!("expected green")
+        };
+        assert_eq!(report.green.sha, "green");
+        assert_eq!(report.green.coverage, CoverageStrength::SmartSelection);
+        assert_eq!(report.commits_after_green, 2);
+        assert_eq!(report.commits_without_any_record, 1);
+    }
+
+    #[test]
+    fn first_bad_finds_newest_transition_without_treating_gap_as_pass() {
+        let commits = vec!["bad2".into(), "bad1".into(), "gap".into(), "good".into()];
+        let rows = vec![
+            gate(
+                row("bad2", "2026-08-03T04:00:00Z", "full", "full", "fail"),
+                "cell",
+                "fail",
+            ),
+            gate(
+                row("bad1", "2026-08-03T03:00:00Z", "full", "full", "fail"),
+                "cell",
+                "fail",
+            ),
+            gate(
+                row("good", "2026-08-03T01:00:00Z", "full", "full", "pass"),
+                "cell",
+                "pass",
+            ),
+        ];
+        let FirstBadOutcome::Found(report) =
+            HistoryQueryEngine::new(commits, rows).first_bad("cell")
+        else {
+            panic!("expected transition")
+        };
+        assert_eq!(report.first_bad.sha, "bad1");
+        assert_eq!(report.last_good.sha, "good");
+        assert_eq!(report.commits_without_cell_record, 1);
+    }
+
+    #[test]
+    fn parses_runner_nodes_and_rust_test_functions() {
+        let rows = parse_log_observations(
+            "[lint.clippy] \u{2717} FAIL Clippy\n[test.liteinst_strict] test liteinst_detcore_strict_verify_micro_suite ... FAILED\n",
+        );
+        assert!(rows
+            .iter()
+            .any(|row| row.name == "lint.clippy" && gate_failed(row)));
+        let test = rows
+            .iter()
+            .find(|row| row.name == "liteinst_detcore_strict_verify_micro_suite")
+            .unwrap();
+        assert_eq!(test.source_node.as_deref(), Some("test.liteinst_strict"));
+    }
+
+    #[test]
+    fn dirty_or_unanchored_pass_is_not_green() {
+        let mut dirty = row("tip", "2026-08-03T01:00:00Z", "full", "full", "pass");
+        dirty.tree_dirty = Some(true);
+        assert!(matches!(
+            HistoryQueryEngine::new(vec!["tip".into()], vec![dirty]).newest_green("origin/main"),
+            NewestGreenOutcome::NoEvidence { .. }
+        ));
+    }
+
+    #[test]
+    fn cache_invalidates_on_main_tip_or_ledger_change() {
+        let report = NewestGreenReport {
+            schema_version: 1,
+            main_tip: "tip-a".into(),
+            main_ref: "origin/main".into(),
+            green: evidence(
+                "tip-a",
+                &row("tip-a", "2026-08-03T01:00:00Z", "full", "full", "pass"),
+            ),
+            commits_after_green: 0,
+            commits_without_any_record: 0,
+            commits_with_records: 0,
+        };
+        let cache = NewestGreenCache {
+            schema_version: 1,
+            main_tip: "tip-a".into(),
+            main_ref: "origin/main".into(),
+            ledger_path: "/tmp/ledger".into(),
+            ledger_len: 100,
+            ledger_modified_ns: 200,
+            report,
+        };
+        let path = Path::new("/tmp/ledger");
+        assert!(cache_matches(
+            &cache,
+            "tip-a",
+            "origin/main",
+            path,
+            100,
+            200
+        ));
+        assert!(!cache_matches(
+            &cache,
+            "tip-b",
+            "origin/main",
+            path,
+            100,
+            200
+        ));
+        assert!(!cache_matches(
+            &cache,
+            "tip-a",
+            "origin/main",
+            path,
+            101,
+            201
+        ));
+    }
+}

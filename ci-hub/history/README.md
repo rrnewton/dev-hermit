@@ -87,6 +87,38 @@ The `--since` / `--repo` / `--branch` / `--limit` / `--json` flag names match
 The recent-runs listing and every other store consumer read the SAME
 `ignored/ci-hub/gha-runs.csv`, so counts agree by construction.
 
+## Local main-history queries (`ci-hub`)
+
+The typed front door uses one Rust history index for both directions; neither
+command reruns validation:
+
+```bash
+# Most recent main commit whose latest clean, anchored local run passed.
+ci-hub/ci-hub newest-green-main
+
+# Newest retained PASS -> FAIL transition for an outer gate, DAG node, or test.
+ci-hub/ci-hub first-bad liteinst_detcore_strict_verify_micro_suite
+```
+
+`newest-green-main` prints the exact profile and selection mode. A full/full
+result is labelled `full`; a smart-selected or narrower-profile run is labelled
+with that weaker guarantee. It also counts newer commits with no ledger record.
+Its cache is keyed by both the fetched `origin/main` tip and the ledger length +
+modification time, so a new main commit or a newly appended validation record
+invalidates it. Use `--no-fetch` only for an intentionally offline snapshot.
+
+`first-bad` reports both endpoints, unobserved commits between them, the files
+touched by the candidate, and a conservative plausibility statement. Inner DAG
+nodes and Rust test functions are recovered through the log path stored in the
+same ledger row. If that log is gone, the command says the cell detail was not
+retained; it never turns missing evidence into a pass. Host load was not stored
+by schema 3, so only the measured run CPU/wall ratio can currently be reported.
+
+Both commands follow `validate-status` exit codes: `0` found the requested
+evidence, `3` found failure evidence without the required green boundary, and
+`4` means no qualifying record/transition. Tool-cost output reports estimated
+and actual wall and CPU time on every completion path.
+
 **Queued-run wait (`>=N`).** A still-queued run has `run_started_at == created_at`
 (a GitHub placeholder), so its stored `queue_s` is `0` even after hours in the
 queue — a silent wrong reading. The listing therefore shows `>=N` for a queued
