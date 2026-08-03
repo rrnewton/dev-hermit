@@ -56,6 +56,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
      ./ci-hub/ci-hub fresh
      ./ci-hub/ci-hub main-health
      ./ci-hub/ci-hub runner-health --all
+     ./ci-hub/bin/load-probe
 
 3. Recover local validation evidence after an agent or pane disappears:
      ./ci-hub/ci-hub local-history --since YYYY-MM-DD
@@ -129,6 +130,8 @@ enum HubCommand {
     ValidateWorktrees(ValidateWorktreesArgs),
     /// Summarize self-hosted runners and recent workflows.
     RunnerHealth(RunnerHealthArgs),
+    /// Gate timing-sensitive work on measured CPU and memory utilization.
+    LoadProbe(LoadProbeArgs),
     /// Operate the shared-file landing mutex.
     LandLock(landing_lock::LandLockArgs),
 }
@@ -355,6 +358,20 @@ struct RunnerHealthArgs {
     gh: Option<String>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct LoadProbeArgs {
+    #[arg(long, default_value_t = 1.0)]
+    sample_seconds: f64,
+    #[arg(long, default_value_t = 50.0)]
+    max_executing_percent: f64,
+    #[arg(long, default_value_t = 10.0)]
+    min_memory_available_percent: f64,
+    #[arg(long, default_value_t = 5)]
+    top: usize,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Clone, Debug)]
 struct CostSpec {
     tool: &'static str,
@@ -428,6 +445,13 @@ impl HubCommand {
             Self::RunnerHealth(_) => CostSpec {
                 tool: "ci-hub/runner-health",
                 basis: "not measured: runner/workflow query cost history is not retained".into(),
+            },
+            Self::LoadProbe(args) => CostSpec {
+                tool: "ci-hub/load-probe",
+                basis: format!(
+                    "not measured: requested sample={:.3}s plus /proc+cgroup scan; retained runtime history not established",
+                    args.sample_seconds
+                ),
             },
             Self::LandLock(args) if args.command.consumes_meaningful_time() => CostSpec {
                 tool: "ci-hub/land-lock",
@@ -826,6 +850,29 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             }
             run_python(root, "ci-hub/runners/ci-status.py", forwarded)
         }
+        HubCommand::LoadProbe(args) => {
+            let mut forwarded = Vec::new();
+            push_option(
+                &mut forwarded,
+                "--sample-seconds",
+                args.sample_seconds.to_string(),
+            );
+            push_option(
+                &mut forwarded,
+                "--max-executing-percent",
+                args.max_executing_percent.to_string(),
+            );
+            push_option(
+                &mut forwarded,
+                "--min-memory-available-percent",
+                args.min_memory_available_percent.to_string(),
+            );
+            push_option(&mut forwarded, "--top", args.top.to_string());
+            if args.json {
+                forwarded.push("--json".into());
+            }
+            run_python(root, "ci-hub/health/load_probe.py", forwarded)
+        }
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
     }
 }
@@ -1197,6 +1244,31 @@ mod tests {
         assert_eq!(args.stale_hours, 6.0);
         assert_eq!(args.data_dir, Some(PathBuf::from("/tmp/ci-hub")));
         assert!(args.json);
+    }
+
+    #[test]
+    fn parses_typed_load_probe_command() {
+        let command = Cli::try_parse_from([
+            "ci-hub",
+            "load-probe",
+            "--sample-seconds",
+            "0.5",
+            "--max-executing-percent",
+            "40",
+            "--top",
+            "3",
+            "--json",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::LoadProbe(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.sample_seconds, 0.5);
+        assert_eq!(args.max_executing_percent, 40.0);
+        assert_eq!(args.top, 3);
+        assert!(args.json);
+        assert!(HubCommand::LoadProbe(args).cost_spec().is_some());
     }
 
     #[test]

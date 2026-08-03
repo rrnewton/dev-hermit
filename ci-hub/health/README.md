@@ -13,6 +13,25 @@ health polling. Project policy stays in this repository:
 - `.orc/plugins/hermit-dev/index.ts` is the outer five-minute scheduler and
   wakeup delivery adapter.
 
+## Timing-sensitive load precondition
+
+`./ci-hub/bin/load-probe` takes a one-second host-counter sample and exits
+zero only when the box is suitable for timing-sensitive work. The default
+policy requires executing CPU at or below 50% and `MemAvailable` at or above
+10%. Load average is diagnostic only: it includes uninterruptible sleep and is
+never used for the verdict. Override thresholds explicitly when a measurement
+has a stricter documented precondition.
+
+The report includes measured executing/idle/iowait CPU, top CPU consumers,
+`R/S/D/Z` process states, memory/PSI, and the numeric verdict. In a 3pai PID
+namespace, aggregate counters remain host-wide but host PIDs are hidden. The
+probe says this loudly, prints visible versus cgroup PID coverage, and ranks
+cgroup CPU instead of mislabeling the sandbox-local process list as host-wide.
+Exit 1 means measured conditions violate policy; exit 2 means required evidence
+was unavailable. It reports its cost directly and avoids the `rust-script`
+cache, so this is the canonical 3pai/BpfJailer entrypoint. The typed
+`./ci-hub/ci-hub load-probe` alias is also available outside that restriction.
+
 The hub checks GitHub current-main health and open-PR red counts every 15
 minutes. Every five minutes it checks the live ORC agent snapshot and runs the
 same gentle primary-refresh routine as `make checkout-fresh`. Clean product

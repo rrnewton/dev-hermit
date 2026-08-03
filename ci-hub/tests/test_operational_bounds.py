@@ -204,6 +204,11 @@ class OperationalBoundsTest(unittest.TestCase):
             (("history", "--", "--help"), {0}, self.env),
             (("local-history", "--json", "--since", "2999-01-01"), {0}, self.env),
             (
+                ("load-probe", "--sample-seconds", "0.1", "--top", "1"),
+                {0, 1},
+                self.env,
+            ),
+            (
                 (
                     "runner-health",
                     "--repo",
