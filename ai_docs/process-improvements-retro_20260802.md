@@ -262,13 +262,15 @@ wasted cycles for an O(1) root fix.
 | know-the-gating-model | ci-debugging, hermit-lander | ci-debugging done (#1493) |
 | install-deps-asserts-toolchain | Makefile + AGENTS.md | **landed** (`718d83d3`, `826f64e8`) |
 | ground-truth-not-chatter | AGENTS.md, hermit-coord | AGENTS.md done; coord to reinforce |
-| diagnose-runner-queue-before-code | ci-debugging, hermit-ci | wiring this pass |
-| fix-common-cause-once | ci-debugging, hermit-lander | wiring this pass |
+| diagnose-runner-queue-before-code | ci-debugging | wired ([PR #1508](https://github.com/rrnewton/hermit/pull/1508)) |
+| fix-common-cause-once | ci-debugging | wired ([PR #1508](https://github.com/rrnewton/hermit/pull/1508)) |
+| coordination-discipline (rules 1,2,3,4,7) | hermit-coord | wired ([PR #1508](https://github.com/rrnewton/hermit/pull/1508)) |
 
-Wired this pass: `ci-debugging` skill gains "Runner-queue contention vs code" and
-"Common cause vs per-PR" sections; `hermit-coord` skill gains the coordinator
-rules 1, 2, 3, 4, and 7. Both land as one docs-only PR against
-`rrnewton/hermit:main`.
+Wired via [PR #1508](https://github.com/rrnewton/hermit/pull/1508): `ci-debugging`
+gains "Runner-queue contention vs code" (§6) and "Common cause vs per-PR" (§7)
+sections; `hermit-coord` gains a "Coordination discipline" section carrying rules
+1, 2, 3, 4, and 7. This follows the CI iteration rules already wired in
+[PR #1493](https://github.com/rrnewton/hermit/pull/1493).
 
 ## Bottom line
 
