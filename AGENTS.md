@@ -839,6 +839,15 @@ branch exists, or `git status` shows a modified submodule. Do not pin an
 unpublished private commit unless the task explicitly establishes how every
 consumer can fetch it.
 
+Every ordinary pointer advance follows the single-variable A/B protocol in
+`ci-hub/history/SUBMODULE-BUMPS.md`: start at a clean, evidenced-green parent A;
+advance exactly one gitlink to fetched submodule `origin/main`; create B whose
+commit changes only that gitlink; verify B; and append the result to the ci-hub
+history store. Never bury a gitlink advance inside an unrelated source/policy
+commit. For determinism-related changes, one passing run is insufficient;
+require a powered repeated probe such as the calibrated matched-load multisect
+probe. Use `make single-submodule-bump ARGS='plan ...'` before execution.
+
 ### Pointer Update Procedure
 
 After landing and validation:

@@ -12,6 +12,8 @@ SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
 	install-deps-core install-deps-full install-deps-qemu lint list-rust-scripts validate
 
+.PHONY: single-submodule-bump
+
 build: init-hermit
 	@$(MAKE) --no-print-directory doctor-core
 	@$(MAKE) --no-print-directory build-hermit
@@ -132,6 +134,9 @@ check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils s
 list-rust-scripts: ## Inventory executable Rust and rust-script source files
 	@scripts/list-rust-scripts.rs
 
+single-submodule-bump: ## Plan/run one isolated gitlink A→B verification (ARGS='...')
+	@scripts/single-submodule-bump.rs $(ARGS)
+
 lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@command -v rustfmt >/dev/null 2>&1 || { echo 'ERROR: rustfmt is required.' >&2; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
@@ -232,6 +237,7 @@ help:
 	@echo "make check-portability  Reject owner-specific paths in build/run files"
 	@echo "make check-agent-utils-pin  Require parent pin and checkout at agent-utils origin/main"
 	@echo "make list-rust-scripts Inventory executable Rust and rust-script source files"
+	@echo "make single-submodule-bump  Plan/run one isolated gitlink A→B verification"
 	@echo "make lint               Lint parent scripts, tests, paths, and submodule policy"
 	@echo "make compat-envelope    Cross-backend compat regression gate (ptrace+DBI, portable CI lane)"
 	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
