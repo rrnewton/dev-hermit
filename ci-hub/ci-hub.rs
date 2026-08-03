@@ -20,6 +20,8 @@
 mod landing_lock;
 #[path = "lib/records.rs"]
 mod records;
+#[path = "lib/validate_status.rs"]
+mod validate_status;
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -132,10 +134,16 @@ enum HubCommand {
     RunnerHealth(RunnerHealthArgs),
     /// Gate timing-sensitive work on measured CPU and memory utilization.
     LoadProbe(LoadProbeArgs),
+    /// Query the local validate ledger for a commit and print the landing/cache verdict.
+    ValidateStatus(ValidateStatusArgs),
+    /// Apply `locally-validated` to PRs whose head has a clean full-validate record.
+    ApplyLocalLabel(ApplyLocalLabelArgs),
     /// Operate the shared-file landing mutex.
     LandLock(landing_lock::LandLockArgs),
     /// Inspect or switch the committed CI-constrained mode and its GitHub projection.
     CiMode(CiModeArgs),
+    /// Inspect or edit the named current CI batch and its ci-batch PR labels.
+    Batch(BatchArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -374,12 +382,61 @@ struct LoadProbeArgs {
     json: bool,
 }
 
+#[derive(Args, Clone, Debug)]
+struct ValidateStatusArgs {
+    /// The commit SHA (full 40-hex or an unambiguous ledger prefix) to assess.
+    #[arg(long, conflicts_with = "pr")]
+    sha: Option<String>,
+    /// A PR number; its head SHA is resolved via gh and assessed.
+    #[arg(long, conflicts_with = "sha")]
+    pr: Option<u64>,
+    /// Repository used to resolve --pr head SHAs.
+    #[arg(long, default_value = "rrnewton/hermit")]
+    repo: String,
+    /// Override the validate ledger path (default: ignored/ci-hub/validate-runs.jsonl).
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+    /// Emit the machine-readable verdict report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ApplyLocalLabelArgs {
+    /// A single PR number to consider.
+    #[arg(long, conflicts_with = "all_open")]
+    pr: Option<u64>,
+    /// Sweep every open PR in the repo, labeling each validated head.
+    #[arg(long, conflicts_with = "pr")]
+    all_open: bool,
+    /// Repository whose PRs are labeled.
+    #[arg(long, default_value = "rrnewton/hermit")]
+    repo: String,
+    /// Override the validate ledger path (default: ignored/ci-hub/validate-runs.jsonl).
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+    /// Report intended label actions without editing any label.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit the machine-readable per-PR action report.
+    #[arg(long)]
+    json: bool,
+}
+
 /// Name of the committed source-of-truth mode file, relative to the workspace root.
 const CI_MODE_STATE_PATH: &str = "ci-hub/health/ci-mode.json";
 /// GitHub repository variable that projects the mode where workflows can read it.
 const CI_MODE_VARIABLE: &str = "CI_MODE";
 /// Repositories whose auto-fan-out is gated by the mode; both carry the projection.
 const CI_MODE_REPOS: [&str; 2] = ["rrnewton/hermit", "rrnewton/reverie"];
+
+/// Name of the committed source-of-truth batch file, relative to the workspace root.
+const CI_BATCH_STATE_PATH: &str = "ci-hub/health/ci-batch.json";
+/// PR label that projects batch membership where workflows can read it; a PR
+/// carrying this label is exempt from the constrained-mode gate and gets CI.
+const CI_BATCH_LABEL: &str = "ci-batch";
+/// Repository assumed for `--pr N` when no `--repo` is given.
+const CI_BATCH_DEFAULT_REPO: &str = "rrnewton/hermit";
 
 #[derive(Args, Clone, Debug)]
 struct CiModeArgs {
@@ -488,6 +545,107 @@ impl CiModeState {
     }
 }
 
+#[derive(Args, Clone, Debug)]
+struct BatchArgs {
+    #[command(subcommand)]
+    command: BatchCommand,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum BatchCommand {
+    /// Print the named current batch and its member PRs (reads the file only).
+    Show(BatchShowArgs),
+    /// Replace the current batch with a new named batch and label its PRs.
+    Set(BatchSetArgs),
+    /// Add PR(s) to the current batch and apply the ci-batch label.
+    Add(BatchMemberArgs),
+    /// Remove PR(s) from the current batch and drop the ci-batch label.
+    Remove(BatchMemberArgs),
+    /// Clear the current batch, dropping the ci-batch label from every member.
+    Clear(BatchClearArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+struct BatchShowArgs {
+    /// Emit the machine-readable batch report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct BatchSetArgs {
+    /// Stable descriptive slug naming the batch, e.g. "cpu-timeout-landing".
+    name: String,
+    /// Operator-supplied justification recorded in the state file.
+    #[arg(long)]
+    reason: String,
+    /// Repository owning every `--pr` in this invocation.
+    #[arg(long, default_value = CI_BATCH_DEFAULT_REPO)]
+    repo: String,
+    /// Initial member PR number(s); each is labelled ci-batch. Repeatable.
+    #[arg(long = "pr")]
+    prs: Vec<u64>,
+    /// Compute and print the intended change without touching files, GitHub, or git.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct BatchMemberArgs {
+    /// Repository owning every `--pr` in this invocation.
+    #[arg(long, default_value = CI_BATCH_DEFAULT_REPO)]
+    repo: String,
+    /// PR number(s) to add or remove. Repeatable; at least one required.
+    #[arg(long = "pr", required = true)]
+    prs: Vec<u64>,
+    /// Compute and print the intended change without touching files, GitHub, or git.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct BatchClearArgs {
+    /// Compute and print the intended change without touching files, GitHub, or git.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+/// One member of a batch: a PR is identified by its owning repo and number, so a
+/// batch may span both gated repositories.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct BatchPr {
+    repo: String,
+    number: u64,
+}
+
+/// Committed source of truth for the named current CI batch. Absent file == no
+/// batch. Membership is projected to GitHub as the ci-batch label on each PR.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct CiBatchState {
+    name: String,
+    reason: String,
+    since: String,
+    actor: String,
+    #[serde(default)]
+    prs: Vec<BatchPr>,
+}
+
+impl CiBatchState {
+    fn empty() -> Self {
+        Self {
+            name: String::new(),
+            reason: String::new(),
+            since: String::new(),
+            actor: String::new(),
+            prs: Vec::new(),
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        !self.name.is_empty()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CostSpec {
     tool: &'static str,
@@ -581,6 +739,7 @@ impl HubCommand {
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
             | Self::CiMode(_)
+            | Self::Batch(_)
             | Self::LandLock(_) => return None,
         };
         Some(spec)
@@ -638,6 +797,24 @@ enum CiHubError {
     },
     #[error("ci-hub: CI-mode state {path} is not valid JSON: {source}")]
     CiModeJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("ci-hub: cannot read batch state {path}: {source}")]
+    CiBatchRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("ci-hub: cannot write batch state {path}: {source}")]
+    CiBatchWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("ci-hub: batch state {path} is not valid JSON: {source}")]
+    CiBatchJson {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
@@ -1013,6 +1190,13 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             CiModeCommand::Status(status_args) => ci_mode_status(root, status_args),
             CiModeCommand::Set(set_args) => ci_mode_set(root, set_args),
             CiModeCommand::Fire(fire_args) => ci_mode_fire(root, fire_args),
+        },
+        HubCommand::Batch(args) => match args.command {
+            BatchCommand::Show(show_args) => batch_show(root, show_args),
+            BatchCommand::Set(set_args) => batch_set(root, set_args),
+            BatchCommand::Add(member_args) => batch_add(root, member_args),
+            BatchCommand::Remove(member_args) => batch_remove(root, member_args),
+            BatchCommand::Clear(clear_args) => batch_clear(root, clear_args),
         },
     }
 }
@@ -1472,6 +1656,405 @@ fn ci_mode_fire(root: &Path, args: CiModeFireArgs) -> Result<i32, CiHubError> {
         );
         Ok(2)
     }
+}
+
+fn batch_path(root: &Path) -> PathBuf {
+    root.join(CI_BATCH_STATE_PATH)
+}
+
+/// Load the committed batch. Returns `(state, present)`; an absent file is an
+/// empty (inactive) batch.
+fn load_batch(root: &Path) -> Result<(CiBatchState, bool), CiHubError> {
+    let path = batch_path(root);
+    if !path.exists() {
+        return Ok((CiBatchState::empty(), false));
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|source| CiHubError::CiBatchRead {
+        path: path.clone(),
+        source,
+    })?;
+    let state =
+        serde_json::from_str(&raw).map_err(|source| CiHubError::CiBatchJson { path, source })?;
+    Ok((state, true))
+}
+
+/// Serialize the batch to its committed on-disk form (pretty + trailing newline,
+/// matching ci-mode so a hand-authored seed and a tool write are byte-identical).
+fn batch_json(state: &CiBatchState) -> String {
+    serde_json::to_string_pretty(state).expect("batch state is serializable") + "\n"
+}
+
+/// Create the ci-batch label if it is missing; an "already exists" result is
+/// success, so this is idempotent and safe to call before every label edit.
+fn ensure_batch_label(root: &Path, repo: &str) -> Result<(), String> {
+    let output = gh_command(
+        root,
+        &[
+            "label",
+            "create",
+            CI_BATCH_LABEL,
+            "--repo",
+            repo,
+            "--color",
+            "1D76DB",
+            "--description",
+            "Current CI batch: exempt from constrained-mode gate; gets CI now.",
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh label create: {source}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("already exists") {
+        return Ok(());
+    }
+    Err(format!(
+        "gh label create exited {}: {}",
+        exit_status_code(output.status),
+        stderr.trim()
+    ))
+}
+
+/// Apply (`--add-label`) or drop (`--remove-label`) the ci-batch label on one PR.
+fn edit_batch_label(root: &Path, pr: &BatchPr, add: bool) -> Result<(), String> {
+    let flag = if add { "--add-label" } else { "--remove-label" };
+    let number = pr.number.to_string();
+    let output = gh_command(
+        root,
+        &[
+            "pr",
+            "edit",
+            &number,
+            "--repo",
+            &pr.repo,
+            flag,
+            CI_BATCH_LABEL,
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh pr edit: {source}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh pr edit #{} on {} exited {}: {}",
+            pr.number,
+            pr.repo,
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Returns Ok(true) if a commit was created, Ok(false) if the file was unchanged.
+fn commit_batch_state(root: &Path, name: &str) -> Result<bool, String> {
+    let dirty = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain", "--", CI_BATCH_STATE_PATH])
+        .output()
+        .map_err(|source| format!("launch git status: {source}"))?;
+    if !dirty.status.success() {
+        return Err(format!(
+            "git status exited {}: {}",
+            exit_status_code(dirty.status),
+            String::from_utf8_lossy(&dirty.stderr).trim()
+        ));
+    }
+    if dirty.stdout.is_empty() {
+        return Ok(false);
+    }
+    let message = if name.is_empty() {
+        "ci-hub: clear CI batch".to_string()
+    } else {
+        format!("ci-hub: set CI batch to {name}")
+    };
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", &message, "-o", "--", CI_BATCH_STATE_PATH])
+        .output()
+        .map_err(|source| format!("launch git commit: {source}"))?;
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(format!(
+            "git commit exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Shared publish path for every mutating batch command: write the source of
+/// truth first (a label/git failure never loses the decision), project the
+/// ci-batch label additions and removals, then commit and push the state file.
+/// `to_add`/`to_drop` are the label deltas; `state` is the already-updated batch.
+fn publish_batch(
+    root: &Path,
+    state: &CiBatchState,
+    to_add: &[BatchPr],
+    to_drop: &[BatchPr],
+) -> Result<i32, CiHubError> {
+    let path = batch_path(root);
+    std::fs::write(&path, batch_json(state)).map_err(|source| CiHubError::CiBatchWrite {
+        path: path.clone(),
+        source,
+    })?;
+    println!("Wrote {}.", path.display());
+
+    let mut failures: Vec<String> = Vec::new();
+
+    // Ensure the label exists once per repo we add it to (removals reference an
+    // already-existing label, so only additions need the create).
+    let mut repos: Vec<&str> = to_add.iter().map(|pr| pr.repo.as_str()).collect();
+    repos.sort_unstable();
+    repos.dedup();
+    for repo in repos {
+        if let Err(error) = ensure_batch_label(root, repo) {
+            eprintln!("LABEL ENSURE FAILED for {repo}: {error}");
+            failures.push(format!("ensure-label {repo}: {error}"));
+        }
+    }
+
+    for pr in to_add {
+        match edit_batch_label(root, pr, true) {
+            Ok(()) => println!("Labelled {} #{} {CI_BATCH_LABEL}.", pr.repo, pr.number),
+            Err(error) => {
+                eprintln!("LABEL ADD FAILED for {} #{}: {error}", pr.repo, pr.number);
+                failures.push(format!("add-label {} #{}: {error}", pr.repo, pr.number));
+            }
+        }
+    }
+    for pr in to_drop {
+        match edit_batch_label(root, pr, false) {
+            Ok(()) => println!("Unlabelled {} #{} {CI_BATCH_LABEL}.", pr.repo, pr.number),
+            Err(error) => {
+                eprintln!("LABEL REMOVE FAILED for {} #{}: {error}", pr.repo, pr.number);
+                failures.push(format!("remove-label {} #{}: {error}", pr.repo, pr.number));
+            }
+        }
+    }
+
+    match commit_batch_state(root, &state.name) {
+        Ok(true) => {
+            println!("Committed {CI_BATCH_STATE_PATH} to parent main.");
+            match push_parent_main(root) {
+                Ok(()) => println!("Pushed origin HEAD:main."),
+                Err(error) => {
+                    eprintln!("PUSH FAILED: {error}");
+                    failures.push(format!("push: {error}"));
+                }
+            }
+        }
+        Ok(false) => println!("No state change to commit (file already matches)."),
+        Err(error) => {
+            eprintln!("COMMIT FAILED: {error}");
+            failures.push(format!("commit: {error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(0)
+    } else {
+        eprintln!(
+            "ci-hub batch: state written, but {} projection/publish step(s) failed: {}",
+            failures.len(),
+            failures.join("; ")
+        );
+        Ok(2)
+    }
+}
+
+fn batch_show(root: &Path, args: BatchShowArgs) -> Result<i32, CiHubError> {
+    let (state, present) = load_batch(root)?;
+    if args.json {
+        #[derive(Serialize)]
+        struct Report<'a> {
+            file_present: bool,
+            active: bool,
+            name: &'a str,
+            reason: &'a str,
+            since: &'a str,
+            actor: &'a str,
+            prs: &'a [BatchPr],
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&Report {
+                file_present: present,
+                active: state.is_active(),
+                name: &state.name,
+                reason: &state.reason,
+                since: &state.since,
+                actor: &state.actor,
+                prs: &state.prs,
+            })
+            .expect("batch report is serializable")
+        );
+        return Ok(0);
+    }
+    if !state.is_active() {
+        println!("Current batch: NONE");
+        println!(
+            "  source: {}",
+            if present {
+                batch_path(root).display().to_string()
+            } else {
+                format!("(no {CI_BATCH_STATE_PATH}; no batch)")
+            }
+        );
+        return Ok(0);
+    }
+    println!("Current batch: {}", state.name);
+    println!("  source: {}", batch_path(root).display());
+    println!("  reason: {}", state.reason);
+    if !state.since.is_empty() {
+        println!("  since:  {}", state.since);
+    }
+    if !state.actor.is_empty() {
+        println!("  actor:  {}", state.actor);
+    }
+    if state.prs.is_empty() {
+        println!("  PRs:    (none)");
+    } else {
+        println!("  PRs:");
+        for pr in &state.prs {
+            println!("    {} #{}", pr.repo, pr.number);
+        }
+    }
+    Ok(0)
+}
+
+/// Deduplicate a `--repo` + repeated `--pr` invocation into distinct members.
+fn members_from(repo: &str, prs: &[u64]) -> Vec<BatchPr> {
+    let mut out: Vec<BatchPr> = Vec::new();
+    for &number in prs {
+        let pr = BatchPr {
+            repo: repo.to_string(),
+            number,
+        };
+        if !out.contains(&pr) {
+            out.push(pr);
+        }
+    }
+    out
+}
+
+fn batch_set(root: &Path, args: BatchSetArgs) -> Result<i32, CiHubError> {
+    let (old, _present) = load_batch(root)?;
+    let new_members = members_from(&args.repo, &args.prs);
+    let state = CiBatchState {
+        name: args.name,
+        reason: args.reason,
+        since: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        actor: ci_mode_actor(),
+        prs: new_members.clone(),
+    };
+    // Old members no longer present lose the label; new members gain it.
+    let to_drop: Vec<BatchPr> = old
+        .prs
+        .iter()
+        .filter(|pr| !new_members.contains(pr))
+        .cloned()
+        .collect();
+    let to_add: Vec<BatchPr> = new_members
+        .iter()
+        .filter(|pr| !old.prs.contains(pr))
+        .cloned()
+        .collect();
+
+    if args.dry_run {
+        batch_dry_run(root, &state, &to_add, &to_drop);
+        return Ok(0);
+    }
+    publish_batch(root, &state, &to_add, &to_drop)
+}
+
+fn batch_add(root: &Path, args: BatchMemberArgs) -> Result<i32, CiHubError> {
+    let (mut state, _present) = load_batch(root)?;
+    if !state.is_active() {
+        eprintln!(
+            "ci-hub batch add: no current batch; run `ci-hub batch set <name> --reason ...` first."
+        );
+        return Ok(2);
+    }
+    let requested = members_from(&args.repo, &args.prs);
+    let to_add: Vec<BatchPr> = requested
+        .iter()
+        .filter(|pr| !state.prs.contains(pr))
+        .cloned()
+        .collect();
+    if to_add.is_empty() {
+        println!("All requested PRs are already in batch {}.", state.name);
+        return Ok(0);
+    }
+    state.prs.extend(to_add.iter().cloned());
+
+    if args.dry_run {
+        batch_dry_run(root, &state, &to_add, &[]);
+        return Ok(0);
+    }
+    publish_batch(root, &state, &to_add, &[])
+}
+
+fn batch_remove(root: &Path, args: BatchMemberArgs) -> Result<i32, CiHubError> {
+    let (mut state, present) = load_batch(root)?;
+    if !present || !state.is_active() {
+        eprintln!("ci-hub batch remove: no current batch to remove PRs from.");
+        return Ok(2);
+    }
+    let requested = members_from(&args.repo, &args.prs);
+    let to_drop: Vec<BatchPr> = requested
+        .iter()
+        .filter(|pr| state.prs.contains(pr))
+        .cloned()
+        .collect();
+    if to_drop.is_empty() {
+        println!("None of the requested PRs are in batch {}.", state.name);
+        return Ok(0);
+    }
+    state.prs.retain(|pr| !to_drop.contains(pr));
+
+    if args.dry_run {
+        batch_dry_run(root, &state, &[], &to_drop);
+        return Ok(0);
+    }
+    publish_batch(root, &state, &[], &to_drop)
+}
+
+fn batch_clear(root: &Path, args: BatchClearArgs) -> Result<i32, CiHubError> {
+    let (old, present) = load_batch(root)?;
+    if !present && !old.is_active() {
+        println!("No current batch to clear.");
+        return Ok(0);
+    }
+    let to_drop = old.prs.clone();
+    let state = CiBatchState::empty();
+
+    if args.dry_run {
+        batch_dry_run(root, &state, &[], &to_drop);
+        return Ok(0);
+    }
+    publish_batch(root, &state, &[], &to_drop)
+}
+
+fn batch_dry_run(root: &Path, state: &CiBatchState, to_add: &[BatchPr], to_drop: &[BatchPr]) {
+    println!("DRY RUN: no files, GitHub labels, or commits changed.");
+    println!("Would write {}:", batch_path(root).display());
+    println!("{}", batch_json(state));
+    for pr in to_add {
+        println!("Would add label {CI_BATCH_LABEL} to {} #{}.", pr.repo, pr.number);
+    }
+    for pr in to_drop {
+        println!(
+            "Would remove label {CI_BATCH_LABEL} from {} #{}.",
+            pr.repo, pr.number
+        );
+    }
+    println!("Would commit {CI_BATCH_STATE_PATH} to parent main and push origin HEAD:main.");
 }
 
 fn agent_tool(root: &Path) -> PathBuf {
@@ -1964,6 +2547,63 @@ mod tests {
 
         // ci-mode is a trivial local read/write dispatcher: no cost wrapper.
         assert!(HubCommand::CiMode(args).cost_spec().is_none());
+    }
+
+    #[test]
+    fn parses_typed_batch_commands() {
+        let set = Cli::try_parse_from([
+            "ci-hub",
+            "batch",
+            "set",
+            "cpu-timeout-landing",
+            "--reason",
+            "priority: land cpu_timeout chain",
+            "--pr",
+            "1566",
+            "--pr",
+            "1568",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::Batch(args) = set else {
+            panic!("wrong command variant")
+        };
+        let BatchCommand::Set(set_args) = args.command else {
+            panic!("wrong subcommand variant")
+        };
+        assert_eq!(set_args.name, "cpu-timeout-landing");
+        assert_eq!(set_args.repo, CI_BATCH_DEFAULT_REPO);
+        assert_eq!(set_args.prs, vec![1566, 1568]);
+        assert!(!set_args.dry_run);
+
+        let add = Cli::try_parse_from([
+            "ci-hub",
+            "batch",
+            "add",
+            "--repo",
+            "rrnewton/reverie",
+            "--pr",
+            "42",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::Batch(args) = add else {
+            panic!("wrong command variant")
+        };
+        let BatchCommand::Add(member_args) = args.command.clone() else {
+            panic!("wrong subcommand variant")
+        };
+        assert_eq!(member_args.repo, "rrnewton/reverie");
+        assert_eq!(member_args.prs, vec![42]);
+
+        // batch is a local read/write dispatcher: no cost wrapper, like ci-mode.
+        assert!(HubCommand::Batch(args).cost_spec().is_none());
+
+        // members_from deduplicates a repeated --pr within one repo.
+        let members = members_from("rrnewton/hermit", &[7, 7, 9]);
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].number, 7);
+        assert_eq!(members[1].number, 9);
     }
 
     #[test]
