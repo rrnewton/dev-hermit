@@ -48,6 +48,44 @@ Never plan blind. Before generating options:
 State, in one sentence bound to evidence, *what the nondeterminism or wedge
 actually is* before proposing anything.
 
+### Settled questions — redirect before proposing a spike
+
+Agents: read the named implementation and target the adjacent open question.
+Coordinators: rewrite a proposal whose crux is already answered here.
+
+1. **Can RCB preemption reach an exact deterministic guest position? Yes.**
+   Hermit/Reverie ptrace programs the PMU early for skid, then single-steps to
+   the exact `(RCB, instruction)` target. Read
+   `reverie/reverie-ptrace/src/timer.rs::{ClockCounter,Timer::attempt_single_step}`
+   and rr's `src/ReplaySession.cc::advance_to`. **Open:** the cost of doing the
+   equivalent inside a patching backend versus through the ptrace tracer.
+2. **Which preemption path is primary?** An intercepted-event boundary (usually
+   a syscall) is the fast path; the precise RCB timer guarantees progress when
+   no such boundary arrives. Read
+   `hermit/detcore/src/lib.rs::{pre_handler_hook,end_timeslice_if_needed,post_handler_hook,handle_timer_event}`.
+   Calling the RCB path “rare” requires measurement. **Open:** its frequency and
+   cost by workload and backend.
+3. **Must recording eliminate PMU skid? No.** A recorder can make the delivered
+   `(RCB, RIP)` the canonical preemption point; skid is then placement noise in
+   the trace, not a recording failure. Read `rrnewton/sched-test`'s
+   `scx-sim/crates/scx_simulator/src/preempt/mod.rs::{preempt_handler,PreemptRing::record_preemption}`.
+   **Open:** the minimum Hermit trace schema needed to replay those actual
+   landing points, including asynchronous events.
+4. **Can replay distinguish repeated executions of one target RIP? Yes.**
+   scx-sim's breakpoint replay re-arms at that RIP until the live branch count
+   identifies the recorded dynamic instance; rr rejects mismatching execution
+   points in `advance_to`. Read scx-sim's `preempt/mod.rs::replay_bp_handler`
+   and `backend/replay.rs`. Current Hermit instead reaches exact
+   `(RCB, instruction)` by PMU plus single-step. **Open:** whether breakpoint-
+   assisted positioning is faster and portable enough for arbitrary guests.
+5. **Does Hermit silently multiplex exhausted PMU counters? No.** Its counters
+   are pinned: open failure aborts timer initialization, and descheduling or
+   `running != enabled` panics. Read
+   `reverie/reverie-ptrace/src/perf.rs::{Builder::create,PerfCounter::ctr_value,PerfCounter::ctr_value_fast}`
+   and `timer.rs::Timer::new`; a direct probe also observed the hard failure at
+   the sixth pinned PMC on this host. **Open:** an admission policy that avoids
+   exhaustion and quantifies co-tenancy cost.
+
 ---
 
 ## Step 1 — CLASSIFY the source of nondeterminism
