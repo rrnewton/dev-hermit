@@ -101,7 +101,9 @@ FIFO permanently** (the observed ~2040-minute head-of-line starvation). The fix:
 `run` supervises the child against `--child-deadline`; on breach it SIGTERMs the
 whole child process group (then SIGKILL after a short grace), **releases the
 lock**, prints a loud `ABANDON PR #N` line, and exits `124`. The PR is left open
-for retry. An unbounded wait is unboxed compute; every wait here is bounded.
+for retry. A zero deadline is rejected: an unbounded wait is unboxed compute and
+every wait here is bounded. `land-pr.sh`'s surviving outer supervisor also posts
+a durable PR comment when the killed inner process cannot do so itself.
 
 **Never hand-roll a renewer.** A bare `acquire` plus an external `renewer.sh`
 loop that outlives a dead agent defeats the lease-lapse safety net and is exactly
@@ -131,6 +133,9 @@ never wedges a land:
 
 Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
 PR comment — so an abandoned PR never silently languishes (the #244 pattern).
+Before taking the lock, the shared lander persists a post-land intent. Only after
+the merged SHA is ancestry-confirmed does it arm concurrent exact-SHA local and
+GitHub verification; ORC recovery closes the merge-before-arm crash window.
 
 ```bash
 cd ~/work/dev-hermit

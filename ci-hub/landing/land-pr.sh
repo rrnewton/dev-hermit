@@ -53,13 +53,24 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PR" ] && [ -n "$BR" ] || { echo "usage: land-pr.sh <PR> <BRANCH> [--union] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2; exit 2; }
+if [ -z "$PR" ] || [ -z "$BR" ]; then
+  echo "usage: land-pr.sh <PR> <BRANCH> [--union] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2
+  exit 2
+fi
+case "$GATE_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: gate deadline must be positive seconds" >&2; exit 2 ;; esac
+case "$CHILD_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: child deadline must be positive seconds" >&2; exit 2 ;; esac
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 WT="$ROOT/worktrees/lander/hermit"
 R=rrnewton/hermit
 say(){ echo "[land#$PR] $*"; }
+comment_abandon(){
+  local reason="$1"
+  with-proxy gh pr comment "$PR" -R "$R" --body \
+    "[coordinator, $MODEL] ABANDONED landing attempt: ${reason}. The lock was released so the FIFO can continue. Retry if the PR remains open; durable recovery will arm exact-SHA verification if GitHub completed the merge." \
+    >/dev/null 2>&1 || say "WARN: could not post ABANDON comment"
+}
 
 # --- outer: self-wrap in land-lock run so the lease is bound to this bounded ---
 # child. `run` acquires (FIFO), heartbeats only while we live, and ALWAYS releases
@@ -67,8 +78,26 @@ say(){ echo "[land#$PR] $*"; }
 if [ "$INNER" -eq 0 ]; then
   args=(--_inner "$PR" "$BR" --agent "$AGENT" --gate-deadline "$GATE_DEADLINE")
   [ "$UNION" -eq 1 ] && args+=(--union)
-  exec "$ROOT/ci-hub/ci-hub" land-lock run --agent "$AGENT" --pr "$PR" \
+  # Persist the exact-SHA verification obligation intent before the bounded
+  # child can merge. If this process dies after the merge, the ORC recovery
+  # watcher observes the merged SHA and arms both verifiers.
+  if ! "$ROOT/ci-hub/remediation/land_and_arm.py" prepare \
+      --repo "$R" --pr "$PR" --source "$ROOT/hermit" \
+      --land-mode speculative --actor "$AGENT"; then
+    say "ABANDON: could not prepare the post-land verification obligation"
+    comment_abandon "could not prepare the mandatory post-land verification obligation"
+    exit 2
+  fi
+  "$ROOT/ci-hub/ci-hub" land-lock run --agent "$AGENT" --pr "$PR" \
     --child-deadline "$CHILD_DEADLINE" -- "$0" "${args[@]}"
+  rc=$?
+  # The hard deadline kills the entire inner process group, so only this outer
+  # supervisor remains able to emit the durable PR-side abandonment signal.
+  case "$rc" in
+    1) comment_abandon "timed out waiting for the landing lock" ;;
+    124) comment_abandon "land subtree exceeded the ${CHILD_DEADLINE}s hard deadline and was killed" ;;
+  esac
+  exit "$rc"
 fi
 
 # --- inner: we now hold the land-lock ----------------------------------------
@@ -76,9 +105,7 @@ fi
 abandon(){
   local reason="$1" code="${2:-1}"
   say "ABANDON: $reason"
-  with-proxy gh pr comment "$PR" -R "$R" --body \
-    "[$AGENT agent, $MODEL] ABANDONED landing attempt: ${reason}. Releasing the land-lock so the FIFO queue can proceed; PR left open for retry." \
-    >/dev/null 2>&1 || say "WARN: could not post ABANDON comment"
+  comment_abandon "$reason"
   exit "$code"
 }
 
@@ -171,7 +198,14 @@ with-proxy git -C "$ROOT/hermit" fetch -q origin main 2>/dev/null \
 MC=$(with-proxy gh pr view "$PR" -R "$R" --json mergeCommit -q .mergeCommit.oid)
 GITDIR="$ROOT/hermit"; git -C "$GITDIR" cat-file -e "$MC" 2>/dev/null || GITDIR="$WT"
 if git -C "$GITDIR" merge-base --is-ancestor "$MC" origin/main 2>/dev/null; then
-  say "LANDED:$MC"; exit 0
+  if "$ROOT/ci-hub/remediation/land_and_arm.py" complete --repo "$R" --pr "$PR"; then
+    say "LANDED:$MC"; exit 0
+  fi
+  say "POST-LAND ARM PENDING: $MC is landed; durable recovery will retry"
+  with-proxy gh pr comment "$PR" -R "$R" --body \
+    "[coordinator, $MODEL] LANDED at $MC, but immediate exact-SHA verification arming failed. The durable prepared intent remains open and the ORC recovery watcher will retry; this landing is not being reported complete." \
+    >/dev/null 2>&1 || say "WARN: could not post post-land arm warning"
+  exit 8
 else
   abandon "merge reported but $MC is NOT an ancestor of origin/main (verify manually)" 7
 fi

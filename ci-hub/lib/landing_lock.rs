@@ -23,7 +23,7 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 /// lock is released. A stuck land holding the lock is a head-of-line block for
 /// every other FIFO waiter (the ~2040-minute starvation this bounds against): an
 /// unbounded wait is unboxed compute. A real land is minutes; 30 min is a
-/// generous ceiling far below any starvation. `0` disables the bound (discouraged).
+/// generous ceiling far below any starvation.
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 1_800;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
@@ -90,7 +90,8 @@ pub struct RunArgs {
     pub hold: u64,
     /// Kill the child and release the lock if it runs longer than this many
     /// seconds. Bounds the head-of-line block a stuck lander would otherwise
-    /// impose on the FIFO queue. `0` disables the bound (discouraged).
+    /// impose on the FIFO queue. Must be positive: unbounded lock holders are
+    /// forbidden.
     #[arg(long, default_value_t = DEFAULT_CHILD_DEADLINE_SECONDS)]
     pub child_deadline: u64,
     #[arg(last = true, required = true)]
@@ -218,6 +219,10 @@ pub enum LandLockError {
     ReleaseNotOwner { agent: String, holder: String },
     #[error("landing-lock: child command is empty")]
     EmptyChild,
+    #[error(
+        "landing-lock: --child-deadline must be positive; unbounded lock holders are forbidden"
+    )]
+    UnboundedChildDeadline,
 }
 
 impl LandLockError {
@@ -227,7 +232,7 @@ impl LandLockError {
             | Self::ReleaseNotOwner { .. }
             | Self::GuardTimeout
             | Self::InvalidState(_) => 3,
-            Self::Io { .. } | Self::EmptyChild => 2,
+            Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline => 2,
         }
     }
 }
@@ -474,6 +479,9 @@ impl LandingLock {
     fn run(&self, args: RunArgs) -> Result<i32, LandLockError> {
         if args.child.is_empty() {
             return Err(LandLockError::EmptyChild);
+        }
+        if args.child_deadline == 0 {
+            return Err(LandLockError::UnboundedChildDeadline);
         }
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
@@ -738,13 +746,12 @@ enum ChildOutcome {
 
 /// Wait for `child`, killing it if it runs longer than `deadline_secs`.
 ///
-/// `deadline_secs == 0` waits forever (the pre-guardrail behaviour, discouraged
-/// because a hung land then wedges the whole FIFO). Otherwise the child subtree
-/// is signalled SIGTERM, given a short grace period, then SIGKILLed, and the
-/// child is reaped so no zombie is left behind.
+/// The child subtree is signalled SIGTERM, given a short grace period, then
+/// SIGKILLed, and the child is reaped so no zombie is left behind. Callers reject
+/// zero before acquiring the lock so the pre-guardrail unbounded behavior cannot
+/// be re-enabled.
 fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutcome {
-    let deadline = (deadline_secs > 0)
-        .then(|| Instant::now() + Duration::from_secs(deadline_secs));
+    let deadline = Instant::now() + Duration::from_secs(deadline_secs);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return ChildOutcome::Exited(status),
@@ -761,11 +768,9 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutc
                 }
             }
         }
-        if let Some(deadline) = deadline {
-            if Instant::now() >= deadline {
-                terminate_child_group(child, pr);
-                return ChildOutcome::TimedOut;
-            }
+        if Instant::now() >= deadline {
+            terminate_child_group(child, pr);
+            return ChildOutcome::TimedOut;
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
@@ -947,6 +952,27 @@ mod tests {
             started.elapsed()
         );
         // Head-of-line block is cleared: the lock is free for the next waiter.
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn run_rejects_unbounded_deadline_before_acquiring() {
+        let paths = temp_paths("unbounded-child-deadline");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let error = lock
+            .run(RunArgs {
+                agent: "unbounded-lander".into(),
+                pr: "9998".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 0,
+                child: vec![OsString::from("/bin/true")],
+            })
+            .unwrap_err();
+        assert!(matches!(error, LandLockError::UnboundedChildDeadline));
         assert!(lock.read_holder().unwrap().is_none());
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }

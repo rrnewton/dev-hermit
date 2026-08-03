@@ -259,6 +259,46 @@ class OperationalBoundsTest(unittest.TestCase):
         )
         self.assertIn("ABANDON", deadline_run.stdout + deadline_run.stderr)
         self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
+        # The old behavior could be restored with --child-deadline 0. Reject it
+        # before acquiring so no caller can create an unbounded FIFO holder.
+        unbounded = self.run_bounded(
+            "land-lock",
+            "run",
+            "--agent",
+            "ci-shard-unbounded",
+            "--pr",
+            "test-unbounded",
+            "--wait",
+            "0",
+            "--hold",
+            "30",
+            "--child-deadline",
+            "0",
+            "--",
+            "/bin/true",
+            expected={2},
+            env=env,
+        )
+        self.assertIn("must be positive", unbounded.stdout + unbounded.stderr)
+        self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
+
+    def test_shared_lander_preserves_atomic_arm_and_durable_abandonment(self) -> None:
+        front_door = (ROOT / "ci-hub/ci-hub.rs").read_text()
+        self.assertTrue(
+            front_door.startswith("#!/usr/bin/env -S rust-script --force\n")
+        )
+        script = (ROOT / "ci-hub/landing/land-pr.sh").read_text()
+        prepare = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" prepare')
+        acquire = script.index('"$ROOT/ci-hub/ci-hub" land-lock run')
+        merge = script.index('gh pr merge "$PR"')
+        ancestry = script.index("merge-base --is-ancestor")
+        complete = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" complete')
+        self.assertLess(prepare, acquire)
+        self.assertLess(acquire, merge)
+        self.assertLess(merge, ancestry)
+        self.assertLess(ancestry, complete)
+        self.assertIn("124) comment_abandon", script)
+        self.assertIn("[coordinator, $MODEL] ABANDONED", script)
 
 
 if __name__ == "__main__":

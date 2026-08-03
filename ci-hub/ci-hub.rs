@@ -1,5 +1,10 @@
-#!/usr/bin/env rust-script
+#!/usr/bin/env -S rust-script --force
 //! Typed front door for dev-hermit CI state and operations.
+//!
+//! `--force` makes rust-script ask Cargo to check the `#[path]` modules below.
+//! Without it, rust-script keys only on this top-level file and can execute a
+//! stale cached binary after `lib/*.rs` changes. Unchanged modules take Cargo's
+//! no-op dependency-check path rather than being recompiled.
 //!
 //! ```cargo
 //! [dependencies]

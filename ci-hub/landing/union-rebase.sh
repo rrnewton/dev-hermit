@@ -134,4 +134,8 @@ if [ "$PUSH" = "--push" ]; then
 fi
 
 detach_home
-[ $UNIONED -eq 1 ] && status "UNIONED" || status "CLEAN"
+if [ "$UNIONED" -eq 1 ]; then
+  status "UNIONED"
+else
+  status "CLEAN"
+fi
