@@ -71,7 +71,7 @@ preprocessor or fallback ran. Every plugin-absent, incomplete, corrupt, and
 incompatible path follows the same rule: stop before guest execution, state the
 failed invariant, and give the specific repair command.
 
-## One Hermit root
+## End-user Hermit root
 
 Resolve the Hermit root once:
 
@@ -79,10 +79,12 @@ Resolve the Hermit root once:
 HERMIT_DIR=${HERMIT_DIR:-$HOME/.hermit}
 ```
 
-All Hermit-owned discovery uses that resolved path. The proposed layout is:
+All end-user installation, runtime, and global-configuration discovery uses that
+resolved path. The proposed layout is:
 
 ```text
 $HERMIT_DIR/
+  config.toml                        # optional future user-global configuration
   bin/
     hermit-dynamorio                 # optional explicit/root-local install
   plugins/
@@ -97,13 +99,6 @@ $HERMIT_DIR/
         licenses/...
   downloads/                         # content-addressed temporary/cache data
   recordings -> <cache recording directory>
-  validate/
-    checkouts/
-      <checkout-id>/
-        checkout.json                # repository identity and canonical path
-        runs.jsonl                   # the only durable ledger write target
-        runs/<run-id>/validate.log   # durable raw log, not a /tmp artifact
-    global.jsonl                     # rebuildable aggregate, never a source
 ```
 
 The existing recording store may remain under
@@ -113,54 +108,10 @@ required `~/.hermit/recordings` entry. Creation is idempotent and never
 overwrites an existing non-symlink or a symlink to a different location; such a
 conflict fails with the two paths and a repair instruction.
 
-Validation history has different ownership from recordings and installed
-plugins: each record describes one repository checkout, not the user in the
-abstract. That does not require a second discovery root. Store it in the
-user-scoped Hermit namespace, partitioned by a stable checkout identifier. The
-checkout metadata records the canonical repository URL, parent checkout path,
-and creation time; every row records the worktree path, commit, profile, and run
-identifier. All worktrees belonging to one parent checkout append to that
-checkout's ledger. The checkout identifier is a random 128-bit value generated
-once at registration and persisted in `checkout.json`, not a hash that silently
-changes when the checkout moves.
-
-The parent repository may expose convenience links:
-
-```text
-<parent>/ignored/validate-checkout ->
-  $HERMIT_DIR/validate/checkouts/<checkout-id>/
-<parent>/ignored/validate-run-ledger.jsonl ->
-  $HERMIT_DIR/validate/checkouts/<checkout-id>/runs.jsonl
-<parent>/ignored/validate-runs ->
-  $HERMIT_DIR/validate/checkouts/<checkout-id>/runs/
-```
-
-These links bridge repository-scoped data into the checkout where developers
-expect to inspect it. They are not additional ledgers, and aggregation never
-globs repository trees to discover them. A checkout registration under
-`$HERMIT_DIR/validate/checkouts` is the authority; the links can be recreated
-from it, a checkout move updates only its recorded path and links, and link
-creation fails rather than overwrite conflicting paths. `global.jsonl` is
-derived solely from the registered checkout ledgers and may be deleted and
-rebuilt.
-
-This replaces the current split controlled by `DEV_HERMIT_PARENT`: the primary
-ledger under `<parent>/ignored`, per-worktree `ignored` ledgers, ad hoc ledgers
-under both `$TMPDIR` and `/tmp`, and a separate global output under the parent.
-That design already loses direct evidence. `aggregate.py` states that an unset
-`DEV_HERMIT_PARENT` skips append entirely, so it reconstructs otherwise missing
-runs from temporary logs; in the reported 112-record sample, 23 records were
-reconstructions rather than recorded ledger rows. Scattered write locations
-have turned observation into inference.
-
-After migration, `DEV_HERMIT_PARENT` no longer controls validation storage and
-temporary directories are never durable sources. `validate.sh` creates its
-run directory under the canonical checkout partition, writes a start event
-before executing any gate, streams the raw log there, and writes a terminal
-event from its exit trap. A missing terminal event truthfully means an
-interrupted run; it is not reconstructed into a guessed result. Existing files
-from the legacy path shapes are imported once with their original source and a
-`reconstructed` marker, then future aggregation reads only `$HERMIT_DIR`.
+This root belongs to people who install and run Hermit. Developer build output,
+including validation ledgers and logs, must never appear here. A user who never
+checks out the repository or runs its developer validation must not acquire a
+`$HERMIT_DIR/validate` directory.
 
 The flagship package still has a first-party LiteInst runtime requirement in
 today's architecture. Calling the product a single static executable must not
@@ -168,6 +119,47 @@ hide that fact: either the first-party LiteInst DSO remains part of the core
 Hermit distribution under this root, or a separate effort embeds and
 materializes it. The DynamoRIO split does not classify that Hermit-owned runtime
 as a third-party plugin.
+
+## Developer validation state
+
+Validation has a disjoint audience and lifetime. It is developer build evidence
+tied to a source checkout, not installed-product state. In a managed dev-hermit
+workspace, every primary and worktree validation writes to the primary parent
+repository's ignored tree:
+
+```text
+<primary-dev-hermit-parent>/ignored/
+  validate-run-ledger.jsonl          # the only durable ledger write target
+  validate-runs/<run-id>/validate.log
+  validate-run-global.jsonl          # rebuildable aggregate, never a source
+```
+
+The resolver follows the Hermit checkout's superproject and canonicalizes the
+parent repository's Git common directory, so a nested parent worktree resolves
+back to the same primary parent. `DEV_HERMIT_PARENT` is not a condition for
+writing. Failure to resolve the managed parent is an actionable error before
+validation begins, never permission to run without recording. A standalone
+Hermit clone has no dev-hermit parent and uses its own checkout-local
+`ignored/` directory; it does not participate in the parent workspace's global
+aggregate.
+
+This replaces the current split controlled by `DEV_HERMIT_PARENT`: the primary
+ledger under `<parent>/ignored`, per-worktree `ignored` ledgers, ad hoc ledgers
+under both `$TMPDIR` and `/tmp`, and a separate global output under the parent.
+That design already loses direct evidence. `aggregate.py` states that an unset
+`DEV_HERMIT_PARENT` skips append entirely, so it reconstructs otherwise missing
+runs from temporary logs; in the reported 112-record sample, 23 records were
+reconstructions rather than recorded ledger rows. Scattered write destinations,
+not multiple audiences, caused the loss.
+
+After migration, temporary directories and per-worktree ledgers are never
+durable sources. `validate.sh` creates its run directory under the canonical
+developer root, writes a start event before executing any gate, streams the raw
+log there, and writes a terminal event from its exit trap. A missing terminal
+event truthfully means an interrupted run; it is not reconstructed into a
+guessed result. Existing files from legacy path shapes are imported once with
+their original source and a `reconstructed` marker. Future aggregation reads
+only the one canonical ledger for that developer workspace.
 
 ## Discovery
 
@@ -280,6 +272,7 @@ These invariants are mechanical gates, not documentation promises:
 | Absence is actionable | Clean-home integration test asserts exact stderr, exit 69, and no guest start | Block publication |
 | Installation needs no activation | Clean-home test installs both crates and runs DBT without extra configuration | Block publication |
 | Recordings remain discoverable | Filesystem test checks `$HERMIT_DIR/recordings` resolves to the configured cache | Block publication |
+| End-user state excludes developer artifacts | Install and developer-validation tests assert `$HERMIT_DIR/validate` is never created | Block publication or developer-tooling change |
 
 For 0.2 the policy is **exact package version plus exact ABI tag plus exact
 Detcore build ID**. Git SHAs and build dates are printed for diagnosis, but do
@@ -317,11 +310,11 @@ hermit --backend dbt
   v
 hermit-dynamorio __hermit_plugin_probe_v1
   | atomically ensure payload
-  | verify manifest, hashes, and libdetcore_dbt.so descriptor
+  | verify provenance, hashes, and libdetcore_dbt.so descriptor
   | return versioned manifest with absolute payload paths
   v
 hermit
-  | compare exact version + ABI tag
+  | compare exact version + ABI tag + Detcore build ID
   | create coordinator state
   | launch only the returned drrun/client/tool paths
   v
@@ -405,11 +398,13 @@ release artifacts:
    even when a manifest is edited to claim compatibility.
 9. An interrupted install leaves the prior `current` payload usable and never
    exposes the partial replacement.
-10. `$HERMIT_DIR` relocation works without consulting unrelated host paths, and
-   the recordings symlink resolves to the actual cache store.
-11. Validation runs from the primary checkout and two worktrees append to one
-    checkout-partitioned ledger under `$HERMIT_DIR`; an interrupted run leaves
-    an explicit start event and durable log, with no `/tmp` reconstruction.
+10. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
+    recordings symlink resolves to the actual cache store, and neither package
+    installation nor developer validation creates `$HERMIT_DIR/validate`.
+11. Validation runs from the primary checkout and two worktrees append to
+    `<primary-dev-hermit-parent>/ignored/validate-run-ledger.jsonl`; an
+    interrupted run leaves an explicit start event and durable log, with no
+    `/tmp` reconstruction.
 12. Strict and verify coverage runs against the packaged DBT path, not a
     workspace-relative `target/` tree.
 
