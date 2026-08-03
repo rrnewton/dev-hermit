@@ -223,3 +223,66 @@ scheduler work is spent, i.e. it could resolve S1 as NO cheaply.
 (needs a liteinst slot + a build; read-only w.r.t. Mode B), report the per-syscall
 (b) delta first, and only authorize the full in-guest-scheduler build if (b)
 shows a win worth pursuing.
+
+## S1 (b) RESULT + Mode-A→full-Detcore scoping (2026-08-03, measurement complete)
+
+Experiment artifact (K=1 cgroup, two-point slope, medians n=10):
+`experiments/s1-liteinst-inguest-trap-microbench_20260803/` — parent `main`
+`04716ec4121e43886bf3b14bf00ef346c11c81fb`. Reverie `.so` built at
+`d2fb9a055693bec30e8d48333c5694050b22e869`; Mode A/B doc labels (D3 fix) at
+reverie `1787127266ba88e566242a1c0b8dc76913b1c489` on branch
+`codex/s1-liteinst-inguest-trap-microbench`.
+
+**(b)-axis result — in-guest WINS, conservatively.** getpid (axis a=0):
+native 64.3 ns/syscall; liteinst **Mode A** in-guest warm hook *including strace
+per-hook I/O* (UPPER BOUND) 845.7 ns/syscall; ptrace 26,393.7 ns/syscall.
+**ptrace / liteinst = 31.2×.** The in-guest interception *mechanism* beats a
+ptrace round-trip on axis (b) by ~31×, and by more once strace I/O is removed
+from the in-guest arm (the null-hook path exists: `calls=32 traps=1 hooks=32`).
+
+**This does NOT clear S1 — the prize sits on a path that cannot run.** Scoping
+Mode A → full Detcore, smallest to largest gap (evidence at reverie `d2fb9a05`,
+Detcore at hermit primary `bfb0a9ef`):
+
+1. **RCB clock — RUNTIME-FATAL, not merely stubbed.** Detcore's first scheduling
+   action is `guest.read_clock().expect("Couldn't read clock")`
+   (`detcore/src/lib.rs:371`). Mode A's `read_clock` returns `Unsupported`
+   (`tool_host.rs:632`). ⇒ `Detcore<LiteinstGuest>` **panics on its first tick**;
+   this is not a build gate, it is an immediate runtime abort.
+2. **RCB timer / deterministic preemption — the research-hard piece.** Detcore
+   drives `guest.set_timer(TimerSchedule::Rcbs(..))` / `set_timer_precise`
+   (`detcore/src/lib.rs:636,640`); Mode A stubs both (`tool_host.rs:616,624`),
+   and the crate boundary says *"PMU preemption ... not implemented."* In ptrace
+   the tracer owns the PMU from **outside** and takes the RCB overflow as a clean
+   stop. In-guest, the guest must field its **own** PMU-overflow signal and yield
+   from a handler landing at a **nondeterministic RIP** — the same in-process
+   preemption re-entrancy problem that made **DBI clean-call preemption a
+   documented dead-end** (`[[dbi-preemption-in-process-reentrancy-blocker]]`).
+   Mode A also does **not** support guest-callable signal handlers, which is the
+   delivery mechanism you would need. This is not a stub to fill; it is a
+   research problem, plausibly already refuted on a sibling in-process backend.
+   *Caveat:* LiteInst's trampoline patch model differs from DBI clean-calls, so
+   it deserves its own confirmation rather than assumed-identical failure.
+3. **CPUID / RDTSC / RDRAND / RDSEED** — Detcore determinizes all four
+   (`detcore/src/cpuid.rs`, `syscalls/misc.rs`); Mode A does **not route them as
+   Reverie events** (crate boundary). Each needs an interception path Mode A
+   lacks.
+4. **Multi-thread + clone/fork/exec** — Detcore's entire scheduler
+   (`detcore/src/scheduler.rs`, `runqueue`) exists to serialize **multiple**
+   threads; Mode A is one-process/one-thread and fails closed on fork/clone.
+   Corollary: **axis (a) is degenerate on Mode A today** — you cannot measure
+   sequentialization on a backend that cannot hold two threads. This is an
+   independent reason (a) is not the right next datum until the multi-thread
+   build exists.
+
+**Verdict on unification.** The mechanism advantage that motivates in-guest
+unification is **real and measured (~31× on axis b, conservative)**. But the gap
+to a *runnable* full-Detcore Mode A is **large and front-loaded on its single
+hardest, possibly-refuted component — in-guest deterministic PMU preemption**.
+So the honest framing is not "S1 passed" but **"the (b) mechanism wins; S1
+remains blocked on in-guest preemption, which is the crux the whole case must
+clear."** Recommended next scientific step is #2 in isolation: a focused
+spike/spec on whether in-guest RCB preemption can land the guest deterministically
+at all (or a proof it cannot, mirroring DBI) — that single question resolves S1
+YES/NO. Axis-(a) measurement is deferred until a multi-thread Mode A build
+exists, since (a) is backend-independent and cannot change the viability verdict.
