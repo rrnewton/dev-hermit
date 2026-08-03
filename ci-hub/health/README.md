@@ -1,12 +1,13 @@
-# Operational tick hub
+# CI health object
 
 Dev-hermit uses the pinned `agent-utils/tick-hub` engine for coordinator
 health polling. Project policy stays in this repository:
 
-- `ops/tick-hub.yaml` defines checks, cadences, gates, and warning actions.
-- `ops/tick-hub-state.yaml` is the versioned runtime policy.
-- `scripts/operational_health.py` implements the project-specific probes.
-- `scripts/run-tick-hub` materializes the exact `agent-utils` gitlink on
+- `ci-hub/health/tick-hub.yaml` defines checks, cadences, gates, and warning actions.
+- `ci-hub/health/tick-hub-state.yaml` is the versioned runtime policy.
+- `ci-hub/health/operational_health.py` implements project-specific probes.
+- `ci-hub/bin/health-tick` uses `ci-hub/bin/agent-tool` to materialize the exact
+  `agent-utils` gitlink on
   demand, provisions the pinned Python runtime dependency into the ignored
   `.tick-hub/venv` when needed, then invokes the real tick-hub CLI.
 - `.orc/plugins/hermit-dev/index.ts` is the outer five-minute scheduler and
@@ -31,13 +32,13 @@ it has no reset, clean, force-checkout, or force-push path.
 Run a dry tick from the repository root:
 
 ```bash
-HERMIT_AGENT_SNAPSHOT_JSON='[]' ./scripts/run-tick-hub --no-header
+HERMIT_AGENT_SNAPSHOT_JSON='[]' ./ci-hub/bin/health-tick --no-header
 ```
 
 Run and persist due times:
 
 ```bash
-HERMIT_AGENT_SNAPSHOT_JSON='[]' ./scripts/run-tick-hub --flush --no-header
+HERMIT_AGENT_SNAPSHOT_JSON='[]' ./ci-hub/bin/health-tick --flush --no-header
 ```
 
 `agent-utils` uses `update = none`, so ordinary recursive submodule checkout

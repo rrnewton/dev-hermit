@@ -13,7 +13,7 @@ provides a **non-mutating status reporter**, not fleet provisioning.
 ## Quick start
 
 ```sh
-cd ~/work/dev-hermit/ci-runner
+cd ~/work/dev-hermit/ci-hub/runners
 ./ci-status.py                 # rrnewton/hermit (default)
 ./ci-status.py --all           # all three Hermit repos
 ./ci-status.py --repo rrnewton/reverie --limit 60

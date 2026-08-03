@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
+cd "$ROOT"
+exec "$ROOT/ci-hub/bin/agent-tool" tick-hub tick \
+    --config "$ROOT/ci-hub/health/tick-hub.yaml" \
+    --state "$ROOT/ci-hub/health/tick-hub-state.yaml" \
+    --fired-state "$ROOT/.tick-hub/fired-state" \
+    --current-tick-min 5 \
+    "$@"

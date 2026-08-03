@@ -160,7 +160,7 @@ The ledger already covers this; close its two gaps.
   instead of the :636 no-op. Eliminates the standalone/CI drop. *(hermit/ change
   — halt-deferred.)*
 - **A2 — Continuously fold into the durable global store.** Schedule
-  `scripts/validate-run-aggregate.py --write-global` (cron or `/loop`) to keep
+  `ci-hub/validate/aggregate.py --write-global` (cron or `/loop`) to keep
   `ignored/validate-run-global.jsonl` + `.csv` current from ledger rows plus
   raw-log reconstruction of any un-ledgered runs. *(Parent-side — can start
   now.)*
@@ -239,4 +239,4 @@ runs) durable and exactly attributable.
   scidr tree; absent from primary and all other slots.
 - Prior art: `ai_docs/validate-run-global-visibility-20260803.md`,
   `ai_docs/validate-run-ledger-reconstruction-20260802.md`,
-  `scripts/validate-run-aggregate.py`.
+  `ci-hub/validate/aggregate.py`.

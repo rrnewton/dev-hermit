@@ -13,8 +13,8 @@ registers it as the `hermit-dev` skill.
   `orc.hermit-dev.status()`.
 - Register the fork-safe `gh-issue-create` wrapper.
 - Run the real `agent-utils/tick-hub` operational poll every five minutes.
-  The versioned config is `ops/tick-hub.yaml`; the plugin only supplies the
-  live `orc.listAgents()` snapshot, invokes `scripts/run-tick-hub`, and sends a
+  The versioned config is `ci-hub/health/tick-hub.yaml`; the plugin only supplies the
+  live `orc.listAgents()` snapshot, invokes `ci-hub/bin/health-tick`, and sends a
   `HARD WARNING` wakeup when the hub emits an action/error or fails.
 - Through that tick, gently fast-forward clean product primaries and publish a
   coherent parent gitlink snapshot; dirty or inconsistent state is preserved
@@ -52,10 +52,10 @@ remove a stale home copy; it no longer installs one.
 From the dev-hermit root:
 
 ```bash
-HERMIT_AGENT_SNAPSHOT_JSON='[]' ./scripts/run-tick-hub --no-header
+HERMIT_AGENT_SNAPSHOT_JSON='[]' ./ci-hub/bin/health-tick --no-header
 ```
 
 A live session's `orc.hermit-dev.status()` must report the five-minute tick
-interval and `ops/tick-hub.yaml` config. `orc.listWorkflows()` must show the
+interval and `ci-hub/health/tick-hub.yaml` config. `orc.listWorkflows()` must show the
 sleeping `hermit-dev-operational-health-v1` workflow and must not show
 `hermit-dev-pr-health`.

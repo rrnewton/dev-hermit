@@ -44,7 +44,7 @@ net-new was cherry-picked onto `main` first (see task
 | `impl-docs-update-session` | `236c25e` | 2026-07-22 | Deleted. Patch-identical to `main` via PR #2 (`16e05eb`); `git cherry` reports it already present. Nothing net-new. |
 | `impl-update-agents-md-slot04` | `f3e5440` | 2026-07-22 | Deleted. Tree identical to `main` via PR #3 (`262d813`, "Require committed feature-branch handoffs"). Nothing net-new. |
 | `impl-profile-hermit-overhead` | `659c585` | 2026-07-22 | Deleted. Its only net-new file `ai_docs/performance-profile.md` is byte-identical to the copy carried by `impl-commit-new-research`, which was merged to `main`. |
-| `codex/pr-status-health` | `16365ac` | 2026-07-22 | Merged then deleted. Cherry-picked to `main` as `2ace563` (`scripts/pr_status.py`, `scripts/test_pr_status.py`, `.orc/plugins/hermit-dev/index.ts` +30). |
+| `codex/pr-status-health` | `16365ac` | 2026-07-22 | Merged then deleted. Cherry-picked to `main` as `2ace563`; its PR-health implementation now lives at `ci-hub/health/pr_status.py` with tests under `ci-hub/health/tests/`, and the ORC caller remains in `.orc/plugins/hermit-dev/index.ts`. |
 | `impl-commit-new-research` | `09c0b71` | 2026-07-22 | Merged then deleted. Cherry-picked to `main` as `0d7684e` (`ai_docs/` research set + `experiments/qemu_under_hermit_20260721/`, 3054 insertions). |
 
 `main` advanced `262d813` -> `0d7684e` (fast-forward) carrying the two merged

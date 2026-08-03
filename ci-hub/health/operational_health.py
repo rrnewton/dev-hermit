@@ -9,14 +9,15 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
-if __package__:
-    from . import github_main_health, pr_status, primary_checkout
-else:
-    import github_main_health
-    import pr_status
-    import primary_checkout
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import github_main_health
+import pr_status
+import primary_checkout
 
 
 BROKEN_AGENT_STATES = frozenset(
@@ -55,12 +56,11 @@ def github_main_gate() -> int:
 
 def pull_request_gate() -> int:
     try:
-        pulls = [
-            pull
+        statuses = [
+            pr_status.fetch_repo_status(repo)
             for repo in pr_status.DEFAULT_REPOS
-            for pull in pr_status.fetch_open_prs(repo)
         ]
-    except (RuntimeError, ValueError) as error:
+    except RuntimeError as error:
         _emit(
             {
                 "state": "unknown",
@@ -73,25 +73,29 @@ def pull_request_gate() -> int:
         return 1
 
     counts = {
-        state: sum(pull.ci_status == state for pull in pulls)
-        for state in ("green", "red", "pending", "none")
+        state: sum(getattr(status, state) for status in statuses)
+        for state in ("open", "green", "red", "pending", "real_reds")
     }
-    state = "red" if counts["red"] else "ok"
+    outage = any(status.outage_suspected for status in statuses)
+    unhealthy = counts["real_reds"] > 0 or outage
+    state = "red" if unhealthy else "ok"
     _emit(
         {
             "state": state,
-            "total": len(pulls),
+            "total": counts["open"],
             "red": counts["red"],
             "pending": counts["pending"],
             "green": counts["green"],
-            "none": counts["none"],
+            "real_reds": counts["real_reds"],
+            "outage": "yes" if outage else "no",
             "summary": (
-                f"open={len(pulls)},red={counts['red']},"
-                f"pending={counts['pending']},none={counts['none']}"
+                f"open={counts['open']},red={counts['red']},"
+                f"pending={counts['pending']},real={counts['real_reds']},"
+                f"outage={'yes' if outage else 'no'}"
             ),
         }
     )
-    return 1 if counts["red"] else 0
+    return 1 if unhealthy else 0
 
 
 def primary_snapshot_gate() -> int:

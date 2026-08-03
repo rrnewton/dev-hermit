@@ -3,6 +3,8 @@ name: validate-sh-rr-compat-counter-conflict
 description: "validate.sh RR_COMPAT_EXPECTED is a recurring rebase-conflict hotspot; it must EXACTLY equal the RR_COMPAT_PASSING_LABELS array size. Reconcile = base's current count + the PR's net-new additions, then verify the array count."
 ---
 
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+
 Recurring merge-conflict class when rebasing any hermit PR that adds programs to the record/replay corpus (seen landing PR #662, 2026-07-26). `validate.sh` has TWO coupled values that MUST agree:
 - `readonly RR_COMPAT_EXPECTED=<N>` (~line 291)
 - `declare -Ar RR_COMPAT_PASSING_LABELS=( [prog]=1 ... )` (~line 332)

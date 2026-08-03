@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
+# Run a tool from the exact agent-utils commit pinned by dev-hermit.
 set -euo pipefail
 
-ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
-cd "$ROOT"
+ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-toplevel)
 AGENT_UTILS="$ROOT/agent-utils"
 EXPECTED=$(git -C "$ROOT" rev-parse :agent-utils)
-ACTUAL=""
+TOOL=${1:-}
 
+case "$TOOL" in
+    pr-landing-planner|safe-ci-dag-runner|tick-hub) ;;
+    *)
+        echo "usage: ci-hub/bin/agent-tool <pr-landing-planner|safe-ci-dag-runner|tick-hub> [args...]" >&2
+        exit 2
+        ;;
+esac
+shift
+
+ACTUAL=""
 if [[ -e "$AGENT_UTILS/.git" ]]; then
     ACTUAL=$(git -C "$AGENT_UTILS" rev-parse HEAD 2>/dev/null || true)
 fi
-
 if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     if [[ -n "$ACTUAL" ]] && [[ -n $(git -C "$AGENT_UTILS" status --porcelain) ]]; then
-        echo "run-tick-hub: agent-utils is dirty at $ACTUAL; expected $EXPECTED" >&2
+        echo "agent-tool: agent-utils is dirty at $ACTUAL; expected $EXPECTED" >&2
         exit 1
     fi
     update=(
@@ -30,11 +39,15 @@ fi
 
 ACTUAL=$(git -C "$AGENT_UTILS" rev-parse HEAD)
 if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-    echo "run-tick-hub: agent-utils is at $ACTUAL; expected $EXPECTED" >&2
+    echo "agent-tool: agent-utils is at $ACTUAL; expected $EXPECTED" >&2
+    exit 1
+fi
+if [[ -n $(git -C "$AGENT_UTILS" status --porcelain) ]]; then
+    echo "agent-tool: agent-utils is dirty at pinned commit $EXPECTED" >&2
     exit 1
 fi
 
-PYTHON=${TICK_HUB_PYTHON:-python3}
+PYTHON=${CI_HUB_PYTHON:-python3}
 if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
     VENV="$ROOT/.tick-hub/venv"
     if [[ ! -x "$VENV/bin/python" ]]; then
@@ -45,7 +58,7 @@ if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
         install=(
             "$PYTHON" -m pip install
             --disable-pip-version-check
-            --requirement "$ROOT/ops/tick-hub-requirements.txt"
+            --requirement "$ROOT/ci-hub/health/requirements.txt"
         )
         if command -v with-proxy >/dev/null 2>&1; then
             with-proxy "${install[@]}"
@@ -55,9 +68,4 @@ if ! "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
     fi
 fi
 
-exec "$PYTHON" "$AGENT_UTILS/py/bin/tick-hub" tick \
-    --config "$ROOT/ops/tick-hub.yaml" \
-    --state "$ROOT/ops/tick-hub-state.yaml" \
-    --fired-state "$ROOT/.tick-hub/fired-state" \
-    --current-tick-min 5 \
-    "$@"
+exec "$PYTHON" "$AGENT_UTILS/py/bin/$TOOL" "$@"

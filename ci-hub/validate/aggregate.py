@@ -26,12 +26,12 @@ Read-only by default. `--write-global` persists the unified view to
 `<parent>/ignored/validate-run-global.jsonl` (a gitignored durable artifact).
 
 Usage:
-  scripts/validate-run-aggregate.py                 # table, newest last
-  scripts/validate-run-aggregate.py --json          # unified records as JSON
-  scripts/validate-run-aggregate.py --csv out.csv   # flat CSV
-  scripts/validate-run-aggregate.py --write-global   # persist unified JSONL
-  scripts/validate-run-aggregate.py --since 2026-08-03  # filter by date
-  scripts/validate-run-aggregate.py --profiling      # profiling coverage view
+  ci-hub/validate/aggregate.py                 # table, newest last
+  ci-hub/validate/aggregate.py --json          # unified records as JSON
+  ci-hub/validate/aggregate.py --csv out.csv   # flat CSV
+  ci-hub/validate/aggregate.py --write-global  # persist unified JSONL
+  ci-hub/validate/aggregate.py --since 2026-08-03  # filter by date
+  ci-hub/validate/aggregate.py --profiling     # profiling coverage view
 """
 from __future__ import annotations
 
@@ -49,11 +49,11 @@ DUR_RE = re.compile(r"(\d+)")
 
 
 def parent_root() -> str:
-    """Locate the dev-hermit parent (this script lives in <parent>/scripts)."""
+    """Locate the dev-hermit parent (this script lives in ci-hub/validate)."""
     env = os.environ.get("DEV_HERMIT_PARENT")
     if env and os.path.isdir(env):
         return os.path.abspath(env)
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
 
 def tmpdirs() -> list[str]:

@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Tests for scripts/github_main_health.py."""
+"""Tests for ci-hub/health/github_main_health.py."""
 
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from scripts import github_main_health
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import github_main_health
 
 
 def run(*, workflow: str, conclusion: str, created_at: str = "2026-08-02T00:00:00Z") -> dict[str, str]:
@@ -36,7 +39,7 @@ class MainHealthTests(unittest.TestCase):
         )
         self.assertEqual(github_main_health.classify_current_runs(runs), "pending")
 
-    @mock.patch("scripts.github_main_health.subprocess.run")
+    @mock.patch("github_main_health.subprocess.run")
     def test_evaluate_uses_proxy_and_latest_attempt(self, run_command: mock.Mock) -> None:
         payload = [
             run(workflow="ci", conclusion="success", created_at="2026-08-02T00:01:00Z"),

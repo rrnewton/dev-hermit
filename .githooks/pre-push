@@ -5,7 +5,7 @@
 set -uo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-checker="$root/scripts/github_main_health.py"
+checker="$root/ci-hub/bin/main-health"
 
 if [ ! -f "$checker" ]; then
   echo "HARD WARNING: GitHub main health checker is missing: $checker" >&2

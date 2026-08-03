@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from scripts import operational_health
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import operational_health
 
 
 class OperationalHealthTest(unittest.TestCase):
@@ -50,15 +53,28 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("state=pending", output)
 
     def test_pull_request_red_count_is_a_warning(self) -> None:
-        pulls = [
-            SimpleNamespace(ci_status="red"),
-            SimpleNamespace(ci_status="green"),
-            SimpleNamespace(ci_status="pending"),
+        statuses = [
+            SimpleNamespace(
+                open=3,
+                red=1,
+                green=1,
+                pending=1,
+                real_reds=1,
+                outage_suspected=False,
+            ),
+            SimpleNamespace(
+                open=0,
+                red=0,
+                green=0,
+                pending=0,
+                real_reds=0,
+                outage_suspected=False,
+            ),
         ]
         with mock.patch.object(
             operational_health.pr_status,
-            "fetch_open_prs",
-            side_effect=[pulls, []],
+            "fetch_repo_status",
+            side_effect=statuses,
         ):
             result, output = self.capture(operational_health.pull_request_gate)
         self.assertEqual(result, 1)

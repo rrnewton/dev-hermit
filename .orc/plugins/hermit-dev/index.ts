@@ -34,11 +34,11 @@ const URGENT_VALIDATION_SKILL_PATH =
 const ISSUE_CREATE_WRAPPER =
   (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
   "/gh-issue-create";
-const PR_STATUS_COMMAND = 'cd "' + WORKSPACE_ROOT + '" && ./scripts/pr_status.py';
+const PR_STATUS_COMMAND = 'cd "' + WORKSPACE_ROOT + '" && ./ci-hub/ci-hub health';
 const OPERATIONAL_TICK_SCRIPT_NAME = "hermitOperationalTick";
 const OPERATIONAL_TICK_COMMAND =
   'cd "' + WORKSPACE_ROOT + '" && ' +
-  'HERMIT_AGENT_SNAPSHOT_JSON="$1" ./scripts/run-tick-hub --flush --no-header';
+  'HERMIT_AGENT_SNAPSHOT_JSON="$1" ./ci-hub/bin/health-tick --flush --no-header';
 const OPERATIONAL_TICK_INTERVAL_MS = 5 * 60 * 1000;
 const OPERATIONAL_TICK_WORKFLOW_NAME = "hermit-dev-operational-health-v1";
 const LEGACY_PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
@@ -274,7 +274,7 @@ orc.exposeFunction(
       issueCreateWrapper: ISSUE_CREATE_WRAPPER,
       prStatusCommand: PR_STATUS_COMMAND,
       operationalTickCommand: OPERATIONAL_TICK_COMMAND,
-      operationalTickConfig: WORKSPACE_ROOT + "/ops/tick-hub.yaml",
+      operationalTickConfig: WORKSPACE_ROOT + "/ci-hub/health/tick-hub.yaml",
       operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
       maxParkedSlots: 5,
       maxActiveWorktrees: 12,

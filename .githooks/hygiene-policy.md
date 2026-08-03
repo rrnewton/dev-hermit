@@ -59,7 +59,7 @@ attestation before merge. See `demos/ADVERSARIAL-REVIEW-POLICY.md`, the CI job
 
 ## GitHub main health before push
 
-`.githooks/pre-push` runs `scripts/github_main_health.py` before every parent
+`.githooks/pre-push` runs `ci-hub/bin/main-health` before every parent
 push. It polls current-main `push` workflow runs for `rrnewton/dev-hermit`,
 `rrnewton/hermit`, and `rrnewton/reverie` through `with-proxy gh`. A red main or
 query failure emits a hard warning. The hook deliberately does not block because

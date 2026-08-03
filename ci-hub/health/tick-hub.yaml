@@ -7,7 +7,7 @@ reminders:
   - name: primary_checkout_snapshot
     cadence_secs: 300
     gate:
-      cmd: ./scripts/operational_health.py primary-snapshot
+      cmd: ./ci-hub/health/operational_health.py primary-snapshot
       when: failure
       capture: true
     emit:
@@ -20,7 +20,7 @@ reminders:
   - name: github_main_health
     cadence_secs: 900
     gate:
-      cmd: ./scripts/operational_health.py github-main
+      cmd: ./ci-hub/health/operational_health.py github-main
       when: failure
       capture: true
     emit:
@@ -33,7 +33,7 @@ reminders:
   - name: pull_request_health
     cadence_secs: 900
     gate:
-      cmd: ./scripts/operational_health.py pull-requests
+      cmd: ./ci-hub/health/operational_health.py pull-requests
       when: failure
       capture: true
     emit:
@@ -46,7 +46,7 @@ reminders:
   - name: stuck_agents
     cadence_secs: 300
     gate:
-      cmd: ./scripts/operational_health.py agents
+      cmd: ./ci-hub/health/operational_health.py agents
       when: failure
       capture: true
     emit:

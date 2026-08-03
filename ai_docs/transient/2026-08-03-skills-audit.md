@@ -65,6 +65,12 @@ end-to-end PR plan.
 
 ### Where are the CI-health skills?
 
+> **Resolution (2026-08-03):** the implementation and live-query side of this
+> fragmentation is now centralized in [`ci-hub/README.md`](../../ci-hub/README.md).
+> The skills below remain trigger/policy or historical context; `ci-hub/` is
+> the single home for current code, GitHub refresh, history, health summaries,
+> and runner operations.
+
 The primary CI-health role is
 [`.claude/skills/hermit-ci.md`](https://github.com/rrnewton/dev-hermit/blob/main/.claude/skills/hermit-ci.md).
 Focused failure iteration is in Hermit's

@@ -1,7 +1,9 @@
 ---
 name: ci-capacity-single-pmu-runner-bottleneck
-description: "rrnewton/hermit Rust CI is chronically queued/never-green because ONE pmu self-hosted runner can't drain its heavy determinism suite x high PR volume; reverie has the same 1-runner setup but drains (light job). Not broken tests — a capacity mismatch. Status tool: ci-runner/ci-status.py."
+description: "rrnewton/hermit Rust CI is chronically queued/never-green because ONE pmu self-hosted runner can't drain its heavy determinism suite x high PR volume; reverie has the same 1-runner setup but drains (light job). Not broken tests — a capacity mismatch. Status tool: ci-hub/runners/ci-status.py."
 ---
+
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
 
 Task impl-ci-deep-dive (2026-07-24). Deep dive on the Hermit CI alarm
 ("queue, cancelled runs, no green runs").
@@ -62,12 +64,12 @@ This is the documented workaround, consistent with
 [[validate-sh-cannot-be-green-on-devserver]] (main is unprotected; gate =
 GitHub-hosted green + locally-validated).
 
-TOOL BUILT: `$HOME/<repo>/ci-runner/ci-status.py` (+ README.md) — a
+TOOL BUILT: `$HOME/<repo>/ci-hub/runners/ci-status.py` (+ README.md) — a
 non-mutating status reporter (Python3 stdlib; shells out via `$GH` default
 `with-proxy gh`). `./ci-status.py --all` reports runner health, queue depth,
 last-green-per-workflow, and open-PR label compliance for all 3 repos. Modeled
 on but much smaller than a full cloud fleet/shepherd toolkit — NOT ported;
-hermit uses host-local PMU runners, not a cloud fleet). ci-runner/ is UNTRACKED
+hermit uses host-local PMU runners, not a cloud fleet). ci-hub/runners/ is TRACKED
 in the parent superproject (not committed;
 no commit step was in the task).
 

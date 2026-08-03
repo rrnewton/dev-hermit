@@ -3,6 +3,8 @@ name: undraft-does-not-trigger-ci
 description: "gh pr ready does NOT enqueue CI on rrnewton/hermit; ci.yml lacks ready_for_review trigger"
 ---
 
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+
 `.github/workflows/ci.yml` triggers on `pull_request: branches: [main]` with the
 **default activity types only** (opened/synchronize/reopened) plus push to
 main/frontier. `ready_for_review` is NOT listed, so `gh pr ready <N>` (undraft)

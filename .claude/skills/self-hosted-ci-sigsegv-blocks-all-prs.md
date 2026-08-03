@@ -3,6 +3,8 @@ name: self-hosted-ci-sigsegv-blocks-all-prs
 description: "All rrnewton/hermit PRs show red self-hosted CI due to one main-level SIGSEGV, not per-PR bugs"
 ---
 
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+
 As of 2026-07-22, essentially every open PR on rrnewton/hermit fails the
 **"Host-dependent tests (self-hosted)"** CI check while "Regular tests
 (GitHub-hosted)" passes. This is NOT per-PR breakage: even docs-only PRs and the

@@ -1,6 +1,6 @@
 # P0 Landing Plan — 105 open PRs (2026-07-27)
 
-Source: `with-proxy ./scripts/pr_status.py` + `gh pr list --json files,statusCheckRollup`
+Source: `./ci-hub/bin/pr-status` + `gh pr list --json files,statusCheckRollup`
 for `rrnewton/hermit` (93 open) and `rrnewton/reverie` (12 open).
 Analysis scripts: `/tmp/analyze.py`, `/tmp/analyze2.py`.
 

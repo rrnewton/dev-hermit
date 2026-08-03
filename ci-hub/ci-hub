@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Stable front door for dev-hermit CI state and operations.
+set -euo pipefail
+ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
+command=${1:-help}
+if [[ $# -gt 0 ]]; then shift; fi
+
+case "$command" in
+    health)
+        rc=0
+        "$ROOT/ci-hub/bin/main-health" "$@" || rc=$?
+        pr_rc=0
+        "$ROOT/ci-hub/bin/pr-status" "$@" || pr_rc=$?
+        [[ $rc -ne 0 ]] || rc=$pr_rc
+        exit "$rc"
+        ;;
+    main-health) exec "$ROOT/ci-hub/bin/main-health" "$@" ;;
+    pr-status|fresh) exec "$ROOT/ci-hub/bin/pr-status" "$@" ;;
+    tick) exec "$ROOT/ci-hub/bin/health-tick" "$@" ;;
+    local-history) exec python3 "$ROOT/ci-hub/validate/aggregate.py" "$@" ;;
+    runner-health) exec python3 "$ROOT/ci-hub/runners/ci-status.py" "$@" ;;
+    refresh-history)
+        target="$ROOT/ci-hub/history/ingest.py"
+        if [[ -x "$target" || -f "$target" ]]; then
+            exec python3 "$target" "$@"
+        fi
+        echo "ci-hub: unified ingester pending; refreshing local validate history" >&2
+        exec python3 "$ROOT/ci-hub/validate/aggregate.py" --write-global "$@"
+        ;;
+    history)
+        target="$ROOT/ci-hub/history/query.py"
+        if [[ -x "$target" || -f "$target" ]]; then
+            exec python3 "$target" "$@"
+        fi
+        exec python3 "$ROOT/ci-hub/validate/aggregate.py" "$@"
+        ;;
+    help|-h|--help)
+        cat <<'EOF'
+usage: ci-hub/ci-hub <command> [args]
+
+  health           summarize current-main and open-PR health from GitHub
+  main-health      current-main workflow health only
+  pr-status|fresh  pull fresh open-PR CI status via agent-utils
+  tick             run the version-pinned tick-hub operational poll
+  refresh-history  incrementally ingest GitHub/local CI history
+  history          query the local commit/CI history store
+  local-history    query legacy/local validate-run records
+  runner-health    summarize self-hosted runners and recent workflows
+EOF
+        ;;
+    *) echo "ci-hub: unknown command: $command (run ci-hub/ci-hub help)" >&2; exit 2 ;;
+esac

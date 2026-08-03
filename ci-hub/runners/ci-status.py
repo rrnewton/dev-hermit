@@ -2,13 +2,10 @@
 """On-demand CI status report for the Hermit repos.
 
 Non-mutating. Summarizes, per repo: self-hosted runner health, Actions queue
-depth, the most recent *green* run of each workflow, and open-PR label
-compliance with the post-facto-review landing discipline (locally-validated).
-
-Hermit's reality (see README.md): the "Rust" workflow (aka Regular tests) runs
-only on a single PMU self-hosted runner and is chronically backlogged, while the
-GitHub-hosted "Docs" workflow is the practical green gate. reverie CI is fully
-GitHub-hosted and healthy. This tool makes that state visible at a glance.
+depth, and the most recent green run of each workflow. Open-PR CI
+classification belongs to the pinned `agent-utils/pr-landing-planner` and is
+exposed through `ci-hub/bin/pr-status`; it is intentionally not duplicated
+here.
 
 Usage:
     ./ci-status.py                 # default: rrnewton/hermit
@@ -34,8 +31,6 @@ ALL_REPOS = [
     "rrnewton/reverie",
     "facebookexperimental/hermit",
 ]
-# Labels that legitimize a merge when self-hosted CI cannot go green.
-LANDING_LABELS = {"locally-validated", "post-facto-review", "human-approved"}
 
 
 def gh_json(args: list[str], gh_cmd: str):
@@ -115,34 +110,10 @@ def report_runs(repo: str, gh_cmd: str, limit: int) -> None:
                   f"(latest: {by_wf[wf]['status']}/{by_wf[wf]['conclusion'] or '-'})")
 
 
-def report_labels(repo: str, gh_cmd: str) -> None:
-    data = gh_json(
-        ["pr", "list", "--repo", repo, "--state", "open", "--limit", "50",
-         "--json", "number,labels,title"],
-        gh_cmd,
-    )
-    if data is None:
-        print("  open-PR labels: (could not fetch)")
-        return
-    if not data:
-        print("  open-PR labels: no open PRs")
-        return
-    labeled = [pr for pr in data
-               if any(l["name"] in LANDING_LABELS for l in pr["labels"])]
-    unlabeled = [pr for pr in data if not pr["labels"]]
-    print(f"  open PRs: {len(data)} total; "
-          f"{len(labeled)} carry a landing label; {len(unlabeled)} unlabeled")
-    for pr in data:
-        labs = [l["name"] for l in pr["labels"]]
-        print(f"    - #{pr['number']:<4} {','.join(labs) or '(none)':<40} "
-              f"{pr['title'][:40]}")
-
-
 def report_repo(repo: str, gh_cmd: str, limit: int) -> None:
     print(f"\n================ {repo} ================")
     report_runners(repo, gh_cmd)
     report_runs(repo, gh_cmd, limit)
-    report_labels(repo, gh_cmd)
 
 
 def main(argv=None) -> int:
@@ -165,7 +136,7 @@ def main(argv=None) -> int:
     print(f"Hermit CI status — gh via: {gh_cmd!r}")
     for repo in repos:
         report_repo(repo, gh_cmd, args.limit)
-    print("\n(For remediation options see ci-runner/README.md)")
+    print("\n(For remediation options see ci-hub/runners/README.md)")
     return 0
 
 

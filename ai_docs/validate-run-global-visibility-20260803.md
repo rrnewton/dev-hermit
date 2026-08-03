@@ -10,7 +10,7 @@ the tracking-goes-outer principle.
 
 ## TL;DR
 
-- **Tool:** `scripts/validate-run-aggregate.py` (parent). Sweeps all three data
+- **Tool:** `ci-hub/validate/aggregate.py` (parent). Sweeps all three data
   sources into one view. Read-only by default; `--write-global` persists a
   unified JSONL. Runs in ~4s.
 - **Live snapshot (2026-08-03):** 131 validate runs on this host —
@@ -77,19 +77,19 @@ the tracking-goes-outer principle.
 
 ## The aggregation tool
 
-`scripts/validate-run-aggregate.py` (parent). Unifies sources 1+2 into run
+`ci-hub/validate/aggregate.py` (parent). Unifies sources 1+2 into run
 records keyed by `log_file` (ledger wins; raw logs fill the gaps), indexes
 source 3, and links profiling to runs by `git_sha`, falling back to
 same-slot + timestamp-proximity (validate.sh and the dag-runner record different
 SHA fields for the same invocation but coincident wall-clock timestamps).
 
 ```
-scripts/validate-run-aggregate.py                # table, newest last + summary
-scripts/validate-run-aggregate.py --profiling    # profiling coverage per checkout
-scripts/validate-run-aggregate.py --write-global  # persist unified JSONL artifact
-scripts/validate-run-aggregate.py --json          # unified records as JSON
-scripts/validate-run-aggregate.py --csv FILE      # flat CSV
-scripts/validate-run-aggregate.py --since 2026-08-03 [--slot <name>]
+ci-hub/validate/aggregate.py                # table, newest last + summary
+ci-hub/validate/aggregate.py --profiling    # profiling coverage per checkout
+ci-hub/validate/aggregate.py --write-global  # persist unified JSONL artifact
+ci-hub/validate/aggregate.py --json          # unified records as JSON
+ci-hub/validate/aggregate.py --csv FILE      # flat CSV
+ci-hub/validate/aggregate.py --since 2026-08-03 [--slot <name>]
 ```
 
 Table columns: TIME(UTC), SLOT, COMMIT, PROFILE, RESULT, GATES(pass/total),

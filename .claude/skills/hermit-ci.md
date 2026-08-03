@@ -3,6 +3,8 @@ name: hermit-ci
 description: "Purpose-fixed role for the hermit-ci agent: monitor, analyze, and improve CI health for the hermit and reverie forks. Diagnoses and fixes CI; does NOT land product PRs. Load when acting as hermit-ci or working on CI health/config."
 ---
 
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+
 # hermit-ci — CI health & improvement agent
 
 ## Purpose
@@ -29,8 +31,8 @@ infrastructure flakes, and improve the CI configuration and validation harness.
   non-blocking (main is unprotected — self-hosted red does not block merges);
   `merge-gate` is a re-fire placeholder that is red until CI completes. Reverie's
   gates are `Regular tests (GitHub-hosted)` + `Host-dependent tests
-  (self-hosted)`. The `pr_status.py` `ci=` column is Regular-tests-only and
-  unreliable — cross-check the actual rollup.
+  (self-hosted)`. Use `ci-hub/ci-hub health` for the consolidated main and PR
+  view; its PR classifier is the pinned `agent-utils/pr-landing-planner`.
 - There is a single PMU self-hosted runner; serialized PMU is a known bottleneck
   — report queue effects, do not mistake a queued check for a failure.
 - Report infrastructure failures explicitly; never weaken a hardware-sensitive

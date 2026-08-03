@@ -1,13 +1,20 @@
 # PR Planning & Execution — Synthesis
 
 **Purpose.** One place that captures how PRs move from creation to landed on the
-`rrnewton/hermit` and `rrnewton/reverie` forks, how `scripts/pr_status.py` feeds
+`rrnewton/hermit` and `rrnewton/reverie` forks, how `ci-hub/bin/pr-status` feeds
 planning, how a multi-agent harness babysits PRs to green, the landing-sprint /
 "PR zero" protocol, and the session memories that encode the traps. This is a
 coordinator-role document (dispatch, landing, gitlinks); product build/test
 rules live in `hermit/AGENTS.md` and `reverie/AGENTS.md`.
 
 Generated for task `synth-pr-planning-report`. Date: 2026-07-28.
+
+> **Historical implementation note (2026-08-03):** runnable commands now enter
+> through `ci-hub/bin/pr-status`, which delegates collection and CI
+> classification to the pinned `agent-utils/pr-landing-planner`. The detailed
+> implementation description below documents the retired predecessor and must
+> not be treated as current code or current landing policy. See
+> [`ci-hub/README.md`](../../ci-hub/README.md).
 
 ---
 
@@ -22,7 +29,7 @@ feature branch → draft PR → CI green → human review approves → land → 
 ### Actual policy on these forks — LAND ON GREEN, REVIEW IS POST-FACTO
 
 The single most important operational fact, encoded directly in
-`scripts/pr_status.py` and in memory
+`ci-hub/bin/pr-status` and in memory
 [self-hosted-ci-sigsegv-blocks-all-prs](#9-session-memory-inventory) (#53):
 
 > **Landing is never gated on human review.** Every open PR is *free to land*
@@ -96,10 +103,12 @@ Consequences:
 
 ---
 
-## 2. `scripts/pr_status.py` — capabilities and planning use
+## 2. `ci-hub/bin/pr-status` — capabilities and planning use
 
-`scripts/pr_status.py` (stdlib-only Python 3) is the planning front-end for a
-landing sprint. Run it read-only anytime; it mutates nothing.
+`ci-hub/bin/pr-status` is now the planning front-end for a landing sprint. It
+is a thin dev-hermit adapter around the pinned shared planner. Run it read-only
+anytime; it mutates no GitHub state. The bullets below describe its retired
+parent-only predecessor.
 
 ### What it does
 
@@ -213,7 +222,7 @@ rest, safely and continuously.
 Auto-merge is **not** enabled, so the sprint is a serial loop, not a fire-and-
 forget batch:
 
-1. `python3 scripts/pr_status.py` (or `gh pr list … --json
+1. `./ci-hub/bin/pr-status` (or `gh pr list … --json
    number,title,headRefName,mergeable,mergeStateStatus,statusCheckRollup`).
 2. Land each **green + MERGEABLE** PR:
    `with-proxy gh pr merge N -R rrnewton/<repo> --squash --admin --delete-branch`
@@ -289,8 +298,8 @@ show failure/stale even when the real underlying jobs are green (memory
 
 ```bash
 # Poll
-python3 ~/work/dev-hermit/scripts/pr_status.py
-python3 ~/work/dev-hermit/scripts/pr_status.py --repo rrnewton/hermit --warn-threshold 0
+~/work/dev-hermit/ci-hub/bin/pr-status
+~/work/dev-hermit/ci-hub/bin/pr-status --repo rrnewton/hermit --warn-threshold 0
 
 # Per-PR mergeability
 with-proxy gh pr view N -R rrnewton/hermit \
@@ -313,7 +322,7 @@ with-proxy gh pr merge N -R rrnewton/hermit --squash --admin --delete-branch
 
 ## 8. Skills / paths / tooling inventory
 
-- **`scripts/pr_status.py`** — open-PR health & land-readiness (this doc, §2).
+- **`ci-hub/bin/pr-status`** — open-PR health & land-readiness (this doc, §2).
 - **`hermit-dev` ORC plugin** (`.orc/plugins/hermit-dev/`) — coordinator policy
   plugin; reads `dev-hermit/AGENTS.md` at activation; ships
   `gh-issue-create` (fork-only issue wrapper).
@@ -397,7 +406,7 @@ classes are landable / mature):**
 A deterministic, safe fan-in loop (coordinator + `hermit-lander` + worktree
 agents). Serial where landing is serial, parallel where triage is independent.
 
-1. **Snapshot** — `python3 scripts/pr_status.py` for both forks; capture exact
+1. **Snapshot** — `./ci-hub/bin/pr-status` for both forks; capture exact
    open count, and per-PR `ci_status` + (via `gh pr view`) `mergeStateStatus`.
    Classify: `green+CLEAN` / `green+BEHIND` / `pending` / `red-real` /
    `red-stale-or-capacity` / `none(no-CI)` / `DIRTY(conflict)`.

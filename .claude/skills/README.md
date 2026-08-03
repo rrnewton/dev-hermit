@@ -35,6 +35,15 @@ The active set is:
 
 Every active coordinator skill is a flat `.claude/skills/<memory-slug>.md` file.
 
+### CI implementation home
+
+Skills describe when and why CI work should happen. All current CI code, live
+health/history entrypoints, runner operations, and project-specific tick
+configuration live under [`ci-hub/`](../../ci-hub/README.md). Do not add new CI
+implementations under `.claude/skills`, `scripts/`, `ops/`, or a dated memory;
+link the hub instead. Generic engines remain pinned in `agent-utils` and are
+used through `ci-hub/bin/agent-tool`, never copied into this repository.
+
 `human-review-first` is dormant and archived at
 `.claude/archived_skills/human-review-first/SKILL.md`. Archived skills are not
 part of normal discovery or the active memory coverage gate.

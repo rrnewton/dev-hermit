@@ -3,6 +3,8 @@ name: validate-sh-cannot-be-green-on-devserver
 description: "./validate.sh never exits 0 on this development host because baseline main fails host-sensitive detcore tests"
 ---
 
+> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+
 The prescribed local-landing gate is: run `./validate.sh` on a PR's rebased SHA,
 and if green apply the `locally-validated` label (the legitimate substitute for
 green CI), then merge. **Do NOT `--admin`-merge over red self-hosted CI**, and
