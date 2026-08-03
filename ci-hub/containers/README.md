@@ -68,3 +68,26 @@ the zombie count and PID namespace when available.
 The reconciler refuses to act on a stale agent snapshot. If a live agent's exact
 invocation cannot be established, the result is `owner-unknown` and no removal
 occurs. These fail-closed cases distinguish “safe to clean” from “looks idle.”
+
+## Bridging an old ORC process
+
+The canonical scheduler is the ORC workflow
+`hermit-dev-operational-health-v1`. An ORC process started before that workflow
+was added cannot load it without a restart. Do not restart a live fleet solely
+for this poll. Start the bounded bridge as a user service instead:
+
+```bash
+systemd-run --user --unit=dev-hermit-agent-container-reconcile-bridge \
+  --property=Restart=on-failure --property=RestartSec=15s \
+  --working-directory="$HOME/work/dev-hermit" \
+  "$HOME/work/dev-hermit/ci-hub/health/agent-container-reconcile-bridge.rs"
+```
+
+The bridge refreshes the same agent snapshot and invokes the same reconciler.
+It survives agent recycling because systemd owns it. It exits successfully as
+soon as the canonical workflow is observed alive, so a later ORC restart cannot
+leave two schedulers running. Inspect it without mutation with:
+
+```bash
+systemctl --user status dev-hermit-agent-container-reconcile-bridge.service
+```

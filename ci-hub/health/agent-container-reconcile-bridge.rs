@@ -1,0 +1,292 @@
+#!/usr/bin/env rust-script
+//! Bridge container reconciliation into an ORC process that predates the
+//! canonical operational-health workflow.
+//!
+//! The bridge is deliberately temporary. It exits successfully as soon as the
+//! live ORC state reports `hermit-dev-operational-health-v1` alive, leaving the
+//! canonical workflow as the only scheduler.
+//!
+//! ```cargo
+//! [dependencies]
+//! serde = { version = "1", features = ["derive"] }
+//! serde_json = "1"
+//! ```
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{exit, Command};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const CANONICAL_WORKFLOW: &str = "hermit-dev-operational-health-v1";
+const DEFAULT_STATE_URL: &str = "http://127.0.0.1:44109/api/state";
+const DEFAULT_INTERVAL_SECS: u64 = 300;
+
+const USAGE: &str = r#"Usage: agent-container-reconcile-bridge.rs [OPTIONS]
+
+Temporarily reconcile managed agent containers while the running ORC process
+predates the canonical operational-health workflow. The bridge exits when that
+workflow becomes live.
+
+Options:
+  --once                 Run one observation/reconciliation cycle and exit.
+  --interval-secs N      Poll interval (default: 300).
+  --state-url URL        ORC state endpoint (default: http://127.0.0.1:44109/api/state).
+  --root PATH            dev-hermit root (default: current directory).
+  -h, --help             Print this pure help text.
+"#;
+
+#[derive(Debug)]
+struct Args {
+    once: bool,
+    interval_secs: u64,
+    state_url: String,
+    root: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrcState {
+    #[serde(default)]
+    agents: Vec<Value>,
+    #[serde(default)]
+    workflows: Vec<Workflow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Workflow {
+    name: String,
+    #[serde(default)]
+    alive: bool,
+}
+
+#[derive(Serialize)]
+struct AgentSnapshot<'a> {
+    schema_version: u8,
+    captured_at: u64,
+    agents: &'a [Value],
+}
+
+enum Cycle {
+    Continue,
+    CanonicalActive,
+}
+
+fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(message) => {
+            eprintln!("agent-container-reconcile-bridge: ERROR: {message}");
+            exit(2);
+        }
+    }
+}
+
+fn run() -> Result<(), String> {
+    let Some(args) = parse_args(env::args().skip(1))? else {
+        print!("{USAGE}");
+        return Ok(());
+    };
+
+    validate_root(&args.root)?;
+    loop {
+        match run_cycle(&args) {
+            Ok(Cycle::CanonicalActive) => {
+                println!(
+                    "state=canonical-active workflow={CANONICAL_WORKFLOW} summary=temporary-container-reconcile-bridge-stopping"
+                );
+                return Ok(());
+            }
+            Ok(Cycle::Continue) if args.once => return Ok(()),
+            Ok(Cycle::Continue) => {}
+            Err(message) if args.once => return Err(message),
+            Err(message) => eprintln!(
+                "agent-container-reconcile-bridge: ERROR: {message}; retrying in {}s",
+                args.interval_secs
+            ),
+        }
+        thread::sleep(Duration::from_secs(args.interval_secs));
+    }
+}
+
+fn parse_args(arguments: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
+    let mut once = false;
+    let mut interval_secs = DEFAULT_INTERVAL_SECS;
+    let mut state_url = DEFAULT_STATE_URL.to_string();
+    let mut root =
+        env::current_dir().map_err(|error| format!("read current directory: {error}"))?;
+    let mut arguments = arguments.peekable();
+
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "-h" | "--help" => return Ok(None),
+            "--once" => once = true,
+            "--interval-secs" => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| "--interval-secs requires a value".to_string())?;
+                interval_secs = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid --interval-secs value {value:?}"))?;
+                if interval_secs == 0 {
+                    return Err("--interval-secs must be positive".to_string());
+                }
+            }
+            "--state-url" => {
+                state_url = arguments
+                    .next()
+                    .ok_or_else(|| "--state-url requires a value".to_string())?;
+            }
+            "--root" => {
+                root = PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or_else(|| "--root requires a value".to_string())?,
+                );
+            }
+            _ => return Err(format!("unknown argument {argument:?}\n{USAGE}")),
+        }
+    }
+
+    Ok(Some(Args {
+        once,
+        interval_secs,
+        state_url,
+        root,
+    }))
+}
+
+fn validate_root(root: &Path) -> Result<(), String> {
+    let reconciler = root.join("scripts/agent-podman.rs");
+    if !reconciler.is_file() {
+        return Err(format!(
+            "dev-hermit root has no executable reconciler at {}",
+            reconciler.display()
+        ));
+    }
+    Ok(())
+}
+
+fn run_cycle(args: &Args) -> Result<Cycle, String> {
+    let state = fetch_state(&args.state_url)?;
+    if canonical_workflow_alive(&state) {
+        return Ok(Cycle::CanonicalActive);
+    }
+
+    let snapshot_path = args.root.join("ignored/ci-hub/agent-snapshot.json");
+    persist_snapshot(&snapshot_path, &state.agents)?;
+    let status = Command::new(args.root.join("scripts/agent-podman.rs"))
+        .arg("reconcile")
+        .arg("--agents-json")
+        .arg(&snapshot_path)
+        .arg("--apply")
+        .current_dir(&args.root)
+        .status()
+        .map_err(|error| format!("start agent-podman reconciler: {error}"))?;
+    let code = status.code().unwrap_or(2);
+    if code > 1 {
+        return Err(format!("agent-podman reconciler failed with exit {code}"));
+    }
+    println!(
+        "state=bridge-active agents={} reconciler_exit={} summary=canonical-workflow-absent-container-reconciliation-ran",
+        state.agents.len(),
+        code
+    );
+    Ok(Cycle::Continue)
+}
+
+fn fetch_state(url: &str) -> Result<OrcState, String> {
+    let output = Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "15",
+            url,
+        ])
+        .output()
+        .map_err(|error| format!("start curl for ORC state: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "fetch ORC state failed with exit {}: {}",
+            output.status.code().unwrap_or(2),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("parse ORC state JSON: {error}"))
+}
+
+fn canonical_workflow_alive(state: &OrcState) -> bool {
+    state
+        .workflows
+        .iter()
+        .any(|workflow| workflow.name == CANONICAL_WORKFLOW && workflow.alive)
+}
+
+fn persist_snapshot(path: &Path, agents: &[Value]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("snapshot path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("create snapshot directory {}: {error}", parent.display()))?;
+    let captured_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("read system clock: {error}"))?
+        .as_secs();
+    let snapshot = AgentSnapshot {
+        schema_version: 1,
+        captured_at,
+        agents,
+    };
+    let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    let bytes = serde_json::to_vec(&snapshot)
+        .map_err(|error| format!("serialize agent snapshot: {error}"))?;
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("write temporary snapshot {}: {error}", temporary.display()))?;
+    fs::rename(&temporary, path).map_err(|error| {
+        format!(
+            "atomically publish snapshot {} -> {}: {error}",
+            temporary.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_scheduler_requires_exact_live_workflow() {
+        let state = OrcState {
+            agents: Vec::new(),
+            workflows: vec![
+                Workflow {
+                    name: CANONICAL_WORKFLOW.to_string(),
+                    alive: false,
+                },
+                Workflow {
+                    name: "other".to_string(),
+                    alive: true,
+                },
+            ],
+        };
+        assert!(!canonical_workflow_alive(&state));
+    }
+
+    #[test]
+    fn canonical_live_workflow_stops_bridge() {
+        let state = OrcState {
+            agents: Vec::new(),
+            workflows: vec![Workflow {
+                name: CANONICAL_WORKFLOW.to_string(),
+                alive: true,
+            }],
+        };
+        assert!(canonical_workflow_alive(&state));
+    }
+}
