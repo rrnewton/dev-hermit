@@ -92,8 +92,8 @@ $HERMIT_DIR/
     hermit-dynamorio                 # optional explicit/root-local install
   plugins/
     dynamorio/
-      current -> releases/0.2.0/<target>/<abi-tag>/
-      releases/0.2.0/<target>/<abi-tag>/
+      current -> releases/0.2.0/<target>/<abi-tag>/<build-id>/
+      releases/0.2.0/<target>/<abi-tag>/<build-id>/
         plugin.json
         bin/drrun
         lib/libdetcore_dbt.so
@@ -236,9 +236,17 @@ The complete runtime bundle was not inferred from filenames: the existing
 packager names the seven DynamoRIO files, and both the unstripped and stripped
 bundles successfully ran `/bin/true` through `drrun` and the packaged native
 client. The stripped runtime plus licenses is 8.61 MB unpacked and 3.23 MB as an
-actual gzip archive. The earlier roughly 136 MiB figure described the entire
-compressed developer install, including static archives, debug companions,
-headers, and unrelated tools; it is not the payload that must be embedded.
+actual gzip archive.
+
+**Correction to the earlier packaging premise:** the roughly 134 MB planning
+figure was the full DynamoRIO source submodule, not a payload that would ever be
+shipped or embedded. This pinned checkout measures 128,694,015 apparent bytes.
+The working runtime is 10,639,984 bytes unstripped, 8,565,088 bytes stripped,
+and 3,228,825 bytes as the gzip archive with required licenses. Separately, the
+full developer CMake install compresses to 142,467,790 bytes because it contains
+static archives, debug companions, headers, and unrelated tools; that is also
+not shipping weight. Reasoning about embedding a 134 MB runtime was based on a
+category error.
 
 Clean CMake timings used pinned DynamoRIO
 `929840ad9190e5086775e8debc0f0b79b4208d59`, CMake 3.31.8, GCC 11.5.0, and
@@ -255,8 +263,12 @@ containing top-level CMake and license files, `core`, `tools`, `api`, `libutil`,
 `make`, required configuration helpers, and only `drcontainers`, `drmgr`,
 `drx`, `drwrap`, and `drreg` compresses to 5,234,435 bytes. Its extension CMake
 list was reduced to those five directories. From a fresh build directory it
-configured, built, and installed in 14.54 seconds with the same 16-job cap, and
-its `drrun` successfully ran the existing DBT client through `/bin/true`.
+configured, built, and installed successfully, and its `drrun` ran the existing
+DBT client through `/bin/true`.
+
+**Measured source-install cost:** the clean, build-proven subset took 14.54
+seconds from configure through install. That observed cost removes the premise
+that avoiding a long local DynamoRIO build justifies runtime fetching.
 
 That 5.23 MB result proves the DynamoRIO source subset, not the complete
 `hermit-dynamorio` `.crate`: Rust source, build glue, and licenses still count
@@ -308,10 +320,13 @@ On first DBT use, the helper performs an implicit `ensure` operation:
 7. update `current` last with an atomic symlink replacement.
 
 Concurrent first runs either perform the extraction under the lock or wait and
-validate the winner's completed directory. An upgrade selects a new
-version/target/ABI/build-ID path and never overwrites an older extraction, so a
-stale directory cannot satisfy the handshake. Old versions remain available
-for explicit garbage collection.
+validate the winner's completed directory. The helper never trusts `current` by
+pathname alone: it compares the selected manifest and file hashes with the exact
+version, target, ABI tag, and build ID embedded by its source build. Any identity
+or hash mismatch invalidates `current` for that invocation. An upgrade therefore
+selects a new content-addressed path, validates it completely, and only then
+atomically replaces the symlink; it never overwrites or executes the older
+extraction. Old versions remain available for explicit garbage collection.
 
 A read-only or full `$HERMIT_DIR` is the remaining first-use failure. Hermit
 exits 73 (`EX_CANTCREAT`) before guest execution with the resolved path and an
@@ -397,7 +412,7 @@ These invariants are mechanical gates, not documentation promises:
 | Installation needs no activation | Clean-home test installs both crates and runs DBT without extra configuration | Block publication |
 | Embedded distribution fits crates.io | `cargo package` verifies the complete `.crate` is below 10 MB | Block publication |
 | First use is offline | Clean-home integration test disables network and runs DBT after `cargo install` | Block publication |
-| Extraction is atomic | Concurrent first-use and interrupted-extraction tests expose only a complete hashed payload | Block publication |
+| Extraction and upgrade are atomic | Concurrent first-use, interrupted-extraction, and stale-upgrade tests expose only the exact complete hashed payload | Block publication |
 | Recordings remain discoverable | Filesystem test checks `$HERMIT_DIR/recordings` resolves to the configured cache | Block publication |
 | End-user state excludes developer artifacts | Install and developer-validation tests assert no validation output is written beneath `$HERMIT_DIR` | Block publication or developer-tooling change |
 
@@ -528,7 +543,8 @@ release artifacts:
 9. The DBT native client independently refuses an ABI-tag or build-ID mismatch
    even when a manifest is edited to claim compatibility.
 10. An interrupted or concurrent extraction leaves the prior `current` payload
-    usable and never exposes the partial replacement.
+    usable and never exposes the partial replacement; an upgrade with a different
+    version, target, ABI tag, or build ID cannot reuse the stale extraction.
 11. `$HERMIT_DIR` relocation works without consulting unrelated host paths, the
     recordings symlink resolves to the actual cache store, and neither package
     installation nor developer validation writes developer artifacts there.
