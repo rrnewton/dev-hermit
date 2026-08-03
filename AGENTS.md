@@ -1072,6 +1072,70 @@ are unacceptable.
   "It works" is not a result.
 - **Bind evidence to commits, not branch names**, per the evidence block above.
 
+## Establish What You Have Before Acting On It
+
+This is a **coordinator** rule. It governs how the coordinator turns an
+observation into filed work or a reported conclusion, and it binds the
+coordinator specifically: the recurring instances are the coordinator's own, not
+an agent's. Both failure modes below are the same mistake wearing different
+clothes — acting on a claim or a quantity before establishing what it actually
+is. Verifying first costs minutes; acting on the wrong thing costs the
+implementation, the rollback, and the confusion in between. When a premise or a
+headline number comes from a note or from the first quantity that was easy to
+obtain, stop and establish what you have before you act.
+
+### A note is unverified until the coordinator checks it
+
+A note is a snapshot of what one agent believed at one moment, not an
+established fact. Do not launder a note into a task premise by rewriting "X
+appears to be Y" into the imperative "X is Y, fix it." When a task's premise
+originates from a note (or any second-hand observation) rather than from the
+coordinator's own direct verification, the task description must:
+
+- **attribute the premise to its source** — the note, the agent, and that it was
+  a point-in-time belief;
+- **mark it UNVERIFIED** in those words; and
+- **make "verify the premise" the explicit first step, with "premise refuted"
+  named as a valid and valuable outcome** — the refutation is a deliverable, not
+  a failed task.
+
+The originating agent is not at fault: a correctly-hedged observation
+("code-inferred, unmeasured") becomes wrong only when the coordinator drops the
+hedge. Worked example: `tiocgpgrp_uncanonicalized_in_detcore` was filed from a
+code-reading note as an established determinism hole; a runtime test showed the
+value is already handled by PID-namespace translation under `--strict`, and the
+"obvious fix" would have broken valid job control — premise refuted cheaply,
+before any code changed. (A companion instance: the #1518 lint "not wired into
+workflows" premise was refuted by injection — the lint was already enforced in
+three places.)
+
+### A number is unqualified until the coordinator states what it measures
+
+A number can be arithmetically correct and still measure the wrong thing. The
+trap is reaching for the first available quantity, because easily-obtained
+quantities are usually **proxies** for the thing actually wanted. Before acting
+on a number — filing work against it, or reporting it as evidence — establish:
+
+- **what it measures** — is this the quantity the decision actually needs, or a
+  proxy?
+- **its unit** — a count is not a rate; an aggregate is not a per-unit; a load
+  average is not a utilisation; a source tree is not a shipping artifact;
+- **its denominator or comparison base** — against what, and per what?
+
+**When a ratio looks surprising, interrogate the denominator before filing work
+against the numerator.** Worked example: "only 1 of 132 validate runs has DAG
+profiling" reads as sparse instrumentation until you check the denominator — it
+is actually evidence the mechanism is barely used at all, a different problem
+needing different work. Other same-day instances: 478 "saturating" processes of
+which 415 were zombies (a count is not load); a 920 GB total weighed against a
+200 GB **per-worktree** cap (an aggregate is not a per-unit); load average 81
+then 134 while the box was ~64% idle (a load average is not a utilisation); a
+134 MB DynamoRIO **source submodule** cited while debating embedding a 3.2 MB
+gzipped **payload**; "1.58x parallelism" read as a missing scheduler that had in
+fact been told to use two lanes; a hardcoded "20–70 minutes" presented as an
+estimate. The full list lives in the note on
+`task-premises-from-notes-must-be-marked-unverified`.
+
 ## Failure, Recovery, And Concurrent Work
 
 Other agents may update the parent, primary checkouts, registries, or branches
@@ -1102,6 +1166,10 @@ Before dispatch:
 4. Confirm exclusive ownership or record every sharing agent and disjoint path.
 5. Confirm the intended base SHA and publication target for each repository.
 6. Register the slot before work begins.
+7. If the task premise came from a note, or a headline number came from the
+   first quantity to hand, apply *Establish What You Have Before Acting On It*:
+   attribute the premise and mark it UNVERIFIED with verification as step one;
+   state a number's measure, unit, and denominator before filing work against it.
 
 Before Hermit publication or landing:
 
