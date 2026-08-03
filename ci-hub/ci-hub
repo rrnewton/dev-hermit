@@ -18,6 +18,7 @@ case "$command" in
     pr-status|fresh) exec "$ROOT/ci-hub/bin/pr-status" "$@" ;;
     tick) exec "$ROOT/ci-hub/bin/health-tick" "$@" ;;
     local-history) exec python3 "$ROOT/ci-hub/validate/aggregate.py" "$@" ;;
+    land-lock) exec "$ROOT/ci-hub/landing/landing-lock.sh" "$@" ;;
     runner-health) exec python3 "$ROOT/ci-hub/runners/ci-status.py" "$@" ;;
     refresh-history)
         target="$ROOT/ci-hub/history/ingest.py"
@@ -46,6 +47,8 @@ usage: ci-hub/ci-hub <command> [args]
   history          query the local commit/CI history store
   local-history    query legacy/local validate-run records
   runner-health    summarize self-hosted runners and recent workflows
+  land-lock        shared-file LANDING MUTEX (acquire|renew|release|status|run)
+                   every lander MUST hold it around re-union->push->stamp->merge
 EOF
         ;;
     *) echo "ci-hub: unknown command: $command (run ci-hub/ci-hub help)" >&2; exit 2 ;;

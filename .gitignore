@@ -121,3 +121,10 @@ ACTIVE.md
 # Local type-checker cache files.
 **/.mypy_cache/
 /worktree-state.json
+
+# Landing mutex runtime state (see ci-hub/landing/). Machine-local, never committed.
+/.landing-lock
+/.landing-lock.guard
+/.landing-lock.guard.*
+/.landing-lock.queue
+/.landing-lock.queue.*
