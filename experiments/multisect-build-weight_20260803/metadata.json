@@ -1,0 +1,33 @@
+{
+  "experiment": "multisect-build-weight",
+  "date": "2026-08-03",
+  "question": "cheapest probe build that keeps usable backtraces; how to materialize a commit per probe; how many probes sustain in parallel",
+  "host": {
+    "cpu": "AMD EPYC 9D85",
+    "logical_cpus": 316,
+    "mem_gib": 754,
+    "shared": true,
+    "note": "load varies; measurements labelled idle vs contended"
+  },
+  "repos": {
+    "hermit_primary_sha": "baf1a7b7f3037b13d3bad2cf99701a83ea2739ad",
+    "hermit_branch": "main",
+    "parent_sha": "7ac72dee7c6c6b054f2c856a3cb8272b452924bd"
+  },
+  "toolchain": {
+    "host_cargo": "1.97.1 (c980f4866 2026-06-30)",
+    "build_toolchain": "repo-pinned nightly per commit rust-toolchain.toml",
+    "sccache": false
+  },
+  "probe": {
+    "name": "detcore_misc",
+    "build_argv": "cargo test -p detcore --test tests_misc --no-run",
+    "build_env_C3": "CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked",
+    "test": "vfork::vfork_parent_resumes_after_child_exec",
+    "excludes_hermit_cli": true,
+    "third_party_backends_out": ["dbi", "sabre", "e9patch"]
+  },
+  "checkout_decision": "git worktree add --detach (shares .git; own target/ per worktree; serialize only the add via pool-global flock)",
+  "recommended_build_config": "C3",
+  "results_csv": "results.csv"
+}

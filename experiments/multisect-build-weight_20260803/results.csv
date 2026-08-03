@@ -1,0 +1,30 @@
+category,metric,config,value,unit,condition,note
+checkout,worktree_add_wall,git-worktree,0.18,s,idle,shares .git objects
+checkout,worktree_source_disk,git-worktree,11,MiB,-,source only
+build,cold_wall,C1_default_debug2,24.0,s,idle,full backtraces
+build,cold_cpu,C1_default_debug2,162,cpu_s,idle,
+build,rss,C1_default_debug2,981,MB,idle,
+build,target_disk,C1_default_debug2,1600,MB,idle,
+build,test_binary_size,C1_default_debug2,210,MB,idle,
+build,cold_wall,C3_linetables_split,18.1,s,idle,keeps file:line backtraces (RECOMMENDED)
+build,cold_cpu,C3_linetables_split,129,cpu_s,idle,
+build,rss,C3_linetables_split,812,MB,idle,
+build,target_disk,C3_linetables_split,910,MB,idle,
+build,test_binary_size,C3_linetables_split,68.7,MB,idle,~3x smaller than C1
+build,cold_wall,C3_linetables_split,58.3,s,contended,load-dependent
+build,warm_wall_noop,C3_linetables_split,0.4,s,idle,cargo no-op (rep 2..N)
+build,warm_cpu_noop,C3_linetables_split,0.3,cpu_s,idle,
+build,warm_wall_touch1,C3_linetables_split,9.35,s,idle,one file changed
+build,warm_cpu_touch1,C3_linetables_split,16,cpu_s,idle,8x less than cold
+build,full_workspace_target,naive,65,GiB,-,rejected: blows 200GB cap at 3 probes
+run,test_full_suite_wall,tests_misc,0.41,s,idle,28 tests
+run,test_full_suite_cpu,tests_misc,2,cpu_s,idle,
+run,test_vfork_wall,vfork_single,0.02,s,idle,healthy
+run,test_calibrated_wall,vfork_single,0.11,s,contended,
+parallel,cold_wall_8wide,C3_linetables_split,23,s,8 concurrent,1.28x solo
+parallel,cold_cpu_8wide_each,C3_linetables_split,182,cpu_s,8 concurrent,~60 cores total for 8
+parallel,box_cpu_cap,safe-ci.slice,284,cores,-,CPUQuota ~90% x 316
+disk,per_probe_cold,C3_linetables_split,0.92,GiB,-,11MiB source + 910MB target
+disk,peak_pool_round,C3_linetables_split,4.6,GiB,k=3,(k+2) worktrees; cleaned at end
+e2e,search_wall,3commit_k1n1j3,24.1,s,real box,AMBIGUOUS (no regression in range)
+e2e,search_cpu,3commit_k1n1j3,396.7,cpu_s,real box,CPU>>wall confirms parallel builds

@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# multisect-probe -- the token-free automatic probe unit.
+#
+# This is the command the multisect ENGINE (debug/multisect) runs, once per
+# repetition, wrapped inside `safe-ci-dag-runner box` (cgroup mem + wall
+# timeout + core cap). It does the three things the engine deliberately does
+# NOT do:
+#
+#     checkout(commit)  ->  targeted-minimal-build  ->  run-one-test
+#
+# and exits with a status the box turns into a PASS/FAIL/TIMEOUT verdict:
+#
+#     exit 0      test passed              -> box PASS  -> engine "green"
+#     exit 124    test hung (inner kill)   -> box FAIL  -> engine "wedged"
+#     exit !=0    test failed              -> box FAIL  -> engine "wedged"
+#     exit 125    BUILD FAILED (infra)     -> box FAIL, but a `build-failed`
+#                                            marker is written so the
+#                                            orchestrator can WARN that the
+#                                            blame may be a compile break,
+#                                            not the target bug.
+#
+# Once the investigating agent has configured the probe (a probes/*.env file),
+# the entire search runs through this script in pure code -- NO tokens per
+# probe. That automation boundary is the whole point of the tool.
+#
+# BUILD-VS-HANG SEPARATION (correctness-critical):
+#   The build is NOT wrapped in the hang timeout -- only the test binary is
+#   (via PROBE_TEST_TIMEOUT). A cold build therefore can NEVER be misread as a
+#   test hang. The box's own (outer) timeout is a generous safety net sized to
+#   cover a cold build plus the inner timeout; see the orchestrator.
+#
+# Inputs from the engine (environment):
+#   MULTISECT_COMMIT MULTISECT_SHORT_COMMIT MULTISECT_REP MULTISECT_ROUND
+#   MULTISECT_OUTPUT_DIR MULTISECT_REPO
+#
+# Inputs from the configured probe (probes/<name>.env, exported by orchestrator):
+#   PROBE_REPO           git checkout that owns the .git objects to search
+#   PROBE_POOL_DIR       directory holding per-commit worktrees (orchestrator-owned)
+#   PROBE_BUILD_ARGV     build command; compiles the test WITHOUT running it
+#   PROBE_TEST_BIN_GLOB  glob (under target/) matching the compiled test binary
+#   PROBE_TEST_ARGV      args passed to the test binary (filter, --exact, etc.)
+#   PROBE_TEST_TIMEOUT   inner hang-detector timeout, seconds (bounds the TEST only)
+#   PROBE_BUILD_ENV      extra `KEY=VAL ...` build env (the C3 profile lives here)
+#
+set -uo pipefail
+
+fail_infra() { echo "multisect-probe: INFRA: $*" >&2; }
+
+# Robustness: if the boxed environment did not forward the probe config (some
+# sandboxes scrub env), source it from PROBE_CONFIG. The orchestrator always
+# exports both the PROBE_* vars and PROBE_CONFIG.
+if [[ -z "${PROBE_REPO:-}" && -n "${PROBE_CONFIG:-}" && -f "${PROBE_CONFIG}" ]]; then
+  # shellcheck disable=SC1090
+  set -a; source "${PROBE_CONFIG}"; set +a
+fi
+
+: "${MULTISECT_COMMIT:?engine must set MULTISECT_COMMIT}"
+: "${MULTISECT_REPO:?engine must set MULTISECT_REPO}"
+: "${PROBE_REPO:?configured probe must set PROBE_REPO}"
+: "${PROBE_POOL_DIR:?configured probe must set PROBE_POOL_DIR}"
+: "${PROBE_BUILD_ARGV:?configured probe must set PROBE_BUILD_ARGV}"
+: "${PROBE_TEST_BIN_GLOB:?configured probe must set PROBE_TEST_BIN_GLOB}"
+: "${PROBE_TEST_TIMEOUT:?configured probe must set PROBE_TEST_TIMEOUT}"
+
+short="${MULTISECT_SHORT_COMMIT:-${MULTISECT_COMMIT:0:12}}"
+out="${MULTISECT_OUTPUT_DIR:-$PROBE_POOL_DIR/out-$short-r${MULTISECT_REP:-0}}"
+mkdir -p "$out"
+
+wt="$PROBE_POOL_DIR/wt-$short"
+lock="$PROBE_POOL_DIR/.lock-$short"
+mkdir -p "$PROBE_POOL_DIR"
+
+# Serialize any same-commit concurrency (reps are serial today, but a per-commit
+# flock keeps a future -j change or a retry from clobbering one worktree's build
+# directory -- Hard Invariant 8, no shared writable build dirs).
+exec 9>"$lock"
+if ! flock 9; then
+  fail_infra "cannot lock $lock"
+  exit 3
+fi
+
+# --- checkout ------------------------------------------------------------------
+# git worktree shares .git objects with PROBE_REPO: ~0.2s, ~11M of source, and
+# NO separate object store. Decided with evidence; see experiments/
+# multisect-build-weight_20260803/.
+#
+# `git worktree add` takes a repo-global lock on the parent's worktree metadata,
+# so CONCURRENT adds from the same PROBE_REPO (different commits, run in
+# parallel by the engine) race and fail. Serialize ONLY the add itself via a
+# pool-global lock -- a short critical section -- then release it so builds run
+# concurrently in their separate worktrees (Hard Invariant 8 preserved).
+if [[ ! -e "$wt/.git" ]]; then
+  addlock="$PROBE_POOL_DIR/.worktree-add.lock"
+  exec 8>"$addlock"
+  flock 8
+  if [[ ! -e "$wt/.git" ]]; then
+    git -C "$PROBE_REPO" worktree add --detach "$wt" "$MULTISECT_COMMIT" \
+      >"$out/checkout.log" 2>&1
+    rc_add=$?
+  else
+    rc_add=0
+  fi
+  flock -u 8
+  exec 8>&-
+  if [[ $rc_add -ne 0 ]]; then
+    fail_infra "git worktree add failed for $short (see $out/checkout.log)"
+    exit 3
+  fi
+else
+  # Reused worktree (warm rep): make sure it is exactly at this commit.
+  git -C "$wt" checkout --detach --quiet "$MULTISECT_COMMIT" \
+    >>"$out/checkout.log" 2>&1 || true
+fi
+
+# --- targeted minimal build (NOT under the hang timeout) -----------------------
+# The C3 profile (CARGO_INCREMENTAL=0 + line-tables-only + split-debuginfo) is
+# carried in PROBE_BUILD_ENV. It keeps file:line backtraces (this bug class
+# needs them) while being strictly cheaper than the default dev profile.
+build_start=$(date +%s.%N)
+if ! env ${PROBE_BUILD_ENV:-} bash -c "cd '$wt' && ${PROBE_BUILD_ARGV}" \
+      >"$out/build.log" 2>&1; then
+  # A build failure is INFRA, not a wedge: main commits normally compile, so a
+  # break here almost certainly means an environmental problem or a range that
+  # crosses a compile-broken commit. Leave a marker the orchestrator scans for.
+  touch "$PROBE_POOL_DIR/build-failed-$short"
+  echo "BUILD-FAILED commit=$short (see $out/build.log)" >&2
+  exit 125
+fi
+build_end=$(date +%s.%N)
+
+# Locate the compiled test binary (never rebuild inside the timed step). Pick
+# the newest executable that is not a depfile/dSYM/dwo artifact.
+shopt -s nullglob
+testbin=""
+for cand in $(ls -t "$wt"/${PROBE_TEST_BIN_GLOB} 2>/dev/null); do
+  case "$cand" in
+    *.d | *.dwo | *.dSYM) continue ;;
+  esac
+  if [[ -f "$cand" && -x "$cand" ]]; then
+    testbin="$cand"
+    break
+  fi
+done
+shopt -u nullglob
+if [[ -z "$testbin" ]]; then
+  fail_infra "no executable test binary matched $PROBE_TEST_BIN_GLOB under $wt/target"
+  exit 3
+fi
+
+# --- run one test (THIS is what the inner timeout bounds) ----------------------
+run_start=$(date +%s.%N)
+# shellcheck disable=SC2086
+timeout --signal=KILL "${PROBE_TEST_TIMEOUT}" \
+  env ${PROBE_TEST_ENV:-} "$testbin" ${PROBE_TEST_ARGV:-} \
+  >"$out/test.log" 2>&1
+rc=$?
+run_end=$(date +%s.%N)
+
+# Record per-probe timings for the estimator's calibration ingestion.
+awk -v b="$build_start" -v be="$build_end" -v r="$run_start" -v re="$run_end" \
+    -v rc="$rc" -v c="$short" -v rep="${MULTISECT_REP:-0}" 'BEGIN{
+  printf "commit=%s rep=%s build_s=%.3f test_s=%.3f rc=%d\n", c, rep, be-b, re-r, rc
+}' >"$out/probe-timing.txt" 2>/dev/null || true
+
+exit "$rc"

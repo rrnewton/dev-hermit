@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+"""multisect -- configured-probe front end for the rate-aware Git-range search.
+
+WHAT THIS IS
+    A thin, honest orchestrator around the existing rate-aware search engine
+    (debug/multisect). It adds exactly the layer that engine deliberately omits:
+    a checkout+build+run PROBE HARNESS, a worktree POOL with guaranteed cleanup,
+    a known-green ANCHOR provider (consumes ci-hub history), and an up-front
+    ETA-to-blame ESTIMATOR. It does NOT reimplement selection, green-rate
+    classification, or recursion -- that is the engine's job, and hermit-multisect
+    depends on it live.
+
+THE AUTOMATION BOUNDARY (the whole point)
+    The investigating agent CONFIGURES a probe once (a probes/<name>.env file),
+    then runs `multisect run --probe <name>`. From that point the ENTIRE search
+    is automatic code -- checkout, build, run, classify, recurse -- with ZERO
+    tokens per probe. Per-probe token burn is a design failure.
+
+COST AWARENESS (tool-cost-awareness-convention; ci-hub/TOOL-COST-CONVENTION.md)
+    Before any expensive work, `run` prints the ETA-to-blame derived from a
+    calibration probe (not a guess): expected WALL and CPU, the basis, and -- if
+    the ETA is large -- the levers to shrink it. The whole search is wrapped in
+    ci-hub/bin/tool-cost, which prints the canonical COST ACTUAL line (real
+    wall + CPU) on EVERY exit path, including failure and abort. CPU vs wall is
+    what distinguishes a working search from a spinning one.
+
+Subcommands:
+    run          calibrate -> print ETA -> run the search (wall+CPU always)
+    estimate     calibrate + print ETA only (no search)
+    calibrate    run one probe, print measured cold/warm build + test costs
+    gc           remove leaked probe-pool worktrees (never orphan copies)
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PARENT = HERE.parent
+sys.path.insert(0, str(HERE / "lib"))
+
+import anchors  # noqa: E402
+import estimate as est_mod  # noqa: E402
+
+
+def eprint(*a: object) -> None:
+    print(*a, file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# probe configuration
+# ---------------------------------------------------------------------------
+def load_probe(name_or_path: str) -> tuple[Path, dict[str, str]]:
+    """Resolve a probes/<name>.env file and parse its KEY=VALUE lines."""
+    cand = Path(name_or_path)
+    if not cand.exists():
+        cand = HERE / "probes" / f"{name_or_path}.env"
+    if not cand.exists():
+        sys.exit(f"multisect: no probe config {name_or_path!r} (looked in probes/)")
+    cfg: dict[str, str] = {}
+    for raw in cand.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :]
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        cfg[key.strip()] = val.strip().strip('"').strip("'")
+    return cand.resolve(), cfg
+
+
+def resolve_runner(explicit: str | None) -> Path:
+    """Find safe-ci-dag-runner: explicit -> env -> PATH -> known materializations."""
+    if explicit:
+        p = Path(explicit).expanduser().resolve()
+        if p.is_file() and os.access(p, os.X_OK):
+            return p
+        sys.exit(f"multisect: --box-runner not executable: {p}")
+    env = os.environ.get("SAFE_CI_DAG_RUNNER_BIN")
+    if env and Path(env).is_file():
+        return Path(env).resolve()
+    which = shutil.which("safe-ci-dag-runner")
+    if which:
+        return Path(which).resolve()
+    for rel in (
+        "agent-utils/rs/bin/safe-ci-dag-runner",
+        "hermit/agent-utils/rs/bin/safe-ci-dag-runner",
+        "hermit/agent-utils/rs/target/release/safe-ci-dag-runner",
+    ):
+        cand = PARENT / rel
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return cand.resolve()
+    sys.exit(
+        "multisect: cannot find safe-ci-dag-runner. Set SAFE_CI_DAG_RUNNER_BIN, "
+        "pass --box-runner, or build agent-utils/rs."
+    )
+
+
+def rev_count(repo: Path, good: str, bad: str) -> int:
+    out = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", f"{good}..{bad}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        sys.exit(f"multisect: git rev-list {good}..{bad} failed: {out.stderr.strip()}")
+    return int(out.stdout.strip() or "0")
+
+
+# ---------------------------------------------------------------------------
+# calibration -- measure the probe cost ONCE (owner requirement, not a guess)
+# ---------------------------------------------------------------------------
+def calibrate(
+    cfg: dict[str, str], cfg_path: Path, commit: str, keep: bool
+) -> est_mod.ProbeCost:
+    """Run the probe twice on `commit`: cold then warm, measuring build+test."""
+    pool = Path(cfg["PROBE_POOL_DIR"])
+    pool.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update(cfg)
+    env["PROBE_CONFIG"] = str(cfg_path)
+    env["MULTISECT_REPO"] = cfg["PROBE_REPO"]
+    env["MULTISECT_COMMIT"] = commit
+    env["MULTISECT_SHORT_COMMIT"] = commit[:12]
+
+    def one(rep: int) -> tuple[float, float, float, int]:
+        outdir = pool / f"calib-{commit[:12]}-r{rep}"
+        outdir.mkdir(parents=True, exist_ok=True)
+        env["MULTISECT_REP"] = str(rep)
+        env["MULTISECT_OUTPUT_DIR"] = str(outdir)
+        t0 = time.monotonic()
+        subprocess.run([str(HERE / "multisect-probe")], env=env, check=False)
+        wall = time.monotonic() - t0
+        build_s = test_s = 0.0
+        timing = outdir / "probe-timing.txt"
+        rc = 0
+        if timing.exists():
+            for tok in timing.read_text().split():
+                if tok.startswith("build_s="):
+                    build_s = float(tok.split("=", 1)[1])
+                elif tok.startswith("test_s="):
+                    test_s = float(tok.split("=", 1)[1])
+                elif tok.startswith("rc="):
+                    rc = int(tok.split("=", 1)[1])
+        return wall, build_s, test_s, rc
+
+    eprint(f"[calibrate] cold probe on {commit[:12]} ...")
+    _, cold_build, cold_test, rc1 = one(1)
+    eprint(f"[calibrate]   cold build={cold_build:.1f}s test={cold_test:.2f}s rc={rc1}")
+    eprint(f"[calibrate] warm probe on {commit[:12]} ...")
+    _, warm_build, warm_test, rc2 = one(2)
+    eprint(f"[calibrate]   warm build={warm_build:.1f}s test={warm_test:.2f}s rc={rc2}")
+
+    if not keep:
+        for d in pool.glob(f"calib-{commit[:12]}-r*"):
+            shutil.rmtree(d, ignore_errors=True)
+
+    hang = float(cfg.get("PROBE_TEST_TIMEOUT", "30"))
+    test_ref = cold_test if cold_test > 0 else warm_test
+    return est_mod.ProbeCost(
+        build_cold_s=cold_build or 20.0,
+        build_warm_s=warm_build or max(cold_build * 0.5, 9.0),
+        test_s=max(test_ref, 0.05),
+        hang_timeout_s=hang,
+        measured=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# pool cleanup -- guaranteed, never orphan
+# ---------------------------------------------------------------------------
+def cleanup_pool(repo: Path, pool: Path) -> None:
+    if not pool.exists():
+        return
+    for wt in sorted(pool.glob("wt-*")):
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)],
+            capture_output=True,
+            check=False,
+        )
+        if wt.exists():
+            shutil.rmtree(wt, ignore_errors=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "prune"], capture_output=True, check=False
+    )
+    shutil.rmtree(pool, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# subcommands
+# ---------------------------------------------------------------------------
+def resolve_good(repo: Path, good: str | None, bad: str) -> str:
+    if good:
+        return good
+    anchor = anchors.suggest_good(repo, bad, start=PARENT)
+    if anchor is None:
+        sys.exit(
+            "multisect: no --good given and no known-green anchor found in ci-hub "
+            "history. Pass --good <sha> (a commit you trust was green)."
+        )
+    eprint(
+        f"[anchor] --good defaulted to known-green {anchor.sha[:12]} "
+        f"({anchor.source}: {anchor.detail})"
+    )
+    return anchor.sha
+
+
+def build_shape(cfg: dict[str, str], repo: Path, good: str, bad: str, args) -> est_mod.SearchShape:
+    interval = rev_count(repo, good, bad)
+    return est_mod.SearchShape(
+        interval_commits=max(interval, 1),
+        k=args.k,
+        reps=args.reps,
+        jobs=args.jobs or (args.k + 2),
+        wedge_fraction=args.wedge_fraction,
+    )
+
+
+def do_estimate(args) -> int:
+    cfg_path, cfg = load_probe(args.probe)
+    repo = Path(cfg["PROBE_REPO"]).resolve()
+    good = resolve_good(repo, args.good, args.bad)
+    shape = build_shape(cfg, repo, good, args.bad, args)
+    if args.probe_cost:
+        cold, warm, test, hang = (float(x) for x in args.probe_cost.split(","))
+        probe = est_mod.ProbeCost(cold, warm, test, hang, measured=False)
+    else:
+        probe = calibrate(cfg, cfg_path, bad_calib_commit(repo, good, args.bad), args.keep_pool)
+    est = est_mod.estimate(probe, shape)
+    print(est_mod.render(est))
+    eprint(est_mod.cost_line(est))
+    return 0
+
+
+def bad_calib_commit(repo: Path, good: str, bad: str) -> str:
+    """Calibrate on a GREEN commit (the good anchor) so we measure a passing
+    test's cost, not a hang. Falls back to bad if good is unresolvable."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{good}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return out.stdout.strip() or bad
+
+
+def do_run(args) -> int:
+    cfg_path, cfg = load_probe(args.probe)
+    repo = Path(cfg["PROBE_REPO"]).resolve()
+    good = resolve_good(repo, args.good, args.bad)
+    shape = build_shape(cfg, repo, good, args.bad, args)
+
+    # 1. Calibrate (measure, don't guess) unless a cost was supplied.
+    if args.probe_cost:
+        cold, warm, test, hang = (float(x) for x in args.probe_cost.split(","))
+        probe = est_mod.ProbeCost(cold, warm, test, hang, measured=False)
+    else:
+        probe = calibrate(cfg, cfg_path, bad_calib_commit(repo, good, args.bad), args.keep_pool)
+
+    # 2. ETA-to-blame, up front and prominent.
+    est = est_mod.estimate(probe, shape)
+    print(est_mod.render(est))
+    eprint(est_mod.cost_line(est))
+    if args.estimate_only:
+        return 0
+
+    # 3. Box wall timeout = generous cover of a cold build + the inner hang
+    #    timeout + margin, so a slow cold build is NEVER misread as a hang.
+    load_inflation = 2.5
+    box_timeout = int(
+        math.ceil(probe.build_cold_s * load_inflation + probe.hang_timeout_s + 30)
+    )
+
+    runner = resolve_runner(args.box_runner)
+    pool = Path(cfg["PROBE_POOL_DIR"]).resolve()
+    pool.mkdir(parents=True, exist_ok=True)
+    output_dir = (HERE / "ignored" / f"run-{shape.interval_commits}c-k{args.k}n{args.reps}").resolve()
+
+    engine_env = os.environ.copy()
+    engine_env.update(cfg)
+    engine_env["PROBE_CONFIG"] = str(cfg_path)
+    engine_env["SAFE_CI_DAG_RUNNER_BIN"] = str(runner)
+
+    engine_argv = [
+        "python3",
+        str(PARENT / "debug" / "multisect"),
+        "--repo", str(repo),
+        "--episode", f"multisect-{Path(args.probe).stem}",
+        "--good", good,
+        "--bad", args.bad,
+        "-k", str(args.k),
+        "-n", str(args.reps),
+        "-j", str(shape.jobs),
+        "--mem", cfg.get("PROBE_BOX_MEM", "6G"),
+        "--timeout", str(box_timeout),
+        "--cores", cfg.get("PROBE_BOX_CORES", "8"),
+        "--output-dir", str(output_dir),
+        "--", str(HERE / "multisect-probe"),
+    ]
+
+    # 4. Wrap the whole search in ci-hub/bin/tool-cost -> canonical COST ACTUAL
+    #    (wall + CPU) on every exit path. Also keep our own wall/CPU as a
+    #    fallback so the guarantee holds even without the wrapper.
+    tool_cost = PARENT / "ci-hub" / "bin" / "tool-cost"
+    if tool_cost.is_file():
+        launch = [
+            str(tool_cost),
+            "--tool", "multisect/search",
+            "--estimate-wall-seconds", f"{est.wall_s:.0f}",
+            "--estimate-cpu-seconds", f"{est.cpu_s:.0f}",
+            "--basis", est.basis,
+            "--", *engine_argv,
+        ]
+    else:
+        launch = engine_argv
+
+    t0 = time.monotonic()
+    cpu0 = os.times()
+    rc = 1
+    try:
+        rc = subprocess.run(launch, env=engine_env, check=False).returncode
+    finally:
+        wall = time.monotonic() - t0
+        cpu1 = os.times()
+        child_cpu = (cpu1.children_user - cpu0.children_user) + (
+            cpu1.children_system - cpu0.children_system
+        )
+        # Always print actual wall+CPU, including on failure/abort. tool-cost
+        # emits the canonical line; this is the orchestrator's own guarantee.
+        eprint(
+            f"COST ACTUAL tool=multisect/orchestrator wall={wall:.3f}s "
+            f"cpu={child_cpu:.3f}s exit={rc}"
+        )
+        markers = list(pool.glob("build-failed-*")) if pool.exists() else []
+        if markers:
+            eprint(
+                f"!! WARNING: {len(markers)} commit(s) FAILED TO BUILD "
+                f"({', '.join(m.name.split('build-failed-')[-1] for m in markers)}). "
+                "A build failure classifies as WEDGED, so the blame may be a "
+                "compile break, not the target bug. Inspect build.log and "
+                "consider narrowing the interval to build-clean commits."
+            )
+        if not args.keep_pool:
+            cleanup_pool(repo, pool)
+            eprint(f"[pool] cleaned {pool}")
+        else:
+            eprint(f"[pool] retained {pool} (--keep-pool)")
+    return rc
+
+
+def do_calibrate(args) -> int:
+    cfg_path, cfg = load_probe(args.probe)
+    repo = Path(cfg["PROBE_REPO"]).resolve()
+    ref = args.good or cfg.get("PROBE_CALIB_COMMIT", "HEAD")
+    commit = bad_calib_commit(repo, ref, ref)  # resolve to a full sha
+    pool = Path(cfg["PROBE_POOL_DIR"]).resolve()
+    try:
+        probe = calibrate(cfg, cfg_path, commit, args.keep_pool)
+        print(
+            f"probe cost: cold_build={probe.build_cold_s:.1f}s warm_build={probe.build_warm_s:.1f}s "
+            f"test={probe.test_s:.2f}s hang_timeout={probe.hang_timeout_s:.0f}s"
+        )
+    finally:
+        # Standalone calibrate must not leak its worktree (run/ reuses it, so
+        # run cleans via cleanup_pool; here we own the whole pool).
+        if not args.keep_pool:
+            cleanup_pool(repo, pool)
+            eprint(f"[pool] cleaned {pool}")
+    return 0
+
+
+def do_gc(args) -> int:
+    """Remove leaked probe-pool worktrees under multisect/ignored/."""
+    ignored = HERE / "ignored"
+    repos: set[Path] = set()
+    if not ignored.exists():
+        print("nothing to gc")
+        return 0
+    removed = 0
+    for pool in list(ignored.glob("pool*")) + list(ignored.glob("*/pool*")):
+        # Best-effort: prune each worktree via any repo that owns it.
+        for wt in pool.glob("wt-*"):
+            gitfile = wt / ".git"
+            repo = None
+            if gitfile.is_file():
+                txt = gitfile.read_text()
+                # "gitdir: <repo>/.git/worktrees/<name>"
+                if "gitdir:" in txt:
+                    gd = txt.split("gitdir:", 1)[1].strip()
+                    repo = Path(gd).parents[2] if "/.git/worktrees/" in gd else None
+            if repo:
+                repos.add(repo)
+                subprocess.run(
+                    ["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)],
+                    capture_output=True,
+                    check=False,
+                )
+            if wt.exists():
+                shutil.rmtree(wt, ignore_errors=True)
+            removed += 1
+        shutil.rmtree(pool, ignore_errors=True)
+    for repo in repos:
+        subprocess.run(["git", "-C", str(repo), "worktree", "prune"], capture_output=True, check=False)
+    print(f"gc removed {removed} probe worktree(s)")
+    return 0
+
+
+def add_common(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--probe", required=True, help="probes/<name>.env or a path")
+    p.add_argument("--good", help="known-green lower bound (default: ci-hub anchor)")
+    p.add_argument("--bad", help="known-broken upper bound (required for run/estimate)")
+    p.add_argument("-k", type=int, default=3, help="interior probes per round")
+    p.add_argument("-n", "--reps", type=int, default=6, help="repetitions per commit")
+    p.add_argument("-j", "--jobs", type=int, help="concurrent commits (default k+2)")
+    p.add_argument("--wedge-fraction", type=float, default=0.5, help="expected wedged-rep share (cost model)")
+    p.add_argument("--probe-cost", help="skip calibration: cold,warm,test,hang seconds")
+    p.add_argument("--keep-pool", action="store_true", help="do not clean probe worktrees")
+    p.add_argument("--box-runner", help="safe-ci-dag-runner path override")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    pr = sub.add_parser("run", help="calibrate, print ETA, run the search")
+    add_common(pr)
+    pr.add_argument("--estimate-only", action="store_true", help="stop after the ETA")
+    pr.set_defaults(func=do_run)
+
+    pe = sub.add_parser("estimate", help="calibrate + print ETA only")
+    add_common(pe)
+    pe.set_defaults(func=do_estimate, estimate_only=True)
+
+    pc = sub.add_parser("calibrate", help="measure one probe's cost")
+    add_common(pc)
+    pc.set_defaults(func=do_calibrate)
+
+    pg = sub.add_parser("gc", help="remove leaked probe-pool worktrees")
+    pg.set_defaults(func=do_gc)
+
+    args = parser.parse_args(argv)
+    if args.cmd in {"run", "estimate"} and not args.bad:
+        parser.error("--bad is required for run/estimate")
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
