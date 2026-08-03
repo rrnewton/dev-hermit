@@ -223,6 +223,39 @@ class TempParentTest(unittest.TestCase):
         self.assertIn("!", out)
         self.assertIn("26558", out)
 
+    def test_queued_run_gets_offline_lower_bound_not_zero(self):
+        # A still-queued run has run_started_at == created_at (GitHub placeholder)
+        # => queue_s == 0. The listing must replace that misleading 0 with the
+        # snapshot-anchored lower bound, keep queue_s itself untouched, and flag
+        # the run as an outlier off the lower bound (not the stored 0).
+        created = "2026-08-03T00:00:00Z"
+        self._write_gha([
+            self._gha_run(run_id="term", created_at="2026-08-03T05:00:00Z",
+                          conclusion="success", queue_s="0"),
+            self._gha_run(run_id="stuck", created_at=created,
+                          run_started_at=created,  # placeholder == created
+                          status="queued", conclusion="", queue_s="0"),
+        ])
+        # Pin the snapshot clock: set the store mtime to created + 2h.
+        store = self.parent / "ignored" / "ci-hub" / "gha-runs.csv"
+        snap = query._epoch(created) + 7200
+        os.utime(store, (snap, snap))
+
+        res = query.recent_runs(str(self.parent), None, None, None, None, 10,
+                                slowest=True)
+        stuck = next(r for r in res["runs"] if r["run_id"] == "stuck")
+        term = next(r for r in res["runs"] if r["run_id"] == "term")
+        self.assertEqual(stuck["queue_s"], 0.0)              # stored value untouched
+        self.assertEqual(stuck["queue_lower_bound_s"], 7200)  # snapshot - created
+        self.assertTrue(stuck["queue_outlier"])              # flagged off the LB
+        self.assertIsNone(term["queue_lower_bound_s"])       # terminal: no LB
+        self.assertEqual(res["runs"][0]["run_id"], "stuck")  # slowest = LB wins
+        # queue_s percentiles must stay measured-only (the LB never leaks in).
+        self.assertEqual(res["queue_p95_s"], 0.0)
+        out = query.render_recent(res, 10)
+        self.assertIn(">=7200", out)
+        self.assertIn("still queued as of snapshot", out)
+
 
 class HelperTest(unittest.TestCase):
     def test_percentile_nearest_rank(self):

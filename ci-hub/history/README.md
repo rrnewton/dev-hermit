@@ -85,9 +85,20 @@ ci-hub history --repo rrnewton/hermit --slowest --limit 10 --json
 The `--since` / `--repo` / `--branch` / `--limit` / `--json` flag names match
 `ci-hub local-history` on purpose so the two history subcommands do not diverge.
 The recent-runs listing and every other store consumer read the SAME
-`ignored/ci-hub/gha-runs.csv`, so counts agree by construction; a currently
-`queued` run shows `queue_s=0` until it starts (the store can only measure a wait
-once `run_started_at` exists), so use `--slowest` to see historically long waits.
+`ignored/ci-hub/gha-runs.csv`, so counts agree by construction.
+
+**Queued-run wait (`>=N`).** A still-queued run has `run_started_at == created_at`
+(a GitHub placeholder), so its stored `queue_s` is `0` even after hours in the
+queue — a silent wrong reading. The listing therefore shows `>=N` for a queued
+run, where `N = snapshot_mtime - created_at` ("still queued as of our last
+refresh, so it waited at least this long"). This is an OFFLINE lower bound
+anchored to the snapshot, not a live `now - created_at` (which would trust a
+possibly-stale status). It can only understate, never overstate, the current
+wait. `queue_s` and its percentiles stay measured-terminal-only; the lower bound
+is a separate `queue_lower_bound_s` field in `--json`. The `!` outlier flag uses
+the effective wait (measured for terminal runs, lower bound for queued), so a
+run stuck in the queue is flagged instead of reading `0`. See
+`ai_docs/ci-hub-history-queued-wait-lower-bound_20260803.md` for the reasoning.
 
 `green-time` counts only `conclusion == success` as green; `cancelled`,
 `failure`, etc. are non-green. The store preserves every conclusion and

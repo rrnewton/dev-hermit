@@ -391,34 +391,70 @@ def _is_queue_outlier(q: float | None, thresh: float) -> bool:
     return q is not None and q > thresh and q > 0
 
 
+def _queue_lower_bound_s(r: dict, snapshot_ts: float | None) -> float | None:
+    """Lower bound on a still-queued run's wait, computed OFFLINE.
+
+    A queued run has run_started_at == created_at (a GitHub placeholder), so the
+    stored queue_s is 0 even after hours in the queue — a silent wrong reading.
+    The honest floor is `snapshot_ts - created_at`: the run was still queued AS OF
+    our last refresh, so it waited at least that long. Anchored to the snapshot
+    (not to `now`), it can only understate; it never trusts a possibly-stale
+    status the way `now - created_at` would. Terminal runs return None — their
+    queue_s is the real measured value.
+    """
+    if snapshot_ts is None or _effective_conclusion(r) != "queued":
+        return None
+    created = _epoch(r.get("created_at"))
+    if created is None:
+        return None
+    return max(0.0, snapshot_ts - created)
+
+
 def recent_runs(parent: str, repo: str | None, since: str | None,
                 branch: str | None, status: str | None, limit: int,
                 slowest: bool = False) -> dict:
     """K runs plus the window's queue/run shape they came from.
 
-    Ordered newest-first by default, or by descending queue wait with
-    ``slowest=True`` (surfaces the handful of runs stuck for hours behind the
-    p95=0 median). The queue-outlier flag is computed against the p95 of the
-    FILTERED window, so it means "slow relative to this selection".
+    Ordered newest-first by default, or by descending *effective* wait with
+    ``slowest=True`` (surfaces runs stuck for hours behind the p95=0 median).
+    Effective wait = measured queue_s for terminal runs, else the offline
+    lower bound for still-queued runs. The outlier flag is computed against the
+    p95 of the measured (terminal) queue distribution, so it means "slow
+    relative to the completed runs".
     """
     rows = load_gha_rows(parent, repo, since, branch)
     if status:
         rows = [r for r in rows if _effective_conclusion(r) == status]
+    store = gha_store_path(parent)
+    snapshot_ts = os.path.getmtime(store) if os.path.isfile(store) else None
+    # p95/threshold from MEASURED terminal waits only — a lower bound is not a
+    # measured wait and must not skew the completed-run distribution.
     queues = sorted(q for q in (_float(r.get("queue_s")) for r in rows)
                     if q is not None)
     p95_queue = percentile(queues, 95) or 0.0
     thresh = max(QUEUE_OUTLIER_FLOOR_S, p95_queue)
-    # Count outliers across the WHOLE matched window, not just the shown K, so
-    # the "handful stuck for hours" is visible even when the newest K were fast.
-    window_outliers = sum(1 for q in queues if _is_queue_outlier(q, thresh))
+
+    def eff_wait(r: dict) -> float | None:
+        q = _float(r.get("queue_s"))
+        if q is not None and q > 0:
+            return q
+        lb = _queue_lower_bound_s(r, snapshot_ts)
+        return lb if lb is not None else q
+
+    # Count outliers across the WHOLE matched window (not just the shown K) using
+    # the effective wait, so a queued-for-hours run counts even at queue_s=0.
+    window_outliers = sum(1 for r in rows
+                          if _is_queue_outlier(eff_wait(r), thresh))
     if slowest:
-        rows.sort(key=lambda r: _float(r.get("queue_s")) or -1.0, reverse=True)
+        rows.sort(key=lambda r: eff_wait(r) if eff_wait(r) is not None else -1.0,
+                  reverse=True)
     else:
         # created_at is a fixed-width ISO string, so lexical == chronological.
         rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     out = []
     for r in rows[:max(0, limit)]:
         q = _float(r.get("queue_s"))
+        lb = _queue_lower_bound_s(r, snapshot_ts)
         out.append({
             "created_at": r.get("created_at") or "",
             "repo": r.get("repo") or "?",
@@ -427,14 +463,18 @@ def recent_runs(parent: str, repo: str | None, since: str | None,
             "ref": _branch_or_pr(r),
             "conclusion": _effective_conclusion(r),
             "queue_s": q,
+            "queue_lower_bound_s": round(lb) if lb is not None else None,
             "run_s": _float(r.get("run_s")),
             "url": r.get("html_url") or "",
-            "queue_outlier": _is_queue_outlier(q, thresh),
+            "queue_outlier": _is_queue_outlier(eff_wait(r), thresh),
         })
     return {
         "total_matched": len(rows),
         "shown": len(out),
-        "order": "slowest-queue" if slowest else "newest",
+        "order": "slowest-wait" if slowest else "newest",
+        "snapshot_ts": (dt.datetime.fromtimestamp(snapshot_ts, dt.timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ")
+                        if snapshot_ts is not None else None),
         "queue_p95_s": round(p95_queue, 1),
         "queue_outlier_threshold_s": round(thresh, 1),
         "window_outliers": window_outliers,
@@ -449,8 +489,15 @@ def render_recent(res: dict, limit: int) -> str:
     hdr = ("", "TIME(UTC)", "REPO", "RUN_ID", "WORKFLOW", "BRANCH/PR",
            "CONCL", "QUEUE(s)", "RUN(s)", "URL")
     body = []
+    have_lb = False
     for r in runs:
         mark = "!" if r["queue_outlier"] else ""
+        lb = r.get("queue_lower_bound_s")
+        if lb is not None:            # still-queued: measured 0 is misleading,
+            queue_cell = f">={lb:.0f}"  # show the offline lower bound instead.
+            have_lb = True
+        else:
+            queue_cell = _s(r["queue_s"])
         body.append((
             mark,
             _short_utc(r["created_at"]),
@@ -459,22 +506,29 @@ def render_recent(res: dict, limit: int) -> str:
             r["workflow"],
             r["ref"],
             r["conclusion"],
-            _s(r["queue_s"]),
+            queue_cell,
             _s(r["run_s"]),
             r["url"],
         ))
     n_out = sum(1 for r in runs if r["queue_outlier"])
-    order = "slowest-queue first" if res.get("order") == "slowest-queue" \
+    order = "slowest-wait first" if res.get("order") == "slowest-wait" \
         else "newest first"
     head = (f"--- {res['shown']} of {res['total_matched']} matched "
             f"runs ({order}) ---")
-    legend = (f"! = queued > {res['queue_outlier_threshold_s']:.0f}s "
-              f"(floor {QUEUE_OUTLIER_FLOOR_S:.0f}s, window p95 "
-              f"{res['queue_p95_s']:.0f}s) — waiting on a runner; "
-              f"{n_out} of {res['shown']} shown flagged, "
-              f"{res['window_outliers']} of {res['total_matched']} in window "
-              f"(use --slowest to see them)")
-    return "\n".join([head, _table(hdr, body), legend])
+    lines = [head, _table(hdr, body)]
+    if have_lb:
+        lines.append(
+            f">=N = still queued as of snapshot {res.get('snapshot_ts') or '?'}: "
+            f"lower bound = snapshot - created_at (offline; not a live 'now', so "
+            f"it can only understate the current wait)")
+    lines.append(
+        f"! = wait > {res['queue_outlier_threshold_s']:.0f}s "
+        f"(floor {QUEUE_OUTLIER_FLOOR_S:.0f}s, terminal-run p95 "
+        f"{res['queue_p95_s']:.0f}s) — waiting on a runner; "
+        f"{n_out} of {res['shown']} shown flagged, "
+        f"{res['window_outliers']} of {res['total_matched']} in window "
+        f"(use --slowest to see them)")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
