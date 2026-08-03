@@ -11,8 +11,8 @@ if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
     if ((repo_count == 0)); then repo_count=3; fi
     exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
         --tool ci-hub/main-health \
-        --estimate-wall-seconds "$((10 + repo_count * 10))" \
-        --estimate-cpu-seconds "$((1 + repo_count))" \
-        --basis "$repo_count repos x commit and workflow API queries" -- "$0" "$@"
+        --estimate-unknown \
+        --basis "not measured: repo_count=$repo_count; no retained commit/workflow-query cost history" \
+        -- "$0" "$@"
 fi
 exec python3 "$ROOT/ci-hub/health/github_main_health.py" "$@"

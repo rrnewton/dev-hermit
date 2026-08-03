@@ -55,7 +55,7 @@ class ProtocolTest(unittest.TestCase):
         runs = protocol._parse_github_runs(json.dumps(payload), SHA)
         self.assertEqual([run["databaseId"] for run in runs], [1])
 
-    def test_estimate_uses_history_with_safety_floors(self) -> None:
+    def test_estimate_uses_only_recorded_history(self) -> None:
         ledger = self.root / "ledger.jsonl"
         ledger.write_text(
             "\n".join(
@@ -65,9 +65,17 @@ class ProtocolTest(unittest.TestCase):
             + "\n"
         )
         estimate = protocol.estimate_local_validate_cost(ledger)
+        self.assertEqual(estimate["kind"], "derived")
         self.assertEqual(estimate["wall_seconds"], 5000)
         self.assertEqual(estimate["cpu_seconds"], 9001)
-        self.assertIn("3 recent full validate", estimate["basis"])
+        self.assertIn("last 3 usable", estimate["basis"])
+
+    def test_estimate_is_unknown_without_usable_history(self) -> None:
+        estimate = protocol.estimate_local_validate_cost(self.root / "missing.jsonl")
+        self.assertEqual(estimate["kind"], "unknown")
+        self.assertIsNone(estimate["wall_seconds"])
+        self.assertIsNone(estimate["cpu_seconds"])
+        self.assertTrue(estimate["basis"].startswith("not measured:"))
 
     def test_first_failure_immediately_requires_revert_at_tip(self) -> None:
         self.create()
@@ -135,7 +143,12 @@ class ProtocolTest(unittest.TestCase):
         workspace = self.root / "ignored/ci-hub/obligations/test-obligation"
         cost_path = workspace / "cost.json"
         log_path = workspace / "local.log"
-        estimate = {"wall_seconds": 1800.0, "cpu_seconds": 7200.0, "basis": "test"}
+        estimate = {
+            "kind": "derived",
+            "wall_seconds": 1800.0,
+            "cpu_seconds": 7200.0,
+            "basis": "derived from test fixture history, n=3",
+        }
         self.transition(
             {
                 "local": {

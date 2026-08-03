@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import subprocess
@@ -18,11 +19,13 @@ from typing import Any
 SCHEMA_VERSION = 1
 
 
-def _seconds(value: float) -> str:
-    return f"{value:.3f}s"
+def _seconds(value: float | None) -> str:
+    return "unknown" if value is None else f"{value:.3f}s"
 
 
-def print_estimate(*, tool: str, wall_seconds: float, cpu_seconds: float, basis: str) -> None:
+def print_estimate(
+    *, tool: str, wall_seconds: float | None, cpu_seconds: float | None, basis: str
+) -> None:
     print(
         "COST ESTIMATE "
         f"tool={tool} wall={_seconds(wall_seconds)} cpu={_seconds(cpu_seconds)} "
@@ -76,8 +79,8 @@ def _write_actual_json(path: Path, payload: dict[str, Any]) -> None:
 def _actual_payload(
     *,
     tool: str,
-    estimate_wall_seconds: float,
-    estimate_cpu_seconds: float,
+    estimate_wall_seconds: float | None,
+    estimate_cpu_seconds: float | None,
     basis: str,
     wall_seconds: float,
     cpu_user_seconds: float,
@@ -88,6 +91,7 @@ def _actual_payload(
         "schema_version": SCHEMA_VERSION,
         "tool": tool,
         "estimate": {
+            "kind": "unknown" if estimate_wall_seconds is None else "derived",
             "wall_seconds": estimate_wall_seconds,
             "cpu_seconds": estimate_cpu_seconds,
             "basis": basis,
@@ -116,8 +120,8 @@ def run_command(
     command: Sequence[str],
     *,
     tool: str,
-    estimate_wall_seconds: float,
-    estimate_cpu_seconds: float,
+    estimate_wall_seconds: float | None,
+    estimate_cpu_seconds: float | None,
     basis: str,
     actual_json: Path | None = None,
 ) -> int:
@@ -212,8 +216,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Print an up-front cost estimate and final wall/CPU usage around a command."
     )
     parser.add_argument("--tool", required=True, help="stable tool/operation name")
-    parser.add_argument("--estimate-wall-seconds", type=float, required=True)
-    parser.add_argument("--estimate-cpu-seconds", type=float, required=True)
+    parser.add_argument("--estimate-wall-seconds", type=float)
+    parser.add_argument("--estimate-cpu-seconds", type=float)
+    parser.add_argument(
+        "--estimate-unknown",
+        action="store_true",
+        help="report wall/CPU as unknown because no defensible estimate exists",
+    )
     parser.add_argument("--basis", required=True, help="parameters/history behind the estimate")
     parser.add_argument(
         "--actual-json",
@@ -226,8 +235,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.command = args.command[1:]
     if not args.command:
         parser.error("a command is required after --")
-    if args.estimate_wall_seconds < 0 or args.estimate_cpu_seconds < 0:
-        parser.error("estimates must be non-negative")
+    numeric = (args.estimate_wall_seconds, args.estimate_cpu_seconds)
+    if args.estimate_unknown:
+        if any(value is not None for value in numeric):
+            parser.error("--estimate-unknown cannot be combined with numeric estimates")
+        if not args.basis.lower().startswith(("not measured:", "unknown:")):
+            parser.error("an unknown estimate basis must start with 'not measured:' or 'unknown:'")
+    elif any(value is None for value in numeric):
+        parser.error(
+            "provide both numeric estimates or use --estimate-unknown; never invent a fallback"
+        )
+    elif any(
+        value < 0 or not math.isfinite(value) for value in numeric if value is not None
+    ):
+        parser.error("estimates must be finite and non-negative")
     return args
 
 

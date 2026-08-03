@@ -8,11 +8,29 @@ small generated artifacts are not separate operator entrypoints.
 
 | Surface | Estimate | Final wall + CPU | Notes |
 | --- | --- | --- | --- |
-| `ci-hub/ci-hub` commands | yes | yes | Operation-specific; full vs incremental history is distinguished. |
-| `ci-hub/bin/main-health` | yes | yes | Scales with explicit/default repository count. |
-| `ci-hub/bin/pr-status` | yes | yes | Scales with explicit/default repository count. |
-| `ci-hub/bin/health-tick` | yes | yes | One cadence-filtered tick estimate. |
-| Any command launched through `ci-hub/bin/tool-cost` | caller-supplied derived estimate | yes | Shared `wait4` child-tree measurement and exit preservation. |
+| `ci-hub/ci-hub` commands | explicit unknown | yes | No retained per-command cost history; no timeout or guessed constant is presented as an estimate. |
+| `ci-hub/bin/main-health` | explicit unknown | yes | Repository count is stated, but no per-repository cost is invented. |
+| `ci-hub/bin/pr-status` | explicit unknown | yes | Repository count is stated, but no planner/API cost is invented. |
+| `ci-hub/bin/health-tick` | explicit unknown | yes | Due gates vary and no tick history exists. |
+| Any command launched through `ci-hub/bin/tool-cost` | derived or explicit unknown | yes | Shared `wait4` child-tree measurement and exit preservation; unknown persists as JSON `null`. |
+
+## Numeric-claim sweep
+
+| Violation | Replacement or disposition |
+| --- | --- |
+| `ci-hub` front door and direct wrappers printed invented wall/CPU constants, including a one-second `land-lock` estimate even though acquisition may queue and `run` includes an arbitrary child command. | `wall=unknown cpu=unknown`, with an operation-specific `not measured:` basis. Actual wall/CPU remains measured on every exit. |
+| Speculative-land local validation used invented 30-minute wall / 2-hour CPU floors, including when no ledger rows existed. | With history: p90 of the last at most 50 usable successful full-profile ledger rows, with `n` in the basis. Without history: explicit unknown and JSON `null`, never a floor. |
+| Full history refresh described “approximately 19000” runs and converted that constant into a four-hour estimate without counting or profiling the query. | Explicit unknown; the GitHub result count and runtime history do not exist before the query. |
+| `hermit/validate.sh` printed a static per-profile ETA table. | Owned by `hermit-227b`: same-profile/cache/host ledger estimate with sample size/range, or explicit insufficient history. |
+| `hermit/ci/power-to-weight.rs` displayed unmeasured DAG hints as `dur_s` and used a `>=120s` flag. | Hermit PR: unitless `declared_unmeasured_weight`; measured selection rate names exact commit window and `n`; the candidate rule is labeled a configured heuristic. |
+
+The Hermit sweep also confirmed that selector/harness counts, stress progress,
+compatibility and coverage percentages, and final validation durations are
+computed from live inputs or results. `RR_COMPAT_EXPECTED=139` has recorded
+provenance. Four other legitimate compatibility ratchets still need equivalent
+source comments while the `validate.sh` owner has that file:
+`STRICT_COMPAT_TOTAL=191`, `SABRE_COMPAT_EXPECTED=207`,
+`SABRE_COMPAT_TOTAL=212`, and `E9PATCH_COMPAT_TOTAL=155`.
 
 ## Assigned concurrently
 

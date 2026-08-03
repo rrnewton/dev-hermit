@@ -4,32 +4,23 @@ ROOT=$(git -C "$(dirname -- "${BASH_SOURCE[0]}")/../.." rev-parse --show-topleve
 
 if [[ -z ${CI_HUB_TOOL_COST_ACTIVE:-} ]]; then
     command=${1:-status}
-    wall=1
-    cpu=1
-    basis="one local obligation-store operation"
+    basis="not measured: obligation-store operation cost history is not retained"
     case "$command" in
         arm)
-            wall=150
-            cpu=15
-            basis="exact-SHA fetch, detached verifier launch, and GitHub-run confirmation"
+            basis="not measured: exact-SHA fetch, verifier launch, and GitHub dispatch cost history is not retained"
             ;;
         watch)
-            wall=7200
-            cpu=300
-            basis="poll until both local and GitHub verifiers reach terminal state"
+            basis="not measured: verifier completion time is unknown; polling bounds are not estimates"
             for arg in "$@"; do
                 if [[ $arg == --once ]]; then
-                    wall=60
-                    cpu=5
-                    basis="one exact-SHA local/GitHub obligation poll"
+                    basis="not measured: one exact-SHA obligation poll has no retained cost history"
                 fi
             done
             ;;
     esac
     exec env CI_HUB_TOOL_COST_ACTIVE=1 "$ROOT/ci-hub/bin/tool-cost" \
         --tool "speculative-land/$command" \
-        --estimate-wall-seconds "$wall" \
-        --estimate-cpu-seconds "$cpu" \
+        --estimate-unknown \
         --basis "$basis" -- "$0" "$@"
 fi
 

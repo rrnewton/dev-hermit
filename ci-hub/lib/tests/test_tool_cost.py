@@ -13,20 +13,31 @@ TOOL = ROOT / "ci-hub/bin/tool-cost"
 
 class ToolCostTest(unittest.TestCase):
     def run_tool(
-        self, command: list[str], *, actual_json: Path | None = None
+        self,
+        command: list[str],
+        *,
+        actual_json: Path | None = None,
+        estimate_unknown: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         options = ["--actual-json", str(actual_json)] if actual_json else []
-        return subprocess.run(
-            [
-                str(TOOL),
-                "--tool",
-                "test/tool",
+        estimate = (
+            ["--estimate-unknown", "--basis", "not measured: test has no history"]
+            if estimate_unknown
+            else [
                 "--estimate-wall-seconds",
                 "12",
                 "--estimate-cpu-seconds",
                 "3",
                 "--basis",
-                "3 items x 4 seconds",
+                "derived from 3 fixture items x 4 measured seconds/item",
+            ]
+        )
+        return subprocess.run(
+            [
+                str(TOOL),
+                "--tool",
+                "test/tool",
+                *estimate,
                 *options,
                 "--",
                 *command,
@@ -42,7 +53,10 @@ class ToolCostTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "payload\n")
         self.assertIn("COST ESTIMATE tool=test/tool wall=12.000s cpu=3.000s", result.stderr)
-        self.assertIn("basis='3 items x 4 seconds'", result.stderr)
+        self.assertIn(
+            "basis='derived from 3 fixture items x 4 measured seconds/item'",
+            result.stderr,
+        )
         self.assertRegex(
             result.stderr,
             r"COST ACTUAL tool=test/tool wall=[0-9.]+s cpu=[0-9.]+s .* exit=0",
@@ -73,11 +87,53 @@ class ToolCostTest(unittest.TestCase):
             payload = json.loads(actual_path.read_text())
             self.assertEqual(payload["schema_version"], 1)
             self.assertEqual(payload["tool"], "test/tool")
+            self.assertEqual(payload["estimate"]["kind"], "derived")
             self.assertEqual(payload["estimate"]["wall_seconds"], 12.0)
             self.assertEqual(payload["estimate"]["cpu_seconds"], 3.0)
             self.assertEqual(payload["actual"]["exit"], "3")
             self.assertGreaterEqual(payload["actual"]["wall_seconds"], 0)
             self.assertGreaterEqual(payload["actual"]["cpu_seconds"], 0)
+
+    def test_unknown_estimate_is_explicit_and_persisted_as_null(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            actual_path = Path(directory) / "unknown-cost.json"
+            result = self.run_tool(
+                [sys.executable, "-c", "pass"],
+                actual_json=actual_path,
+                estimate_unknown=True,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(
+                "COST ESTIMATE tool=test/tool wall=unknown cpu=unknown",
+                result.stderr,
+            )
+            self.assertIn("basis='not measured: test has no history'", result.stderr)
+            payload = json.loads(actual_path.read_text())
+            self.assertEqual(payload["estimate"]["kind"], "unknown")
+            self.assertIsNone(payload["estimate"]["wall_seconds"])
+            self.assertIsNone(payload["estimate"]["cpu_seconds"])
+            self.assertGreaterEqual(payload["actual"]["wall_seconds"], 0)
+
+    def test_missing_numeric_pair_requires_explicit_unknown(self) -> None:
+        result = subprocess.run(
+            [
+                str(TOOL),
+                "--tool",
+                "test/tool",
+                "--basis",
+                "not measured: omitted on purpose",
+                "--",
+                sys.executable,
+                "-c",
+                "pass",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("never invent a fallback", result.stderr)
 
 
 if __name__ == "__main__":

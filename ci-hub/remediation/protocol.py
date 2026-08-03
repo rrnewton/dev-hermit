@@ -25,8 +25,6 @@ DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
 DEFAULT_WORKFLOW_FILE = "ci-portable.yml"
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
-DEFAULT_VALIDATE_WALL_SECONDS = 1800.0
-DEFAULT_VALIDATE_CPU_SECONDS = 7200.0
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 
 
@@ -64,17 +62,25 @@ def estimate_local_validate_cost(
             samples = []
     samples = samples[-50:]
     if samples:
-        wall = max(DEFAULT_VALIDATE_WALL_SECONDS, _percentile([x[0] for x in samples], 0.9))
-        cpu = max(DEFAULT_VALIDATE_CPU_SECONDS, _percentile([x[1] for x in samples], 0.9))
+        wall = _percentile([x[0] for x in samples], 0.9)
+        cpu = _percentile([x[1] for x in samples], 0.9)
         basis = (
-            f"p90 of {len(samples)} recent full validate ledger runs, with "
-            "30m wall/2h CPU safety floors"
+            f"derived from p90 of the last {len(samples)} usable successful "
+            "full-profile validate ledger row(s), window capped at 50, "
+            "mixed host/cache states"
         )
-    else:
-        wall = DEFAULT_VALIDATE_WALL_SECONDS
-        cpu = DEFAULT_VALIDATE_CPU_SECONDS
-        basis = "full validate with no usable history; 30m wall/2h CPU safety floors"
-    return {"wall_seconds": round(wall, 3), "cpu_seconds": round(cpu, 3), "basis": basis}
+        return {
+            "kind": "derived",
+            "wall_seconds": round(wall, 3),
+            "cpu_seconds": round(cpu, 3),
+            "basis": basis,
+        }
+    return {
+        "kind": "unknown",
+        "wall_seconds": None,
+        "cpu_seconds": None,
+        "basis": "not measured: no usable successful full-profile validate ledger rows",
+    }
 
 
 def _run(
@@ -456,15 +462,22 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
                 "VALIDATE_LABEL_PR": "0",
             }
         )
+        estimate_arguments = (
+            (
+                "--estimate-wall-seconds",
+                str(estimate["wall_seconds"]),
+                "--estimate-cpu-seconds",
+                str(estimate["cpu_seconds"]),
+            )
+            if estimate["kind"] == "derived"
+            else ("--estimate-unknown",)
+        )
         result = _run(
             (
                 str(ROOT / "ci-hub/bin/tool-cost"),
                 "--tool",
                 "speculative-land/local-validate",
-                "--estimate-wall-seconds",
-                str(estimate["wall_seconds"]),
-                "--estimate-cpu-seconds",
-                str(estimate["cpu_seconds"]),
+                *estimate_arguments,
                 "--basis",
                 str(estimate["basis"]),
                 "--actual-json",
