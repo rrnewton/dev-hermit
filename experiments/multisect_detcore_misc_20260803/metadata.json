@@ -1,0 +1,42 @@
+{
+  "experiment": "multisect_detcore_misc_20260803",
+  "question": "Find ALL flip points (pass<->fail) of test.detcore_misc's vfork::vfork_parent_resumes_after_child_exec across hermit commit history, using load-amplified concurrent-stress probes with rate-based (trinary) classification.",
+  "date": "2026-08-03",
+  "host": "devbig014.atn7.facebook.com",
+  "nproc": 316,
+  "test": "cargo test -p detcore --test tests_misc  (target: vfork::vfork_parent_resumes_after_child_exec --exact --test-threads=1)",
+  "hermit_head_at_task_start": "0ac1c1d7",
+  "hermit_head_current": "66c6b7010ae0a182c4cf6eb363484648b0a7b632",
+  "flip_commit": {
+    "hermit": "9c964fce16ab60c3eadecc557fa2844399854f06",
+    "hermit_short": "9c964fce",
+    "subject": "Ratchet SaBRe compiler compatibility (#1167)",
+    "date": "2026-07-30 03:21:37 -0400",
+    "reverie_pin_before": "22791b2fe7a837da233758ddb8f546b0c8ee07aa",
+    "reverie_pin_after": "fb2cf7e0b7ee99cee0f0120a8f9667c818744a72",
+    "reverie_regression_first_included": "a8195cfc84cd6029f2d6c288cfe15cdaf114b784",
+    "last_clean_commit": "5e190f7d8a1b3ace75b61852111e666730d50b10"
+  },
+  "probe": {
+    "design": "matched-load co-scheduling; N single-shot instances of every commit launched interleaved per wave so all share instantaneous host load; head co-scheduled as validity calibrator (wave valid only if head FLAKY); trinary PASS(all-pass)/FAIL(zero-pass)/FLAKY(mixed), FLAKY=RED.",
+    "concurrency_per_label": 32,
+    "iteration_timeout_s": 20,
+    "hang_code": 124,
+    "load_range_during_valid_waves": "286-590 (1-min loadavg)",
+    "calibration": "head 30x@load407: 5/5 waves FLAKY; head co-scheduled FLAKY in every counted wave"
+  },
+  "signature_confirmed_at_head": {
+    "ptrace_geteventmsg_esrch": "131883 ptrace(PTRACE_GETEVENTMSG,<defunct-cat-pid>) in ~3s, 131882 = -1 ESRCH",
+    "child": "cat = Z <defunct>",
+    "tracee": "state t (ptrace-stopped)",
+    "cpu": "one thread ~105% pinned, others idle",
+    "stack": "ptrace -> Stopped::getevent -> Event::decode_status_return -> WaitFuture::poll -> Running::next_state -> Zombie::reap, under reverie_ptrace::task::handle_internal_error"
+  },
+  "root_cause": "Long-standing reverie safeptrace notifier bug: decode_status_return does `?` (return Err(Died) on ESRCH) BEFORE reservation.commit(), so the dead status is never popped from `pending` and is re-getevent'd forever = ESRCH hot spin. Latent since 2021; the notifier ~10x slowdown pulled by reverie a8195cf (capture_identity) widened the waitid->getevent death-race window enough to expose it under concurrency. Fix = reverie PR #355 (820b2b64), not yet pinned at hermit main.",
+  "artifacts": {
+    "matched_probe": "matched.sh",
+    "sequential_builder": "build-seq.sh",
+    "raw_waves": "ignored/matched/<timestamp>/ (gitignored)",
+    "binaries": "ignored/bins/<sha> (gitignored)"
+  }
+}

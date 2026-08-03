@@ -1,0 +1,23 @@
+phase,hermit_short,hermit_role,reverie_pin,samples,hangs,hang_rate_pct,verdict
+landscape10,21e91ff3,pre-#868 parent,4c6e9a0b,320,0,0.00,CLEAN
+landscape10,d495b602,#868 vfork-serialize,4c6e9a0b,320,2,0.63,CLEAN
+landscape10,51f18e9d,pin-bump #1,f1ed0280,319,0,0.00,CLEAN
+landscape10,829aab34,pin-bump #9,aecbbace,320,2,0.63,CLEAN
+landscape10,9c964fce,pin-bump #17 (#1167),fb2cf7e0,320,69,21.56,FLAKY
+landscape10,1ece0654,pin-bump #24,aa6f1283,320,75,23.44,FLAKY
+landscape10,5d92a601,pin-bump #25 (PR#305),26ffc1a6,320,59,18.44,FLAKY
+landscape10,a14c1878,pin-bump #29,bbf6e2ef,320,64,20.00,FLAKY
+landscape10,c008e014,pin-bump #32,6b8ed64f,320,68,21.25,FLAKY
+landscape10,0ac1c1d7,head-at-task-start,d973a85b,320,52,16.25,FLAKY
+subwindow,829aab34,pin-bump #9 (last clean anchor),aecbbace,192,1,0.52,CLEAN
+subwindow,86428d65,pin-bump #10,aba0a3b0,192,0,0.00,CLEAN
+subwindow,4ed730b3,pin-bump #12,875cf175,192,1,0.52,CLEAN
+subwindow,f963c963,pin-bump #13,7424ea58,192,1,0.52,CLEAN
+subwindow,0df976bb,pin-bump #14,629ce985,192,0,0.00,CLEAN
+subwindow,b36f2902,pin-bump #15,9c22e2fb,192,1,0.52,CLEAN
+subwindow,5e190f7d,pin-bump #16 (LAST CLEAN),22791b2f,192,0,0.00,CLEAN
+subwindow,9c964fce,pin-bump #17 (FIRST FLAKY = FLIP),fb2cf7e0,182,36,19.78,FLAKY
+subwindow,0ac1c1d7,head calibrator,d973a85b,185,27,14.59,FLAKY
+highload_matched30,21e91ff3,pre-#868 parent,4c6e9a0b,90,0,0.00,CLEAN
+highload_matched30,d495b602,#868 vfork-serialize,4c6e9a0b,90,0,0.00,CLEAN
+highload_matched30,0ac1c1d7,head calibrator,d973a85b,90,13,14.44,FLAKY
