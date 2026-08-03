@@ -79,6 +79,7 @@ for this poll. Start the bounded bridge as a user service instead:
 ```bash
 systemd-run --user --unit=dev-hermit-agent-container-reconcile-bridge \
   --property=Restart=on-failure --property=RestartSec=15s \
+  --setenv=PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
   --working-directory="$HOME/work/dev-hermit" \
   "$HOME/work/dev-hermit/ci-hub/health/agent-container-reconcile-bridge.rs"
 ```
