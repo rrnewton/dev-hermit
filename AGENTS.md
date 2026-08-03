@@ -812,7 +812,14 @@ Before handoff, capture the exact state:
 git status --short --branch
 git rev-parse HEAD
 git log -1 --oneline --decorate
+python3 ci-hub/tests/documented_commands.py --closeout
 ```
+
+The closeout guard refreshes `origin/main` through `with-proxy` and rejects
+unpushed parent commits. A dirty shared parent also fails unless every retained
+path is explicitly accounted for with `--dirty-note`; that exception documents
+concurrent ownership and never authorizes staging or modifying someone else's
+work.
 
 Every handoff includes:
 

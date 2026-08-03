@@ -19,7 +19,23 @@ tests. It deliberately has two evidence layers:
   mutating examples must parse their literal argv without side effects, and the
   live CI phase executes networked read-only examples through `with-proxy`.
   Cost-only output is treated as silent failure; auth/import/path/usage errors
-  and any write to a clean checkout fail the shard.
+  and any content or tracked-file-mtime change in a clean checkout fail the
+  shard. `--help` is always a side-effect-free discovery probe.
+
+Before a parent handoff or task close, run the same harness as a closeout guard:
+
+```bash
+python3 ci-hub/tests/documented_commands.py --closeout
+```
+
+The guard fetches `origin/main` through `with-proxy`, refuses unpushed commits,
+and requires a clean parent. In the shared checkout, concurrent dirt must be
+accounted for explicitly rather than silently ignored:
+
+```bash
+python3 ci-hub/tests/documented_commands.py --closeout \
+  --dirty-note "ci-hub/runners/* is concurrent work owned by hermit-XYZ; left unchanged"
+```
 
 The split prevents GitHub latency from being reported as a ci-hub regression
 without allowing a broken or stalled ci-hub process to pass as infrastructure

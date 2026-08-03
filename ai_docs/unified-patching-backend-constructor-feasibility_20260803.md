@@ -161,3 +161,65 @@ it is a different architecture and belongs on its own track. Recommend adopting
 the staged milestone with Stage 1 as a hard gate, and explicitly **not**
 authorizing Stage 2+ until Stage 1's in-guest fast path is proven with the
 (a)/(b) cost split.
+
+---
+
+## S1 reachability finding (2026-08-03, added after the verdict)
+
+**S1 is BUILD-gated, not measurement-gated: full Detcore is not runnable on
+liteinst Mode A today, so the (a)/(b) measurement cannot yet be taken.** This is
+the pre-authorized "blocked S1 is a valid outcome" — but note it is blocked
+*before* measurement, not by a measurement that shows no win. Three independent
+lines of evidence at reverie `d2fb9a05`:
+
+1. **Wiring.** The Mode A in-guest ToolHost entry (`install_tool`, exported as
+   `n`/`n_from_bootstrap`) is instantiated only with **test tools** —
+   `CounterTool`, `UnsubscribedLifecycleTool`, `InjectExitTool`
+   (`reverie-liteinst/src/bin/rpc_tool_guest.rs`). It is **never** instantiated
+   with `Detcore`. Hermit's only liteinst Detcore path is Mode B
+   (`run_host_with_preload::<Detcore>`, hermit `hermit-cli/src/lib.rs:1528`).
+   ⇒ Detcore has never run in-guest on liteinst.
+2. **`Guest` contract stubs.** Mode A's `LiteinstGuest` returns
+   `io::ErrorKind::Unsupported` for the scheduler's clock/timer:
+   `set_timer` (`tool_host.rs:616`, *"LiteInst does not implement RCB timer
+   delivery"*), `set_timer_precise` (`:624`), `read_clock` (`:632`, *"does not
+   implement an RCB clock"*). No RCB clock + no timer ⇒ Detcore's deterministic
+   virtual-time scheduler and preemption cannot run in-guest.
+3. **Authoritative crate boundary.** `reverie-liteinst/CLAUDE.md`, *Supported
+   Boundary*: *"Tool mode supports one process/thread. Timer and clock APIs, PMU
+   preemption, guest callable signal handlers, exec bootstrap, and general
+   clone/fork injection are not implemented."* This is the crate's own contract,
+   not an inference.
+
+**What DOES already exist in Mode A** (so the build is bounded, not open-ended):
+the in-guest host *does* drive async tool futures to completion (`drive_ready`
+spins on `Poll::Pending` with a no-op waker, `tool_host.rs:314-321`), and
+`send_rpc` blocks on that spin (`:403-407`). So the **(a) sequentialization/park
+mechanism exists in-guest today in a rudimentary busy-spin form** — a Detcore
+handler that parks awaiting the global scheduler singleton would spin, not
+deadlock. The missing pieces are specifically: the **RCB clock + timer +
+in-guest PMU preemption delivery**, **multi-process/thread** support, the
+**HybridPtrace lifecycle owner** (clone/fork/exec/vDSO/pre-exec), and finally
+**wiring Detcore as the Mode A `T`**. That is the S1 build, in order.
+
+### Salvageable clean (b) measurement — recommended immediate next datum
+
+A real *instrumentation-cost-first* number is obtainable **without** building the
+scheduler and **without touching Mode B or destabilizing the flagship**: measure
+the **warm-patched in-guest hook round-trip** (a null/`CounterTool` tool, after
+the first-trap patch is installed — signature `calls=N traps=1 hooks=N`) against
+the **ptrace seccomp-stop round-trip** for the same syscall, per syscall, in a
+**1-CPU box**. This is the cleanest possible isolation of axis **(b)**:
+sequentialization **(a) = 0** (no scheduler, no global-state RPC on the hot path)
+and instrumentation is a null tool, so the delta is purely trap-mechanism cost.
+It directly answers the load-bearing unknown from Q4 — *can an in-guest patched
+trap beat a ptrace stop on (b) at all?* — which bounds the entire perf case.
+Parallelism/sequentialization cost is reported separately and is not part of this
+datum. A null-tool (b) win is necessary-but-not-sufficient for the Detcore fast
+path; a null-tool (b) *loss* would refute the perf hypothesis before any
+scheduler work is spent, i.e. it could resolve S1 as NO cheaply.
+
+**Recommendation:** treat S1 as opening with this (b)-isolation micro-benchmark
+(needs a liteinst slot + a build; read-only w.r.t. Mode B), report the per-syscall
+(b) delta first, and only authorize the full in-guest-scheduler build if (b)
+shows a win worth pursuing.

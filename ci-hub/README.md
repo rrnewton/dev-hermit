@@ -10,7 +10,9 @@ an experiment directory.
 Every fenced shell invocation in this README and `landing/README.md` is extracted
 and exercised by the docs-as-tests check. Read-only commands execute; mutating
 commands must pass their exact argument parser without performing the action.
-The core workflows are:
+`--help` is a purity contract: it must not write, touch tracked-file mtimes,
+perform network access, or import heavy optional dependencies. The core workflows
+are:
 
 ```bash
 # Print the command list without network or filesystem writes.

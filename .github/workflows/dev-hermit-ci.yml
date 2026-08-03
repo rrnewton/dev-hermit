@@ -91,6 +91,13 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/with-proxy"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
 
+      - name: Assert harness help probes are pure
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m python3 scripts/check-harness-help.py
+
       - name: Classify bounded live GitHub health
         env:
           GH_TOKEN: ${{ github.token }}

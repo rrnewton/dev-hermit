@@ -186,6 +186,32 @@ def _workspace_state(root: Path, *, include_ignored: bool) -> str:
     return result.stdout
 
 
+def _tracked_mtimes(root: Path) -> dict[str, int]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+    mtimes: dict[str, int] = {}
+    for raw_path in result.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        relative = os.fsdecode(raw_path)
+        path = root / relative
+        if path.is_file() or path.is_symlink():
+            mtimes[relative] = path.lstat().st_mtime_ns
+    return mtimes
+
+
+def _changed_mtimes(before: dict[str, int], after: dict[str, int]) -> list[str]:
+    return sorted(
+        path
+        for path in before.keys() | after.keys()
+        if before.get(path) != after.get(path)
+    )
+
+
 def _run_one(
     command: DocumentedCommand,
     *,
@@ -207,6 +233,7 @@ def _run_one(
 
     timeout = 120 if live else 45
     before = _workspace_state(root, include_ignored=True) if verify_purity else ""
+    before_mtimes = _tracked_mtimes(root) if verify_purity else {}
     try:
         result = subprocess.run(
             executed,
@@ -266,12 +293,88 @@ def _run_one(
         reports.append(f"PASS parse-nested {command.label} land_and_arm.py")
     if verify_purity:
         after = _workspace_state(root, include_ignored=True)
-        if after != before:
+        changed_mtimes = _changed_mtimes(before_mtimes, _tracked_mtimes(root))
+        if after != before or changed_mtimes:
             raise DocsCommandError(
                 f"{command.label}: command mutated a clean checkout\n"
                 f"command: {executed}\nstatus before:\n{before}\nstatus after:\n{after}"
+                f"\ntracked mtimes changed: {changed_mtimes or 'none'}"
             )
     return reports
+
+
+def _evaluate_closeout(
+    *,
+    head: str,
+    origin_main: str,
+    unpushed: int,
+    dirty: str,
+    dirty_note: str | None,
+) -> list[str]:
+    if unpushed:
+        raise DocsCommandError(
+            f"closeout refused: HEAD {head} has {unpushed} commit(s) not on "
+            f"origin/main {origin_main}; commit and push before handoff"
+        )
+    note = (dirty_note or "").strip()
+    if dirty and len(note) < 20:
+        raise DocsCommandError(
+            "closeout refused: parent is dirty; commit/push task-owned work or pass "
+            "--dirty-note with an explicit ownership/reason statement\n" + dirty
+        )
+    if not dirty and note:
+        raise DocsCommandError(
+            "closeout refused: --dirty-note was supplied but the parent is clean; "
+            "remove the stale exception"
+        )
+    reports = [f"CLOSEOUT PUSHED: head={head} origin_main={origin_main} unpushed=0"]
+    if dirty:
+        reports.append("CLOSEOUT DIRTY PATHS:\n" + dirty.rstrip())
+        reports.append("CLOSEOUT DIRTY NOTE: " + note)
+    else:
+        reports.append("CLOSEOUT WORKTREE: clean")
+    return reports
+
+
+def closeout_guard(*, root: Path, dirty_note: str | None) -> list[str]:
+    fetch = subprocess.run(
+        ["with-proxy", "git", "fetch", "--quiet", "origin", "main"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=90,
+        check=False,
+    )
+    if fetch.returncode != 0:
+        raise DocsCommandError(
+            "closeout refused: cannot refresh origin/main through with-proxy\n"
+            + fetch.stdout
+            + fetch.stderr
+        )
+
+    def git_output(*arguments: str) -> str:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise DocsCommandError(
+                f"closeout refused: git {' '.join(arguments)} failed\n"
+                + result.stdout
+                + result.stderr
+            )
+        return result.stdout.strip()
+
+    return _evaluate_closeout(
+        head=git_output("rev-parse", "HEAD"),
+        origin_main=git_output("rev-parse", "origin/main"),
+        unpushed=int(git_output("rev-list", "--count", "origin/main..HEAD")),
+        dirty=git_output("status", "--porcelain=v1", "--untracked-files=all"),
+        dirty_note=dirty_note,
+    )
 
 
 def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
@@ -339,12 +442,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--list", action="store_true")
+    parser.add_argument(
+        "--closeout",
+        action="store_true",
+        help="require pushed HEAD and clean parent, or an explicit dirty-tree note",
+    )
+    parser.add_argument(
+        "--dirty-note",
+        help="explicit ownership/reason for concurrent parent dirt at closeout",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.closeout:
+            for report in closeout_guard(
+                root=args.root.resolve(), dirty_note=args.dirty_note
+            ):
+                print(report)
+            return 0
+        if args.dirty_note:
+            raise DocsCommandError("--dirty-note requires --closeout")
         if args.list:
             for command in extract_commands(
                 (args.root / "ci-hub/README.md", args.root / "ci-hub/landing/README.md")

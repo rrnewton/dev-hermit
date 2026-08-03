@@ -41,6 +41,38 @@ class DocumentedCommandsTest(unittest.TestCase):
         )
         self.assertEqual(documented_commands._business_output(output), "")
 
+    def test_mtime_only_change_is_a_purity_failure(self) -> None:
+        self.assertEqual(
+            documented_commands._changed_mtimes({"a": 1, "b": 2}, {"a": 3, "b": 2}),
+            ["a"],
+        )
+
+    def test_closeout_requires_push_and_dirty_tree_accounting(self) -> None:
+        with self.assertRaises(documented_commands.DocsCommandError):
+            documented_commands._evaluate_closeout(
+                head="a" * 40,
+                origin_main="b" * 40,
+                unpushed=1,
+                dirty="",
+                dirty_note=None,
+            )
+        with self.assertRaises(documented_commands.DocsCommandError):
+            documented_commands._evaluate_closeout(
+                head="a" * 40,
+                origin_main="a" * 40,
+                unpushed=0,
+                dirty=" M concurrent.txt",
+                dirty_note=None,
+            )
+        reports = documented_commands._evaluate_closeout(
+            head="a" * 40,
+            origin_main="a" * 40,
+            unpushed=0,
+            dirty=" M concurrent.txt",
+            dirty_note="concurrent.txt is owned by hermit-226 and intentionally left unchanged",
+        )
+        self.assertIn("concurrent.txt", "\n".join(reports))
+
 
 if __name__ == "__main__":
     unittest.main()
