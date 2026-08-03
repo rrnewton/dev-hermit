@@ -6,7 +6,7 @@ SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
 .PHONY: build build-full build-hermit check-deps check-portability clean \
-	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre \
+	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
 	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
@@ -50,6 +50,19 @@ checkout-sabre:
 checkout-optional-submodules:
 	@scripts/checkout-optional-submodules.rs all
 
+# submodules: safe init/update that keeps every primary ATTACHED. Prefer this
+# over `checkout-all` / `init-hermit`: the raw `git submodule update --init
+# --recursive` below checks each `update = checkout` product out at its pinned
+# gitlink in DETACHED HEAD, silently detaching a primary that was on main (or,
+# for liteinst2, its feature branch). scripts/submodules.sh reattaches instead
+# and never resets a dirty or divergent checkout. Pass ARGS=... to forward flags
+# (e.g. `make submodules ARGS=--no-pull`).
+submodules:
+	@scripts/submodules.sh $(ARGS)
+
+# checkout-all: raw recursive init. WARNING: this DETACHES attached primaries
+# (see `make submodules` for the attach-preserving equivalent). Kept for the
+# nested product checkout-all recursion below and legacy call sites.
 checkout-all:
 	@$(SUBMODULE_GIT) submodule update --init --recursive
 	@$(MAKE) -C hermit --no-print-directory checkout-all
@@ -215,7 +228,8 @@ help:
 	@echo "make compat-envelope-full  Privileged superset (adds SaBRe + KVM/reverie, privileged CI lane)"
 	@echo "make compat-envelope-fullcorpus  LOCAL full 235-cell union across all runnable backends"
 	@echo "make validate           Outer-repo definition-of-done gate (local = full-corpus envelope)"
-	@echo "make checkout-all       Check out every standard and optional submodule"
+	@echo "make submodules         Safe init/update; keeps primaries ATTACHED (no detach)"
+	@echo "make checkout-all       Recursive submodule init (WARNING: detaches primaries)"
 	@echo "make checkout-fresh     Refresh clean primaries and publish parent gitlinks"
 	@echo "make checkout-e9patch   Check out the optional pinned e9patch source"
 	@echo "make checkout-sabre     Check out the optional pinned SaBRe source"
