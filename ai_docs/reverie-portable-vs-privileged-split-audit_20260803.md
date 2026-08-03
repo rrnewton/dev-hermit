@@ -245,6 +245,51 @@ runs=$(with-proxy gh api "repos/rrnewton/reverie/actions/workflows/ci.yml/runs?b
 for r in $runs; do with-proxy gh api "repos/rrnewton/reverie/actions/runs/$r/jobs" \
   --jq '.jobs[] | [.name, .conclusion, ((.completed_at|fromdateiso8601)-(.started_at|fromdateiso8601))] | @tsv'; done
 
-# portable probe
+# portable probe (no sysctl flip): 16 EPERM MapUid
 with-proxy gh run view 30840658519 -R rrnewton/reverie --log
+
+# userns sysctl-flip probe (the decisive follow-up): 88/0 pass
+with-proxy gh run view 30842156411 -R rrnewton/reverie --log
 ```
+
+## ADDENDUM (2026-08-03, later) — the EPERM inversion is a sysctl, not a privilege
+
+The owner asked to EXPLAIN the 16/19-FAIL EPERM inversion before recommending any
+moves, because it decides whether the runtime-share numbers mean what they appear
+to. Resolution of the "gating wrong vs our model wrong" fork:
+
+- **Our model was wrong; the gating is substantively correct** — the 16 tests DO
+  fail on `ubuntu-latest`, so they were not needlessly gated. But **"needs
+  privilege" is the wrong label.** The true dependency is narrow: an *unprivileged
+  user namespace must be creatable* (`map_root()` → `/proc/self/{u,g}id_map`,
+  requires `clone(CLONE_NEWUSER)` to succeed). Not root, not hardware, not a
+  self-hosted host. The self-hosted runner satisfies them *incidentally* because
+  its host permits userns; `ubuntu-latest` blocks it via one sysctl,
+  `kernel.apparmor_restrict_unprivileged_userns=1` (Ubuntu 24.04).
+
+- **DECISIVE PROBE (run 30842156411, ubuntu-latest), tested not inferred:** flip
+  the sysctl first, then run the crate. Result:
+  - `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` **succeeds**
+    on the GitHub-hosted VM (passwordless root; value went 1 → 0).
+  - `cargo test -p reverie-process -- --test-threads=1` → **88 passed / 0 failed
+    / 0 EPERM/MapUid** (two binaries: 58 + 30). Without the flip the same set gave
+    16 EPERM.
+  - `/dev/kvm` **is present** on `ubuntu-latest` (reconfirmed) — KVM portability
+    still UNPROVEN (needs its own probe; this crate does not exercise it).
+
+**What the numbers actually mean, post-probe:** the "privileged" bucket is not
+18.2% of runtime bound to scarce self-hosted capacity — it is **portable with one
+workflow line** for the namespace tests. The genuinely-self-hosted residue
+collapses to **real-PMU** (`perf_event_paranoid` blocks user hardware counters on
+GitHub-hosted) plus **KVM** (unproven). 
+
+**Recommended move (now defensible):** add a `sudo sysctl -w
+kernel.apparmor_restrict_unprivileged_userns=0` step to the `regular` job (or a
+dedicated 3rd GitHub-hosted job) and drop the 14 userns `--skip`s + the 3
+already-portable ones, leaving only true-PMU/KVM on self-hosted. That frees the
+new 2nd/3rd self-hosted runners for work that genuinely needs privilege. Gate this
+behind the KVM-portability probe before moving KVM itself.
+
+Throwaway probe branch `experiment/userns-sysctl-probe` was created via git
+plumbing off the primary object store (no checkout mutated) and deleted after
+evidence capture.
