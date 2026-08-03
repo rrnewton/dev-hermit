@@ -40,6 +40,15 @@ BROKEN_AGENT_STATES = frozenset(
 ACTIVE_AGENT_STATES = frozenset(("active", "busy", "in_progress", "running", "working"))
 DEFAULT_STUCK_AFTER_SECS = 60 * 60
 DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
+# Per-repo wall-clock budget for the auto-invoked PR-health gate. tick-hub's
+# SubprocessGateRunner hard-kills any gate at 30s, so the gate MUST resolve well
+# under that: two repos queried serially at 12s each is ~24s worst case. Staying
+# under the guillotine is what lets pr_status emit its own structured
+# degraded/unavailable result (distinguishing "GitHub was slow" from "ci-hub is
+# broken") instead of the gate timing out into a bare, undifferentiated failure.
+DEFAULT_PR_GATE_TIMEOUT_SECS = float(
+    os.environ.get("CI_HUB_PR_GATE_TIMEOUT", "12")
+)
 DEFAULT_AGENT_SNAPSHOT = ROOT / "ignored" / "ci-hub" / "agent-snapshot.json"
 TERMINAL_AGENT_STATES = frozenset(
     (
@@ -161,18 +170,37 @@ def github_main_gate() -> int:
 
 
 def pull_request_gate() -> int:
-    try:
-        statuses = [
-            pr_status.fetch_repo_status(repo) for repo in pr_status.DEFAULT_REPOS
-        ]
-    except RuntimeError as error:
+    # Query each repo under a bounded budget and keep whatever succeeds: one slow
+    # or blocked repo must not discard the other's real reds, and the gate must
+    # resolve before tick-hub's 30s guillotine so the failure is reported (with a
+    # reason) rather than silently timed out. See DEFAULT_PR_GATE_TIMEOUT_SECS.
+    statuses: list[pr_status.RepoStatus] = []
+    unavailable: list[tuple[str, str]] = []
+    for repo in pr_status.DEFAULT_REPOS:
+        try:
+            statuses.append(
+                pr_status.fetch_repo_status(
+                    repo, timeout=DEFAULT_PR_GATE_TIMEOUT_SECS
+                )
+            )
+        except RuntimeError as error:
+            unavailable.append((repo, _field(error)))
+
+    if not statuses:
+        # Every repo failed: ci-hub/GitHub is unavailable. This is NOT "no open
+        # PRs" and NOT "all green" — report it loudly and fire the reminder.
+        reasons = "; ".join(f"{repo}:{why}" for repo, why in unavailable)
         _emit(
             {
-                "state": "unknown",
+                "state": "unavailable",
                 "total": 0,
                 "red": 0,
                 "pending": 0,
-                "summary": _field(error),
+                "green": 0,
+                "real_reds": 0,
+                "outage": "no",
+                "degraded": "yes",
+                "summary": f"all repos unavailable ({reasons})",
             }
         )
         return 1
@@ -183,7 +211,23 @@ def pull_request_gate() -> int:
     }
     outage = any(status.outage_suspected for status in statuses)
     unhealthy = counts["real_reds"] > 0 or outage
-    state = "red" if unhealthy else "ok"
+    degraded = bool(unavailable)
+    if unhealthy:
+        state = "red"
+    elif degraded:
+        # Real reds vs partial coverage are different alarms: "degraded" tells the
+        # coordinator the answer is incomplete (a repo was slow/blocked), not that
+        # PRs are failing.
+        state = "degraded"
+    else:
+        state = "ok"
+    summary = (
+        f"open={counts['open']},red={counts['red']},"
+        f"pending={counts['pending']},real={counts['real_reds']},"
+        f"outage={'yes' if outage else 'no'}"
+    )
+    if degraded:
+        summary += ",unavailable=" + "|".join(repo for repo, _ in unavailable)
     _emit(
         {
             "state": state,
@@ -193,14 +237,11 @@ def pull_request_gate() -> int:
             "green": counts["green"],
             "real_reds": counts["real_reds"],
             "outage": "yes" if outage else "no",
-            "summary": (
-                f"open={counts['open']},red={counts['red']},"
-                f"pending={counts['pending']},real={counts['real_reds']},"
-                f"outage={'yes' if outage else 'no'}"
-            ),
+            "degraded": "yes" if degraded else "no",
+            "summary": summary,
         }
     )
-    return 1 if unhealthy else 0
+    return 1 if (unhealthy or degraded) else 0
 
 
 def primary_snapshot_gate() -> int:

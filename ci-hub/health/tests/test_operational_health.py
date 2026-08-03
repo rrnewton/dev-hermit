@@ -15,6 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import operational_health
 
 
+def pr_status_unavailable(reason: str) -> Exception:
+    """A repo-query failure as pr_status raises it (a RuntimeError subclass)."""
+    return operational_health.pr_status.RepoUnavailable(reason)
+
+
 class OperationalHealthTest(unittest.TestCase):
     def capture(
         self, function: object, *args: object, **kwargs: object
@@ -86,6 +91,61 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("total=3", output)
         self.assertIn("red=1", output)
         self.assertIn("pending=1", output)
+
+    def test_pull_request_one_repo_unavailable_is_degraded_not_lost(self) -> None:
+        # A slow/blocked repo must not discard the other repo's real data: the
+        # answer is DEGRADED (partial), distinct from "PRs are red".
+        healthy = SimpleNamespace(
+            open=2, red=0, green=2, pending=0, real_reds=0, outage_suspected=False
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one", "b/two"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            side_effect=[healthy, pr_status_unavailable("b/two blocked")],
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=degraded", output)
+        self.assertIn("degraded=yes", output)
+        self.assertIn("open=2", output)  # the healthy repo survived
+        self.assertIn("unavailable=b/two", output)
+
+    def test_pull_request_all_repos_unavailable_is_not_zero_prs(self) -> None:
+        # Every repo failing is "ci-hub/GitHub unavailable", never "no open PRs".
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one", "b/two"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            side_effect=[
+                pr_status_unavailable("a/one blocked"),
+                pr_status_unavailable("b/two blocked"),
+            ],
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=unavailable", output)
+        self.assertNotIn("state=ok", output)
+
+    def test_pull_request_gate_bounds_each_repo_under_the_guillotine(self) -> None:
+        # The gate MUST pass a per-repo timeout so it resolves before tick-hub's
+        # 30s SubprocessGateRunner kills it (which would erase the reason).
+        healthy = SimpleNamespace(
+            open=0, red=0, green=0, pending=0, real_reds=0, outage_suspected=False
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=healthy,
+        ) as fetch:
+            self.capture(operational_health.pull_request_gate)
+        _, kwargs = fetch.call_args
+        self.assertIn("timeout", kwargs)
+        self.assertLessEqual(kwargs["timeout"] * 2, 30.0)
 
     def test_primary_snapshot_failure_is_a_structured_warning(self) -> None:
         def blocked(*_args: object, **kwargs: object) -> int:

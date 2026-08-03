@@ -54,7 +54,7 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: pull-requests
-      title: "open PR CI needs attention: {summary}"
+      title: "open PR health is {state}: {summary}"
 
   - name: ci_queue_health
     cadence_secs: 900
