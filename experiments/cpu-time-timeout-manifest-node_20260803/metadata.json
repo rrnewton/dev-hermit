@@ -1,0 +1,36 @@
+{
+  "task": "ci-timeout-audit-cpu-time-manifest-node",
+  "date": "2026-08-03",
+  "node": {
+    "gate_name": "Centralized test manifest and inventory",
+    "dag_node": "e2e/metadata",
+    "command": "./ci/test_harness.sh validate",
+    "current_wall_timeouts": {"validate_sh_gate_seconds": 600, "dag_node_seconds": 60}
+  },
+  "repos": {
+    "hermit_primary_sha": "4a97ec36d813bc271aec84bf36511bb0f36a9bb5",
+    "agent_utils_base_sha": "1c0e9c3c4928dac192e0115291f114863bc03a0d"
+  },
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "logical_cpus": 316,
+    "shared": true,
+    "note": "other agents active during ambient sampling"
+  },
+  "measurement": {
+    "tool": "/usr/bin/time -v",
+    "cpu_metric": "user+system CPU (getrusage RUSAGE_CHILDREN); same quantity as cgroup cpu.stat usage_usec",
+    "cpuset_for_controlled_load": "0-3",
+    "burners": 8,
+    "oversubscription": "2x"
+  },
+  "results_cpu_seconds_pooled_n35": {"min": 6.50, "median": 7.79, "p90": 8.84, "p99": 11.45, "max": 12.24},
+  "results_wall_seconds": {
+    "ambient_n20": {"min": 6.57, "median": 7.71, "p90": 9.65, "p99": 19.32, "max": 21.03},
+    "cpuset_loaded_n10": {"min": 8.44, "median": 9.57, "p90": 11.39, "p99": 16.71, "max": 17.30},
+    "historical_ledger_n106": {"min": 4, "median": 6, "p90": 11, "p99": 17, "max": 57}
+  },
+  "cross_check": {"source": "hermit-ci batch validate at hermit 2dec5db0", "wall_seconds": 8},
+  "proposed_cpu_timeout_seconds": 18,
+  "arithmetic": "max_observed_cpu 12.24 * 1.5 = 18.36 -> 18 (<=50% margin rule, anchored on distribution max)"
+}
