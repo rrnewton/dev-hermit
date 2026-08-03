@@ -1,3 +1,44 @@
+> # ⚠ CORRECTION / RETRACTION (2026-08-03) — READ FIRST
+>
+> **The "NO / blocked / DBI wall" verdict below is RETRACTED.** The *raw data* is
+> fine (skid 15–90, 9 RIPs over 20 runs) — but its **interpretation is wrong**,
+> and so is the question the spike asked. "Can an in-guest RCB-preemption
+> interrupt land the guest deterministically at all?" is **not** an open research
+> question and **not** the S1 crux. It is a **solved, shipping problem**, with two
+> working reference implementations: **our own `reverie-ptrace/src/timer.rs`** and
+> **mozilla rr**.
+>
+> This exact host already runs the fix. `timer.rs` fires the PMI *early*
+> (`AMD_EPYC_9D85_SKID_MARGIN = 1_000`, timer.rs:68, calibrated for this family
+> 0x1A model 0x11 box whose p99 skid is 384) and then **single-steps to the exact
+> RCB count** (`attempt_single_step` timer.rs:800 → `single_step_with_clock`
+> timer.rs:547). **No PEBS is required** — the spike's leg 2 (PEBS unavailable on
+> AMD) is real but irrelevant, because the skid-margin + single-step path is
+> precisely the mechanism that makes non-precise delivery deterministic anyway.
+> The spike measured *raw overflow skid* and correctly found it nondeterministic;
+> that is the premise the machinery exists to solve, not a wall.
+>
+> **Leg 3 ("single-step correction = DBI in-process re-entrancy wall") is also
+> retracted as a blocker.** `[[dbi-preemption-in-process-reentrancy-blocker]]` is
+> about clean-call re-entrancy in a JIT context; it is not evidence that in-guest
+> determinism is unachievable. Determinism achievability was never the question.
+>
+> **What the in-guest question actually is (settled by the owner):** a **COST**
+> question, never an achievability one. Syscall-based preemption is the fast
+> primary path; RCB-overflow preemption is a rare fallback. RECORD may ignore skid
+> on a nondeterministic preemption (record where you landed); REPLAY uses the
+> scx-sim technique (breakpoint at the known target RIP + count branches). The
+> real in-guest delta is **counter attribution** — in ptrace the tool runs in the
+> tracer process so its branches are not in the tracee's counter, while in-guest
+> the tool's handler branches run in guest userspace and *are* counted, so they
+> must be deducted via **tool-RCB bracketing** (read RCB at trampoline entry —
+> clean, since the unconditional `jmp` doesn't increment the conditional-branch
+> counter — read again before returning, subtract the difference). Full reframe:
+> `ai_docs/unified-patching-backend-constructor-feasibility_20260803.md`, the
+> `## CORRECTION` section. Everything below this box is the superseded original.
+
+---
+
 # S1 crux spike: can an in-guest RCB-preemption interrupt land the guest deterministically?
 
 **One-line verdict:** **NO — provably the DBI wall again, on this host.** An

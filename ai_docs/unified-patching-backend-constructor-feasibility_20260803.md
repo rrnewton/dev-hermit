@@ -286,3 +286,109 @@ spike/spec on whether in-guest RCB preemption can land the guest deterministical
 at all (or a proof it cannot, mirroring DBI) — that single question resolves S1
 YES/NO. Axis-(a) measurement is deferred until a multi-thread Mode A build
 exists, since (a) is backend-independent and cannot change the viability verdict.
+
+## CORRECTION (2026-08-03, supersedes the "crux" framing in §S1 above)
+
+**The framing in item #2 and the Verdict above is WRONG and is retracted.**
+"Can an in-guest RCB-preemption interrupt land the guest deterministically at
+all?" is **NOT an open research question and NOT the crux.** It is a **solved
+problem with two working reference implementations: our own hermit/ptrace, and
+mozilla rr.** Treating it as a crux amplified a rediscovery of the foundation
+the system is already built on. Whoever reads this next: do not re-raise it.
+
+**Read the reference before theorizing.** `reverie-ptrace/src/timer.rs` is the
+working mechanism, and it is calibrated for *this exact host*:
+
+- Header (timer.rs:14-18): *"Due to PMU skid, precise timer events must be
+  driven to completion via single stepping. This means the PMI is scheduled
+  early…"* — the fire-early-then-single-step path. **No PEBS required.**
+- `AMD_EPYC_9D85_SKID_MARGIN = 1_000` (timer.rs:68), selected for family 0x1A
+  model 0x11 = this box, with the comment (141-144): *"Turin EPYC family 1Ah
+  model 11h has p99 skid of 384 RCBs. A 1K performance margin accepts rare
+  larger overshoots because the existing single-step path completes them without
+  losing correctness."*
+- `attempt_single_step` (timer.rs:800) asserts `target_rcb − current.rcbs() ≤
+  max_single_step_count` (= skid_margin + 5 = **1005 here**) and drives
+  `step(task)` — out-of-process ptrace single-step — via
+  `single_step_with_clock` (timer.rs:547: *"counts instructions & rcbs together
+  … to reach target_rcb"*) to the **exact** RCB count.
+
+So on this CPU, with no PEBS, Detcore already reaches an exact deterministic
+branch count. The from-first-principles spike
+(`experiments/s1-inguest-rcb-preemption-determinism-spike_20260803/`) only
+measured *raw overflow skid* and correctly found it nondeterministic — which is
+exactly the premise the skid-margin + single-step machinery exists to solve. Its
+"NO / blocked / DBI wall" **verdict is retracted**; see that experiment's own
+CORRECTION header.
+
+**Settled facts to build on (do not re-derive):**
+
+1. **Syscall-based preemption is the FAST PRIMARY path; RCB-based preemption is
+   the RARE FALLBACK** — and the fallback is where all skid pain lives. The
+   common case never touches skid at all.
+2. **RECORD can simply IGNORE the skid** on a nondeterministic preemption — you
+   record where you actually landed; there is nothing to make deterministic.
+3. **REPLAY uses the scx-sim technique:** the target RIP is known, so install a
+   breakpoint there and **count branches to disambiguate which dynamic instance**
+   you are at. No live single-step-to-exact-count is needed on replay.
+
+**The DBI dead-end was narrower than item #2 implied.**
+`[[dbi-preemption-in-process-reentrancy-blocker]]` is about clean-call
+re-entrancy in a JIT context — not evidence that in-guest determinism is
+unachievable. Determinism achievability is not in question for any backend.
+
+**The real in-guest delta = COUNTER ATTRIBUTION, and the algorithm that settles
+it.** The genuine difference between an in-guest backend and the ptrace tracer is
+not determinism — it is *who gets counted*. Linux attributes PMU retired-branch
+counts user-vs-kernel, per thread. reverie's ptrace timer opens the RCB counter
+with `exclude_kernel`/`exclude_guest`/`exclude_hv`, `pinned=1`, per-tid,
+`cpu=-1` (`reverie-ptrace/src/perf.rs:207-211`; RCB event `AMD_RCB_EVENT =
+0x5100d1`). In **ptrace**, the tool code runs in the **tracer** process, so the
+tool's own branches are **not** in the tracee's user counter — attribution is
+free. In an **in-guest** backend, the tool's syscall-handler branches execute in
+**guest userspace** on the very thread being counted, so they **are** counted and
+must be **subtracted manually**. This — not determinism — is the thing an
+in-guest design has to solve, and the owner gave the algorithm:
+
+**TOOL-RCB BRACKETING:**
+
+1. Read the RCB counter the moment control lands in the trampoline. The
+   unconditional `jmp` that delivered control does **not** increment the
+   retired-*conditional*-branch counter, so this is a **clean baseline** — no
+   correction needed for the entry transition itself.
+2. Read the RCB counter again immediately before returning control to the guest.
+3. The difference is exactly the RCBs the tool itself consumed; **deduct** it
+   from the elapsed count. Guest branch accounting stays exact.
+
+**Cheap by construction.** The PMU alarm exists only to break an *unbroken* run
+of guest compute with no syscalls. Every syscall-handler entry already
+record-and-subtracts and **resets the timer to the remaining amount** (the
+per-syscall reset dance `request_event`/`observe_event`/`finalize_requests`,
+`reverie-ptrace/src/timer.rs:328/337/387`), so a syscall-dense guest barely
+touches the RCB-overflow path at all. Bracketing rides that same per-syscall
+reset: it is not a new hot-path mechanism, just two counter reads per handler
+entry.
+
+**The LEGITIMATE S1 axis — reframed on COST, never achievability:**
+
+- What does an in-guest patching-backend variant **cost relative to the ptrace
+  tracer**, per preemption-positioning case?
+  - *Syscall preemption (primary/common):* in-guest wins big — the measured
+    ~31× axis-(b) advantage stands (near-local call vs ptrace round-trip); no
+    skid, no single-step.
+  - *RCB preemption during RECORD (rare):* skid is ignorable (fact 2), so
+    in-guest cost is ≈ fielding its own PMI — no single-step needed.
+  - *RCB preemption during REPLAY (rare):* breakpoint-at-known-RIP + branch
+    count (fact 3), a positioning technique, not out-of-process live stepping.
+  - *The one genuinely different case:* if a live in-guest backend ever needs
+    single-step-to-exact-count (the ptrace path today), who drives the stepping
+    without an out-of-process tracer? That is an **architecture/cost** question
+    for a rare fallback — **not** a determinism-achievability question.
+- Which preemption-positioning path is cheapest for which case is the real
+  design question. Determinism via RCB is assumed throughout, because it is.
+
+**Net:** items #1 (read_clock runtime-fatal on Mode A), #3 (CPUID/RDTSC/etc.
+routing), and #4 (multi-thread/clone) above remain accurate build gaps. Only
+item #2's "deterministic preemption is a possibly-refuted research crux" is
+retracted: it is a solved, shipping mechanism, and the in-guest question is its
+cost, not its possibility. **Mode B untouched.**
