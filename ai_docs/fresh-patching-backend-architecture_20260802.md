@@ -316,6 +316,27 @@ Current production LiteInst is not the template: it has the same host-dispatch
 defect as e9patch. The target is specifically the guest-local LiteInst lane and
 its active lifecycle-supervisor work.
 
+### Quiescence is a capability, not a backend property
+
+Landed LiteInst2 makes concurrent WordPatch++ publication the ordinary default
+and exposes separate unsafe `bind_quiescent`/`apply_quiescent` entrypoints
+([LiteInst2 publication split][liteinst-quiescent]). A quiescent binding rejects
+the ordinary concurrent `apply` call, and the unsafe contract must be
+re-established before every apply or revert: no sibling thread, signal handler,
+or code writer may fetch or touch the patch window. Reverie's stopped-tracee
+helper selects that entrypoint under its current single-process/single-thread
+host-hybrid contract, while the signal-driven direct path explicitly selects
+concurrent publication ([Reverie publication selection][liteinst-publication]).
+
+This is the relevant Hermit optimization boundary. Detcore sequentialization or
+a lifecycle supervisor that actually holds all sibling stops may supply the
+proof; merely being a "patching backend" may not. The shared runtime should
+therefore model publication mode as an explicit capability, default it to
+concurrent, and make the quiescent constructor unavailable unless the caller
+owns that proof. E9patch's offline AOT rewrite is inherently pre-execution, but
+any late DSO/JIT/residual-site rewrite must use concurrent publication or obtain
+the same supervisor proof. SaBRe missed-site rewriting has the same requirement.
+
 ### 1. Extract behavior before changing placement
 
 Create a shared sibling of `reverie-preload` (working name
@@ -532,6 +553,8 @@ that remains a workload-specific hypothesis rather than an architectural fact.
 [lite-supervisor-pr]: https://github.com/rrnewton/reverie/pull/337
 [hermit-lite-guest-pr]: https://github.com/rrnewton/hermit/pull/1451
 [sabre-forwarder]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L34-L116
+[liteinst-quiescent]: https://github.com/rrnewton/liteinst2/blob/8bffae9da68e0636ec4b6dc473a0fd29ac589d20/src/patcher.rs#L511-L764
+[liteinst-publication]: https://github.com/rrnewton/reverie/blob/d2fb9a055693bec30e8d48333c5694050b22e869/reverie-liteinst/src/runtime.rs#L977-L1115
 [hermit-sabre-launch]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/hermit-cli/src/lib.rs#L988-L1096
 [detcore-sabre-intro]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L9-L27
 [detcore-sabre-plugin]: https://github.com/rrnewton/hermit/blob/e072d313ba62fdbd46c6708b40e5b407006946af/detcore-sabre/src/lib.rs#L139-L250
