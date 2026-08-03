@@ -19,13 +19,22 @@ def _rollup(*states: tuple[str, str]) -> list[dict]:
     return [{"status": s, "conclusion": c} for s, c in states]
 
 
-def _pr(number: int, rollup, *, mergeable="MERGEABLE", merge_state="CLEAN", draft=False):
+def _pr(
+    number: int,
+    rollup,
+    *,
+    mergeable="MERGEABLE",
+    merge_state="CLEAN",
+    draft=False,
+    labels=(),
+):
     return {
         "number": number,
         "title": f"pr {number}",
         "isDraft": draft,
         "mergeable": mergeable,
         "mergeStateStatus": merge_state,
+        "labels": [{"name": label} for label in labels],
         "statusCheckRollup": rollup,
     }
 
@@ -84,6 +93,85 @@ class GhEngineClassificationTests(unittest.TestCase):
         self.assertEqual(status.real_reds, 5)
         self.assertTrue(status.outage_suspected)
         self.assertTrue(status.unhealthy)
+
+
+class ReviewProtocolClassificationTests(unittest.TestCase):
+    def classify(self, *labels: str, draft: bool = False):
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [_pr(12, [], draft=draft, labels=labels)],
+        )
+        self.assertEqual(len(status.review_protocol), 1)
+        return status.review_protocol[0]
+
+    def test_round_one_and_current_approvals_are_complete(self) -> None:
+        audit = self.classify(
+            "post-facto-human-review",
+            "adversarial-review-codex1",
+            "adversarial-review-claude1",
+            "passed-review-codex",
+            "passed-review-claude",
+        )
+        self.assertTrue(audit.complete)
+        self.assertEqual(audit.review_rounds, "complete")
+        self.assertEqual(audit.current_approvals, "complete")
+
+    def test_later_protocol_rounds_are_valid(self) -> None:
+        audit = self.classify(
+            "post-facto-human-review",
+            "adversarial-review-codex4",
+            "adversarial-review-claude3",
+            "passed-review-codex",
+            "passed-review-claude",
+        )
+        self.assertTrue(audit.complete)
+        self.assertEqual(audit.codex_rounds, (4,))
+        self.assertEqual(audit.claude_rounds, (3,))
+
+    def test_one_sided_review_is_distinct_from_current_approval(self) -> None:
+        audit = self.classify(
+            "post-facto-human-review",
+            "adversarial-review-claude1",
+            "passed-review-claude",
+        )
+        self.assertEqual(audit.review_rounds, "partial")
+        self.assertEqual(audit.current_approvals, "partial")
+        self.assertIn("review-round-codex", audit.missing)
+        self.assertIn("current-approval-codex", audit.missing)
+
+    def test_invalid_or_bare_round_labels_do_not_fake_review(self) -> None:
+        audit = self.classify(
+            "post-facto-human-review",
+            "adversarial-review-codex",
+            "adversarial-review-claude0",
+            "adversarial-review-codex5",
+            "adversarial-review-claude10",
+        )
+        self.assertEqual(audit.review_rounds, "missing")
+        self.assertEqual(len(audit.invalid_labels), 4)
+
+    def test_suffixed_approval_does_not_mean_current_head_approved(self) -> None:
+        audit = self.classify(
+            "post-facto-human-review",
+            "adversarial-review-codex2",
+            "adversarial-review-claude2",
+            "passed-review-codex2",
+            "passed-review-claude2",
+        )
+        self.assertEqual(audit.review_rounds, "complete")
+        self.assertEqual(audit.current_approvals, "missing")
+        self.assertFalse(audit.complete)
+        self.assertEqual(len(audit.invalid_labels), 2)
+
+    def test_drafts_stay_out_of_ci_counts_but_in_review_audit(self) -> None:
+        audit = self.classify("post-facto-human-review", draft=True)
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [_pr(12, [], draft=True, labels=("post-facto-human-review",))],
+        )
+        self.assertTrue(audit.draft)
+        self.assertEqual(status.open, 0)
+        self.assertEqual(len(status.review_protocol), 1)
 
 
 class GhEngineLoudFailureTests(unittest.TestCase):
@@ -268,6 +356,28 @@ class RenderTests(unittest.TestCase):
         report = pr_status.render_report([status], warn_threshold=10, engine="gh")
         self.assertIn("undetermined_reds=3", report)
         self.assertIn("CAUTION", report)
+
+    def test_render_separates_review_history_from_current_approval(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(
+                    12,
+                    [],
+                    labels=(
+                        "post-facto-human-review",
+                        "adversarial-review-codex2",
+                        "adversarial-review-claude3",
+                        "passed-review-claude",
+                    ),
+                )
+            ],
+        )
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("dual_review=1", report)
+        self.assertIn("current_dual_approval=0", report)
+        self.assertIn("approval=partial", report)
+        self.assertIn("missing=current-approval-codex", report)
 
 
 if __name__ == "__main__":

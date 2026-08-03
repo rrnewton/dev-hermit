@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -107,9 +108,37 @@ _RETRYABLE_MARKERS = (
     "changed during collection",
 )
 
+# Keep this exact language in sync with Hermit's
+# scripts/core-review-protocol-lint.sh. Review activity is durable and numbered;
+# approval is an unsuffixed assertion about the current head.
+_REVIEW_ROUND_LABEL = re.compile(
+    r"^adversarial-review-(?P<reviewer>codex|claude)(?P<round>[1-4])$"
+)
+_POST_FACTO_LABEL = "post-facto-human-review"
+_PASSED_REVIEW_LABELS = {
+    "codex": "passed-review-codex",
+    "claude": "passed-review-claude",
+}
+
 
 class RepoUnavailable(RuntimeError):
     """The status query could not complete within its time budget or was blocked."""
+
+
+@dataclass(frozen=True)
+class ReviewProtocolStatus:
+    """Review activity and current-head approval for one post-facto PR."""
+
+    pr: int | None
+    title: str
+    draft: bool
+    codex_rounds: tuple[int, ...]
+    claude_rounds: tuple[int, ...]
+    review_rounds: str
+    current_approvals: str
+    complete: bool
+    missing: tuple[str, ...]
+    invalid_labels: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -122,6 +151,7 @@ class RepoStatus:
     real_reds: int
     outage_suspected: bool
     prs: tuple[dict[str, object], ...]
+    review_protocol: tuple[ReviewProtocolStatus, ...] = ()
     undetermined_reds: int = 0
     available: bool = True
     reason: str = ""
@@ -229,11 +259,90 @@ def _rollup_ci_state(rollup: object) -> str:
     return "pending"
 
 
+def _label_names(entry: dict[str, object]) -> set[str]:
+    """Normalize ``gh pr list --json labels`` without accepting bad schemas."""
+    labels = entry.get("labels")
+    if not isinstance(labels, list):
+        return set()
+    names: set[str] = set()
+    for label in labels:
+        if isinstance(label, str):
+            names.add(label)
+        elif isinstance(label, dict) and isinstance(label.get("name"), str):
+            names.add(label["name"])
+    return names
+
+
+def _review_protocol_status(entry: dict[str, object]) -> ReviewProtocolStatus | None:
+    """Classify one PR using the same label semantics as the merge-gate lint."""
+    labels = _label_names(entry)
+    if _POST_FACTO_LABEL not in labels:
+        return None
+
+    rounds: dict[str, set[int]] = {"codex": set(), "claude": set()}
+    invalid_labels: list[str] = []
+    for label in labels:
+        match = _REVIEW_ROUND_LABEL.fullmatch(label)
+        if match:
+            rounds[match.group("reviewer")].add(int(match.group("round")))
+        elif label.startswith(
+            ("adversarial-review-codex", "adversarial-review-claude")
+        ):
+            invalid_labels.append(label)
+        elif label.startswith(
+            ("passed-review-codex", "passed-review-claude")
+        ) and label not in _PASSED_REVIEW_LABELS.values():
+            invalid_labels.append(label)
+
+    has_round = {reviewer: bool(values) for reviewer, values in rounds.items()}
+    has_approval = {
+        reviewer: expected in labels
+        for reviewer, expected in _PASSED_REVIEW_LABELS.items()
+    }
+
+    def paired_state(values: dict[str, bool]) -> str:
+        present = sum(values.values())
+        if present == 2:
+            return "complete"
+        return "partial" if present == 1 else "missing"
+
+    missing: list[str] = []
+    for reviewer in ("codex", "claude"):
+        if not has_round[reviewer]:
+            missing.append(f"review-round-{reviewer}")
+        if not has_approval[reviewer]:
+            missing.append(f"current-approval-{reviewer}")
+
+    number = entry.get("number")
+    return ReviewProtocolStatus(
+        pr=(
+            number
+            if isinstance(number, int) and not isinstance(number, bool)
+            else None
+        ),
+        title=str(entry.get("title") or ""),
+        draft=entry.get("isDraft") is True,
+        codex_rounds=tuple(sorted(rounds["codex"])),
+        claude_rounds=tuple(sorted(rounds["claude"])),
+        review_rounds=paired_state(has_round),
+        current_approvals=paired_state(has_approval),
+        complete=not missing,
+        missing=tuple(missing),
+        invalid_labels=tuple(sorted(invalid_labels)),
+    )
+
+
 def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
     prs: list[dict[str, object]] = []
+    review_protocol: list[ReviewProtocolStatus] = []
     green = red = pending = real_reds = undetermined_reds = 0
     for entry in raw:
-        if not isinstance(entry, dict) or entry.get("isDraft") is True:
+        if not isinstance(entry, dict):
+            continue
+        review_status = _review_protocol_status(entry)
+        if review_status is not None:
+            review_protocol.append(review_status)
+        if entry.get("isDraft") is True:
             continue
         number = entry.get("number")
         ci = _rollup_ci_state(entry.get("statusCheckRollup"))
@@ -291,6 +400,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         undetermined_reds=undetermined_reds,
         outage_suspected=outage,
         prs=tuple(prs),
+        review_protocol=tuple(review_protocol),
     )
 
 
@@ -612,6 +722,37 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 f"    #{pr.get('pr', '?'):<5} ci={pr.get('ci', 'unknown'):<7} "
                 f"class={pr.get('red_class') or '-':<23} {pr.get('title', '')}"
             )
+        if status.review_protocol:
+            audits = status.review_protocol
+            complete = sum(audit.complete for audit in audits)
+            dual_review = sum(audit.review_rounds == "complete" for audit in audits)
+            partial_review = sum(audit.review_rounds == "partial" for audit in audits)
+            no_review = sum(audit.review_rounds == "missing" for audit in audits)
+            dual_approval = sum(
+                audit.current_approvals == "complete" for audit in audits
+            )
+            invalid = sum(bool(audit.invalid_labels) for audit in audits)
+            lines.append(
+                "    Review protocol: "
+                f"labeled={len(audits)} complete={complete} "
+                f"dual_review={dual_review} partial_review={partial_review} "
+                f"no_review_evidence={no_review} "
+                f"current_dual_approval={dual_approval} invalid_label_prs={invalid}"
+            )
+            for audit in audits:
+                invalid_detail = (
+                    f" invalid={','.join(audit.invalid_labels)}"
+                    if audit.invalid_labels
+                    else ""
+                )
+                draft = " draft=yes" if audit.draft else ""
+                lines.append(
+                    f"      #{audit.pr if audit.pr is not None else '?':<5} "
+                    f"review={audit.review_rounds:<8} "
+                    f"approval={audit.current_approvals:<8} "
+                    f"missing={','.join(audit.missing) or '-'}"
+                    f"{invalid_detail}{draft} {audit.title}"
+                )
     if unavailable:
         lines.append(
             f"PARTIAL RESULT: {len(unavailable)} of {len(statuses)} repo(s) "
