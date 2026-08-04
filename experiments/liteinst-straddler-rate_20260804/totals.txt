@@ -1,0 +1,5 @@
+binaries_with_syscall_sites=26
+total_syscall_sites=944
+word8_straddlers=119 (12.606%)  [operative: classify_word_patch==GuardedSplit, off 57..63]
+prefix2_straddlers=13 (1.377%)  [reported cacheline_straddlers stat, off 63]
+skipped_files=30 (see skipped.csv)

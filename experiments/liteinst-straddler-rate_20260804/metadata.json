@@ -1,0 +1,45 @@
+{
+  "experiment": "liteinst-straddler-rate",
+  "date": "2026-08-04",
+  "question": "What is the real cache-line straddler rate at LiteInst syscall patch sites across a corpus of real binaries, and does it warrant per-machine calibration of the WordPatch++ staleness wait?",
+  "method": "Static, decoder-independent. For every decoded `syscall` (0f 05) instruction in a corpus of system ELF binaries and shared libraries, compute (virtual_address mod 64). ELF load bases are page-aligned (4096 % 64 == 0), so (runtime_addr mod 64) == (vaddr mod 64): ASLR does not change the cache-line offset, making the static vaddr exact for the runtime classification.",
+  "classification": {
+    "word8_straddler": "classify_word_patch() selects GuardedSplit iff the 8-byte WordPatch++ publication word [addr, addr+8) crosses a 64-byte line, i.e. (addr mod 64) in 57..63. This is the OPERATIVE rule that drives bail-to-ptrace / needs-calibrated-wait on the Concurrent publication path.",
+    "prefix2_straddler": "The reported end-of-run `cacheline_straddlers` stat counts sites whose straddle_after is Some, where straddle_after = split_offset(addr, min(instr_len, 5)). For a 2-byte `syscall` this fires ONLY at offset 63. This is a diagnostic sub-statistic, NOT the bail rule."
+  },
+  "repo_shas": {
+    "parent_dev_hermit": "d33ac2c9136f9b09e7fc3e3a0bf5ccebd2004924",
+    "reverie": "bfea4d5aa7d662cacf21f41ff2df5b60925dff2d",
+    "liteinst2": "8bffae9da68e0636ec4b6dc473a0fd29ac589d20",
+    "hermit": "0f891e432a75c51e57ea4215cd649fa253d8e2c0"
+  },
+  "source_anchors": {
+    "classify_word_patch": "liteinst2/src/patcher.rs:51 (WORD_PATCH_BYTES=8, patcher.rs:34)",
+    "split_offset": "liteinst2/src/cache_line.rs:38",
+    "budget_for_patch_bail": "reverie/reverie-liteinst/src/straddler.rs:74-91",
+    "straddle_prefix_stat": "reverie/reverie-liteinst/src/runtime.rs:1038-1044",
+    "cacheline_straddlers_counter": "reverie/reverie/src/backend_stats.rs:209-215",
+    "quiescent_no_bail": "reverie/reverie-liteinst/src/runtime.rs:1066-1072 (staleness=None for Quiescent)",
+    "hermit_hybrid_quiescent": "reverie/reverie-liteinst/src/runtime.rs:1154,1190 (reverie_liteinst_install_site_for_ptrace)",
+    "standalone_concurrent": "reverie/reverie-liteinst/src/runtime.rs:1623,1671 (in-process SIGSYS dispatch)"
+  },
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+  "cache_line_bytes": 64,
+  "tool": "GNU objdump (GNU Binutils) 2.37",
+  "command": "bash scan.sh corpus.txt out   # corpus = 1459 unique realpath ELF files from /usr/bin,/bin,/usr/lib64,/lib64",
+  "caps": "files > 40 MiB skipped (30 files: giant Go/internal monoliths e.g. devfeature 1.08 GB, libLLVM), per-objdump timeout 25s. See skipped.csv.",
+  "results": {
+    "unique_elf_scanned": 1459,
+    "binaries_with_syscall_sites": 26,
+    "total_syscall_sites": 944,
+    "word8_straddlers": 119,
+    "word8_rate_pct": 12.606,
+    "prefix2_straddlers": 13,
+    "prefix2_rate_pct": 1.377,
+    "uniform_baseline_word8_pct": 10.938,
+    "libc_sites": 510,
+    "libc_word8": 78,
+    "libc_word8_pct": 15.294,
+    "libc_prefix2": 3
+  }
+}
