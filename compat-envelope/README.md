@@ -219,14 +219,14 @@ busybox applets.
 #     --bin reverie-kvm-counter1 --bin reverie-kvm-counter2
 ./collect-reverie-compat.rs --repo ../hermit --csv reverie-scorecard.csv
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
-    --backends kvm --all
+    --backends kvm --observable tool-count --all
 ```
 
-Only tools that have both launchers become stdout-parity cells; a ptrace-only example
+Only tools that have both launchers become tool-count-parity cells; a ptrace-only example
 records its KVM cell as not-runnable (0/0), never faked.
 
 **Current finding** (reverie `a4f33d69`, hermit `2f3689bd`, this host with
-`/dev/kvm`): KVM is `0% stdout-parity, 100% determinism` — fully self-deterministic but
+`/dev/kvm`): KVM is `0% tool-count-parity, 100% determinism` — fully self-deterministic but
 surfaces a **constant 4 fewer syscalls** to the shared Tool callback than ptrace
 (`true` 12→8, `echo hi` 15→11, `pwd` 16→12). That is a real Guest-contract
 interception-surface gap, not a determinism defect, and is exactly the honest
@@ -280,18 +280,25 @@ disk (defaults resolve to the `worktrees/e9patch` checkout).
 ## Rendering
 
 ```bash
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --all  # full corpus
-./render-scorecard.rs --csv scorecard.csv --all             # CI/regression subset
-./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter --backends kvm --all
-./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch --latest
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --all --json
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all
+./render-scorecard.rs --csv scorecard.csv --observable stdout --all
+./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
+    --backends kvm --observable tool-count --all
+./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch \
+    --observable stdout --latest
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all --json
 ```
 
 `--csv` is required. A bare invocation exits 2 rather than silently choosing
 `scorecard.csv`, whose CI/regression population is much smaller than the full
-corpus. The input path is repeated in human and JSON output.
+corpus. `--observable` defaults to `stdout`; the Reverie counter scorecard must
+select `tool-count`. The input path and observable are repeated in machine and
+human output.
 
 ## Table markers (never let a `0` be ambiguous)
+
+The examples below use the default `stdout-parity` label. With `--observable
+tool-count`, the renderer uses the same markers under `tool-count-parity`.
 
 - `X%?` — stdout parity **never measured** for that bucket → UNKNOWN, not a confirmed 0.
 - `X%~` — **partial** stdout-parity coverage (some denom cells measured, some not).
@@ -301,7 +308,9 @@ corpus. The input path is repeated in human and JSON output.
 A real red (ran + failed) is `0%, 0%` with no marker; the markers keep it
 visually distinct from "not measured" and "not runnable", which is what the
 phase-2 bar (*every red a CONFIRMED red*) requires. Machine-readable
-`--json`/`--tsv` carry `stdout_parity_measured_count`/`ran_count` per cell.
+`--json`/`--tsv` carry observable-qualified fields such as
+`stdout_parity_measured_count` or `tool_count_parity_measured_count`, plus
+`ran_count` per cell.
 
 ## Stdout-parity measurement
 
