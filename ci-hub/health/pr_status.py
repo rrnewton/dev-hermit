@@ -192,6 +192,14 @@ class RepoStatus:
     review_protocol: tuple[ReviewProtocolStatus, ...] = ()
     mechanism_overlaps: tuple[MechanismOverlap, ...] = ()
     undetermined_reds: int = 0
+    # Split of real_reds by what actually failed at head. A product-red has at
+    # least one failing check that is a genuine product test/build; a gate-red
+    # fails ONLY landing-gate/review meta-checks (merge-gate*, review-protocol),
+    # i.e. the PR merely lacks a valid receipt/review — main is not broken.
+    # product_reds + gate_reds == real_reds on the gh engine (0 on the planner,
+    # which does not enumerate per-check names).
+    product_reds: int = 0
+    gate_reds: int = 0
     available: bool = True
     reason: str = ""
 
@@ -302,6 +310,43 @@ def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
     if any_ok:
         return "green"
     return "pending"
+
+
+# Landing-gate / review META-checks. A red on one of these means the PR lacks a
+# valid receipt (merge-gate) or a completed review (core-review-protocol) at its
+# current head — a landing blocker, NOT a product-test failure. Kept in sync with
+# Hermit's `merge-gate-v2` / `core-review-protocol` and Reverie's `merge-gate`
+# check names. Matched tolerantly so a version bump (`merge-gate-v3`) or the
+# planner's spaced form ("Merge Gate") still classifies as a gate check.
+_GATE_META_CHECK_NAMES = frozenset(
+    {"merge-gate", "merge-gate-v2", "merge gate", "core-review-protocol"}
+)
+
+
+def _is_gate_meta_check(name: str) -> bool:
+    normalized = name.strip().lower()
+    if normalized in _GATE_META_CHECK_NAMES:
+        return True
+    return normalized.startswith(("merge-gate", "merge gate")) or (
+        "review-protocol" in normalized
+    )
+
+
+def _failing_check_names(rollup: object, *, head_sha: str = "") -> list[str]:
+    """Names of the FAILED checks in the latest-per-context rollup at head.
+
+    Mirrors ``_rollup_ci_state``'s FAILED test so the split cannot disagree with
+    the red verdict it refines.
+    """
+    names: list[str] = []
+    for check in select_latest_checks(rollup, head_sha=head_sha):
+        if not isinstance(check, dict):
+            continue
+        status = str(check.get("status") or "").upper()
+        outcome = str(check.get("conclusion") or check.get("state") or "").upper()
+        if classify_check(status, outcome) is CheckOutcome.FAILED:
+            names.append(str(check.get("name") or check.get("context") or ""))
+    return names
 
 
 def _label_names(entry: dict[str, object]) -> set[str]:
@@ -422,6 +467,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
     review_protocol: list[ReviewProtocolStatus] = []
     mechanism_overlaps = _mechanism_overlaps(raw)
     green = red = pending = real_reds = undetermined_reds = 0
+    product_reds = gate_reds = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -431,10 +477,8 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         if entry.get("isDraft") is True:
             continue
         number = entry.get("number")
-        ci = _rollup_ci_state(
-            entry.get("statusCheckRollup"),
-            head_sha=str(entry.get("headRefOid") or ""),
-        )
+        head_sha = str(entry.get("headRefOid") or "")
+        ci = _rollup_ci_state(entry.get("statusCheckRollup"), head_sha=head_sha)
         mergeable = str(entry.get("mergeable") or "").upper()
         merge_state = str(entry.get("mergeStateStatus") or "").upper()
         # Stale-base vs real: a CONFLICTING/DIRTY red is red because its merge
@@ -450,6 +494,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         )
         stale_base = mergeable == "CONFLICTING" or merge_state == "DIRTY"
         red_class = ""
+        real_red_kind = ""
         if ci == "red":
             red += 1
             if stale_base:
@@ -460,6 +505,18 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
             else:
                 red_class = "real-red"
                 real_reds += 1
+                # Refine the real-red: gate-only (lacks receipt/review) vs a
+                # genuine product break. An unnamed/empty failing set falls to
+                # "product" so a red is never hidden by the split.
+                fails = _failing_check_names(
+                    entry.get("statusCheckRollup"), head_sha=head_sha
+                )
+                if fails and all(_is_gate_meta_check(name) for name in fails):
+                    real_red_kind = "gate"
+                    gate_reds += 1
+                else:
+                    real_red_kind = "product"
+                    product_reds += 1
         elif ci == "green":
             green += 1
         else:
@@ -469,6 +526,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
                 "pr": number,
                 "ci": ci,
                 "red_class": red_class,
+                "real_red_kind": real_red_kind,
                 "mergeable": mergeable or "UNKNOWN",
                 "merge_state": merge_state or "UNKNOWN",
                 "title": entry.get("title", ""),
@@ -487,6 +545,8 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         pending=pending,
         real_reds=real_reds,
         undetermined_reds=undetermined_reds,
+        product_reds=product_reds,
+        gate_reds=gate_reds,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -872,6 +932,8 @@ def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
                 "ready_prs": status.open,
                 "green": status.green,
                 "real_reds": status.real_reds,
+                "product_reds": status.product_reds,
+                "gate_reds": status.gate_reds,
                 "stale_base_reds": stale_base_reds,
                 "undetermined_reds": status.undetermined_reds,
                 "no_result": status.pending,
@@ -919,12 +981,39 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         assert isinstance(item, dict)
         lines.append(
             "  {repo}: available={available} ready={ready_prs} green={green} "
-            "real_reds={real_reds} stale_base_reds={stale_base_reds} "
+            "real_reds={real_reds} (product={product_reds} gate={gate_reds}) "
+            "stale_base_reds={stale_base_reds} "
             "undetermined_reds={undetermined_reds} no_result={no_result} "
             "outage={outage_suspected} triggers_unhealthy={triggers_unhealthy}".format(
                 **item
             )
         )
+    # Make the banner actionable: say WHETHER any product test is actually broken,
+    # so a gate/review-only UNHEALTHY is not mistaken for product breakage (and,
+    # conversely, a real product red is pointed at directly). Only over available
+    # repos — an unavailable repo's product state is unknown, not zero.
+    if verdict["state"] == "unhealthy":
+        available_statuses = [s for s in statuses if s.available]
+        total_product = sum(s.product_reds for s in available_statuses)
+        if total_product == 0:
+            lines.append(
+                "  Actionability: 0 product-test reds on any ready PR head — "
+                "UNHEALTHY is driven entirely by landing-gate/review reds "
+                "(PRs lacking a valid receipt or completed review at head), not "
+                "product breakage. Fix by producing receipts / completing review, "
+                "not by debugging tests."
+            )
+        else:
+            hot = ", ".join(
+                f"{s.repo}={s.product_reds}"
+                for s in available_statuses
+                if s.product_reds
+            )
+            lines.append(
+                f"  Actionability: {total_product} product-test red(s) — a genuine "
+                f"break at a ready PR head: {hot}. Remaining real_reds are "
+                "landing-gate/review only."
+            )
     for status in statuses:
         if not status.available:
             lines.append(f"  {status.repo}: UNAVAILABLE — {status.reason}")
@@ -935,10 +1024,15 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             if status.undetermined_reds
             else ""
         )
+        # Show the product/gate split only when it fully accounts for real_reds
+        # (the gh engine classifies every real-red; the planner does not).
+        split = ""
+        if status.real_reds and status.product_reds + status.gate_reds == status.real_reds:
+            split = f" (product={status.product_reds} gate={status.gate_reds})"
         lines.append(
             f"  {status.repo}: open={status.open} green={status.green} "
             f"red={status.red} pending={status.pending} real_reds={status.real_reds}"
-            f"{undet} outage={'yes' if status.outage_suspected else 'no'}"
+            f"{split}{undet} outage={'yes' if status.outage_suspected else 'no'}"
         )
         if status.undetermined_reds:
             lines.append(
@@ -947,9 +1041,13 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 "stale-base unresolved — re-run to classify."
             )
         for pr in status.prs:
+            klass = pr.get("red_class") or "-"
+            kind = pr.get("real_red_kind")
+            if kind:
+                klass = f"{klass}:{kind}"
             lines.append(
                 f"    #{pr.get('pr', '?'):<5} ci={pr.get('ci', 'unknown'):<7} "
-                f"class={pr.get('red_class') or '-':<23} {pr.get('title', '')}"
+                f"class={klass:<23} {pr.get('title', '')}"
             )
         _render_mechanism_overlaps(lines, status.mechanism_overlaps)
         if status.review_protocol:

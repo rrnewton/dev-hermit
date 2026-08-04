@@ -81,6 +81,58 @@ class GhEngineClassificationTests(unittest.TestCase):
             pr_status._rollup_ci_state(_rollup(("COMPLETED", "FAILURE"))), "red"
         )
 
+    def test_real_red_failing_only_merge_gate_is_gate_not_product(self) -> None:
+        # A mergeable PR whose ONLY failing check is the receipt meta-check is a
+        # real-red, but a landing-gate red — not product breakage.
+        raw = [
+            _pr(
+                10,
+                [
+                    {"name": "merge-gate-v2", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                    {"name": "Regular tests (GitHub-hosted)", "status": "COMPLETED",
+                     "conclusion": "SUCCESS"},
+                ],
+            ),
+        ]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.gate_reds, 1)
+        self.assertEqual(status.product_reds, 0)
+        self.assertEqual(status.prs[0]["real_red_kind"], "gate")
+
+    def test_real_red_failing_a_product_test_is_product(self) -> None:
+        raw = [
+            _pr(
+                11,
+                [
+                    {"name": "merge-gate", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                    {"name": "Regular tests (GitHub-hosted)", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                ],
+            ),
+        ]
+        status = pr_status._classify_gh_prs("rrnewton/reverie", raw)
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.gate_reds, 0)
+        self.assertEqual(status.prs[0]["real_red_kind"], "product")
+
+    def test_core_review_protocol_only_red_is_gate(self) -> None:
+        raw = [
+            _pr(
+                12,
+                [
+                    {"name": "core-review-protocol", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                ],
+            ),
+        ]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.gate_reds, 1)
+        self.assertEqual(status.product_reds, 0)
+
     def test_latest_same_head_duplicate_controls_health(self) -> None:
         sha = "a" * 40
         older = {
@@ -525,6 +577,41 @@ class RenderTests(unittest.TestCase):
         self.assertIn("real_reds=2", report)
         self.assertIn("stale_base_reds=1", report)
         self.assertIn("triggers_unhealthy=True", report)
+
+    def test_render_flags_gate_only_unhealthy_as_no_product_break(self) -> None:
+        # All real-reds are gate reds => the note must say product-test reds=0.
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(
+                    1,
+                    [{"name": "merge-gate-v2", "status": "COMPLETED",
+                      "conclusion": "FAILURE"}],
+                    merge_state="BLOCKED",
+                ),
+            ],
+        )
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("CI health: UNHEALTHY", report)
+        self.assertIn("0 product-test reds", report)
+        self.assertIn("(product=0 gate=1)", report)
+
+    def test_render_points_at_product_red_when_present(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/reverie",
+            [
+                _pr(
+                    2,
+                    [{"name": "Regular tests (GitHub-hosted)", "status": "COMPLETED",
+                      "conclusion": "FAILURE"}],
+                    merge_state="BLOCKED",
+                ),
+            ],
+        )
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("CI health: UNHEALTHY", report)
+        self.assertIn("1 product-test red(s)", report)
+        self.assertIn("rrnewton/reverie=1", report)
 
     def test_render_surfaces_undetermined_caution(self) -> None:
         status = pr_status.RepoStatus(
