@@ -27,7 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_transcript import eastern_dt  # noqa: E402
+from lib_transcript import eastern_dt, scrub_internal_fqdns_tree  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DAILY = HERE / "daily"
@@ -87,6 +87,7 @@ def _render_ai(rec: dict) -> list[str]:
 # Daily                                                                       #
 # --------------------------------------------------------------------------- #
 def render_day(doc: dict) -> str:
+    doc = scrub_internal_fqdns_tree(doc)
     date = doc["date"]
     title = f"{date} {doc['weekday']} Daily dev-hermit dev team transcript"
     meta = doc.get("meta", {})
@@ -130,6 +131,7 @@ def render_day(doc: dict) -> str:
 # Weekly                                                                      #
 # --------------------------------------------------------------------------- #
 def render_week(doc: dict) -> str:
+    doc = scrub_internal_fqdns_tree(doc)
     week = doc["week"]
     title = f"{week} Weekly dev-hermit dev team transcript"
     out = [title, "=" * len(title), "", f"> {doc.get('overview', '').strip()}", ""]

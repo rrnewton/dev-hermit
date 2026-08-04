@@ -42,6 +42,7 @@ from lib_transcript import (  # noqa: E402
     iso_week,
     load_blocks,
     resolve_session,
+    scrub_internal_fqdns_tree,
     weekday_abbr,
 )
 
@@ -221,7 +222,10 @@ def _read_day(date: str) -> dict:
 
 def _write_day(date: str, doc: dict) -> None:
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-    (SUMMARY_DIR / f"{date}.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1))
+    scrubbed = scrub_internal_fqdns_tree(doc)
+    (SUMMARY_DIR / f"{date}.json").write_text(
+        json.dumps(scrubbed, ensure_ascii=False, indent=1)
+    )
 
 
 def summarize_day(date: str, turns: list[Turn], model: str, agent: str,
@@ -345,8 +349,9 @@ def summarize_week(week: str, day_docs: list[dict], model: str, agent: str,
             f"{d['date']} {d['weekday']}" for d in days)
     doc = {"week": week, "generated_at": datetime.now(EASTERN).isoformat(),
            "overview": overview, "days": days}
-    p.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
-    return doc
+    scrubbed = scrub_internal_fqdns_tree(doc)
+    p.write_text(json.dumps(scrubbed, ensure_ascii=False, indent=1))
+    return scrubbed
 
 
 # --------------------------------------------------------------------------- #

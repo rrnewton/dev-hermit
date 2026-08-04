@@ -76,7 +76,9 @@ noise**. Four buckets drive rendering:
 | `full` | the reply kept **verbatim** in a ` ```markdown ` fence (`AI response (full msg):`) |
 
 Verbatim **user prompts** are always captured by pure code (never the LLM) and
-are never dropped.
+are never dropped. Before cache writes and rendering, Meta-internal FQDNs are
+reduced to their short host names (for example,
+`devbig014.atn7.facebook.com` becomes `devbig014`).
 
 > **Note on `full`:** across the ~11-day history the classifier selected `full`
 > **zero** times — this is correct for this data, not a bug. The coordinator's own

@@ -65,6 +65,31 @@ SESSIONS_DIR = ORC_HOME / "sessions"
 # The dev-hermit coordinator session lives in a cwd containing this marker.
 DEFAULT_CWD_MARKER = "dev-hermit"
 
+# Internal hostnames can enter transcripts through verbatim prompts and tool
+# output. Preserve the short host name while removing the datacenter/domain
+# suffix before generated artifacts are written.
+_INTERNAL_FQDN_RE = re.compile(
+    r"\b([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)"
+    r"(?:\.[A-Za-z0-9-]+)*\.facebook\.com\b",
+    re.IGNORECASE,
+)
+
+
+def scrub_internal_fqdns(text: str) -> str:
+    """Replace Meta-internal FQDNs with their short host names."""
+    return _INTERNAL_FQDN_RE.sub(lambda match: match.group(1), text)
+
+
+def scrub_internal_fqdns_tree(value):
+    """Recursively scrub every string in a JSON-compatible value."""
+    if isinstance(value, str):
+        return scrub_internal_fqdns(value)
+    if isinstance(value, list):
+        return [scrub_internal_fqdns_tree(item) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_internal_fqdns_tree(item) for key, item in value.items()}
+    return value
+
 
 # --------------------------------------------------------------------------- #
 # Session resolution                                                          #
