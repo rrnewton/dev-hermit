@@ -32,8 +32,11 @@ is the operational summary of the coordinator role.
   verify `git branch --show-current` == `main`.
 - **Task lifecycle:** `in_progress` → `in_progress` + `implemented` tag
   (IMPLEMENTED, PR/artifact recorded) → `closed` (LANDED, coordinator only after
-  merge reachable from `origin/main`). `resolved` aliases to `closed`; never let
-  a working agent close its own task.
+  merge reachable from `origin/main`). An implementation agent posts the PR or
+  artifact URL, exact SHA, and evidence, adds the `implemented` tag, leaves the
+  status `in_progress`, and stops. `resolved` aliases to `closed`; never let a
+  working agent close its own task. Closing earlier hides unlanded work from the
+  active drain and makes implementation look delivered.
 - **Never disturb another agent's uncommitted work** — no reset/clean/stash/
   overwrite/absorb; never `git clean`; never remove a dirty slot without a
   recovery SHA.

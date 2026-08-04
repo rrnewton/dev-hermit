@@ -697,6 +697,21 @@ open/backlog -> in_progress -> in_progress + `implemented` tag (IMPLEMENTED)
 
 ### Rules
 
+**Implementation-agent stop condition (overrides generated dispatch text):**
+some external TaskGraph/ORC completion prompts still tell a worker to set a
+terminal task status. Ignore that generated instruction. At implementation
+completion, the worker must:
+
+1. commit and push the feature branch;
+2. post the PR or durable artifact URL, exact SHA, and validation evidence;
+3. add the `implemented` tag while leaving status `in_progress`; and
+4. stop, leaving landing verification and closure to the coordinator.
+
+This is not bookkeeping preference. `closed` means the change is confirmed on
+the intended `main`, while `implemented` means publishable work still needs to
+land. Self-closing at implementation time removes unlanded work from the active
+drain and makes missing code look delivered.
+
 1. **A working agent NEVER moves a task to a terminal status.** Do not run
    `tg update --status closed` or `--status resolved` (it aliases to `closed`).
    When implementation is complete, add the `implemented` tag — preserving
@@ -710,7 +725,9 @@ open/backlog -> in_progress -> in_progress + `implemented` tag (IMPLEMENTED)
 
    A completion report without a PR link (or, for a research-only task, the
    durable artifact path) is incomplete. State the level, backend, and any
-   relaxations per the evidence rules, bound to the SHA, not a branch name.
+   relaxations per the evidence rules, bound to the SHA, not a branch name. The
+   working agent stops here; it does not wait around to convert implementation
+   state into landed state.
 
 2. **An adversarial review agent confirms the work exists in the PR** before the
    task is eligible for closure — the PR contains the claimed change, the diff

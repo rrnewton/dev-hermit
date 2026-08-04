@@ -28,6 +28,10 @@ gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 - PR opened = in review.
 - Merged to main + `hermit run --backend X` works = DONE.
 - Never close a backend milestone task for work on an unlanded branch.
+- At implementation handoff, post the PR and exact SHA, add the `implemented`
+  tag, leave status `in_progress`, and stop. The coordinator closes only after
+  proving the commit is on `main`; closing sooner hides the unlanded backend
+  from the active drain and makes implementation look delivered.
 
 ## Deep Code-Path Audit
 
