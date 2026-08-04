@@ -15,13 +15,16 @@ fall well below that bound; it does not erase the later serial guest-test tail.
 ## Provenance
 
 - Date: 2026-08-04
-- Hermit: `8078d089e3c8c968e9f416b215f027a342b847ac` (PR #1592)
-- Runner: pinned agent-utils `ec4ddf07689fae6baf9e55c76b8247487ea9705f`
+- Controlled A/B Hermit head: `451f9953b5b84c0cba52c6cb57c2614256fdfdb3`
+- Runner gitlink: agent-utils `089e4b47563c6ec2d46555dcdbd7b027de6a5b1a`
 - Inner build width: `CARGO_BUILD_JOBS=8`
 - Host: 316 logical CPUs; load-probe before the experiment reported 18.4% CPU
   executing and 441.8 GiB available memory.
 
-PR #1592 did not configure either Cargo path. Its full-run paths were:
+The original observation came from PR #1592 at
+`8078d089e3c8c968e9f416b215f027a342b847ac`, retained in
+`/tmp/hermit-validate.Xci2Xl.log`. That run did not configure either Cargo path;
+its paths were:
 
 - `CARGO_HOME=/home/newton/.cargo` (default), package lock
   `/home/newton/.cargo/.package-cache`.
@@ -30,10 +33,11 @@ PR #1592 did not configure either Cargo path. Its full-run paths were:
 
 ## Method
 
-The retained full-profile log named nine concurrent portable nodes with a
-package-cache wait and seven with a build-directory wait. The controlled A/B
-uses the seven Cargo nodes whose behavior remains valid when `CARGO_TARGET_DIR`
-changes: `test.rr_suite_contract`, `doc.doctests`, `test.detcore_unit`,
+The retained PR #1592 full-profile log named nine concurrent portable nodes with
+a package-cache wait and seven with a build-directory wait. The controlled A/B,
+run later at the separately recorded Hermit head above, uses the seven Cargo
+nodes whose behavior remains valid when `CARGO_TARGET_DIR` changes:
+`test.rr_suite_contract`, `doc.doctests`, `test.detcore_unit`,
 `build.flaky_harnesses`, `lint.clippy`, `doc.rustdoc`, and
 `test.regular_crates`.
 
