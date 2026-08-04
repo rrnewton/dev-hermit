@@ -5,7 +5,7 @@
 # never mistake the standing ambient orphan (e.g. hermit-ptw's 2009586) for our own inner,
 # and we ONLY ever kill pids we spawned (Invariant 15).
 set -u
-ROOT=/home/newton/work/dev-hermit
+ROOT="${ROOT:-$(git rev-parse --show-toplevel)}"
 HB="$ROOT/hermit/target/debug/hermit"
 N=${1:-2}
 OBSERVE=${2:-5}

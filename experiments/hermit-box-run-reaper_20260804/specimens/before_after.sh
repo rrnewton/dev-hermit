@@ -14,7 +14,7 @@
 #
 # Invariant 15: we ONLY ever kill PIDs/PGIDs we spawned ourselves (captured explicitly).
 set -u
-ROOT=/home/newton/work/dev-hermit
+ROOT="${ROOT:-$(git rev-parse --show-toplevel)}"
 D="$ROOT/scratch/verify-hang-repro/wrapper-proof"
 SPEC="$D/leaky_spinner.sh"
 WRAP="$ROOT/scripts/hermit-box-run"
