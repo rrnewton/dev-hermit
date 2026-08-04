@@ -85,6 +85,20 @@ if comp:
 else:
     print("\n(compile.csv absent — run build_and_run.sh to populate compile timings)")
 
+# --- 5. Critical-path ceiling (hermit-220: strict_compat = ~47% of DAG wall) ---
+STRICT_COMPAT_FRAC = 0.47   # hermit-220: strict_compat ~600s @ ~12 cores = 47% of critical path
+print(f"\n=== 5. critical-path ceiling (strict_compat = {STRICT_COMPAT_FRAC:.0%} of DAG wall) ===")
+print("A build-profile change touches TWO things on the DAG:")
+print(f"  (a) COMPILE time — a one-time node, part of the OTHER {1-STRICT_COMPAT_FRAC:.0%}. A")
+print(f"      30% compile win there is at most 30%*{1-STRICT_COMPAT_FRAC:.0%} = "
+      f"{0.30*(1-STRICT_COMPAT_FRAC):.0%} of DAG wall.")
+print("  (b) RUNTIME instrumentation for every hermit-running test — INCLUDING")
+print(f"      strict_compat ({STRICT_COMPAT_FRAC:.0%}). If strict_compat is SYSCALL-BOUND, a debug/")
+print("      o0 hermit INFLATES the 47% (see the syscall_bound runtime ratio above) —")
+print("      that can DWARF any compile saving and flip the profile to a net loss.")
+print("So: report the profile's effect on BOTH the compile node AND on strict_compat's")
+print("runtime; do NOT claim a compile-% win as a DAG-wall-% win.")
+
 print("\nSemantic guard: release-o0 is behaviour-identical to release by construction")
 print("(only opt-level differs). See semantics.txt; 'debug' flips debug-assertions +")
 print("overflow-checks => NOT a valid determinism-test CI profile regardless of speed.")

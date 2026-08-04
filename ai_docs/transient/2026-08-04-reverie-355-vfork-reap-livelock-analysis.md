@@ -224,3 +224,86 @@ merged, `79517704`), and is pinned in hermit main `8f656b4d`. detcore_misc's 16-
 resolved. Per owner directive: keep the task open (do not close); tag `implemented`.
 
 Logs: `scratch/assiduous-vfork-logs/{detcore_misc-16wide-cpuwall.log,reverie-unit-direct-79517704.log,harness16-cpuwall.sh}`.
+
+---
+
+## SAME-HOST A/B — LIVE LIVELOCK CAPTURE (determinism-debugger, 2026-08-04)
+
+**Why this run exists.** Every classifier built this cycle was verified against *planted* or *inferred*
+cases. This is the missing piece: a real, captured burned-core livelock firing on the **UNFIXED**
+`d973a85b` binary, sitting next to a post-fix run on the **SAME harness, host, and load window**, so the
+`harness16-cpuwall.sh` livelock discriminator becomes **falsifiable** (it fires loudly on the true bug and
+is not inert) rather than merely plausible. Standalone shows nothing on either side — this is AT
+CONCURRENCY (16-wide).
+
+### Provenance verified FROM THE BINARY (not the config)
+- UNFIXED: `worktrees/vforkverify/hermit/target/debug/deps/tests_misc-ffb88577c4582b93` — embedded
+  string `reverie-2fc770f7a9c80803/d973a85`; `'vfork::' --list` → **2 tests** (not a 0-test silent build).
+  Build log `build-UNFIXED-d973a85b.log`: `reverie-pin = …?rev=d973a85b…`, `BUILD EXIT=0`.
+- FIXED: `scratch/assiduous-vfork-logs/tests_misc-FIXED-79517704` — embedded `reverie-…/7951770`;
+  `'vfork::' --list` → **2 tests**. This is the landed-pin (`79517704`) binary.
+
+### Harness (load-robust discriminator)
+`harness16-cpuwall.sh BIN ROUNDS LABEL`, `BUDGET=30 CONC=16`. Launches 16 concurrent
+`setsid BIN 'vfork::' --test-threads=1` per round; for any instance still alive at the 30 s budget it reads
+`/proc/PID/stat` utime+stime and classifies **LIVELOCK (CPU ≥ 70 % of wall = burned core)** vs
+**CONTENTION (CPU ≪ wall = merely descheduled/slow)**. Invariant-15 safe: it signals ONLY its own negative
+PGIDs. Both sides run back-to-back, sequentially (neither steals the other's cores), via `ab-driver.sh`.
+
+### Result — A/B, 20×16 = 320 runs each, same driver run (`ab-samehost-092710.log`)
+
+| Side | Reverie | Livelock | Contention | Runs | Rate | Load window (firing rounds) |
+|---|---|---|---|---|---|---|
+| **UNFIXED** | d973a85b | **62** | **0** | 320 | **19.4 %** | fires across load **54–193** (load-independent) |
+| **FIXED** | 79517704 | **1** | 0 | 320 | 0.31 % | single firing at load 122 |
+
+Then a **fixed-side confirmation** run, 40×16 = 640 runs (`fixed-confirm-093833.log`): **livelock=1,
+contention=0** — the single firing at load **239.71** (`cpu=22s/wall=30s`).
+
+### What this establishes
+1. **The discriminator is FALSIFIABLE and not inert.** On UNFIXED it fires **62 times / 320**, every firing
+   a burned core (`cpu≈wall≈30s`), and **contention=0 in all 320 runs** — it never mislabels a slow/contended
+   run as a livelock, even at load 193. On FIXED the same harness/binary is near-silent. A classifier that
+   fires 62× on the real bug and ≈0 on the fix is bound to the phenomenon, not to load or to the harness.
+2. **The captured live signature matches the source model.** Burned core (CPU time tracks wall to the budget
+   ceiling) = the unbounded `PTRACE_GETEVENTMSG`/ESRCH re-poll hot spin from the async notifier path,
+   exactly as analyzed above. The companion `capture-twoproc.sh`/`twoproc-capture-UNFIXED.log` showed the
+   per-instance shape: leader at `__futex_wait` while a supervisor thread burns a core.
+3. **The dominant, load-INDEPENDENT reap livelock is ELIMINATED by #355.** UNFIXED fires at loads as low as
+   **54**; FIXED does not reproduce that regime at all. 19.4 % → 0 across the low/moderate-load band.
+
+### HONEST RESIDUAL — do not read this as "livelock == 0"
+The fixed binary is **not provably zero**. Combined landed-pin (`79517704`) fixed-side runs, same harness
+family, same host:
+
+| Source | Livelock / Runs |
+|---|---|
+| assiduous-debugger (earlier) | 0 / 640 |
+| hermit-250 | 0 / 336 |
+| this A/B fixed side | 1 / 320 |
+| this fixed confirm | 1 / 640 |
+| **TOTAL** | **2 / 1936 ≈ 0.10 %** |
+
+So #355 takes the observed burned-core rate from **~19 % to ~0.1 % (≈ 190× reduction)**, but **two genuine
+burned-core firings survive** on the fixed binary (22–24 CPU-seconds accumulated over a 30 s budget — that is
+real on-core spinning; box load inflates *wall*, it cannot manufacture accumulated *CPU-time*, so this is not
+a contention artifact). Both survivors occurred at elevated load (122, 240) while UNFIXED fires down to
+load 54; with n=2 I do **not** claim a clean load-gate.
+
+**UNVERIFIED — what the residual IS.** #355 fixes the **async** notifier ESRCH-consume path only. A residual
+burned-core event could be (a) a rare tail of the same mechanism not fully covered under extreme scheduling
+pressure, or (b) a **distinct** detcore-side spin the reverie-side fix does not touch — plausibly related to
+`detcore-wait4-nondelivery-sigkilled-child` ("Face B"). I did not capture a fixed-side survivor's live
+signature (0.1 % is impractical to catch in a settle window this session). **Recommended follow-up:** a
+targeted capture (`capture-twoproc.sh` against the FIXED binary at high load, longer settle) to determine
+whether the 2/1936 survivor is the reap spin's tail or Face B — this directly informs whether lifting the
+`detcore_misc` KNOWN-FAILURE marking should be unconditional or carry a "<0.1 % load-tail residual" caveat.
+
+### Verdict for the marking
+The classifier is now **falsifiable, not plausible**: proven to fire on the real bug (62/320) and proven not
+inert (contention=0 across 320). #355 eliminates the dominant load-independent reap livelock (19 % → ~0 in
+the low/moderate-load band). A ~0.1 % burned-core residual persists on the fixed binary at high load, cause
+UNVERIFIED. This is the airtight A/B the marking-lift was waiting on, delivered **with** its residual stated
+rather than rounded to zero.
+
+Logs (this run): `scratch/assiduous-vfork-logs/{ab-driver.sh,ab-samehost-092710.log,fixed-confirm-093833.log,harness16-cpuwall.sh,capture-twoproc.sh,twoproc-capture-UNFIXED.log,build-UNFIXED-d973a85b.log}`.

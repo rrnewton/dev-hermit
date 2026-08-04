@@ -30,17 +30,22 @@ CC="$HERE/compile.csv"
 echo "profile,phase,wall_s,user_s,sys_s,cpu_s" > "$CC"
 
 # build <label> <target-subdir-name> <cargo-args...> ; extra env via BUILD_ENV
+# MUST invoke cargo from inside $SRC so hermit's rust-toolchain.toml (nightly)
+# applies — running from elsewhere picks the stable default and fails E0554
+# (#![feature] on stable). NO pipe on cargo (a pipe masks its exit status).
 build() {
   local label=$1 sub=$2; shift 2
   local td=$HERE/target-$label
-  local tf; tf="$(mktemp)"
+  local tf blog; tf="$(mktemp)"; blog="$HERE/build-$label.log"
   echo "=== building hermit ($label) -> $td @ ${SHA:0:12} ==="
   # from-scratch build into a fresh per-label target dir = full honest compile cost.
-  env ${BUILD_ENV:-} CARGO_TARGET_DIR="$td" \
-    /usr/bin/time -f '%e %U %S' -o "$tf" -- \
-    with-proxy cargo build --locked --manifest-path "$SRC/Cargo.toml" \
-    --bin hermit "$@" 2>&1 | tail -3 || { echo "BUILD FAILED ($label)"; cat "$tf"; exit 4; }
-  awk -v p="$label" '{printf "%s,compile,%s,%s,%s,%.3f\n", p,$1,$2,$3,$2+$3}' "$tf" >> "$CC"
+  ( cd "$SRC" && env ${BUILD_ENV:-} CARGO_TARGET_DIR="$td" \
+      /usr/bin/time -f '%e %U %S' -o "$tf" -- \
+      with-proxy cargo build --locked --bin hermit "$@" ) > "$blog" 2>&1
+  local rc=$?
+  if [ $rc -ne 0 ]; then echo "BUILD FAILED ($label) rc=$rc — tail:"; tail -8 "$blog"; rm -f "$tf"; exit 4; fi
+  # skip the '/usr/bin/time: Command exited...' line; only the numeric timing row.
+  awk -v p="$label" '$1 ~ /^[0-9.]+$/ && NF>=3 {printf "%s,compile,%s,%s,%s,%.3f\n", p,$1,$2,$3,$2+$3}' "$tf" >> "$CC"
   rm -f "$tf"
   echo "  compile: $(tail -1 "$CC")"
 }

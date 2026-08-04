@@ -1,7 +1,4 @@
 profile,phase,wall_s,user_s,sys_s,cpu_s
-release,compile,Command,exited,with,0.000
-release,compile,43.01,238.76,25.49,264.250
-release-o0,compile,Command,exited,with,0.000
-release-o0,compile,20.00,90.66,12.56,103.220
-debug,compile,Command,exited,with,0.000
-debug,compile,21.40,107.62,14.91,122.530
+release,compile,83.93,418.97,18.56,437.530
+release-o0,compile,29.11,113.72,15.39,129.110
+debug,compile,47.09,164.73,27.13,191.860

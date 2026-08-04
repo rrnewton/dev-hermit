@@ -38,6 +38,44 @@ The genuine ptrace-only residues are **not** syscall interception, in all three:
   *instruction*-interception surface, not syscalls.
 - **Arbitrary signal delivery** → needs an in-guest signal shim.
 
+## Reverie core-abstraction impact — CHANGE vs EXTEND (read before landing any follow-on)
+
+**This enumeration is descriptive: it changes nothing.** But it must not hide the
+distinction the owner cares about. The *design direction it endorses* splits into
+two categories under the Reverie API Policy, and they cut in opposite directions:
+
+**CHANGES a Reverie core abstraction — requires owner discussion BEFORE it lands
+(not additive):**
+
+1. **Syscall-interception model.** Replacing ptrace syscall-discovery with a
+   SIGSYS→post-`sigreturn` in-guest handler plus a trusted syscall gate changes the
+   *syscall interception/injection semantics* — a named core abstraction.
+2. **Lifecycle ownership / container responsibilities.** Replacing ptrace
+   fork/exec/exit/wait observation with pidfd/subreaper/wait + guest RPC changes
+   *lifecycle ownership* — a named core abstraction.
+3. **Tool hosting location + guest register/memory contracts (LiteInst
+   Mode-B→Mode-A).** Moving the Tool in-guest and reading RCB via in-guest `rdpmc`
+   bracketing changes where the Tool runs and the guest register contract. (The
+   `rdpmc` primitive itself was additive, PR #363; *relying on it for scheduling*
+   is the core change.)
+
+**EXTENDS with new event types / activates dormant in-tree code — additive, report
+loudly, no core-abstraction change:**
+
+4. **Reverie ptrace-stats event types** (`PtraceSyscallEntry/Exit`,
+   `PtraceRawSyscallRedirect`, `PtraceInstalledSigillDispatch/Marker`) — pure
+   additive measurement; wiring Hermit to increment them is additive.
+5. **Wiring the existing in-tree e9patch in-guest AOT fast path** insofar as it
+   activates dormant code against existing abstractions — additive; **except** the
+   `HybridPtrace` *lifecycle-owner* portion, which lands in category (2) above.
+
+**Bottom line for the owner:** the analysis proposes NO change today, but the path
+to "no ptrace needed" it points at **does change the syscall-interception model and
+lifecycle ownership (categories 1–2) and the Tool/Guest execution + register
+contracts (category 3)** — all requiring owner discussion before implementation.
+It is not a pure additive-event-type extension. (The `api-extension` framing does
+not apply cleanly; the load-bearing follow-ons are core-abstraction changes.)
+
 ## Two accounting boundaries (kept honest in both directions)
 
 These come from the SaBRe half and are applied to all three backends so the
