@@ -50,6 +50,11 @@ const DEFAULT_WARN_THRESHOLD: usize = 10;
 const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
 const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
+// Owner-established 2026-08-04 floor: this commit made the merge-gate-v2
+// transition fail closed. A green base before it creates heads that current
+// branch protection refuses, so it is not a usable rebase base.
+const CURRENT_GATE_SCHEMA: &str = "merge-gate-v2";
+const CURRENT_GATE_SCHEMA_FLOOR: &str = "c369be3ff8e2c751a313b27979fa8f470dafecf0";
 const ROOT_HELP: &str = r#"Typed front door for dev-hermit CI state and operations
 
 Usage: ci-hub <COMMAND>
@@ -63,7 +68,7 @@ START HERE
 HISTORY & FORENSICS
   Ask what is healthy, which branch commit was last green, and where failure began.
   main-health             Query current main-branch GitHub workflow health
-  newest-green            Find the newest locally-green commit [default: --branch main]
+  newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
   local-history           Inspect local validate receipts across slots and worktrees
@@ -127,8 +132,9 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
      ./ci-hub/ci-hub newest-green
      ./ci-hub/ci-hub first-bad CELL_OR_GATE
    Receipts live under ignored/ci-hub and identify slot, SHA, profile, dirty
-   state, result, wall seconds, and CPU seconds. Newest-green reports whether
-   its guarantee is full or selected; first-bad reports unobserved commit gaps.
+   state, result, wall seconds, and CPU seconds. Run newest-green immediately
+   before each rebase; it rejects green evidence below the current gate-schema
+   floor. First-bad reports unobserved commit gaps.
 
 4. Treat post-land obligations as durable work, not notification delivery:
      ./ci-hub/ci-hub obligations --actionable
@@ -3327,6 +3333,21 @@ fn branch_history(repo: &Path, branch_ref: &str) -> Result<Vec<String>, CiHubErr
     Ok(commits)
 }
 
+fn history_at_or_after_gate_floor(
+    mut commits: Vec<String>,
+    branch_ref: &str,
+    gate_floor: &str,
+) -> Result<Vec<String>, CiHubError> {
+    let Some(floor_index) = commits.iter().position(|commit| commit == gate_floor) else {
+        return Err(CiHubError::HistoryQuery(format!(
+            "{branch_ref} does not contain required {CURRENT_GATE_SCHEMA} first-parent floor \
+             {gate_floor}; refusing to guess a usable rebase base"
+        )));
+    };
+    commits.truncate(floor_index + 1);
+    Ok(commits)
+}
+
 fn ledger_stamp(path: &Path) -> Result<(u64, u128), CiHubError> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
@@ -3481,6 +3502,10 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         report.green.coverage.as_str(),
     );
     println!(
+        "GATE-SCHEMA {} floor={} eligibility=at-or-after",
+        report.gate_schema, report.gate_schema_floor,
+    );
+    println!(
         "BRANCH {} tip={} commits-after-green={} recorded={} no-record={} cache={}",
         report.branch,
         report.branch_tip,
@@ -3505,7 +3530,11 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     if !args.query.no_fetch {
         fetch_history_branch(&repo, &args.query.branch)?;
     }
-    let commits = branch_history(&repo, &branch_ref)?;
+    let commits = history_at_or_after_gate_floor(
+        branch_history(&repo, &branch_ref)?,
+        &branch_ref,
+        CURRENT_GATE_SCHEMA_FLOOR,
+    )?;
     let branch_tip = commits.first().expect("nonempty history");
     let ledger = ledger_path(root, &args.query.ledger);
     let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
@@ -3517,6 +3546,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
                 &args.query.branch,
                 &branch_ref,
                 branch_tip,
+                CURRENT_GATE_SCHEMA_FLOOR,
                 &ledger,
                 ledger_len,
                 ledger_modified_ns,
@@ -3529,13 +3559,19 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
 
     let mut rows = load_ledger_rows(&ledger)?;
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows).newest_green(&args.query.branch, &branch_ref) {
+    match HistoryQueryEngine::new(commits, rows).newest_green(
+        &args.query.branch,
+        &branch_ref,
+        CURRENT_GATE_SCHEMA,
+        CURRENT_GATE_SCHEMA_FLOOR,
+    ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 3,
+                schema_version: 4,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
+                gate_schema_floor: report.gate_schema_floor.clone(),
                 ledger_path: ledger.display().to_string(),
                 ledger_len,
                 ledger_modified_ns,
@@ -3548,25 +3584,30 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
         NewestGreenOutcome::FailedOnly {
             branch_tip,
             recorded,
+            commits_in_range,
         } => {
             if args.query.json {
                 println!(
                     "{}",
-                    serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "trustworthy_recorded_commits": recorded})
+                    serde_json::json!({"schema_version": 2, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": CURRENT_GATE_SCHEMA, "gate_schema_floor": CURRENT_GATE_SCHEMA_FLOOR, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
                 );
             } else {
-                println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} -- {recorded} branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch);
+                println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} gate={CURRENT_GATE_SCHEMA} floor={CURRENT_GATE_SCHEMA_FLOOR} window-commits={commits_in_range} full-green=0 -- {recorded} eligible branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch);
             }
             Ok(3)
         }
-        NewestGreenOutcome::NoEvidence { branch_tip } => {
+        NewestGreenOutcome::NoEvidence {
+            branch_tip,
+            commits_in_range,
+            recorded,
+        } => {
             if args.query.json {
                 println!(
                     "{}",
-                    serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip})
+                    serde_json::json!({"schema_version": 2, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": CURRENT_GATE_SCHEMA, "gate_schema_floor": CURRENT_GATE_SCHEMA_FLOOR, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
                 );
             } else {
-                println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} -- no clean commit-anchored branch validation record exists", args.query.branch);
+                println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} gate={CURRENT_GATE_SCHEMA} floor={CURRENT_GATE_SCHEMA_FLOOR} window-commits={commits_in_range} trustworthy-recorded={recorded} full-green=0 -- no qualifying at-or-after-floor clean commit-anchored branch validation record exists", args.query.branch);
             }
             Ok(4)
         }
@@ -3756,7 +3797,8 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
 }
 
 /// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
-/// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 NOT-VALIDATED.
+/// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 for every
+/// re-measurement state (TRUNCATED, NEEDS-RERUN, or NOT-VALIDATED).
 fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
@@ -3806,6 +3848,18 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                     "# validate FAILED {} -- a clean full-coverage run exists but did NOT pass ({} record(s)); this commit is known-failing",
                     assessment.sha,
                     assessment.disqualified.len(),
+                );
+            }
+            validate_status::Verdict::Truncated => {
+                println!(
+                    "# validate TRUNCATED {} -- a run ended before producing a genuine failing gate; re-dispatch required",
+                    assessment.sha,
+                );
+            }
+            validate_status::Verdict::NeedsRerun => {
+                println!(
+                    "# validate NEEDS-RERUN {} -- red evidence lacks complete solo execution conditions or is known-flaky/contended; rerun solo at -j 4",
+                    assessment.sha,
                 );
             }
             validate_status::Verdict::NotValidated => {
@@ -4327,6 +4381,28 @@ mod tests {
         assert!(args.query.no_fetch);
         assert_eq!(args.query.branch, "main");
         assert!(HubCommand::FirstBad(args).cost_spec().is_some());
+    }
+
+    #[test]
+    fn gate_floor_excludes_older_green_bases() {
+        let commits = vec!["tip".into(), "floor".into(), "old-green".into()];
+        assert_eq!(
+            history_at_or_after_gate_floor(commits, "origin/main", "floor").unwrap(),
+            vec!["tip", "floor"]
+        );
+    }
+
+    #[test]
+    fn missing_gate_floor_refuses_instead_of_guessing() {
+        let error = history_at_or_after_gate_floor(
+            vec!["tip".into(), "old-green".into()],
+            "origin/main",
+            "floor",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("does not contain required"));
+        assert!(error.contains("refusing to guess"));
     }
 
     #[test]
