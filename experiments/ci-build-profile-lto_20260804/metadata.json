@@ -1,0 +1,27 @@
+{
+  "experiment": "ci-build-profile-lto",
+  "question": "For the CI release profile, compare full-LTO vs thin-LTO vs no-LTO on compile wall, test wall, total, and runtime delta. Only the total decides. Semantic guard: debug-assertions / overflow-checks / panic strategy must be unchanged.",
+  "date_utc": "2026-08-04",
+  "host_short": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "nproc": 316,
+  "mem_total_gb": 754,
+  "toolchain": "nightly (rust-toolchain.toml channel=nightly)",
+  "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+  "rustc_version": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "shas": {
+    "hermit": "b384187efd725c504d69281f043d442325d4fcb2",
+    "reverie": "114b3dfcf5fc5fb8cee10877944b0ed7be529522",
+    "parent": "472d74d1190c94d2de55d9907f6224687ed06dba"
+  },
+  "unit_under_test": "cargo build --release -p hermit --features third-party-backends",
+  "unit_rationale": "Exactly the release build validate.sh runs for the release-consuming CI jobs (strict_compat + backend-parity). This is the release compile node whose LTO cost the owner asked about.",
+  "knob_varied": "CARGO_PROFILE_RELEASE_LTO in {false (=no-lto=current default), thin, fat (=full)}",
+  "semantic_guard": "CARGO_PROFILE_RELEASE_LTO overrides ONLY profile.release.lto. debug-assertions=false, overflow-checks=false, panic=unwind are the release-profile defaults and are NOT touched by this env var, so they are identical across all three rows. LTO is a codegen/link-time optimization and by definition cannot change these determinism-relevant knobs.",
+  "current_profile_config": "hermit workspace has NO [profile.*] stanzas in any Cargo.toml, no .cargo/config, and no CARGO_PROFILE_RELEASE_LTO / RUSTFLAGS LTO in any of the 9 CI workflows. Therefore the CI release profile IS cargo's default release profile, whose lto = false. There is no full-LTO in the current CI build.",
+  "jobs": 32,
+  "cpuquota": "3200%",
+  "boxing": "systemd-run --user --wait --collect (asks systemd for a scope = still boxed); one clean build per row, run serially",
+  "producer_script": "measure_lto_compile.sh",
+  "raw_results": "compile-lto.csv"
+}

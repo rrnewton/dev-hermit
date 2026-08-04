@@ -129,6 +129,13 @@ ACTIVE.md
 /.landing-lock.queue
 /.landing-lock.queue.*
 
+# validate-lock box-exclusive admission runtime state (see ci-hub/, validate-lock
+# gate). Same shape as the landing mutex above. Machine-local, never committed.
+/.validate-lock.guard
+/.validate-lock.guard.*
+/.validate-lock.queue
+/.validate-lock.queue.*
+
 # safe-ci-dag-runner runtime scratch (per-node profiles). Machine-local, never committed.
 /.safe-ci-dag-runner/
 

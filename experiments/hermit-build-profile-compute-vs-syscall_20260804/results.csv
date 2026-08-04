@@ -7,3 +7,16 @@ release,syscall_bound,hermit,unpinned,-,4,1717.80,572.440
 release,syscall_bound,hermit,unpinned,-,5,991.81,536.790
 release,syscall_bound,hermit,pinned1,picked,1,520.23,515.160
 release,syscall_bound,hermit,pinned1,picked,2,514.35,512.750
+release,syscall_bound,hermit,pinned1,picked,3,506.83,505.930
+release,syscall_bound,hermit,pinned1,picked,4,516.76,513.500
+release,syscall_bound,hermit,pinned1,picked,5,513.74,513.530
+release,compute_bound,hermit,unpinned,-,1,79.80,79.790
+release,compute_bound,hermit,unpinned,-,2,79.44,79.420
+release,compute_bound,hermit,unpinned,-,3,79.62,79.510
+release,compute_bound,hermit,unpinned,-,4,85.52,85.380
+release,compute_bound,hermit,unpinned,-,5,90.74,90.610
+release,compute_bound,hermit,pinned1,picked,1,79.93,79.910
+release,compute_bound,hermit,pinned1,picked,2,79.77,79.760
+release,compute_bound,hermit,pinned1,picked,3,81.75,80.290
+release,compute_bound,hermit,pinned1,picked,4,79.87,79.850
+release,compute_bound,hermit,pinned1,picked,5,79.36,79.340

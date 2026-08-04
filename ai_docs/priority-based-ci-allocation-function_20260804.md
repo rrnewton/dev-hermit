@@ -96,6 +96,65 @@ C is the meta-justification: because width is exhausted, this **order** is the e
 - Does not rank predating heads at all — it converts them to rebase work, which is the real
   precondition for them to ever become admissible.
 
+## Tonight's inputs, sharpened (2026-08-04, three measured inputs → three contributions)
+
+The three inputs handed this session re-key the derivation on the **reverie pin** and give the gate
+a *quantitative* justification (a livelock ratio) it previously argued only qualitatively. The
+lexicographic structure is unchanged; the inputs make it tighter. Each input contributes exactly one
+thing:
+
+### Input 1 — the reverie pin split → the ELIGIBILITY GATE, now quantified
+
+**Measured (this session):** of **73 open PRs, 59 carry the unfixed reverie pin `d973a85b`** and
+**14 carry the fix**. The unfixed pin's `detcore_misc` livelock rate is **19.4 %**; with the fix it
+is **0.10 %** — a **~194× differential**.
+
+**Contribution:** this is the gate, and the 194× ratio is *why the gate is not optional*. A PR on the
+unfixed pin does not "waste a slot" neutrally — it converts a scarce admission into a 19.4 %-chance
+livelock, i.e. **negative** expected value, not zero. The remedy is a **pin BUMP, not capacity**:
+handing these 59 more hosted slots cannot help them: they will livelock ~1 in 5 times regardless of
+how much capacity they get. Only rebasing onto the fix moves them. So the gate **removes 59/73 from
+contention up front** and emits each as an actionable *bump* signal — capacity spent on them is worse
+than idle. This aligns with the earlier anchor-split (Input A): anchor-OK is schema-admissibility;
+pin-fixed is livelock-freedom; **eligibility requires BOTH**, and the pin is the binding one tonight
+(59 fail it vs 56 predating the anchor).
+
+### Input 2 — admission caps at 8; portable is 90 % of it → the COST that makes ORDER the lever
+
+**Measured:** hosted admission caps at **8 concurrent**, and **portable runs are 35/39 = 90 % of
+per-push admissions**.
+
+**Contribution:** this fixes *where* the scarce resource actually is and *how* scarce. The contested
+resource is not "CI" in the abstract — it is the **8-wide portable admission window**, which one lane
+saturates 90 % of. That is what makes losing the priority race expensive (Input B's 22–51 min queue
+wait is *this* window filling). Because the window is narrow and one-lane-dominated, **admission
+order into it is the entire allocation control** — there is no slack to absorb a bad ordering.
+
+### Input 3 — outer DAG ceiling 4.24×, width exhausted → ORDER is the ONLY lever
+
+**Measured:** outer DAG parallelism tops out at **4.24×**
+([[two-level-parallelism-outer-times-inner-and-serial-tail]]); width is exhausted.
+
+**Contribution:** this closes the escape hatch. We cannot widen our way out of the 8-wide window —
+the DAG itself caps at 4.24× and the serial spine (Input C) is uncuttable. With width fixed,
+**ordering is the only remaining degree of freedom**, which is precisely what a priority function
+sets. Inputs 2 and 3 together prove the lever is *order*; Input 1 sets *who is even eligible* to be
+ordered.
+
+### Restated function, verified both directions with N
+
+The function is unchanged: **TIER-0 gate** (anchor-OK **AND** reverie-pin-fixed) → **KEY-1** batch →
+**KEY-2** closeness-to-landing → **KEY-3** head-stability, plus **AGING**.
+
+- **Fires:** a pin-fixed, batch, near-landing PR wins every key; the 59 unfixed-pin PRs are gated out
+  before ranking (admitting one is *negative*-EV at 19.4 % livelock). Proven by TIER-0 + KEY-2.
+- **Non-starvation, N STATED:** AGING reserves ≥1 of the 8 admission slots per cycle for the
+  **oldest-waiting eligible** PR. The eligible tail is bounded by **Input 1's 14 pin-fixed PRs**
+  (of which ~10 are also anchor-OK and ready today); so **N = 14** (≤ 14 admissible, ~10 ready). With
+  batch size *b*, every eligible PR gets a turn within **≤ (N − b) aging cycles** — the low-priority
+  tail is delayed, never starved. A scheduler that starved this tail would be disabled; AGING is why
+  it is not.
+
 ## Coordination
 
 Admission-limit measurement is owned by **hermit-ghdag**; the Input B numbers above carry their own
