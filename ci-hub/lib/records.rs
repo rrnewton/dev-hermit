@@ -121,6 +121,10 @@ pub struct HistoryRow {
     pub tree_dirty: Option<bool>,
     #[serde(default)]
     pub result: Option<String>,
+    /// Process exit from the validation driver. A signal/cancellation exit can
+    /// truncate a run after only passing gates; it is not a product failure.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
     /// Tests EXECUTED per the run's own test-runner banners. `None` = unknown (no
     /// banner in the log), distinct from `Some(0)` = a demonstrably inert green
     /// (a `--features`-gated build that compiled the tests out). A green carries
@@ -148,8 +152,30 @@ pub struct HistoryRow {
     pub full_coverage: Option<bool>,
     #[serde(default)]
     pub checks: Option<u64>,
+    /// Explicit completed/expected outer-gate counts. `checks` is retained for
+    /// old rows; new failure evidence carries both names so completeness is
+    /// observable rather than inferred from a profile name.
+    #[serde(default)]
+    pub gates_run: Option<u64>,
+    #[serde(default)]
+    pub gates_expected: Option<u64>,
     #[serde(default)]
     pub failures: Option<u64>,
+    /// `-j` passed to the CI DAG lane, and the number of other validates
+    /// observed concurrently. A failure without these conditions cannot be
+    /// promoted to a durable known-bad verdict.
+    #[serde(default)]
+    pub dag_jobs: Option<u64>,
+    #[serde(default)]
+    pub concurrent_validates: Option<u64>,
+    /// The failed cell was in the measured-flaky registry at run time. Such a
+    /// red needs a solo `-j 4` confirmation before it is durable.
+    #[serde(default)]
+    pub known_flaky_failure: Option<bool>,
+    /// This row is the required solo `-j 4` confirmation of an earlier
+    /// contended or known-flaky red.
+    #[serde(default)]
+    pub solo_rerun_confirmation: Option<bool>,
     #[serde(default)]
     pub real_seconds: Option<f64>,
     #[serde(default)]
@@ -212,6 +238,14 @@ pub struct GateHistoryRow {
     /// which emitted it. Ledger-native outer gates leave this unset.
     #[serde(default)]
     pub source_node: Option<String>,
+    /// `outer_gate` when the named gate itself failed; `lane_substep` when the
+    /// outer gate merely carried a failing DAG node.
+    #[serde(default)]
+    pub failure_origin: Option<String>,
+    /// Canonical DAG node names for a lane-carried failure. Empty is not valid
+    /// evidence when `failure_origin == lane_substep`.
+    #[serde(default)]
+    pub failed_substeps: Vec<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

@@ -93,6 +93,12 @@ pub enum Verdict {
     /// No PASS, but a clean full-coverage record that FAILED/killed/timed out —
     /// a known-bad commit, distinct and more informative than "no record".
     FailedOnRecord,
+    /// The run ended before all planned gates completed. Nothing observed
+    /// failed, so this is an absence of a result and must be re-dispatched.
+    Truncated,
+    /// A red exists, but its execution conditions are missing, contended, or
+    /// known-flaky and lack the required solo `-j 4` confirmation.
+    NeedsRerun,
     /// No qualifying record: none at all, or only dirty/subset/unanchored runs.
     NotValidated,
 }
@@ -104,7 +110,7 @@ impl Verdict {
         match self {
             Verdict::Validated => 0,
             Verdict::FailedOnRecord => 3,
-            Verdict::NotValidated => 4,
+            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NotValidated => 4,
         }
     }
 
@@ -112,6 +118,8 @@ impl Verdict {
         match self {
             Verdict::Validated => "VALIDATED",
             Verdict::FailedOnRecord => "FAILED",
+            Verdict::Truncated => "TRUNCATED",
+            Verdict::NeedsRerun => "NEEDS-RERUN",
             Verdict::NotValidated => "NOT-VALIDATED",
         }
     }
@@ -239,14 +247,80 @@ pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
     }
 }
 
-/// A clean full-coverage run for the commit that is a genuine FAILURE (a
-/// known-bad commit). Only explicit product failure/timeout results qualify.
-/// Killed, cancelled, missing, unknown, and explicit `no_result` records are the
-/// absence of a verdict: they fall through to `NotValidated` (exit 4 =
-/// re-dispatch), never `FailedOnRecord` (exit 3 = known failing).
-fn is_clean_full_nonpass(row: &HistoryRow, sha: &str) -> bool {
-    is_clean_full_coverage(row, sha)
-        && matches!(row.result.as_deref(), Some("fail" | "failed" | "timeout"))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureDisposition {
+    NotFailure,
+    Truncated,
+    NeedsRerun,
+    Failed,
+}
+
+fn gate_is_red(gate: &crate::records::GateHistoryRow) -> bool {
+    matches!(gate.result.as_deref(), Some("fail" | "failed" | "timeout"))
+        || matches!(gate.kind.as_deref(), Some("fail" | "failed" | "timeout"))
+}
+
+/// Interpret one red ledger row using the conditions carried with it.
+///
+/// A bare `result=fail` is deliberately insufficient. Durable FAILED requires
+/// a complete outer-gate run, a real failing gate with its origin recorded, and
+/// the width/concurrency/flake conditions. A contended or known-flaky red is a
+/// rerun request until a solo `-j 4` confirmation exists.
+pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
+    if !is_clean_full_coverage(row, sha)
+        || !matches!(row.result.as_deref(), Some("fail" | "failed" | "timeout"))
+    {
+        return FailureDisposition::NotFailure;
+    }
+
+    let gates_run = row.gates_run.or(row.checks);
+    let failed_gates: Vec<_> = row.gates.iter().filter(|gate| gate_is_red(gate)).collect();
+
+    // The live false-red shape: Ctrl-C/termination after only passing gates.
+    // Explicit planned counts supersede this compatibility recognition once
+    // the producer carries them.
+    if row.exit_code == Some(130)
+        || row
+            .gates_expected
+            .zip(gates_run)
+            .is_some_and(|(expected, ran)| ran < expected)
+        || (row.failures == Some(0) && failed_gates.is_empty())
+    {
+        return FailureDisposition::Truncated;
+    }
+    // Missing completeness or execution conditions cannot prove a defect. Old
+    // reds therefore become re-measurement requests instead of permanent
+    // condemnations when the schema tightens.
+    let complete = row
+        .gates_expected
+        .zip(gates_run)
+        .is_some_and(|(expected, ran)| expected > 0 && ran >= expected);
+    let conditions_present = row.dag_jobs.is_some()
+        && row.concurrent_validates.is_some()
+        && row.known_flaky_failure.is_some();
+    let origin_bound = !failed_gates.is_empty()
+        && failed_gates
+            .iter()
+            .all(|gate| match gate.failure_origin.as_deref() {
+                Some("outer_gate") => true,
+                Some("lane_substep") => !gate.failed_substeps.is_empty(),
+                _ => false,
+            });
+    if !complete || !conditions_present || !origin_bound {
+        return FailureDisposition::NeedsRerun;
+    }
+
+    let contended = row.concurrent_validates.is_some_and(|count| count > 0);
+    let flaky = row.known_flaky_failure == Some(true);
+    if contended || flaky {
+        let confirmed = row.solo_rerun_confirmation == Some(true)
+            && row.dag_jobs == Some(4)
+            && row.concurrent_validates == Some(0);
+        if !confirmed {
+            return FailureDisposition::NeedsRerun;
+        }
+    }
+    FailureDisposition::Failed
 }
 
 /// The outcome of assessing a commit against the ledger.
@@ -265,7 +339,9 @@ pub struct Assessment {
 pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
     let mut qualifying = Vec::new();
     let mut disqualified = Vec::new();
-    let mut saw_clean_full_nonpass = false;
+    let mut saw_failed = false;
+    let mut saw_needs_rerun = false;
+    let mut saw_truncated = false;
     for row in rows {
         if row.commit.as_deref() != Some(sha) {
             continue;
@@ -273,16 +349,23 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
         if is_clean_full_pass(row, sha) {
             qualifying.push(row.clone());
         } else {
-            if is_clean_full_nonpass(row, sha) {
-                saw_clean_full_nonpass = true;
+            match failure_disposition(row, sha) {
+                FailureDisposition::Failed => saw_failed = true,
+                FailureDisposition::NeedsRerun => saw_needs_rerun = true,
+                FailureDisposition::Truncated => saw_truncated = true,
+                FailureDisposition::NotFailure => {}
             }
             disqualified.push(row.clone());
         }
     }
     let verdict = if !qualifying.is_empty() {
         Verdict::Validated
-    } else if saw_clean_full_nonpass {
+    } else if saw_failed {
         Verdict::FailedOnRecord
+    } else if saw_needs_rerun {
+        Verdict::NeedsRerun
+    } else if saw_truncated {
+        Verdict::Truncated
     } else {
         Verdict::NotValidated
     };
@@ -383,6 +466,20 @@ mod tests {
         ))
     }
 
+    fn complete_failure(sha: &str) -> HistoryRow {
+        row(&format!(
+            r#"{{"schema_version":6,"profile":"full","selection_mode":"full",
+                "commit":"{sha}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":5,"gates_run":5,
+                "gates_expected":5,"failures":1,"dag_jobs":4,
+                "concurrent_validates":0,"known_flaky_failure":false,
+                "solo_rerun_confirmation":false,
+                "gates":[{{"name":"portable CI DAG lane","result":"fail",
+                    "exit_code":1,"failure_origin":"lane_substep",
+                    "failed_substeps":["test.detcore_misc"]}}]}}"#
+        ))
+    }
+
     /// A SATISFIED per-node coverage obligation: a nonempty planned set, every
     /// planned test node executed, none inert, none absent — the shape a real
     /// full run stamps. `sat_coverage(13)` matches the measured 13-node lane set.
@@ -438,11 +535,66 @@ mod tests {
 
     #[test]
     fn clean_full_failure_is_failed_not_missing() {
-        let mut r = clean_full_pass(PASS_SHA);
-        r.result = Some("fail".into());
+        let r = complete_failure(PASS_SHA);
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::FailedOnRecord);
         assert_eq!(a.verdict.exit_code(), 3);
+    }
+
+    #[test]
+    fn truncated_failure_record_is_not_failed() {
+        // Exact live shape from 3a404879 run 2: the driver was terminated after
+        // two passing gates. A bare `result=fail` must not condemn the commit.
+        let r = row(&format!(
+            r#"{{"schema_version":3,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":130,"checks":2,"failures":0,
+                "gates":[
+                    {{"name":"Initialize repository submodules","result":"pass","exit_code":0}},
+                    {{"name":"Centralized test manifest and inventory","result":"pass","exit_code":0}}
+                ]}}"#
+        ));
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn contended_or_known_flaky_red_needs_rerun() {
+        let mut contended = complete_failure(PASS_SHA);
+        contended.concurrent_validates = Some(1);
+        assert_eq!(assess(&[contended], PASS_SHA).verdict, Verdict::NeedsRerun);
+
+        let mut flaky = complete_failure(PASS_SHA);
+        flaky.known_flaky_failure = Some(true);
+        assert_eq!(
+            assess(&[flaky.clone()], PASS_SHA).verdict,
+            Verdict::NeedsRerun
+        );
+
+        flaky.solo_rerun_confirmation = Some(true);
+        assert_eq!(assess(&[flaky], PASS_SHA).verdict, Verdict::FailedOnRecord);
+    }
+
+    #[test]
+    fn conditionless_red_needs_rerun_instead_of_failed() {
+        let mut r = complete_failure(PASS_SHA);
+        r.gates_expected = None;
+        r.dag_jobs = None;
+        r.concurrent_validates = None;
+        r.known_flaky_failure = None;
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NeedsRerun);
+    }
+
+    #[test]
+    fn complete_red_without_bound_failure_origin_needs_rerun() {
+        let mut r = complete_failure(PASS_SHA);
+        r.gates[0].failure_origin = None;
+        r.gates[0].failed_substeps.clear();
+        assert_eq!(assess(&[r.clone()], PASS_SHA).verdict, Verdict::NeedsRerun);
+
+        r.gates.clear();
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NeedsRerun);
     }
 
     #[test]
