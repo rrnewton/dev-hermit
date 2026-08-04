@@ -209,3 +209,145 @@ evidence. Derive the safe concurrency against total cores before fanning out rec
 runs are a recurring bug class). The Hermit Merge Gate must execute `ci-hub/validation/verify_receipt.sh`
 from an immutable parent commit, never from the pull request under test — a PR-controlled verifier can
 authorize itself even when the workflow YAML is separately pinned.
+
+## Canonical Layout — full directory tree
+
+Predicate in AGENTS.md: every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` where
+`<slot>` is a named agent (`kvm`, `dbi`, `sabre`, `e9patch`, `liteinst`, `ci`, `coord`, `lander`, `opt` —
+`hermit-` prefix stripped) or a generic `slotNN`. Nested layout v3: one slot per agent, exactly one mutating
+owner. Old flat layout (`worktrees/slotNN` + sibling `worktrees_reverie/slotNN`) and primary-nested
+`hermit/.worktrees/…` scratch trees are deprecated — never create either.
+
+```text
+~/work/dev-hermit/
+|-- AGENTS.md ; CLAUDE.md -> AGENTS.md
+|-- .orc/plugins/hermit-dev/       # coordinator policy plugin
+|-- .gitmodules
+|-- hermit/ reverie/ liteinst2/    # primaries; coordinator only
+|-- agent-utils/                    # optional shared tooling; exact pin, on demand
+|-- worktree-state.json             # machine-local slot->owner map (gitignored)
+|-- worktrees/
+|   |-- ACTIVE.md                   # human notes + script-managed slot table (gitignored)
+|   |-- ARCHIVED.md                 # append-only completed-slot history (durable)
+|   |-- kvm/{hermit,reverie,liteinst2}/  # named-agent slot; dbi/ slot01/ ... up to 12 active + 5 parked
+|-- ai_docs/                        # durable research + handoffs
+|-- experiments/                    # durable reproducible evidence
+`-- scratch/                        # ignored transient material
+```
+
+Physical worktrees, build output, `worktree-state.json`, and `ACTIVE.md` are machine-local and gitignored;
+`ARCHIVED.md` is durable. `ai_docs/transient/2026-07-27-worktree-management-map.md` is the authoritative index
+of every place worktree information lives — read it before any worktree operation.
+
+## Vocabulary — full glossary
+
+- **Parent**: `~/work/dev-hermit/`, the harness repo holding gitlinks and workspace state.
+- **Primary checkout**: `~/work/dev-hermit/{hermit,reverie,liteinst2}/`. Coordinator-owned; integration, pinning, inspection, cache donation.
+- **Submodule**: a repo the parent records as an exact gitlink SHA — a commit, not a branch, not uncommitted contents.
+- **Slot**: one opaque paired workspace under `worktrees/`. **Active worktree**: assigned to live work and in `ACTIVE.md`. **Parked slot**: clean, detached, retained for cache reuse, omitted from `ACTIVE.md`. **Legacy slot**: pre-policy non-canonical worktree in `ACTIVE.md`; may finish its task but must be removed, not reused.
+- **Product worktree**: one nested submodule checkout inside a slot, e.g. `slot02/hermit`.
+- **Feature branch**: task-specific branch in one product worktree; slot names are unrelated to branch names.
+- **Hermit base**: current `rrnewton/hermit:main`, unless a task names another reviewed base. **Hermit upstream**: `facebookexperimental/hermit`, public reference — not the default landing target.
+- **Shared slot**: active slot used by multiple research-only agents, or mutating agents with explicitly disjoint file ownership in `ACTIVE.md`. No two agents may edit the same file concurrently.
+- **Handoff SHA**: the exact commit tested and offered for integration. A branch name alone is not evidence.
+- **3pai agent sandbox**: agent execution environment identified at runtime by `META_3PAI_*` vars and the `3pai_sandbox.slice` cgroup; file/network policy enforced by BpfJailer.
+
+## Product Vision — full statement
+
+`goal-hermit-v2`: a robust deterministic execution engine whose `run`/`record` modes support arbitrary
+real-world binaries, whose chaos mode exposes concurrency races, whose schedule search localizes races to
+events and stack traces, whose production backend avoids ptrace overhead, and whose non-communicating processes
+execute in parallel. `goal-qemu-linux-under-hermit`: run a complete Linux VM as a userspace QEMU process under
+Hermit so deterministic execution, record/replay, chaos scheduling, and schedule search expose and localize
+kernel races across the full stack. Prioritize correctness, faithful replay, race discovery/localization,
+lower overhead, backend maturity, and QEMU/Linux viability. Do not close either long-range goal without its
+required human verification.
+
+## Process-Kill Safety — war story
+
+Hard Invariant 15 exists because a broad `pkill` once killed other agents' hermit runs mid-task, and `pkill -f
+"find / -path"` recurred later because a freshly recycled agent did not carry the verbal correction — the rule
+does not survive recycling unless it lives in AGENTS.md. Up to eighteen agents share this box and its binary
+paths (`hermit`, `cargo`, `python3`, …), so any name/pattern/`-f`-substring/user/`ps|grep|kill` match kills
+siblings' live work.
+
+## Task Lifecycle — phantom-closure rationale
+
+Phantom closures (a task marked done while its work never landed) are a recurring failure mode; completion
+splits into an implementation step the worker performs and a closure step only the coordinator performs, with
+an adversarial review gate between. Ordinary agents have no reliable fleet-wide peer-message channel: the
+agent-side `SendMessage` registry is scoped to same-session subagents and cannot resolve fixed/numeric ORC
+fleet names (`hermit-lander`, `hermit-247`), so never claim another fleet agent was notified merely because a
+message was attempted. TaskGraph notes are pull-based — they preserve a handoff across recycling but do not
+wake a recipient and are not delivery acknowledgement.
+
+## Coordinator Checklist (coordinator-only preflight)
+
+Terse preflights recapping rules stated in full in AGENTS.md; each references a section there.
+
+- **Before dispatch:** reconcile `ACTIVE.md` + both Git worktree lists + physical slot children; check parent/primaries/candidate slot for unexpected changes; confirm ≤ 12 active worktrees and ≤ 15 agents; record exclusive ownership or every sharing agent + disjoint path; confirm base SHA + publication target per repo, verifying a handed SHA against `ci-hub newest-green`; register the slot before work; apply *Establish what you have* when a premise came from a note/number.
+- **Before Hermit publication or landing:** re-read concurrent local state, remote `main`, and the exact PR head; verify the handoff SHA, diff, evidence, cleanliness; push/open only when authorized; require both hosted and self-hosted checks green at the exact head SHA; merge only when authorized; record the resulting `main` SHA + CI.
+- **Before parent pinning:** submodule commits clean, reviewed, tested, fetchable; inspect `git diff --submodule=log` before staging; stage only intended gitlinks + parent-owned files; validate a coordinated Hermit/Reverie pair when both move; commit parent changes to `main` only when the task authorizes it.
+- **Before closeout:** each changed repo has a clean committed feature branch; record exact SHAs + validation in the task and `ARCHIVED.md`; detach slot children at their parent-pinned gitlinks; remove/update the slot row; keep ≤ 5 parked; leave unrelated concurrent work exactly as found.
+- **Before closing a task (coordinator only):** `in_progress` + `implemented` with a PR link/artifact path; adversarial reviewer verified the work exists; invoke `./ci-hub/bin/close-task` with that code/artifact/run reference. Proceed only on rc 0; never let a working agent close its own task; treat `--status resolved` as a raw close that bypasses the gate.
+
+## Action-time procedures (consulted when performing the action; invariants stay in AGENTS.md)
+
+### Submodule pinning — A/B protocol, procedure, initialization
+
+- **A/B protocol** (in `ci-hub/history/SUBMODULE-BUMPS.md`): clean green parent A → advance one gitlink to fetched `origin/main` → B changing only that gitlink → verify B → append to the ci-hub history store. Never bury a gitlink advance in an unrelated commit. Determinism changes need a powered repeated probe (one run is insufficient). Use `make single-submodule-bump ARGS='plan ...'` before execution.
+- **Procedure:** confirm each submodule clean and on the intended SHA; inspect `git diff --submodule=log -- hermit reverie`; stage only pointers intentionally moved (`git add hermit reverie` records only checked-out commits, not uncommitted files); re-inspect `--cached`. If both move together, validate the exact pair and update both gitlinks in one commit with old/new SHAs + compatibility evidence. Confirm referenced commits are fetchable from authorized remotes before sharing the parent commit.
+- **Initialization** reproduces recorded commits: `git submodule update --init --checkout -- hermit` and the Reverie form with `-c submodule.reverie.update=checkout` (override only when init is intended and `.gitmodules` marks it `update = none`). Do not recursively init optional/heavy nested submodules without a task that needs them.
+
+### Existing Hermit PR checkout — never validate against the PR's historical Reverie pin
+
+Checkout and preparation are one operation: `scripts/checkout-hermit-pr-latest-reverie.sh --repo
+worktrees/<slot>/hermit [--push] <pr>`. It fetches current Hermit+Reverie main, checks out the PR without
+rewriting history, merges current Hermit main, runs `check-reverie-pin.rs --update-to-latest` to update every
+tracked pin site, commits the pin update, and runs full validation at that commit. `--push` publishes the
+validated candidate with a non-force push. A stale pin is a hard validation failure; do not substitute raw `gh
+pr checkout` + validation.
+
+### Slot closing / parking / reclaiming
+
+Close a slot only after intended work is committed and handed off. Record each child HEAD, feature branches,
+exact SHAs, validation, and integration disposition in `ARCHIVED.md`; detach each child at its parent-pinned
+gitlink so `git -C $slot status --short` is empty; remove the slot's row from `ACTIVE.md`. Keep feature
+branches until reachable from a pushed branch or merged target. Reclaim a parked slot with `git worktree remove
+--force` then `git worktree prune` (`--force` is needed because the parent holds initialized submodules; it does
+not authorize discarding changes). To reuse a parked slot, repeat the clean-start audit and branch from the
+current base — never reset a parked child to make it current.
+
+### Landing Authorization — lander startup obligation discovery
+
+On startup or replacement, `hermit-lander` must discover durable inherited remediation before taking new queue
+work (wake messages are advisory, lost during recycling): `ci-hub/ci-hub inherit-obligations --agent
+hermit-lander --session "..."`. This acknowledges discovery, not completion; every obligation stays open in
+`ci-hub health` until its fix-forward or revert SHA is recorded with `ci-hub resolve-obligation`.
+
+### Worktree Registry — conflicts to resolve before assigning a slot
+
+Reconcile the registry with all Git worktree registries (`git worktree list --porcelain` for parent and each
+product) and the filesystem; the parent list owns canonical nested slots, product lists should normally contain
+only the primary checkout. Resolve before assigning: an unregistered physical checkout; a registered worktree
+whose directory is missing; a live slot absent from `ACTIVE.md`; a row for a parked/missing slot; duplicate
+rows; a branch checked out by more than one worktree; any non-canonical path. Never silently delete a stale
+path — record what owns it and preserve uncommitted work first.
+
+### Clean Start — submodule status flag legend
+
+Submodule status flags (`git submodule status`): leading space = matches gitlink; `+` = HEAD differs (not
+automatically an error — integration may be in flight; attribute before acting, do not erase with a submodule
+update unless the reset is intended); `-` = not initialized; `U` = merge conflict.
+
+## Communication Precision — full report-writing rules
+
+Governs coordinator headlines, cross-task aggregation, and user-facing progress reports. Reports must be
+specific enough that another engineer can act without re-deriving the scope.
+
+- **Never headline a bare pass ratio.** `10/10 pass` is not a headline. Name the program category, the exact programs (or link a table), the Hermit mode and backend, and why that batch was selected.
+- **Separate new results from baseline.** Label every rollup `New this run`, `Baseline reconfirmed`, `Regression`, or `Not rerun`, and state the commit/PR that changed between compared runs.
+- **Classify programs before totaling** (system utilities, text-processing, interpreters/runtimes, compilers/build tools, databases, network programs, interactive applications, virtualization/emulators); mixed batches need subtotals.
+- **Name execution context** (native baseline, ptrace, DBI, KVM; strict run / strict verify / record-replay / relaxed) and why it answers the batch question.
+- **Name the tool** — never "the Tool"; say `StraceTool`, `Detcore`, `CounterTool`, etc.
+- **Give the exact command line**, **say where** (`main`, `PR #N`, or exact branch/SHA), and **qualify the result** (determinism level `L0`/`L1`/`L2`, pass count `18/20`, exact programs/tests covered). "It works" is not a result. Bind evidence to commits, not branch names.
