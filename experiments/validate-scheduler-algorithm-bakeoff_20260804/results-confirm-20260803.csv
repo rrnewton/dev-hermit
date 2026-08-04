@@ -1,0 +1,12 @@
+# Fresh re-dispatch confirming campaign, 2026-08-03/04, hermit @0f891e43, agent-utils 7d4ed14 (v0.11.0-15), devbig014, WARM, all-pass 20-node --only subset, TPBJ=48.
+# wall_s/user_s/sys_s = RECORDED (elapsed + exact child rusage). our_concurrency = cpu_s/wall_s = RECORDED time-avg cores of OUR run. box_busy_pct = SAMPLED /proc/stat whole box incl co-tenants. resolved_j = 316.
+seq,planner,wall_s,user_s,sys_s,cpu_s,our_concurrency,box_busy_pct_SAMPLED,resolved_j,result,n_passed,n_failed,valid_for_median,note
+c1,greedy-lpt,115.9,124.1,167.2,291.3,2.51,14.08,316,pass,20,0,no,cold-first-slot outlier
+c1,critical-path,68.0,113.1,98.8,211.9,3.12,14.97,316,pass,20,0,yes,
+c1,cpa,2.3,0.9,1.4,2.3,NA,13.37,316,fail,3,3,no,cpa injects -j into -j-rejecting cmds
+c2,critical-path,67.5,115.4,119.0,234.4,3.47,11.69,316,pass,20,0,yes,
+c2,greedy-lpt,67.9,117.4,112.8,230.2,3.39,11.53,316,pass,20,0,yes,
+c3,greedy-lpt,70.8,104.9,101.8,206.7,2.92,14.71,316,fail,19,1,no,1 flaky node under load
+c3,critical-path,71.1,117.5,125.9,243.4,3.42,12.98,316,pass,20,0,yes,
+c4,critical-path,69.3,117.2,117.8,235.0,3.39,12.0,316,pass,20,0,yes,
+c4,greedy-lpt,66.7,116.6,108.2,224.8,3.37,12.38,316,pass,20,0,yes,
