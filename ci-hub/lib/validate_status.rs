@@ -267,6 +267,15 @@ fn gate_is_red(gate: &crate::records::GateHistoryRow) -> bool {
 /// the width/concurrency/flake conditions. A contended or known-flaky red is a
 /// rerun request until a solo `-j 4` confirmation exists.
 pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
+    // Schema-4+ producers carry non-verdict outcomes explicitly. Read them
+    // before the legacy fail inference so first-class TRUNCATED/NEEDS-RERUN
+    // records remain observable even though they intentionally cannot satisfy
+    // the clean full-pass predicate.
+    match row.result.as_deref() {
+        Some("truncated") => return FailureDisposition::Truncated,
+        Some("needs-rerun" | "needs_rerun") => return FailureDisposition::NeedsRerun,
+        _ => {}
+    }
     if !is_clean_full_coverage(row, sha)
         || !matches!(row.result.as_deref(), Some("fail" | "failed" | "timeout"))
     {
@@ -558,6 +567,19 @@ mod tests {
                     {{"name":"Initialize repository submodules","result":"pass","exit_code":0}},
                     {{"name":"Centralized test manifest and inventory","result":"pass","exit_code":0}}
                 ]}}"#
+        ));
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn explicit_truncated_record_stays_first_class() {
+        let r = row(&format!(
+            r#"{{"schema_version":4,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"truncated","raw_result":"fail","exit_code":130,
+                "checks":2,"gates_run":2,"gates_expected":5,"failures":0}}"#
         ));
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::Truncated);
