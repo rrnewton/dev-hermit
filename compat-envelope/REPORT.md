@@ -242,9 +242,12 @@ reverie-examples             6          0%, 100%
 TOTAL                        6          0%, 100%
 ```
 
+This table's first percentage is **tool-count parity**, not stdout parity: it
+compares the shared Tool's callback total between ptrace and KVM.
+
 Honest finding (host with `/dev/kvm`): KVM is **fully self-deterministic**
 (`100%` determinism) but surfaces a **constant 4 fewer syscalls** to the shared
-Tool callback than ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` stdout parity. A
+Tool callback than ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` tool-count parity. A
 real **B1.5 Guest-contract interception-surface gap**, measured and confirmed 0
 (no `?`), not a determinism defect.
 

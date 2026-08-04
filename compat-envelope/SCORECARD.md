@@ -81,10 +81,13 @@ KVM output bitwise-identical to ptrace in that sweep.
   `REPORT.md` for the per-backend stdout-parity/determinism cells and the
   four-signal limitation.
 
-## Table 2 — Reverie: example-tool parity (B1.5+ backends)
+## Table 2 — Reverie: Tool callback-count parity (B1.5+ backends)
 
 The shared Reverie `counter` Tool (counter1 + counter2), run through the ptrace
 launchers vs the KVM launchers over a static-busybox guest corpus.
+
+The first percentage compares callback totals only; it is not stdout or
+four-signal cross-backend parity.
 
 | bucket            | ptrace | kvm        |
 |-------------------|-------:|:-----------|
@@ -93,7 +96,7 @@ launchers vs the KVM launchers over a static-busybox guest corpus.
 
 - **KVM** is fully self-deterministic (`100%` determinism, 6/6 identical reruns)
   but surfaces a **constant 4 fewer syscalls** to the shared Tool callback than
-  ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` stdout parity. A real **B1.5
+  ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` tool-count parity. A real **B1.5
   Guest-contract interception-surface gap**, measured and confirmed 0 (no `?`),
   not a determinism defect.
 
@@ -128,7 +131,7 @@ Fresh triage of every `lane=privileged` test (task
   `--ci-only ∩ portable` slice, not the corpus).
 - **Sweep corroboration** — ptrace **166/183** L1, KVM **105/183** L1 (quiet host).
 - **Portable/privileged** — **200 / 2** (was 199 / 3; cpuid-probe reclassified).
-- **Reverie** — ptrace **6**; KVM **0% stdout parity, 100% determinism**.
+- **Reverie** — ptrace **6**; KVM **0% tool-count parity, 100% determinism**.
 
 ## Regenerate
 
