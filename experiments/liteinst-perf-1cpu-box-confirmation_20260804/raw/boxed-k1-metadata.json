@@ -1,0 +1,30 @@
+{
+  "backends": [
+    "ptrace",
+    "kvm",
+    "liteinst"
+  ],
+  "host": "devbig014.atn7.facebook.com",
+  "logical_cpus": 1,
+  "manifest_sha256": "5039a2efea1f508c548cb3cf27cee264b602da3ba62d73662ae80127a6eabb8e",
+  "repetitions": 3,
+  "reverie_sha": "bfea4d5aa7d662cacf21f41ff2df5b60925dff2d",
+  "run_id": "20260804T062316Z",
+  "run_start_utc": "2026-08-04T06:23:16.548153+00:00",
+  "run_utc": "2026-08-04T06:26:27.719384+00:00",
+  "schema": 1,
+  "seed": 1,
+  "source_dirty": true,
+  "start_load_average": [
+    45.41,
+    58.85,
+    55.7
+  ],
+  "target_seconds": 3.0,
+  "timeout_seconds": 180.0,
+  "warmups": 1,
+  "workloads": [
+    "counter2-cpu-heavy",
+    "counter2-syscall-mix"
+  ]
+}

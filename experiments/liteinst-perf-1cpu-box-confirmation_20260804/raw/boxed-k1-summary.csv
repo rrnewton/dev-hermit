@@ -1,0 +1,11 @@
+workload,backend,variant,repetitions,median_ms,geomean_ms,native_median_ms,slowdown,counter_total
+counter2-cpu-heavy,kvm,static,3,3252.518,3259.852,2970.845,1.094812,16830
+counter2-cpu-heavy,liteinst,dynamic,3,2994.553,2995.858,2968.002,1.008946,16829
+counter2-cpu-heavy,native,dynamic,3,2968.002,2968.201,2968.002,1.0,
+counter2-cpu-heavy,native,static,3,2970.845,2971.833,2970.845,1.0,
+counter2-cpu-heavy,ptrace,dynamic,3,3242.19,3244.109,2968.002,1.092381,16861
+counter2-syscall-mix,kvm,static,3,6802.736,6785.032,2980.516,2.282402,267700
+counter2-syscall-mix,liteinst,dynamic,3,3130.609,3184.709,2979.607,1.050678,267699
+counter2-syscall-mix,native,dynamic,3,2979.607,2976.112,2979.607,1.0,
+counter2-syscall-mix,native,static,3,2980.516,2977.177,2980.516,1.0,
+counter2-syscall-mix,ptrace,dynamic,3,6773.885,6769.074,2979.607,2.273415,267731

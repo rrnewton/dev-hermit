@@ -89,12 +89,40 @@ Reference frame reconciliation on the idle-gated benchmark-v3 host: gvisor-systr
 **10–13µs**, sabre **0.61–0.86µs**, dbi **1.0–1.5µs** — all cross-check the
 counter2 ranking.
 
-## Method status and caveats (non-negotiable per the owner)
+## UPDATE 2026-08-04 — the 1-CPU box is now available and CONFIRMS this attribution
+
+The method caveat below (1-CPU box not ready) is now **CLOSED**. Re-measured
+inside the sequentializing 1-CPU box via `sched_setaffinity` (cgroup cpuset is
+NOT delegated on this sandbox, so affinity is the only working size-K box —
+mechanism surfaced per directive), core 9 (least-busy free), same host/reverie
+SHA, release, medians of 3 + 1 warmup. Full run:
+`experiments/liteinst-perf-1cpu-box-confirmation_20260804/`.
+
+| Backend | Boxed K=1 geomean | Unboxed same-session | Boxed marginal ns/call |
+| --- | ---: | ---: | ---: |
+| **liteinst** | **1.030x** | 1.038x | **496** |
+| ptrace | 1.576x | 1.576x | 14,032 |
+| kvm | 1.581x | 1.612x | 14,113 |
+
+- **INSTRUMENTATION cost (reported first, parallelism removed):** boxed to one
+  idle dedicated core, LiteInst's in-guest patch fastpath is **~0.50µs/syscall,
+  ~28× faster than ptrace (14.0µs) and reverie-KVM (14.1µs)**. On a dedicated
+  core wall ≈ total-tree CPU-time, so these are contamination-free anchors.
+- **PARALLELISM cost (reported separately):** boxed ≈ unboxed (<3% geomean).
+  Sequentialization is **not** a confound here — now *measured*, not merely
+  asserted "by construction." It is a separate axis that only shows on
+  multi-threaded guests (absent from this single-threaded corpus).
+- **Caveat:** a smoke run on **core 0** gave ptrace 22.6x (67s) — a ~10×
+  contention artifact, not signal; the reported run used core 9. Least-busy-free
+  core selection is load-bearing.
+
+## Method status and caveats (as originally recorded; box caveat now closed above)
 
 - **The mandated 1-CPU sequentializing box is NOT ready.**
   `runner-cpu-affinity-single-core-runs` (= hermit-220) is Phase 2, blocked by
   `rust-runner-parity-catchup-and-real-crosscheck`, 0/1 complete. Per the owner's
   directive I am saying so rather than producing a blended number.
+  **[SUPERSEDED 2026-08-04: box now available, see UPDATE section above.]**
 - **Sequentialization is not a confound in any number above.** All fixtures
   (counter2 workloads, `syscall_heavy`, the getpid loops) are **single-threaded**,
   so Hermit's thread-sequentialization penalty is ≈0 by construction. That penalty
