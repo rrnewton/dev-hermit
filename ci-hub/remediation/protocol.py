@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -39,22 +40,171 @@ TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 # obligation-path-must-consume-no-result-taxonomy).
 REMEDIATION_STATES = frozenset(("red",))
 # A local validate exit code is not a truth value. Exit 0 is the only passing
-# answer; a clean nonzero exit is a genuine failing answer; but a validate
-# process the ENVIRONMENT killed — OOM/SIGKILL (137), SIGTERM (143), or any
-# signal (a negative subprocess returncode) — never delivered a verdict at all.
-# That is a no_result, exactly like a cancelled hosted run.
+# answer; a validate process the ENVIRONMENT killed — OOM/SIGKILL (137),
+# SIGTERM (143), or any signal (a negative subprocess returncode) — never
+# delivered a verdict at all. That is a no_result, exactly like a cancelled
+# hosted run.
 _LOCAL_INFRA_EXITS = frozenset((137, 143))
 DEFAULT_LOCAL_REDISPATCH_LIMIT = int(
     os.environ.get("CI_HUB_LOCAL_REDISPATCH_LIMIT", "2")
 )
 
+# A clean nonzero exit is NOT automatically a failing answer. Tonight three
+# separate ENVIRONMENTAL failures — a sandbox EPERM on a re-validate, a
+# BpfJailer denial of a `.o.d` write inside a DAG step, and a cold-build linker
+# flake with zero tests run — each exited clean-nonzero and read as a product
+# RED, and each was one automated step from reverting a healthy tip. The
+# genuine failure was in the HARNESS, not the landed code.
+#
+# THE DERIVED DISCRIMINATOR (task cancellation_taxonomy_distinguish_self). The
+# earlier attempt enumerated environmental root causes and defaulted every other
+# nonzero exit to RED. That is precisely "a hardcoded list of a growing set":
+# each NEW environmental wording we had not yet listed fell through to red and
+# became one automated step from reverting a healthy tip — the exact failure
+# mode that bit us five times tonight. So we DERIVE instead of enumerate, and we
+# put the UNKNOWN on the safe side:
+#
+#   only a genuine, product-attributable failing TEST VERDICT makes the LOCAL
+#   leg red. Every other nonzero exit — a build/link error, a sandbox denial, a
+#   proxy drop, a disk-full, or an unrecognised failure we have never seen — is
+#   a no_result: re-dispatch and (if it reproduces) fix the box, never revert
+#   the tip on a local leg alone.
+#
+# This is sound, not merely cautious: a speculative land already COMPILED and
+# TESTED the tip before arming, so a nonzero re-validate that is NOT a fresh
+# failing test is overwhelmingly the environment (cold cache, sandbox, flake),
+# not a regression in the landed code. And a real regression the environment did
+# NOT cause surfaces on the GitHub leg too, which is authoritative and reverts on
+# its own. The only "list" that remains is _TEST_FAILURE_MARKERS, and it lives
+# in the SAFE direction: a marker we forget only downgrades a would-be red to a
+# re-dispatch (recoverable), it can never manufacture a revert. _INFRA_SIGNATURE
+# is retained ONLY to LABEL which box to fix; it no longer decides red vs
+# no_result, so a missing category costs a precise log line, never a false red.
+_TEST_FAILURE_MARKERS = (
+    "test result: failed",  # cargo: printed only when >0 tests failed
+    "error: test failed",  # cargo test-harness wrapper on a failing suite
+    "failures:",  # cargo lists the failing test names under this header
+    "tests failed",
+    "assertion failed",
+    "assertionerror",
+    "panicked at",  # a rust test panic
+)
+_TEST_FAILURE_COUNT_RE = re.compile(r"\b([1-9]\d*)\s+failed\b")  # pytest "3 failed"
+# Diagnostic-only labels for a no_result. Grouped by CAUSE, but NON-load-bearing:
+# they name which box to fix in the log, they do NOT gate red vs no_result, so
+# this set can be incomplete without ever producing a false red.
+_INFRA_SIGNATURE_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "sandbox-denied",  # 3pai BpfJailer / seccomp / permission denial
+        (
+            "operation not permitted",
+            "permission denied",
+            "eperm",
+            "eacces",
+            "bpfjailer",
+            "blocked by seccomp",
+            "seccomp",
+        ),
+    ),
+    (
+        "network-proxy",  # the required proxy / network dropped mid-fetch
+        (
+            "could not resolve host",
+            "connection reset by peer",
+            "connection timed out",
+            "failed to connect",
+            "proxyconnect",
+            "temporary failure in name resolution",
+            "network is unreachable",
+        ),
+    ),
+    (
+        "disk-exhausted",  # ran out of disk / inodes / memory under load
+        (
+            "no space left on device",
+            "disk quota exceeded",
+            "cannot allocate memory",
+        ),
+    ),
+    (
+        "cold-build-flake",  # a cold-toolchain link/archive race, zero tests run
+        (
+            "collect2: error",
+            "ld returned 1 exit status",
+            "ld: cannot",
+            "error adding symbols",
+            "clang: error: unable to execute command",
+        ),
+    ),
+)
 
-def _local_state(exit_code: int) -> str:
+
+def _has_test_failures(output: str) -> bool:
+    """Whether the validate output shows at least one genuine test failure.
+
+    Over-inclusive on purpose: a false positive here only forces a genuine RED
+    (revertable), never swallows one, so unusual failure formatting fails safe.
+    """
+    lowered = output.lower()
+    if any(marker in lowered for marker in _TEST_FAILURE_MARKERS):
+        return True
+    return _TEST_FAILURE_COUNT_RE.search(lowered) is not None
+
+
+def _infra_signature(output: str) -> str | None:
+    """Best-effort ROOT-CAUSE label for a no_result, or None if unrecognised.
+
+    Diagnostic only: it decides nothing. A None just yields a generic
+    "non-test-failure" label; it never turns a no_result into a red.
+    """
+    lowered = output.lower()
+    for category, needles in _INFRA_SIGNATURE_CATEGORIES:
+        if any(needle in lowered for needle in needles):
+            return category
+    return None
+
+
+def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
+    """Map a local validate (exit_code, output) to (state, human reason).
+
+    The discriminator is DERIVED, not enumerated: only a genuine failing test
+    VERDICT is red; every other nonzero exit — build/link error, sandbox denial,
+    proxy drop, disk-full, or an unrecognised failure — is a no_result to
+    re-dispatch, so an unknown failure mode can never manufacture a revert.
+    """
     if exit_code == 0:
-        return "green"
+        return "green", "clean exit"
     if exit_code < 0 or exit_code in _LOCAL_INFRA_EXITS:
-        return "no_result"
-    return "red"
+        return "no_result", f"environment-killed (exit={exit_code})"
+    if _has_test_failures(output):
+        return "red", "test-failure"
+    # Nonzero, but no product test rendered a failing verdict: the failure came
+    # from the build/harness/sandbox layer (or is simply unrecognised). Either
+    # way it is a hole to re-dispatch, never a tip to revert. GitHub stays
+    # authoritative for a genuine regression the environment did not cause.
+    category = _infra_signature(output) or "unclassified"
+    return "no_result", f"non-test-failure:{category}"
+
+
+def _local_state(exit_code: int, output: str = "") -> str:
+    return _classify_local(exit_code, output)[0]
+
+
+def _read_local_output(log_path: Path, offset: int, *, cap: int = 64_000_000) -> str:
+    """Best-effort read of this validate run's output for classification.
+
+    The validate subprocess streams to the same log the watcher opened, so the
+    output from `offset` (captured just before validate started) to end is this
+    run's. A read failure yields "" (no test-failure verdict visible), which
+    leaves a nonzero exit as a no_result to re-dispatch — the safe state that
+    never manufactures a revert from an output we could not even read.
+    """
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            handle.seek(max(0, offset))
+            return handle.read(cap)
+    except OSError:
+        return ""
 
 
 class ProtocolError(RuntimeError):
@@ -804,6 +954,11 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
             if estimate["kind"] == "derived"
             else ("--estimate-unknown",)
         )
+        # Everything from here streams to the same log the watcher opened, so
+        # capture the offset now: the bytes after it are exactly this validate
+        # run's output, used to tell a product test failure from an
+        # environmental (harness-caused) one.
+        log_offset = log_path.stat().st_size if log_path.exists() else 0
         result = _run(
             (
                 str(ROOT / "ci-hub/bin/tool-cost"),
@@ -824,7 +979,16 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
             env=environment,
         )
         exit_code = result.returncode
-        state = _local_state(exit_code)
+        output = _read_local_output(log_path, log_offset)
+        state, reason = _classify_local(exit_code, output)
+        # Log every classification so an environmental downgrade is auditable and
+        # an unattributed zero-test-failure red surfaces a candidate missing
+        # signature (task cancellation_taxonomy_distinguish_self).
+        print(
+            f"ci-hub obligation={obligation_id} local classification: "
+            f"state={state} reason={reason} exit={exit_code}",
+            flush=True,
+        )
         try:
             measured_cost = json.loads(cost_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
