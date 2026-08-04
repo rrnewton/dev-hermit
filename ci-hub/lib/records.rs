@@ -133,6 +133,15 @@ pub struct HistoryRow {
     /// subset (the `1 passed; 154 filtered out` narrowed-scope trap).
     #[serde(default)]
     pub filtered_tests: Option<i64>,
+    /// Per-DAG-node test-coverage obligation outcome, written by the producer
+    /// (`validate.sh`) from the run's own per-node banners/terminal lines. Carries
+    /// the CONDITION with the value (Proxy Binding): the NAMES of any inert or
+    /// absent nodes travel in the receipt, so the landing predicate decides from
+    /// receipt fields alone and never re-reads a log. `None` on a pre-coverage
+    /// receipt; a count-capable receipt (schema >= COUNTS_SCHEMA) that omits it is
+    /// a writer defect. Supersedes the blunt `filtered_tests == 0` predicate.
+    #[serde(default)]
+    pub coverage: Option<CoverageRow>,
     /// Whether the run covered the FULL profile (`level == "full"`), not a
     /// partial `*-only` profile whose pass reads identically to a full green.
     #[serde(default)]
@@ -155,6 +164,37 @@ pub struct HistoryRow {
     pub gates: Vec<GateHistoryRow>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// Per-DAG-node test-coverage obligation outcome. The producer computes this from
+/// the run's per-node `[node] test result:` banners (executed/filtered sums, and
+/// whether the node emitted any banner) and `[node] ✓ PASS/✗ FAIL` terminal lines
+/// (which nodes actually RAN), crossed against the PLANNED set of `test.*` DAG
+/// nodes in the lane manifests. The obligation is SATISFIED iff
+/// `planned_test_nodes > 0 && zero_executed_nodes.is_empty() && absent_nodes.is_empty()`.
+/// This is the per-node replacement for the blunt aggregate `filtered_tests == 0`
+/// predicate, which could not distinguish a full run's legitimate cross-shard
+/// filtering (~693 tests) from a narrowed-subset masquerade.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CoverageRow {
+    /// Test-bearing DAG nodes the run PLANNED (manifest `test.*` steps for the
+    /// lanes actually run). `0` = the producer could not determine a planned set;
+    /// never treated as a satisfied obligation.
+    #[serde(default)]
+    pub planned_test_nodes: u64,
+    /// Planned test nodes that actually executed tests (ran, and — where they emit
+    /// libtest banners — with a positive passed-sum). Diagnostic.
+    #[serde(default)]
+    pub executed_test_nodes: u64,
+    /// NAMES of planned test nodes that RAN and emitted libtest banner(s) whose
+    /// passed-sum was 0 — an inert green (every crate filtered-to-empty or
+    /// compiled-out). A banner-less node (legit shell/e2e) is NOT listed here.
+    #[serde(default)]
+    pub zero_executed_nodes: Vec<String>,
+    /// NAMES of planned test nodes that produced NO terminal PASS/FAIL line at all
+    /// — never ran / skipped / absent from the run.
+    #[serde(default)]
+    pub absent_nodes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

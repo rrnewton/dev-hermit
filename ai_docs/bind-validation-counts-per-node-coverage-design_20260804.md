@@ -10,6 +10,47 @@ in `agent-utils`, `ci-hub/lib/validate_status.rs` (`is_clean_full_pass`), and
 `remove_uncounted_receipt_grandfather` (last; only after the grandfathered population
 is measured at ZERO).
 
+## ARCHITECTURE CORRECTION (hermit-coord 2026-08-04, measured after the first draft)
+
+The first draft assumed THREE touch points including a change to the `safe-ci-dag-runner`
+(agent-utils) to emit per-node counts. **That change is unnecessary** — established by
+direct measurement, not inference:
+
+- `validate.sh` runs each lane as `./ci/run-dag.sh <lane> -j <jobs> -v`. The runner's
+  `run` verb parses `-v` as `action="count", default=1` (cli.py:375), so a single `-v`
+  yields **verbosity 2**; `scheduler.py:363` sets `stream = self.verbosity >= 2`, so the
+  runner **streams every child stdout line prefixed `[<node.tag>] `** into the shared
+  `LOG_FILE`. The per-node libtest banners are therefore ALREADY in the log
+  (`[test.NODE] test result: ok. N passed; ...; M filtered out`), which is exactly what my
+  3-log measurement below aggregated.
+- The runner ALSO emits a per-node terminal line `[<node.tag>] ✓ PASS ...` / `✗ FAIL ...`
+  at verbosity ≥ 1 (scheduler.py:580-583) for EVERY node that ran. This is the reliable
+  "did this node run" signal — independent of whether the node emits libtest banners (a
+  shell/e2e test node may run real work and emit none). A skipped/absent node produces
+  NO such line, and a skipped required node already forces `RunResult.ok = False`.
+
+**Consequence:** the bind is **2 files in 2 repos, NO agent-utils change, NO temp worktree**:
+1. `hermit/validate.sh` (producer) — self-contained log parse → emit `coverage{}` (schema 5).
+2. `ci-hub/lib/validate_status.rs` (consumer) — enforce the coverage obligation from the
+   receipt, delete the `filtered>0` guard.
+`ci-hub/remediation/nonzero_result.py --per-node` is now OPTIONAL parent-side diagnostic
+parity (the consumer reads `coverage{}` from the receipt JSON; it does NOT re-parse a log),
+and a Hermit PR MUST NOT depend on the parent `ci-hub` at runtime (hermit has no
+`nonzero_result.py`; validate.sh on main does not call it — the earlier "validate.sh calls
+nonzero_result.py --ledger-fields" note was the PR #1587 *branch*, not main).
+
+### Refined obligation (avoids the shell-node false-positive that would recreate the stall)
+
+Computable from the LOG alone (+ the manifest for the planned test-node set):
+1. **ran/absent:** every planned test node (manifest tag prefix `test.`) MUST have a
+   `[node] ✓ PASS`/`✗ FAIL` terminal line. A planned test node with none → `absent` →
+   violation. (No false positive: shell nodes still emit the terminal line.)
+2. **zero-executed:** a node that emitted ≥1 libtest banner MUST have passed-sum > 0. A node
+   with NO banner is EXEMPT (legit shell/e2e). This catches the real inert-green (every
+   crate filtered-to-empty / compiled-out) without rejecting banner-less test nodes — the
+   precise line the blanket "executed>0 for all nodes" draft would have crossed.
+`filtered_tests` is retained as a pure diagnostic; the `filtered==0` predicate is DELETED.
+
 ## One-line problem
 
 The consumer's `filtered_tests == 0` predicate (validate_status.rs:184-186) is the WRONG
@@ -111,32 +152,42 @@ Aggregate `executed_tests` / `filtered_tests` remain (diagnostics). The obligati
 re-derive the verdict and lets a human see WHICH node was inert, per the Proxy-Binding
 "carry the condition with the value" rule.
 
-## Implementation (THREE touch points — scope note for coordinator)
+## Implementation (TWO touch points — corrected; see ARCHITECTURE CORRECTION above)
 
-The user's instruction named two files (`validate.sh`, `validate_status.rs`); correct
-implementation needs a third — the DAG runner — because node granularity and the
-planned-set live there.
-
-1. **`safe-ci-dag-runner` (agent-utils):** per node, capture the node's stdout, extract the
-   libtest banner(s) via the shared `nonzero_result.py` per-node extractor, and emit a
-   machine-readable per-node coverage record (planned set + per-node executed/filtered +
-   ran/absent). This is the source of truth for planned-vs-executed. *(Exact hooks pending
-   the safe-ci-dag-runner exploration; see §"Runner integration" below.)*
-2. **`hermit/validate.sh` (`append_validation_ledger`):** aggregate the runner's per-node
-   records (plus any foreground gates' own banners) into the compact `coverage` object and
-   emit it in the receipt alongside the aggregate counts. Standalone hermit (no runner
-   manifest) degrades gracefully: emit `coverage` from whatever banners exist, never
-   fabricate a satisfied obligation.
-3. **`ci-hub/lib/validate_status.rs` (`is_clean_full_pass`):** DELETE the
+1. **`hermit/validate.sh` (`append_validation_ledger` + the DAG-lane gate path):** after the
+   lane gate(s) run, parse the shared `LOG_FILE` (self-contained, in-repo — awk/bash or a
+   small vendored helper, NOT the parent `nonzero_result.py`): collect per-node terminal
+   `[node] ✓ PASS`/`✗ FAIL` lines (→ ran-set) and per-node `[node] test result:` banners
+   (→ per-node passed/filtered sums + had-banner flag). Cross the ran-set against the
+   PLANNED test-node set (union of the `test.*` steps in the lane manifests actually run,
+   read from `ci/dag/*.json`) to compute `absent_nodes`; compute `zero_executed_nodes` from
+   the refined obligation (banner-emitting node with passed-sum 0). Emit the compact
+   `coverage{}` object plus the aggregate `executed_tests`/`filtered_tests` counts, and bump
+   `schema_version` to `COUNTS_SCHEMA=5`. Standalone hermit (no DAG lane) degrades
+   gracefully: emit `coverage` from whatever banners exist and `planned_test_nodes` it can
+   see; NEVER fabricate a satisfied obligation.
+2. **`ci-hub/lib/validate_status.rs` (`is_clean_full_pass`):** DELETE the
    `filtered_tests > 0 ⇒ reject` guard. Keep the cheap universal `executed_tests == 0`
    guard. For a count-capable (schema ≥ `COUNTS_SCHEMA`) receipt, require the `coverage`
-   obligation satisfied. A count-capable receipt MISSING `coverage` is a writer defect →
+   obligation satisfied (`planned_test_nodes > 0 && zero_executed_nodes == [] &&
+   absent_nodes == []`). A count-capable receipt MISSING `coverage` is a writer defect →
    reject (fail-closed, same pattern as the existing missing-counts rule). Pre-count
    receipts stay grandfathered until `remove_uncounted_receipt_grandfather` (measured at 0).
 
-Producer and consumer must change in ONE transition (a predicate changed in one but not
-the other is exactly the stall this replaces). `nonzero_result.py` gains a `--per-node`
-mode so both the runner and any diagnostics use ONE parser (no second banner regex).
+Producer and consumer encode ONE judgement. Landing order is safe either way: no schema-5
+receipt exists yet, so the consumer's new coverage branch is inert until the validate.sh
+producer lands — deleting the `filtered>0` guard is pure un-breaking. `nonzero_result.py`
+MAY gain a `--per-node` mode later as a parent-side DIAGNOSTIC parity parser; it is NOT
+load-bearing for the bind and NOT called by hermit.
+
+## Overlap with `emit_executed_and_filtered` (PR #1587) — coordinator decision
+
+bind's validate.sh change (coverage{} + counts + schema 5) SUBSUMES emit's aggregate-count
+work, and PR #1587's raw-`filtered` approach is the thing that would re-break the drain. Two
+clean options: (A) one Hermit PR does the full producer (coverage{} + counts + schema 5),
+superseding PR #1587 and satisfying `emit_executed_and_filtered` as a stale-premise close;
+(B) bind lands only coverage{} + schema 5 and PR #1587 rebases to add nothing but the
+aggregate counts. (A) is fewer moving parts and avoids a broken PR lingering. Recommend (A).
 
 ## Sequencing
 
@@ -144,8 +195,15 @@ mode so both the runner and any diagnostics use ONE parser (no second banner reg
 contract) → `remove_uncounted_receipt_grandfather` (last; only after measuring the
 grandfathered population at ZERO, not assuming it).
 
-## Runner integration
+## Runner integration — RESOLVED: no runner change needed
 
-*(To be finalized from the safe-ci-dag-runner exploration: exact manifest location, node
-classification, existing per-node reporting, node command capture point, planned-vs-run
-tracking, and which of the Python/Rust runners validate.sh invokes.)*
+The safe-ci-dag-runner exploration is complete and settles this: validate.sh invokes the
+**Python** engine via `ci/run-dag.sh` (`find_runner` prefers `agent-utils/common/bin`
+→ `py/bin/safe-ci-dag-runner`). At the verbosity validate.sh uses (`-v` → 2), the runner
+already streams `[node] `-prefixed child stdout (banners) AND emits `[node] ✓ PASS/✗ FAIL`
+terminal lines — the two signals the producer needs — into the shared `LOG_FILE`. Planned
+node set and classification come from the manifests `hermit/ci/dag/{portable,privileged}.json`
+(`test.*` tag prefix). Planned-vs-run is therefore fully reconstructable in validate.sh from
+(log terminal lines) ∪ (manifest test nodes); the runner already fails the run when a
+required node is skipped (`RunResult.ok=False`). No agent-utils edit is required, so this
+bind does not touch the (currently PR-#15-occupied) canonical agent-utils checkout.
