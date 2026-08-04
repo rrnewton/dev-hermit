@@ -277,6 +277,33 @@ origin, not causation. A predicate such as `marker-present && mismatch-present` 
 facts. Causal binding requires evidence that can exist only when the claimed condition caused the reported
 outcome, such as a typed first-cause result.
 
+**One verifier per authority, called by every consumer.** An **evidence authority** is the source whose
+contents can make a load-bearing claim true; a label, comment, status, or copied field is only a cache or
+reference to that source. Give each authority one semantic verifier that dereferences the source, validates
+the qualified value, and is called by every gate, labeler, lander, status view, and closure path that acts on
+the claim. Do not collapse different authorities behind one generic-looking semantic check: a validation
+receipt and a Git commit require different proofs. They may share transport/digest primitives, not truth
+conditions. A verifier is not deployed merely because it exists. Mark an authority covered only after (1) a
+counted qualifying positive passes, (2) a well-shaped but nonexistent/tampered/otherwise nonqualifying
+negative is refused, and (3) a call-site audit shows that every consumer invokes the verifier rather than
+reimplementing or bypassing it.
+
+#### Load-Bearing Authority Registry
+
+This registry covers authorities that currently decide validation, review, landing, dependency currency, or
+workflow-policy outcomes. Add a row before introducing another load-bearing authority or consumer; update a
+row only from exact code and tests, never from a PR description.
+
+| Authority and qualified value | Canonical dereferencing verifier | Coverage and remaining hole |
+| --- | --- | --- |
+| **Local validation:** exact Hermit SHA plus clean/full/counted ledger row and satisfied per-node coverage; remotely, the immutable receipt content and digest derived from that row. | Local lander: `ci-hub validate-status` through `ci-hub/landing/local-validation-eligibility.sh`. Remote producer: `ci-hub/validation/publish_receipt.py`. Remote consumer: `scripts/verify-local-validation-receipt.sh` from Hermit #1578. | **PARTIAL.** Canonical local landing consumers use the ledger verifier. The remote verifier has a 1/1 counted positive and refuses nonexistent, tampered, and zero-executed receipts, but is not on Hermit main and not called by every merge-gate consumer. A `locally-validated` label or well-shaped comment never authorizes by itself; #1593's shape parser must be replaced by the receipt verifier. |
+| **Historical Git provenance:** the claimed commit exists in the named repository and the measurement/artifact is bound to that commit, not merely written beside a 40-hex string. | **None.** The minimum identity primitive is a fresh fetch plus `git cat-file -e <sha>^{commit}` in the intended repository; measurement causation additionally needs a commit-bound artifact/receipt. | **MISSING.** Hermit #1546 validates provenance fields and full-SHA syntax without dereferencing the object or a measurement artifact. Commit existence alone proves identity, not that the measurement came from it. |
+| **Adversarial/human review:** reviewer lane, verdict, PR number, and exact reviewed head in a durable receipt produced by that lane. | **None.** `scripts/core-review-protocol-lint.sh` checks cache labels only. | **MISSING.** Push-time label invalidation narrows staleness but does not prove who reviewed what; `passed-review-*`, numbered review labels, and `human-approved` are assertions until a lane-specific exact-head receipt is dereferenced. |
+| **Landed PR identity and task closure:** GitHub's `mergeCommit.oid` is reachable from a freshly fetched target branch. | `ci-hub verify-landing`; canonical landing/closure paths also check merge-commit ancestry before reporting completion. | **COVERED for canonical consumers.** Never substitute PR-head ancestry, `MERGED`, or `mergeStateStatus`; audit new closure/status consumers for direct reimplementations. |
+| **Hosted CI result:** an authoritative workflow/job run for the exact head, with terminal success distinct from failure and `NO_RESULT`. | GitHub API exact-head run/job lookup; outcome classification is currently repeated across shell/JQ/Python consumers. | **PARTIAL.** The source is dereferenced, but no single deployed classifier owns all consumers. Cancelled/skipped/missing/queued/stale are `NO_RESULT`, not red or green; #1593 must not land its tri-state work with the fabricated local-evidence bypass. |
+| **Workflow-policy version:** the required context was emitted by the trusted current workflow definition, not an older PR-branch YAML with weaker rules. | Hermit #1579's versioned context/blob check and ruleset reconciler. | **MISSING on main.** Until the versioned gate lands and every required-context consumer switches, stale branch YAML can emit a current-looking green. |
+| **Live dependency currency:** every tracked manifest and lockfile pin equals the freshly resolved canonical remote ref. | `scripts/check-reverie-pin.rs` from Hermit #1591: live `git ls-remote`, tracked `Cargo.toml` + `Cargo.lock` scan, exact equality. | **PARTIAL until #1591 lands and all paths call it.** The reviewed verifier has an exact-tip positive and real ancestor-behind negative; local validate, both DAGs, hosted aggregate, merge gate, and receipt production are the required consumers. |
+
 The generative cure is: **carry the condition with the value.** A value measured under conditions it does
 not record is a proxy, whether that value is a string, flag, status, hash, or number. Store `{ jobs: 32,
 bytes: N }`, not a bare memory cap `N`; bind green to an exact-SHA run with a nonzero executed-test count;
