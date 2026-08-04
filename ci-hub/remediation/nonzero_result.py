@@ -80,6 +80,18 @@ _RESULT_OK_RE = re.compile(r"\btest result: ok\. (\d+) passed\b")
 # result:` line (ok or not), so it is scanned independently of the `ok.` verdict.
 _FILTERED_RE = re.compile(r"\b(\d+) filtered out\b")
 
+# safe-ci-dag-runner streams every child stdout line prefixed `[<node.tag>] `
+# (node.tag = `group.job`) into the shared validate LOG_FILE at verbosity >= 2,
+# and emits a per-node terminal `[<node.tag>] ✓ PASS ...` / `✗ FAIL ...` line at
+# verbosity >= 1. This prefix is how per-node aggregation attributes a libtest
+# banner to the DAG node that produced it.
+_NODE_PREFIX_RE = re.compile(r"^\[([^\]]+)\] ?(.*)$")
+# The terminal marker appears at the START of the terminal line's body (right
+# after the `[tag] ` prefix); requiring startswith keeps indented guest stdout
+# (e.g. `[tag]     ✓ PASS printed by a test`) from ever forging the signal.
+_PASS_TERMINAL = "✓ PASS"  # ✓ PASS
+_FAIL_TERMINAL = "✗ FAIL"  # ✗ FAIL
+
 
 def executed_test_count(output: str) -> int | None:
     """Total tests EXECUTED as reported by the run's own test-runner banners.
@@ -139,6 +151,61 @@ def is_zero_test_green(output: str) -> bool:
     return executed_test_count(output) == 0
 
 
+def per_node_counts(output: str) -> dict[str, dict]:
+    """Per-DAG-node executed/filtered/banner counts, keyed by `[<node.tag>]`.
+
+    Returns ``{node_tag: {"executed": int, "filtered": int, "banner_count": int,
+    "terminal": "pass"|"fail"|None}}`` for every ``[tag] ``-prefixed node seen in
+    the safe-ci-dag-runner streamed log. This is the NODE-granular companion of
+    :func:`executed_test_count`, single-sourcing the SAME ``passed``/``filtered``
+    regexes so a per-node view can never drift from the aggregate one.
+
+    Counting rules (see the module docstring for WHY node granularity is correct):
+
+    * ``executed`` sums ``N passed`` across the node's ``test result: ok.``
+      libtest banner lines; ``filtered`` sums ``N filtered out``. A node's banners
+      are AGGREGATED before any zero-check, because a legitimate full run has
+      zero-passed banners (empty crates, doctests, sharded filter-misses like
+      ``1 passed; 213 filtered out``) absorbed inside a node whose total is
+      positive. Only a NODE whose banners sum to zero is inert.
+    * ``banner_count`` counts the node's ``test result:`` summary lines. A node
+      with ``banner_count == 0`` emitted no libtest banner and is EXEMPT from the
+      zero-executed obligation (legit shell / e2e / nextest node).
+    * ``terminal`` records the node's ``✓ PASS`` / ``✗ FAIL`` runner line. The
+      terminal line itself embeds a ``[test result: ok. ...]`` summary; it is
+      DELIBERATELY excluded from banner counting so that summary is never
+      double-counted against the banners streamed earlier.
+    """
+    nodes: dict[str, dict] = {}
+    if not output:
+        return nodes
+    for raw in output.splitlines():
+        m = _NODE_PREFIX_RE.match(raw)
+        if not m:
+            continue
+        tag, rest = m.group(1), m.group(2)
+        node = nodes.setdefault(
+            tag, {"executed": 0, "filtered": 0, "banner_count": 0, "terminal": None}
+        )
+        stripped = rest.lstrip()
+        # Terminal line first: it carries an embedded banner we must NOT count.
+        if stripped.startswith(_PASS_TERMINAL):
+            node["terminal"] = "pass"
+            continue
+        if stripped.startswith(_FAIL_TERMINAL):
+            node["terminal"] = "fail"
+            continue
+        if "test result:" in rest:
+            node["banner_count"] += 1
+            pm = _RESULT_OK_RE.search(rest)
+            if pm:
+                node["executed"] += int(pm.group(1))
+            fm = _FILTERED_RE.search(rest)
+            if fm:
+                node["filtered"] += int(fm.group(1))
+    return nodes
+
+
 def _json_literal(value: int | None) -> str:
     """A count as a JSON literal: an integer, or ``null`` for UNKNOWN (``None``).
 
@@ -169,30 +236,46 @@ def main(argv: list[str] | None = None) -> int:
     for embedding in a ledger record; ``-`` reads the log from stdin. A missing or
     unreadable log prints ``null null`` (UNKNOWN, fail-safe) and still exits 0, so
     the writer never fabricates a zero and never fails the run over a read hiccup.
+
+    ``nonzero_result.py --per-node <log>`` prints the per-DAG-node counts dict as
+    JSON (``-`` reads the log from stdin). A missing/unreadable log prints ``{}``
+    and exits 0, matching the fail-safe error handling of ``--ledger-fields``.
     """
     import argparse
+    import json
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--ledger-fields",
         metavar="LOG",
-        required=True,
         help="print `<executed_tests> <filtered_tests>` (JSON literals) for LOG (`-`=stdin)",
+    )
+    group.add_argument(
+        "--per-node",
+        metavar="LOG",
+        help="print the per-node counts dict as JSON for LOG (`-`=stdin)",
     )
     args = parser.parse_args(argv)
 
-    if args.ledger_fields == "-":
+    src = args.ledger_fields if args.ledger_fields is not None else args.per_node
+    per_node_mode = args.per_node is not None
+    if src == "-":
         output = sys.stdin.read()
     else:
         try:
-            with open(args.ledger_fields, errors="replace") as fh:
+            with open(src, errors="replace") as fh:
                 output = fh.read()
         except OSError:
-            # No evidence to read -> UNKNOWN, never a fabricated zero. The writer
-            # emits nulls; the reader leaves such a record alone (fail-safe).
-            print("null null")
+            # No evidence to read -> UNKNOWN/empty, never a fabricated result. The
+            # writer emits the fail-safe token and still exits 0 (read hiccup is
+            # never a run failure).
+            print("{}" if per_node_mode else "null null")
             return 0
-    print(_ledger_fields(output))
+    if per_node_mode:
+        print(json.dumps(per_node_counts(output), sort_keys=True))
+    else:
+        print(_ledger_fields(output))
     return 0
 
 
