@@ -87,7 +87,7 @@ LANDING & BATCH CONTROL
 POST-LAND REMEDIATION
   Arm, discover, watch, and resolve durable exact-SHA verification obligations.
   arm-land                Arm concurrent local and GitHub verification after a land
-  verify-landed-pr        Resolve a rebase-merged PR to its replayed main SHA
+  verify-landing          Verify a PR replay SHA or commit SHA on a fetched target
   obligations             List open or actionable speculative-land obligations
   inherit-obligations     Let a fresh lander claim obligations from a recycled agent
   watch-obligations       Poll verifier state and trigger failure remediation
@@ -174,8 +174,9 @@ enum HubCommand {
     Tick(PassthroughArgs),
     /// Arm local and GitHub verification for a just-landed SHA.
     ArmLand(ArmLandArgs),
-    /// Resolve a PR's rebase replay SHA and prove it remains on main.
-    VerifyLandedPr(VerifyLandedPrArgs),
+    /// Verify a PR replay SHA or commit SHA against a freshly fetched target.
+    #[command(visible_alias = "verify-landed-pr")]
+    VerifyLanding(VerifyLandingArgs),
     /// Show speculative-land obligations from the typed JSONL store.
     Obligations(ObligationsArgs),
     /// Discover and acknowledge remediation inherited by this lander instance.
@@ -308,12 +309,15 @@ struct ArmLandArgs {
 }
 
 #[derive(Args, Clone, Debug)]
-struct VerifyLandedPrArgs {
-    pr: u64,
+struct VerifyLandingArgs {
+    /// Positive PR number or full 40-character commit SHA.
+    reference: String,
     #[arg(long, default_value = "rrnewton/hermit")]
     repo: String,
     #[arg(long)]
     source: Option<PathBuf>,
+    #[arg(long, default_value = "main")]
+    target: String,
     #[arg(long)]
     json: bool,
 }
@@ -814,10 +818,15 @@ impl HubCommand {
                 basis: "not measured: verifier launch and GitHub dispatch cost history is not retained"
                     .into(),
             },
-            Self::VerifyLandedPr(_) => CostSpec {
-                tool: "ci-hub/verify-landed-pr",
-                basis: "not measured: one GitHub PR query plus one fetch and local ancestry check"
-                    .into(),
+            Self::VerifyLanding(args) => CostSpec {
+                tool: "ci-hub/verify-landing",
+                basis: if args.reference.len() == 40 {
+                    "not measured: one target fetch plus local SHA resolution and ancestry check"
+                        .into()
+                } else {
+                    "not measured: one GitHub PR query plus one target fetch and ancestry check"
+                        .into()
+                },
             },
             Self::WatchObligations(args) => CostSpec {
                 tool: "ci-hub/watch-obligations",
@@ -1238,10 +1247,10 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             }
             run_python(root, "ci-hub/remediation/protocol.py", protocol_args)
         }
-        HubCommand::VerifyLandedPr(args) => {
+        HubCommand::VerifyLanding(args) => {
             let mut protocol_args = vec![
-                OsString::from("verify-landed-pr"),
-                OsString::from(args.pr.to_string()),
+                OsString::from("verify-landing"),
+                OsString::from(args.reference),
             ];
             push_option(&mut protocol_args, "--repo", args.repo);
             push_option(
@@ -1249,6 +1258,7 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 "--source",
                 args.source.unwrap_or_else(|| root.join("hermit")),
             );
+            push_option(&mut protocol_args, "--target", args.target);
             if args.json {
                 protocol_args.push("--json".into());
             }
@@ -3322,18 +3332,31 @@ mod tests {
     fn parses_rebase_aware_landing_verifier() {
         let cli = Cli::try_parse_from([
             "ci-hub",
-            "verify-landed-pr",
+            "verify-landing",
             "1219",
             "--repo",
             "rrnewton/hermit",
+            "--target",
+            "main",
             "--json",
         ])
         .unwrap();
-        let HubCommand::VerifyLandedPr(args) = cli.command else {
+        let HubCommand::VerifyLanding(args) = cli.command else {
             panic!("wrong command variant")
         };
-        assert_eq!(args.pr, 1219);
+        assert_eq!(args.reference, "1219");
+        assert_eq!(args.target, "main");
         assert!(args.json);
+    }
+
+    #[test]
+    fn parses_landing_verifier_sha_and_legacy_alias() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let cli = Cli::try_parse_from(["ci-hub", "verify-landed-pr", sha]).unwrap();
+        let HubCommand::VerifyLanding(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.reference, sha);
     }
 
     #[test]

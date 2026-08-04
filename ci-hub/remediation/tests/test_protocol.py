@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import subprocess
@@ -117,6 +118,83 @@ class ProtocolTest(unittest.TestCase):
                 protocol.resolve_landed_sha(
                     source, head, repo="rrnewton/hermit", pr=1219
                 )
+
+    def test_verify_landing_pr_reports_replay_ancestry(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        replay = "d" * 40
+        args = argparse.Namespace(
+            source=source,
+            reference="1219",
+            target="main",
+            repo="rrnewton/hermit",
+            json=True,
+        )
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol,
+                "_query_pr_landing",
+                return_value=("MERGED", "c" * 40, replay),
+            ),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=True),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.verify_landing(args)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["state"], "landed")
+        self.assertEqual(payload["rc"], 0)
+        self.assertEqual(payload["resolved_sha"], replay)
+
+    def test_verify_landing_sha_reports_not_landed(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        args = argparse.Namespace(
+            source=source,
+            reference=SHA,
+            target="main",
+            repo="rrnewton/hermit",
+            json=True,
+        )
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(protocol, "_resolve_raw_sha", return_value=SHA),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=False),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.verify_landing(args)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["state"], "not-landed")
+        self.assertEqual(payload["rc"], 1)
+        self.assertEqual(payload["ancestry"], "not-ancestor")
+
+    def test_verify_landing_pr_without_merge_commit_is_unverifiable(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        args = argparse.Namespace(
+            source=source,
+            reference="1558",
+            target="main",
+            repo="rrnewton/hermit",
+            json=True,
+        )
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol,
+                "_query_pr_landing",
+                return_value=("OPEN", "e" * 40, ""),
+            ),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.verify_landing(args)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 2)
+        self.assertEqual(payload["state"], "unverifiable")
+        self.assertEqual(payload["rc"], 2)
+        self.assertEqual(payload["reason"], "no mergeCommit.oid")
 
     def transition(self, patch: dict) -> dict:
         return obligations.transition(

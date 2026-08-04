@@ -55,12 +55,21 @@ are:
 
 Networked commands use `with-proxy` internally.
 
-Landing verification is PR-aware. `ci-hub verify-landed-pr PR --repo
-OWNER/REPO --source CHECKOUT` reads GitHub's `mergeCommit.oid` (the commit
-replayed by a rebase merge), fetches current `origin/main`, and requires that
-replay SHA to remain ancestral. Do not test the pre-merge PR head: rebase merge
-rewrites it by design. The API's `MERGED` state is not sufficient on its own;
-the replay-SHA ancestry check still detects a later force-push orphan.
+Landing verification is PR-aware and has machine-stable result codes:
+
+```bash
+./ci-hub/ci-hub verify-landing PR --repo OWNER/REPO --source CHECKOUT
+./ci-hub/ci-hub verify-landing FULL_40_HEX_SHA --source CHECKOUT
+```
+
+The command freshly fetches the target (default `origin/main`) and prints
+`LANDED` with rc 0, `NOT_LANDED` with rc 1, or `UNVERIFIABLE` with rc 2. For a
+PR it reads GitHub's `mergeCommit.oid`, the commit created by a rebase merge,
+then checks that replay SHA's ancestry. Do not test the pre-merge PR head:
+rebase merge rewrites it by design. The API's `MERGED` state is not sufficient
+on its own; a non-ancestral replay SHA is `NOT_LANDED`, detecting a later
+force-push orphan. A PR without `mergeCommit.oid` is `UNVERIFIABLE`, never an
+inferred failure or success. `verify-landed-pr` remains a compatibility alias.
 
 ## Object map and ownership
 

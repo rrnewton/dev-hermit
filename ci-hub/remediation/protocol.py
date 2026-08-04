@@ -380,7 +380,25 @@ def _run(
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
 
 
-def _is_main_ancestor(source: Path, sha: str) -> bool:
+def _fetch_target(source: Path, target: str) -> str:
+    target_ref = f"origin/{target}"
+    _run(
+        (
+            "with-proxy",
+            "git",
+            "-C",
+            str(source),
+            "fetch",
+            "origin",
+            f"refs/heads/{target}:refs/remotes/{target_ref}",
+        ),
+        check=True,
+        timeout=DEFAULT_NETWORK_TIMEOUT,
+    )
+    return target_ref
+
+
+def _is_target_ancestor(source: Path, sha: str, target_ref: str) -> bool:
     ancestry = _run(
         (
             "git",
@@ -389,17 +407,21 @@ def _is_main_ancestor(source: Path, sha: str) -> bool:
             "merge-base",
             "--is-ancestor",
             sha,
-            "origin/main",
+            target_ref,
         ),
         check=False,
     )
     if ancestry.returncode not in (0, 1):
         detail = (ancestry.stderr or ancestry.stdout or "").strip()
-        raise ProtocolError(f"cannot compare {sha} with fetched origin/main: {detail}")
+        raise ProtocolError(f"cannot compare {sha} with fetched {target_ref}: {detail}")
     return ancestry.returncode == 0
 
 
-def _resolve_pr_replay_sha(source: Path, repo: str, pr: int) -> tuple[str, str]:
+def _is_main_ancestor(source: Path, sha: str) -> bool:
+    return _is_target_ancestor(source, sha, "origin/main")
+
+
+def _query_pr_landing(repo: str, pr: int) -> tuple[str, str, str]:
     result = _run(
         (
             "with-proxy",
@@ -429,6 +451,11 @@ def _resolve_pr_replay_sha(source: Path, repo: str, pr: int) -> tuple[str, str]:
         if isinstance(merge_commit, Mapping)
         else ""
     )
+    return state, head, replay
+
+
+def _resolve_pr_replay_sha(source: Path, repo: str, pr: int) -> tuple[str, str]:
+    state, head, replay = _query_pr_landing(repo, pr)
     if state != "MERGED" or not obligations.SHA_RE.fullmatch(replay):
         raise ProtocolError(
             f"{repo}#{pr} has no merged replay SHA (state={state or 'unknown'})"
@@ -492,36 +519,143 @@ def resolve_landed_sha(
     return resolved
 
 
-def verify_landed_pr(args: argparse.Namespace) -> int:
+def _print_landing_verdict(
+    *,
+    state: str,
+    rc: int,
+    reference: str,
+    target_ref: str,
+    json_output: bool,
+    **details: object,
+) -> int:
+    payload = {
+        "state": state,
+        "rc": rc,
+        "input": reference,
+        "target": target_ref,
+        **details,
+    }
+    if json_output:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        fields = " ".join(
+            f"{key}={value}" for key, value in payload.items() if key != "state"
+        )
+        print(f"{state.upper().replace('-', '_')} {fields}")
+    return rc
+
+
+def _resolve_raw_sha(source: Path, reference: str) -> str:
+    rev_parse = (
+        "git",
+        "-C",
+        str(source),
+        "rev-parse",
+        "--verify",
+        f"{reference}^{{commit}}",
+    )
+    result = _run(rev_parse, check=False)
+    if result.returncode != 0:
+        _run(
+            (
+                "with-proxy",
+                "git",
+                "-C",
+                str(source),
+                "fetch",
+                "--no-tags",
+                "origin",
+                reference,
+            ),
+            check=True,
+            timeout=DEFAULT_NETWORK_TIMEOUT,
+        )
+        result = _run(rev_parse, check=True)
+    commit = result.stdout.strip().lower()
+    if not obligations.SHA_RE.fullmatch(commit):
+        raise ProtocolError(f"cannot resolve full commit SHA from {reference!r}")
+    return commit
+
+
+def verify_landing(args: argparse.Namespace) -> int:
     source = args.source.expanduser().resolve()
     if not source.is_dir():
-        raise ProtocolError(f"source checkout is missing: {source}")
-    _run(
-        ("with-proxy", "git", "-C", str(source), "fetch", "origin", "main"),
-        check=True,
-        timeout=DEFAULT_NETWORK_TIMEOUT,
-    )
-    head, replay = _resolve_pr_replay_sha(source, args.repo, args.pr)
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "state": "landed",
-                    "repo": args.repo,
-                    "pr": args.pr,
-                    "pr_head_sha": head,
-                    "landed_sha": replay,
-                    "verification": "mergeCommit-ancestor-of-origin/main",
-                },
-                sort_keys=True,
+        return _print_landing_verdict(
+            state="unverifiable",
+            rc=2,
+            reference=args.reference,
+            target_ref=f"origin/{args.target}",
+            json_output=args.json,
+            reason=f"source checkout is missing: {source}",
+        )
+
+    try:
+        target_ref = _fetch_target(source, args.target)
+        reference = args.reference.lower()
+        if obligations.SHA_RE.fullmatch(reference):
+            commit = _resolve_raw_sha(source, reference)
+            is_ancestor = _is_target_ancestor(source, commit, target_ref)
+            return _print_landing_verdict(
+                state="landed" if is_ancestor else "not-landed",
+                rc=0 if is_ancestor else 1,
+                reference=args.reference,
+                target_ref=target_ref,
+                json_output=args.json,
+                input_kind="sha",
+                resolved_sha=commit,
+                ancestry="ancestor" if is_ancestor else "not-ancestor",
             )
+
+        if not args.reference.isdecimal() or int(args.reference) <= 0:
+            return _print_landing_verdict(
+                state="unverifiable",
+                rc=2,
+                reference=args.reference,
+                target_ref=target_ref,
+                json_output=args.json,
+                reason="input must be a positive PR number or full 40-character SHA",
+            )
+
+        pr = int(args.reference)
+        pr_state, head, replay = _query_pr_landing(args.repo, pr)
+        if pr_state != "MERGED" or not obligations.SHA_RE.fullmatch(replay):
+            return _print_landing_verdict(
+                state="unverifiable",
+                rc=2,
+                reference=args.reference,
+                target_ref=target_ref,
+                json_output=args.json,
+                input_kind="pr",
+                repo=args.repo,
+                pr=pr,
+                pr_state=pr_state or "unknown",
+                pr_head_sha=head or "unknown",
+                reason="no mergeCommit.oid",
+            )
+        is_ancestor = _is_target_ancestor(source, replay, target_ref)
+        return _print_landing_verdict(
+            state="landed" if is_ancestor else "not-landed",
+            rc=0 if is_ancestor else 1,
+            reference=args.reference,
+            target_ref=target_ref,
+            json_output=args.json,
+            input_kind="pr",
+            repo=args.repo,
+            pr=pr,
+            pr_state=pr_state,
+            pr_head_sha=head or "unknown",
+            resolved_sha=replay,
+            ancestry="ancestor" if is_ancestor else "not-ancestor",
         )
-    else:
-        print(
-            f"LANDED {args.repo}#{args.pr} landed_sha={replay} "
-            f"pr_head_sha={head or 'unknown'}"
+    except ProtocolError as error:
+        return _print_landing_verdict(
+            state="unverifiable",
+            rc=2,
+            reference=args.reference,
+            target_ref=f"origin/{args.target}",
+            json_output=args.json,
+            reason=str(error),
         )
-    return 0
 
 
 def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
@@ -1740,14 +1874,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--store", type=Path, default=obligations.default_store_path()
     )
 
-    verify_landed_parser = subparsers.add_parser(
-        "verify-landed-pr",
-        help="resolve a PR's rebase replay SHA and prove it remains on main",
+    verify_landing_parser = subparsers.add_parser(
+        "verify-landing",
+        aliases=["verify-landed-pr"],
+        help="verify a PR replay SHA or commit SHA against a freshly fetched target",
     )
-    verify_landed_parser.add_argument("pr", type=int)
-    verify_landed_parser.add_argument("--repo", default=DEFAULT_REPO)
-    verify_landed_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
-    verify_landed_parser.add_argument("--json", action="store_true")
+    verify_landing_parser.add_argument(
+        "reference", help="positive PR number or full 40-character commit SHA"
+    )
+    verify_landing_parser.add_argument("--repo", default=DEFAULT_REPO)
+    verify_landing_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    verify_landing_parser.add_argument("--target", default="main")
+    verify_landing_parser.add_argument("--json", action="store_true")
 
     watch_parser = subparsers.add_parser(
         "watch", help="poll open obligations and record transitions"
@@ -1820,8 +1958,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "wait must be non-negative and poll interval must be positive"
                 )
             return arm(args)
-        if args.command == "verify-landed-pr":
-            return verify_landed_pr(args)
+        if args.command in ("verify-landing", "verify-landed-pr"):
+            return verify_landing(args)
         if args.command == "watch":
             if args.poll_seconds <= 0:
                 raise ProtocolError("--poll-seconds must be positive")
