@@ -1,2 +1,6 @@
 guests/bin/
 target-*/
+# Per-agent private harness output (rerun_harness.sh writes+rm's this each run;
+# the shared canonical file is results.csv) and any dead/partial-run backups.
+results.mine.csv
+*.bak
