@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# STANDING sweep: earned validate receipts x FRESH open-PR heads.
+# Emits VALID / FLOOR-BLOCKED / NOT-CERTIFIED / ORPHANED with denominators.
+# Run after every drain rebase wave -- see ci-hub/landing/reconcile_receipts.py.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+exec python3 "$ROOT/ci-hub/landing/reconcile_receipts.py" "$@"

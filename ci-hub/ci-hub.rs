@@ -487,6 +487,12 @@ struct LoadProbeArgs {
 
 #[derive(Args, Clone, Debug)]
 struct ValidateStatusArgs {
+    /// The commit SHA given POSITIONALLY (equivalent to --sha). Accepts either
+    /// `validate-status <SHA>` or `validate-status --sha <SHA>`; the bare form
+    /// is the natural reflex, so rejecting it was a usability trap. Supplying
+    /// both the positional and --sha, or combining with --pr, is a conflict.
+    #[arg(value_name = "SHA", conflicts_with_all = ["sha", "pr"])]
+    sha_positional: Option<String>,
     /// The commit SHA (full 40-hex or an unambiguous ledger prefix) to assess.
     #[arg(long, conflicts_with = "pr")]
     sha: Option<String>,
@@ -3875,14 +3881,17 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
 fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
-    let sha = match (&args.sha, args.pr) {
+    // A SHA may arrive as `--sha` or positionally; clap already forbids giving
+    // both, or either together with `--pr`.
+    let sha_input = args.sha.as_ref().or(args.sha_positional.as_ref());
+    let sha = match (sha_input, args.pr) {
         (Some(input), None) => {
             validate_status::resolve_sha(&rows, input).map_err(CiHubError::ValidateStatus)?
         }
         (None, Some(pr)) => gh_pr_head(root, &args.repo, pr)?,
         _ => {
             return Err(CiHubError::ValidateStatus(
-                "exactly one of --sha or --pr is required".into(),
+                "exactly one of a SHA (positional or --sha) or --pr is required".into(),
             ))
         }
     };
@@ -4333,6 +4342,32 @@ mod tests {
             panic!("wrong command variant")
         };
         assert_eq!(args.reference, sha);
+    }
+
+    #[test]
+    fn validate_status_accepts_positional_or_flag_sha() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        // Positional form (the reflex that used to be rejected).
+        let cli = Cli::try_parse_from(["ci-hub", "validate-status", sha]).unwrap();
+        let HubCommand::ValidateStatus(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.sha_positional.as_deref(), Some(sha));
+        assert_eq!(args.sha, None);
+
+        // Flag form still works.
+        let cli = Cli::try_parse_from(["ci-hub", "validate-status", "--sha", sha]).unwrap();
+        let HubCommand::ValidateStatus(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.sha.as_deref(), Some(sha));
+        assert_eq!(args.sha_positional, None);
+
+        // Positional + --pr conflict, and positional + --sha conflict.
+        assert!(Cli::try_parse_from(["ci-hub", "validate-status", sha, "--pr", "1"]).is_err());
+        assert!(
+            Cli::try_parse_from(["ci-hub", "validate-status", sha, "--sha", sha]).is_err()
+        );
     }
 
     #[test]
