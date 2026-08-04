@@ -80,6 +80,24 @@ always WITH A DENOMINATOR ("valid 1 of 59"):
 - `ORPHANED` — no current open-PR head equals this commit; the head moved or the
   PR landed. `orphaned/total` is the measured cost of push-rewrites-the-head.
 
+**COORDINATOR post-wave step (standing, once per rebase wave).** There is no
+per-wave code hook — a rebase wave is a coordinator-level batch, not a single
+script's loop, and the natural home (`rebase_wrapper.py`) owns an overlapping
+reconcile/`eligible` mechanism. So the coordinator runs this as the FIRST landing
+step after every rebase wave, BEFORE queueing any new ~500s validate:
+
+```bash
+./ci-hub/bin/reconcile-receipts            # 1. sweep the moved frontier
+# 2. for each VALID row: apply-local-label from the receipt, then land it
+#    (ci-hub apply-local-label --pr <N> ; ci-hub/landing/land-pr.sh ...).
+# 3. for each FLOOR-BLOCKED row: it needs REBASE, not a new validate.
+```
+
+A wave rewrites heads — some receipts revive, some die — so only a re-run after
+each wave is current; the query costs seconds against a full run's ~500s. This is
+the cheapest work in the drain: consume evidence already earned before spending
+new compute.
+
 Landing verification is PR-aware and has machine-stable result codes:
 
 ```bash
