@@ -36,6 +36,7 @@ def _pr(
         "mergeStateStatus": merge_state,
         "labels": [{"name": label} for label in labels],
         "statusCheckRollup": rollup,
+        "headRefOid": "a" * 40,
     }
 
 
@@ -79,6 +80,30 @@ class GhEngineClassificationTests(unittest.TestCase):
         self.assertEqual(
             pr_status._rollup_ci_state(_rollup(("COMPLETED", "FAILURE"))), "red"
         )
+
+    def test_latest_same_head_duplicate_controls_health(self) -> None:
+        sha = "a" * 40
+        older = {
+            "name": "merge-gate",
+            "headSha": sha,
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "startedAt": "2026-08-04T15:12:05Z",
+            "detailsUrl": "https://github.com/o/r/actions/runs/10/job/1",
+        }
+        newer = {
+            "name": "merge-gate",
+            "headSha": sha,
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "startedAt": "2026-08-04T15:24:36Z",
+            "detailsUrl": "https://github.com/o/r/actions/runs/11/job/2",
+        }
+        for rollup in ([older, newer], [newer, older]):
+            with self.subTest(order=[item["conclusion"] for item in rollup]):
+                self.assertEqual(
+                    pr_status._rollup_ci_state(rollup, head_sha=sha), "green"
+                )
 
     def test_drafts_excluded(self) -> None:
         raw = [_pr(1, _rollup(("COMPLETED", "SUCCESS")), draft=True)]

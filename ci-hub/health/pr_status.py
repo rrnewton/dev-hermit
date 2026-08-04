@@ -55,7 +55,7 @@ from typing import Sequence
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
 
-from check_outcome import CheckOutcome, classify_check
+from check_outcome import CheckOutcome, classify_check, select_latest_checks
 
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
@@ -101,6 +101,7 @@ GH_FIELDS = (
     "updatedAt",
     "labels",
     "statusCheckRollup",
+    "headRefOid",
 )
 MECHANISM_GH_FIELDS = ("number", "title", "isDraft", "labels")
 
@@ -258,13 +259,14 @@ def resolve_net_wrapper(spec: str | None) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _rollup_ci_state(rollup: object) -> str:
+def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
     """Reduce a statusCheckRollup list to one of red/pending/green.
 
     Empty rollup (no checks yet) is treated as pending, not green: a PR with no
     checks has not demonstrated health.
     """
-    if not isinstance(rollup, list) or not rollup:
+    rollup = select_latest_checks(rollup, head_sha=head_sha)
+    if not rollup:
         return "pending"
     any_fail = False
     any_pending = False
@@ -419,7 +421,10 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         if entry.get("isDraft") is True:
             continue
         number = entry.get("number")
-        ci = _rollup_ci_state(entry.get("statusCheckRollup"))
+        ci = _rollup_ci_state(
+            entry.get("statusCheckRollup"),
+            head_sha=str(entry.get("headRefOid") or ""),
+        )
         mergeable = str(entry.get("mergeable") or "").upper()
         merge_state = str(entry.get("mergeStateStatus") or "").upper()
         # Stale-base vs real: a CONFLICTING/DIRTY red is red because its merge

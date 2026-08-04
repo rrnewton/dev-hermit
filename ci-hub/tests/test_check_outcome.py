@@ -10,7 +10,12 @@ from pathlib import Path
 CI_HUB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CI_HUB))
 
-from check_outcome import CheckOutcome, classify_check
+from check_outcome import (
+    CheckOutcome,
+    classify_check,
+    select_latest_checks,
+    select_latest_workflow_run,
+)
 
 
 class CheckOutcomeContractTests(unittest.TestCase):
@@ -60,6 +65,112 @@ class CheckOutcomeContractTests(unittest.TestCase):
             classify_check("completed", "cancelled", self_timeout=True),
             CheckOutcome.FAILED,
         )
+
+    def test_latest_same_head_check_wins_in_both_input_orders(self) -> None:
+        sha = "a" * 40
+        older = {
+            "name": "merge-gate",
+            "headSha": sha,
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "startedAt": "2026-08-04T15:12:05Z",
+            "detailsUrl": "https://github.com/o/r/actions/runs/30922888575/job/1",
+        }
+        newer = {
+            "name": "merge-gate",
+            "headSha": sha,
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "startedAt": "2026-08-04T15:24:36Z",
+            "detailsUrl": "https://github.com/o/r/actions/runs/30923975433/job/2",
+        }
+        wrong_head = {**newer, "headSha": "b" * 40, "conclusion": "FAILURE"}
+        for rollup in ([older, newer, wrong_head], [wrong_head, newer, older]):
+            with self.subTest(order=[item["conclusion"] for item in rollup]):
+                selected = select_latest_checks(rollup, head_sha=sha)
+                self.assertEqual(len(selected), 1)
+                self.assertEqual(selected[0]["conclusion"], "SUCCESS")
+
+    def test_newer_queued_run_overrides_older_success(self) -> None:
+        selected = select_latest_checks(
+            [
+                {
+                    "name": "merge-gate",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-08-04T15:12:05Z",
+                    "detailsUrl": "https://github.com/o/r/actions/runs/10/job/1",
+                },
+                {
+                    "name": "merge-gate",
+                    "status": "QUEUED",
+                    "conclusion": "",
+                    "startedAt": "0001-01-01T00:00:00Z",
+                    "detailsUrl": "https://github.com/o/r/actions/runs/11/job/2",
+                },
+            ]
+        )
+        self.assertEqual(
+            classify_check(selected[0]["status"], selected[0]["conclusion"]),
+            CheckOutcome.NO_RESULT,
+        )
+
+    def test_unorderable_contrary_duplicate_is_no_result(self) -> None:
+        selected = select_latest_checks(
+            [
+                {
+                    "name": "merge-gate",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                },
+                {
+                    "name": "merge-gate",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+            ]
+        )
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["status"], "AMBIGUOUS")
+        self.assertIs(
+            classify_check(selected[0]["status"], selected[0]["conclusion"]),
+            CheckOutcome.NO_RESULT,
+        )
+
+    def test_latest_workflow_run_filters_head_event_and_ties_by_id(self) -> None:
+        sha = "a" * 40
+        payload = {
+            "workflow_runs": [
+                {
+                    "head_sha": sha,
+                    "event": "pull_request",
+                    "created_at": "2026-08-04T15:12:05Z",
+                    "id": 10,
+                },
+                {
+                    "head_sha": sha,
+                    "event": "workflow_dispatch",
+                    "created_at": "2026-08-04T15:24:36Z",
+                    "id": 11,
+                },
+                {
+                    "head_sha": sha,
+                    "event": "workflow_run",
+                    "created_at": "2026-08-04T15:25:00Z",
+                    "id": 12,
+                },
+                {
+                    "head_sha": "b" * 40,
+                    "event": "workflow_dispatch",
+                    "created_at": "2026-08-04T15:26:00Z",
+                    "id": 13,
+                },
+            ]
+        }
+        selected = select_latest_workflow_run(
+            payload, head_sha=sha, events=("pull_request", "workflow_dispatch")
+        )
+        self.assertEqual(selected["id"], 11)
 
 
 if __name__ == "__main__":
