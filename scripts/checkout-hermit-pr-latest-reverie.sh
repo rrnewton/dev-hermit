@@ -2,15 +2,18 @@
 set -euo pipefail
 
 # Prepare, validate, and optionally publish non-rewriting Reverie pin bumps.
-# TARGET_SHA is deliberately supplied at execution time because Reverie main is
-# the synchronization barrier. The command refuses a target other than the
-# then-current Reverie main.
+# TARGET_SHA is resolved from Reverie main at execution time because that branch
+# is the synchronization barrier. An explicitly supplied SHA is only an
+# expectation guard; the command refuses it if main has already moved.
 
 usage() {
   cat <<'EOF'
 Usage:
-  checkout-pr-latest-reverie.sh --target-sha <40-hex> \
+  checkout-pr-latest-reverie.sh \
     --repo <clean-hermit-worktree> [--push] <pr> [<pr> ...]
+
+The command resolves latest Reverie main itself. Optional
+--target-sha <40-hex> asserts an expected tip and fails if it is stale.
 
 The operation is fail-closed and sequential per PR:
   fetch -> verify disjoint -> merge current Hermit main -> regenerate pins ->
@@ -73,7 +76,7 @@ while (($#)); do
   esac
 done
 
-[[ $target =~ ^[0-9a-f]{40}$ ]] || \
+[[ -z $target || $target =~ ^[0-9a-f]{40}$ ]] || \
   die "--target-sha (or TARGET_SHA) must be a full lowercase 40-hex SHA"
 [[ -n $repo ]] || die "--repo is required"
 ((${#prs[@]} > 0)) || die "at least one PR is required"
@@ -89,6 +92,13 @@ ci_hub="$workspace/ci-hub/ci-hub"
 [[ -x $ci_hub ]] || die "missing ci-hub executable: $ci_hub"
 evidence_dir="$workspace/scratch/pin-bump-evidence"
 mkdir -p "$evidence_dir"
+
+resolved_target=$(with-proxy git ls-remote \
+  https://github.com/rrnewton/reverie.git refs/heads/main | awk '{print $1}')
+[[ $resolved_target =~ ^[0-9a-f]{40}$ ]] || die "could not resolve Reverie main"
+[[ -z $target || $target == "$resolved_target" ]] || \
+  die "expected Reverie main $target, but latest is $resolved_target"
+target=$resolved_target
 
 if ! $foreground; then
   unit="hermit-pin-bump-${target:0:8}-$(date +%s)"
@@ -118,10 +128,6 @@ fi
 
 note "fetching authoritative tips"
 with-proxy git -C "$repo" fetch origin main
-current_reverie=$(with-proxy git ls-remote https://github.com/rrnewton/reverie.git refs/heads/main | awk '{print $1}')
-[[ $current_reverie =~ ^[0-9a-f]{40}$ ]] || die "could not resolve Reverie main"
-[[ $target == "$current_reverie" ]] || \
-  die "TARGET_SHA=$target is not current Reverie main=$current_reverie"
 
 for pr in "${prs[@]}"; do
   operation_started=$(date +%s)
