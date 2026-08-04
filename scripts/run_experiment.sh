@@ -163,7 +163,12 @@ for ((run = 1; run <= runs; run++)); do
   mkdir "$run_dir"
 
   set +e
-  "$hermit_bin" --log "$hermit_log" run -- "$program" "${program_args[@]}" \
+  # Box the bare hermit run so a leaked core/held namespace is reaped by cgroup.kill.
+  # --passthrough streams stdout and stderr byte-identically on SEPARATE fds, so the
+  # per-stream sha256 determinism fingerprint below is unchanged, and the child's REAL
+  # exit status (part of the fingerprint) is propagated verbatim.
+  "$script_dir/hermit-box-run" --passthrough --label run-experiment \
+    -- "$hermit_bin" --log "$hermit_log" run -- "$program" "${program_args[@]}" \
     >"$run_dir/stdout" 2>"$run_dir/stderr"
   exit_code=$?
   set -e
