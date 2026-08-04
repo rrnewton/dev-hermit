@@ -1,0 +1,8 @@
+layout	width	wall_s	user_s	sys_s	node_wall_s	build_lock_wait_s	package_lock_wait_s	blocked_pct	valid
+shared	1	272.30	751.91	673.26	271.783	0.000	0.000	0.0	yes
+shared	4	335.59	751.91	1151.69	1175.635	816.017	15.108	70.7	no-external-cpu-106-cores
+shared	4	348.15	761.18	1224.73	1221.120	840.210	21.140	70.5	no-external-cpu-114-cores
+shared	7	217.71	741.93	289.38	895.076	665.633	7.842	75.2	yes
+isolated	1	361.71	1249.69	601.31	361.212	0.000	0.000	0.0	yes
+isolated	4	124.90	1289.39	562.02	352.505	0.000	2.297	0.7	yes
+isolated	7	125.11	1292.53	544.04	358.126	0.000	7.514	2.1	yes
