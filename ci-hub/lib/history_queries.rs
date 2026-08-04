@@ -910,6 +910,24 @@ mod tests {
     }
 
     #[test]
+    fn newest_green_does_not_count_a_two_of_five_red_as_failure() {
+        let commits = vec!["tip".into(), "floor".into()];
+        let mut truncated = row("tip", "2026-08-04T17:16:12Z", "full", "full", "fail");
+        truncated.checks = Some(2);
+        truncated.gates_run = Some(2);
+        truncated.gates_expected = Some(5);
+
+        assert!(matches!(
+            newest_green(HistoryQueryEngine::new(commits, vec![truncated])),
+            NewestGreenOutcome::NoEvidence {
+                branch_tip,
+                commits_in_range: 2,
+                recorded: 0,
+            } if branch_tip == "tip"
+        ));
+    }
+
+    #[test]
     fn first_bad_finds_newest_transition_without_treating_gap_as_pass() {
         let commits = vec!["bad2".into(), "bad1".into(), "gap".into(), "good".into()];
         let rows = vec![
