@@ -149,3 +149,5 @@ ACTIVE.md
 /h.json
 /pr_status*.err
 /pr_status*.json
+/prstatus*.err
+/prstatus*.json
