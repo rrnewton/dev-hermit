@@ -5,7 +5,7 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-agent-utils-pin check-deps check-harness-help check-portability clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-deps check-harness-help check-portability check-rust-error-string-proxies clean \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
@@ -131,6 +131,9 @@ check-portability:
 check-harness-help: ## Assert every harness entrypoint's -h/--help/--version is a pure safe probe
 	@scripts/check-harness-help.py
 
+check-rust-error-string-proxies: ## Reject Rust control flow that classifies typed errors by display strings
+	@scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
+
 check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
 	@scripts/check-agent-utils-pin.rs
 
@@ -148,6 +151,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push
 	python3 -m py_compile scripts/*.py
 	python3 -m unittest discover -s scripts -p 'test_*.py'
+	@$(MAKE) --no-print-directory check-rust-error-string-proxies
 	@scripts/check-parent-gitmodules.sh
 	@scripts/check-agent-utils-pin.rs
 	@scripts/primary_checkout.py check

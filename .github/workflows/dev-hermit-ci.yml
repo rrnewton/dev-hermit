@@ -39,6 +39,8 @@ jobs:
           ulimit -t 300
           timeout --signal=KILL 1m python3 -m py_compile scripts/*.py
           timeout --signal=KILL 3m python3 -m unittest discover -s scripts -p "test_*.py"
+          git -c submodule.agent-utils.update=none submodule update --init --depth 1 -- hermit reverie liteinst2
+          timeout --signal=KILL 2m scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
   ci-hub:
     name: ci-hub bounded operations shard

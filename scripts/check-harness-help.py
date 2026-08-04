@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ENTRYPOINTS: list[tuple[str, list[str]]] = [
     ("scripts/sync-memory-skill.rs", ["-h", "--help", "--version"]),
     ("scripts/lint-memory-skill-sync.rs", ["-h", "--help", "--version"]),
+    ("scripts/lint-rust-error-string-proxies.py", ["-h", "--help", "--version"]),
     ("scripts/memory-skill-contradiction-scan.rs", ["-h", "--help", "--version"]),
     ("scripts/check-parent-gitmodules.sh", ["-h", "--help"]),
     ("scripts/check-portable-paths.sh", ["-h", "--help"]),

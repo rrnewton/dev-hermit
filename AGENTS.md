@@ -555,6 +555,44 @@ infrastructure failures explicitly rather than weakening hardware-sensitive
 assertions. Use `with-proxy` for networked `git` and `gh`, and never use
 `gh auth switch` (authentication is shared machine state).
 
+### Proxy Binding Review Axis
+
+**Proxy Binding** is the mandatory adversarial-review axis that asks: **what
+binds this check to the fact it claims, and can I observe that binding rather
+than infer it?** A check fails this axis when it keys on a correlated proxy
+without an observable identity, causal, coverage, or provenance link to the
+claimed condition. Reviewers must name the claimed fact, the observed evidence,
+and the binding between them; passing tests do not supply a missing binding.
+
+Worked examples from one review cycle:
+
+1. A skid retry matched a marker substring, not an authenticated overshoot
+   failure; guest output could spoof it and co-occurrence did not prove cause.
+2. Rust code compared `error.to_string()` with `Errno::EFAULT.to_string()`
+   instead of matching the typed error variant.
+3. `check-reverie-pin.rs` inspected `Cargo.toml` but not tracked `Cargo.lock`
+   files, so its file set did not bind to the complete pin claim.
+4. A backend-abstraction lint covered three of six backends while claiming the
+   abstraction rule generally.
+5. `land-pr.sh` polled a status rollup that could omit `workflow_run` gates, so
+   the rollup did not bind to all gates the script caused.
+6. An ancestor-of-PR-head query stood in for landed status even though a
+   rebase-merge does not retain the feature head as an ancestor.
+7. A merge gate ran stale branch-owned workflow YAML, so its green result was
+   not bound to current trusted gate semantics.
+8. A shared-account `locally-validated` label lacked a run ID, exact SHA, and
+   durable log binding it to an actual validation.
+9. A parity percentage hashed piped stdout only while claiming full-trace
+   parity.
+
+Lint only the syntactic subset that is mechanically observable. In particular,
+the Rust proxy lint rejects error-like values converted to display strings for
+comparison or use in `if`, `while`, or `match` conditions. That lint does not
+prove semantic binding. No general lint can determine that a checker enumerated
+the complete file/backend/gate set, used the correct merge identity, attached a
+real run, or measured the full trace it names. Those remain review questions and
+require observable enumeration, identity, provenance, or coverage evidence.
+
 ### Post-Facto Human Review
 
 The canonical protocol is post-facto: once required adversarial review is resolved
