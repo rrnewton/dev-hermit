@@ -215,7 +215,7 @@ impl HistoryQueryEngine {
                         trustworthy_recorded += 1;
                     }
                 }
-                Verdict::Truncated | Verdict::NeedsRerun => {}
+                Verdict::Truncated | Verdict::NeedsRerun | Verdict::NoResult => {}
             }
         }
 

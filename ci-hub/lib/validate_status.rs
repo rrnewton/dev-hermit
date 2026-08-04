@@ -99,6 +99,11 @@ pub enum Verdict {
     /// A red exists, but its execution conditions are missing, contended, or
     /// known-flaky and lack the required solo `-j 4` confirmation.
     NeedsRerun,
+    /// A red whose gates could not run at all (an ENVIRONMENT fault, not a
+    /// product defect): a command-not-found storm (all-or-most failing gates at
+    /// exit 127) or a sub-second collapse where every gate failed. Nothing about
+    /// the product was actually exercised, so it is re-runnable, never FAILED.
+    NoResult,
     /// No qualifying record: none at all, or only dirty/subset/unanchored runs.
     NotValidated,
 }
@@ -110,7 +115,7 @@ impl Verdict {
         match self {
             Verdict::Validated => 0,
             Verdict::FailedOnRecord => 3,
-            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NotValidated => 4,
+            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NoResult | Verdict::NotValidated => 4,
         }
     }
 
@@ -120,6 +125,7 @@ impl Verdict {
             Verdict::FailedOnRecord => "FAILED",
             Verdict::Truncated => "TRUNCATED",
             Verdict::NeedsRerun => "NEEDS-RERUN",
+            Verdict::NoResult => "NO-RESULT",
             Verdict::NotValidated => "NOT-VALIDATED",
         }
     }
@@ -165,6 +171,13 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// ledger from a branch writer that emits NO counts, so 4 cannot mean "counts
 /// present". 5 is the first clean anchor.
 pub const COUNTS_SCHEMA: u32 = 5;
+
+/// A schema-3+ full-profile run's known gate contract is five gates. When the
+/// producer has not yet written `gates_expected` (it predates that field), a
+/// full row of schema >= 3 still has this expected count. Mirrors the Python
+/// `flake_class.gate_counts` fallback so both engines apply the SAME
+/// completeness rule (the canonical guard for validate_ledger_qualified_rows).
+pub const FULL_GATES_EXPECTED: u64 = 5;
 
 /// A per-node coverage obligation is SATISFIED iff the run planned at least one
 /// test-bearing DAG node AND no planned test node was inert (ran but executed 0
@@ -252,12 +265,57 @@ pub enum FailureDisposition {
     NotFailure,
     Truncated,
     NeedsRerun,
+    NoResult,
     Failed,
 }
 
 fn gate_is_red(gate: &crate::records::GateHistoryRow) -> bool {
     matches!(gate.result.as_deref(), Some("fail" | "failed" | "timeout"))
         || matches!(gate.kind.as_deref(), Some("fail" | "failed" | "timeout"))
+}
+
+/// The shell's exit code for "command not found" — a gate at this code never ran
+/// the tool it wraps, so it exercised nothing about the product.
+const EXIT_COMMAND_NOT_FOUND: i32 = 127;
+
+/// The observable signature of an ENVIRONMENT fault rather than a product defect:
+/// the gate commands could not run at all, so a red carries no information about
+/// the commit. Bound to values the row itself carries (Proxy Binding — classify
+/// on the observed fault, not on the incidental absence of condition fields, so
+/// the verdict survives the producer starting to emit `dag_jobs`/conditions).
+/// Two independent, each-sufficient tells:
+///
+///   (A) COMMAND-NOT-FOUND STORM: at least one failing gate is exit 127 AND no
+///       failing gate is a genuine product failure (a red gate that actually ran
+///       for >0s at a non-127 exit). A real test/assertion red is exit 1/101
+///       after real execution — never 127 — so a genuine defect can never be
+///       laundered here. LIVE: a1493427 recorded fail at 1s with five gates at
+///       exit 127; the SAME commit passed 6/6 at 58s.
+///   (B) SUB-SECOND COLLAPSE: the whole run's wall is <= 1s AND every gate that
+///       produced a result failed (no gate passed) — the run died before doing
+///       any real work. A genuine build+test red cannot complete this fast.
+fn is_env_fault_red(row: &HistoryRow, failed_gates: &[&crate::records::GateHistoryRow]) -> bool {
+    if failed_gates.is_empty() {
+        return false;
+    }
+    // (A) A gate that genuinely exercised the product and failed disqualifies the
+    // env-fault reading: it ran for real time at a non-command-not-found exit.
+    let any_genuine_red = failed_gates.iter().any(|gate| {
+        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND)
+            && gate.real_seconds.is_some_and(|s| s > 0.0)
+    });
+    let any_command_not_found = failed_gates
+        .iter()
+        .any(|gate| gate.exit_code == Some(EXIT_COMMAND_NOT_FOUND));
+    let command_not_found_storm = any_command_not_found && !any_genuine_red;
+
+    // (B) Sub-second wall with no passing gate. `real_seconds` is the whole run's
+    // wall; a run this short cannot have built and tested the product.
+    let subsecond_collapse = row.real_seconds.is_some_and(|s| s <= 1.0)
+        && !row.gates.is_empty()
+        && row.gates.iter().all(gate_is_red);
+
+    command_not_found_storm || subsecond_collapse
 }
 
 /// Interpret one red ledger row using the conditions carried with it.
@@ -283,25 +341,44 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
     }
 
     let gates_run = row.gates_run.or(row.checks);
+    // Apply the schema-aware full-profile fallback so an anchored full run whose
+    // producer predates `gates_expected` still carries its five-gate contract —
+    // identical to Python `gate_counts`, so the two engines never disagree on
+    // completeness. `is_clean_full_coverage` above already guarantees
+    // profile == "full" here; the schema guard keeps the count off legacy rows.
+    let gates_expected = row.gates_expected.or_else(|| {
+        (row.profile.as_deref() == Some("full") && row.schema_version.is_some_and(|v| v >= 3))
+            .then_some(FULL_GATES_EXPECTED)
+    });
     let failed_gates: Vec<_> = row.gates.iter().filter(|gate| gate_is_red(gate)).collect();
 
-    // The live false-red shape: Ctrl-C/termination after only passing gates.
-    // Explicit planned counts supersede this compatibility recognition once
-    // the producer carries them.
-    if row.exit_code == Some(130)
-        || row
-            .gates_expected
-            .zip(gates_run)
-            .is_some_and(|(expected, ran)| ran < expected)
-        || (row.failures == Some(0) && failed_gates.is_empty())
+    // An environment fault (command-not-found storm, sub-second collapse) is
+    // checked FIRST: its gates could not run, so the red carries no information
+    // about the commit. This is the most specific reading and must win over the
+    // completeness/condition logic below — otherwise, once the producer emits
+    // conditions, a 127-storm with full profile + bound origin would launder
+    // into a durable FAILED. It is re-runnable, never FAILED.
+    if is_env_fault_red(row, &failed_gates) {
+        return FailureDisposition::NoResult;
+    }
+
+    // Completeness is structural. Even when a fail-fast row carries a real red
+    // gate, it did not execute the full validation contract and cannot become a
+    // durable FAILED verdict. A genuine red control has matching gate counts.
+    let has_real_failure = row.failures.is_some_and(|f| f >= 1) || !failed_gates.is_empty();
+    if gates_expected
+        .zip(gates_run)
+        .is_some_and(|(expected, ran)| expected > 0 && ran != expected)
+        || (!has_real_failure
+            && (row.exit_code == Some(130)
+                || (row.failures == Some(0) && failed_gates.is_empty())))
     {
         return FailureDisposition::Truncated;
     }
     // Missing completeness or execution conditions cannot prove a defect. Old
     // reds therefore become re-measurement requests instead of permanent
     // condemnations when the schema tightens.
-    let complete = row
-        .gates_expected
+    let complete = gates_expected
         .zip(gates_run)
         .is_some_and(|(expected, ran)| expected > 0 && ran >= expected);
     let conditions_present = row.dag_jobs.is_some()
@@ -356,6 +433,7 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
     let mut saw_failed = false;
     let mut saw_needs_rerun = false;
     let mut saw_truncated = false;
+    let mut saw_no_result = false;
     for row in rows {
         if row.commit.as_deref() != Some(sha) {
             continue;
@@ -367,6 +445,7 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
                 FailureDisposition::Failed => saw_failed = true,
                 FailureDisposition::NeedsRerun => saw_needs_rerun = true,
                 FailureDisposition::Truncated => saw_truncated = true,
+                FailureDisposition::NoResult => saw_no_result = true,
                 FailureDisposition::NotFailure => {}
             }
             disqualified.push(row.clone());
@@ -380,6 +459,8 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
         Verdict::NeedsRerun
     } else if saw_truncated {
         Verdict::Truncated
+    } else if saw_no_result {
+        Verdict::NoResult
     } else {
         Verdict::NotValidated
     };
@@ -472,7 +553,7 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"testhost",
+            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
@@ -491,6 +572,26 @@ mod tests {
                 "gates":[{{"name":"portable CI DAG lane","result":"fail",
                     "exit_code":1,"failure_origin":"lane_substep",
                     "failed_substeps":["test.detcore_misc"]}}]}}"#
+        ))
+    }
+
+    /// The exact live shape of a1493427 (reverie): a clean full run that recorded
+    /// `fail` at 1s with every FAILING gate at exit 127 (command not found) — the
+    /// build/test binaries were missing. The SAME commit passed 6/6 at 58s. An
+    /// environment fault exercised nothing about the product.
+    fn command_not_found_row(sha: &str) -> HistoryRow {
+        row(&format!(
+            r#"{{"schema_version":3,"repo":"reverie","profile":"full","selection_mode":"full",
+                "commit":"{sha}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":6,"failures":5,"real_seconds":1,
+                "gates":[
+                    {{"name":"Merge-gate policy","result":"pass","exit_code":0,"real_seconds":0}},
+                    {{"name":"Build workspace","result":"fail","exit_code":127,"real_seconds":0}},
+                    {{"name":"Test regular workspace cases","result":"fail","exit_code":127,"real_seconds":0}},
+                    {{"name":"Documentation tests","result":"fail","exit_code":127,"real_seconds":0}},
+                    {{"name":"Clippy","result":"fail","exit_code":127,"real_seconds":0}},
+                    {{"name":"Rustfmt","result":"fail","exit_code":127,"real_seconds":0}}
+                ]}}"#
         ))
     }
 
@@ -574,6 +675,18 @@ mod tests {
     }
 
     #[test]
+    fn exit_130_after_a_real_gate_failure_is_failed_not_truncated() {
+        // A gate genuinely failed, then teardown was Ctrl-C'd (exit 130). The
+        // SIGINT must NOT launder the recorded failure into a non-verdict — a
+        // real red is worse to hide than a needless re-run. Live shape: d096c20c.
+        let mut r = complete_failure(PASS_SHA);
+        r.exit_code = Some(130);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::FailedOnRecord);
+        assert_eq!(a.verdict.exit_code(), 3);
+    }
+
+    #[test]
     fn explicit_truncated_record_stays_first_class() {
         let r = row(&format!(
             r#"{{"schema_version":4,"profile":"full","selection_mode":"full",
@@ -584,6 +697,53 @@ mod tests {
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::Truncated);
         assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn incomplete_real_gate_failure_is_truncated_not_failed() {
+        let mut r = complete_failure(PASS_SHA);
+        r.checks = Some(1);
+        r.gates_run = Some(1);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn schema3_full_incomplete_red_without_gates_expected_is_truncated() {
+        // Live shape a4d20fa8: a schema-3 full run whose producer predates the
+        // `gates_expected` field. It fail-fasted at gate 1 of the known five-gate
+        // contract. The full-profile fallback (expected=5) must apply so ran(1)!=5
+        // reads TRUNCATED, matching Python flake_class.gate_counts — before this
+        // fix Rust read raw gates_expected=None and returned NEEDS-RERUN, diverging
+        // from Python on the canonical guard.
+        let r = row(&format!(
+            r#"{{"schema_version":3,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":1,"failures":1,
+                "gates":[
+                    {{"name":"Initialize repository submodules","result":"fail","exit_code":1}}
+                ]}}"#
+        ));
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn legacy_schema1_incomplete_red_gets_no_five_gate_fallback() {
+        // The fallback is schema>=3 only: a schema-1 full run legitimately had a
+        // different gate count, so an absent gates_expected must NOT be fabricated
+        // as 5. Such a row is never given a completeness-derived TRUNCATED verdict.
+        let r = row(&format!(
+            r#"{{"schema_version":1,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":1,"failures":1,
+                "gates":[
+                    {{"name":"Initialize repository submodules","result":"fail","exit_code":1}}
+                ]}}"#
+        ));
+        assert_ne!(assess(&[r], PASS_SHA).verdict, Verdict::Truncated);
     }
 
     #[test]
@@ -637,10 +797,103 @@ mod tests {
     }
 
     #[test]
+    fn command_not_found_storm_is_no_result_not_failed() {
+        // LIVE a1493427: five failing gates at exit 127 (command not found), 1s
+        // wall; the same commit passed 6/6 at 58s. An env fault exercised nothing
+        // about the product, so it must be re-runnable, never a permanent FAILED.
+        // (Before this rule the reverie 6-gate row only escaped FAILED by accident
+        // — schema-3 carried no conditions and the 5-gate fallback mismatched its
+        // gate count; once the producer emits conditions that accident vanishes.)
+        let a = assess(&[command_not_found_row(PASS_SHA)], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NoResult);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn command_not_found_storm_with_full_conditions_still_no_result() {
+        // The forward hazard: once the producer emits dag_jobs / concurrency /
+        // bound origin on these rows, a complete condition-bound 127-storm must
+        // STILL read NO-RESULT — env-fault detection is keyed on the observed
+        // fault, not on the absence of condition fields.
+        let mut r = command_not_found_row(PASS_SHA);
+        r.schema_version = Some(6);
+        r.gates_run = Some(6);
+        r.gates_expected = Some(6);
+        r.dag_jobs = Some(4);
+        r.concurrent_validates = Some(0);
+        r.known_flaky_failure = Some(false);
+        for gate in r.gates.iter_mut().filter(|g| gate_is_red(g)) {
+            gate.failure_origin = Some("outer_gate".into());
+        }
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NoResult);
+    }
+
+    #[test]
+    fn subsecond_collapse_all_gates_red_is_no_result() {
+        // No 127 code, but the whole run collapsed in <=1s with every gate red —
+        // the run died before doing any real work. Env fault, re-runnable.
+        let r = row(&format!(
+            r#"{{"schema_version":3,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":3,"failures":3,"real_seconds":1,
+                "gates":[
+                    {{"name":"Build workspace","result":"fail","exit_code":1,"real_seconds":0}},
+                    {{"name":"Test regular workspace cases","result":"fail","exit_code":1,"real_seconds":0}},
+                    {{"name":"Clippy","result":"fail","exit_code":1,"real_seconds":0}}
+                ]}}"#
+        ));
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NoResult);
+    }
+
+    #[test]
+    fn genuine_red_that_executed_is_not_laundered_as_env_fault() {
+        // A real product red: a lane substep failed at exit 1 AFTER real execution
+        // time, complete profile with bound conditions. Neither env-fault tell
+        // matches (exit != 127; wall not sub-second), so it stays a durable FAILED.
+        // This is the "GENUINE red still reads FAILED" bracket.
+        let mut r = complete_failure(PASS_SHA);
+        r.real_seconds = Some(58.0);
+        r.gates[0].real_seconds = Some(45.0);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::FailedOnRecord);
+        assert_eq!(a.verdict.exit_code(), 3);
+    }
+
+    #[test]
+    fn mixed_command_not_found_and_genuine_red_is_not_no_result() {
+        // One gate genuinely failed after running (exit 1, 45s); a second was
+        // command-not-found. A real defect co-occurring with env noise must NOT be
+        // laundered to NO-RESULT: any genuine executed red disqualifies the
+        // env-fault reading.
+        let mut r = complete_failure(PASS_SHA);
+        r.real_seconds = Some(60.0);
+        r.gates[0].real_seconds = Some(45.0);
+        r.gates.push(
+            serde_json::from_str(
+                r#"{"name":"Rustfmt","result":"fail","exit_code":127,"real_seconds":0}"#,
+            )
+            .expect("valid gate json"),
+        );
+        assert_ne!(assess(&[r], PASS_SHA).verdict, Verdict::NoResult);
+    }
+
+    #[test]
+    fn genuine_failed_sibling_wins_over_env_fault_row() {
+        // Two rows for one commit: an env-fault 127-storm AND a genuine complete
+        // red. The genuine red must surface (FailedOnRecord), never be downgraded
+        // by the env-fault sibling.
+        let mut genuine = complete_failure(PASS_SHA);
+        genuine.real_seconds = Some(58.0);
+        genuine.gates[0].real_seconds = Some(45.0);
+        let rows = vec![command_not_found_row(PASS_SHA), genuine];
+        assert_eq!(assess(&rows, PASS_SHA).verdict, Verdict::FailedOnRecord);
+    }
+
+    #[test]
     fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
-            r#"{"schema_version":3,"host":"testhost","profile":"full","selection_mode":"full",
+            r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );
