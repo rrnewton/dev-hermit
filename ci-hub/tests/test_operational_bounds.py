@@ -542,7 +542,7 @@ class OperationalBoundsTest(unittest.TestCase):
                     "created_at": "2026-08-04T02:49:00Z",
                 },
                 {
-                    "head_sha": "c" * 40,
+                    "head_sha": sha,
                     "event": "workflow_run",
                     "status": "completed",
                     "conclusion": "success",
