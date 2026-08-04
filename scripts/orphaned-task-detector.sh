@@ -143,7 +143,7 @@ if (( orphan_n > 0 )); then
     echo
     echo "ROUTE each (coordinator decision — never a silent third state):"
     echo "  * still wanted -> reassign: tg claim <task> (as the new owner) or tg update <task> --owner <agent>"
-    echo "  * done/moot    -> close:    tg update <task> --status closed  (record why)"
+    echo "  * done/moot    -> coordinator records evidence, then uses ./ci-hub/bin/close-task"
     echo "This tool only DETECTS. It does not reassign or close anything."
 fi
 # --gate: signal orphan presence through the exit code so a composite health poll

@@ -84,12 +84,30 @@ class TaskLifecyclePolicyTest(unittest.TestCase):
     def test_canonical_policy_explains_the_agent_stop_condition(self) -> None:
         policy = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for required in (
-            "Implementation-agent stop condition",
+            "A working agent NEVER moves a task to a terminal status",
             "add the `implemented` tag while leaving status `in_progress`",
-            "stop, leaving landing verification and closure to the coordinator",
-            "Self-closing at implementation time removes unlanded work",
+            "(4) stop",
+            "Only the coordinator closes tasks",
         ):
             self.assertIn(required, policy)
+
+        rationale = (ROOT / "ai_docs" / "agents-md-policy-rationale.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "Phantom closures (a task marked done while its work never landed)",
+            rationale,
+        )
+
+        coordinator_skill = " ".join(
+            (ROOT / ".claude" / "skills" / "hermit-coord.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        self.assertIn(
+            "Closing earlier hides unlanded work from the active drain",
+            coordinator_skill,
+        )
 
 
 if __name__ == "__main__":
