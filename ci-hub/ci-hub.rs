@@ -16,14 +16,14 @@
 //! thiserror = "2"
 //! ```
 
-#[path = "lib/landing_lock.rs"]
-mod landing_lock;
-#[path = "lib/validate_lock.rs"]
-mod validate_lock;
 #[path = "lib/history_queries.rs"]
 mod history_queries;
+#[path = "lib/landing_lock.rs"]
+mod landing_lock;
 #[path = "lib/records.rs"]
 mod records;
+#[path = "lib/validate_lock.rs"]
+mod validate_lock;
 #[path = "lib/validate_status.rs"]
 mod validate_status;
 
@@ -31,8 +31,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
 use history_queries::{
-    CellEvidenceCache, FirstBadOutcome, HistoryQueryEngine, NewestGreenCache,
-    NewestGreenOutcome,
+    CellEvidenceCache, FirstBadOutcome, HistoryQueryEngine, NewestGreenCache, NewestGreenOutcome,
 };
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
@@ -86,6 +85,7 @@ LANDING & BATCH CONTROL
   apply-local-label       Label PR heads backed by a clean full-validation receipt
   ci-mode                 Inspect or change constrained CI admission mode
   batch                   Inspect or edit the named current CI batch
+  ci-timeout              Cancel hosted runs starved waiting to start; reroute to local
 
 POST-LAND REMEDIATION
   Arm, discover, watch, and resolve durable exact-SHA verification obligations.
@@ -220,6 +220,8 @@ enum HubCommand {
     CiMode(CiModeArgs),
     /// Inspect or edit the named current CI batch and its ci-batch PR labels.
     Batch(BatchArgs),
+    /// Cancel PRs whose hosted CI starved waiting to start and reroute to local validation.
+    CiTimeout(CiTimeoutArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -574,6 +576,20 @@ const CI_BATCH_LABEL: &str = "ci-batch";
 /// Repository assumed for `--pr N` when no `--repo` is given.
 const CI_BATCH_DEFAULT_REPO: &str = "rrnewton/hermit";
 
+/// PR label the ci-timeout reaper applies BEFORE cancelling a starved run, so the
+/// `ci-portable-autoretry.yml` guard sees it on the workflow_run:cancelled event
+/// and stands down instead of re-firing the hosted lane.
+const CI_TIMEOUT_FALLBACK_LABEL: &str = "ci-local-fallback";
+/// Append-only audit trail of every ci-timeout cancellation, relative to root.
+const CI_TIMEOUT_AUDIT_PATH: &str = "ci-hub/health/ci-timeout-cancellations.jsonl";
+/// Default hosted-start-latency threshold (minutes) beyond which a not-yet-started
+/// portable run is treated as starved and rerouted to local validation.
+const DEFAULT_CI_TIMEOUT_THRESHOLD_MINUTES: u64 = 60;
+/// Default cap on open PRs inspected per ci-timeout scan/reap.
+const DEFAULT_CI_TIMEOUT_LIMIT: usize = 100;
+/// Repository assumed by ci-timeout when no `--repo` is given.
+const CI_TIMEOUT_DEFAULT_REPO: &str = "rrnewton/hermit";
+
 #[derive(Args, Clone, Debug)]
 struct CiModeArgs {
     #[command(subcommand)]
@@ -782,6 +798,128 @@ impl CiBatchState {
     }
 }
 
+#[derive(Args, Clone, Debug)]
+struct CiTimeoutArgs {
+    #[command(subcommand)]
+    command: CiTimeoutCommand,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum CiTimeoutCommand {
+    /// Report starved-vs-untouched PRs without mutating anything (read-only).
+    Scan(CiTimeoutScanArgs),
+    /// Cancel starved runs and reroute to local validation (DRY RUN unless --execute).
+    Reap(CiTimeoutReapArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+struct CiTimeoutScanArgs {
+    /// Repository whose open PRs are inspected.
+    #[arg(long, default_value = CI_TIMEOUT_DEFAULT_REPO)]
+    repo: String,
+    /// Hosted-start-latency threshold (minutes) above which a not-started run is starved.
+    #[arg(long, default_value_t = DEFAULT_CI_TIMEOUT_THRESHOLD_MINUTES)]
+    threshold_minutes: u64,
+    /// Emit the machine-readable scan report.
+    #[arg(long)]
+    json: bool,
+    /// Maximum number of open PRs to inspect.
+    #[arg(long, default_value_t = DEFAULT_CI_TIMEOUT_LIMIT)]
+    limit: usize,
+}
+
+#[derive(Args, Clone, Debug)]
+struct CiTimeoutReapArgs {
+    /// Repository whose open PRs are inspected and, under --execute, mutated.
+    #[arg(long, default_value = CI_TIMEOUT_DEFAULT_REPO)]
+    repo: String,
+    /// Hosted-start-latency threshold (minutes) above which a not-started run is starved.
+    #[arg(long, default_value_t = DEFAULT_CI_TIMEOUT_THRESHOLD_MINUTES)]
+    threshold_minutes: u64,
+    /// Maximum number of open PRs to inspect.
+    #[arg(long, default_value_t = DEFAULT_CI_TIMEOUT_LIMIT)]
+    limit: usize,
+    /// Perform the label/cancel/audit mutations; without it this is a dry run.
+    #[arg(long)]
+    execute: bool,
+    /// Act on exactly this PR number if it qualifies; otherwise act on all starved PRs.
+    #[arg(long)]
+    pr: Option<u64>,
+    /// Emit the machine-readable reap report.
+    #[arg(long)]
+    json: bool,
+}
+
+/// One open-PR row from `gh pr list --json number,headRefName,headRefOid,createdAt`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhPrRow {
+    number: u64,
+    head_ref_name: String,
+    head_ref_oid: String,
+}
+
+/// One workflow-run row from `gh run list --json databaseId,headSha,status,...`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhRunRow {
+    database_id: u64,
+    head_sha: String,
+    status: String,
+    created_at: String,
+    event: String,
+}
+
+/// The `jobs` array from `gh run view <id> --json jobs`.
+#[derive(Deserialize)]
+struct GhRunJobs {
+    #[serde(default)]
+    jobs: Vec<GhJobRow>,
+}
+
+/// One job from a run's `jobs` array; a job that never started is `queued`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhJobRow {
+    status: Option<String>,
+    started_at: Option<String>,
+}
+
+impl GhJobRow {
+    /// A job has STARTED once its status leaves `queued` or it records a start time.
+    fn started(&self) -> bool {
+        self.status
+            .as_deref()
+            .map(|s| s != "queued")
+            .unwrap_or(false)
+            || self
+                .started_at
+                .as_deref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+    }
+}
+
+/// A qualified starved PR: its portable run is not completed, no job has started,
+/// and it has waited past the threshold to begin.
+struct StarvedPr {
+    pr: u64,
+    head_sha: String,
+    run_id: u64,
+    run_created_at: String,
+    wait_seconds: i64,
+    jobs_total: usize,
+    jobs_started: usize,
+}
+
+/// Outcome of the shared qualifier: every open PR is either starved or normally
+/// scheduled (started, under threshold, completed, or has no portable run).
+struct CiTimeoutQualification {
+    now: chrono::DateTime<chrono::Utc>,
+    starved: Vec<StarvedPr>,
+    scheduled_untouched: Vec<u64>,
+}
+
 #[derive(Clone, Debug)]
 struct CostSpec {
     tool: &'static str,
@@ -890,6 +1028,10 @@ impl HubCommand {
                 tool: "ci-hub/validate-lock",
                 basis: "not measured: queue wait and optional child command vary; wait/lease/child-deadline values are bounds, not estimates"
                     .into(),
+            },
+            Self::CiTimeout(_) => CostSpec {
+                tool: "ci-hub/ci-timeout",
+                basis: "not measured: bounded gh queries per open PR plus optional label/cancel mutations; no tests executed here (local validate is enqueued separately under the validate-lock)".into(),
             },
             Self::Obligations(_)
             | Self::InheritObligations(_)
@@ -1430,6 +1572,10 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             BatchCommand::Remove(member_args) => batch_remove(root, member_args),
             BatchCommand::Clear(clear_args) => batch_clear(root, clear_args),
         },
+        HubCommand::CiTimeout(args) => match args.command {
+            CiTimeoutCommand::Scan(scan_args) => run_ci_timeout_scan(root, scan_args),
+            CiTimeoutCommand::Reap(reap_args) => run_ci_timeout_reap(root, reap_args),
+        },
     }
 }
 
@@ -1447,7 +1593,8 @@ fn load_ci_mode(root: &Path) -> Result<(CiModeState, bool), CiHubError> {
         path: path.clone(),
         source,
     })?;
-    let state = serde_json::from_str(&raw).map_err(|source| CiHubError::CiModeJson { path, source })?;
+    let state =
+        serde_json::from_str(&raw).map_err(|source| CiHubError::CiModeJson { path, source })?;
     Ok((state, true))
 }
 
@@ -1530,8 +1677,8 @@ fn read_ci_mode_variable(root: &Path, repo: &str) -> Result<Option<String>, Stri
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let rows: Vec<GhVariableRow> =
-        serde_json::from_slice(&output.stdout).map_err(|source| format!("parse gh json: {source}"))?;
+    let rows: Vec<GhVariableRow> = serde_json::from_slice(&output.stdout)
+        .map_err(|source| format!("parse gh json: {source}"))?;
     Ok(rows
         .into_iter()
         .find(|row| row.name == CI_MODE_VARIABLE)
@@ -1707,7 +1854,10 @@ fn ci_mode_set(root: &Path, args: CiModeSetArgs) -> Result<i32, CiHubError> {
         println!("DRY RUN: no files, GitHub variables, or commits changed.");
         println!("Would write {}:", path.display());
         println!("{json}");
-        println!("Would project {CI_MODE_VARIABLE}={value} to: {}", CI_MODE_REPOS.join(", "));
+        println!(
+            "Would project {CI_MODE_VARIABLE}={value} to: {}",
+            CI_MODE_REPOS.join(", ")
+        );
         println!("Would commit {CI_MODE_STATE_PATH} to parent main and push origin HEAD:main.");
         return Ok(0);
     }
@@ -1861,7 +2011,10 @@ fn ci_mode_fire(root: &Path, args: CiModeFireArgs) -> Result<i32, CiHubError> {
     }
     let head_ref = String::from_utf8_lossy(&view.stdout).trim().to_string();
     if head_ref.is_empty() {
-        eprintln!("ci-hub ci-mode fire: could not resolve head branch for PR #{pr} on {}.", args.repo);
+        eprintln!(
+            "ci-hub ci-mode fire: could not resolve head branch for PR #{pr} on {}.",
+            args.repo
+        );
         return Ok(2);
     }
 
@@ -2077,7 +2230,10 @@ fn publish_batch(
         match edit_batch_label(root, pr, false) {
             Ok(()) => println!("Unlabelled {} #{} {CI_BATCH_LABEL}.", pr.repo, pr.number),
             Err(error) => {
-                eprintln!("LABEL REMOVE FAILED for {} #{}: {error}", pr.repo, pr.number);
+                eprintln!(
+                    "LABEL REMOVE FAILED for {} #{}: {error}",
+                    pr.repo, pr.number
+                );
                 failures.push(format!("remove-label {} #{}: {error}", pr.repo, pr.number));
             }
         }
@@ -2291,7 +2447,10 @@ fn batch_dry_run(root: &Path, state: &CiBatchState, to_add: &[BatchPr], to_drop:
     println!("Would write {}:", batch_path(root).display());
     println!("{}", batch_json(state));
     for pr in to_add {
-        println!("Would add label {CI_BATCH_LABEL} to {} #{}.", pr.repo, pr.number);
+        println!(
+            "Would add label {CI_BATCH_LABEL} to {} #{}.",
+            pr.repo, pr.number
+        );
     }
     for pr in to_drop {
         println!(
@@ -2306,6 +2465,587 @@ fn agent_tool(root: &Path) -> PathBuf {
     env::var_os("CI_HUB_AGENT_TOOL")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("ci-hub/bin/agent-tool"))
+}
+
+/// Seconds elapsed since an RFC3339 timestamp, clamped to 0 (never negative when
+/// a clock skew or future-dated run makes `now` precede the timestamp).
+fn wait_seconds_since(now: chrono::DateTime<chrono::Utc>, rfc3339: &str) -> i64 {
+    match chrono::DateTime::parse_from_rfc3339(rfc3339) {
+        Ok(ts) => now
+            .signed_duration_since(ts.with_timezone(&chrono::Utc))
+            .num_seconds()
+            .max(0),
+        Err(_) => 0,
+    }
+}
+
+/// Human wait rendering, e.g. `2h 03m` -> `2h 3m`.
+fn format_wait_hm(seconds: i64) -> String {
+    let secs = seconds.max(0);
+    format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+}
+
+/// Exact admission-gated local-validate enqueue command a follow-on runs; this
+/// command never runs it here (the validate-lock serializes box-exclusive compute).
+fn ci_timeout_enqueue_command(head_sha: &str, pr: u64) -> String {
+    format!(
+        "ci-hub validate-lock run --kind validate --agent ci-timeout --target {head_sha} -- env PR_NUMBER={pr} ./validate.sh"
+    )
+}
+
+/// Shared qualifier for scan and reap: classify every open PR as starved (portable
+/// run not completed, no job started, waited past threshold) or scheduled-untouched.
+/// An `Err` means a gh query hard-failed and the qualification is incomplete.
+fn qualify_ci_timeout(
+    root: &Path,
+    repo: &str,
+    threshold_minutes: u64,
+    limit: usize,
+) -> Result<CiTimeoutQualification, String> {
+    let now = chrono::Utc::now();
+    let threshold_seconds = (threshold_minutes as i64).saturating_mul(60);
+    let limit_str = limit.to_string();
+    let output = gh_command(
+        root,
+        &[
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--draft=false",
+            "--json",
+            "number,headRefName,headRefOid,createdAt",
+            "-L",
+            &limit_str,
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh pr list: {source}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gh pr list exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let prs: Vec<GhPrRow> = serde_json::from_slice(&output.stdout)
+        .map_err(|source| format!("parse gh pr list json: {source}"))?;
+
+    let mut starved = Vec::new();
+    let mut scheduled_untouched = Vec::new();
+    for pr in &prs {
+        match qualify_one_pr(root, repo, pr, now, threshold_seconds)? {
+            Some(entry) => starved.push(entry),
+            None => scheduled_untouched.push(pr.number),
+        }
+    }
+    Ok(CiTimeoutQualification {
+        now,
+        starved,
+        scheduled_untouched,
+    })
+}
+
+/// Qualify a single PR. Returns `Some(StarvedPr)` only when its newest exact-head
+/// pull_request portable run is not completed, has NOT started, and has waited past
+/// the threshold; every other case (no run, completed, started, under threshold) is
+/// scheduled-untouched (`None`). An `Err` is a gh query failure for this PR.
+fn qualify_one_pr(
+    root: &Path,
+    repo: &str,
+    pr: &GhPrRow,
+    now: chrono::DateTime<chrono::Utc>,
+    threshold_seconds: i64,
+) -> Result<Option<StarvedPr>, String> {
+    let output = gh_command(
+        root,
+        &[
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--workflow",
+            "ci-portable.yml",
+            "--branch",
+            &pr.head_ref_name,
+            "--json",
+            "databaseId,headSha,status,conclusion,createdAt,event",
+            "-L",
+            "10",
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh run list (pr #{}): {source}", pr.number))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gh run list (pr #{}) exited {}: {}",
+            pr.number,
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let runs: Vec<GhRunRow> = serde_json::from_slice(&output.stdout)
+        .map_err(|source| format!("parse gh run list json (pr #{}): {source}", pr.number))?;
+    // Runs arrive newest-first; take the newest whose head matches this exact PR
+    // head and which came from a pull_request event. No match => no portable run.
+    let Some(run) = runs
+        .into_iter()
+        .find(|run| run.head_sha == pr.head_ref_oid && run.event == "pull_request")
+    else {
+        return Ok(None);
+    };
+    if run.status == "completed" {
+        return Ok(None);
+    }
+    // Threshold is time-WAITING-TO-START, not runtime: inspect jobs so a legitimately
+    // long-running job is never killed. Not-started == every job still queued.
+    let run_id_str = run.database_id.to_string();
+    let jobs_output = gh_command(
+        root,
+        &["run", "view", &run_id_str, "--repo", repo, "--json", "jobs"],
+    )
+    .output()
+    .map_err(|source| format!("launch gh run view (pr #{}): {source}", pr.number))?;
+    if !jobs_output.status.success() {
+        return Err(format!(
+            "gh run view {} (pr #{}) exited {}: {}",
+            run.database_id,
+            pr.number,
+            exit_status_code(jobs_output.status),
+            String::from_utf8_lossy(&jobs_output.stderr).trim()
+        ));
+    }
+    let view: GhRunJobs = serde_json::from_slice(&jobs_output.stdout)
+        .map_err(|source| format!("parse gh run view json (pr #{}): {source}", pr.number))?;
+    let jobs_total = view.jobs.len();
+    let jobs_started = view.jobs.iter().filter(|job| job.started()).count();
+    let not_started = if view.jobs.is_empty() {
+        run.status == "queued"
+    } else {
+        jobs_started == 0
+    };
+    let wait_seconds = wait_seconds_since(now, &run.created_at);
+    if not_started && wait_seconds > threshold_seconds {
+        Ok(Some(StarvedPr {
+            pr: pr.number,
+            head_sha: run.head_sha,
+            run_id: run.database_id,
+            run_created_at: run.created_at,
+            wait_seconds,
+            jobs_total,
+            jobs_started,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn run_ci_timeout_scan(root: &Path, args: CiTimeoutScanArgs) -> Result<i32, CiHubError> {
+    let qual = match qualify_ci_timeout(root, &args.repo, args.threshold_minutes, args.limit) {
+        Ok(qual) => qual,
+        Err(message) => {
+            eprintln!("ci-hub ci-timeout scan: {message}");
+            return Ok(2);
+        }
+    };
+    let now_rfc = qual.now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    if args.json {
+        #[derive(Serialize)]
+        struct StarvedReport<'a> {
+            pr: u64,
+            head_sha: &'a str,
+            run_id: u64,
+            run_created_at: &'a str,
+            wait_seconds: i64,
+            jobs_total: usize,
+            jobs_started: usize,
+        }
+        #[derive(Serialize)]
+        struct ScanReport<'a> {
+            schema_version: u32,
+            repo: &'a str,
+            threshold_minutes: u64,
+            now: &'a str,
+            starved: Vec<StarvedReport<'a>>,
+            starved_count: usize,
+            scheduled_untouched_count: usize,
+            scheduled_untouched_prs: &'a [u64],
+        }
+        let starved: Vec<StarvedReport> = qual
+            .starved
+            .iter()
+            .map(|entry| StarvedReport {
+                pr: entry.pr,
+                head_sha: &entry.head_sha,
+                run_id: entry.run_id,
+                run_created_at: &entry.run_created_at,
+                wait_seconds: entry.wait_seconds,
+                jobs_total: entry.jobs_total,
+                jobs_started: entry.jobs_started,
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&ScanReport {
+                schema_version: 1,
+                repo: &args.repo,
+                threshold_minutes: args.threshold_minutes,
+                now: &now_rfc,
+                starved_count: starved.len(),
+                scheduled_untouched_count: qual.scheduled_untouched.len(),
+                scheduled_untouched_prs: &qual.scheduled_untouched,
+                starved,
+            })
+            .expect("ci-timeout scan report is serializable")
+        );
+        return Ok(0);
+    }
+    for entry in &qual.starved {
+        println!(
+            "STARVED pr #{} run {} waited {} (threshold {}m)",
+            entry.pr,
+            entry.run_id,
+            format_wait_hm(entry.wait_seconds),
+            args.threshold_minutes
+        );
+    }
+    // Both-direction statement is required: never report only the cancellations.
+    println!(
+        "STARVED: {} PR(s) would be cancelled+rerouted. UNTOUCHED: {} normally-scheduled PR(s) not disturbed.",
+        qual.starved.len(),
+        qual.scheduled_untouched.len()
+    );
+    Ok(0)
+}
+
+/// Idempotent `gh label create` for the local-fallback label ("already exists" is
+/// success), mirroring `ensure_batch_label`.
+fn ensure_fallback_label(root: &Path, repo: &str) -> Result<(), String> {
+    let output = gh_command(
+        root,
+        &[
+            "label",
+            "create",
+            CI_TIMEOUT_FALLBACK_LABEL,
+            "--repo",
+            repo,
+            "--color",
+            "B60205",
+            "--description",
+            "ci-hub cancelled this run to reroute to local validation; autoretry stands down.",
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh label create: {source}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("already exists") {
+        return Ok(());
+    }
+    Err(format!(
+        "gh label create exited {}: {}",
+        exit_status_code(output.status),
+        stderr.trim()
+    ))
+}
+
+/// Apply the local-fallback label to one PR. MUST run before the cancel so the
+/// workflow_run:cancelled event carries the label and the guard stands down.
+fn add_fallback_label(root: &Path, repo: &str, pr: u64) -> Result<(), String> {
+    let number = pr.to_string();
+    let output = gh_command(
+        root,
+        &[
+            "pr",
+            "edit",
+            &number,
+            "--repo",
+            repo,
+            "--add-label",
+            CI_TIMEOUT_FALLBACK_LABEL,
+        ],
+    )
+    .output()
+    .map_err(|source| format!("launch gh pr edit: {source}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh pr edit #{pr} exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Cancel a hosted run. A cancelled run is classified NO_RESULT (never RED) by all
+/// consumers, so cancelling is safe with respect to the health classifiers.
+fn cancel_run(root: &Path, repo: &str, run_id: u64) -> Result<(), String> {
+    let id = run_id.to_string();
+    let output = gh_command(root, &["run", "cancel", &id, "--repo", repo])
+        .output()
+        .map_err(|source| format!("launch gh run cancel: {source}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh run cancel {run_id} exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Append one JSONL audit record explaining WHY a run was cancelled. `state` is
+/// always "no_result" (never "red"/"fail"): this is the audit trail, and the
+/// cancelled GitHub run is already NO_RESULT to the health classifiers.
+fn append_ci_timeout_audit(
+    root: &Path,
+    repo: &str,
+    entry: &StarvedPr,
+    threshold_minutes: u64,
+    at: &str,
+    actor: &str,
+) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct AuditRecord<'a> {
+        schema_version: u32,
+        at: &'a str,
+        actor: &'a str,
+        repo: &'a str,
+        pr: u64,
+        head_sha: &'a str,
+        run_id: u64,
+        wait_seconds: i64,
+        threshold_minutes: u64,
+        state: &'a str,
+        reason: &'a str,
+    }
+    let reason = format!(
+        "portable CI waited {}s (> {}m) to start; cancelled and rerouted to local validation",
+        entry.wait_seconds, threshold_minutes
+    );
+    let record = AuditRecord {
+        schema_version: 1,
+        at,
+        actor,
+        repo,
+        pr: entry.pr,
+        head_sha: &entry.head_sha,
+        run_id: entry.run_id,
+        wait_seconds: entry.wait_seconds,
+        threshold_minutes,
+        state: "no_result",
+        reason: &reason,
+    };
+    let line = serde_json::to_string(&record).map_err(|source| format!("serialize audit: {source}"))?;
+    let path = root.join(CI_TIMEOUT_AUDIT_PATH);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|source| format!("create {}: {source}", parent.display()))?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|source| format!("open {}: {source}", path.display()))?;
+    writeln!(file, "{line}").map_err(|source| format!("write {}: {source}", path.display()))?;
+    Ok(())
+}
+
+fn run_ci_timeout_reap(root: &Path, args: CiTimeoutReapArgs) -> Result<i32, CiHubError> {
+    let qual = match qualify_ci_timeout(root, &args.repo, args.threshold_minutes, args.limit) {
+        Ok(qual) => qual,
+        Err(message) => {
+            eprintln!("ci-hub ci-timeout reap: {message}");
+            return Ok(2);
+        }
+    };
+    // --pr narrows to exactly that PR if it qualifies; otherwise all starved PRs.
+    let targets: Vec<&StarvedPr> = match args.pr {
+        Some(number) => qual.starved.iter().filter(|entry| entry.pr == number).collect(),
+        None => qual.starved.iter().collect(),
+    };
+
+    if !args.execute {
+        if args.json {
+            #[derive(Serialize)]
+            struct WouldReap<'a> {
+                pr: u64,
+                head_sha: &'a str,
+                run_id: u64,
+                wait_seconds: i64,
+                enqueue_command: String,
+            }
+            #[derive(Serialize)]
+            struct DryRunReport<'a> {
+                dry_run: bool,
+                repo: &'a str,
+                threshold_minutes: u64,
+                would_reap: Vec<WouldReap<'a>>,
+            }
+            let would_reap: Vec<WouldReap> = targets
+                .iter()
+                .map(|entry| WouldReap {
+                    pr: entry.pr,
+                    head_sha: &entry.head_sha,
+                    run_id: entry.run_id,
+                    wait_seconds: entry.wait_seconds,
+                    enqueue_command: ci_timeout_enqueue_command(&entry.head_sha, entry.pr),
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string(&DryRunReport {
+                    dry_run: true,
+                    repo: &args.repo,
+                    threshold_minutes: args.threshold_minutes,
+                    would_reap,
+                })
+                .expect("ci-timeout dry-run report is serializable")
+            );
+            return Ok(0);
+        }
+        println!("DRY RUN (pass --execute to mutate). {} PR(s) would be reaped:", targets.len());
+        for entry in &targets {
+            println!("pr #{} run {} (waited {}):", entry.pr, entry.run_id, format_wait_hm(entry.wait_seconds));
+            println!("  1. ensure repo label {CI_TIMEOUT_FALLBACK_LABEL} exists");
+            println!("  2. gh pr edit {} --repo {} --add-label {CI_TIMEOUT_FALLBACK_LABEL}", entry.pr, args.repo);
+            println!("  3. gh run cancel {} --repo {}", entry.run_id, args.repo);
+            println!("  4. append audit record to {CI_TIMEOUT_AUDIT_PATH} (state=no_result)");
+            println!("  5. enqueue: {}", ci_timeout_enqueue_command(&entry.head_sha, entry.pr));
+        }
+        return Ok(0);
+    }
+
+    let actor = ci_mode_actor();
+    let now_rfc = qual.now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut failures = 0usize;
+
+    #[derive(Serialize)]
+    struct ReapResult {
+        pr: u64,
+        head_sha: String,
+        run_id: u64,
+        wait_seconds: i64,
+        label_applied: bool,
+        cancelled: bool,
+        audit_written: bool,
+        enqueue_command: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    }
+    let mut results: Vec<ReapResult> = Vec::new();
+
+    for entry in &targets {
+        let enqueue = ci_timeout_enqueue_command(&entry.head_sha, entry.pr);
+        let mut result = ReapResult {
+            pr: entry.pr,
+            head_sha: entry.head_sha.clone(),
+            run_id: entry.run_id,
+            wait_seconds: entry.wait_seconds,
+            label_applied: false,
+            cancelled: false,
+            audit_written: false,
+            enqueue_command: enqueue.clone(),
+            error: None,
+        };
+        // a. ensure the fallback label exists (idempotent).
+        if let Err(message) = ensure_fallback_label(root, &args.repo) {
+            if !args.json {
+                eprintln!("pr #{}: FAILED to ensure label: {message}", entry.pr);
+            }
+            result.error = Some(format!("ensure label: {message}"));
+            failures += 1;
+            results.push(result);
+            continue;
+        }
+        // b. apply the label BEFORE the cancel so the cancelled event carries it.
+        if let Err(message) = add_fallback_label(root, &args.repo, entry.pr) {
+            if !args.json {
+                eprintln!("pr #{}: FAILED to apply label: {message}", entry.pr);
+            }
+            result.error = Some(format!("apply label: {message}"));
+            failures += 1;
+            results.push(result);
+            continue;
+        }
+        result.label_applied = true;
+        // c. cancel the starved run.
+        if let Err(message) = cancel_run(root, &args.repo, entry.run_id) {
+            // Label is already present, so the guard will already stand down; report,
+            // do not try to remove the label.
+            if !args.json {
+                eprintln!(
+                    "pr #{}: FAILED to cancel run {} (label {CI_TIMEOUT_FALLBACK_LABEL} already applied; guard will stand down): {message}",
+                    entry.pr, entry.run_id
+                );
+            }
+            result.error = Some(format!(
+                "cancel run (label already applied; guard will stand down): {message}"
+            ));
+            failures += 1;
+            results.push(result);
+            continue;
+        }
+        result.cancelled = true;
+        // d. append the audit record explaining WHY.
+        if let Err(message) =
+            append_ci_timeout_audit(root, &args.repo, entry, args.threshold_minutes, &now_rfc, &actor)
+        {
+            if !args.json {
+                eprintln!("pr #{}: cancelled but FAILED to write audit record: {message}", entry.pr);
+            }
+            result.error = Some(format!("audit record: {message}"));
+            failures += 1;
+            results.push(result);
+            continue;
+        }
+        result.audit_written = true;
+        if !args.json {
+            println!(
+                "pr #{}: labelled {CI_TIMEOUT_FALLBACK_LABEL}, cancelled run {}, audited.",
+                entry.pr, entry.run_id
+            );
+            // e. emit the enqueue command; do NOT run it here.
+            println!("  enqueue: {enqueue}");
+        }
+        results.push(result);
+    }
+
+    if args.json {
+        #[derive(Serialize)]
+        struct ExecReport<'a> {
+            dry_run: bool,
+            repo: &'a str,
+            threshold_minutes: u64,
+            reaped: &'a [ReapResult],
+            failures: usize,
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&ExecReport {
+                dry_run: false,
+                repo: &args.repo,
+                threshold_minutes: args.threshold_minutes,
+                reaped: &results,
+                failures,
+            })
+            .expect("ci-timeout reap report is serializable")
+        );
+    } else {
+        println!(
+            "REAPED: {} succeeded, {} failed of {} starved PR(s).",
+            results.iter().filter(|result| result.error.is_none()).count(),
+            failures,
+            targets.len()
+        );
+    }
+    Ok(if failures > 0 { 2 } else { 0 })
 }
 
 fn main_health_arguments(args: &MainHealthArgs) -> Vec<OsString> {
@@ -2416,7 +3156,15 @@ fn gh_pr_head(root: &Path, repo: &str, pr: u64) -> Result<String, CiHubError> {
     let output = gh_command(
         root,
         &[
-            "pr", "view", &pr_arg, "--repo", repo, "--json", "headRefOid", "-q", ".headRefOid",
+            "pr",
+            "view",
+            &pr_arg,
+            "--repo",
+            repo,
+            "--json",
+            "headRefOid",
+            "-q",
+            ".headRefOid",
         ],
     )
     .output()
@@ -2430,7 +3178,9 @@ fn gh_pr_head(root: &Path, repo: &str, pr: u64) -> Result<String, CiHubError> {
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_ascii_lowercase();
+    let sha = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_ascii_lowercase();
     if sha.is_empty() {
         return Err(CiHubError::Gh {
             context: format!("pr view #{pr}"),
@@ -2445,8 +3195,18 @@ fn gh_open_prs(root: &Path, repo: &str) -> Result<Vec<u64>, CiHubError> {
     let output = gh_command(
         root,
         &[
-            "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number",
-            "-q", ".[].number",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "number",
+            "-q",
+            ".[].number",
         ],
     )
     .output()
@@ -2717,12 +3477,14 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         report.commits_without_any_record,
         if cache_hit { "hit" } else { "miss" },
     );
-    if report.green.coverage != history_queries::CoverageStrength::Full {
-        println!(
-            "WEAKER-GUARANTEE: this was not a full-profile/full-selection validation; rebase decisions inherit only the stated {} evidence",
-            report.green.coverage.as_str()
-        );
-    }
+    println!(
+        "EVIDENCE-WINDOW first-parent={}..{} commits={} trustworthy-recorded={} full-green={}",
+        report.range_oldest_commit,
+        report.branch_tip,
+        report.branch_commits_in_range,
+        report.trustworthy_recorded_commits_in_range,
+        report.full_green_commits_in_range,
+    );
 }
 
 fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubError> {
@@ -2755,12 +3517,10 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
 
     let mut rows = load_ledger_rows(&ledger)?;
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows)
-        .newest_green(&args.query.branch, &branch_ref)
-    {
+    match HistoryQueryEngine::new(commits, rows).newest_green(&args.query.branch, &branch_ref) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 2,
+                schema_version: 3,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
@@ -2778,7 +3538,10 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
             recorded,
         } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "trustworthy_recorded_commits": recorded}));
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "trustworthy_recorded_commits": recorded})
+                );
             } else {
                 println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} -- {recorded} branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch);
             }
@@ -2786,7 +3549,10 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
         }
         NewestGreenOutcome::NoEvidence { branch_tip } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip}));
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip})
+                );
             } else {
                 println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} -- no clean commit-anchored branch validation record exists", args.query.branch);
             }
@@ -2799,7 +3565,14 @@ fn files_touched(repo: &Path, sha: &str) -> Result<Vec<String>, CiHubError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha])
+        .args([
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            sha,
+        ])
         .output()
         .map_err(|source| CiHubError::Launch {
             tool: "git diff-tree first-bad".into(),
@@ -2868,7 +3641,14 @@ fn print_first_bad(report: &history_queries::FirstBadReport, json: bool) {
     if report.first_bad_commit_has_mixed_outcomes {
         println!("FLAKE-SIGNAL: the same first-bad SHA has both PASS and FAIL records for this cell; the failure is real evidence but not a deterministic commit regression");
     }
-    println!("FILES-TOUCHED {}", if report.files_touched.is_empty() { "(none)".into() } else { report.files_touched.join(" ") });
+    println!(
+        "FILES-TOUCHED {}",
+        if report.files_touched.is_empty() {
+            "(none)".into()
+        } else {
+            report.files_touched.join(" ")
+        }
+    );
     println!("PLAUSIBILITY {}", report.plausibility);
     println!(
         "LOAD-CONTEXT {}",
@@ -2891,8 +3671,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
         fetch_history_branch(&repo, &args.query.branch)?;
     }
     let commits = branch_history(&repo, &branch_ref)?;
-    let main_set: std::collections::BTreeSet<&str> =
-        commits.iter().map(String::as_str).collect();
+    let main_set: std::collections::BTreeSet<&str> = commits.iter().map(String::as_str).collect();
     let ledger = ledger_path(root, &args.query.ledger);
     let mut rows = load_ledger_rows(&ledger)?;
     rows.retain(|row| {
@@ -2909,10 +3688,8 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
     ) {
         FirstBadOutcome::Found(mut report) => {
             report.files_touched = files_touched(&repo, &report.first_bad.sha)?;
-            report.plausibility = assess_diff_plausibility(
-                &report.files_touched,
-                report.source_node.as_deref(),
-            );
+            report.plausibility =
+                assess_diff_plausibility(&report.files_touched, report.source_node.as_deref());
             print_first_bad(&report, args.query.json);
             Ok(0)
         }
@@ -2922,15 +3699,24 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             failure,
         } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "query": query, "matched_name": matched_name, "failure": failure, "reason": "failure exists but no earlier PASS is retained"}));
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "query": query, "matched_name": matched_name, "failure": failure, "reason": "failure exists but no earlier PASS is retained"})
+                );
             } else {
                 println!("FIRST-BAD FAILED cell={matched_name} sha={} -- failure exists but no earlier PASS is retained", failure.sha);
             }
             Ok(3)
         }
-        FirstBadOutcome::NoEvidence { query, available_names } => {
+        FirstBadOutcome::NoEvidence {
+            query,
+            available_names,
+        } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "suggestions": available_names, "reason": "no retained cell/gate record"}));
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "suggestions": available_names, "reason": "no retained cell/gate record"})
+                );
             } else {
                 println!("FIRST-BAD NOT-VALIDATED cell={query} -- no retained cell/gate record; absence is not PASS");
                 if !available_names.is_empty() {
@@ -2939,9 +3725,16 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             }
             Ok(4)
         }
-        FirstBadOutcome::NoTransition { query, matched_name, observations } => {
+        FirstBadOutcome::NoTransition {
+            query,
+            matched_name,
+            observations,
+        } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "matched_name": matched_name, "observations": observations, "reason": "no retained PASS-to-FAIL transition"}));
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "matched_name": matched_name, "observations": observations, "reason": "no retained PASS-to-FAIL transition"})
+                );
             } else {
                 println!("FIRST-BAD NOT-VALIDATED cell={matched_name} observations={observations} -- no retained PASS-to-FAIL transition");
             }
@@ -2980,7 +3773,10 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "newest_qualifying": newest.map(describe_record),
             "ledger": path.display().to_string(),
         });
-        println!("{}", serde_json::to_string_pretty(&report).expect("serialize report"));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).expect("serialize report")
+        );
     } else {
         match assessment.verdict {
             validate_status::Verdict::Validated => {
@@ -3039,13 +3835,19 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             Ok(head) => head,
             Err(error) => {
                 eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
-                actions.push(serde_json::json!({"pr": pr, "action": "error", "detail": error.to_string()}));
+                actions.push(
+                    serde_json::json!({"pr": pr, "action": "error", "detail": error.to_string()}),
+                );
                 continue;
             }
         };
         let verdict = validate_status::assess(&rows, &head).verdict;
         if verdict != validate_status::Verdict::Validated {
-            println!("PR #{pr}: skip -- head {} is {}", &head[..12.min(head.len())], verdict.as_str());
+            println!(
+                "PR #{pr}: skip -- head {} is {}",
+                &head[..12.min(head.len())],
+                verdict.as_str()
+            );
             actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": verdict.as_str()}));
             continue;
         }
@@ -3059,7 +3861,16 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
         let mut command = Command::new("python3");
         command
             .arg(&publisher)
-            .args(["--pr", &pr_arg, "--repo", &args.repo, "--sha", &head, "--ledger", &ledger_arg])
+            .args([
+                "--pr",
+                &pr_arg,
+                "--repo",
+                &args.repo,
+                "--sha",
+                &head,
+                "--ledger",
+                &ledger_arg,
+            ])
             .current_dir(root);
         if let Some(config_dir) = gh_config_dir() {
             command.env("GH_CONFIG_DIR", config_dir);
@@ -3067,8 +3878,7 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
         if args.dry_run {
             command.arg("--dry-run");
         }
-        let status = command.status()
-        .map_err(|source| CiHubError::Launch {
+        let status = command.status().map_err(|source| CiHubError::Launch {
             tool: publisher.display().to_string(),
             source,
         })?;
@@ -3085,8 +3895,12 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
     }
 
     if args.json {
-        let report = serde_json::json!({"schema_version": 1, "applied": applied, "actions": actions});
-        println!("{}", serde_json::to_string_pretty(&report).expect("serialize report"));
+        let report =
+            serde_json::json!({"schema_version": 1, "applied": applied, "actions": actions});
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).expect("serialize report")
+        );
     }
     Ok(if failed == 0 { 0 } else { 1 })
 }
@@ -3471,14 +4285,10 @@ mod tests {
         assert!(args.query.json);
         assert!(HubCommand::NewestGreen(args).cost_spec().is_some());
 
-        let first_bad = Cli::try_parse_from([
-            "ci-hub",
-            "first-bad",
-            "test.detcore_misc",
-            "--no-fetch",
-        ])
-        .unwrap()
-        .command;
+        let first_bad =
+            Cli::try_parse_from(["ci-hub", "first-bad", "test.detcore_misc", "--no-fetch"])
+                .unwrap()
+                .command;
         let HubCommand::FirstBad(args) = first_bad else {
             panic!("wrong command variant")
         };
@@ -3524,9 +4334,12 @@ mod tests {
             .filter(|word| clap_commands.contains(*word))
             .map(str::to_string)
             .collect();
-        let listed_commands: std::collections::BTreeSet<String> =
-            listed.iter().cloned().collect();
-        assert_eq!(listed.len(), listed_commands.len(), "duplicate help command");
+        let listed_commands: std::collections::BTreeSet<String> = listed.iter().cloned().collect();
+        assert_eq!(
+            listed.len(),
+            listed_commands.len(),
+            "duplicate help command"
+        );
         assert_eq!(
             listed_commands, clap_commands,
             "root help must classify every public subcommand exactly once"
