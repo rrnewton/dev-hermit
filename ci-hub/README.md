@@ -57,7 +57,9 @@ Landing verification is PR-aware and has machine-stable result codes:
 
 ```bash
 ./ci-hub/ci-hub verify-landing PR --repo OWNER/REPO --source CHECKOUT
-./ci-hub/ci-hub verify-landing FULL_40_HEX_SHA --source CHECKOUT
+./ci-hub/ci-hub verify-landing COMMIT_OID --source CHECKOUT
+./ci-hub/ci-hub verify-landing PR --repo OWNER/REPO --source CHECKOUT \
+  --item "description" --claimed-oid REPORTED_OID
 ```
 
 The command freshly fetches the target (default `origin/main`) and prints
@@ -68,6 +70,14 @@ rebase merge rewrites it by design. The API's `MERGED` state is not sufficient
 on its own; a non-ancestral replay SHA is `NOT_LANDED`, detecting a later
 force-push orphan. A PR without `mergeCommit.oid` is `UNVERIFIABLE`, never an
 inferred failure or success. `verify-landed-pr` remains a compatibility alias.
+
+Commit abbreviations are expanded and reported as `full_oid`; never copy an
+abbreviated OID into a landing report. Claim-audit mode prints the item, reported
+OID, full OID, whether it resolves, whether the PR's `mergeCommit.oid` is present
+on the fetched target, and the reported OID's own ancestry rc. Thus a pre-rebase
+head can truthfully show `claimed_ancestry_rc=1` while
+`change_present_on_main=true`; the landing is identified by the separate full
+`merge_commit_oid`.
 
 Task closure is a separate, fail-closed consumer of that verifier:
 

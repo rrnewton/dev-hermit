@@ -129,6 +129,8 @@ class ProtocolTest(unittest.TestCase):
             target="main",
             repo="rrnewton/hermit",
             json=True,
+            item=None,
+            claimed_oid=None,
         )
         with (
             mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
@@ -156,6 +158,8 @@ class ProtocolTest(unittest.TestCase):
             target="main",
             repo="rrnewton/hermit",
             json=True,
+            item=None,
+            claimed_oid=None,
         )
         with (
             mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
@@ -179,6 +183,8 @@ class ProtocolTest(unittest.TestCase):
             target="main",
             repo="rrnewton/hermit",
             json=True,
+            item=None,
+            claimed_oid=None,
         )
         with (
             mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
@@ -195,6 +201,77 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(payload["state"], "unverifiable")
         self.assertEqual(payload["rc"], 2)
         self.assertEqual(payload["reason"], "no mergeCommit.oid")
+
+    def test_verify_landing_expands_abbreviated_direct_commit(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        args = argparse.Namespace(
+            source=source,
+            reference=SHA[:7],
+            target="main",
+            repo="rrnewton/hermit",
+            json=True,
+            item="direct main change",
+            claimed_oid=None,
+        )
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(protocol, "_resolve_raw_sha", return_value=SHA),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=True),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.verify_landing(args)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["claimed_oid"], SHA[:7])
+        self.assertEqual(payload["full_oid"], SHA)
+        self.assertTrue(payload["resolves"])
+        self.assertTrue(payload["change_present_on_main"])
+        self.assertEqual(payload["claimed_ancestry_rc"], 0)
+
+    def test_verify_landing_separates_dead_head_from_live_rebased_change(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        head = "abedbe29" + "c" * 32
+        replay = "d" * 40
+        args = argparse.Namespace(
+            source=source,
+            reference="1592",
+            target="main",
+            repo="rrnewton/hermit",
+            json=True,
+            item="PR #1592",
+            claimed_oid="abedbe29",
+        )
+
+        def is_ancestor(_source, sha, _target):
+            return sha == replay
+
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol,
+                "_query_pr_landing",
+                return_value=("MERGED", head, replay),
+            ),
+            mock.patch.object(
+                protocol,
+                "_resolve_claimed_oid",
+                return_value=(head, True, True),
+            ),
+            mock.patch.object(protocol, "_is_target_ancestor", side_effect=is_ancestor),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.verify_landing(args)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 0, "the PR's rebased change is landed")
+        self.assertEqual(payload["state"], "landed")
+        self.assertEqual(payload["claimed_oid"], "abedbe29")
+        self.assertEqual(payload["full_oid"], head)
+        self.assertTrue(payload["resolves"])
+        self.assertTrue(payload["change_present_on_main"])
+        self.assertEqual(payload["claimed_ancestry_rc"], 1)
+        self.assertEqual(payload["merge_commit_oid"], replay)
 
     def transition(self, patch: dict) -> dict:
         return obligations.transition(

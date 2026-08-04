@@ -319,8 +319,14 @@ struct ArmLandArgs {
 
 #[derive(Args, Clone, Debug)]
 struct VerifyLandingArgs {
-    /// Positive PR number or full 40-character commit SHA.
+    /// Positive PR number or commit OID (abbreviations are expanded before reporting).
     reference: String,
+    /// Human-readable item name included in claim-audit output.
+    #[arg(long)]
+    item: Option<String>,
+    /// OID originally reported for a PR landing; compares it with the replayed merge commit.
+    #[arg(long, requires = "item")]
+    claimed_oid: Option<String>,
     #[arg(long, default_value = "rrnewton/hermit")]
     repo: String,
     #[arg(long)]
@@ -1417,6 +1423,12 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 args.source.unwrap_or_else(|| root.join("hermit")),
             );
             push_option(&mut protocol_args, "--target", args.target);
+            if let Some(item) = args.item {
+                push_option(&mut protocol_args, "--item", item);
+            }
+            if let Some(claimed_oid) = args.claimed_oid {
+                push_option(&mut protocol_args, "--claimed-oid", claimed_oid);
+            }
             if args.json {
                 protocol_args.push("--json".into());
             }
@@ -4165,6 +4177,25 @@ mod tests {
         assert_eq!(args.reference, "1219");
         assert_eq!(args.target, "main");
         assert!(args.json);
+    }
+
+    #[test]
+    fn parses_landing_claim_audit_with_full_identity_context() {
+        let cli = Cli::try_parse_from([
+            "ci-hub",
+            "verify-landing",
+            "1592",
+            "--item",
+            "PR #1592",
+            "--claimed-oid",
+            "abedbe29",
+        ])
+        .unwrap();
+        let HubCommand::VerifyLanding(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.item.as_deref(), Some("PR #1592"));
+        assert_eq!(args.claimed_oid.as_deref(), Some("abedbe29"));
     }
 
     #[test]

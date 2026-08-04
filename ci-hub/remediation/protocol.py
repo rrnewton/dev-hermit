@@ -580,8 +580,99 @@ def _resolve_raw_sha(source: Path, reference: str) -> str:
     return commit
 
 
+def _resolve_claimed_oid(
+    source: Path,
+    claimed_oid: str,
+    *,
+    pr: int,
+    pr_head: str,
+) -> tuple[str, bool, bool]:
+    """Return (full OID, resolves, object available for local ancestry).
+
+    The freshly fetched target resolves abbreviations for commits already on the
+    target. A pre-rebase PR head is normally absent from the target, so use
+    GitHub's full head identity and fetch the immutable pull ref before checking
+    its ancestry. Merely padding or prefix-matching a short hash is never treated
+    as local object resolution.
+    """
+    abbreviated = claimed_oid.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", abbreviated):
+        return "", False, False
+
+    rev_parse = (
+        "git",
+        "-C",
+        str(source),
+        "rev-parse",
+        "--verify",
+        f"{abbreviated}^{{commit}}",
+    )
+    resolved = _run(rev_parse, check=False)
+    if resolved.returncode == 0:
+        full_oid = resolved.stdout.strip().lower()
+        if obligations.SHA_RE.fullmatch(full_oid):
+            return full_oid, True, True
+
+    if obligations.SHA_RE.fullmatch(pr_head) and pr_head.startswith(abbreviated):
+        fetched = _run(
+            (
+                "with-proxy",
+                "git",
+                "-C",
+                str(source),
+                "fetch",
+                "--no-tags",
+                "origin",
+                f"pull/{pr}/head",
+            ),
+            check=False,
+            timeout=DEFAULT_NETWORK_TIMEOUT,
+        )
+        available = False
+        if fetched.returncode == 0:
+            available = _run(
+                (
+                    "git",
+                    "-C",
+                    str(source),
+                    "cat-file",
+                    "-e",
+                    f"{pr_head}^{{commit}}",
+                ),
+                check=False,
+            ).returncode == 0
+        return pr_head, True, available
+
+    return "", False, False
+
+
+def _claim_fields(
+    *,
+    item: str,
+    claimed_oid: str,
+    full_oid: str,
+    resolves: bool,
+    change_present: bool,
+    claimed_ancestry_rc: int,
+    target: str,
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "item": item,
+        "claimed_oid": claimed_oid,
+        "full_oid": full_oid or "unresolved",
+        "resolves": resolves,
+        "change_present_on_target": change_present,
+        "claimed_ancestry_rc": claimed_ancestry_rc,
+    }
+    if target == "main":
+        fields["change_present_on_main"] = change_present
+    return fields
+
+
 def verify_landing(args: argparse.Namespace) -> int:
     source = args.source.expanduser().resolve()
+    item = getattr(args, "item", None)
+    claimed_oid = getattr(args, "claimed_oid", None)
     if not source.is_dir():
         return _print_landing_verdict(
             state="unverifiable",
@@ -595,7 +686,16 @@ def verify_landing(args: argparse.Namespace) -> int:
     try:
         target_ref = _fetch_target(source, args.target)
         reference = args.reference.lower()
-        if obligations.SHA_RE.fullmatch(reference):
+        if claimed_oid and not item:
+            return _print_landing_verdict(
+                state="unverifiable",
+                rc=2,
+                reference=args.reference,
+                target_ref=target_ref,
+                json_output=args.json,
+                reason="--claimed-oid requires --item",
+            )
+        if re.fullmatch(r"[0-9a-f]{7,40}", reference):
             commit = _resolve_raw_sha(source, reference)
             is_ancestor = _is_target_ancestor(source, commit, target_ref)
             return _print_landing_verdict(
@@ -607,6 +707,15 @@ def verify_landing(args: argparse.Namespace) -> int:
                 input_kind="sha",
                 resolved_sha=commit,
                 ancestry="ancestor" if is_ancestor else "not-ancestor",
+                **_claim_fields(
+                    item=item or args.reference,
+                    claimed_oid=args.reference,
+                    full_oid=commit,
+                    resolves=True,
+                    change_present=is_ancestor,
+                    claimed_ancestry_rc=0 if is_ancestor else 1,
+                    target=args.target,
+                ),
             )
 
         if not args.reference.isdecimal() or int(args.reference) <= 0:
@@ -616,7 +725,7 @@ def verify_landing(args: argparse.Namespace) -> int:
                 reference=args.reference,
                 target_ref=target_ref,
                 json_output=args.json,
-                reason="input must be a positive PR number or full 40-character SHA",
+                reason="input must be a positive PR number or 7-40 character commit OID",
             )
 
         pr = int(args.reference)
@@ -636,6 +745,38 @@ def verify_landing(args: argparse.Namespace) -> int:
                 reason="no mergeCommit.oid",
             )
         is_ancestor = _is_target_ancestor(source, replay, target_ref)
+        claim_details: dict[str, object]
+        if claimed_oid:
+            full_oid, resolves, locally_available = _resolve_claimed_oid(
+                source,
+                claimed_oid,
+                pr=pr,
+                pr_head=head,
+            )
+            claimed_ancestry_rc = 2
+            if locally_available:
+                claimed_ancestry_rc = (
+                    0 if _is_target_ancestor(source, full_oid, target_ref) else 1
+                )
+            claim_details = _claim_fields(
+                item=item,
+                claimed_oid=claimed_oid,
+                full_oid=full_oid,
+                resolves=resolves,
+                change_present=is_ancestor,
+                claimed_ancestry_rc=claimed_ancestry_rc,
+                target=args.target,
+            )
+        else:
+            claim_details = _claim_fields(
+                item=item or f"{args.repo}#{pr}",
+                claimed_oid=replay,
+                full_oid=replay,
+                resolves=True,
+                change_present=is_ancestor,
+                claimed_ancestry_rc=0 if is_ancestor else 1,
+                target=args.target,
+            )
         return _print_landing_verdict(
             state="landed" if is_ancestor else "not-landed",
             rc=0 if is_ancestor else 1,
@@ -648,7 +789,9 @@ def verify_landing(args: argparse.Namespace) -> int:
             pr_state=pr_state,
             pr_head_sha=head or "unknown",
             resolved_sha=replay,
+            merge_commit_oid=replay,
             ancestry="ancestor" if is_ancestor else "not-ancestor",
+            **claim_details,
         )
     except ProtocolError as error:
         return _print_landing_verdict(
@@ -1933,7 +2076,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="verify a PR replay SHA or commit SHA against a freshly fetched target",
     )
     verify_landing_parser.add_argument(
-        "reference", help="positive PR number or full 40-character commit SHA"
+        "reference", help="positive PR number or commit OID (abbreviations accepted)"
+    )
+    verify_landing_parser.add_argument(
+        "--item", help="human-readable item name included in claim-audit output"
+    )
+    verify_landing_parser.add_argument(
+        "--claimed-oid",
+        help="OID originally reported for a PR landing (requires --item)",
     )
     verify_landing_parser.add_argument("--repo", default=DEFAULT_REPO)
     verify_landing_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
