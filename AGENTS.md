@@ -559,15 +559,28 @@ assertions. Use `with-proxy` for networked `git` and `gh`, and never use
 
 **Proxy Binding** is the mandatory adversarial-review axis that asks: **what
 binds this check to the fact it claims, and can I observe that binding rather
-than infer it?** A check fails this axis when it keys on a correlated proxy
-without an observable identity, causal, coverage, or provenance link to the
-claimed condition. Reviewers must name the claimed fact, the observed evidence,
-and the binding between them; passing tests do not supply a missing binding.
+than infer it?** Authenticating **who** emitted evidence proves origin, not
+causation. A predicate such as `marker-present && mismatch-present` merely ANDs
+two independent facts. Causal binding requires evidence that can exist only when
+the claimed condition caused the reported outcome, such as a typed first-cause
+result.
+
+Verification must bracket guarded behavior from both sides. **Negative:** plant
+the violating or non-qualifying case and confirm **refusal**; this proves the
+mechanism is not permissive. **Positive:** plant the genuine qualifying case and
+confirm it **fires**; this proves the mechanism is not inert. Neither alone is
+verification: a guard that refuses everything passes every negative test ever
+written.
+
+A check fails this axis when it keys on a correlated proxy without an observable
+identity, causal, coverage, or provenance link to the claimed condition.
+Reviewers must name the claimed fact, the observed evidence, and the binding
+between them; passing tests do not supply a missing binding.
 
 Worked examples from one review cycle:
 
 1. A skid retry matched a marker substring, not an authenticated overshoot
-   failure; guest output could spoof it and co-occurrence did not prove cause.
+   failure; authenticating origin would still leave co-occurrence short of cause.
 2. Rust code compared `error.to_string()` with `Errno::EFAULT.to_string()`
    instead of matching the typed error variant.
 3. `check-reverie-pin.rs` inspected `Cargo.toml` but not tracked `Cargo.lock`
