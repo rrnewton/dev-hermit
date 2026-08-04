@@ -153,6 +153,28 @@ _LINK_ENVELOPES = (
 # stream is a toolchain diagnostic, never product test output.
 _LINKER_DIAG_SUBSTR = "undefined reference to "
 
+# The safe-ci-dag runner's OWN per-node failure lines. A test/e2e/lint/doc node
+# rarely emits a rustc/gcc ``error:`` line — it fails via the harness's verdict
+# output instead, so ``_is_error_diagnostic`` sees nothing and the node's
+# ``first_error_line`` was left None (25% of red nodes: e2e.metadata,
+# detcore_misc, strict_compat, rustfmt, manifest buckets, dbi_parity …), making
+# those reds gate-name-only once the /tmp log is evicted. Two verbatim shapes,
+# both node-scoped stream text (never a proxy):
+#   * a manifest/parity PER-CASE verdict — ``FAIL  portable custom liteinst
+#     system-utils/clock-determinism - custom runs=5 failed_runs=1 distinct=2`` /
+#     ``FAIL dbi/file_metadata: ... expected=...`` — naming the exact failing
+#     case AND its detail; and
+#   * the node's terminal SUMMARY — ``✗ FAIL <desc> (<time>, <disposition>)`` /
+#     ``❌ <desc> (… exit 137: …)`` — whose disposition (``exit N`` / ``TIMEOUT`` /
+#     ``CPU-TIMEOUT``) is the interpretable cause when a lane was KILLED (an
+#     ``exit 137`` OOM-kill, a wall/cpu timeout) rather than asserting.
+# Used ONLY as a fallback when the node emitted no toolchain diagnostic, so a real
+# compile/link ``error:`` always wins; and ``^FAIL[ \t]`` deliberately excludes
+# ``FAILED`` (no delimiter follows) so rust's ``test result: FAILED`` summary is
+# not mistaken for a per-case verdict.
+_HARNESS_CASE_FAIL_RE = re.compile(r"^FAIL[ \t]")
+_HARNESS_SUMMARY_MARKERS = ("✗ FAIL", "❌")
+
 # Ledger rows must stay bounded; a path- or URL-bearing error line can be long.
 _FIRST_ERROR_LINE_CAP = 500
 
@@ -202,7 +224,11 @@ def _first_error_line_for(log_text: str, node: str) -> str | None:
     fact" field — it lets two failures sharing one gate name AND one failing node
     (``build.runtime_release`` dying on a truncated-object DynamoRIO link failure
     vs a stale ``--locked`` Cargo.lock) be told apart from the ledger row alone,
-    without reopening the log."""
+    without reopening the log. When the node emitted no toolchain diagnostic at all
+    (a test/e2e/lint lane that failed via the harness verdict, not a compiler),
+    fall back to the DAG runner's own verbatim failure line
+    (``_first_harness_failure_for``) so the row is still attributable; only a node
+    that emitted NEITHER a toolchain nor a harness failure line returns None."""
     fallback: str | None = None
     for body in _node_lines(log_text, node):
         line = body.strip()
@@ -212,7 +238,29 @@ def _first_error_line_for(log_text: str, node: str) -> str | None:
             fallback = line
         if not _is_generic_envelope(line):
             return _bounded_error_line(line)
-    return _bounded_error_line(fallback) if fallback is not None else None
+    if fallback is not None:
+        return _bounded_error_line(fallback)
+    return _first_harness_failure_for(log_text, node)
+
+
+def _first_harness_failure_for(log_text: str, node: str) -> str | None:
+    """The DAG runner's own first failure line on ``node``'s stream, or None.
+
+    Fallback for a node that failed without a toolchain ``error:`` line. Prefers a
+    manifest/parity PER-CASE verdict (``FAIL  <…> <case> - <detail>`` /
+    ``FAIL dbi/<case>: …``) — the most specific fact, naming the failing case —
+    returning the FIRST one in emission order; otherwise the node's terminal
+    ``✗ FAIL``/``❌`` SUMMARY, which at least carries the disposition (``exit N`` /
+    ``TIMEOUT`` / ``CPU-TIMEOUT``). All matched text is verbatim node stream output,
+    length-capped, never fabricated."""
+    summary: str | None = None
+    for body in _node_lines(log_text, node):
+        line = body.strip()
+        if _HARNESS_CASE_FAIL_RE.match(line):
+            return _bounded_error_line(line)
+        if summary is None and any(line.startswith(m) for m in _HARNESS_SUMMARY_MARKERS):
+            summary = line
+    return _bounded_error_line(summary) if summary is not None else None
 
 
 def _node_lines(log_text: str, node: str) -> list[str]:

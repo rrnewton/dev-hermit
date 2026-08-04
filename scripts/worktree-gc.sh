@@ -67,7 +67,7 @@ INCLUDE_ACTIVE=0
 #   cap         = 95 GB/tree x 12 active x 1.25 headroom = 1425 GB apparent
 #   slot budget = 95 GB/tree  (mean of the 5 heaviest fully-built trees measured
 #                 2026-08-03: 54/66/87/110/152 GB ~= 94, taken as 95 for margin)
-# Measured 2026-08-03 on a devserver: worktrees du-sb = 643.5 GB apparent; compsize
+# Measured 2026-08-03 on devbig: worktrees du-sb = 643.5 GB apparent; compsize
 # disk = 163 GB real (ratio ~3.9:1); 16 active / 0 parked; fs free = 2330 GB.
 # Empty = "use derived default"; --cap-gb / --slot-budget-gb override.
 CAP_GB=""

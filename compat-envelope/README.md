@@ -18,15 +18,29 @@ All CSVs live **in this outer dev-hermit repo**, never inside the inner
 
 Rows are e2e manifest buckets plus a `TOTAL`. The leftmost column is the golden
 **ptrace** integer count — tests passing `--strict` + replay — which is the B4
-denominator. Every other backend column is `stdout-parity%, determinism%` as a
-fraction of that ptrace denominator:
+denominator. The first table reports two independent coverage counts per
+backend, `bitwise/absolute`, over that denominator:
 
-- **stdout-parity%** — piped guest stdout has a SHA-256 match with the ptrace
-  reference. This is an **upper bound**, not full cross-backend parity: it does
-  not compare the INFO log, stack detlog, or heap detlog required by the
-  four-signal parity standard. TTY behavior is also outside this scorecard.
+- **bitwise** — cells with a dereferenced cross-backend `BitwiseInfoV1` witness:
+  full INFO logs (including exact virtual-time timestamps and syscall values),
+  `--detlog-stack`, and `--detlog-heap` all match. Only real wall-clock prefixes
+  may be stripped, and host addresses may be canonicalized only through the
+  declared first-appearance-ordinal policy.
+- **absolute** — cells whose exact fixture source contains a reviewed correctness
+  oracle and whose negative control is dereferenceable. This catches a bug shared
+  by ptrace and the compared backend, which equality against ptrace cannot see.
+
+A high-confidence compatibility pass requires both. Missing evidence is
+**UNQUALIFIED**, never inferred from an exit status, field shape, or stdout hash.
+
+The second table retains two legacy diagnostics:
+
+- **stdout-equality%** — piped guest stdout has a SHA-256 match with the ptrace
+  reference. This is **not parity**: it does not compare INFO logs, virtual-time
+  timestamps, syscall inputs/results, stack detlogs, or heap detlogs. TTY
+  behavior is also outside this scorecard.
 - **determinism%** — the backend is self-deterministic (run1 == run2), whether or
-  not it matches ptrace. Determinism and stdout parity are independent signals;
+  not it matches ptrace. Determinism and stdout equality are independent signals;
   neither implies the other.
 
 A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-green).
@@ -41,6 +55,7 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | `hermit/tests/backend-parity/run_matrix.py` | Runs the focused ptrace/DBI/KVM contracts and appends live `backend-parity` rows directly to this outer `scorecard.csv`; no generated matrix is tracked in the inner Hermit repository. |
 | `expansion-dag.rs` | Generates the **expansion-mode** safe-ci-dag-runner DAG: one boxed step per cell with per-cell wall-time + memory budgets, plus a dated evidence run dir. |
 | `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by all collectors. |
+| `absolute-oracles.csv` | Reviewed absolute-oracle registry. The renderer dereferences exact fixture source at each row's `hermit_sha` plus the pinned negative-control artifact before counting an oracle. |
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
 | `reverie-scorecard.csv` | Reverie B1.5 Guest/Tool-boundary results (same schema). |
 | `e9patch-scorecard.csv` | e9patch preprocessing-invariance results over the ptrace backend (same schema). |
@@ -76,7 +91,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
           │      --results hermit/ignored/e2e/compat-envelope/L/B/BE.jsonl    ← JSONL intermediate
           │      (bash+jq runner — NOT nextest; also emits …/junit.xml)
           ├─ reads that JSONL (outcome, duration_ms, reason)
-          ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → stdout parity
+          ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → legacy stdout equality
           └─ appends 19-col rows → compat-envelope/scorecard.csv
       └─ collect-reverie-compat.rs → reverie-scorecard.csv
       └─ render-scorecard.rs --csv scorecard.csv --all               → rendered table
@@ -122,7 +137,7 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
 - Runs **ptrace first** to write the stdout reference, then each other backend:
   `det` = `--strict --verify` exits 0; `parity` (the legacy CSV field name) =
   backend stdout SHA-256 == reference. The renderer labels this value
-  `stdout-parity`; it is not the four-signal parity standard.
+  `stdout-equality`; it is not execution parity.
 - **Parity reference gotcha (important):** the reference is captured with plain
   `hermit run --strict`, *not* `--strict --verify`. `--verify` does an internal
   double-run and emits **no** guest stdout to the parent, so a `--verify` capture
@@ -151,14 +166,40 @@ output_hash,duration_ms,max_rss_kb,reason
   candidate).
 - `outcome` — `pass` | `diverge` | `fail` | `skip`.
 - `deterministic` / `parity` — `1` | `0` | blank (unknown). `parity` is the
-  legacy schema name for stdout-only parity. `deterministic` records run1==run2
-  **independent of stdout parity**.
+  legacy schema name for stdout-only equality. It is not execution parity.
+  `deterministic` records run1==run2 **independent of stdout equality**.
 - `output_hash` — the comparable observable (hermit: guest-output hash; reverie:
   the syscall total).
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
 
 The renderer keys logical cells on `(bucket, test_id, test_mode, backend)` and,
-with `--all`, keeps the newest `run_id` per cell (last-writer-wins).
+with `--all`, keeps the greatest recorded `run_utc` per cell. File append order
+only breaks equal-time ties: concurrent producers can append an older completed
+run after a newer one, so position is not chronology.
+
+### High-confidence evidence
+
+Historical 19-column rows contain no bitwise evidence, so they are bitwise
+UNQUALIFIED. The renderer deliberately does not accept a typed-looking witness
+file: a JSON tuple can name invented log hashes while never running a comparison.
+No shared consumer currently replays a cross-backend `BitwiseInfoV1` comparison,
+so the current bitwise count is honestly zero. The count may become nonzero only
+after the product exposes the shared comparator as a dereferencing verifier; a
+new per-scorecard shape parser is not sufficient.
+
+The writer must capture that authority at record time. Each qualifying row must
+name the comparison contract and canonicalization policy, exact head/test/backend
+identity, result, and a content-addressed durable receipt whose referenced INFO
+artifacts the shared verifier can dereference. An unreferenced cache or `/tmp`
+log is not evidence: eviction would leave a plausible row that can no longer be
+verified. The current historical rows cannot be upgraded from their stdout hashes
+alone and require fresh measurements unless their exact INFO artifacts are found.
+
+Absolute assertions are supplied by `absolute-oracles.csv`. Each entry binds a
+test id to the exact source hash and to a hashed negative-control artifact. The
+renderer reads the fixture using `git show <row-hermit-sha>:<source-path>` and
+counts it only when both hashes dereference. This keeps a plausible but forged
+tuple from qualifying.
 
 ## Two modes (hermit envelope)
 
@@ -222,11 +263,11 @@ busybox applets.
     --backends kvm --observable tool-count --all
 ```
 
-Only tools that have both launchers become tool-count-parity cells; a ptrace-only example
+Only tools that have both launchers become tool-count-equality cells; a ptrace-only example
 records its KVM cell as not-runnable (0/0), never faked.
 
 **Current finding** (reverie `a4f33d69`, hermit `2f3689bd`, this host with
-`/dev/kvm`): KVM is `0% tool-count-parity, 100% determinism` — fully self-deterministic but
+`/dev/kvm`): KVM is `0% tool-count-equality, 100% determinism` — fully self-deterministic but
 surfaces a **constant 4 fewer syscalls** to the shared Tool callback than ptrace
 (`true` 12→8, `echo hi` 15→11, `pwd` 16→12). That is a real Guest-contract
 interception-surface gap, not a determinism defect, and is exactly the honest
@@ -297,11 +338,11 @@ human output.
 
 ## Table markers (never let a `0` be ambiguous)
 
-The examples below use the default `stdout-parity` label. With `--observable
-tool-count`, the renderer uses the same markers under `tool-count-parity`.
+The examples below use the default `stdout-equality` label. With `--observable
+tool-count`, the renderer uses the same markers under `tool-count-equality`.
 
-- `X%?` — stdout parity **never measured** for that bucket → UNKNOWN, not a confirmed 0.
-- `X%~` — **partial** stdout-parity coverage (some denom cells measured, some not).
+- `X%?` — stdout equality **never measured** for that bucket → UNKNOWN, not a confirmed 0.
+- `X%~` — **partial** stdout-equality coverage (some denom cells measured, some not).
 - `n/a` — backend **ran zero** denom cells here (binary absent / not
   manifest-enabled) → not measurable, **not** a confirmed fail.
 
@@ -309,10 +350,10 @@ A real red (ran + failed) is `0%, 0%` with no marker; the markers keep it
 visually distinct from "not measured" and "not runnable", which is what the
 phase-2 bar (*every red a CONFIRMED red*) requires. Machine-readable
 `--json`/`--tsv` carry observable-qualified fields such as
-`stdout_parity_measured_count` or `tool_count_parity_measured_count`, plus
+`stdout_equality_measured_count` or `tool_count_equality_measured_count`, plus
 `ran_count` per cell.
 
-## Stdout-parity measurement
+## Stdout-equality measurement
 
 `collect-envelope.rs --with-parity` runs the same guest under ptrace and the
 backend and compares stdout SHA-256. `.sh` fixtures run via `--run`, `direct`
@@ -328,8 +369,8 @@ and refuses to launch a guest from. Backend availability is probed once up front
 1. A cell exists **only** for a B1.5+ backend running the canonical shared tool.
    Pre-B1.5 work is "progress toward", not a cell.
 2. Not-run / not-runnable cells are `n/a` or `0/0`, never blank-rendered-as-green.
-3. `determinism%` never implies full parity; a deterministic backend whose
-   stdout diverges from ptrace reads `0% stdout-parity, N% determinism`.
+3. `determinism%` never implies parity; a deterministic backend whose stdout
+   diverges from ptrace reads `0% stdout-equality, N% determinism`.
 4. Every number is produced by an actual run recorded in the CSV with its SHAs.
 5. An **unmeasured** stdout parity (`?`) or **unavailable** backend (`n/a`) is never
    presented as a confirmed 0 — measured-and-failed is the only real red.

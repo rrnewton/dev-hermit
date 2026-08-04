@@ -75,14 +75,36 @@ def gate_counts(record: dict) -> tuple[int | None, int | None]:
     )
 
 
+def has_real_failure(record: dict) -> bool:
+    """True when a gate/test ACTUALLY failed — as opposed to an incomplete or
+    interrupted run. A gate row marked fail/timeout, or a nonzero product
+    ``failures`` count, is a real red signal. Used to keep ``ran < expected`` from
+    laundering a fail-fast red into a truncation."""
+    for g in record.get("gates", []):
+        if isinstance(g, dict) and g.get("result") in ("fail", "failed", "timeout"):
+            return True
+    f = record.get("failures")
+    return isinstance(f, int) and f >= 1
+
+
 def is_truncated(record: dict) -> bool:
-    """True when this row did not complete its declared validation gate set."""
+    """True when this row did not complete its declared validation gate set.
+
+    Completeness is structural: when both counts exist, only ``ran == expected``
+    is a completed result. A fail-fast row may contain a real failing gate, but it
+    still did not execute the full validation contract and cannot become a
+    durable FAILED verdict. A genuine red control is a complete row whose gate
+    counts match. For legacy rows without both counts, interruption signals are
+    used only when no real failure was recorded.
+    """
     if record.get("result") == "truncated":
         return True
-    if record.get("exit_code") == 130:
-        return True
     ran, expected = gate_counts(record)
-    return expected is not None and expected > 0 and ran is not None and ran < expected
+    if expected is not None and expected > 0 and ran is not None:
+        return ran != expected
+    if has_real_failure(record):
+        return False
+    return record.get("exit_code") == 130
 
 
 def effective_result(record: dict) -> object:

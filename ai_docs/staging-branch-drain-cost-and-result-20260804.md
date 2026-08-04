@@ -75,3 +75,58 @@ Staging wins decisively, and the empirical run refutes the attribution objection
 
 Existing origin staging refs: `staging/drain-all` (bd5272b), `staging/membership-passing-1470`,
 `staging/membership-passing-1470-1551-1544`, `staging/patching-coalesce`.
+
+---
+
+## CORRECTION (lander, 2026-08-04T20:45Z) — corrected baseline + failure differential flips the verdict
+
+The section above used a **528s blend** and a **pre-soft-green serial model**. Both inputs are now
+superseded. Re-priced, **staging does NOT clearly win** over disciplined serial. Two changes:
+
+### Input 1 — corrected per-validate baseline (owner)
+- WARM median **500s** (n=94); COLD median **732s** (n=14). Not a 527/528s blend.
+- Failure differential (NEW): **cold 70% fail vs warm 46% fail** (ledger-corroborated 79%/55% deduped,
+  see [[cache-state-cold-fail-is-build-surface-not-slot-or-oom]]). The cold excess is **not noise** — it
+  is the **DynamoRIO build SPOF** (cc1plus OOM-kill / 0-byte `scheduler_impl.cpp.o` link, forced by
+  `build.workspace --features third-party-backends` on 31 dependents). Cold builds max surface and hits
+  it; warm has it cached. **A large part of cold's 70% is DETERMINISTIC, not retryable** — it blocks,
+  it doesn't retry-to-green.
+- Retry-inflated expected wall per GREEN validate (upper-bound, treats fails as flaky-retryable):
+  WARM `500/(1−0.46)=926s`; COLD `732/(1−0.70)=2440s`.
+
+### Input 2 — serial is NO LONGER quadratic (the founding premise is stale)
+The `ci-hub/landing/rebase_wrapper.py` **soft-green** machinery landed TODAY (`744b3877` rebase+soft-green,
+`02e02bd` receipt_at_Z; see [[rebase-wrapper-soft-green-confidence-levels]]). A **clean** rebase onto new
+main **inherits** green (soft) — no re-validate; only a conflict-resolving rebase voids it. That **breaks
+the 100% receipt-orphan → N² re-validate** loop this whole task was premised on. Disciplined serial
+(rebase-front + soft-green) is now ~**linear** (≤ N warm validates; clean re-rebases land free).
+
+### Cost both ways, corrected (N = landable PRs; formula + N=21 & N=30)
+
+| model | validates | per-green | N=21 | N=30 |
+|---|---|---|---|---|
+| **S1 legacy naive serial** (batch-validate-ahead, 100% orphan, NO soft-green) | N(N+1)/2 warm | 926s | ~214k s (**~59h**) | ~431k s (**~120h**) |
+| **S2 disciplined serial** (rebase-front + soft-green inheritance, landed today) | ≤ N warm | 926s | ~19.4k s (**~5.4h**) | ~27.8k s (**~7.7h**) |
+| **staging** (1 cold validate + attribution/bisect over 61 merged) | 1 + up to log₂61≈6 cold | 2440s | **~0.7h best … ~4.7h worst** | same (O(1) in N) |
+
+### Verdict — say so
+- Staging **decisively beats S1** (legacy naive) — ~12–85×. That is the prior memo's win. **But S1 is no
+  longer the alternative**: the soft-green wrapper landed, so the realistic serial is S2.
+- Staging (~0.7–4.7h) **vs S2 (~5.4–7.7h): NO CLEAR WINNER.** Staging's best case beats S2; its worst
+  case ≈ S2. And staging carries **three risks S2 does not**:
+  1. **Cold + max build surface → maximum DynamoRIO-SPOF exposure.** Staging is blocked on the SAME
+     SPOF as serial, hit HARDEST. Its 70% is largely the deterministic SPOF → **retry won't clear it;
+     it's gated on the DynamoRIO fix, full stop** (matches the 19:15 HOLD note).
+  2. **A cold RED is ambiguous.** The owner is right that "a red staging branch does not say which PR
+     broke it" — the 12:49 run got a *clean self-naming lint* (attribution ≈ 0), but a **flaky/SPOF
+     build red** is indistinguishable from a culprit red without re-running; attribution-is-free was a
+     lucky property of that specific failure, not a guarantee.
+  3. **Small realized denominator.** Only ~6 of 18 clean riders are READY (rest drafts); the 43
+     high-value conflicted PRs aren't in staging without the format-aware JSON registry merger. O(1)
+     amortized over ~6 landings is a weak win.
+
+**BOTTOM LINE:** Priced with the corrected cold/warm split and the today-landed soft-green wrapper,
+**staging does not clearly win.** Run it **speculatively** (it costs nothing if abandoned, per owner) but
+do **not** treat it as the cost-winning strategy — the disciplined rebase-front + soft-green serial is
+comparable and lower-risk. **Both are currently BLOCKED on the DynamoRIO build SPOF**; that fix, not the
+staging-vs-serial choice, is the gating item. The merge-gate change is **HELD for review** (owner).

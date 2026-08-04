@@ -16,9 +16,11 @@ class CompletionTest(unittest.TestCase):
         truncated = {
             "profile": "full", "result": "fail", "checks": 2,
             "gates_run": 2, "gates_expected": 5, "failures": 2,
+            "gates": [{"name": "portable CI DAG lane", "result": "fail"}],
         }
         analysis = fc.classify(truncated, [truncated], {})
         self.assertEqual(analysis.verdict, "truncated")
+        self.assertEqual(fc.effective_result(truncated), "truncated")
 
     def test_genuine_five_of_five_red_is_classified(self):
         genuine = {
@@ -27,6 +29,7 @@ class CompletionTest(unittest.TestCase):
         }
         analysis = fc.classify(genuine, [genuine], {})
         self.assertEqual(analysis.verdict, "defect")
+        self.assertEqual(fc.effective_result(genuine), "fail")
 
     def test_old_reconstructed_four_gate_red_is_not_rewritten(self):
         old_complete = {

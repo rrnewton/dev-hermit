@@ -166,6 +166,13 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// present". 5 is the first clean anchor.
 pub const COUNTS_SCHEMA: u32 = 5;
 
+/// A schema-3+ full-profile run's known gate contract is five gates. When the
+/// producer has not yet written `gates_expected` (it predates that field), a
+/// full row of schema >= 3 still has this expected count. Mirrors the Python
+/// `flake_class.gate_counts` fallback so both engines apply the SAME
+/// completeness rule (the canonical guard for validate_ledger_qualified_rows).
+pub const FULL_GATES_EXPECTED: u64 = 5;
+
 /// A per-node coverage obligation is SATISFIED iff the run planned at least one
 /// test-bearing DAG node AND no planned test node was inert (ran but executed 0
 /// countable tests) or absent (never produced a terminal result). Carrying the
@@ -283,25 +290,34 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
     }
 
     let gates_run = row.gates_run.or(row.checks);
+    // Apply the schema-aware full-profile fallback so an anchored full run whose
+    // producer predates `gates_expected` still carries its five-gate contract —
+    // identical to Python `gate_counts`, so the two engines never disagree on
+    // completeness. `is_clean_full_coverage` above already guarantees
+    // profile == "full" here; the schema guard keeps the count off legacy rows.
+    let gates_expected = row.gates_expected.or_else(|| {
+        (row.profile.as_deref() == Some("full") && row.schema_version.is_some_and(|v| v >= 3))
+            .then_some(FULL_GATES_EXPECTED)
+    });
     let failed_gates: Vec<_> = row.gates.iter().filter(|gate| gate_is_red(gate)).collect();
 
-    // The live false-red shape: Ctrl-C/termination after only passing gates.
-    // Explicit planned counts supersede this compatibility recognition once
-    // the producer carries them.
-    if row.exit_code == Some(130)
-        || row
-            .gates_expected
-            .zip(gates_run)
-            .is_some_and(|(expected, ran)| ran < expected)
-        || (row.failures == Some(0) && failed_gates.is_empty())
+    // Completeness is structural. Even when a fail-fast row carries a real red
+    // gate, it did not execute the full validation contract and cannot become a
+    // durable FAILED verdict. A genuine red control has matching gate counts.
+    let has_real_failure = row.failures.is_some_and(|f| f >= 1) || !failed_gates.is_empty();
+    if gates_expected
+        .zip(gates_run)
+        .is_some_and(|(expected, ran)| expected > 0 && ran != expected)
+        || (!has_real_failure
+            && (row.exit_code == Some(130)
+                || (row.failures == Some(0) && failed_gates.is_empty())))
     {
         return FailureDisposition::Truncated;
     }
     // Missing completeness or execution conditions cannot prove a defect. Old
     // reds therefore become re-measurement requests instead of permanent
     // condemnations when the schema tightens.
-    let complete = row
-        .gates_expected
+    let complete = gates_expected
         .zip(gates_run)
         .is_some_and(|(expected, ran)| expected > 0 && ran >= expected);
     let conditions_present = row.dag_jobs.is_some()
@@ -472,7 +488,7 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"testhost",
+            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
@@ -574,6 +590,18 @@ mod tests {
     }
 
     #[test]
+    fn exit_130_after_a_real_gate_failure_is_failed_not_truncated() {
+        // A gate genuinely failed, then teardown was Ctrl-C'd (exit 130). The
+        // SIGINT must NOT launder the recorded failure into a non-verdict — a
+        // real red is worse to hide than a needless re-run. Live shape: d096c20c.
+        let mut r = complete_failure(PASS_SHA);
+        r.exit_code = Some(130);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::FailedOnRecord);
+        assert_eq!(a.verdict.exit_code(), 3);
+    }
+
+    #[test]
     fn explicit_truncated_record_stays_first_class() {
         let r = row(&format!(
             r#"{{"schema_version":4,"profile":"full","selection_mode":"full",
@@ -584,6 +612,53 @@ mod tests {
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::Truncated);
         assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn incomplete_real_gate_failure_is_truncated_not_failed() {
+        let mut r = complete_failure(PASS_SHA);
+        r.checks = Some(1);
+        r.gates_run = Some(1);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn schema3_full_incomplete_red_without_gates_expected_is_truncated() {
+        // Live shape a4d20fa8: a schema-3 full run whose producer predates the
+        // `gates_expected` field. It fail-fasted at gate 1 of the known five-gate
+        // contract. The full-profile fallback (expected=5) must apply so ran(1)!=5
+        // reads TRUNCATED, matching Python flake_class.gate_counts — before this
+        // fix Rust read raw gates_expected=None and returned NEEDS-RERUN, diverging
+        // from Python on the canonical guard.
+        let r = row(&format!(
+            r#"{{"schema_version":3,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":1,"failures":1,
+                "gates":[
+                    {{"name":"Initialize repository submodules","result":"fail","exit_code":1}}
+                ]}}"#
+        ));
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Truncated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn legacy_schema1_incomplete_red_gets_no_five_gate_fallback() {
+        // The fallback is schema>=3 only: a schema-1 full run legitimately had a
+        // different gate count, so an absent gates_expected must NOT be fabricated
+        // as 5. Such a row is never given a completeness-derived TRUNCATED verdict.
+        let r = row(&format!(
+            r#"{{"schema_version":1,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":1,"failures":1,
+                "gates":[
+                    {{"name":"Initialize repository submodules","result":"fail","exit_code":1}}
+                ]}}"#
+        ));
+        assert_ne!(assess(&[r], PASS_SHA).verdict, Verdict::Truncated);
     }
 
     #[test]
@@ -640,7 +715,7 @@ mod tests {
     fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
-            r#"{"schema_version":3,"host":"testhost","profile":"full","selection_mode":"full",
+            r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );
