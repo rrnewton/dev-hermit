@@ -10,25 +10,43 @@
 //! (`append_validation_ledger`), this module READS it. There is deliberately no
 //! second table.
 //!
-//! ## The predicate (VALIDATED)
+//! ## The predicate (VALIDATED) — version-aware over a schema transition
 //!
-//! A record satisfies the predicate for a commit iff it is a clean,
-//! commit-anchored, FULL-profile, FULL-selection PASS that CARRIES WHAT IT
-//! VERIFIED — a nonzero executed-test count AND zero filtered-out:
-//!   commit == <sha> && commit_anchored == true && tree_dirty == false &&
-//!   selection_mode == "full" && profile == "full" && result == "pass" &&
-//!   executed_tests == Some(n) with n > 0 && filtered_tests == Some(0).
+//! The full rule is "a green must carry what it verified" (AGENTS.md Proxy
+//! Binding, parent da98bdd): a clean, commit-anchored, FULL-profile,
+//! FULL-selection PASS with a nonzero executed-test count AND zero filtered-out.
+//! But the PRODUCER TRAVELS WITH THE BRANCH: a receipt's writer is whatever
+//! `validate.sh` shipped on that PR's branch, and older writers do not emit the
+//! count fields at all. Enforcing the count clauses on EVERY receipt therefore
+//! strands every pre-count receipt (measured 2026-08-04: 35/35 clean full passes
+//! in the ledger flip to NOT-VALIDATED), identically to the bfb0a9ef anchor
+//! transition. So this consumer is VERSION-AWARE: it applies the rule that
+//! matches each receipt's declared capability.
 //!
-//! The count clauses are the SAME rule from two sides: a green must carry WHAT IT
-//! COVERED (profile/selection — a partial `*-only` profile or a subset selection
-//! is fail-closed rejected) and HOW MUCH IT VERIFIED (executed count — a zero-
-//! test green is a no-result, not a pass; a filtered subset is a narrowed scope,
-//! not the full suite). A green that does NOT carry these counts is refused: an
-//! absent count is an unqualified claim, and this reader gates on the fields the
-//! writer already records, so the writer's three fields (profile/executed/
-//! filtered) and this consumer enforce ONE judgement, matching the Proxy Binding
-//! truth table at AGENTS.md. `validate.sh`'s `append_validation_ledger` must emit
-//! both counts for its receipts to be trusted for landing.
+//! A record satisfies the predicate for a commit iff it is clean,
+//! commit-anchored, FULL-profile, FULL-selection, `result == "pass"`, AND:
+//!   * it passes two UNIVERSAL guards that hold at every schema — `executed_tests
+//!     != Some(0)` (a demonstrated zero-test run is a no-result, never green) and
+//!     no positive `filtered_tests` (any name-filtered subset is a narrowed scope
+//!     masquerading as the full profile); AND
+//!   * IF the receipt is count-capable (`schema_version >= COUNTS_SCHEMA`, i.e.
+//!     written by a count-emitting writer) OR actually carries both counts, it is
+//!     held STRICT: `executed_tests == Some(n>0) && filtered_tests == Some(0)`.
+//!     An absent count from a count-capable writer is a writer DEFECT, refused.
+//!   * ELSE it is a genuinely pre-count receipt and is GRANDFATHERED: the two
+//!     universal guards plus clean/full/full/pass suffice (the pre-tightening
+//!     rule). This strands nobody and un-breaks the drain; new receipts pick up
+//!     STRICT automatically as count-emitting writers roll out.
+//!
+//! The grandfather branch is schema/presence-keyed, NOT time-keyed, so it never
+//! expires-and-strands: it self-liquidates as pre-count receipts age out. See
+//! `ai_docs/transition-design-executed-filtered-count-schema-tightening_20260804.md`.
+//! Keying strictness on field PRESENCE (not the `schema_version` integer alone) is
+//! deliberate: the live writers disagree about the version — `aggregate.py` emits
+//! counts under schema 1 while schema 3 and 4 exist WITHOUT counts — so the
+//! condition ("this receipt measured coverage") must travel with the value as the
+//! fields themselves; the schema escalator exists only to catch a count-capable
+//! writer that emits nothing.
 //!
 //! This is intentionally NEVER LOOSER than `hermit/validate.sh`'s own
 //! `locally-validated` stamp guard, which fires only when
@@ -110,45 +128,73 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
         && row.profile.as_deref() == Some("full")
 }
 
-/// The landing / cache predicate: a clean full-coverage PASS for the commit that
-/// CARRIES a nonzero executed-test count AND filtered nothing out. A green MUST
-/// carry what it verified; a receipt that does not is not a green, it is an
-/// unqualified claim. Three ways a full-profile `pass` row nonetheless verifies
-/// less than it claims, each refused here:
-///   * `executed_tests` ABSENT — the receipt never states how much it ran. This
-///     is WORSE than a demonstrated zero: a zero-test run at least logs
-///     `running 0 tests` (greppable, catchable); an absent count leaves nothing
-///     to catch. A green with no count is a proxy for a green.
-///   * `executed_tests == Some(0)` — the banners prove zero tests ran, a
-///     no-result wearing a success badge (the `--features`-gated build that
-///     compiled the tests out).
-///   * `filtered_tests != Some(0)` — a NAME-FILTERED subset (`1 passed; 154
-///     filtered out`) covered a narrowed scope while claiming the full profile. A
-///     genuinely full `cargo test` filters nothing, so a positive filtered count
-///     is the same scope-masquerade defect as a partial profile, and an ABSENT
-///     filtered count is again an unqualified claim: the run does not state that
-///     it filtered nothing.
+/// The `schema_version` at which a receipt's WRITER guarantees it emits both
+/// count fields. A receipt stamped `>= COUNTS_SCHEMA` is held to the STRICT rule
+/// even when a count is absent, because for such a writer an absent count is a
+/// DEFECT (it was contractually required to emit), not a pre-count receipt.
 ///
-/// So a full green requires, over and above clean full coverage: `result==pass`,
-/// `executed_tests == Some(n)` with `n > 0`, and `filtered_tests == Some(0)`.
-/// Missing either count, zero execution, or any positive filtered count is
-/// NotValidated (exit 4 = re-dispatch), never FailedOnRecord — the run is
-/// UNVERIFIED, not known-bad. This is the reader half of the SAME three-field
-/// judgement the writer records (`aggregate.py` emits profile, executed, and
-/// filtered) and the SAME truth table the Proxy Binding rule states at AGENTS.md
-/// ("a green must carry what it verified": profile=full, executed>0, filtered=0,
-/// failures=0). Recording a field and gating on it are different things; this
-/// closes the gap where the writer carried all three and the reader enforced one.
+/// This is the SINGLE source of truth for the version boundary: the count-emitting
+/// `hermit/validate.sh` `append_validation_ledger` stamps exactly this
+/// `schema_version`, and this consumer gates on `>=` it (see
+/// `emit_executed_and_filtered`). Do not hard-code the integer in the writer with
+/// a separate comment — writer and consumer are ONE judgement, or they diverge.
 ///
-/// DRAIN NOTE: `validate.sh`'s `append_validation_ledger` must emit both counts
-/// (via `nonzero_result.py --ledger-fields`) for a validate.sh receipt to satisfy
-/// this predicate; a receipt written without the counts reads NotValidated and is
-/// re-dispatched, by design — an uncounted green is not trusted for landing.
+/// Why 5, not 4: schema 1/2/3 are already in use and schema 4 is ALREADY in the
+/// ledger from a branch writer that emits NO counts, so 4 cannot mean "counts
+/// present". 5 is the first clean anchor.
+pub const COUNTS_SCHEMA: u32 = 5;
+
+/// The landing / cache predicate — version-aware over the count-schema
+/// transition (see the module docs and the transition design note). Over and
+/// above clean full coverage (`is_clean_full_coverage`) and `result == "pass"`:
+///
+///   * TWO UNIVERSAL GUARDS, applied at EVERY schema (grandfather or strict):
+///     `executed_tests != Some(0)` — a demonstrated zero-test run is a no-result
+///     wearing a success badge (the `--features`-gated build that compiled the
+///     tests out), never a green; and no positive `filtered_tests` — a
+///     NAME-FILTERED subset (`1 passed; 154 filtered out`) covered a narrowed
+///     scope while claiming the full profile, the same scope-masquerade as a
+///     partial profile. Neither is ever grandfathered.
+///   * THEN, if the receipt is COUNT-CAPABLE (`schema_version >= COUNTS_SCHEMA`)
+///     OR actually CARRIES both counts, it is held STRICT: `executed_tests ==
+///     Some(n>0) && filtered_tests == Some(0)`. This catches a count-capable
+///     writer that emits nothing (a DEFECT) and enforces the full Proxy Binding
+///     rule on every receipt able to prove its coverage — including
+///     `aggregate.py`, which carries counts under an OLD schema.
+///   * ELSE the receipt is a genuinely PRE-COUNT receipt (writer predates count
+///     emission, carried neither count): it is GRANDFATHERED under the
+///     pre-tightening rule (the two guards + clean/full/full/pass). This is the
+///     transition allowance that un-breaks the drain without stranding the
+///     backlog; it strands nobody and self-liquidates as pre-count receipts age.
+///
+/// Everything short of the applicable rule is NotValidated (exit 4 = re-dispatch),
+/// never FailedOnRecord — an uncounted or under-covered run is UNVERIFIED, not
+/// known-bad. This AGREES with the AGENTS.md Proxy Binding truth table (parent
+/// da98bdd) for count-capable receipts; for grandfathered receipts it applies the
+/// documented pre-transition contract those writers were built against.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
-    is_clean_full_coverage(row, sha)
-        && row.result.as_deref() == Some("pass")
-        && matches!(row.executed_tests, Some(n) if n > 0)
-        && row.filtered_tests == Some(0)
+    if !(is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")) {
+        return false;
+    }
+    // Universal guards: a demonstrated zero-test run and any positive filtered
+    // count are never a full green, at any schema — never grandfathered.
+    if row.executed_tests == Some(0) {
+        return false;
+    }
+    if matches!(row.filtered_tests, Some(f) if f > 0) {
+        return false;
+    }
+    let count_capable = row.schema_version.is_some_and(|v| v >= COUNTS_SCHEMA);
+    let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
+    if count_capable || counts_present {
+        // STRICT: the receipt can prove coverage (count-capable writer, or an
+        // old-schema writer that carried both counts) — so require it to.
+        matches!(row.executed_tests, Some(n) if n > 0) && row.filtered_tests == Some(0)
+    } else {
+        // GRANDFATHER: a genuinely pre-count receipt that cleared both universal
+        // guards — accept under the pre-tightening clean/full/full/pass rule.
+        true
+    }
 }
 
 /// A clean full-coverage run for the commit that is a genuine FAILURE (a
@@ -382,13 +428,69 @@ mod tests {
     }
 
     #[test]
-    fn absent_executed_count_is_not_validated() {
-        // NEGATIVE: a green that does not STATE how much it ran is an unqualified
-        // claim, not a green. Worse than a demonstrated zero — a zero-test run
-        // logs `running 0 tests` (greppable); an absent count leaves nothing to
-        // catch. It is unverified, so NotValidated (re-dispatch), not known-bad.
+    fn grandfathered_pre_count_pass_validates() {
+        // TRANSITION POSITIVE (the 35/35 un-break case): a PRE-COUNT receipt —
+        // old-schema (3 < COUNTS_SCHEMA) writer that carried NEITHER count — is a
+        // clean full/full pass that clears both universal guards, so it is
+        // grandfathered VALIDATED. This is exactly what un-breaks the live drain:
+        // without it, every raw validate.sh receipt on main flips NotValidated.
         let mut r = clean_full_pass(PASS_SHA);
+        r.schema_version = Some(3);
         r.executed_tests = None;
+        r.filtered_tests = None;
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::Validated);
+        assert_eq!(a.verdict.exit_code(), 0);
+    }
+
+    #[test]
+    fn grandfather_still_refuses_the_two_universal_guards() {
+        // NEGATIVE: grandfathering is NOT a free pass. A pre-count receipt whose
+        // OWN banners nonetheless prove a zero-test run, or a positive filtered
+        // count, is refused at every schema — those are never a full green.
+        let mut zero = clean_full_pass(PASS_SHA);
+        zero.schema_version = Some(3);
+        zero.filtered_tests = None;
+        zero.executed_tests = Some(0);
+        assert_eq!(assess(&[zero], PASS_SHA).verdict, Verdict::NotValidated);
+
+        let mut filt = clean_full_pass(PASS_SHA);
+        filt.schema_version = Some(3);
+        filt.executed_tests = None;
+        filt.filtered_tests = Some(154);
+        assert_eq!(assess(&[filt], PASS_SHA).verdict, Verdict::NotValidated);
+    }
+
+    #[test]
+    fn old_schema_carrying_counts_is_held_strict() {
+        // aggregate.py stamps schema_version 1 but DOES emit both counts. Because
+        // the counts are PRESENT the receipt can prove coverage, so it is held
+        // STRICT even on the old schema: a positive count validates, a
+        // demonstrated zero does not.
+        let mut ok = clean_full_pass(PASS_SHA);
+        ok.schema_version = Some(1);
+        ok.executed_tests = Some(47);
+        ok.filtered_tests = Some(0);
+        assert_eq!(assess(&[ok], PASS_SHA).verdict, Verdict::Validated);
+
+        let mut zero = clean_full_pass(PASS_SHA);
+        zero.schema_version = Some(1);
+        zero.executed_tests = Some(0);
+        zero.filtered_tests = Some(0);
+        assert_eq!(assess(&[zero], PASS_SHA).verdict, Verdict::NotValidated);
+    }
+
+    #[test]
+    fn count_capable_absent_counts_is_a_defect() {
+        // NEGATIVE (the new-writer bug catch): a COUNT-CAPABLE receipt
+        // (schema_version >= COUNTS_SCHEMA) that emits NO counts is a writer
+        // DEFECT, not a pre-count receipt — it was contractually required to emit.
+        // Held strict; absent counts => NotValidated. This is the one case pure
+        // presence-keying cannot catch and the schema escalator exists for.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.schema_version = Some(COUNTS_SCHEMA);
+        r.executed_tests = None;
+        r.filtered_tests = None;
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::NotValidated);
         assert_eq!(a.verdict.exit_code(), 4);
@@ -396,15 +498,14 @@ mod tests {
     }
 
     #[test]
-    fn absent_filtered_count_is_not_validated() {
-        // NEGATIVE: a full-profile green that does not STATE it filtered nothing
-        // out is likewise unqualified. Only an explicit `filtered==0` proves the
-        // full suite ran unnarrowed.
+    fn count_capable_full_green_validates() {
+        // POSITIVE: a count-capable receipt carrying a nonzero executed count and
+        // zero filtered is the fully-qualified green the transition converges on.
         let mut r = clean_full_pass(PASS_SHA);
-        r.filtered_tests = None;
-        let a = assess(&[r], PASS_SHA);
-        assert_eq!(a.verdict, Verdict::NotValidated);
-        assert_eq!(a.verdict.exit_code(), 4);
+        r.schema_version = Some(COUNTS_SCHEMA);
+        r.executed_tests = Some(36);
+        r.filtered_tests = Some(0);
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::Validated);
     }
 
     #[test]
@@ -429,21 +530,32 @@ mod tests {
     }
 
     #[test]
-    fn positive_control_three_legitimate_full_passes_validate() {
-        // POSITIVE CONTROL, N=3: the guard must not reject everything. Three
-        // legitimate clean full/full passes carrying nonzero executed counts
-        // (1, 47, 332) and filtered==0 all remain VALIDATED (rc=0). Without this
-        // control a consumer that rejects absent AND filtered would pass every
-        // negative test above and still be useless — it would refuse real greens.
-        for executed in [1_i64, 47, 332] {
+    fn positive_control_legitimate_passes_validate_across_all_branches() {
+        // POSITIVE CONTROL, N=6 across all three ACCEPT branches: the version-aware
+        // consumer must not reject everything (a consumer that did would pass every
+        // negative test and be disabled within a day). Each is a legitimate green:
+        //   - GRANDFATHER: pre-count writer, no counts (schema 2 and 3).
+        //   - OLD-WITH-COUNTS: aggregate.py carries counts under schema 1.
+        //   - COUNT-CAPABLE: new writer, schema >= COUNTS_SCHEMA, counts present.
+        // (schema_version, executed, filtered)
+        let legit: [(u32, Option<i64>, Option<i64>); 6] = [
+            (2, None, None),        // grandfather
+            (3, None, None),        // grandfather (the 35/35 raw-validate.sh case)
+            (1, Some(1), Some(0)),  // old schema carrying counts
+            (1, Some(47), Some(0)), // old schema carrying counts
+            (COUNTS_SCHEMA, Some(36), Some(0)), // count-capable full green
+            (COUNTS_SCHEMA, Some(332), Some(0)), // count-capable full green
+        ];
+        for (sv, executed, filtered) in legit {
             let mut r = clean_full_pass(PASS_SHA);
-            r.executed_tests = Some(executed);
-            r.filtered_tests = Some(0);
+            r.schema_version = Some(sv);
+            r.executed_tests = executed;
+            r.filtered_tests = filtered;
             let a = assess(&[r], PASS_SHA);
             assert_eq!(
                 a.verdict,
                 Verdict::Validated,
-                "executed={executed} filtered=0 must be Validated"
+                "schema={sv} executed={executed:?} filtered={filtered:?} must be Validated"
             );
             assert_eq!(a.verdict.exit_code(), 0);
         }
