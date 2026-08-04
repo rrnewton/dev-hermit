@@ -280,6 +280,22 @@
       "source_row": "16",
       "parent_id": null,
       "implementation": null
+    },
+    {
+      "id": "track-owner-tooling-directives",
+      "summary": "Track owner tooling directives until fresh-main ancestry confirms landing",
+      "requested_at": "2026-08-04",
+      "repository": "rrnewton/dev-hermit",
+      "checkout": ".",
+      "target": "main",
+      "task": "track_owner_tooling_directives",
+      "owner": "hermit-251",
+      "source_row": null,
+      "parent_id": null,
+      "implementation": {
+        "kind": "commit",
+        "identity": "94c363cff10f40e11a5b64e938fda35d217aa45f"
+      }
     }
   ]
 }

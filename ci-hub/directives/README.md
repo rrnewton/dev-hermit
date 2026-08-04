@@ -29,6 +29,7 @@ failures are `unverifiable`, never green.
 
 The hourly `owner_tooling_directives` health tick runs the same command and
 wakes the coordinator for every state other than complete fresh-main ancestry.
-The versioned seed preserves the 16-row 2026-08-04 audit and expands it to 19
-records so parent pins and cross-repository submodule legs cannot be hidden by
-one partially landed directive.
+The versioned seed preserves the 16-row 2026-08-04 audit, expands its
+cross-repository legs, and records this tracking directive itself. Parent pins
+and child obligations therefore cannot be hidden by one partially landed
+directive.
