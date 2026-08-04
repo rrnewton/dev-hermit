@@ -15,14 +15,12 @@
 #   (NEVER --admin) -> ancestry-verify.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
-#   1. Race-tolerant gate poll: never bail on a transient merge-gate FAILURE; poll
-#      the latest exact-head pull_request/workflow_dispatch Actions run and ride
-#      through FAILURE/IN_PROGRESS to SUCCESS. PR statusCheckRollup is too narrow:
-#      it omits the workflow_run-triggered dispatch that can carry the success.
+#   1. Trinary gate poll: PASSED lands, FAILED stops, and NO_RESULT blocks while
+#      re-dispatching. PR statusCheckRollup is too narrow: it omits the
+#      workflow_run-triggered dispatch that can carry the success.
 #   2. The merge command is the mergeability arbiter, NOT mergeStateStatus (which
 #      sticks at UNKNOWN); attempt `gh pr merge --rebase` in a bounded retry loop.
-#   3. Self-heal the lagging-invalidate label strip: on a COMPLETED/FAILURE run
-#      with the label now absent, re-add it (the `labeled` event refires green).
+#   3. A genuine gate failure is never overwritten by re-stamping metadata.
 #
 # Boxing principle applied to ourselves: EVERY wait here is bounded, and every
 # terminal bail emits a visible ABANDON signal (stderr + a role-tagged PR comment)
@@ -96,6 +94,12 @@ comment_abandon(){
   with-proxy gh pr comment "$PR" -R "$R" --body \
     "[coordinator, $MODEL] ABANDONED landing attempt: ${reason}. The lock was released so the FIFO can continue. Retry if the PR remains open; durable recovery will arm exact-SHA verification if GitHub completed the merge." \
     >/dev/null 2>&1 || say "WARN: could not post ABANDON comment"
+}
+comment_no_result(){
+  local reason="$1"
+  with-proxy gh pr comment "$PR" -R "$R" --body \
+    "[coordinator, $MODEL] NO-RESULT landing pause: ${reason}. No failing verdict was recorded; the missing check was re-dispatched and this PR remains blocked until it produces PASSED or FAILED." \
+    >/dev/null 2>&1 || say "WARN: could not post NO-RESULT comment"
 }
 
 # A real land exceeds the agent shell's foreground time budget. Launch the
@@ -233,12 +237,13 @@ fi
 # 5. FIX 1 + FIX 3: bounded, race-tolerant merge-gate poll. Query Actions by the
 # exact PR head and admit only pull_request/workflow_dispatch runs. The latter is
 # load-bearing: merge-gate's workflow_run controller dispatches the real PR-head
-# gate, but that success is absent from PR statusCheckRollup. Ride through
-# transient FAILURE/IN_PROGRESS/QUEUED to COMPLETED/SUCCESS. On a failure with
-# the label now absent, re-add it so `labeled` refires the gate. UNKNOWN/stuck is
-# actionable: at the measured deadline, ABANDON visibly instead of waiting.
+# gate, but that success is absent from PR statusCheckRollup. A genuine FAILED
+# result stops immediately. NO_RESULT (cancelled/skipped/neutral/pending/absent)
+# blocks without becoming a failure and re-dispatches the gate once per observed
+# terminal hole. UNKNOWN/stuck exits with a distinct temporary/no-result code.
 selector="$SCRIPT_DIR/merge-gate-status.jq"
-deadline=$((SECONDS+GATE_DEADLINE)); gate=""; cj="UNAVAILABLE/PENDING"; gate_detail="no successful Actions query"
+outcome_helper="$ROOT/ci-hub/check_outcome.py"
+deadline=$((SECONDS+GATE_DEADLINE)); gate=""; cj="UNAVAILABLE/PENDING"; gate_detail="no successful Actions query"; dispatched_run=""; gate_status="UNAVAILABLE"; gate_conclusion="PENDING"
 while (( SECONDS < deadline )); do
   if actions_json=$(with-proxy gh api \
       "repos/$R/actions/workflows/merge-gate.yml/runs?head_sha=$HEAD&per_page=100" \
@@ -248,21 +253,39 @@ while (( SECONDS < deadline )); do
     cj="${gate_status}/${gate_conclusion}"
     gate_detail="event=$gate_event run=$gate_run created=$gate_created url=$gate_url"
   else
+    gate_status="UNAVAILABLE"
+    gate_conclusion="PENDING"
     cj="UNAVAILABLE/PENDING"
     gate_detail="Actions API unavailable"
   fi
-  say "merge-gate(exact-head)=$cj $gate_detail"
-  [ "$cj" = "COMPLETED/SUCCESS" ] && { gate=ok; break; }
-  if [ "$cj" = "COMPLETED/FAILURE" ]; then
-    lb=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-    if ! grep -q locally-validated <<<"$lb"; then
-      with-proxy gh pr edit "$PR" -R "$R" --add-label locally-validated >/dev/null 2>&1 \
-        && say "re-stamped locally-validated (lagging-invalidate strip)"
-    fi
-  fi
+  check_outcome=$(python3 "$outcome_helper" --status "$gate_status" --conclusion "$gate_conclusion")
+  say "merge-gate(exact-head)=$cj outcome=$check_outcome $gate_detail"
+  case "$check_outcome" in
+    PASSED) gate=ok; break ;;
+    FAILED) abandon "merge-gate produced a genuine FAILED verdict for exact head $HEAD ($cj; $gate_detail)" 5 ;;
+    NO_RESULT)
+      # A terminal hole or an absent run needs a new observation. Do not duplicate
+      # an already queued/running run, and do not dispatch the same terminal hole
+      # repeatedly while GitHub is still creating its successor.
+      if { [ "$gate_status" = "COMPLETED" ] || [ "$gate_status" = "MISSING" ]; } &&
+         [ "${gate_run:--}" != "$dispatched_run" ]; then
+        if with-proxy gh workflow run merge-gate.yml -R "$R" --ref "$BR" -f pr_number="$PR"; then
+          dispatched_run="${gate_run:--}"
+          say "merge-gate NO_RESULT re-dispatched for exact head $HEAD"
+        else
+          say "merge-gate NO_RESULT re-dispatch failed; will retry"
+        fi
+      fi
+      ;;
+  esac
   sleep 15
 done
-[ "$gate" = ok ] || abandon "merge-gate deadline ${GATE_DEADLINE}s exceeded for exact head $HEAD (last=$cj; $gate_detail)" 5
+if [ "$gate" != ok ]; then
+  reason="merge-gate remained NO_RESULT for exact head $HEAD through the ${GATE_DEADLINE}s deadline (last=$cj; $gate_detail)"
+  say "NO-RESULT: $reason"
+  comment_no_result "$reason"
+  exit 75
+fi
 
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to

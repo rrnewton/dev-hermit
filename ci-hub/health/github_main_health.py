@@ -10,7 +10,13 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Sequence
+
+CI_HUB = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CI_HUB))
+
+from check_outcome import CheckOutcome, classify_check
 
 DEFAULT_REPOS = (
     "rrnewton/dev-hermit",
@@ -25,38 +31,6 @@ DEFAULT_RUN_LIMIT = 100
 # an interactive health command. CI deliberately overrides these lower.
 DEFAULT_CALL_TIMEOUT = float(os.environ.get("CI_HUB_MAIN_HEALTH_TIMEOUT", "15"))
 DEFAULT_OVERALL_DEADLINE = float(os.environ.get("CI_HUB_MAIN_HEALTH_DEADLINE", "60"))
-# A run conclusion is not a truth value. Only these three buckets exist, and they
-# are TOTAL over GitHub's conclusion enum plus any value GitHub adds later:
-#   RED        - a genuine BAD answer that warrants alarm/remediation.
-#   SUCCESS    - a genuine PASSING answer.
-#   NO_RESULT  - the ABSENCE of an answer (the run was cancelled, superseded,
-#                skipped, or is awaiting manual action). Neither pass nor fail:
-#                the correct response is to RE-DISPATCH and fill the hole, never
-#                to raise a red. A `cancelled` run misclassified as red once
-#                nearly reverted a healthy main (task cancelled-run-classified-as-red),
-#                which is why `cancelled`/`action_required`/`stale` are NO_RESULT,
-#                not RED. Anything not explicitly enumerated below is treated as
-#                NO_RESULT so a newly added GitHub conclusion can never manufacture
-#                a false failure (the hardcoded-list-of-a-growing-set trap).
-RED_CONCLUSIONS = frozenset(
-    (
-        "failure",
-        "timed_out",
-        "error",
-        "startup_failure",
-    )
-)
-SUCCESS_CONCLUSIONS = frozenset(("success", "neutral"))
-NO_RESULT_CONCLUSIONS = frozenset(
-    (
-        "cancelled",
-        "action_required",
-        "stale",
-        "skipped",
-        "",
-    )
-)
-
 # `cancelled` is ambiguous and cannot be split by conclusion OR by duration. A
 # self-inflicted `timeout-minutes` kill (our own box firing on a hang -- REAL
 # signal about the code) and an externally-imposed cancel (a superseding push, a
@@ -246,14 +220,17 @@ def classify_current_runs(runs: Sequence[MainRun]) -> str:
     # A self-timeout cancel is a genuine BAD answer (a hang), not a hole: it
     # alarms like any other red so the box is never silent (task
     # cancellation_taxonomy_distinguish_self).
-    if any(
-        run.conclusion in RED_CONCLUSIONS or run.self_timeout for run in runs
-    ):
-        return "red"
-    if any(
-        run.status != "completed" or run.conclusion not in SUCCESS_CONCLUSIONS
+    outcomes = tuple(
+        classify_check(
+            run.status,
+            run.conclusion,
+            self_timeout=run.self_timeout,
+        )
         for run in runs
-    ):
+    )
+    if any(outcome is CheckOutcome.FAILED for outcome in outcomes):
+        return "red"
+    if any(outcome is CheckOutcome.NO_RESULT for outcome in outcomes):
         return "pending"
     return "green"
 
@@ -408,13 +385,18 @@ def render_report(health: Sequence[RepoMainHealth]) -> str:
             lines.append("    no push workflow runs found at the current main SHA")
             continue
         for run in repo.runs:
+            outcome = classify_check(
+                run.status,
+                run.conclusion,
+                self_timeout=run.self_timeout,
+            )
             if run.self_timeout:
                 # A self-inflicted timeout kill (a hang) surfaces as RED, not a
                 # hole, so a human acts; the actuator still only re-dispatches it.
                 marker = "SELF-TIMEOUT"
-            elif run.conclusion in RED_CONCLUSIONS:
+            elif outcome is CheckOutcome.FAILED:
                 marker = "RED"
-            elif run.status == "completed" and run.conclusion in NO_RESULT_CONCLUSIONS:
+            elif outcome is CheckOutcome.NO_RESULT:
                 # A hole in the record, not a failure: re-dispatch, do not alarm.
                 marker = "NO-RESULT"
             else:

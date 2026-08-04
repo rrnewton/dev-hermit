@@ -508,7 +508,12 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertNotIn(
             'gh pr view "$PR" -R "$R" --json statusCheckRollup', script
         )
-        self.assertIn("merge-gate deadline ${GATE_DEADLINE}s exceeded", script)
+        self.assertIn("merge-gate remained NO_RESULT", script)
+        self.assertIn('check_outcome=$(python3 "$outcome_helper"', script)
+        self.assertIn('FAILED) abandon "merge-gate produced a genuine FAILED verdict', script)
+        self.assertIn('NO_RESULT)', script)
+        self.assertIn("gh workflow run merge-gate.yml", script)
+        self.assertIn("exit 75", script)
 
         plugin = (ROOT / ".orc/plugins/hermit-dev/index.ts").read_text()
         heartbeat = plugin[plugin.index("speculativeLandRemediationHeartbeat") :]

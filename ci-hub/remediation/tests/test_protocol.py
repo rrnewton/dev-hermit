@@ -395,12 +395,12 @@ class ProtocolTest(unittest.TestCase):
     ) -> None:
         # POSITIVE, COUNTED bracket (task obligation_revert_path_lone): the guard
         # against a lone local red must NOT make the actuator inert. Every
-        # AUTHORITATIVE hosted red -- N == 3 distinct red-producing conclusions
-        # (failure, timed_out, startup_failure), which _github_state maps to the
+        # AUTHORITATIVE hosted red -- N == 4 distinct red-producing conclusions
+        # (failure, timed_out, error, startup_failure), which _github_state maps to the
         # taxonomy "red" -- STILL arms an immediate revert of a still-at-tip land.
         # A path that never recommends is disabled, not fixed.
-        red_conclusions = ("failure", "timed_out", "startup_failure")
-        self.assertEqual(len(red_conclusions), 3)  # N stated: N == 3
+        red_conclusions = ("failure", "timed_out", "error", "startup_failure")
+        self.assertEqual(len(red_conclusions), 4)  # N stated: N == 4
         self.assertEqual(set(red_conclusions), set(protocol._RED_CONCLUSIONS))
         reverted = 0
         for index, conclusion in enumerate(red_conclusions):
@@ -446,7 +446,7 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(record["remediation"]["state"], "triggered", conclusion)
             reverted += 1
         # All N genuine hosted failures still revert.
-        self.assertEqual(reverted, 3)
+        self.assertEqual(reverted, 4)
 
     def test_no_result_is_distinct_from_both_pass_and_fail_for_a_local_red(
         self,
@@ -737,12 +737,12 @@ class GithubStateClassificationTest(unittest.TestCase):
     def _state(self, status: str, conclusion: str) -> str:
         return protocol._github_state({"status": status, "conclusion": conclusion})
 
-    def test_success_and_neutral_are_green(self) -> None:
+    def test_only_success_is_green(self) -> None:
         self.assertEqual(self._state("completed", "success"), "green")
-        self.assertEqual(self._state("completed", "neutral"), "green")
+        self.assertEqual(self._state("completed", "neutral"), "no_result")
 
     def test_genuine_failures_are_red(self) -> None:
-        for conclusion in ("failure", "timed_out", "startup_failure"):
+        for conclusion in ("failure", "timed_out", "error", "startup_failure"):
             self.assertEqual(self._state("completed", conclusion), "red", conclusion)
 
     def test_cancelled_is_no_result_not_red(self) -> None:
@@ -757,9 +757,9 @@ class GithubStateClassificationTest(unittest.TestCase):
                 self._state("completed", conclusion), "no_result", conclusion
             )
 
-    def test_incomplete_run_is_running(self) -> None:
-        self.assertEqual(self._state("in_progress", ""), "running")
-        self.assertEqual(self._state("queued", ""), "running")
+    def test_incomplete_run_is_no_result(self) -> None:
+        self.assertEqual(self._state("in_progress", ""), "no_result")
+        self.assertEqual(self._state("queued", ""), "no_result")
 
     def test_no_result_github_leg_does_not_remediate_a_green_local(self) -> None:
         # (local=green, github=no_result) must be neither satisfied nor a

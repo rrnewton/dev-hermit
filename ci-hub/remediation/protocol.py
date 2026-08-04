@@ -19,10 +19,13 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "ci-hub"))
 sys.path.insert(0, str(ROOT / "ci-hub/history"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import obligations
+from check_outcome import CheckOutcome, classify_check
+from check_outcome import FAIL_CONCLUSIONS as _RED_CONCLUSIONS
 from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
@@ -718,27 +721,11 @@ def github_main_sha(repo: str) -> str:
     return sha
 
 
-# Bucketing of a GitHub run conclusion into a verification state. TOTAL over
-# GitHub's conclusion enum and any value it adds later. A conclusion is not a
-# truth value: only success/neutral are a passing answer, only failure/timed_out/
-# startup_failure are a failing answer, and everything else — cancelled, skipped,
-# stale, action_required, empty, or an UNKNOWN future value — is the ABSENCE of a
-# result. Absence is neither pass nor fail; it is a hole to RE-DISPATCH, never a
-# red to alarm on. A cancelled run misread as red once nearly reverted a healthy
-# main (task cancelled-run-classified-as-red), which is exactly what the
-# no_result bucket and the "unknown defaults to no_result" rule prevent.
-_GREEN_CONCLUSIONS = frozenset({"success", "neutral"})
-_RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
-
-
 def _github_state(run: Mapping[str, Any]) -> str:
-    status = str(run.get("status") or "").lower()
-    conclusion = str(run.get("conclusion") or "").lower()
-    if status != "completed":
-        return "running"
-    if conclusion in _GREEN_CONCLUSIONS:
+    outcome = classify_check(run.get("status"), run.get("conclusion"))
+    if outcome is CheckOutcome.PASSED:
         return "green"
-    if conclusion in _RED_CONCLUSIONS:
+    if outcome is CheckOutcome.FAILED:
         return "red"
     return "no_result"
 

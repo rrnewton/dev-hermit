@@ -53,6 +53,10 @@ from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "ci-hub"))
+
+from check_outcome import CheckOutcome, classify_check
+
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
 DEFAULT_WARN_THRESHOLD = 10
@@ -100,19 +104,6 @@ GH_FIELDS = (
 )
 MECHANISM_GH_FIELDS = ("number", "title", "isDraft", "labels")
 
-# GitHub check/status vocabularies. A conclusion is not a truth value: only a
-# genuine BAD answer is a fail. CANCELLED/ACTION_REQUIRED are the ABSENCE of a
-# result (a hole to re-run), NOT a failure — a cancelled run misread as red once
-# nearly reverted a healthy main (task cancelled-run-classified-as-red), so they
-# live in _NO_RESULT_STATES and reduce to "pending", never "red".
-_FAIL_STATES = {
-    "FAILURE",
-    "ERROR",
-    "TIMED_OUT",
-    "STARTUP_FAILURE",
-}
-_NO_RESULT_STATES = {"CANCELLED", "ACTION_REQUIRED", "STALE"}
-_OK_STATES = {"SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"}
 # Transient network/GH errors worth a bounded retry.
 _RETRYABLE_MARKERS = (
     "stream error",
@@ -284,16 +275,13 @@ def _rollup_ci_state(rollup: object) -> str:
         status = str(check.get("status") or "").upper()
         # CheckRun => conclusion; StatusContext => state.
         outcome = str(check.get("conclusion") or check.get("state") or "").upper()
-        if status and status != "COMPLETED":
-            any_pending = True
-        if outcome in _FAIL_STATES:
+        classified = classify_check(status, outcome)
+        if classified is CheckOutcome.FAILED:
             any_fail = True
-        elif outcome in _OK_STATES:
+        elif classified is CheckOutcome.PASSED:
             any_ok = True
-        elif outcome in _NO_RESULT_STATES:
-            # A hole in the record (cancelled/superseded), not a failure: pending.
-            any_pending = True
-        elif outcome:  # PENDING / EXPECTED / REQUESTED / unknown => not yet done
+        else:
+            # A hole in the record blocks admission but never reports a red.
             any_pending = True
     if any_fail:
         return "red"

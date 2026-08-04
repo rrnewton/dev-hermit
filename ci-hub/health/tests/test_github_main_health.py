@@ -54,18 +54,24 @@ class MainHealthTests(unittest.TestCase):
         )
         self.assertEqual(github_main_health.classify_current_runs(runs), "pending")
 
-    def test_no_result_conclusions_are_never_red(self) -> None:
-        for conclusion in ("cancelled", "action_required", "stale", "skipped", ""):
+    def test_no_result_conclusions_are_neither_red_nor_green(self) -> None:
+        for conclusion in (
+            "cancelled",
+            "action_required",
+            "stale",
+            "skipped",
+            "neutral",
+            "",
+        ):
             runs = (
                 github_main_health.MainRun(
                     "ci", "a" * 40, "completed", conclusion, "u", "1"
                 ),
             )
-            self.assertNotEqual(
-                github_main_health.classify_current_runs(runs),
-                "red",
-                f"{conclusion!r} must not classify main as red",
-            )
+            state = github_main_health.classify_current_runs(runs)
+            self.assertEqual(state, "pending")
+            self.assertNotEqual(state, "red")
+            self.assertNotEqual(state, "green")
 
     def test_unknown_conclusion_is_not_red(self) -> None:
         # A conclusion GitHub adds later must not manufacture a false red (the

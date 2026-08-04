@@ -39,6 +39,12 @@ import math
 import os
 import re
 import sys
+from pathlib import Path
+
+CI_HUB = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CI_HUB))
+
+from check_outcome import CheckOutcome, FAIL_CONCLUSIONS, classify_check
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
@@ -63,7 +69,7 @@ AUTHORITATIVE = {
 # credited as green:
 #
 #   green      the latest attempt of EVERY authoritative workflow at the current
-#              main commit completed with success/neutral.
+#              main commit completed with success.
 #   red        any authoritative workflow at that commit produced a genuine BAD
 #              answer (see the seven-case table for exactly which sub-cases).
 #   no_result  the latest attempt was an answer that was destroyed, withheld, or
@@ -150,14 +156,6 @@ AUTHORITATIVE = {
 #    boundary); the store cannot see it. Commits with some-but-not-authoritative
 #    runs ARE counted as gap(no-record).
 GREEN_TIME_DEFINITION_DATE = "2026-08-04"
-
-# MUST stay in lockstep with ci-hub/health/github_main_health.py (the canonical
-# live-health taxonomy — task cancelled-run-classified-as-red). Anything not
-# listed falls through to no_result (unknown on the safe side).
-_GREEN_CONCLUSIONS = frozenset(("success", "neutral"))
-_RED_CONCLUSIONS = frozenset(("failure", "timed_out", "error", "startup_failure"))
-_NO_RESULT_CONCLUSIONS = frozenset(
-    ("cancelled", "action_required", "stale", "skipped", ""))
 
 PRUNE = {"target", ".git", "node_modules", ".cargo", "incremental", "deps",
          "build", ".venv", "__pycache__"}
@@ -663,12 +661,12 @@ def render_kill_taxonomy(res: dict, fmt: str) -> str:
 
 def _classify_terminal(conclusion: str) -> str:
     """A single completed run's terminal conclusion -> green/red/no_result."""
-    c = (conclusion or "").lower()
-    if c in _GREEN_CONCLUSIONS:
+    outcome = classify_check("completed", conclusion)
+    if outcome is CheckOutcome.PASSED:
         return "green"
-    if c in _RED_CONCLUSIONS:
+    if outcome is CheckOutcome.FAILED:
         return "red"
-    return "no_result"  # cancelled/skipped/... and every unknown, on the safe side
+    return "no_result"
 
 
 def load_jobs_index(parent: str, repo: str | None) -> dict[str, list[dict]]:
@@ -726,7 +724,7 @@ def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     cancel_onsets = [c for c in cancel_onsets if c is not None]
     onset = min(cancel_onsets) if cancel_onsets else _epoch(run.get("updated_at"))
     for j in jobs:
-        if (j.get("conclusion") or "").lower() not in _RED_CONCLUSIONS:
+        if (j.get("conclusion") or "").lower() not in FAIL_CONCLUSIONS:
             continue
         done = _epoch(j.get("completed_at"))
         if done is None:
@@ -885,7 +883,7 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 
 
 # ---------------------------------------------------------------------------
-# LEDGER-CORROBORATED GREEN. A GitHub `success/neutral` conclusion and a local
+# LEDGER-CORROBORATED GREEN. A GitHub `success` conclusion and a local
 # full-pass validate receipt are TWO DIFFERENT claims; conflating them is what
 # produced a misleading green figure. So the green wall-clock is split into two
 # sub-buckets, reported SEPARATELY and never silently summed:

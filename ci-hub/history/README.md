@@ -140,8 +140,8 @@ run stuck in the queue is flagged instead of reading `0`. See
 `green-time` implements a dated four-state definition (see the `GREEN-TIME
 DEFINITION` block at the top of `query.py`, `GREEN_TIME_DEFINITION_DATE`). Main's
 wall-clock is partitioned into **green / red / no_result / gap**, where **green
-is a positive success record, never the absence of red**. `success`/`neutral` ->
-green; a genuine failing verdict -> red; `cancelled`/`skipped`/`stale`/unknown ->
+is a positive success record, never the absence of red**. `success` -> green; a
+genuine failing verdict -> red; `cancelled`/`skipped`/`neutral`/`stale`/unknown ->
 no_result (a destroyed or withheld answer, re-dispatch not revert); pending or
 no-record -> gap. green requires ALL authoritative workflows to succeed
 (precedence red > gap > no_result > green).

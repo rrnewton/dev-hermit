@@ -67,6 +67,14 @@ class GhEngineClassificationTests(unittest.TestCase):
             "pending",
         )
 
+    def test_no_result_checks_block_green_without_becoming_red(self) -> None:
+        for conclusion in ("CANCELLED", "SKIPPED", "NEUTRAL", "STALE", "FUTURE"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(
+                    pr_status._rollup_ci_state(_rollup(("COMPLETED", conclusion))),
+                    "pending",
+                )
+
     def test_real_failure_still_red(self) -> None:
         self.assertEqual(
             pr_status._rollup_ci_state(_rollup(("COMPLETED", "FAILURE"))), "red"

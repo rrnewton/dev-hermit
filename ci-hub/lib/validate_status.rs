@@ -226,14 +226,13 @@ pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
 }
 
 /// A clean full-coverage run for the commit that is a genuine FAILURE (a
-/// known-bad commit). A `no_result` (a zero-test green already downgraded by the
-/// aggregator) is deliberately EXCLUDED: it is not known-bad, it is unverified,
-/// so it falls through to `NotValidated` (exit 4 = re-dispatch), never
-/// `FailedOnRecord` (exit 3 = known failing).
+/// known-bad commit). Only explicit product failure/timeout results qualify.
+/// Killed, cancelled, missing, unknown, and explicit `no_result` records are the
+/// absence of a verdict: they fall through to `NotValidated` (exit 4 =
+/// re-dispatch), never `FailedOnRecord` (exit 3 = known failing).
 fn is_clean_full_nonpass(row: &HistoryRow, sha: &str) -> bool {
     is_clean_full_coverage(row, sha)
-        && row.result.as_deref() != Some("pass")
-        && row.result.as_deref() != Some("no_result")
+        && matches!(row.result.as_deref(), Some("fail" | "failed" | "timeout"))
 }
 
 /// The outcome of assessing a commit against the ledger.
@@ -433,14 +432,16 @@ mod tests {
     }
 
     #[test]
-    fn killed_run_is_failed_on_record() {
+    fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
             r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );
-        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::FailedOnRecord);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
     }
 
     #[test]

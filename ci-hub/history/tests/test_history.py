@@ -467,6 +467,17 @@ class TempParentTest(unittest.TestCase):
         self.assertAlmostEqual(res["no_result_hours"], 1.0, places=1)
         self.assertEqual(res["red_hours"], 0.0)
 
+    def test_green_time_neutral_is_no_result_not_green(self):
+        self._write_gha([
+            self._gha_wf("a" * 40, "neutral", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["no_result_hours"], 1.0, places=1)
+        self.assertEqual(res["current_state"], "green")
+
     def _write_jobs(self, rows):
         path = self.parent / "ignored" / "ci-hub" / "gha-jobs.csv"
         cols = ["repo", "run_id", "job_id", "name", "conclusion",
