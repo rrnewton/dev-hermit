@@ -1,0 +1,38 @@
+{
+  "experiment": "liteinst-instrumentation-stats_20260804",
+  "question": "From the INSTRUMENTATION side (patch-site accounting, not timing), confirm or refute hermit-perf's attribution of LiteInst's 14.5x slowdown to per-syscall ptrace host round-trips.",
+  "date": "2026-08-04",
+  "task": "liteinst-instrumentation-stats (owner hermit-liteinst)",
+  "host": {
+    "name": "devbig014.atn7.facebook.com",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "logical_cpus": 316,
+    "note": "Reported counts are exact integer event counters, host-independent and load-independent; each config repeated and bitwise-identical across repeats."
+  },
+  "hermit": {
+    "pr": "rrnewton/hermit#1451 (stacked on #1412)",
+    "branch": "codex/liteinst-in-guest-backend-stats",
+    "head_sha": "02a47ef718b4fdb40378654d0dd75e4f4d773ae6",
+    "build": "cargo build -p hermit --bin hermit (DEBUG, unoptimized+debuginfo)",
+    "build_profile_note": "Stat COUNTS are properties of the guest's patch sites and dispatch paths; they are independent of the hermit build profile. Debug chosen only for fast compile."
+  },
+  "reverie_pin": "3eda4286ff222069ef22437c5755d35a9c181ce2",
+  "reverie_pin_note": "This is the stats-API source-behavior commit; it landed on reverie main as squash 9e7af7df8d55696586504705e3eeb7446a8203c8 via reverie PR #362.",
+  "liteinst2_pin": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
+  "backend": "liteinst (in-guest Detcore Tool; ptrace TracerBuilder<()> lifecycle-only supervisor with zero host syscall subscriptions)",
+  "liteinst_runtime": "libreverie_liteinst.so staged beside binary via scripts/stage-liteinst-runtime.sh dev",
+  "how_stats_enabled": "RUST_LOG=hermit::backend_stats=info (enables INFO ONLY for that tracing target; --log info would flood DETLOG). Emitted once at run end via eprintln in hermit-cli/src/backend_stats.rs:37 report(); path fires at hermit-cli/src/lib.rs:1538-1556.",
+  "modes": {
+    "run": "hermit run --backend liteinst (L1, no strict)",
+    "strict_verify": "hermit run --backend liteinst --strict --verify (L2)"
+  },
+  "workloads": {
+    "syscall_loop": "experiments/dbi_perf_leader_baseline_20260801/src/syscall_loop (gcc -O2); tight raw syscall(SYS_getpid) loop of N iterations; N in {10000,100000,1000000}; per-syscall regime.",
+    "branch_heavy": "experiments/dbi_perf_leader_baseline_20260801/src/branch_heavy 2000000 (gcc -O2); ~745M counted branches, ~37 syscalls; compute-bound / syscall-sparse regime.",
+    "bin_echo": "/bin/echo hello",
+    "bin_ls": "/bin/ls /",
+    "python3": "/usr/bin/python3 -c 'print(sum(range(1000)))'"
+  },
+  "runs_per_config": "3 (2 for python3 and strict_verify); every repeat produced bitwise-identical counts",
+  "stat_fields": "process_reports, distinct_rips_patched, patch_candidates, decisions[direct_pun,relocated,straddler_fallback,other_fallback], paths[first_site_seccomp,ptrace_installation,in_guest_sigsys,in_guest_nested_sigsys,cacheline_straddler,unpatchable_or_other,direct_hook], classified_candidates, cacheline_straddlers, non_straddling, instruction_lengths[1..15], straddle_prefix[1..15]"
+}

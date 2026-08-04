@@ -1,0 +1,9 @@
+guest,workload,mode,runs,distinct_rips_patched,patch_candidates,relocated,other_fallback,in_guest_sigsys,in_guest_nested_sigsys,direct_hook,ptrace_installation,cacheline_straddlers,non_straddling,instr_len2_bytes,any_other_instr_len,any_straddle_prefix
+syscall_loop,getpid_N=10000,run,3,2,2,2,0,2,35,10001,0,0,2,2,0,0
+syscall_loop,getpid_N=100000,run,3,2,2,2,0,2,35,100001,0,0,2,2,0,0
+syscall_loop,getpid_N=1000000,run,3,2,2,2,0,2,35,1000001,0,0,2,2,0,0
+syscall_loop,getpid_N=100000,strict_verify,2,2,2,2,0,2,35,100001,0,0,2,2,0,0
+branch_heavy,collatz_2000000,run,3,4,4,4,0,4,54,5,0,0,4,4,0,0
+bin_echo,hello,run,3,5,6,5,1,13,64,7,0,0,6,6,0,0
+bin_ls,slash,run,3,7,8,7,1,16,115,11,0,0,8,8,0,0
+python3,print_sum_range_1000,run,2,6,9,6,3,55,1549,111,0,0,9,9,0,0
