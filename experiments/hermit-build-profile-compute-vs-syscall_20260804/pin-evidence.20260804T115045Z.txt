@@ -1,0 +1,23 @@
+# PIN EVIDENCE — live capture, pinned syscall run2
+# captured_utc=2026-08-04T11:50:45Z
+# harness_pid=1327089 log=samecore-verdict.20260804T100018Z.log
+
+== guest 2809673 ==
+Name:	syscall_bound
+State:	R (running)
+Cpus_allowed_list:	0
+TracerPid=2809671
+
+== tracer 2809671 (all threads) ==
+Name:	hermit
+State:	S (sleeping)
+  tid=2809671 state=S Cpus_allowed_list=0
+  tid=2809674 state=R Cpus_allowed_list=0
+
+== guest all threads ==
+  tid=2809673 Cpus_allowed_list=0
+
+== outer hermit CLI launcher chain (for the record; NOT the tracer) ==
+  pid=2809664 name=time Cpus_allowed_list=0
+  pid=2809665 name=hermit Cpus_allowed_list=0
+  pid=2809671 name=hermit Cpus_allowed_list=0
