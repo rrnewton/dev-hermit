@@ -1,0 +1,18 @@
+{
+  "host": "devbig014",
+  "cpu": "AMD EPYC 9D85 158-Core Processor x2 (316 cores)",
+  "date": "2026-08-03",
+  "code": "scratch/au-parallel-experiment/py",
+  "branch": "codex/dag-runner-core-allocator",
+  "checkout_sha": "22a401fe3b3dfe6cf20e984a4ae50b3435088182",
+  "dag": "examples/06-step-sweep.json",
+  "step": "build.app (TOY simulated cpu+shell work, NOT a real cargo build)",
+  "boxing": "systemd transient scope under safe-ci.slice; peak_bytes populated (boxing REQUIRED for memory)",
+  "commands": [
+    "env PYTHONPATH=$PWD python3 -m safe_ci_dag_runner sweep --dag ../examples/06-step-sweep.json --step build.app --jobs 1..8",
+    "env PYTHONPATH=$PWD python3 -m safe_ci_dag_runner plan --dag ../examples/06-step-sweep.json"
+  ],
+  "result": "method validated end-to-end: median knee-pick rec_inner_jobs=7 matches wall dip at j8; per-width peak_bytes recorded (1.14->4.26 MiB, ~0.45 MiB/worker); gap = memory not on speedup curve",
+  "knee_inner_jobs": 7,
+  "wall_dip_at": 8
+}
