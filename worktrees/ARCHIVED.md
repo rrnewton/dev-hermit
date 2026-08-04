@@ -51,6 +51,26 @@ net-new was cherry-picked onto `main` first (see task
 commits above. `devbig-lead` retained. Local branches and worktrees for these
 remote branches were left untouched (owned by concurrent agents); only the
 remote refs on `rrnewton/dev-hermit` were removed.
+
+### `devbig-lead` superseded and retired (2026-08-04)
+
+**Status: `devbig-lead` is NOT a current integration target. The canonical shared
+branch is `main`.** The "retained" note above was accurate as of 2026-07-22 but is
+now stale: `origin/devbig-lead` (`d330e9679f42`, frozen 2026-08-01) is fully
+superseded by `origin/main`. Do NOT verify ancestry, branch, base, or pin against
+`devbig-lead` — a NOT-ANCESTOR result there is a false alarm (it diverged from
+`main` at `1490bbb` on 2026-08-01 and is 269 commits behind).
+
+Evidence it carries nothing net-new (verified 2026-08-04 at `origin/main` `29fba18`):
+its `hermit` (`5660e01`) and `reverie` (`b9a7fa7`) pins are strict **ancestors** of
+`main`'s pins; every `experiments/` directory on it is already on `main`; the only 5
+files it holds that `main` lacks are pre-reorganization duplicates (`ci-runner/*` is
+byte-identical to `main`'s `ci-hub/runners/*`; `scripts/pr_status.py` ->
+`ci-hub/health/pr_status.py`; `compat-envelope/collect-backend-parity.rs` superseded
+by `main`'s compat-envelope infra). Its exact tip is preserved in local branch
+`archive/devbig-lead-pre-reconcile-20260801`. The 7 fully-merged local
+`devbig-lead-slot*` branches were deleted 2026-08-04. Retiring the `origin/devbig-lead`
+remote ref is authorized once the `devbig` host is confirmed not actively pushing to it.
 | slot90 | hermit-148 / impl-green-main-gate run1 | validate-green-main-slot90 | 9b02761dae4da2edacdc820728e570ccf4fda1ef | validation-only; no PR/commit | release build pass; validate 11/14, integration git plus two analyze gates failed; stale pre-existing slot90 Hermit process discovered; evidence /tmp/hermit-validate.Gw88nW.log; clean slot parked detached | 2026-07-24 |
 | `worktrees/slot37` | Hermit | `ci-concurrency-cancel-stale-runs` | `71ce34cd31b3eed894e13cdda54a4d8bc8c5efa6` | 2026-07-24 | Merged as PR #266 at `f7143b80f8f1a9cb2472b107f4720b472fcc6975`; GitHub-hosted Regular tests passed; bounded validate exited 124 with documented unrelated runtime failures; local and remote feature branches deleted; clean slot parked detached at merged `origin/main`. |
 | `worktrees/slot14` | Hermit | `test-rr-expand-testing` | `f7143b80f8f1a9cb2472b107f4720b472fcc6975` | 2026-07-24 | Validation-only; record 10/10 and replay 10/10 passed with reproduced output on ptrace/default-log/no-relaxations; no source changes or PR; evidence posted to TaskGraph impl-rr-expand-testing; clean slot parked at exact `origin/main`. |
