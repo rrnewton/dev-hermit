@@ -1,0 +1,17 @@
+{
+  "task": "validate-scheduler-algorithm-bakeoff",
+  "owner_agent": "hermit-220",
+  "date": "2026-08-04",
+  "host": "devbig014",
+  "cores": 316,
+  "cpu": "AMD EPYC 9D85 158-Core x2",
+  "hermit_sha": "e8a0d8d3be3b53985dc898bb8e5cbb696a6a719f",
+  "agent_utils_sha": "7c532d4ffbcfbf3a6fd021a7bd851c31cf985b37",
+  "runner_version": "0.12.0",
+  "runner_note": "hermit-vendored agent-utils is v0.2.0 (84580db) and has NO --planner flag; the three planners exist only in parent/scratch agent-utils v0.12.0. Bakeoff drives v0.12.0 runner directly against hermit/ci/dag/portable.json, replicating run-dag.sh's invocation (cwd=hermit root, run --dag ci/dag/portable.json --planner P).",
+  "dag": "hermit/ci/dag/portable.json",
+  "dag_nodes": 47,
+  "planners": ["greedy-lpt", "critical-path", "cpa"],
+  "estimate_source": "DAG-authored hints (0 learned samples on this box)",
+  "cache_state": "warm primary hermit target (67G, debug bin present)"
+}
