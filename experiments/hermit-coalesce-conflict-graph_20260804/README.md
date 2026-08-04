@@ -124,3 +124,15 @@ at A's tip = the architecture-blocked patching lane, landed last.
   1147 1445 1555 1571(src-conf)
   1302 1381 1467 1468(sabre sub-chain, tip, land LAST)
 ```
+
+## End-to-end staging simulation (cumulative)
+
+Sequentially merged all 71 heads in the proposed staging order into a growing synthetic
+staging commit chain (read-only: `git merge-tree` + `commit-tree`, no refs/worktree; final
+tree ae97012). CONFIRMS the graph end-to-end (not just pairwise):
+- **Steps 1-35 (all 33 FREE + first 2 Comp-B): ZERO real conflicts** -> free bulk coalesces
+  cumulatively; only append-glue touched.
+- **Comp-B: 13 real conflicts, EVERY one on `tests/backend-parity/run_matrix.py`** -> single-file stack.
+- **Comp-A: 11 real conflicts** on detcore/src/lib.rs, ci/dag/{portable,privileged}.json,
+  hermit-cli/src/lib.rs, sabre_ptrace.rs, liteinst.rs (sabre sub-chain conflicts at the tip).
+- **All 24 real conflicts are INSIDE the two stacks; none in the free phase** = the graph is correct.
