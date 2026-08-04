@@ -138,3 +138,128 @@ awk -F, 'NR>1&&$11=="liteinst"&&$14=="1"{print $8"|"$9"|"$10}' fullcorpus-scorec
 comm -23 /tmp/pt /tmp/li            # 61 cells
 wc -l corpus/*.tsv                  # 235 current corpus
 ```
+
+## Vacuity audit (2026-08-04)
+
+Applies the night's reverie vacuity lens (memory `vacuous-test-audit-ci-tooling-slice-clean`:
+"does the test FAIL if the mechanism does not run?") to the **108 liteinst PARITY cells**.
+Measurement/inspection only — no boxed sweep, no source edits. Method: joined the 108
+parity=1 liteinst cells from `compat-envelope/fullcorpus-scorecard.csv` (@82a8e853) to their
+corpus sources (`corpus/corpus-c.tsv`, `corpus/corpus-nonc.tsv`) and inspected each program's
+**stdout** emission (parity = piped-stdout-SHA-256 equivalence vs the ptrace golden reference,
+ESTABLISHED `compat-envelope-scorecard-system`).
+
+### Denominator restated (ESTABLISHED)
+
+- **108 of 200 cells** parity=1, liteinst backend, hermit `82a8e853`, `--strict --verify`
+  RECORDED double-run, `parity` field (col 15). Same stale-on-two-axes caveats as above
+  (corpus 200→235; 82a8e853 flagship vs landable d973cc63).
+- **parity ⊆ det**: 0 cells are parity=1 & det=0; 10 cells are det=1 & parity=0
+  (print-memaddrs, proc-fdinfo, proc-fd-link-aliases, socket-cookie-{tcp,udp,unix},
+  socket-timestamp-{timespec,timeval}, sysinfo, clock-determinism). So the 108 is a strict
+  subset of the 118 det. (ESTABLISHED, awk join.)
+- **parity is stdout-SHA-256 only** = upper bound; blind to INFO/detlog-stack/detlog-heap.
+  Therefore parity has **no negative side by construction** (see below).
+
+### (a) genuinely-bracketed vs (b) stdout-only — the split
+
+The honest covered-count is (a); the 108 = (a)+(b).
+
+- **(a) GENUINELY-BRACKETED (value-emitting) = 22 cells (ESTABLISHED by source inspection).**
+  stdout literally carries a determinized nondeterministic quantity, so an inert liteinst
+  mechanism would leak the raw host value into stdout and diverge from the ptrace golden —
+  the ptrace differential is a *de-facto* (not planted) negative side. List in
+  `/tmp/valueemit.txt`; the cleanest are: `getcpu` (CPU id → virtual 0), `pid-probe` /
+  `record-getpid` (canonical pid), `uname` (canonical kernel release/version), `tcp-info-*`
+  (canonicalized TCP_INFO bytes), `so-incoming-cpu-*` (virtual CPU 0), `adjtimex` /
+  `clock-adjtime` / `syslog` / `setitimer` / `timer-create` (determinized time/timer values),
+  `syscall-quick-wins` (determinized uids/gids), `cpuid-probe` (canonical CPUID vendor/sig).
+  - CAVEAT: ~3-4 of the 22 emit a *deterministic data checksum*, not a canonicalized
+    nondeterministic source (`io-uring-ring-determinism`, `mmap-stress-determinism` checksums;
+    `rcx-canonicalization` mostly literal `=1` + 0/1 bits). Their checksum would match even if
+    the determinization were inert, so they are weak brackets. **Tight genuine-bracket floor
+    ~18; upper value-emit bound 22.**
+
+- **(b) STDOUT-ONLY / POTENTIALLY-VACUOUS = 86 cells (108 − 22).** stdout is a fixed
+  constant string emitted only on the self-check passing (`puts("...-ok")` /
+  `puts("...deterministically refused")`); the determinized value itself is compared
+  in-program and reported to **stderr** on failure (stderr is NOT in the parity hash). Whether
+  such a cell is truly vacuous = **does the host natively satisfy the in-program assertion?**
+  (the exact reverie failure mode). That is per-cell **BOX-BLOCKED** (needs native/undeterminized
+  errno+value per syscall on the host); resolved only for cases where the canonical constant is
+  manifestly non-host (e.g. `meminfo-*-deterministic` assert MemTotal==976562 KB ≪ devbig014
+  RAM → host fails the assertion → inert liteinst → empty stdout → parity diverges → those 3
+  ARE bracketed-via-gate).
+
+  **Prime vacuity SUSPECTS — the error-canonicalization family = 43 of the 86 (ESTABLISHED count):**
+  - 30 `*-enosys` (add-key, bpf, cachestat, futex-{requeue,waitv,wake}, keyctl, listmount,
+    lsm-{get-self-attr,list-modules,set-self-attr}, map-shadow-stack, memfd-secret,
+    perf-event-{hardware,open,software,watchpoint}, process-mrelease,
+    remap-file-pages-{anonymous,memfd,tmpfile}, request-key, splice, statmount, sysfs,
+    sysv-{sem,shm}, tee, ustat, vmsplice)
+  - 4 `name-to-handle-*-eopnotsupp`; 3 `*-eperm` (kcmp, ptrace, ptrace-traceme);
+    4 `*-refusal-probe` (acct, copy-file-range, process-vm-readv, process-vm-writev);
+    2 dbi-error (dbi-unsupported-syscall, dbi-exec-failure).
+  - Each prints a fixed "deterministically unavailable/refused" string on the expected error.
+    For a syscall genuinely **absent** on the host (returns ENOSYS natively) the cell is
+    **provably vacuous** — inert liteinst → host ENOSYS → same "ok" string → parity holds.
+    For a syscall the host **implements** but Hermit refuses by policy (e.g. splice/tee/keyctl/
+    perf_event_open on modern kernel 6.18) an inert liteinst would let the syscall succeed →
+    assertion fails → empty stdout → parity diverges → bracketed-via-gate. Which enosys cells
+    fall in which bucket is **BOX-BLOCKED** (needs per-syscall native errno on the host).
+  - ~4 constant-string signal/delivery programs are effectively vacuous regardless of host
+    (`hello-alarm`, `hello-signals`, `sigpipe-siginfo`, `dbi-self-sigqueue`: emit a fixed signal
+    number / fixed si_code / fixed banner — no nondeterministic source in stdout).
+  - Remaining ~39 are self-check "ok" gates (autobind/netns-cookie/proc/timer/memory/socket)
+    whose bracketing depends on host≠canonical = BOX-BLOCKED, likely mostly bracketed-via-gate.
+
+### (3) Negative control — NONE by construction (ESTABLISHED, this is itself the finding)
+
+**No liteinst parity cell has a real negative control** (a planted divergence confirmed
+*caught*). The parity metric is stdout-SHA-256 *equality* with the ptrace reference; by
+construction it only ever asserts two hashes are equal — it never plants a violating case and
+confirms refusal. The 22 value-emitting cells get an *implicit* differential (an inert liteinst
+would diverge from the ptrace golden), but that is a compare-against-reference, not a planted
+negative control internal to the cell; for the 86 constant-"ok" cells even that differential
+collapses when the host already conforms (both backends print "ok"). This mirrors the reverie
+finding: stdout-SHA-256 parity has a positive side only.
+
+### (4) Cheapest next cell — #1397 arch-prctl: still cheapest, and NOT vacuous (bracketed-via-gate)
+
+- **Still the cheapest in-lane ratchet (ESTABLISHED):** PR #1397 is the only clean,
+  non-owner-gated, pause-safe liteinst determinization ratchet (~45 LOC, all Detcore-side
+  shadow-GS, backend-agnostic). Unchanged from the frontier finding above.
+- **NOT vacuous — but it is a self-check gate, not value-emitting (ESTABLISHED by reading
+  `tests/c/arch_prctl_determinism.c`).** The program prints only `puts("arch-prctl-deterministic")`
+  on success; every determinized value (the ARCH_SET_GS/ARCH_GET_GS round-trip
+  `expect_result("changed GS value", observed_gs, requested_gs)`, CPUID state, XCOMP/SHSTK
+  normalization) is checked in-program and reported to **stderr** on failure. So the GS value
+  does NOT reach stdout. It is bracketed *via the gate*: pre-#1397 liteinst reports gs_base=0
+  (ESTABLISHED, gap analysis above) → the "changed GS value" assertion fails → stdout goes
+  empty → parity vs ptrace diverges. The measured #1397 delta flips det 0→1 **and** parity 0→1
+  together, so the parity flip is causally the assertion flip — the strongest binding a
+  self-check cell can have short of a planted negative control. It shares the family weakness
+  (no value in stdout, no explicit negative control), but it is genuinely bound, not vacuous.
+
+### Bottom line
+
+Restated: **108/200 parity (stdout-SHA-256, @82a8e853, RECORDED) = 22 genuinely-bracketed
+(value-emitting; tight floor ~18) + 86 stdout-only**, of which **43 are the error-canonicalization
+suspect family** (provably vacuous where the host is ENOSYS-native, bracketed-via-gate where
+Hermit refuses a host-implemented syscall — the discriminator is BOX-BLOCKED). **No cell has a
+planted negative control; stdout-SHA-256 parity has no negative side by construction.** #1397
+remains the cheapest next cell and is bracketed-via-gate (NOT vacuous), though it emits only a
+pass-gate string, not the GS value.
+
+### Reproduction (extends the block above)
+
+```
+cd compat-envelope
+# 108 parity cells:
+awk -F, 'NR>1&&$11=="liteinst"&&$15=="1"{print $8"|"$9"|"$10}' fullcorpus-scorecard.csv|sort
+# parity ⊆ det check (empty = subset):
+comm -23 <(awk -F, 'NR>1&&$11=="liteinst"&&$15=="1"{print $9}' fullcorpus-scorecard.csv|sort) \
+         <(awk -F, 'NR>1&&$11=="liteinst"&&$14=="1"{print $9}' fullcorpus-scorecard.csv|sort)
+# errno-family suspect count (43): grep the parity ids for enosys|eopnotsupp|eperm|refusal|unsupported-syscall|exec-failure
+# value-emit vs const-stdout: inspect each source's non-stderr printf/puts for a % conversion fed by a syscall/proc value
+```
