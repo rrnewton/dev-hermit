@@ -667,7 +667,7 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
         output = (
             "❌ portable CI DAG manifest (0 passed, 1 failed, exit 1: "
             "[build.dbi_release] thread 'main' (3550207) panicked at "
-            "/home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/"
+            ".cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/"
             "reverie-dbi/build.rs:339:5:; full log: /tmp/hermit-validate.4bKorf.log)\n"
             "❌ Validation summary [full] (3 passed, 2 failed; full log: "
             "/tmp/hermit-validate.4bKorf.log)\n"
