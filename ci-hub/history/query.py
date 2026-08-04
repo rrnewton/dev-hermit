@@ -412,12 +412,29 @@ def load_jobs_index(parent: str, repo: str | None) -> dict[str, list[dict]]:
 def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """Seventh case: run-level CANCELLED, but a JOB inside it may have FAILED.
 
-    Run-level and job-level conclusions disagree; the discriminator is ORDERING.
-    A job whose conclusion is red (failure/timed_out/...) that COMPLETED at or
-    before the run's cancel moment failed on its own — the later run-level cancel
-    only masked it — so the run is a real RED. A job still running when the cancel
-    landed (no completion, or a completion after the cancel) was killed BY the
-    cancel: its non-answer stays no_result.
+    Run-level and job-level conclusions disagree; the discriminator is ORDERING
+    AND ROOT-CAUSE. A job whose conclusion is red (failure/timed_out/...) that
+    completed at/before the cancel BEGAN, and that was not itself waiting on a
+    cancelled dependency, failed on its own — the later run-level cancel only
+    masked it — so the run is a real RED. A job killed BY the cancel, or one whose
+    failure is PROPAGATED from a cancelled dependency, is not an independent
+    verdict and stays no_result.
+
+    Ordering reference: the CANCEL ONSET, not the run's terminal `updated_at`
+    stamp. A cancel-in-progress kills the in-flight jobs, and a downstream
+    aggregation gate (`needs:` all of them, "succeed or be deselected") then
+    completes=failure BECAUSE a required dependency was cancelled — a PROPAGATED
+    failure that finalizes at the run's cancel moment, not a product verdict.
+    Ordering a red job against `updated_at` alone would flag that propagated gate
+    RED (measured: it reproduces the run-30873193855 / hermit-238b false red —
+    task cancellation_taxonomy_distinguish_self). So the reference is the earliest
+    cancelled-sibling completion (when the cancel began killing jobs); a red job
+    is INDEPENDENT only if it both COMPLETED and STARTED at/before that onset. A
+    downstream gate STARTS only after its cancelled dependency resolves, so its
+    start lands after the onset and it is correctly left as no_result even when
+    second-granularity timestamps tie its completion with the onset. With no
+    cancelled sibling the run was cancelled with nothing in flight, so the onset
+    falls back to `updated_at`.
 
     Returns 'red' when a job failed independently of the cancel, else None (the
     caller keeps the run-level no_result classification). Inert when `jobs` is
@@ -425,15 +442,25 @@ def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """
     if not jobs:
         return None
-    cancel_at = _epoch(run.get("updated_at"))  # cancelled run's terminal stamp
+    cancel_onsets = [
+        _epoch(j.get("completed_at"))
+        for j in jobs
+        if (j.get("conclusion") or "").lower() == "cancelled"
+    ]
+    cancel_onsets = [c for c in cancel_onsets if c is not None]
+    onset = min(cancel_onsets) if cancel_onsets else _epoch(run.get("updated_at"))
     for j in jobs:
         if (j.get("conclusion") or "").lower() not in _RED_CONCLUSIONS:
             continue
         done = _epoch(j.get("completed_at"))
         if done is None:
             continue  # a red job with no completion time cannot be ordered
-        # ORDERING: the failure landed at/before the cancel -> independent of it.
-        if cancel_at is None or done <= cancel_at:
+        if onset is None:
+            return "red"
+        # ORDERING + ROOT-CAUSE: the failure both finished and began at/before the
+        # cancel onset -> it did not wait on a cancelled dependency -> independent.
+        started = _epoch(j.get("started_at"))
+        if done <= onset and (started is None or started <= onset):
             return "red"
     return None
 
