@@ -1,0 +1,7 @@
+specimen,dimension,side,N,leaked,detail
+synthetic_spinner,cores,before_unboxed_pgid_kill,3,3,inner orphaned ppid=1 state=R still burning
+synthetic_spinner,cores,after_wrapper,3,0,cpu-budget kill + cgroup.kill reaped whole subtree no external kill
+kvm_livelock,cores,before_unboxed_pgid_kill,2,2,inner orphaned ppid=1 state=R burning + holds distinct pid ns
+kvm_livelock,cores,after_wrapper,2,0,inner reaped scope cgroup removed
+kvm_livelock,namespace,before_unboxed_pgid_kill,2,2,distinct pid ns retained by orphaned inner
+kvm_livelock,namespace,after_wrapper,2,0,ns released (inner gone + scope removed; inode-recycle holder count is racy)

@@ -1,0 +1,37 @@
+{
+  "task": "hermit_run_verify_hangs",
+  "agent": "hermit-liteinst (opus-4.8)",
+  "date_utc": "2026-08-04T19:21:47Z",
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "nproc": 316,
+  "cgroup": "cgroup2fs (unified v2; boxing via systemd-run --user transient scope)",
+  "python": "Python 3.12.13+meta",
+  "wrapper_under_test": "scripts/hermit-box-run",
+  "runner": {
+    "entrypoint": "agent-utils/bin/safe-ci-dag-runner (engine=python, tracked)",
+    "version": "0.11.0"
+  },
+  "shas": {
+    "parent_HEAD": "7808b67ee09cf160232c215269efa4dd01884dee",
+    "hermit_primary": "f80b1c09a6e8c3ed21a2a1d5ecd57edac4862de0",
+    "hermit_slot_debug_binary_source": "dadee2c11d4106fbd85453a5064438e39639bc57",
+    "agent_utils": "a6f4232f849271af4c65585f9861769912411222"
+  },
+  "specimens": {
+    "synthetic": "scratch/verify-hang-repro/wrapper-proof/leaky_spinner.sh (setsid inner cpu-spinner)",
+    "kvm_livelock": "hermit run --backend kvm --base-env=minimal --max-timeslice=disabled --tmp=/tmp -- /bin/sh -c 'exit 23' (debug binary)"
+  },
+  "budgets": {
+    "synthetic_cpu_timeout_s": 3,
+    "kvm_cpu_budget_s": 6,
+    "cores": 1,
+    "known_good_verify_budget_B_s": 57,
+    "wrapper_default_cpu_budget_s": 240
+  },
+  "harnesses": [
+    "scratch/verify-hang-repro/wrapper-proof/before_after.sh",
+    "scratch/verify-hang-repro/wrapper-proof/kvm_before.sh",
+    "scratch/verify-hang-repro/wrapper-proof/kvm_after.sh"
+  ]
+}
