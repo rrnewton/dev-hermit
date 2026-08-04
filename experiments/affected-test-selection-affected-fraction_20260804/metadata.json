@@ -1,0 +1,30 @@
+{
+  "experiment": "affected-test-selection-affected-fraction",
+  "date": "2026-08-04",
+  "question": "Across a real recent window of hermit commits, what fraction of the CI suite does affected-test selection (ci/select-tests.rs, #1500/#1529) genuinely skip, and does it narrow for narrow commits while falling back to FULL for shared-code commits?",
+  "hermit_sha": "8f656b4d8f0318a26994bd96b12af8b06bd36ebc",
+  "parent_sha": "5cbd50904d97a3a886ad89e0e0945082b5faa2e3",
+  "host": "devbig014.atn7.facebook.com",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "tool": "ci/select-tests.rs (self-test 57/57 at 8f656b4d)",
+  "N": 200,
+  "traversal": "git log --first-parent -n 200 (one landed unit per merge/commit)",
+  "window": "2026-08-01 21:52 -0400 .. 2026-08-04 04:10 -0400",
+  "universe": {"nodes": 47, "shards": 11, "cells": 70},
+  "command": "python3 sweep.py 200   (with-proxy; needs rust-script)",
+  "results": {
+    "decision_distribution": {"skip": 24, "selective": 63, "full": 113},
+    "reducible_fraction": 0.435,
+    "work_saved_over_window": {"nodes": 0.189, "shards": 0.216, "cells": 0.142},
+    "full_reason_breakdown": {
+      "force_full[ci]": 59,
+      "force_full[validate.sh]": 19,
+      "unmapped_conservative_full": 17,
+      "force_full[.github]": 12,
+      "force_full[Cargo.lock]": 4,
+      "force_full[scripts]": 2
+    }
+  },
+  "caveat": "Window is CI-tooling-heavy (~80% of FULL is ci/**, validate.sh, .github/** churn that correctly forces full). 43.5% reducible / 14-22% work-saved is a lower bound colored by window composition, not a fixed selector property.",
+  "reproduction": "python3 sweep.py 200 in dev-hermit; per-commit rows in results.csv; labeled examples via python3 examples.py"
+}

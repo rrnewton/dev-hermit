@@ -1,0 +1,201 @@
+sha,decision,nodes,shards,cells,nfiles,top_reason
+8f656b4d8f0318a26994bd96b12af8b06bd36ebc,selective,44,11,70,4,e2e: all backends (core/CLI/fixture change)
+525627bedfba2cdfa4372c3c8cc123a1f30da55d,full,47,11,70,13,validate.sh → force_full
+0f891e432a75c51e57ea4215cd649fa253d8e2c0,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+2f32ca955e395613c45c7266d30c10e76b6e7616,selective,27,10,11,2,e2e: backend-scoped → dbi; sabre
+6e24a159ce20dfd59f3831eb7e426978e79f36e3,full,47,11,70,13,ci/test-footprints.json → force_full
+b1d0d0c241039c07f6d7879515415a5985bce653,selective,46,11,70,4,e2e: all backends (core/CLI/fixture change)
+db9f3bb2b028a24a6e4e0dc2311844bbe93999fc,full,47,11,70,7,ci/manifest-plan/Cargo.toml → force_full
+b7960a15cd977b6cdc76225f47c2429f5c647fc3,full,47,11,70,1,1 unmapped path(s) (e.g. detcore-liteinst/Cargo.toml) → conservative full suite
+a6f8f0e607a8dc1c271d080d57051d6f8c1c5171,full,47,11,70,2,2 unmapped path(s) (e.g. liteinst-runtime-build/Cargo.toml; liteinst-runtime-build/runtime/Cargo.toml) → conservative full suite
+d1617e5316f8764018926b631850473fa7041700,full,47,11,70,1,Cargo.lock → force_full
+3b75232d012cfc7d08f217b6142af2d332b8fd41,selective,46,11,70,3,e2e: all backends (core/CLI/fixture change)
+93d8f14d148fe0e37f19c7e3064879d73f8e20e3,full,47,11,70,17,4 unmapped path(s) (e.g. common/digest/Cargo.toml; detcore-liteinst/Cargo.toml; liteinst-runtime-build/Cargo.toml) → conservative full suite
+74a5b6b56e76b6f676ed0850f64b32e50ba30f70,full,47,11,70,1,1 unmapped path(s) (e.g. agent-utils) → conservative full suite
+bbb6af138999f40e08005cebeb2edc74b74ec9f8,full,47,11,70,4,ci/test_harness.sh → force_full
+488d29f2abc32ec2d3561640b6d406f90d43f935,full,47,11,70,1,.github/workflows/ci-portable.yml → force_full
+ffb56e24eefb4c7a3aa3f71094a6471aade531a4,full,47,11,70,1,ci/run-node.sh → force_full
+e8a0d8d3be3b53985dc898bb8e5cbb696a6a719f,full,47,11,70,1,validate.sh → force_full
+b824a34856a3dec3a46a8fc8698abdfcf917b7fc,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+d5fcdbe822bd80b5ee16b1d4bad6e34a63eca82b,full,47,11,70,3,.github/workflows/ci-privileged.yml → force_full
+93a82b24267b8d9b466f5a6a1cfbaa3e9656f388,full,47,11,70,4,validate.sh → force_full
+afabb00a888013322a118385fd9c7bd0485c3db1,full,47,11,70,1,ci/power-to-weight.rs → force_full
+16ae4b117869ba8fe506521a20ff71d673478a03,full,47,11,70,2,ci/test-selection.md → force_full
+e4fb394e5e661d7c9e6afe6cb99b2112164f75cf,full,47,11,70,7,ci/test_harness.sh → force_full
+9ebe1608303c66bfaa4b9c7d0521a30d9519c182,full,47,11,70,1,ci/run-dag.sh → force_full
+9e85f02f466032669c3adc8e14716608bda0a3f2,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+bfb0a9ef1c303d1977f5f02903b70cc93e514cb5,full,47,11,70,1,validate.sh → force_full
+6f0c26de5d87977649cd36740afa5781d77ae6c5,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+2491a8bc0c9d958163b3cc7aebe8c415d326cda1,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+823a06f939a5945073aca2333201024f3ae05e35,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+8c0aeb0d50d58a29127bea1cac968cc22a5eb4a3,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+7d5b8f9323bcc44b732c7c30af1969dedb695929,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+8da56b9ee1c959b26f96ab07289925a80129841f,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+3641ceb7009019a9aa0c6c6066de8a7aa949218d,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+e072d313ba62fdbd46c6708b40e5b407006946af,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+2636868d4605308d7ecbefaeea65e9cbb25ce20f,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+e31b67699a5800b2238772f3a40a655498d253b8,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+1cea8a6fbaa7a1fd9c08e105eaad7590edd841d1,full,47,11,70,9,ci/test_harness.sh → force_full
+dd2798e95fce6654710ad9b3ca59b17a6a04c778,full,47,11,70,4,ci/test-footprints.json → force_full
+834bf2522868b8be66bc22cbd486e1f9cc7476d1,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+cd96303e63c1b6fd3be006494c1afce112bbed57,full,47,11,70,1,validate.sh → force_full
+56fb61f816ce2ef1b9bdf3a539e454b957d3cedd,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+66c6b7010ae0a182c4cf6eb363484648b0a7b632,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+3201d7b473f572e6a3fab1d5ffca339d32c5ae7d,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+20859ecd15f630a21dc1ecb970d715eb72c806ba,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+f5632cae253ebc0cf465b2bc069a27e33df45ae7,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+fd85b55e0d99973633dcc5a9f749a2245cdb4553,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+348760438071b755b641b92887281d3e72b214ba,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+887a64b111111c8fc59eb4630dd3fa25a096de98,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+baf1a7b7f3037b13d3bad2cf99701a83ea2739ad,selective,32,5,70,21,e2e: all backends (core/CLI/fixture change)
+e574eecc5ba7c6a0d0664e0c4ac4855952b8ee12,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+d615be6c8de55a4fbd1235c731454c2338d1572c,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+4b635a8373abe96b924dbc86c6b350646fdde3bf,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+f38d0765c8620033b016958fe7bbd50f76a8ffb8,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+8ba14922e54d0b6e34b5f49221969aafd99eac1a,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+74f1c521f0e17e2f0c138a7c45356521e8bc7aae,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+fe896da96b00ec7c6a99cb302c0fbae9c11d5eb8,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+0ac1c1d7cd9380cae76bb596788e8ba6e35e2c2d,selective,32,5,70,3,e2e: all backends (core/CLI/fixture change)
+6505f0b5141f719c1520ce6aba62d4e1722b8bae,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+4274144dfe5141178fdd925af7ce623fed6d0d1f,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+47c6263d4f5fa4b300b57cb9a38f5197e231edc3,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+e4d5d5b8dae22958206380b0c0a6abe56defbaf0,full,47,11,70,2,ci/test_harness.sh → force_full
+be7e26cd3c10de3d76b8d0c2e43e3eabe493aa10,full,47,11,70,3,validate.sh → force_full
+f8a321839490f1a808795593a1a760de7a96b8c0,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+d57991e1e9a81eb204b7fc0b9cbe0e10b406d3cc,selective,32,5,70,21,e2e: all backends (core/CLI/fixture change)
+4a97ec36d813bc271aec84bf36511bb0f36a9bb5,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+a034f39ccd0f897785d606d50feae9698fa878c7,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+f356148f87eb75eba79beaa9018c03e6df09cd4e,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+a568d0f2322af4ca0748e1bc82b98ef591c21210,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+9e6b4ea388d0b8e61041d98eb719e9164dceae1c,selective,9,1,8,1,e2e: backend-scoped → dbi
+0ffa2fb3b7d11c815db36e806779c5520e2d4f51,selective,9,1,8,1,e2e: backend-scoped → dbi
+5e0cb54225823fcc332f4ba4f6c09cabbf0f3da5,full,47,11,70,3,validate.sh → force_full
+6dd9e8fe473afa3525d20c9deaed8f7b48bcc619,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+4e6e0f9cb16ae0cc90f141c8c688db8026de63fd,full,47,11,70,2,ci/expected-e2e-plan.json → force_full
+c1b9fb4c206c5db5da275cd045af705ea85c4b71,full,47,11,70,1,validate.sh → force_full
+725f373e65699bea8346951e39b1226a12f8883e,full,47,11,70,3,ci/matrix-symmetry-baseline.json → force_full
+36ee7e70a6e7bbb348d72419b109f5de33cf7e8c,selective,46,11,70,1,e2e: all backends (core/CLI/fixture change)
+d096c20c5613edfdb64f390b39656ca22f3da9d6,selective,32,5,70,8,e2e: all backends (core/CLI/fixture change)
+c72f471b4d66a4f04146d3660fb169ea999f1ea3,full,47,11,70,4,validate.sh → force_full
+6ad899baf82b351f2ce4e2227c08e017fa365c71,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+86f54097221b90c0d816656ad4b9165082bbb535,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+84281c36462f16fa8306382db005dc4c9b723deb,selective,44,11,70,2,e2e: all backends (core/CLI/fixture change)
+6c9d19ec4ae2e6a3972c0cbcc14a96d24318bd39,selective,46,11,70,5,e2e: all backends (core/CLI/fixture change)
+1bc63c23036a15a09c85a9f0b462b33807f0852c,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+c54a72633874c324db917fcc6fbdf4098c92cb21,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+ead879cec708e7e4a29f59a466b1b4d4aef8e6f6,selective,27,10,8,1,e2e: backend-scoped → dbi
+09207d80258323c27ca345a0f41b5c555db96caa,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+859d2047c01558b1605bde19c454020159823e05,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+bc3657f01cd8ce36161c6177369b8bfb050a7348,skip,0,0,0,2,all changed files are CI-irrelevant → skip CI
+ebbe0b25dfdb554acc33d6360b820cee631eac56,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+9e37635de13f16916ab627b0372976dc28377ddb,full,47,11,70,2,1 unmapped path(s) (e.g. .claude/skills/test-shrink-optimization/agents/openai.yaml) → conservative full suite
+d15ee618eaa1ec2dcbd326dcdf384dd61747e93b,full,47,11,70,4,ci/test-selection.md → force_full
+cae0041fcbcfd6677bd89e0f4c1332d1a231a554,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+6f564212a43da5f881667a887a80684095faf71c,full,47,11,70,5,scripts/lib/tests/sigpipe_smoke.rs → force_full
+9c233ed0bfd63fbce4a54ac486cece448d4988ab,selective,46,11,70,2,e2e: all backends (core/CLI/fixture change)
+c3472722c6f2fa6b35b87cb434292cf77e1bf9ac,selective,46,11,70,2,e2e: all backends (core/CLI/fixture change)
+33939744d145f70f444194d5057c228a75cf3f7b,selective,46,11,70,5,e2e: all backends (core/CLI/fixture change)
+ecbc0af8cc2cd127878af302dd9a56821189a571,selective,46,11,70,4,e2e: all backends (core/CLI/fixture change)
+930251a4aaeb8839be40d4159a16bb7b11f4f651,selective,46,11,70,3,e2e: all backends (core/CLI/fixture change)
+e19f0ac62c45c1f8233ede96c32978da7dfc5033,full,47,11,70,4,Cargo.lock → force_full
+c9332253673b9659ef4618981b615a1400485c38,full,47,11,70,4,Cargo.lock → force_full
+1900cf094bd6f6ff6120988f6aeded8beea1f609,full,47,11,70,2,.github/workflows/merge-gate.yml → force_full
+ff67a930b100cdba8771d64ff2bb1c713cc1362b,full,47,11,70,3,.github/workflows/ci-portable.yml → force_full
+e4381a1c6eca066af27c6285cd8009466df98e24,full,47,11,70,1,validate.sh → force_full
+01c5f04b235f8f351d3aefb3608d46e36b665d2d,full,47,11,70,1,ci/dag/portable.json → force_full
+ee08ebc35def4746160013bc72f3da18c895082f,full,47,11,70,1,1 unmapped path(s) (e.g. demos/boot_qemu.sh) → conservative full suite
+826f64e82338a7a51dfe78dd3a61c6f84d562c12,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+718d83d31501a286ec030ffde25669fd8c91f336,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+44df29443d1a067eaff99cd2d46a7dac9143b239,full,47,11,70,2,ci/test_harness.sh → force_full
+db7493654c523e3510e2d8591dac1e7311a18237,full,47,11,70,3,3 unmapped path(s) (e.g. scripts/log_timeslice.rs; scripts/manifest-to-commands.rs; scripts/update_spreadsheet.rs) → conservative full suite
+23eef7be7661b615e3ccb82b9d12c624138fddd2,skip,0,0,0,2,all changed files are CI-irrelevant → skip CI
+b763fb92fb20a91843252e37c9276b2cf5c351a4,skip,0,0,0,3,all changed files are CI-irrelevant → skip CI
+95a274b29b5a6193137336865d878bef68a697ba,full,47,11,70,1,validate.sh → force_full
+98149f7f41f00bb922b61bf3a4d9880ea4b48b89,full,47,11,70,1,validate.sh → force_full
+15356709d5822856892c32f4fe01a21dfdbd2814,full,47,11,70,11,Cargo.lock → force_full
+63a542af5ab81a55d83130775d4031d202fb2a43,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+842235936f807023a4aea304156aaa55493c7caf,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+509e3194249905518a3cdb3cd4a37d25f556c442,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+64007e8c1d71f1f7032da69d6c651807362c72a9,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+c008e01462860ec6d52256ffea7fef9fd7159b0c,full,47,11,70,15,validate.sh → force_full
+c2f8f3ca09cbead8af2c93ce440f3541a189275e,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+714eac8c580de4ef969e54f4062cfb79dae4311b,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+e9e52b192ce6590aa10512d89d3323a70f50b2c3,selective,44,11,70,3,e2e: all backends (core/CLI/fixture change)
+4ddab7c0aff464b4e80eef262ca61c2269334ad3,full,47,11,70,3,ci/test_harness.sh → force_full
+0c362f58b15eaf8abdbfde8489b2c21ef107b360,full,47,11,70,3,ci/test_harness.sh → force_full
+30be5868c7fa349de90626725dd27aa600e4f798,full,47,11,70,2,ci/expected-e2e-plan.json → force_full
+83832762ad43f74d1b95cf4e6b8d507bf4e64bbd,full,47,11,70,2,ci/expected-e2e-plan.json → force_full
+d09a4df3745636e22c69f131289238e00e04bdb1,full,47,11,70,3,ci/expected-e2e-plan.json → force_full
+f21a0c978c4b49a80d7b5593ca8a84f0f8759ac8,full,47,11,70,2,ci/test_harness.sh → force_full
+835ca03cfab73d15638845d9d8f01a61b9840862,full,47,11,70,2,ci/test_harness.sh → force_full
+5d9f5a30584ff560242501328c0758190b599974,full,47,11,70,2,ci/test_harness.sh → force_full
+3997014bf169fdfa7baad474153155aa7a1eccfb,full,47,11,70,2,ci/test_harness.sh → force_full
+5efa9bc8abf50002b4b8667028a710ddcfa21a84,full,47,11,70,2,ci/test_harness.sh → force_full
+01cf6488806603af33ea9cb526eed5e34ecb07ab,full,47,11,70,1,.github/workflows/ci-portable.yml → force_full
+5f3e117d6115c897c0945647793ea2111db7b988,full,47,11,70,2,ci/dag/portable.json → force_full
+a23df0c42ae550510eeff3b6362ca819915dbd25,selective,44,11,70,3,e2e: all backends (core/CLI/fixture change)
+319eaa9081e8a89734929ce136f8fbcf08bd3857,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+419fc59cfeb0fb17e8a7138763c6cc7ee648d365,selective,44,11,70,4,e2e: all backends (core/CLI/fixture change)
+baa8aa52e408e2a06aebe32ee3077969684898c2,full,47,11,70,15,validate.sh → force_full
+9402466f52c0d4d57aced3fb13e67088f5edffbd,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+bafece4cf863d95c93060ce0c46dfe80e144756f,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+90f219e7177bd7681d969618d19abd8c63d571e7,full,47,11,70,15,validate.sh → force_full
+3e4367ec206c756c9eca5b5427826e30d5a42074,full,47,11,70,4,ci/test_harness.sh → force_full
+c0e490ba46a0f80bcf7629083d2c0e2334ffcf11,full,47,11,70,1,.github/workflows/merge-gate.yml → force_full
+d45c2214f0675ace44a315d0bb29ff78b1983f14,full,47,11,70,2,ci/dag/privileged.json → force_full
+ef4a524b3d66c0179b8a55bf90f33b1d33001793,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+eeebff090b6cd762c0167bb9b7a67b8d53584a37,full,47,11,70,4,ci/run-node.sh → force_full
+51996c19be910df4a5d3e23ae574687dff80e714,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+01836071c321dd71eb5dc82a6f41242a1c2fcb36,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+df63e515122fa5005357a597ef76c278b523dd1d,full,47,11,70,1,ci/dag/portable.json → force_full
+a14c18786adc2058e480ad8c252be1175fe356ef,full,47,11,70,16,validate.sh → force_full
+78f9b92629ffeef0b7442bb6afb383bf73632d4b,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+57a3ea41b9a474f7311aaaa643583ade1cc7f5a3,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+e407931e604a9c09022502932bc4b7ab60d71315,selective,32,5,70,11,e2e: all backends (core/CLI/fixture change)
+c3381cae183d9d73b7698a96e8df8eeb4799269b,selective,46,11,70,2,e2e: all backends (core/CLI/fixture change)
+8b7345103a896072cf98ddad46dd4022035d852b,selective,46,11,70,2,e2e: all backends (core/CLI/fixture change)
+aa03f2d261c40db7d3889a5b741c2af30c62e960,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+11231bbe8b75cab6dbba40e2bb30c914b161e17b,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+6c1015dd70d6f4e2cd72c2b153428aec567a4d59,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+fe6639a9255f5fbac26ee2d181ae206f58ca74ac,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+daeb987045e2900b3096c355a19a75caa13efa70,full,47,11,70,2,.github/workflows/merge-gate.yml → force_full
+9be9b2f48a47e46a886009b8fcafbf25a3ee4a44,full,47,11,70,1,ci/dag/privileged.json → force_full
+92859ddff79ca88fc1c0c87cebd9dd5d307fbf8b,full,47,11,70,15,validate.sh → force_full
+c7531a837a65d388707e3b14642a6ba36b660267,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+0c6cda68dbdd76cee3e77ed480f4533c6308486b,selective,31,4,70,3,e2e: all backends (core/CLI/fixture change)
+bb56774c90ae13e63a0a75d6cc1f6c01c69d5734,selective,31,4,70,2,e2e: all backends (core/CLI/fixture change)
+6d9ac88f90bbd35e8a01fa140205c3ddf88da752,full,47,11,70,6,ci/test_harness.sh → force_full
+9f8fbfb243f0dc381382012ab5d165bd6d560c47,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+5173f8a0cd427f192d480c47d5052012b45f006d,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+1c0b04c6202439e3b24719931d8cd60662008477,full,47,11,70,2,ci/expected-e2e-plan.json → force_full
+54bb966e7f67d7c468fbbb68499fc6129b564849,selective,9,1,8,3,e2e: backend-scoped → dbi
+ded0e9066b3f45f7e9dcb3a03d10ac8fd6ff3e74,full,47,11,70,15,validate.sh → force_full
+e8ddd9253f4eb5f1400f0c5dab966ebbdfd7dae9,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+84f3155d588848958280652cbd9dd595028fd845,selective,46,11,70,1,e2e: all backends (core/CLI/fixture change)
+d05aa35273496c58feca5cb3b5a109257617f7cd,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+74cfdd18ed938c695fa3c0f7a51d0113ae3a9958,full,47,11,70,3,ci/expected-e2e-plan.json → force_full
+3d375647e08fadbb0f783fe78d4a97d4edb745ef,full,47,11,70,5,ci/expected-e2e-plan.json → force_full
+c093112dbd46a0cdb542256f95a1f90da601ff99,full,47,11,70,4,ci/expected-e2e-plan.json → force_full
+6f2969722b2979cdfe0e6370b2e025093935b27d,selective,31,4,70,3,e2e: all backends (core/CLI/fixture change)
+c7b2eab090ee6a26154a8c393a9aaa6a2b00597a,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+a954912261b5380ebd8442a5bd6ff99dcebbf555,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+55fd251b8fbeec6e8c472a6ad4376d9489eebbf4,selective,31,4,70,1,e2e: all backends (core/CLI/fixture change)
+ee746bde9b64bf07ed058eedad59b58472dcc02a,selective,46,11,70,6,e2e: all backends (core/CLI/fixture change)
+c7611ea799199bd9ac9364cf932a5c4875e2e831,selective,44,11,70,2,e2e: all backends (core/CLI/fixture change)
+0730a4a0a3f5572e6d02b8643096f0628abc66c0,full,47,11,70,18,validate.sh → force_full
+757c992c8810beca189c43919dfc6a8318ea7712,full,47,11,70,6,ci/test_harness.sh → force_full
+5203477905023c22d105af8c33071b396a8cb11f,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+c68f150aa702314c7a13c2e097c40e54ea56ea3f,selective,44,11,70,3,e2e: all backends (core/CLI/fixture change)
+12d22e470f27fbdcd7495b7c72d2ec068d203ab7,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+74319f9bb85fe91726caa12d28131a5c190eeecd,selective,44,11,70,4,e2e: all backends (core/CLI/fixture change)
+0fdf9740ef548dabf4042bae7059aad76ef825b6,selective,44,11,70,2,e2e: all backends (core/CLI/fixture change)
+3d529b4a6922b3762ef92c3c74fba5f3f360b534,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+88d3d019f7de967071122fd0ebb18b1b16e9354d,full,47,11,70,1,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+8c6e3efe7f91713295db26b5413cd2bed8c686f8,selective,44,11,70,1,e2e: all backends (core/CLI/fixture change)
+5660e01f006bf01e2d272cdc7abf8e46483c289a,full,47,11,70,15,scripts/lib/rust_script_prelude.rs → force_full
+065980ea661f9d5e84b4fbaa0c69f4a4f69a81a9,full,47,11,70,5,1 unmapped path(s) (e.g. Makefile) → conservative full suite
+8c83575217a341af17232e6f50c7717eb17a0211,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+bb37eaa81fcc7434a49b0153515f6115db998be0,selective,44,11,70,2,e2e: all backends (core/CLI/fixture change)
+41aa02c44f823edb95210bca27578d2b7b6146a0,full,47,11,70,2,ci/test_harness.sh → force_full
+84f9a5f2b5611e1cfcc597915e6adcd2859c2ddf,skip,0,0,0,1,all changed files are CI-irrelevant → skip CI
+2bc88f9fd72b6b12bd74c37d1ea62b43f7079d19,selective,46,11,70,4,e2e: all backends (core/CLI/fixture change)
