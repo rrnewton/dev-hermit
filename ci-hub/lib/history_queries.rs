@@ -6,6 +6,7 @@
 //! commit ordering and evidence rules here prevents the two answers drifting.
 
 use crate::records::{GateHistoryRow, HistoryRow};
+use crate::validate_status::{assess, newest, Verdict};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,8 @@ pub struct NewestGreenReport {
     pub branch: String,
     pub branch_ref: String,
     pub branch_tip: String,
+    pub gate_schema: String,
+    pub gate_schema_floor: String,
     pub range_oldest_commit: String,
     pub branch_commits_in_range: usize,
     pub trustworthy_recorded_commits_in_range: usize,
@@ -83,6 +86,7 @@ pub struct NewestGreenCache {
     pub branch: String,
     pub branch_ref: String,
     pub branch_tip: String,
+    pub gate_schema_floor: String,
     pub ledger_path: String,
     pub ledger_len: u64,
     pub ledger_modified_ns: u128,
@@ -108,8 +112,16 @@ pub struct CellEvidenceCache {
 #[derive(Clone, Debug)]
 pub enum NewestGreenOutcome {
     Found(Box<NewestGreenReport>),
-    FailedOnly { branch_tip: String, recorded: usize },
-    NoEvidence { branch_tip: String },
+    FailedOnly {
+        branch_tip: String,
+        recorded: usize,
+        commits_in_range: usize,
+    },
+    NoEvidence {
+        branch_tip: String,
+        commits_in_range: usize,
+        recorded: usize,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -158,25 +170,52 @@ impl HistoryQueryEngine {
         }
     }
 
-    pub fn newest_green(&self, branch: &str, branch_ref: &str) -> NewestGreenOutcome {
+    pub fn newest_green(
+        &self,
+        branch: &str,
+        branch_ref: &str,
+        gate_schema: &str,
+        gate_schema_floor: &str,
+    ) -> NewestGreenOutcome {
         let branch_tip = self.commits.first().cloned().unwrap_or_default();
         let range_oldest_commit = self.commits.last().cloned().unwrap_or_default();
         let mut trustworthy_recorded = 0usize;
+        let mut failed_recorded = 0usize;
         let mut full_green_commits = 0usize;
         let mut newest_full_green = None;
         for (index, sha) in self.commits.iter().enumerate() {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
             };
-            let Some(row) = latest_trustworthy_row(rows) else {
-                continue;
-            };
-            trustworthy_recorded += 1;
-            if row.result.as_deref() == Some("pass") && coverage(row) == CoverageStrength::Full {
-                full_green_commits += 1;
-                if newest_full_green.is_none() {
-                    newest_full_green = Some((index, sha, row));
+            let assessment = assess(rows, sha);
+            match assessment.verdict {
+                Verdict::Validated => {
+                    trustworthy_recorded += 1;
+                    full_green_commits += 1;
+                    if newest_full_green.is_none() {
+                        let row = newest(&assessment.qualifying)
+                            .expect("validated assessment has qualifying evidence");
+                        newest_full_green = Some((index, sha, row.clone()));
+                    }
                 }
+                Verdict::FailedOnRecord => {
+                    trustworthy_recorded += 1;
+                    failed_recorded += 1;
+                }
+                Verdict::NotValidated => {
+                    // A clean anchored partial PASS is trustworthy evidence of
+                    // its narrower scope, even though it cannot be the branch's
+                    // full green. Preserve that accounting while excluding
+                    // ambiguous red states below.
+                    if rows.iter().any(|row| {
+                        row.commit_anchored == Some(true)
+                            && row.tree_dirty == Some(false)
+                            && row.result.as_deref() == Some("pass")
+                    }) {
+                        trustworthy_recorded += 1;
+                    }
+                }
+                Verdict::Truncated | Verdict::NeedsRerun => {}
             }
         }
 
@@ -187,28 +226,35 @@ impl HistoryQueryEngine {
                 .filter(|commit| !self.rows_by_commit.contains_key(*commit))
                 .count();
             let report = NewestGreenReport {
-                schema_version: 2,
+                schema_version: 3,
                 branch: branch.to_string(),
                 branch_ref: branch_ref.to_string(),
                 branch_tip,
+                gate_schema: gate_schema.to_string(),
+                gate_schema_floor: gate_schema_floor.to_string(),
                 range_oldest_commit,
                 branch_commits_in_range: self.commits.len(),
                 trustworthy_recorded_commits_in_range: trustworthy_recorded,
                 full_green_commits_in_range: full_green_commits,
-                green: evidence(sha, row),
+                green: evidence(sha, &row),
                 commits_after_green: newer.len(),
                 commits_without_any_record: missing,
                 commits_with_records: newer.len() - missing,
             };
             return NewestGreenOutcome::Found(Box::new(report));
         }
-        if trustworthy_recorded > 0 {
+        if failed_recorded > 0 {
             NewestGreenOutcome::FailedOnly {
                 branch_tip,
                 recorded: trustworthy_recorded,
+                commits_in_range: self.commits.len(),
             }
         } else {
-            NewestGreenOutcome::NoEvidence { branch_tip }
+            NewestGreenOutcome::NoEvidence {
+                branch_tip,
+                commits_in_range: self.commits.len(),
+                recorded: trustworthy_recorded,
+            }
         }
     }
 
@@ -331,12 +377,6 @@ impl HistoryQueryEngine {
             observations: observations.len(),
         }
     }
-}
-
-fn latest_trustworthy_row(rows: &[HistoryRow]) -> Option<&HistoryRow> {
-    rows.iter()
-        .filter(|row| row.commit_anchored == Some(true) && row.tree_dirty == Some(false))
-        .max_by_key(|row| row.finished_at.as_deref().unwrap_or(""))
 }
 
 fn coverage(row: &HistoryRow) -> CoverageStrength {
@@ -520,6 +560,8 @@ pub fn parse_log_observations(raw: &str) -> Vec<GateHistoryRow> {
                     exit_code: None,
                     real_seconds: None,
                     source_node: Some(node.to_string()),
+                    failure_origin: None,
+                    failed_substeps: Vec::new(),
                     extra: BTreeMap::new(),
                 });
             }
@@ -548,6 +590,8 @@ pub fn parse_log_observations(raw: &str) -> Vec<GateHistoryRow> {
             exit_code: None,
             real_seconds: None,
             source_node,
+            failure_origin: None,
+            failed_substeps: Vec::new(),
             extra: BTreeMap::new(),
         });
     }
@@ -603,6 +647,8 @@ fn error_excerpt(row: &HistoryRow, query: &str) -> Vec<String> {
             exit_code: None,
             real_seconds: None,
             source_node: None,
+            failure_origin: None,
+            failed_substeps: Vec::new(),
             extra: BTreeMap::new(),
         });
     scoped_error_excerpt(&raw, &gate)
@@ -650,14 +696,16 @@ pub fn cache_matches(
     branch: &str,
     branch_ref: &str,
     branch_tip: &str,
+    gate_schema_floor: &str,
     ledger_path: &Path,
     ledger_len: u64,
     ledger_modified_ns: u128,
 ) -> bool {
-    cache.schema_version == 3
+    cache.schema_version == 4
         && cache.branch == branch
         && cache.branch_ref == branch_ref
         && cache.branch_tip == branch_tip
+        && cache.gate_schema_floor == gate_schema_floor
         && cache.ledger_path == ledger_path.display().to_string()
         && cache.ledger_len == ledger_len
         && cache.ledger_modified_ns == ledger_modified_ns
@@ -678,7 +726,7 @@ mod tests {
     use super::*;
 
     fn row(sha: &str, at: &str, profile: &str, selection: &str, result: &str) -> HistoryRow {
-        serde_json::from_value(serde_json::json!({
+        let mut value = serde_json::json!({
             "schema_version": 3,
             "finished_at": at,
             "profile": profile,
@@ -687,9 +735,28 @@ mod tests {
             "commit_anchored": true,
             "tree_dirty": false,
             "result": result,
+            "executed_tests": 36,
+            "filtered_tests": 0,
             "gates": []
-        }))
-        .unwrap()
+        });
+        if matches!(result, "fail" | "failed" | "timeout") {
+            value["exit_code"] = serde_json::json!(1);
+            value["checks"] = serde_json::json!(1);
+            value["gates_run"] = serde_json::json!(1);
+            value["gates_expected"] = serde_json::json!(1);
+            value["failures"] = serde_json::json!(1);
+            value["dag_jobs"] = serde_json::json!(4);
+            value["concurrent_validates"] = serde_json::json!(0);
+            value["known_flaky_failure"] = serde_json::json!(false);
+            value["solo_rerun_confirmation"] = serde_json::json!(false);
+            value["gates"] = serde_json::json!([{
+                "name": "outer failure",
+                "result": "fail",
+                "exit_code": 1,
+                "failure_origin": "outer_gate"
+            }]);
+        }
+        serde_json::from_value(value).unwrap()
     }
 
     fn gate(mut row: HistoryRow, name: &str, result: &str) -> HistoryRow {
@@ -700,9 +767,15 @@ mod tests {
             exit_code: None,
             real_seconds: None,
             source_node: None,
+            failure_origin: None,
+            failed_substeps: Vec::new(),
             extra: BTreeMap::new(),
         });
         row
+    }
+
+    fn newest_green(engine: HistoryQueryEngine) -> NewestGreenOutcome {
+        engine.newest_green("main", "origin/main", "merge-gate-v2", "floor")
     }
 
     #[test]
@@ -720,12 +793,14 @@ mod tests {
             row("full", "2026-08-03T01:00:00Z", "full", "full", "pass"),
         ];
         let NewestGreenOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
+            newest_green(HistoryQueryEngine::new(commits, rows))
         else {
             panic!("expected green")
         };
         assert_eq!(report.green.sha, "full");
         assert_eq!(report.green.coverage, CoverageStrength::Full);
+        assert_eq!(report.gate_schema, "merge-gate-v2");
+        assert_eq!(report.gate_schema_floor, "floor");
         assert_eq!(report.commits_after_green, 3);
         assert_eq!(report.commits_without_any_record, 1);
         assert_eq!(report.commits_with_records, 2);
@@ -744,10 +819,11 @@ mod tests {
         ];
 
         assert!(matches!(
-            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main"),
+            newest_green(HistoryQueryEngine::new(commits, rows)),
             NewestGreenOutcome::FailedOnly {
                 branch_tip,
-                recorded: 3
+                recorded: 3,
+                commits_in_range: 3,
             } if branch_tip == "tip"
         ));
     }
@@ -761,7 +837,7 @@ mod tests {
             row("oldest", "2026-08-03T01:00:00Z", "full", "full", "pass"),
         ];
         let NewestGreenOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
+            newest_green(HistoryQueryEngine::new(commits, rows))
         else {
             panic!("expected newest green")
         };
@@ -783,13 +859,54 @@ mod tests {
             row("oldest", "2026-08-03T01:00:00Z", "full", "full", "pass"),
         ];
         let NewestGreenOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
+            newest_green(HistoryQueryEngine::new(commits, rows))
         else {
             panic!("expected newest green")
         };
 
         assert_eq!(report.trustworthy_recorded_commits_in_range, 2);
         assert_eq!(report.full_green_commits_in_range, 2);
+    }
+
+    #[test]
+    fn newest_green_uses_finished_at_not_ledger_append_order() {
+        let commits = vec!["tip".into()];
+        let rows = vec![
+            row("tip", "2026-08-04T12:00:00Z", "full", "full", "pass"),
+            // The append-only ledger can receive an older run after a newer
+            // one. Its last row is not necessarily its most recent evidence.
+            row("tip", "2026-08-04T11:00:00Z", "full", "full", "pass"),
+        ];
+        let NewestGreenOutcome::Found(report) =
+            newest_green(HistoryQueryEngine::new(commits, rows))
+        else {
+            panic!("expected newest green")
+        };
+
+        assert_eq!(
+            report.green.finished_at.as_deref(),
+            Some("2026-08-04T12:00:00Z")
+        );
+    }
+
+    #[test]
+    fn newest_green_does_not_call_a_partial_pass_failed() {
+        let commits = vec!["tip".into(), "floor".into()];
+        let rows = vec![row(
+            "tip",
+            "2026-08-04T16:27:33Z",
+            "portable-strict-compat-only",
+            "full",
+            "pass",
+        )];
+        assert!(matches!(
+            newest_green(HistoryQueryEngine::new(commits, rows)),
+            NewestGreenOutcome::NoEvidence {
+                branch_tip,
+                commits_in_range: 2,
+                recorded: 1,
+            } if branch_tip == "tip"
+        ));
     }
 
     #[test]
@@ -872,8 +989,7 @@ mod tests {
         let mut dirty = row("tip", "2026-08-03T01:00:00Z", "full", "full", "pass");
         dirty.tree_dirty = Some(true);
         assert!(matches!(
-            HistoryQueryEngine::new(vec!["tip".into()], vec![dirty])
-                .newest_green("main", "origin/main"),
+            newest_green(HistoryQueryEngine::new(vec!["tip".into()], vec![dirty])),
             NewestGreenOutcome::NoEvidence { .. }
         ));
     }
@@ -881,10 +997,12 @@ mod tests {
     #[test]
     fn cache_invalidates_on_branch_tip_or_ledger_change() {
         let report = NewestGreenReport {
-            schema_version: 2,
+            schema_version: 3,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
+            gate_schema: "merge-gate-v2".into(),
+            gate_schema_floor: "floor".into(),
             range_oldest_commit: "root".into(),
             branch_commits_in_range: 2,
             trustworthy_recorded_commits_in_range: 1,
@@ -898,10 +1016,11 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 3,
+            schema_version: 4,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
+            gate_schema_floor: "floor".into(),
             ledger_path: "/tmp/ledger".into(),
             ledger_len: 100,
             ledger_modified_ns: 200,
@@ -913,6 +1032,7 @@ mod tests {
             "main",
             "origin/main",
             "tip-a",
+            "floor",
             path,
             100,
             200
@@ -922,6 +1042,7 @@ mod tests {
             "main",
             "origin/main",
             "tip-b",
+            "floor",
             path,
             100,
             200
@@ -931,9 +1052,20 @@ mod tests {
             "main",
             "origin/main",
             "tip-a",
+            "floor",
             path,
             101,
             201
+        ));
+        assert!(!cache_matches(
+            &cache,
+            "main",
+            "origin/main",
+            "tip-a",
+            "new-floor",
+            path,
+            100,
+            200
         ));
     }
 
@@ -951,6 +1083,8 @@ mod tests {
             exit_code: None,
             real_seconds: None,
             source_node: Some("test.inner".into()),
+            failure_origin: None,
+            failed_substeps: Vec::new(),
             extra: BTreeMap::new(),
         };
         cached_gate.extra.insert(

@@ -810,6 +810,15 @@ impl ValidateLock {
         // whole validate subtree (bash / cargo / hermit), not just the wrapper.
         let spawn_result = Command::new(&args.child[0])
             .args(&args.child[1..])
+            // The child may record `concurrent_validates=0` only when it can
+            // prove it is descended from this live, process-bound lock owner.
+            // Bare validate.sh runs receive neither value and must record
+            // concurrency as unknown rather than guessing zero.
+            .env(
+                "CI_HUB_VALIDATE_LOCK_OWNER_PID",
+                std::process::id().to_string(),
+            )
+            .env("CI_HUB_VALIDATE_LOCK_OWNER_FILE", &self.paths.owner)
             .process_group(0)
             .spawn();
         let outcome = match spawn_result {
@@ -1257,6 +1266,36 @@ mod tests {
                 "lock must be FREE after validate {i}"
             );
         }
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn run_child_receives_process_bound_exclusivity_proof() {
+        let paths = temp_paths("child-proof");
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let command = "test \"$CI_HUB_VALIDATE_LOCK_OWNER_PID\" = \"$PPID\" \
+            && test -r \"$CI_HUB_VALIDATE_LOCK_OWNER_FILE\" \
+            && test \"$(sed -n 's/^pid=//p' \"$CI_HUB_VALIDATE_LOCK_OWNER_FILE\")\" = \"$PPID\"";
+        let code = lock
+            .run(RunArgs {
+                agent: "proof-agent".into(),
+                kind: Kind::Validate,
+                target: "proof-sha".into(),
+                no_wait: false,
+                wait: 0,
+                hold: 30,
+                child_deadline: 30,
+                max: 1,
+                child: vec![
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from(command),
+                ],
+            })
+            .unwrap();
+        assert_eq!(code, 0, "child must verify the live wrapper owner proof");
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
