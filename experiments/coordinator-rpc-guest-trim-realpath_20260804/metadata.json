@@ -1,0 +1,21 @@
+{
+  "experiment": "coordinator-rpc-guest-trim-realpath",
+  "date": "2026-08-04",
+  "question": "Does PR #369 guest-side hop trim (cache pid/tid via pthread_atfork; single 4-byte header read) measurably reduce the real det-mode coordinator-RPC hop latency?",
+  "verdict": "REFUTED on real path: 67us/hop, BEFORE~=AFTER (-0.7% wall, statistically zero)",
+  "host": "devbig014",
+  "cores": 316,
+  "reverie_before_sha": "04a46b43",
+  "reverie_after_sha": "975c9fa8c432fefb6c7ae88b27ef97685fd94f50",
+  "reverie_pr": "https://github.com/rrnewton/reverie/pull/369",
+  "branch": "perf/coordinator-rpc-guest-side-trim",
+  "method": "controlled .so swap via HERMIT_LITEINST_RUNTIME; identical hermit binary, only libreverie_liteinst.so differs; BEFORE/AFTER interleaved per rep",
+  "probe": "yield_loop: sched_yield -> end_timeslice_with_sched_yield -> resource_request = 1 hop/iter (hermit/detcore/src/lib.rs:703)",
+  "K": 8,
+  "N": [20000, 120000],
+  "reps": 8,
+  "loadavg_range": [19.99, 41.75],
+  "command": "python3 measure_v3.py",
+  "inputs": ["measure_v3.py", "src/yield_loop.c", "median-anchors-v3.json"],
+  "related_experiments": ["coordinator-rpc-leverb-ceiling_20260804"]
+}
