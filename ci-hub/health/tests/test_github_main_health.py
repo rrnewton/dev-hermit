@@ -96,6 +96,69 @@ class MainHealthTests(unittest.TestCase):
         self.assertIn("NO-RESULT", report)
         self.assertNotIn("HARD WARNING: GITHUB MAIN IS RED", report)
 
+    # --- cancellation sub-taxonomy: three flavors, one conclusion -------------
+    # `cancelled` cannot be split by conclusion or duration (a supersede was
+    # observed cancelled 4s under a 300s cap). The ONLY reliable discriminator is
+    # the check annotation, and it is a single POSITIVE red signal in the safe
+    # direction: only the self-timeout notice promotes cancelled -> red; every
+    # other annotation (or none) leaves cancelled a no_result, so a supersede /
+    # manual / queue cancel can never manufacture a false red.
+
+    def test_self_timeout_annotation_detected(self) -> None:
+        # A `timeout-minutes` kill (our box firing on a hang) — a REAL signal.
+        messages = [
+            "The job running on runner X has exceeded the maximum execution time of 10 minutes.",
+        ]
+        self.assertTrue(github_main_health.is_self_timeout(messages))
+
+    def test_supersede_and_manual_annotations_are_not_self_timeout(self) -> None:
+        # A superseding push and a manual/queue cancel are the ABSENCE of a
+        # result, not a hang: neither may read as a self-timeout.
+        supersede = [
+            "Canceling since a higher priority waiting request for 'main' exists",
+        ]
+        manual = ["The run was canceled by @someone"]
+        self.assertFalse(github_main_health.is_self_timeout(supersede))
+        self.assertFalse(github_main_health.is_self_timeout(manual))
+        self.assertFalse(github_main_health.is_self_timeout([]))
+
+    def test_self_timeout_cancel_classifies_red(self) -> None:
+        # A confirmed self-timeout kill is a genuine bad answer (a hang): it
+        # alarms on the dashboard so the box is never silent.
+        runs = (
+            github_main_health.MainRun(
+                "ci", "a" * 40, "completed", "cancelled", "u", "1",
+                run_id="99", self_timeout=True,
+            ),
+        )
+        self.assertEqual(github_main_health.classify_current_runs(runs), "red")
+
+    def test_supersede_cancel_without_self_timeout_is_not_red(self) -> None:
+        runs = (
+            github_main_health.MainRun(
+                "ci", "a" * 40, "completed", "cancelled", "u", "1",
+                run_id="99", self_timeout=False,
+            ),
+        )
+        self.assertNotEqual(github_main_health.classify_current_runs(runs), "red")
+
+    def test_render_marks_self_timeout_run(self) -> None:
+        health = (
+            github_main_health.RepoMainHealth(
+                repo="rrnewton/hermit",
+                main_sha="a" * 40,
+                state="red",
+                runs=(
+                    github_main_health.MainRun(
+                        "ci", "a" * 40, "completed", "cancelled", "u", "1",
+                        run_id="99", self_timeout=True,
+                    ),
+                ),
+            ),
+        )
+        report = github_main_health.render_report(health)
+        self.assertIn("SELF-TIMEOUT", report)
+
     @mock.patch("github_main_health.subprocess.run")
     def test_evaluate_uses_proxy_and_latest_attempt(
         self, run_command: mock.Mock

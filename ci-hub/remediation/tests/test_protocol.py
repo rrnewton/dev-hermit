@@ -444,9 +444,24 @@ class LocalStateClassificationTest(unittest.TestCase):
     def test_clean_exit_is_green(self) -> None:
         self.assertEqual(protocol._local_state(0), "green")
 
-    def test_clean_nonzero_exit_is_red(self) -> None:
+    def test_clean_nonzero_exit_without_a_test_verdict_is_no_result(self) -> None:
+        # DERIVED discriminator (task cancellation_taxonomy_distinguish_self): a
+        # bare nonzero exit with no visible failing-test verdict is NOT a red.
+        # We could not read a product test failure, so the failure came from the
+        # build/harness/sandbox layer (or is unrecognised) -> re-dispatch, never
+        # revert. Putting the unknown on the safe side is what stops a growing
+        # list of environmental wordings from ever manufacturing a false revert.
         for code in (1, 2, 3, 42):
-            self.assertEqual(protocol._local_state(code), "red", code)
+            self.assertEqual(protocol._local_state(code), "no_result", code)
+
+    def test_nonzero_exit_with_a_test_verdict_is_red(self) -> None:
+        # The one thing that DOES make a local leg red: a genuine failing test.
+        for code in (1, 101):
+            self.assertEqual(
+                protocol._local_state(code, "test result: FAILED. 1 failed"),
+                "red",
+                code,
+            )
 
     def test_environment_kill_is_no_result_not_red(self) -> None:
         # Regression (task obligation-path-must-consume-no-result-taxonomy): an
@@ -455,6 +470,116 @@ class LocalStateClassificationTest(unittest.TestCase):
         # delivered a verdict; it is a hole to re-dispatch.
         for code in (137, 143, -9, -15):
             self.assertEqual(protocol._local_state(code), "no_result", code)
+
+
+class EnvironmentalLocalClassificationTest(unittest.TestCase):
+    """Plant every direction: a HARNESS-caused red is no_result, never a revert.
+
+    Regression (task cancellation_taxonomy_distinguish_self): three environmental
+    failures tonight (a sandbox EPERM re-validate, a BpfJailer `.o.d` denial, a
+    cold-build link flake with zero tests) each read as a product red and were
+    one automated step from reverting a healthy tip.
+    """
+
+    def test_sandbox_eperm_with_zero_test_failures_is_no_result(self) -> None:
+        # #1576: a re-validate died on a sandbox EPERM, no test ever ran.
+        output = "make: *** [foo.o] Error 1\nopenat(...) = -1 EPERM (Operation not permitted)\n"
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:sandbox-denied")
+
+    def test_bpfjailer_dep_write_denial_is_no_result(self) -> None:
+        # step-21: BpfJailer denied a `.o.d` dependency-file write.
+        output = "cc1: fatal error: could not open dr_config.h.o.d: Permission denied\n"
+        state, reason = protocol._classify_local(2, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:sandbox-denied")
+
+    def test_cold_build_link_flake_is_no_result(self) -> None:
+        # DynamoRIO cold-build link flake, ZERO test failures.
+        output = "/usr/bin/ld: cannot find -lfoo\ncollect2: error: ld returned 1 exit status\n"
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:cold-build-flake")
+
+    def test_network_proxy_drop_is_no_result(self) -> None:
+        output = "error: failed to get `serde`\nCaused by: could not resolve host: github.com\n"
+        state, _ = protocol._classify_local(101, output)
+        self.assertEqual(state, "no_result")
+
+    def test_disk_exhaustion_is_no_result(self) -> None:
+        output = "error: No space left on device (os error 28)\n"
+        state, _ = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+
+    def test_a_real_test_failure_is_red_even_with_a_sandbox_line(self) -> None:
+        # A real test failure is NEVER swallowed: it wins over any infra line.
+        output = (
+            "some background noise: permission denied on /proc\n"
+            "test tests::determinism_holds ... FAILED\n"
+            "test result: FAILED. 41 passed; 1 failed; 0 ignored\n"
+        )
+        state, reason = protocol._classify_local(101, output)
+        self.assertEqual(state, "red")
+        self.assertEqual(reason, "test-failure")
+
+    def test_pytest_style_failure_count_is_red(self) -> None:
+        state, reason = protocol._classify_local(1, "=== 3 failed, 200 passed in 4.2s ===")
+        self.assertEqual(state, "red")
+        self.assertEqual(reason, "test-failure")
+
+    def test_local_compile_break_is_no_result_not_a_local_revert(self) -> None:
+        # A post-land compile break of code that ALREADY compiled+tested before
+        # arming is overwhelmingly environmental (cold cache/toolchain), so the
+        # LOCAL leg does not revert on it: no failing test verdict -> no_result,
+        # re-dispatch. A genuine regression the environment did not cause still
+        # reverts via the authoritative GitHub leg, which sees it too.
+        output = "error[E0425]: cannot find value `foo` in this scope\nerror: could not compile `hermit`\n"
+        state, reason = protocol._classify_local(101, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:unclassified")
+
+    def test_never_before_seen_environmental_wording_is_no_result(self) -> None:
+        # THE derivation the growing-list trap demands: an environmental failure
+        # whose wording is in NONE of our signature categories must STILL be a
+        # no_result, because the discriminator is "no failing test verdict", not
+        # "matches a known infra string". A missing signature costs only a vague
+        # log label ("unclassified"), never a false red / revert.
+        output = "quux-jailer: request refused by frobnicator policy 0x9\nBuild step failed.\n"
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:unclassified")
+
+    def test_environmental_local_red_never_remediates(self) -> None:
+        # End-to-end: an environmental local leg stays no_result through the
+        # actuator, so no obligation ever recommends a revert for it.
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "store.jsonl"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                actor="tester",
+                obligation_id="ob-env",
+                path=store,
+            )
+            obligations.transition(
+                "ob-env",
+                "legs",
+                {
+                    "local": {
+                        "state": "no_result",
+                        "exit_code": 1,
+                        "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                        "source": None,
+                    },
+                    "github": {"state": "running"},
+                },
+                store,
+            )
+            with mock.patch.object(protocol, "github_main_sha", return_value=SHA):
+                record = protocol.evaluate_obligation("ob-env", store_path=store)
+            self.assertNotEqual(record.get("overall_state"), "remediation_required")
 
 
 class LocalRedispatchTest(unittest.TestCase):

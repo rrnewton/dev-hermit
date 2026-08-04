@@ -57,6 +57,27 @@ NO_RESULT_CONCLUSIONS = frozenset(
     )
 )
 
+# `cancelled` is ambiguous and cannot be split by conclusion OR by duration. A
+# self-inflicted `timeout-minutes` kill (our own box firing on a hang -- REAL
+# signal about the code) and an externally-imposed cancel (a superseding push, a
+# queue eviction, a manual stop -- the ABSENCE of a result) BOTH report
+# conclusion=cancelled. Duration cannot tell them apart either: a concurrency
+# supersede was observed cancelled 4s UNDER a 300s cap (task
+# cancellation_taxonomy_distinguish_self), indistinguishable by wall-time from a
+# 300s timeout. The reliable discriminator is the run's check annotations: a
+# job killed by `timeout-minutes` carries GitHub's "exceeded the maximum
+# execution time" annotation; a concurrency cancel carries "higher priority
+# waiting request"; a manual/queue cancel carries neither. Only the
+# self-timeout annotation promotes cancelled -> RED (a hang the box exists to
+# surface). Its absence leaves cancelled as NO_RESULT, so a supersede/manual
+# cancel can never manufacture a false red -- preserving cancelled-run-classified-as-red.
+_SELF_TIMEOUT_ANNOTATION = "exceeded the maximum execution time"
+
+
+def is_self_timeout(messages: Sequence[str]) -> bool:
+    """Whether any check annotation is GitHub's `timeout-minutes` kill notice."""
+    return any(_SELF_TIMEOUT_ANNOTATION in str(m).lower() for m in messages)
+
 
 @dataclass(frozen=True)
 class MainRun:
@@ -66,6 +87,10 @@ class MainRun:
     conclusion: str
     url: str
     created_at: str
+    run_id: str = ""
+    # True only for a `cancelled` run whose annotations prove a self-inflicted
+    # `timeout-minutes` kill (a hang); a supersede/manual/queue cancel is False.
+    self_timeout: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,7 +170,7 @@ def fetch_main_runs(
             "--limit",
             str(limit),
             "--json",
-            "workflowName,headSha,status,conclusion,url,createdAt",
+            "databaseId,workflowName,headSha,status,conclusion,url,createdAt",
         ),
         timeout=timeout,
     )
@@ -168,15 +193,62 @@ def fetch_main_runs(
                 conclusion=str(raw.get("conclusion") or "").lower(),
                 url=str(raw.get("url") or ""),
                 created_at=str(raw.get("createdAt") or ""),
+                run_id=str(raw.get("databaseId") or ""),
             )
         )
     return runs
 
 
+def fetch_run_annotations(repo: str, run_id: str, *, timeout: float) -> list[str]:
+    """Every check annotation message across a run's jobs, lowercased.
+
+    Two `gh api` calls per run (job ids, then per-job annotations); used only to
+    disambiguate a `cancelled` run, so it runs at most once per current-tip
+    cancelled workflow. A fetch failure raises like any other gh call and is
+    handled by the caller as "annotations unavailable" -> stay NO_RESULT (safe).
+    """
+    jobs = _run_gh(
+        (
+            "with-proxy",
+            "gh",
+            "api",
+            f"repos/{repo}/actions/runs/{run_id}/jobs",
+            "--jq",
+            ".jobs[].id",
+        ),
+        timeout=timeout,
+    )
+    messages: list[str] = []
+    for line in jobs.splitlines():
+        job_id = line.strip()
+        if not job_id:
+            continue
+        annotations = _run_gh(
+            (
+                "with-proxy",
+                "gh",
+                "api",
+                f"repos/{repo}/check-runs/{job_id}/annotations",
+                "--jq",
+                ".[].message",
+            ),
+            timeout=timeout,
+        )
+        messages.extend(
+            msg.strip().lower() for msg in annotations.splitlines() if msg.strip()
+        )
+    return messages
+
+
 def classify_current_runs(runs: Sequence[MainRun]) -> str:
     if not runs:
         return "none"
-    if any(run.conclusion in RED_CONCLUSIONS for run in runs):
+    # A self-timeout cancel is a genuine BAD answer (a hang), not a hole: it
+    # alarms like any other red so the box is never silent (task
+    # cancellation_taxonomy_distinguish_self).
+    if any(
+        run.conclusion in RED_CONCLUSIONS or run.self_timeout for run in runs
+    ):
         return "red"
     if any(
         run.status != "completed" or run.conclusion not in SUCCESS_CONCLUSIONS
@@ -224,9 +296,24 @@ def evaluate_repo(
         previous = latest_by_workflow.get(run.workflow)
         if previous is None or run.created_at > previous.created_at:
             latest_by_workflow[run.workflow] = run
-    current_runs = tuple(
-        sorted(latest_by_workflow.values(), key=lambda run: run.workflow.lower())
-    )
+    # Disambiguate cancelled current-tip runs: fetch annotations only for them
+    # (rare) and promote a self-timeout kill to RED. A failed/absent annotation
+    # fetch leaves the run NO_RESULT (safe): never invent a red we cannot prove.
+    enriched: list[MainRun] = []
+    for run in latest_by_workflow.values():
+        if run.conclusion == "cancelled" and run.run_id:
+            try:
+                messages = fetch_run_annotations(
+                    repo,
+                    run.run_id,
+                    timeout=_remaining_timeout(deadline, per_call_timeout, repo),
+                )
+                if is_self_timeout(messages):
+                    run = replace(run, self_timeout=True)
+            except (RepoUnavailable, RuntimeError):
+                pass
+        enriched.append(run)
+    current_runs = tuple(sorted(enriched, key=lambda run: run.workflow.lower()))
     return RepoMainHealth(
         repo=repo,
         main_sha=main_sha,
@@ -321,7 +408,11 @@ def render_report(health: Sequence[RepoMainHealth]) -> str:
             lines.append("    no push workflow runs found at the current main SHA")
             continue
         for run in repo.runs:
-            if run.conclusion in RED_CONCLUSIONS:
+            if run.self_timeout:
+                # A self-inflicted timeout kill (a hang) surfaces as RED, not a
+                # hole, so a human acts; the actuator still only re-dispatches it.
+                marker = "SELF-TIMEOUT"
+            elif run.conclusion in RED_CONCLUSIONS:
                 marker = "RED"
             elif run.status == "completed" and run.conclusion in NO_RESULT_CONCLUSIONS:
                 # A hole in the record, not a failure: re-dispatch, do not alarm.
