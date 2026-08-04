@@ -225,6 +225,15 @@ for slot_dir in "${SLOTS[@]}"; do
 done
 echo "-----"
 echo "TOTAL du: ${total}GB apparent  (cap ${CAP_GB}GB apparent)$( ((total>CAP_GB)) && echo '  *** OVER CAP ***')"
+# Advisory registry-consistency check: call the canonical verifier rather than
+# re-deriving branch/ownership state here. Never gates GC; a FAIL points at the
+# single-writer reconciler.
+if [[ -x "$ROOT/scripts/check-worktree-registry.rs" ]]; then
+    if ! "$ROOT/scripts/check-worktree-registry.rs" --root "$ROOT" >/dev/null 2>&1; then
+        echo "NOTE: worktree registry has drift (recorded vs actual branch). Run"
+        echo "      scripts/allocate-worktree.rs --repair to reconcile (advisory)."
+    fi
+fi
 if [[ -n $orphan_list ]]; then
     echo "ORPHAN CANDIDATES: ${orphan_gb}GB apparent in active+idle(>${LANGUISH_HOURS}h)+not-busy slots: ${orphan_list}"
     echo "  These hold capacity with NO liveness signal (state has no PID/heartbeat)."

@@ -513,4 +513,29 @@ fn main() {
     regen_active_md(&root, &state);
     println!("  state:  {}", state_path(&root).display());
     println!("  active: {}", root.join("worktrees/ACTIVE.md").display());
+
+    // Advisory post-mutation reconciliation check: call the canonical verifier
+    // rather than trusting our own write. Endemic fleet drift means this is
+    // advisory (never blocks the release); a FAIL points at
+    // `allocate-worktree.rs --repair` to reconcile recorded branch cells.
+    verify_registry_advisory(&root);
+}
+
+/// Run the canonical registry verifier and report its verdict without failing.
+/// Every registry mutator routes through this one predicate instead of
+/// re-parsing ACTIVE.md / worktree-state.json itself.
+fn verify_registry_advisory(root: &Path) {
+    let checker = root.join("scripts/check-worktree-registry.rs");
+    if !checker.exists() {
+        return;
+    }
+    let root_arg = root.to_string_lossy().into_owned();
+    match Command::new(&checker).args(["--root", &root_arg]).status() {
+        Ok(s) if s.success() => {}
+        Ok(_) => eprintln!(
+            "note: worktree registry has drift after this release; run \
+             `scripts/allocate-worktree.rs --repair` to reconcile (advisory, not a failure)."
+        ),
+        Err(e) => eprintln!("note: could not run registry verifier: {e}"),
+    }
 }

@@ -465,6 +465,119 @@ fn regen_active_md(root: &Path, state: &Value) {
     std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
 }
 
+/// Physical checkout of a product worktree, read from git porcelain. Mirrors the
+/// canonical verifier scripts/check-worktree-registry.rs::actual_checkout so the
+/// repair mode and the verifier agree on what "the actual branch" means.
+fn actual_checkout(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return Some("-".to_string()); // Absent -> recorded as "-"
+    }
+    let (inside, _, _) = git(path, &["rev-parse", "--is-inside-work-tree"]);
+    if !inside {
+        return None; // Unreadable: do NOT rewrite the recorded value; skip + warn.
+    }
+    let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if on_branch && !branch.is_empty() {
+        return Some(branch);
+    }
+    let (has_head, _, _) = git(path, &["rev-parse", "HEAD"]);
+    if has_head {
+        // Detached: verifier accepts the bare token "detached" for any detached SHA.
+        Some("detached".to_string())
+    } else {
+        None
+    }
+}
+
+/// SINGLE-WRITER REPAIR/SYNC: reconcile the recorded {product}_branch cells in
+/// worktree-state.json (and, via regen_active_md, the managed ACTIVE.md block)
+/// FROM the physical submodule porcelain. This is the reconciler that closes the
+/// three-registries-no-reconciler gap (Proxy-Binding worked-example #9).
+///
+/// SAFETY CONTRACT:
+///   * Only {product}_branch cells are touched. Ownership (agents/task/status/
+///     purpose) is NEVER rewritten from physical state — repurposing intent lives
+///     with a human, not on disk.
+///   * NO git branch/checkout/delete is ever run. Unpushed local refs (e.g. a
+///     slot's codex/* branch parked at a local-only SHA) survive inherently
+///     because repair only rewrites recorded strings, never git objects.
+///   * An Unreadable child leaves its recorded value untouched (skip + warn),
+///     so a transient fault cannot erase a legitimate record.
+/// Runs the verifier before and after so the drift delta is observable, not
+/// inferred.
+fn repair_registry(root: &Path, dry_run: bool) -> ! {
+    let checker = root.join("scripts/check-worktree-registry.rs");
+    let root_arg = root.to_string_lossy().into_owned();
+    let run_checker = |label: &str| {
+        eprintln!("── verifier {label} repair ──");
+        let _ = Command::new(&checker)
+            .args(["--root", root_arg.as_str()])
+            .status();
+    };
+    run_checker("BEFORE");
+
+    let mut state = load_state(root);
+    let slot_names: Vec<String> = state["slots"]
+        .as_object()
+        .map(|s| s.keys().cloned().collect())
+        .unwrap_or_default();
+
+    let mut changed = 0usize;
+    let mut skipped = 0usize;
+    for slot in &slot_names {
+        for product in ["hermit", "reverie", "liteinst2"] {
+            let recorded = state["slots"][slot][format!("{product}_branch")]
+                .as_str()
+                .unwrap_or("-")
+                .to_string();
+            let rel = state["slots"][slot][format!("{product}_path")]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(format!("worktrees/{slot}/{product}")));
+            match actual_checkout(&root.join(&rel)) {
+                None => {
+                    skipped += 1;
+                    eprintln!(
+                        "  skip {slot}/{product}: worktree unreadable; recorded='{recorded}' left as-is"
+                    );
+                }
+                Some(actual) => {
+                    // "detached" recorded value already matches any detached SHA in
+                    // the verifier; don't churn a detached:<sha> recording into bare
+                    // "detached" if it already agrees.
+                    let already_ok = recorded == actual
+                        || (actual == "detached" && recorded.starts_with("detached"));
+                    if !already_ok {
+                        changed += 1;
+                        println!("  reconcile {slot}/{product}: '{recorded}' -> '{actual}'");
+                        if !dry_run {
+                            state["slots"][slot][format!("{product}_branch")] = json!(actual);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if dry_run {
+        println!("repair --dry-run: {changed} branch cell(s) would change, {skipped} skipped (unreadable). No files written.");
+        exit(if changed == 0 { 0 } else { 1 });
+    }
+
+    if changed > 0 {
+        save_state(root, &mut state);
+        regen_active_md(root, &state);
+        println!("repair: reconciled {changed} branch cell(s), {skipped} skipped (unreadable).");
+        println!("  state:  {}", state_path(root).display());
+        println!("  active: {}", root.join("worktrees/ACTIVE.md").display());
+    } else {
+        println!("repair: 0 branch cells needed reconciliation ({skipped} skipped unreadable).");
+    }
+
+    run_checker("AFTER");
+    exit(0);
+}
+
 /// Slot name is a named token [a-z0-9-]+ (e.g. kvm) or slotNN.
 fn valid_slot(name: &str) -> bool {
     !name.is_empty()
@@ -550,6 +663,8 @@ fn main() {
     let mut purpose = String::new();
     let mut read_mostly = false;
     let mut check_only = false;
+    let mut repair = false;
+    let mut dry_run = false;
 
     let mut i = 0;
     let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
@@ -574,6 +689,8 @@ fn main() {
             "--purpose" => purpose = take(&mut i, &argv, "--purpose"),
             "--i-promise-this-agent-is-read-mostly" => read_mostly = true,
             "--check-only" => check_only = true,
+            "--repair" | "--sync" => repair = true,
+            "--dry-run" => dry_run = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return;
@@ -581,6 +698,14 @@ fn main() {
             other => die(&format!("unknown argument: {other}\n\n{USAGE}")),
         }
         i += 1;
+    }
+
+    // Single-writer REPAIR/SYNC: reconcile recorded branch cells from physical
+    // porcelain (never touches git objects or ownership). Runs before the normal
+    // allocation path so it cannot be confused with a slot request.
+    if repair {
+        let root = find_root();
+        repair_registry(&root, dry_run);
     }
 
     // Health check only: report homeostasis and exit without allocating.
