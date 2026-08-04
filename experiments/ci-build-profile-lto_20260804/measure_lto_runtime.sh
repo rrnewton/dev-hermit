@@ -1,61 +1,59 @@
 #!/bin/bash
-# measure_lto_runtime.sh — runtime delta of the three LTO release binaries.
+# measure_lto_runtime.sh (v3) — runtime delta of the three LTO release binaries.
 #
-# "Test wall" for the release-consuming CI jobs (strict_compat + backend-parity)
-# is dominated by how fast the release `hermit` supervisor executes guests, so the
-# LTO-sensitive term in test wall is the per-guest RUNTIME of the release binary.
-# This measures that runtime for each of no-lto / thin-lto / full-lto.
+# LTO only optimizes hermit's OWN user-space code. For the ptrace supervisor the
+# hot metric is CPU time, split user (hermit code — LTO-sensitive) vs system
+# (kernel ptrace round-trips — NOT LTO-touchable). CPU time is load-insensitive
+# (same-core-pinning finding), so we run UNPINNED (fast, multi-core) and compare
+# user/sys/wall across LTO levels. syscall_bound_100k is the supervisor-hot guest;
+# compute_bound_80m is the guest-compute control (supervisor barely runs).
 #
-# Protocol (benchmark skill): K=1 cgroup, SAME single fixed core for all variants
-# (same-core placement dominates ptrace syscall wall & minimises variance), NO
-# per-thread pinning inside the set, interleaved variant order, median of reps,
-# raw rows retained. Correctness-gated on exit status. syscall_bound is the
-# supervisor-sensitive workload; compute_bound is the guest-compute control.
+# Boxing note: we do NOT use systemd-run here — `systemd-run --user
+# --property=AllowedCPUs=...` makes hermit exit 101 silently (scope/ptrace-setup
+# interaction). Plain /usr/bin/time as a direct parent works fine. Placement is
+# left to the kernel; the compared metric (CPU time) does not depend on it.
 set -u
 EXP=/home/newton/work/dev-hermit/experiments/ci-build-profile-lto_20260804
-GBIN=/home/newton/work/dev-hermit/experiments/hermit-build-profile-compute-vs-syscall_20260804/guests/bin
-CORE=8                 # fixed single core for the K=1 set (record it)
-REPS=5
+G=$EXP/guests-scaled
+REPS=7
 CSV="$EXP/runtime-lto.csv"
-echo "variant,guest,rep,core,wall_s,user_s,sys_s,rc" > "$CSV"
+echo "variant,guest,rep,user_s,sys_s,cpu_s,wall_s,rc" > "$CSV"
 
 declare -A BIN=(
   [no-lto]="$EXP/target-lto-no-lto/release/hermit"
   [thin-lto]="$EXP/target-lto-thin-lto/release/hermit"
   [full-lto]="$EXP/target-lto-full-lto/release/hermit"
 )
-
-# verify all three exist before starting
 for v in no-lto thin-lto full-lto; do
-  [ -x "${BIN[$v]}" ] || { echo "MISSING binary for $v: ${BIN[$v]} — aborting"; exit 2; }
+  [ -x "${BIN[$v]}" ] || { echo "MISSING $v"; exit 2; }
 done
 
 run_one () {
   local variant="$1" guest="$2" rep="$3"
-  local hb="${BIN[$variant]}"
-  local tf; tf=$(mktemp)
-  local unit="ltort-$variant-$guest-$rep-$(date -u +%H%M%S%N)"
-  # K=1: pin the whole hermit process tree to ONE core via AllowedCPUs; kernel
-  # schedules supervisor+guest within that single-core set (no per-thread pinning).
-  systemd-run --user --wait --collect --quiet --unit="$unit" \
-    --property=AllowedCPUs=$CORE \
-    --setenv=HOME=/home/newton --setenv=PATH="$PATH" \
-    /usr/bin/time -f '%e %U %S' -o "$tf" \
-    "$hb" run -- "$GBIN/$guest" >/dev/null 2>/dev/null
+  local hb="${BIN[$variant]}" tf; tf=$(mktemp)
+  timeout 180 /usr/bin/time -v "$hb" run -- "$G/$guest" >/dev/null 2>"$tf"
   local rc=$?
-  local line; line=$(cat "$tf" 2>/dev/null)
-  local wall user sys; read -r wall user sys <<<"$line"
-  echo "$variant,$guest,$rep,$CORE,${wall:-NA},${user:-NA},${sys:-NA},$rc" >> "$CSV"
-  echo "  $variant/$guest rep$rep: wall=${wall}s rc=$rc"
+  local u s w
+  u=$(awk -F': ' '/User time/{print $2}' "$tf")
+  s=$(awk -F': ' '/System time/{print $2}' "$tf")
+  w=$(awk -F': ' '/Elapsed \(wall/{print $2}' "$tf")
+  local wsec; wsec=$(awk -v t="$w" 'BEGIN{n=split(t,a,":");x=0;for(i=1;i<=n;i++)x=x*60+a[i];printf "%.2f",x}')
+  local cpu; cpu=$(awk -v a="$u" -v b="$s" 'BEGIN{printf "%.2f",a+b}')
+  echo "$variant,$guest,$rep,${u:-NA},${s:-NA},$cpu,$wsec,$rc" >> "$CSV"
+  echo "  $variant/$guest rep$rep: user=${u} sys=${s} cpu=${cpu} wall=${wsec} rc=$rc"
   rm -f "$tf"
 }
 
-echo "=== runtime delta: K=1 core=$CORE reps=$REPS interleaved ==="
+# warmup (unrecorded)
+for guest in syscall_bound_100k compute_bound_80m; do
+  for variant in no-lto thin-lto full-lto; do run_one "$variant" "$guest" 0 >/dev/null 2>&1; done
+done
+: > "$CSV"; echo "variant,guest,rep,user_s,sys_s,cpu_s,wall_s,rc" > "$CSV"
+
+echo "=== runtime delta: unpinned, CPU-time metric, reps=$REPS interleaved ==="
 for rep in $(seq 1 $REPS); do
-  for guest in syscall_bound compute_bound; do
-    for variant in no-lto thin-lto full-lto; do   # interleave variants each rep
-      run_one "$variant" "$guest" "$rep"
-    done
+  for guest in syscall_bound_100k compute_bound_80m; do
+    for variant in no-lto thin-lto full-lto; do run_one "$variant" "$guest" "$rep"; done
   done
 done
 echo "=== DONE ==="; cat "$CSV"

@@ -1,0 +1,4 @@
+profile,lto_setting,compile_wall_s,compile_cpu_s,compile_parallelism_x,test_wall_delta_vs_nolto,rt_syscallhot_cpu_s,rt_syscallhot_user_s,rt_compute_cpu_s,binary_bytes,note
+no-lto (CURRENT default),false,93.58,898.13,9.60,baseline,3.44,0.57,0.62,58699800,cargo default release profile = what CI runs today
+thin-lto,thin,126.58,1259.00,9.95,-0.9% (3.44->3.41 cpu),3.41,0.55,0.61,62892136,+35% compile for <=1% runtime
+full-lto,fat,247.44,1047.48,4.23,-2.0% (3.44->3.37 cpu),3.37,0.52,0.61,56402752,+164% compile; parallelism collapses 9.6x->4.23x (serial link)

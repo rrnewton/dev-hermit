@@ -1,2 +1,4 @@
 row,lto,jobs,wall_s,user_s,sys_s,cpu_s,loadavg_1m,rc
 no-lto,false,32,93.58,814.40,83.73,898.13,37.04,0
+thin-lto,thin,32,126.58,1089.46,169.54,1259.00,32.35,0
+full-lto,fat,32,247.44,968.44,79.04,1047.48,91.35,0
