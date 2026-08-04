@@ -13,10 +13,12 @@ class TranscriptSanitizationTest(unittest.TestCase):
     def test_internal_fqdns_become_short_names(self) -> None:
         text = (
             "run on devbig014.atn7.facebook.com and fetch from "
-            "git.vip.facebook.com; keep github.com unchanged"
+            "git.vip.facebook.com; keep developers.facebook.com and "
+            "github.com unchanged"
         )
         self.assertEqual(
-            "run on devbig014 and fetch from git; keep github.com unchanged",
+            "run on devbig014 and fetch from git; keep "
+            "developers.facebook.com and github.com unchanged",
             scrub_internal_fqdns(text),
         )
 

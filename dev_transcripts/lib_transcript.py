@@ -70,7 +70,7 @@ DEFAULT_CWD_MARKER = "dev-hermit"
 # suffix before generated artifacts are written.
 _INTERNAL_FQDN_RE = re.compile(
     r"\b([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)"
-    r"(?:\.[A-Za-z0-9-]+)*\.facebook\.com\b",
+    r"(?:\.[A-Za-z0-9-]+)+\.facebook\.com\b",
     re.IGNORECASE,
 )
 
