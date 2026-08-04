@@ -67,6 +67,7 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
   history                 Query the retained GitHub Actions timeline
   refresh-history         Ingest fresh GitHub and local history into the local store
@@ -208,6 +209,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Read canonical qualified views of the validate ledger.
+    Ledger(LedgerArgs),
     /// Find the newest branch commit whose latest local validation passed.
     NewestGreen(NewestGreenArgs),
     /// Find the newest recorded PASS -> FAIL transition for a local cell or gate.
@@ -510,6 +513,49 @@ struct ValidateStatusArgs {
     /// Emit the machine-readable verdict report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct LedgerArgs {
+    #[command(subcommand)]
+    command: LedgerCommand,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum LedgerCommand {
+    /// Emit complete, nonempty PASS rows sorted by finished_at.
+    QualifiedRows(QualifiedRowsArgs),
+    /// Attribute FAILED rows to their per-substep cause by dereferencing log_file.
+    AttributeReds(AttributeRedsArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+struct QualifiedRowsArgs {
+    /// Override ignored/validate-run-ledger.jsonl.
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct AttributeRedsArgs {
+    /// Override ignored/validate-run-ledger.jsonl.
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+    /// Only rows whose commit starts with this prefix.
+    #[arg(long)]
+    commit: Option<String>,
+    /// Attribute the most recent N failed rows (0 = all).
+    #[arg(long)]
+    last: Option<u64>,
+    /// Emit JSON, not text.
+    #[arg(long)]
+    json: bool,
+    /// Persist durable per-red-node attribution (verbatim first_error_line) from
+    /// each surviving log into ignored/validate-red-attribution.jsonl
+    /// (append-only, idempotent), so a red is attributable after its /tmp log
+    /// is evicted. Safe to run on every landing.
+    #[arg(long)]
+    persist: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -1053,6 +1099,7 @@ impl HubCommand {
             | Self::ResolveObligation(_)
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
+            | Self::Ledger(_)
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
@@ -1575,6 +1622,34 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::Ledger(args) => match args.command {
+            LedgerCommand::QualifiedRows(qualified_args) => {
+                let mut forwarded = Vec::new();
+                if let Some(ledger) = qualified_args.ledger {
+                    push_option(&mut forwarded, "--ledger", ledger);
+                }
+                run_python(root, "ci-hub/validate/qualified_rows.py", forwarded)
+            }
+            LedgerCommand::AttributeReds(red_args) => {
+                let mut forwarded = Vec::new();
+                if let Some(ledger) = red_args.ledger {
+                    push_option(&mut forwarded, "--ledger", ledger);
+                }
+                if let Some(commit) = red_args.commit {
+                    push_option(&mut forwarded, "--commit", commit);
+                }
+                if let Some(last) = red_args.last {
+                    push_option(&mut forwarded, "--last", last.to_string());
+                }
+                if red_args.json {
+                    forwarded.push("--json".into());
+                }
+                if red_args.persist {
+                    forwarded.push("--persist".into());
+                }
+                run_python(root, "ci-hub/validate/attribute_reds.py", forwarded)
+            }
+        },
         HubCommand::NewestGreen(args) => run_newest_green(root, args),
         HubCommand::FirstBad(args) => run_first_bad(root, args),
         HubCommand::ApplyLocalLabel(args) => run_apply_local_label(root, args),
@@ -4292,6 +4367,54 @@ mod tests {
         assert!(matches!(args.land_mode, LandMode::Admin));
         assert_eq!(args.pr, Some(1219));
         assert!(args.no_dispatch);
+    }
+
+    #[test]
+    fn parses_qualified_ledger_rows_command() {
+        let cli = Cli::try_parse_from([
+            "ci-hub",
+            "ledger",
+            "qualified-rows",
+            "--ledger",
+            "/tmp/ledger.jsonl",
+        ])
+        .unwrap();
+        let HubCommand::Ledger(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        let LedgerCommand::QualifiedRows(args) = args.command else {
+            panic!("wrong ledger subcommand variant")
+        };
+        assert_eq!(args.ledger, Some(PathBuf::from("/tmp/ledger.jsonl")));
+    }
+
+    #[test]
+    fn parses_attribute_reds_command() {
+        let cli = Cli::try_parse_from([
+            "ci-hub",
+            "ledger",
+            "attribute-reds",
+            "--ledger",
+            "/tmp/ledger.jsonl",
+            "--commit",
+            "fedc81ed",
+            "--last",
+            "0",
+            "--json",
+            "--persist",
+        ])
+        .unwrap();
+        let HubCommand::Ledger(args) = cli.command else {
+            panic!("wrong command variant")
+        };
+        let LedgerCommand::AttributeReds(args) = args.command else {
+            panic!("wrong ledger subcommand variant")
+        };
+        assert_eq!(args.ledger, Some(PathBuf::from("/tmp/ledger.jsonl")));
+        assert_eq!(args.commit.as_deref(), Some("fedc81ed"));
+        assert_eq!(args.last, Some(0));
+        assert!(args.json);
+        assert!(args.persist);
     }
 
     #[test]
