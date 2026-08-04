@@ -246,6 +246,60 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(res["red_hours"], 0.0)
         self.assertEqual(res["job_level_red_promotions"], 0)
 
+    def test_ingest_jobs_scopes_to_cancelled_authoritative_main_and_joins(self):
+        # Ingester (C) end-to-end: only cancelled authoritative-MAIN runs are
+        # fetched for jobs, and the resulting gha-jobs.csv drives query.py's
+        # seventh case by file contract (no cross-module import of internals).
+        def row(base, **over):
+            base.update(over)
+            return base
+        self._write_gha([
+            # candidate: cancelled, main, authoritative "W"
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            # bounds R1's reign; not a candidate (success)
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+            # not a candidate: cancelled but non-authoritative workflow (same
+            # commit as R1 so it adds no spurious reign boundary).
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:10:00Z",
+                         "2026-08-03T00:20:00Z", wf="Other", run_id="R3"),
+            # not a candidate: cancelled authoritative but NOT on main
+            row(self._gha_wf("d" * 40, "cancelled", "2026-08-03T00:10:00Z",
+                             "2026-08-03T00:20:00Z", run_id="R4"),
+                head_branch="pr-branch"),
+        ])
+        cand = ingest.cancelled_authoritative_runs(
+            str(self.parent), "r/x", ["W"], None)
+        self.assertEqual(cand, ["R1"])
+
+        calls = []
+
+        def fake_fetch(repo, run_id):
+            calls.append(run_id)
+            return [{"id": "j1", "run_id": run_id, "run_attempt": "1",
+                     "name": "build", "status": "completed",
+                     "conclusion": "failure",
+                     "completed_at": "2026-08-03T00:30:00Z"}]
+
+        orig = ingest.fetch_jobs
+        ingest.fetch_jobs = fake_fetch
+        try:
+            ingest.ingest_jobs("r/x", str(self.parent), workflows=["W"],
+                               since=None, refetch=False, max_runs=100)
+            self.assertEqual(calls, ["R1"])  # scoped: only the one candidate
+            # The join makes query.py promote the cancelled run to red (case 7).
+            res = query.green_time(str(self.parent), "r/x", None, ["W"])
+            self.assertEqual(res["job_level_red_promotions"], 1)
+            self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
+            # Idempotent: a second pass re-fetches nothing (terminal run cached).
+            calls.clear()
+            ingest.ingest_jobs("r/x", str(self.parent), workflows=["W"],
+                               since=None, refetch=False, max_runs=100)
+            self.assertEqual(calls, [])
+        finally:
+            ingest.fetch_jobs = orig
+
     def test_green_time_commit_without_authoritative_run_is_gap_no_record(self):
         # Commit B ran only a NON-authoritative workflow: no authoritative check
         # record -> gap(no-record), never carried-forward as A's green.

@@ -155,7 +155,13 @@ completed at/before the run's cancel moment). Cases that the run-level store
 cannot yet discriminate (self-timeout annotation; per-job failure) stay
 conservatively in no_result, so an offline blind spot can only UNDER-count red,
 never inflate green. The seventh-case discriminator (`_resolve_cancelled_run`) is
-implemented but inert until a per-job store (`gha-jobs.csv`) exists.
+LIVE: `ingest.py` produces the per-job store `gha-jobs.csv`, scoped to cancelled
+authoritative-main runs (the only runs where the case can fire), so a masked job
+failure is now recovered as red. Being non-green, the promotion moves the
+red<->no_result split (which drives action) without ever changing green_pct. A
+run cancelled while still queued has zero jobs and correctly stays no_result; a
+fetched-set sidecar (`gha-jobs-fetched.json`) makes the ingest O(new cancelled
+runs). Skip it with `ingest.py --no-jobs`; `--refetch-jobs` forces a re-fetch.
 
 The store preserves every conclusion and timestamp, so a refined definition can
 be recomputed later without re-ingesting. Authoritative workflow defaults: hermit

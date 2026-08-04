@@ -453,6 +453,183 @@ def _download_artifact(repo: str, art_id: int, out_dir: str) -> bool:
 # ---------------------------------------------------------------------------
 # Local validate-run history refresh (build on aggregate.py, do not duplicate)
 # ---------------------------------------------------------------------------
+# (C) Per-JOB store for the seventh-case ordering discriminator
+#
+# query.py's green-time metric has a seventh case: a run whose RUN-LEVEL
+# conclusion is `cancelled` but which contains a JOB that FAILED first. The
+# discriminator is ORDERING (a red job that completed at/before the run's cancel
+# moment failed on its own -> real red; one killed by the cancel stays
+# no_result), and it is INERT until this per-job store exists. We only ever need
+# job rows for the runs that can actually trigger the case: cancelled runs of an
+# AUTHORITATIVE workflow on main. Fetching jobs for every run would be a large,
+# needless multiplier on the API, so this ingester is deliberately SCOPED to
+# those runs. gha-runs.csv is the run universe; this narrows it to the cancelled
+# authoritative-main subset and fetches one `.../jobs` call per such run.
+# ---------------------------------------------------------------------------
+
+# Authoritative main-branch workflow per repo. MUST stay in lockstep with
+# query.py AUTHORITATIVE (the green-time consumer); kept as a local copy rather
+# than an import so the stores stay joinable by file-contract only.
+AUTHORITATIVE_WORKFLOWS = {
+    "rrnewton/hermit": ["CI (GitHub-managed portable)"],
+    "rrnewton/reverie": ["Rust"],
+}
+
+JOBS_MAX_RUNS = 400  # per-pass cap on cancelled runs fetched (logged if hit)
+
+JOBS_COLUMNS = [
+    "repo", "run_id", "run_attempt", "job_id", "name", "status", "conclusion",
+    "started_at", "completed_at", "html_url",
+]
+
+
+def load_jobs_store(path: str) -> dict[tuple, dict]:
+    rows: dict[tuple, dict] = {}
+    if not os.path.isfile(path):
+        return rows
+    with open(path, newline="", errors="replace") as fh:
+        for row in csvmod.DictReader(fh):
+            rows[(row.get("repo", ""), row.get("run_id", ""),
+                  row.get("job_id", ""))] = row
+    return rows
+
+
+def write_jobs_store(path: str, rows: dict[tuple, dict]) -> None:
+    ordered = sorted(rows.values(),
+                     key=lambda r: (r.get("repo", ""), r.get("run_id", ""),
+                                    r.get("job_id", "")))
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="") as fh:
+        w = csvmod.DictWriter(fh, fieldnames=JOBS_COLUMNS, extrasaction="ignore")
+        w.writeheader()
+        for r in ordered:
+            w.writerow({c: r.get(c, "") for c in JOBS_COLUMNS})
+    os.replace(tmp, path)
+
+
+def job_to_row(repo: str, job: dict) -> dict:
+    return {
+        "repo": repo,
+        "run_id": str(job.get("run_id", "")),
+        "run_attempt": str(job.get("run_attempt", "")),
+        "job_id": str(job.get("id", "")),
+        "name": job.get("name") or "",
+        "status": job.get("status") or "",
+        "conclusion": job.get("conclusion") or "",
+        "started_at": job.get("started_at") or "",
+        "completed_at": job.get("completed_at") or "",
+        "html_url": job.get("html_url") or "",
+    }
+
+
+def cancelled_authoritative_runs(parent: str, repo: str,
+                                 workflows: list[str],
+                                 since: str | None) -> list[str]:
+    """run_ids of cancelled authoritative-workflow runs on main (case-7 candidates)."""
+    path = gha_store_path(parent)
+    if not os.path.isfile(path):
+        return []
+    want = set(workflows)
+    since_iso = None
+    if since:
+        since_iso = since if "T" in since else since[:10] + "T00:00:00Z"
+    ids: list[str] = []
+    seen: set[str] = set()
+    with open(path, newline="", errors="replace") as fh:
+        for row in csvmod.DictReader(fh):
+            if row.get("repo") != repo:
+                continue
+            if row.get("head_branch") != "main":
+                continue
+            if row.get("workflow_name") not in want:
+                continue
+            if (row.get("conclusion") or "").lower() != "cancelled":
+                continue
+            if since_iso and (row.get("created_at") or "") < since_iso:
+                continue
+            rid = row.get("run_id") or ""
+            if rid and rid not in seen:
+                seen.add(rid)
+                ids.append(rid)
+    return ids
+
+
+def fetch_jobs(repo: str, run_id: str) -> list[dict]:
+    """All jobs of a run via `.../runs/{id}/jobs` (paginated)."""
+    jobs: list[dict] = []
+    for page in range(1, RESULT_CAP_PAGES + 1):
+        payload = gh_json(
+            f"repos/{repo}/actions/runs/{run_id}/jobs?per_page={PER_PAGE}&page={page}")
+        if not payload:
+            break
+        batch = payload.get("jobs") or []
+        jobs.extend(batch)
+        if len(batch) < PER_PAGE:
+            break
+    return jobs
+
+
+def jobs_fetched_path(parent: str) -> str:
+    """Sidecar recording which cancelled run_ids have had jobs fetched.
+
+    A cancelled run is terminal, so its jobs never change. Job ROWS alone cannot
+    mark a run "done": a run cancelled while still queued has ZERO jobs, so it
+    would never appear in the row store and would be re-fetched forever. This set
+    records every fetched run_id (with or without jobs) so incremental passes are
+    genuinely O(new cancelled runs), not O(all cancelled runs).
+    """
+    return os.path.join(store_dir(parent), "gha-jobs-fetched.json")
+
+
+def load_jobs_fetched(parent: str) -> dict:
+    return load_cursor(jobs_fetched_path(parent))  # same {repo: [...]} json shape
+
+
+def save_jobs_fetched(parent: str, data: dict) -> None:
+    save_cursor(jobs_fetched_path(parent), data)
+
+
+def ingest_jobs(repo: str, parent: str, *, workflows: list[str],
+                since: str | None, refetch: bool, max_runs: int) -> None:
+    path = jobs_store_path(parent)
+    rows = load_jobs_store(path)
+    before = len(rows)
+    candidates = cancelled_authoritative_runs(parent, repo, workflows, since)
+    # A cancelled run is terminal, so its jobs never change: skip run_ids already
+    # fetched (idempotent, cheap incremental) unless --refetch-jobs. `have` unions
+    # the fetched-set sidecar with run_ids present in the row store, so a run with
+    # zero jobs is still recorded as done and never re-fetched.
+    fetched = load_jobs_fetched(parent)
+    have = set(fetched.get(repo, [])) | {k[1] for k in rows if k[0] == repo}
+    todo = candidates if refetch else [r for r in candidates if r not in have]
+    truncated = 0
+    if len(todo) > max_runs:
+        truncated = len(todo) - max_runs
+        todo = todo[:max_runs]
+    api_calls = 0
+    for run_id in todo:
+        for job in fetch_jobs(repo, run_id):
+            rows[(repo, run_id, str(job.get("id", "")))] = job_to_row(repo, job)
+        have.add(run_id)
+        api_calls += 1
+    fetched[repo] = sorted(have)
+    save_jobs_fetched(parent, fetched)
+    write_jobs_store(path, rows)
+    added = len(rows) - before
+    msg = (f"ci-hub ingest [{repo}]: jobs for {len(todo)} cancelled "
+           f"authoritative-main runs ({api_calls} api calls), +{added} job rows; "
+           f"store now {len(rows)} rows -> {path}")
+    if truncated:
+        msg += (f"  [CAPPED: {truncated} more candidate runs not fetched this "
+                f"pass; raise --jobs-max-runs or re-run to continue]")
+    print(msg)
+
+
+def jobs_store_path(parent: str) -> str:
+    return os.path.join(store_dir(parent), "gha-jobs.csv")
+
+
+# ---------------------------------------------------------------------------
 
 def refresh_local(parent: str) -> None:
     agg = os.path.join(parent, "ci-hub", "validate", "aggregate.py")
@@ -484,6 +661,16 @@ def main() -> int:
                          f"(default {PROFILES_MAX_PAGES}; raise for a full backfill)")
     ap.add_argument("--no-profiles", action="store_true",
                     help="skip ci-perf artifact download")
+    ap.add_argument("--no-jobs", action="store_true",
+                    help="skip per-job store (seventh-case discriminator source)")
+    ap.add_argument("--refetch-jobs", action="store_true",
+                    help="re-fetch jobs for cancelled runs already in the store")
+    ap.add_argument("--jobs-max-runs", type=int, default=JOBS_MAX_RUNS,
+                    help=f"per-pass cap on cancelled runs fetched for jobs "
+                         f"(default {JOBS_MAX_RUNS})")
+    ap.add_argument("--jobs-workflow", action="append",
+                    help="authoritative workflow for job scoping (repeatable; "
+                         "default per-repo AUTHORITATIVE_WORKFLOWS)")
     ap.add_argument("--no-local", action="store_true",
                     help="skip local validate-run aggregate refresh")
     args = ap.parse_args()
@@ -495,6 +682,11 @@ def main() -> int:
                     overlap_hours=args.overlap_hours)
         if not args.no_profiles:
             ingest_profiles(repo, parent, max_pages=args.profiles_max_pages)
+        if not args.no_jobs:
+            wf = args.jobs_workflow or AUTHORITATIVE_WORKFLOWS.get(repo, [])
+            if wf:
+                ingest_jobs(repo, parent, workflows=wf, since=args.since,
+                            refetch=args.refetch_jobs, max_runs=args.jobs_max_runs)
     if not args.no_local:
         refresh_local(parent)
     return 0

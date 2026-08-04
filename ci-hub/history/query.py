@@ -141,10 +141,11 @@ AUTHORITATIVE = {
 #  * case 5: environmental failures are only separable on the local-validate leg
 #    (protocol.py); on the GitHub authoritative leg they present as `failure` and
 #    are counted as red here.
-#  * case 7: the seventh-case ORDERING discriminator is implemented (see
-#    _resolve_cancelled_run) but INERT until a per-job store (gha-jobs.csv, owned
-#    by the ci-hub history-store task) exists; with only run-level rows every
-#    cancelled run stays no_result (conservative).
+#  * case 7: the seventh-case ORDERING discriminator (see _resolve_cancelled_run)
+#    is LIVE whenever the per-job store gha-jobs.csv is present (produced by
+#    ingest.py, scoped to cancelled authoritative-main runs). With no job store,
+#    or for a run cancelled while still queued (zero jobs), every cancelled run
+#    stays no_result (conservative).
 #  * a commit with NO run of ANY workflow in the store is invisible (no reign
 #    boundary); the store cannot see it. Commits with some-but-not-authoritative
 #    runs ARE counted as gap(no-record).
@@ -178,13 +179,13 @@ def gha_store_path(parent: str) -> str:
 
 
 def jobs_store_path(parent: str) -> str:
-    """Optional per-job store for the seventh-case ordering discriminator.
+    """Per-job store for the seventh-case ordering discriminator.
 
-    PROPOSED file contract (owned by the ci-hub history-store task, not yet
-    produced): one row per job of a run, columns at least
+    File contract (PRODUCED by ingest.py's job ingester, scoped to cancelled
+    authoritative-main runs): one row per job of a run, columns at least
     repo, run_id, job_id, name, conclusion, started_at, completed_at
     (mirrors `gh api repos/{repo}/actions/runs/{id}/jobs`). Joined to gha-runs by
-    (repo, run_id). Absent today -> the discriminator is inert (see
+    (repo, run_id). When absent -> the discriminator is inert (see
     _resolve_cancelled_run) and every cancelled run stays no_result.
     """
     return os.path.join(store_dir(parent), "gha-jobs.csv")
