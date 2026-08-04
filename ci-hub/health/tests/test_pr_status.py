@@ -322,6 +322,17 @@ class PlannerAdapterTests(unittest.TestCase):
         self.assertIn("--format", command)
         self.assertIn("json", command)
 
+    def test_planning_runs_use_real_merge_tree_conflict_detection(self) -> None:
+        # The merge-tree engine is ON for planning runs (the opt-in `--engine
+        # planner` path). It was previously pinned to `file-overlap` on an
+        # unmeasured "expensive fan-out" theory; the real cost was the fetch,
+        # not the analysis (see planner_command). Guard the flip so it cannot
+        # silently rot back to the cheap fallback.
+        command = pr_status.planner_command("rrnewton/hermit", 7)
+        idx = command.index("--conflict-detector")
+        self.assertEqual(command[idx + 1], "merge-tree")
+        self.assertNotIn("file-overlap", command)
+
     @mock.patch("pr_status.subprocess.run")
     def test_fetch_uses_planner_schema_without_reimplementing_ci(
         self, run: mock.Mock
