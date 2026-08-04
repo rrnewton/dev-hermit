@@ -297,7 +297,7 @@ row only from exact code and tests, never from a PR description.
 | Authority and qualified value | Canonical dereferencing verifier | Coverage and remaining hole |
 | --- | --- | --- |
 | **Local validation ledger:** exact Hermit SHA plus clean/full/counted local ledger row and satisfied per-node coverage. | `ci-hub validate-status` / `ci-hub/lib/validate_status.rs`; the lander calls it through `ci-hub/landing/local-validation-eligibility.sh`. | **PARTIAL.** Canonical local lander and prevalidation paths call the verifier, but `validate.sh` still applies `locally-validated` directly from its own exit path. Labels are not ledger evidence, and every label/receipt publisher must first call the ledger verifier. |
-| **Published validation receipt:** immutable receipt commit and path on the receipt branch, branch ancestry, recomputed receipt and log digests, exact repo/head, and a counted qualifying ledger row. | Producer: `ci-hub/validation/publish_receipt.py`. Consumer: `scripts/verify-local-validation-receipt.sh` from Hermit #1578. | **PARTIAL.** The consumer fixture accepts 1/1 legitimate receipt and refuses nonexistent, tampered, and zero-executed controls, but the verifier is not on Hermit main. The merge gate and landing planner still accept a bare `locally-validated` label, and #1593 adds another shape-only parser. Replace every such consumer with the receipt verifier. |
+| **Published validation receipt:** immutable receipt commit and path on the receipt branch, branch ancestry, recomputed receipt and log digests, exact repo/head, and a counted qualifying ledger row. | Producer: `ci-hub/validation/publish_receipt.py`. Consumer: the parent-pinned `ci-hub/validation/verify_receipt.sh`, never PR-controlled verifier code. | **PARTIAL.** The consumer fixture accepts 2/2 legitimate counted receipts and refuses a well-shaped nonexistent receipt, tampering, zero execution, and incomplete coverage. The Hermit merge gate and landing planner still accept a bare `locally-validated` label, and #1593 adds another shape-only parser. Replace every such consumer with the parent verifier. |
 | **Historical Git provenance:** the claimed commit exists in the named repository and the measurement/artifact is bound to that commit, not merely written beside a 40-hex string. | **None.** The minimum identity primitive is a fresh fetch plus `git cat-file -e <sha>^{commit}` in the intended repository; measurement causation additionally needs a commit-bound artifact/receipt. | **MISSING.** Hermit #1546 validates provenance fields and full-SHA syntax without dereferencing the object or a measurement artifact. Commit existence alone proves identity, not that the measurement came from it. |
 | **Adversarial/human review:** reviewer lane, verdict, PR number, and exact reviewed head in a durable receipt produced by that lane. | **None.** `scripts/core-review-protocol-lint.sh` checks cache labels only. | **MISSING.** Push-time label invalidation narrows staleness but does not prove who reviewed what; `passed-review-*`, numbered review labels, and `human-approved` are assertions until a lane-specific exact-head receipt is dereferenced. |
 | **Landing authorization:** a durable coordinator/owner decision names the exact repository, PR, and head allowed to land, with no unresolved hold. | **None.** `land-pr.sh` accepts command-line PR/branch arguments and does not dereference a task authorization record. | **MISSING.** Agent assignment, a ready label, or invoking the lander is not authorization. A future verifier must consume an exact-head authorization receipt; keep this human/coordinator gate explicit until then. |
@@ -615,6 +615,28 @@ and the resulting target commit when landing is authorized. Local feature-branch
 hosted and self-hosted CI are green.
 
 ### Running validate — `systemd-run --user` Is The Producer Path
+
+**MANDATORY PRE-ANCHOR PREFLIGHT — run this BEFORE you claim ANY Hermit PR for validation.** A PR head
+that does **not** descend from hermit `bfb0a9ef` (commit-anchoring, 2026-08-03 18:43 UTC) runs its **own
+older** `validate.sh`, which emits the anchor fields (`commit_anchored`/`selection_mode`) **NULL**; the
+consumer `is_clean_full_pass` (`ci-hub/lib/validate_status.rs:100-121`) is **fail-closed** on them, so the
+~17-minute run is a **guaranteed rejection even when fully green**. The producer travels with the branch, so
+this can never be fixed by anything on main — the pre-anchor head must be **rebased**, not re-validated. The
+check is causal, one command:
+
+```
+git -C <checkout> merge-base --is-ancestor bfb0a9ef1c303d1977f5f02903b70cc93e514cb5 <PR-head>
+# rc=1 => PRE-ANCHOR => DO NOT claim/validate; flag for rebase onto newest-green.  rc=0 => anchored, proceed.
+# tool form: ci-hub/validate/preflight_anchor.py --head <sha>   (exit 2 = REFUSE)
+```
+
+This has a passing side, it is not a wall: **#1591 is anchored (rc=0) — validate it normally.** It also
+catches real waste: **#1558 is pre-anchor and was caught in a drain claim by this check.** The current
+23 pre-anchor "passers" that MUST be rebased before any validate:
+`1227 1229 1233 1235 1242 1244 1245 1246 1247 1250 1252 1254 1296 1393 1397 1445 1464 1472 1473 1477 1549 1552 1558`
+(re-derive the live set with the `is-ancestor` loop; do not trust a stale list). **HOLD mass-rebase** until
+the version-aware counts consumer (`reject_missing_or_filtered`) lands — see task
+`prs-predating-commit-anchoring-can-never-produce-a-qualifying-receipt`.
 
 An agent sandbox CANNOT run `validate.sh` directly: BpfJailer denies a process **creating its own** cgroup,
 so the wrapper exits 3 in ~9s having executed nothing. The tell is `CPU/wall 1.0x` on a many-core box — the
