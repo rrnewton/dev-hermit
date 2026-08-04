@@ -1,0 +1,13 @@
+fixture,syscall_class,N,rc,user_s,sys_s,wall_s,involuntary_cs,cores_box,note
+yield_loop,coordinator-event,500,0,0.02,0.53,2.47,1250,4,startup-dominated
+yield_loop,coordinator-event,2000,0,0.06,0.20,0.34,1623,4,linear
+yield_loop,coordinator-event,5000,0,0.13,0.32,0.46,3097,4,linear
+yield_loop,coordinator-event,10000,0,0.23,0.57,0.81,5703,4,linear
+syscall_loop,passthrough-getpid,1000,0,0.05,0.48,0.48,,4,startup-dominated
+syscall_loop,passthrough-getpid,5000,0,0.11,0.58,0.69,,4,linear
+syscall_loop,passthrough-getpid,10000,124,,,,,4,HEISENBUG-hang-timeout90s
+syscall_loop,passthrough-getpid,20000,0,0.48,1.34,1.83,,4,linear
+syscall_loop,passthrough-getpid,40000,0,0.98,2.55,3.54,,4,linear
+syscall_loop,passthrough-getpid,100000,124,,,,,1,HANG-timeout90s
+syscall_loop,passthrough-getpid,100000,124,,,,,4,HANG-timeout120s
+# marginal slopes (startup subtracted): yield 2000->10000 user=21.25us sys=46.25us wall=58.75us user/cpu=31%; getpid 5000->40000 user=24.86us sys=56.29us wall=81.43us user/cpu=31%
