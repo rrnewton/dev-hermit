@@ -351,11 +351,15 @@ pub enum ValidateLockError {
     ReleaseNotOwner { agent: String, holder: String },
     #[error("validate-lock: child command is empty")]
     EmptyChild,
-    #[error("validate-lock: --child-deadline must be positive; unbounded lock holders are forbidden")]
+    #[error(
+        "validate-lock: --child-deadline must be positive; unbounded lock holders are forbidden"
+    )]
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
-    #[error("validate-lock: {operation}: process {pid} owns the supervised lease, not this process")]
+    #[error(
+        "validate-lock: {operation}: process {pid} owns the supervised lease, not this process"
+    )]
     ProcessNotOwner { operation: &'static str, pid: u32 },
     #[error("validate-lock: cannot reclaim lease: {0}")]
     ReclaimNotProven(String),
@@ -370,10 +374,7 @@ impl ValidateLockError {
             | Self::ReclaimNotProven(_)
             | Self::GuardTimeout
             | Self::InvalidState(_) => 3,
-            Self::Io { .. }
-            | Self::EmptyChild
-            | Self::UnboundedChildDeadline
-            | Self::BadMax => 2,
+            Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline | Self::BadMax => 2,
         }
     }
 }
@@ -737,8 +738,8 @@ impl ValidateLock {
         // Admission: block FIFO, or refuse immediately under --no-wait. Never
         // silently admit a second box-exclusive holder.
         if args.no_wait {
-            let token =
-                self.with_guard(|| self.try_acquire(&args.agent, args.kind, &args.target, args.hold))?;
+            let token = self
+                .with_guard(|| self.try_acquire(&args.agent, args.kind, &args.target, args.hold))?;
             match token {
                 AcquireToken::Acquired => eprintln!(
                     "validate-lock: ACQUIRED by {} running {} {} (lease {}s)",
@@ -812,7 +813,11 @@ impl ValidateLock {
             .process_group(0)
             .spawn();
         let outcome = match spawn_result {
-            Ok(mut child) => Ok(supervise_child(&mut child, args.child_deadline, &args.target)),
+            Ok(mut child) => Ok(supervise_child(
+                &mut child,
+                args.child_deadline,
+                &args.target,
+            )),
             Err(source) => Err(source),
         };
         let _ = stop_tx.send(());
@@ -1159,9 +1164,7 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
 /// the direct child. `signal_group` is reused from landing_lock.
 fn terminate_child_group(child: &mut Child, target: &str) {
     let group = format!("-{}", child.id());
-    eprintln!(
-        "validate-lock: child-deadline reached for {target}; SIGTERM process group {group}"
-    );
+    eprintln!("validate-lock: child-deadline reached for {target}; SIGTERM process group {group}");
     signal_group("TERM", &group);
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
@@ -1266,7 +1269,8 @@ mod tests {
         };
         // agent1 holds the box as a validate.
         assert_eq!(
-            lock.acquire("agent1", Kind::Validate, "sha1", 0, 60).unwrap(),
+            lock.acquire("agent1", Kind::Validate, "sha1", 0, 60)
+                .unwrap(),
             0
         );
 
@@ -1307,7 +1311,8 @@ mod tests {
         // Release agent1; the queued agent2 (head of FIFO) then acquires.
         lock.release("agent1", false).unwrap();
         assert_eq!(
-            lock.acquire("agent2", Kind::Validate, "sha2", 0, 60).unwrap(),
+            lock.acquire("agent2", Kind::Validate, "sha2", 0, 60)
+                .unwrap(),
             0
         );
         let holder = lock.read_holder().unwrap().unwrap();

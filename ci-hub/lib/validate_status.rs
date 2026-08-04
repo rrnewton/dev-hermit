@@ -673,7 +673,7 @@ mod tests {
         // is removed and covered by `uncounted_pre_count_pass_is_not_validated`.
         // (schema_version, executed, filtered, coverage)
         let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 4] = [
-            (1, Some(1), Some(0), None),  // old schema carrying counts
+            (1, Some(1), Some(0), None),    // old schema carrying counts
             (1, Some(47), Some(693), None), // old schema carrying counts, legit filters
             (COUNTS_SCHEMA, Some(36), Some(0), Some(sat_coverage(13))), // count-capable green
             (COUNTS_SCHEMA, Some(332), Some(693), Some(sat_coverage(13))), // count-capable, legit filters
@@ -748,8 +748,8 @@ mod tests {
         let rows = vec![clean_full_pass(PASS_SHA), clean_full_pass(OTHER_SHA)];
         assert_eq!(resolve_sha(&rows, "cde3c11").unwrap(), PASS_SHA);
         assert!(resolve_sha(&rows, "deadbeef").is_err()); // no match
-        // "a" prefixes only OTHER_SHA here, so it is unambiguous; a shared
-        // prefix across two distinct commits must error.
+                                                          // "a" prefixes only OTHER_SHA here, so it is unambiguous; a shared
+                                                          // prefix across two distinct commits must error.
         let mut third = clean_full_pass("cdefffffffffffffffffffffffffffffffffffff");
         third.finished_at = Some("2026-08-03T20:00:00Z".into());
         let rows2 = vec![clean_full_pass(PASS_SHA), third];
