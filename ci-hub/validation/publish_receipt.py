@@ -81,18 +81,32 @@ def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
-def build_receipt(repo: str, sha: str, row: dict[str, Any]) -> tuple[dict[str, Any], bytes, str]:
-    log_path = Path(row["log_file"])
-    if not log_path.is_absolute() or not log_path.is_file():
-        fail(f"ledger log is not a readable absolute file: {log_path}")
-    log_digest = hashlib.sha256(log_path.read_bytes()).hexdigest()
+def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
+    source = Path(row["log_file"])
+    if not source.is_absolute() or not source.is_file():
+        fail(f"ledger log is not a readable absolute file: {source}")
+    evidence_dir = ledger.parent / "validation-evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    started = "".join(ch for ch in row["started_at"] if ch.isalnum())
+    destination = evidence_dir / f"{sha}-{started}.log"
+    content = source.read_bytes()
+    if destination.exists() and destination.read_bytes() != content:
+        fail(f"durable log path already contains different content: {destination}")
+    if not destination.exists():
+        destination.write_bytes(content)
+    return destination
+
+
+def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -> tuple[dict[str, Any], bytes, str]:
+    log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
     run_id = f"{sha}@{row['started_at']}"
     receipt = {
         "schema_version": 1,
         "repository": repo,
         "commit": sha,
         "run_id": run_id,
-        "log_file": str(log_path),
+        "source_log_file": row["log_file"],
+        "durable_log_file": str(durable_log),
         "log_sha256": log_digest,
         "ledger_record": row,
     }
@@ -219,7 +233,8 @@ def main() -> int:
     if len(args.sha) != 40 or any(ch not in "0123456789abcdef" for ch in args.sha):
         fail("--sha must be exactly 40 lowercase hex characters")
     row = qualifying_row(read_rows(args.ledger), args.sha)
-    receipt, body, digest = build_receipt(args.repo, args.sha, row)
+    durable_log = preserve_log(args.ledger, args.sha, row)
+    receipt, body, digest = build_receipt(args.repo, args.sha, row, durable_log)
     path = f"validation-receipts/{args.repo}/{args.sha}/{digest}.json"
     if args.dry_run:
         print(json.dumps({"action": "would-publish-and-bind", "path": path,

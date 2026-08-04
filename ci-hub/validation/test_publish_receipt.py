@@ -39,10 +39,14 @@ class ReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             row = self.row(Path(directory))
             selected = MODULE.qualifying_row([row], "a" * 40)
-            receipt, body, digest = MODULE.build_receipt("rrnewton/hermit", "a" * 40, selected)
+            durable = MODULE.preserve_log(Path(directory) / "ledger.jsonl", "a" * 40, selected)
+            receipt, body, digest = MODULE.build_receipt(
+                "rrnewton/hermit", "a" * 40, selected, durable
+            )
             self.assertEqual(receipt["ledger_record"]["executed_tests"], 12)
             self.assertEqual(receipt["commit"], "a" * 40)
             self.assertEqual(len(receipt["log_sha256"]), 64)
+            self.assertTrue(Path(receipt["durable_log_file"]).is_file())
             self.assertEqual(MODULE.hashlib.sha256(body).hexdigest(), digest)
 
     def test_zero_executed_is_refused(self):
