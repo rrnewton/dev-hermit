@@ -10,11 +10,18 @@ Two engines:
   works on 3pai hosts.
 
 * ``planner`` (opt-in, ``--engine planner``) — adapts the pinned
-  agent-utils/pr-landing-planner, which additionally does per-PR local
-  ``git fetch`` + ``merge-tree`` file-overlap conflict detection. That fan-out
-  is slow (~1.35s/PR) and, on BpfJailer-enforced 3pai hosts, its network git
-  fetches are intermittently blocked (FILE_OPEN denials) or hang, so it is no
-  longer the default.
+  agent-utils/pr-landing-planner and runs REAL ``git merge-tree`` conflict
+  detection over the open set (``--conflict-detector merge-tree``). The thing
+  that once made this look expensive was never the analysis: one merge-tree
+  base-conflict probe is ~36.5ms local (measured 2026-08-04, 40 probes over
+  rrnewton/hermit's 107 open PRs; whole open set vs main ~4s). The real cost
+  was a per-PR ``git fetch`` fan-out (21.5s over 25 heads), which agent-utils
+  PR #14 collapses to ONE batched fetch (0.85s, ~25x). ``gh`` stays the DEFAULT
+  for the every-tick path because it needs no local ``git fetch`` at all and is
+  the only path that works under 3pai BpfJailer (where the planner's network
+  fetch is intermittently blocked with FILE_OPEN denials or hangs). Reach for
+  ``--engine planner`` on a planning run, where real conflict data is worth the
+  one fetch.
 
 Why the ``gh`` default and the loudness discipline below matter: this is the
 sanctioned ops tool, dispatched every PR-status tick. Its previous per-PR git
@@ -52,9 +59,16 @@ DEFAULT_WARN_THRESHOLD = 10
 MAX_FETCH_ATTEMPTS = 3
 
 # Timeout basis (derived, not a plausible constant):
-#   planner engine — measured 2026-08-03 on devbig014: the reverie planner
-#   completed in 35.17s for 26 open PRs => ~1.35s per PR of sequential proxied
-#   `git fetch`. Hermit had 128 open PRs => ~173s happy-path; combined ~208s.
+#   planner engine — the binding cost is the FETCH, not the conflict analysis.
+#   With the pre-#14 pinned agent-utils it fetches per PR: measured 2026-08-03
+#   on devbig014, the reverie planner completed in 35.17s for 26 open PRs =>
+#   ~1.35s/PR of sequential proxied `git fetch` (hermit's 128 open PRs =>
+#   ~173s happy-path; combined ~208s), which is what these budgets are sized
+#   for. agent-utils PR #14 collapses that fan-out to ONE batched fetch (0.85s
+#   over 25 heads, ~25x), after which the whole planning run is dominated by
+#   fetch-once + cheap local merge-tree probes (~36.5ms each; open set vs main
+#   ~4s). The `merge-tree` conflict flip in planner_command adds only those
+#   cheap local probes, not more fetching, so these budgets stay ample.
 #   gh engine — a single `gh pr list` API call per repo returns in a few
 #   seconds regardless of PR count, so the same budgets are comfortably ample
 #   headroom for network variance and leave a stalled call bounded.
@@ -643,8 +657,21 @@ def planner_command(repo: str, warn_threshold: int) -> list[str]:
         "with-proxy",
         "--gh-cmd",
         "gh",
+        # Real merge-tree conflict detection, ON for planning runs (this is the
+        # opt-in `--engine planner` path, NOT the every-tick `gh` default). It
+        # was previously pinned to `file-overlap` on the theory that real
+        # conflict analysis is an "expensive fan-out" — a conservative default
+        # nobody had measured. Measured 2026-08-04 (denominator: 40 probes over
+        # rrnewton/hermit's 107 open PRs): one `git merge-tree` base-conflict
+        # probe = 36.5 ms local; the whole open set vs main ~4 s. The real cost
+        # was never the analysis — it was a per-PR `git fetch` fan-out (21.5 s
+        # over 25 hermit heads), which agent-utils PR #14 collapses to ONE
+        # batched fetch (0.85 s, ~25x). So real conflict data over the full open
+        # set costs seconds. A stated derivation cannot silently rot back into a
+        # guess. `gh` stays the default for the every-tick path (no local fetch;
+        # the only path that works under 3pai BpfJailer); planning runs opt in.
         "--conflict-detector",
-        "file-overlap",
+        "merge-tree",
         "--gate-check",
         "merge-gate" if repo == "rrnewton/hermit" else "Merge Gate",
         "--format",
@@ -931,8 +958,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("CI_HUB_PR_STATUS_ENGINE", "gh"),
         help=(
             "status backend: 'gh' (default; single proxied gh API call, no "
-            "per-PR git fetch) or 'planner' (agent-utils per-PR fetch + "
-            "file-overlap conflict detection)"
+            "per-PR git fetch) or 'planner' (agent-utils, real merge-tree "
+            "conflict detection over the open set; use on planning runs)"
         ),
     )
     parser.add_argument(
