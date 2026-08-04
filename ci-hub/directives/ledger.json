@@ -44,7 +44,10 @@
       "owner": "hermit-247",
       "source_row": "2",
       "parent_id": "remove-cgroups-agent-utils",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "f80b1c09a6e8c3ed21a2a1d5ecd57edac4862de0"
+      }
     },
     {
       "id": "unsafe-strip-lines-rename",
@@ -166,7 +169,10 @@
       "owner": "hermit-243",
       "source_row": "8",
       "parent_id": null,
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "aa41b45ab1953a260968424aa9948c1c00b82b60"
+      }
     },
     {
       "id": "dbi-to-dbt-rename",
@@ -279,7 +285,10 @@
       "owner": "hermit-ptw",
       "source_row": "16",
       "parent_id": null,
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "5c9ff32310bced510288decb6b5278e020407a99"
+      }
     },
     {
       "id": "track-owner-tooling-directives",
