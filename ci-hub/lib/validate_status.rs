@@ -310,7 +310,12 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
         return FailureDisposition::NeedsRerun;
     }
 
-    let contended = row.concurrent_validates.is_some_and(|count| count > 0);
+    // The measured #1592 false-red bracket was -j16 FAIL versus solo -j4 PASS.
+    // Width itself creates intra-run Cargo package/build-directory contention;
+    // it does not require a second validate process. Therefore either observed
+    // peer overlap OR width above the measured safe rerun width needs remeasure.
+    let contended = row.concurrent_validates.is_some_and(|count| count > 0)
+        || row.dag_jobs.is_some_and(|jobs| jobs > 4);
     let flaky = row.known_flaky_failure == Some(true);
     if contended || flaky {
         let confirmed = row.solo_rerun_confirmation == Some(true)
@@ -564,6 +569,18 @@ mod tests {
         let mut contended = complete_failure(PASS_SHA);
         contended.concurrent_validates = Some(1);
         assert_eq!(assess(&[contended], PASS_SHA).verdict, Verdict::NeedsRerun);
+
+        // The exact #1592 class: one validate, but a -j16 lane contends with its
+        // own Cargo nodes. The same non-flaky complete failure at solo -j4 is a
+        // genuine failure; width is not decorative metadata.
+        let mut wide = complete_failure(PASS_SHA);
+        wide.dag_jobs = Some(16);
+        wide.concurrent_validates = Some(0);
+        assert_eq!(assess(&[wide], PASS_SHA).verdict, Verdict::NeedsRerun);
+        assert_eq!(
+            assess(&[complete_failure(PASS_SHA)], PASS_SHA).verdict,
+            Verdict::FailedOnRecord
+        );
 
         let mut flaky = complete_failure(PASS_SHA);
         flaky.known_flaky_failure = Some(true);
