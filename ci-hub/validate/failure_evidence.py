@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 from typing import Mapping
@@ -105,6 +106,114 @@ _INFRA_SIGNATURES = (
 
 _NODE_PREFIX_RE = per_node_counts.__globals__["_NODE_PREFIX_RE"]
 
+# An error-DIAGNOSTIC line, as emitted by rustc/cargo/gcc/clang/ld/collect2. Two
+# shapes: a body that STARTS with ``error:`` / ``error[E0432]:`` (rustc, cargo),
+# and a tool/file-prefixed ``<something>: error:`` (``collect2: error:``,
+# ``ld: error:``, ``<file>:<line>: error:``). This is matched against a node's own
+# stream line AFTER the ``[tag] `` prefix is stripped, so it is a FACT about the
+# failing node, not a proxy — it records verbatim what the toolchain printed.
+_ERROR_LINE_RE = re.compile(r"(?:^|[:\s])error(?:\[[^\]]*\])?:\s")
+
+# Cargo's build-ORCHESTRATION envelopes: cargo prints one of these for EVERY
+# build-script / compile / doc failure, then re-prints the real diagnostic the
+# child emitted (under ``Caused by:`` / ``--- stderr``). The envelope names only
+# the crate, never the cause, so two totally unrelated failures (a corrupt
+# DynamoRIO archive vs a stale ``--locked`` Cargo.lock) both surface as
+# ``error: failed to run custom build command for <crate>``. ``first_error_line``
+# therefore skips these envelopes to reach the first SUBSTANTIVE error line,
+# falling back to the envelope only when the node emitted nothing more specific.
+_CARGO_ENVELOPES = (
+    "error: failed to run custom build command for ",
+    "error: could not compile ",
+    "error: failed to compile ",
+    "error: could not document ",
+    "error: build failed",
+)
+
+# Linker-driver ENVELOPES: the exact analogue of the cargo envelopes above for the
+# LINK step. ``collect2: error: ld returned 1 exit status`` (and the bare
+# ``error: ld returned N exit status``) is emitted for EVERY link failure
+# regardless of cause, so two totally unrelated link failures share it verbatim —
+# it names no symbol and no library. ``first_error_line`` therefore treats it as an
+# envelope and skips it to reach the substantive ``undefined reference`` diagnostic
+# below, falling back to it only when the node emitted nothing more specific.
+_LINK_ENVELOPES = (
+    "collect2: error:",
+    "error: ld returned ",
+)
+
+# A linker symbol-resolution diagnostic. GNU ld prints
+# ``<site>: undefined reference to `<symbol>'`` with NO ``error:`` token, so
+# ``_ERROR_LINE_RE`` alone never sees it — yet it is the single most interpretable
+# fact a link failure carries: WHICH symbol is unresolved, hence WHICH library.
+# It is recognized as a substantive error line so it wins over the generic
+# collect2/ld envelopes and lets two DynamoRIO link failures with different missing
+# symbols be told apart from the ledger row alone (the task's "error string is a
+# fact" for the fedc81ed DynamoRIO fault). ``undefined reference to`` in the log
+# stream is a toolchain diagnostic, never product test output.
+_LINKER_DIAG_SUBSTR = "undefined reference to "
+
+# Ledger rows must stay bounded; a path- or URL-bearing error line can be long.
+_FIRST_ERROR_LINE_CAP = 500
+
+
+def _bounded_error_line(line: str) -> str:
+    if len(line) <= _FIRST_ERROR_LINE_CAP:
+        return line
+    return line[: _FIRST_ERROR_LINE_CAP - 1] + "…"
+
+
+def _is_error_diagnostic(line: str) -> bool:
+    """Whether ``line`` (already stream-prefix-stripped) is a toolchain error
+    diagnostic worth surfacing: an ``error:``/``error[E…]:`` line from
+    rustc/cargo/gcc/clang/ld, OR a GNU-ld ``undefined reference to `<symbol>'``
+    line, which carries no ``error:`` token yet is the substantive cause of a link
+    failure."""
+    return bool(_ERROR_LINE_RE.search(line)) or _LINKER_DIAG_SUBSTR in line
+
+
+def _is_generic_envelope(line: str) -> bool:
+    """Whether ``line`` is a build-ORCHESTRATION envelope that names only the
+    crate/step, never the cause — cargo's ``failed to run custom build command``
+    family or the linker driver's ``collect2: error: ld returned N``. These are
+    skipped so ``first_error_line`` reaches the substantive diagnostic beneath
+    them, and used only as a last-resort fallback."""
+    if any(line.startswith(env) for env in _CARGO_ENVELOPES):
+        return True
+    return any(env in line for env in _LINK_ENVELOPES)
+
+
+def _first_error_line_for(log_text: str, node: str) -> str | None:
+    """The first SUBSTANTIVE error-diagnostic line on ``node``'s own stream, or
+    None when the node emitted no error-shaped line at all.
+
+    Order-preserving and node-scoped: iterate the node's lines in emission order,
+    skip generic build-orchestration envelopes (cargo's ``failed to run custom
+    build command`` family and the linker's ``collect2: error: ld returned N``),
+    and return the first remaining substantive error line verbatim
+    (leading/trailing stream whitespace trimmed, length-capped). A GNU-ld
+    ``undefined reference to `<symbol>'`` line counts as substantive even though it
+    lacks an ``error:`` token — it names the unresolved symbol (hence the library),
+    the actual fact behind a link failure. If every error line the node emitted IS
+    an envelope, the first envelope is returned rather than None — the crate name
+    is still a fact, just a weaker one. Returns None only when the node emitted no
+    error line: a triager then falls back to the sub-step/fault classification,
+    never to a fabricated string. This is the interpretable "error string is a
+    fact" field — it lets two failures sharing one gate name AND one failing node
+    (``build.runtime_release`` dying on a truncated-object DynamoRIO link failure
+    vs a stale ``--locked`` Cargo.lock) be told apart from the ledger row alone,
+    without reopening the log."""
+    fallback: str | None = None
+    for body in _node_lines(log_text, node):
+        line = body.strip()
+        if not _is_error_diagnostic(line):
+            continue
+        if fallback is None:
+            fallback = line
+        if not _is_generic_envelope(line):
+            return _bounded_error_line(line)
+    return _bounded_error_line(fallback) if fallback is not None else None
+
 
 def _node_lines(log_text: str, node: str) -> list[str]:
     """Lines of the merged DAG stream attributed to ``node`` by its ``[tag] ``
@@ -135,7 +244,8 @@ def classify_failed_substeps(
 
     For every node that terminated ``✗ FAIL`` this returns one record:
     ``{"node", "group", "sub_step_class", "fault_class", "infra_signature",
-    "known_flaky"}`` — sorted by node. This is the read-side answer to
+    "first_error_line", "known_flaky"}`` — sorted by node. This is the read-side
+    answer to
     "one-gate-name-for-three-unrelated-causes": instead of a single lane name and
     exit=1, a consumer sees WHICH node failed, whether it is a build/prep step or
     a product test, and whether the failure is an INFRASTRUCTURE fault (corrupt
@@ -168,6 +278,7 @@ def classify_failed_substeps(
                 "sub_step_class": sub_step,
                 "fault_class": fault,
                 "infra_signature": signature,
+                "first_error_line": _first_error_line_for(log_text, node),
                 "known_flaky": fault == "code"
                 and sub_step == "lane-run"
                 and cell in registry,

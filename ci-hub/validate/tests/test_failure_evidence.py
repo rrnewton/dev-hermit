@@ -254,5 +254,154 @@ def test_no_failures_yields_empty():
     assert classify_failed_substeps(log) == []
 
 
+# --- first_error_line: an error STRING is a fact, a gate name is a proxy -------
+# The task's decisive lesson: fedc81ed and 1fad135d BOTH failed `portable CI DAG
+# manifest` at the SAME node build.runtime_release on 2026-08-04 — gate name AND
+# node name identical — yet with COMPLETELY UNRELATED causes (a DynamoRIO link
+# failure vs a stale `--locked` Cargo.lock). Four wrong theories were built over
+# hours before anyone opened the logs. The `first_error_line` field carries the
+# first substantive error line INTO the ledger row so the two are attributable
+# from the row alone. Bodies below are verbatim excerpts from
+# /tmp/hermit-validate.u7wd6E.log (fedc81ed) and .UMwz5g.log (1fad135d).
+
+def test_first_error_line_distinguishes_same_gate_same_node_failures():
+    fedc81ed = _fail(
+        "build.runtime_release",
+        "error: failed to run custom build command for `reverie-dbi v0.2.0`",
+        "  scheduler_impl.h:1325: undefined reference to "
+        "`dynamorio::drmemtrace::scheduler_impl_tmpl_t<...>::set_cur_input'",
+        "  collect2: error: ld returned 1 exit status",
+    )
+    fad135d = _fail(
+        "build.runtime_release",
+        "error: failed to run custom build command for `hermit-install v0.2.0`",
+        "  error: cannot update the lock file "
+        "/w/hermit/liteinst-runtime-build/Cargo.lock because --locked was passed "
+        "to prevent this",
+    )
+    [f] = classify_failed_substeps(fedc81ed)
+    [d] = classify_failed_substeps(fad135d)
+    # Same gate, same failing node — the ONLY discriminator is the error string.
+    assert f["node"] == d["node"] == "build.runtime_release"
+    # Both the cargo build-orchestration envelope AND the generic linker envelope
+    # (`collect2: error: ld returned 1`) are SKIPPED so the substantive cause — the
+    # unresolved DynamoRIO symbol — surfaces verbatim. This is the task's stated
+    # known answer for fedc81ed (`...::set_cur_input`), not the cause-free wrapper.
+    assert f["first_error_line"] == (
+        "scheduler_impl.h:1325: undefined reference to "
+        "`dynamorio::drmemtrace::scheduler_impl_tmpl_t<...>::set_cur_input'"
+    )
+    assert d["first_error_line"] == (
+        "error: cannot update the lock file "
+        "/w/hermit/liteinst-runtime-build/Cargo.lock because --locked was passed "
+        "to prevent this"
+    )
+    assert f["first_error_line"] != d["first_error_line"]
+
+
+def test_first_error_line_separates_two_different_link_failures():
+    # The "one gate name, N causes" problem recurses at the error-line level: the
+    # generic `collect2: error: ld returned 1 exit status` is identical for EVERY
+    # link failure, so surfacing it would leave two unrelated link faults
+    # indistinguishable. Surfacing the `undefined reference to <symbol>` line
+    # instead separates them by the missing symbol (hence library).
+    dynamorio = _fail(
+        "build.runtime_release",
+        "  launcher.cpp:300: undefined reference to "
+        "`dynamorio::drmemtrace::op_verbose'",
+        "  collect2: error: ld returned 1 exit status",
+    )
+    product = _fail(
+        "build.runtime_release",
+        "  main.cpp:42: undefined reference to `my_product::widget::init()'",
+        "  collect2: error: ld returned 1 exit status",
+    )
+    [a] = classify_failed_substeps(dynamorio)
+    [b] = classify_failed_substeps(product)
+    assert a["first_error_line"] == (
+        "launcher.cpp:300: undefined reference to "
+        "`dynamorio::drmemtrace::op_verbose'"
+    )
+    assert b["first_error_line"] == (
+        "main.cpp:42: undefined reference to `my_product::widget::init()'"
+    )
+    assert a["first_error_line"] != b["first_error_line"]
+    # ... and the class still separates them: the dynamorio symbol is an infra
+    # signature, the product symbol is not.
+    assert a["fault_class"] == "infrastructure"
+    assert b["fault_class"] == "code"
+
+
+def test_first_error_line_falls_back_to_link_envelope_when_only_envelope():
+    # A link failure whose node emitted the collect2 envelope but NO
+    # `undefined reference` line (e.g. output truncated) still records the envelope
+    # rather than None — a weaker fact, but a fact.
+    log = _fail("build.runtime_release", "  collect2: error: ld returned 1 exit status")
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == "collect2: error: ld returned 1 exit status"
+
+
+def test_first_error_line_matches_rustc_coded_error():
+    log = _fail("build.workspace", "error[E0432]: unresolved import `foo::bar`")
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == "error[E0432]: unresolved import `foo::bar`"
+
+
+def test_first_error_line_falls_back_to_envelope_when_only_envelope():
+    # A node whose ONLY error line is cargo's envelope still records the crate
+    # name (a weaker fact) rather than None.
+    log = _fail(
+        "build.workspace",
+        "error: could not compile `foo` (lib) due to 1 previous error",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == (
+        "error: could not compile `foo` (lib) due to 1 previous error"
+    )
+
+
+def test_first_error_line_is_none_without_an_error_line():
+    # A failing node that printed no error-diagnostic line yields None — never a
+    # fabricated string; the triager falls back to the fault classification.
+    log = _fail("test.cli", "test result: FAILED. 0 passed; 1 failed")
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] is None
+
+
+def test_first_error_line_ignores_the_word_error_without_a_colon():
+    log = _fail(
+        "test.cli",
+        "the test exercises error handling paths",
+        "warning: deprecated api in use",
+        "test result: FAILED. 0 passed; 1 failed",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] is None
+
+
+def test_first_error_line_does_not_leak_across_nodes():
+    log = (
+        _fail(
+            "build.runtime_release",
+            "  error: cannot update the lock file X because --locked was passed",
+        )
+        + _fail("test.cli", "test result: FAILED. 0 passed; 1 failed")
+    )
+    recs = {r["node"]: r for r in classify_failed_substeps(log)}
+    assert recs["build.runtime_release"]["first_error_line"] == (
+        "error: cannot update the lock file X because --locked was passed"
+    )
+    # test.cli emitted no error line of its own — it must not inherit the other
+    # node's error string.
+    assert recs["test.cli"]["first_error_line"] is None
+
+
+def test_first_error_line_is_length_bounded():
+    log = _fail("build.workspace", "error: " + "x" * 2000)
+    [rec] = classify_failed_substeps(log)
+    assert len(rec["first_error_line"]) <= 500
+    assert rec["first_error_line"].endswith("…")
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
