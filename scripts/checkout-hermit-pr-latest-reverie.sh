@@ -9,14 +9,15 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  checkout-pr-latest-reverie.sh \
+  checkout-hermit-pr-latest-reverie.sh \
     --repo <clean-hermit-worktree> [--push] <pr> [<pr> ...]
 
 The command resolves latest Reverie main itself. Optional
 --target-sha <40-hex> asserts an expected tip and fails if it is stale.
 
 The operation is fail-closed and sequential per PR:
-  fetch -> verify disjoint -> merge current Hermit main -> regenerate pins ->
+  fetch -> verify PR state -> merge current Hermit main -> run the checker's
+  derived --update-to-latest mutation ->
   commit -> full validate at the exact commit -> non-force push (with --push).
 
 Without --push, the validated candidate remains local. Evidence is written to
@@ -128,6 +129,9 @@ fi
 
 note "fetching authoritative tips"
 with-proxy git -C "$repo" fetch origin main
+git -C "$repo" show refs/remotes/origin/main:scripts/check-reverie-pin.rs | \
+  grep -Fq -- '--update-to-latest' || \
+  die "current Hermit main lacks the authoritative pin updater; land #1591 first"
 
 for pr in "${prs[@]}"; do
   operation_started=$(date +%s)
@@ -146,12 +150,6 @@ for pr in "${prs[@]}"; do
   [[ $base == main ]] || die "PR #$pr base is $base, not main"
   [[ $head_owner == rrnewton ]] || die "PR #$pr is from fork owner $head_owner"
   [[ $old_head =~ ^[0-9a-f]{40}$ ]] || die "PR #$pr has invalid head SHA"
-
-  # This batch is only for PRs whose original change is mechanically disjoint
-  # from Reverie manifests, locks, and backend integration code.
-  adjacent=$(with-proxy gh pr view "$pr" -R rrnewton/hermit --json files --jq \
-    '.files[].path' | rg '(^|/)Cargo\.lock$|^detcore|^hermit-cli/|^hermit-install/|^liteinst-runtime-build/' || true)
-  [[ -z $adjacent ]] || die "PR #$pr is Reverie-adjacent; semantic review required: $adjacent"
 
   # Each candidate gets the freshest Hermit base. The target Reverie tip must
   # remain fixed for the full batch; any movement stops before another PR.
@@ -174,33 +172,20 @@ for pr in "${prs[@]}"; do
   fi
   pin_base=$(git -C "$repo" rev-parse HEAD)
 
-  # The authoritative checker defines the tracked Cargo metadata domain and
-  # rejects inconsistent/diverged input before this command mutates it.
+  # check-reverie-pin.rs is the single authority for BOTH the derived Cargo
+  # metadata domain and its mutation. A compatibility path with a hand-written
+  # file list would recreate the drift this command exists to prevent.
+  "$repo/scripts/check-reverie-pin.rs" --help | \
+    grep -Fq -- '--update-to-latest' || \
+    die "PR #$pr: current Hermit main lacks the authoritative pin updater; land #1591 first"
+  note "PR #$pr: deriving and updating every Reverie pin site via the checker"
   (
     cd "$repo"
-    with-proxy ./scripts/check-reverie-pin.rs --reverie-main "$target"
+    with-proxy ./scripts/check-reverie-pin.rs --update-to-latest
   )
-
-  mapfile -d '' manifests < <(git -C "$repo" ls-files -z -- \
-    Cargo.toml ':(glob)**/Cargo.toml')
-  changed_manifests=0
-  for manifest in "${manifests[@]}"; do
-    path="$repo/$manifest"
-    rg -q 'git = "https://github.com/rrnewton/reverie\.git"' "$path" || continue
-    TARGET_SHA=$target perl -pi -e \
-      'if (/git\s*=\s*"https:\/\/github\.com\/rrnewton\/reverie\.git"/) { s/(rev\s*=\s*")[0-9a-f]{7,40}(")/$1$ENV{TARGET_SHA}$2/g; }' \
-      "$path"
-    ((changed_manifests += 1))
-  done
-  ((changed_manifests > 0)) || die "PR #$pr: no Reverie manifests found"
-
-  note "PR #$pr: regenerating root and LiteInst lockfiles for $target"
-  (
-    cd "$repo"
-    with-proxy cargo update -p reverie-core --precise "$target"
-    with-proxy cargo update --manifest-path liteinst-runtime-build/Cargo.toml \
-      -p reverie-liteinst --precise "$target"
-  )
+  updated_pin=$("$repo/scripts/check-reverie-pin.rs" --print-pin)
+  [[ $updated_pin == "$target" ]] || \
+    die "PR #$pr: checker updated to $updated_pin, expected $target"
 
   unexpected=$(git -C "$repo" diff --name-only "$pin_base" -- | \
     rg -v '(^|/)Cargo\.(toml|lock)$' || true)
@@ -218,10 +203,7 @@ for pr in "${prs[@]}"; do
     'github\.com/rrnewton/reverie[^"#]*(rev = "|\?rev=)[0-9a-f]{7,40}' \
     -- '*Cargo.toml' '*Cargo.lock' | rg -v "$target" || true)
   [[ -z $bad_pins ]] || die "PR #$pr: stale/mixed Reverie pins remain: $bad_pins"
-  (
-    cd "$repo"
-    with-proxy ./scripts/check-reverie-pin.rs --reverie-main "$target"
-  )
+  (cd "$repo" && with-proxy ./scripts/check-reverie-pin.rs)
 
   mapfile -t pin_paths < <(git -C "$repo" diff --name-only "$pin_base" -- \
     | rg '(^|/)Cargo\.(toml|lock)$')

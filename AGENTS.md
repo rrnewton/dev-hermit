@@ -225,6 +225,24 @@ current `rrnewton/hermit:main`.
 
 ### Feature Branch Rules — **ALWAYS COMMIT ON FEATURE BRANCHES**
 
+#### Existing Hermit PR Checkout
+
+Never validate an existing Hermit PR against the historical Reverie pin stored
+in its branch. Checkout and preparation are one operation:
+
+```bash
+scripts/checkout-hermit-pr-latest-reverie.sh \
+  --repo worktrees/<slot>/hermit [--push] <pr>
+```
+
+The command fetches the current Hermit and Reverie main branches, checks out the
+PR without rewriting its history, merges current Hermit main, asks
+`check-reverie-pin.rs --update-to-latest` to derive and update every tracked pin
+site, reports the changed files, commits the pin update, and runs full validation
+at that exact commit. `--push` publishes the validated candidate with a
+non-force push. A stale pin is a hard validation failure; do not run raw
+`gh pr checkout` followed by validation as a substitute.
+
 **Every mutating agent must finish with all intended work committed on its task feature branch. Never
 stash. Never leave intended work uncommitted. An uncommitted or stashed handoff is incomplete.**
 
