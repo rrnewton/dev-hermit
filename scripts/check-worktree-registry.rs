@@ -1,0 +1,271 @@
+#!/usr/bin/env rust-script
+//! Verify that worktree-state.json and ACTIVE.md describe the checked-out branches.
+//!
+//! ```cargo
+//! [dependencies]
+//! serde_json = "1"
+//! ```
+
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::process::{exit, Command};
+
+const BEGIN: &str =
+    "<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->";
+const END: &str = "<!-- END worktree-state -->";
+
+const USAGE: &str = r#"Usage: check-worktree-registry.rs [--root PATH]
+
+Fail unless every worktree-state.json branch agrees with the actual checkout and
+the managed ACTIVE.md row agrees with worktree-state.json. Detached expectations
+may be `detached` (any detached SHA) or `detached:<sha-prefix>` (exact prefix).
+"#;
+
+#[derive(Debug)]
+enum Actual {
+    Absent,
+    Branch(String),
+    Detached(String),
+    Unreadable(String),
+}
+
+fn die(message: &str) -> ! {
+    eprintln!("worktree-registry: ERROR {message}");
+    exit(2);
+}
+
+fn find_root() -> PathBuf {
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        if dir.join(".gitmodules").is_file() && dir.join("worktrees").is_dir() {
+            return dir;
+        }
+        if !dir.pop() {
+            die("could not locate dev-hermit root; pass --root PATH");
+        }
+    }
+}
+
+fn git(path: &Path, args: &[&str]) -> (bool, String, String) {
+    let output = Command::new("git").arg("-C").arg(path).args(args).output();
+    match output {
+        Ok(output) => (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ),
+        Err(error) => (false, String::new(), error.to_string()),
+    }
+}
+
+fn actual_checkout(path: &Path) -> Actual {
+    if !path.exists() {
+        return Actual::Absent;
+    }
+    let (inside, _, error) = git(path, &["rev-parse", "--is-inside-work-tree"]);
+    if !inside {
+        return Actual::Unreadable(if error.is_empty() {
+            "not a git worktree".to_string()
+        } else {
+            error
+        });
+    }
+    let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if on_branch && !branch.is_empty() {
+        return Actual::Branch(branch);
+    }
+    let (has_head, head, error) = git(path, &["rev-parse", "HEAD"]);
+    if has_head && !head.is_empty() {
+        Actual::Detached(head)
+    } else {
+        Actual::Unreadable(error)
+    }
+}
+
+fn actual_display(actual: &Actual) -> String {
+    match actual {
+        Actual::Absent => "-".to_string(),
+        Actual::Branch(branch) => branch.clone(),
+        Actual::Detached(head) => format!("detached:{}", &head[..head.len().min(12)]),
+        Actual::Unreadable(reason) => format!("unreadable:{reason}"),
+    }
+}
+
+fn matches_expected(expected: &str, actual: &Actual) -> bool {
+    if expected == "-" {
+        return matches!(actual, Actual::Absent);
+    }
+    if expected == "detached" {
+        return matches!(actual, Actual::Detached(_));
+    }
+    if let Some(prefix) = expected.strip_prefix("detached:") {
+        return matches!(actual, Actual::Detached(head) if head.starts_with(prefix));
+    }
+    matches!(actual, Actual::Branch(branch) if branch == expected)
+}
+
+fn active_rows(path: &Path) -> BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|error| die(&format!("read {}: {error}", path.display())));
+    let begin = text
+        .find(BEGIN)
+        .unwrap_or_else(|| die(&format!("{} lacks managed BEGIN marker", path.display())));
+    let after_begin = begin + BEGIN.len();
+    let end = text[after_begin..]
+        .find(END)
+        .map(|offset| after_begin + offset)
+        .unwrap_or_else(|| die(&format!("{} lacks managed END marker", path.display())));
+
+    let mut rows = BTreeMap::new();
+    for line in text[after_begin..end].lines() {
+        if !line.starts_with('|') || line.starts_with("| ---") || line.starts_with("| Slot ") {
+            continue;
+        }
+        let cells: Vec<String> = line
+            .trim_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_string())
+            .collect();
+        if cells.len() != 8 {
+            die(&format!("malformed ACTIVE.md managed row: {line}"));
+        }
+        let slot = cells[0].clone();
+        if rows.insert(slot.clone(), cells).is_some() {
+            die(&format!("duplicate ACTIVE.md managed row for slot {slot}"));
+        }
+    }
+    rows
+}
+
+fn state_row(slot: &str, state: &Value) -> Vec<String> {
+    let agents = state["agents"].as_array().cloned().unwrap_or_default();
+    let owner = agents
+        .iter()
+        .find(|agent| !agent["read_only"].as_bool().unwrap_or(false))
+        .and_then(|agent| agent["name"].as_str())
+        .unwrap_or("-");
+    let read_only: Vec<&str> = agents
+        .iter()
+        .filter(|agent| agent["read_only"].as_bool().unwrap_or(false))
+        .filter_map(|agent| agent["name"].as_str())
+        .collect();
+    let agent_cell = if read_only.is_empty() {
+        owner.to_string()
+    } else {
+        format!("{owner} (+ro: {})", read_only.join(", "))
+    };
+    vec![
+        slot.to_string(),
+        agent_cell,
+        state["hermit_branch"].as_str().unwrap_or("-").to_string(),
+        state["reverie_branch"].as_str().unwrap_or("-").to_string(),
+        state["liteinst2_branch"]
+            .as_str()
+            .unwrap_or("-")
+            .to_string(),
+        state["task"].as_str().unwrap_or("-").to_string(),
+        state["status"].as_str().unwrap_or("active").to_string(),
+        if read_only.is_empty() { "no" } else { "shared" }.to_string(),
+    ]
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut root = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                if i >= args.len() {
+                    die("--root requires a path");
+                }
+                root = Some(PathBuf::from(&args[i]));
+            }
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                return;
+            }
+            other => die(&format!("unknown argument {other}\n\n{USAGE}")),
+        }
+        i += 1;
+    }
+    let root = root.unwrap_or_else(find_root);
+    let state_path = root.join("worktree-state.json");
+    let state_text = std::fs::read_to_string(&state_path)
+        .unwrap_or_else(|error| die(&format!("read {}: {error}", state_path.display())));
+    let state: Value = serde_json::from_str(&state_text)
+        .unwrap_or_else(|error| die(&format!("parse {}: {error}", state_path.display())));
+    let slots = state["slots"]
+        .as_object()
+        .unwrap_or_else(|| die("worktree-state.json lacks object field 'slots'"));
+    let active = active_rows(&root.join("worktrees/ACTIVE.md"));
+
+    let mut issues: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut drift_cells = 0usize;
+    for (slot, entry) in slots {
+        match active.get(slot) {
+            Some(row) if row == &state_row(slot, entry) => {}
+            Some(row) => issues.entry(slot.clone()).or_default().push(format!(
+                "ACTIVE_ROW recorded={row:?} state={:?}",
+                state_row(slot, entry)
+            )),
+            None => issues
+                .entry(slot.clone())
+                .or_default()
+                .push("ACTIVE_ROW missing".to_string()),
+        }
+
+        for product in ["hermit", "reverie", "liteinst2"] {
+            let expected = entry[format!("{product}_branch")].as_str().unwrap_or("-");
+            let relative = entry[format!("{product}_path")]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(format!("worktrees/{slot}/{product}")));
+            let actual = actual_checkout(&root.join(relative));
+            if !matches_expected(expected, &actual) {
+                drift_cells += 1;
+                issues.entry(slot.clone()).or_default().push(format!(
+                    "{product} recorded={expected} actual={}",
+                    actual_display(&actual)
+                ));
+            }
+        }
+    }
+
+    let state_names: BTreeSet<&String> = slots.keys().collect();
+    for slot in active.keys() {
+        if !state_names.contains(slot) {
+            issues
+                .entry(slot.clone())
+                .or_default()
+                .push("ACTIVE_ROW has no worktree-state entry".to_string());
+        }
+    }
+
+    for (slot, slot_issues) in &issues {
+        for issue in slot_issues {
+            eprintln!("DRIFT slot={slot} {issue}");
+        }
+    }
+    let rows = state_names
+        .iter()
+        .map(|name| name.as_str())
+        .chain(active.keys().map(|name| name.as_str()))
+        .collect::<BTreeSet<_>>()
+        .len();
+    let drift_rows = issues.len();
+    let correct_rows = rows.saturating_sub(drift_rows);
+    let product_cells = rows * 3;
+    if issues.is_empty() {
+        println!(
+            "worktree-registry: PASS rows={rows} correct_rows={correct_rows} drift_rows=0 product_cells={product_cells} drift_cells=0"
+        );
+    } else {
+        eprintln!(
+            "worktree-registry: FAIL rows={rows} correct_rows={correct_rows} drift_rows={drift_rows} product_cells={product_cells} drift_cells={drift_cells}"
+        );
+        exit(1);
+    }
+}

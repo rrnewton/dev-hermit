@@ -79,8 +79,8 @@ Options:
   --i-promise-this-agent-is-read-mostly
                       Join an already-owned slot as an ADDITIONAL read-only
                       agent instead of failing the collision check.
-  --check-only        Run the workspace homeostasis check (disk cap, languishing
-                      slots, slot sprawl) and exit WITHOUT allocating anything.
+  --check-only        Run registry branch/content consistency plus workspace
+                      homeostasis, then exit WITHOUT allocating anything.
   -h, --help          Show this help.
 
 Homeostasis (ADVISORY, never blocks — allocation always completes): every
@@ -587,6 +587,15 @@ fn main() {
     if check_only {
         let root = find_root();
         homeostasis_check(&root);
+        let checker = root.join("scripts/check-worktree-registry.rs");
+        let root_arg = root.to_string_lossy().into_owned();
+        let status = Command::new(&checker)
+            .args(["--root", root_arg.as_str()])
+            .status()
+            .unwrap_or_else(|error| die(&format!("run {}: {error}", checker.display())));
+        if !status.success() {
+            exit(status.code().unwrap_or(1));
+        }
         return;
     }
 

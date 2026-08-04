@@ -108,12 +108,15 @@ git -C reverie worktree list --porcelain
 git -C liteinst2 worktree list --porcelain
 find worktrees -mindepth 1 -maxdepth 3 -name .git -print | sort
 cat worktree-state.json
+scripts/check-worktree-registry.rs
 ```
 
 Resolve any of: a physical checkout not in its repo's registry; a registered
 worktree whose dir is missing; a live slot absent from ACTIVE.md; an ACTIVE.md
 row for a missing slot; duplicate rows; a branch checked out by two worktrees;
-any path not matching `worktrees/<slot>/{hermit,reverie,liteinst2}`.
+any path not matching `worktrees/<slot>/{hermit,reverie,liteinst2}`. The final
+command compares every managed row and product branch against the live checkout
+and exits nonzero on drift; a counts-only comparison is not reconciliation.
 
 ---
 
