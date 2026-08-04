@@ -637,6 +637,10 @@ remotely readable receipt containing the exact counted ledger row and log digest
 well-shaped comment that points at no such receipt is not evidence. Derive the safe concurrency
 against total cores before fanning out records; do not guess (contended runs are a recurring bug class).
 
+The Hermit Merge Gate must execute `ci-hub/validation/verify_receipt.sh` from an
+immutable parent commit, never from the pull request under test. A PR-controlled
+verifier can authorize itself even when the workflow YAML is separately pinned.
+
 ## Product Vision
 
 `goal-hermit-v2` is the long-term end state: a robust deterministic execution engine whose `run`/`record`
