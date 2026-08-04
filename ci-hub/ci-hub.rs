@@ -556,6 +556,13 @@ struct AttributeRedsArgs {
     /// is evicted. Safe to run on every landing.
     #[arg(long)]
     persist: bool,
+    /// Maintenance: backfill first_error_line for records an older extractor
+    /// persisted null whose log still survives (the idempotency key excludes
+    /// first_error_line, so --persist alone never re-fires). Atomic in-place
+    /// rewrite of ignored/validate-red-attribution.jsonl — do NOT run
+    /// concurrently with --persist.
+    #[arg(long)]
+    refill: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -1646,6 +1653,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 }
                 if red_args.persist {
                     forwarded.push("--persist".into());
+                }
+                if red_args.refill {
+                    forwarded.push("--refill".into());
                 }
                 run_python(root, "ci-hub/validate/attribute_reds.py", forwarded)
             }
