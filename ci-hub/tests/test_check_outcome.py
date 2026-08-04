@@ -20,6 +20,20 @@ from check_outcome import (
 
 
 class CheckOutcomeContractTests(unittest.TestCase):
+    def test_every_admission_consumer_routes_latest_selection_through_authority(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        consumers = {
+            "ci-hub/health/pr_status.py": "select_latest_checks",
+            "ci-hub/health/github_main_health.py": "select_latest_workflow_attempts",
+            "ci-hub/remediation/protocol.py": "select_latest_workflow_attempts",
+            "ci-hub/history/query.py": "select_latest_workflow_attempts",
+            "ci-hub/landing/land-pr.sh": "--select-latest-run",
+        }
+        for relative, authority_call in consumers.items():
+            with self.subTest(consumer=relative):
+                source = (root / relative).read_text()
+                self.assertIn(authority_call, source)
+
     def test_legitimate_passes_remain_passed_n2(self) -> None:
         # N=2 positive controls: CheckRun and legacy StatusContext shapes.
         cases = (("completed", "success"), ("", "SUCCESS"))
