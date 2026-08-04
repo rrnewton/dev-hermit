@@ -1,0 +1,25 @@
+{
+  "experiment": "coordinator-rpc-leverb-ceiling",
+  "date": "2026-08-04",
+  "task": "perf_coordinator_roundtrip_reduction",
+  "question": "Before building a shared-mem+futex transport (lever B), what is the CEILING of per-hop kernel-cost reduction vs the current ~7-syscall UDS coordinator RPC hop, and how much of that ceiling requires the transport rewrite vs a cheap guest-side trim?",
+  "harness": "src/rpc_ceiling_bench.c",
+  "command": "cc -O2 -pthread -o rpc_ceiling_bench rpc_ceiling_bench.c && ./rpc_ceiling_bench 200000 20000 64",
+  "params": { "iters": 200000, "warmup": 20000, "payload_bytes": 64, "K": 1 },
+  "timing": "CLOCK_MONOTONIC per round-trip; medians + IQR over 200k samples",
+  "host": "devbig014.atn7.facebook.com",
+  "cores": 316,
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "toolchain": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+  "concurrent_load_at_measurement": {
+    "loadavg_1m_start": 53.24,
+    "loadavg_1m_end": 46.97,
+    "note": "drain validates carrying the box concurrently; single K=1 bench process, 2 threads, no fan-out. Absolute ns are load-sensitive; inter-mode DELTAS at the same pin are same-run/same-load and are the robust signal."
+  },
+  "source_scope_pins_for_context": {
+    "hermit": "b4e94ce4455daef251e10af2174c6998c1ae1a4d",
+    "reverie": "04a46b43930b918f6ff0f6b53644df732f908c46",
+    "note": "Standalone C microbench; does NOT link hermit/reverie. Pins recorded only to anchor the source-scope (ai_docs/2026-08-04-coordinator-roundtrip-reduction-scope.md) that motivated the comparands."
+  },
+  "harness_fidelity_caveat": "uds_full issues 3 writes (1B+3B header split + payload) vs the real guest's 2 writes (4B header + payload), so uds_full carries ~8 syscalls vs the real ~7 (overcount of 1 write, a few hundred ns). Conclusion is unaffected: the guest-side-trim delta dominates regardless."
+}
