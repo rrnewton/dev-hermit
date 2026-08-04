@@ -801,12 +801,21 @@ impl ValidateLock {
         let now = epoch_seconds()?;
         let holder = self.read_holder()?;
         let liveness = self.owner_liveness()?;
+        // The authoritative owner PROCESS IDENTITY, read from the flock-guarded
+        // owner sidecar (the ONLY writer is an actual `validate-lock run`/lease
+        // acquisition). Consumers that must prove a run descends from the live
+        // lease holder -- e.g. hermit validate.sh's admission guard -- MUST read
+        // owner_pid/owner_boot_id/owner_start_ticks from HERE, never from an env
+        // var or an agent-writable file, because only a real acquisition writes
+        // this record. boot_id defeats reboots; start_ticks defeats PID reuse.
+        let process_owner = self.read_process_owner()?;
         match holder {
             Some(holder) if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) => {
                 println!("ORPHANED (reclaimable):");
                 for line in holder.render().lines() {
                     println!("  {line}");
                 }
+                print_owner_identity(process_owner.as_ref());
                 println!("  owner_process={}", render_liveness(&liveness));
                 println!("  secs_left={}", holder.expires_at - now);
             }
@@ -815,6 +824,7 @@ impl ValidateLock {
                 for line in holder.render().lines() {
                     println!("  {line}");
                 }
+                print_owner_identity(process_owner.as_ref());
                 println!("  owner_process={}", render_liveness(&liveness));
                 println!("  secs_left={}", holder.expires_at - now);
             }
@@ -823,6 +833,7 @@ impl ValidateLock {
                 for line in holder.render().lines() {
                     println!("  {line}");
                 }
+                print_owner_identity(process_owner.as_ref());
                 println!("  owner_process={}", render_liveness(&liveness));
             }
             None => println!("FREE"),
@@ -1245,6 +1256,21 @@ fn render_liveness(liveness: &OwnerLiveness) -> String {
         OwnerLiveness::Alive => "alive".into(),
         OwnerLiveness::Dead(reason) => format!("dead:{reason}"),
         OwnerLiveness::Unknown(reason) => format!("unknown:{reason}"),
+    }
+}
+
+/// Emit the authoritative owner process identity in a stable, greppable form so
+/// a consumer can bind admission to *actually descending from the live lease
+/// owner*. Only a real lease acquisition writes the owner sidecar under the
+/// flock guard, so these lines cannot be produced without holding the lease --
+/// unlike an env var or a hand-written file, which any agent can forge. A legacy
+/// or manual lease with no sidecar prints nothing here, so a consumer that
+/// requires owner_pid will correctly refuse to treat it as admission.
+fn print_owner_identity(owner: Option<&ProcessOwner>) {
+    if let Some(owner) = owner {
+        println!("  owner_pid={}", owner.pid);
+        println!("  owner_boot_id={}", owner.boot_id);
+        println!("  owner_start_ticks={}", owner.start_ticks);
     }
 }
 
