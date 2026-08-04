@@ -205,7 +205,7 @@ class OperationalBoundsTest(unittest.TestCase):
             (("local-history", "--json", "--since", "2999-01-01"), {0}, self.env),
             (
                 (
-                    "newest-green-main",
+                    "newest-green",
                     "--no-fetch",
                     "--ledger",
                     str(self.temp / "missing-ledger.jsonl"),

@@ -1,6 +1,6 @@
 //! Shared local-validate history query engine.
 //!
-//! Both owner-facing directions use this index: `newest-green-main` scans main
+//! Both owner-facing directions use this index: `newest-green` scans a branch
 //! newest-to-oldest for the latest passing evidence, while `first-bad` scans
 //! recorded observations for the newest PASS -> FAIL transition. Keeping the
 //! commit ordering and evidence rules here prevents the two answers drifting.
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-pub const NEWEST_GREEN_CACHE_REL: &str = "ignored/ci-hub/newest-green-main-cache.json";
+pub const NEWEST_GREEN_CACHE_REL: &str = "ignored/ci-hub/newest-green-cache.json";
 pub const CELL_EVIDENCE_CACHE_REL: &str = "ignored/ci-hub/local-cell-evidence-cache.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -45,8 +45,9 @@ pub struct ValidationEvidence {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct NewestGreenReport {
     pub schema_version: u32,
-    pub main_tip: String,
-    pub main_ref: String,
+    pub branch: String,
+    pub branch_ref: String,
+    pub branch_tip: String,
     pub green: ValidationEvidence,
     pub commits_after_green: usize,
     pub commits_without_any_record: usize,
@@ -56,6 +57,8 @@ pub struct NewestGreenReport {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct FirstBadReport {
     pub schema_version: u32,
+    pub branch: String,
+    pub branch_ref: String,
     pub query: String,
     pub matched_name: String,
     pub first_bad: ValidationEvidence,
@@ -73,8 +76,9 @@ pub struct FirstBadReport {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NewestGreenCache {
     pub schema_version: u32,
-    pub main_tip: String,
-    pub main_ref: String,
+    pub branch: String,
+    pub branch_ref: String,
+    pub branch_tip: String,
     pub ledger_path: String,
     pub ledger_len: u64,
     pub ledger_modified_ns: u128,
@@ -99,9 +103,9 @@ pub struct CellEvidenceCache {
 
 #[derive(Clone, Debug)]
 pub enum NewestGreenOutcome {
-    Found(NewestGreenReport),
-    FailedOnly { main_tip: String, recorded: usize },
-    NoEvidence { main_tip: String },
+    Found(Box<NewestGreenReport>),
+    FailedOnly { branch_tip: String, recorded: usize },
+    NoEvidence { branch_tip: String },
 }
 
 #[derive(Clone, Debug)]
@@ -129,7 +133,7 @@ pub struct HistoryQueryEngine {
 }
 
 impl HistoryQueryEngine {
-    /// `commits` are first-parent main commits in newest-to-oldest order.
+    /// `commits` are first-parent branch commits in newest-to-oldest order.
     pub fn new(commits: Vec<String>, rows: Vec<HistoryRow>) -> Self {
         let main: BTreeSet<&str> = commits.iter().map(String::as_str).collect();
         let mut rows_by_commit: BTreeMap<String, Vec<HistoryRow>> = BTreeMap::new();
@@ -150,8 +154,8 @@ impl HistoryQueryEngine {
         }
     }
 
-    pub fn newest_green(&self, main_ref: &str) -> NewestGreenOutcome {
-        let main_tip = self.commits.first().cloned().unwrap_or_default();
+    pub fn newest_green(&self, branch: &str, branch_ref: &str) -> NewestGreenOutcome {
+        let branch_tip = self.commits.first().cloned().unwrap_or_default();
         let mut recorded = 0usize;
         for (index, sha) in self.commits.iter().enumerate() {
             let Some(rows) = self.rows_by_commit.get(sha) else {
@@ -171,23 +175,27 @@ impl HistoryQueryEngine {
                 .count();
             let report = NewestGreenReport {
                 schema_version: 1,
-                main_tip,
-                main_ref: main_ref.to_string(),
+                branch: branch.to_string(),
+                branch_ref: branch_ref.to_string(),
+                branch_tip,
                 green: evidence(sha, row),
                 commits_after_green: newer.len(),
                 commits_without_any_record: missing,
                 commits_with_records: newer.len() - missing,
             };
-            return NewestGreenOutcome::Found(report);
+            return NewestGreenOutcome::Found(Box::new(report));
         }
         if recorded > 0 {
-            NewestGreenOutcome::FailedOnly { main_tip, recorded }
+            NewestGreenOutcome::FailedOnly {
+                branch_tip,
+                recorded,
+            }
         } else {
-            NewestGreenOutcome::NoEvidence { main_tip }
+            NewestGreenOutcome::NoEvidence { branch_tip }
         }
     }
 
-    pub fn first_bad(&self, query: &str) -> FirstBadOutcome {
+    pub fn first_bad(&self, query: &str, branch: &str, branch_ref: &str) -> FirstBadOutcome {
         let normalized = normalize(query);
         let mut available = BTreeSet::new();
         let mut observations: Vec<(usize, String, GateHistoryRow, HistoryRow)> = Vec::new();
@@ -273,6 +281,8 @@ impl HistoryQueryEngine {
                 .collect();
             return FirstBadOutcome::Found(Box::new(FirstBadReport {
                 schema_version: 1,
+                branch: branch.to_string(),
+                branch_ref: branch_ref.to_string(),
                 query: query.to_string(),
                 matched_name: bad.2.name.clone(),
                 first_bad: gate_evidence(&bad.1, &bad.3, &bad.2),
@@ -620,15 +630,17 @@ fn load_context(row: &HistoryRow) -> Option<String> {
 
 pub fn cache_matches(
     cache: &NewestGreenCache,
-    main_tip: &str,
-    main_ref: &str,
+    branch: &str,
+    branch_ref: &str,
+    branch_tip: &str,
     ledger_path: &Path,
     ledger_len: u64,
     ledger_modified_ns: u128,
 ) -> bool {
     cache.schema_version == 2
-        && cache.main_tip == main_tip
-        && cache.main_ref == main_ref
+        && cache.branch == branch
+        && cache.branch_ref == branch_ref
+        && cache.branch_tip == branch_tip
         && cache.ledger_path == ledger_path.display().to_string()
         && cache.ledger_len == ledger_len
         && cache.ledger_modified_ns == ledger_modified_ns
@@ -684,7 +696,7 @@ mod tests {
             row("green", "2026-08-03T01:00:00Z", "full", "selective", "pass"),
         ];
         let NewestGreenOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).newest_green("origin/main")
+            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
         else {
             panic!("expected green")
         };
@@ -715,7 +727,7 @@ mod tests {
             ),
         ];
         let FirstBadOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).first_bad("cell")
+            HistoryQueryEngine::new(commits, rows).first_bad("cell", "main", "origin/main")
         else {
             panic!("expected transition")
         };
@@ -745,7 +757,7 @@ mod tests {
             ),
         ];
         let FirstBadOutcome::Found(report) =
-            HistoryQueryEngine::new(commits, rows).first_bad("cell")
+            HistoryQueryEngine::new(commits, rows).first_bad("cell", "main", "origin/main")
         else {
             panic!("expected retained historical transition")
         };
@@ -774,17 +786,19 @@ mod tests {
         let mut dirty = row("tip", "2026-08-03T01:00:00Z", "full", "full", "pass");
         dirty.tree_dirty = Some(true);
         assert!(matches!(
-            HistoryQueryEngine::new(vec!["tip".into()], vec![dirty]).newest_green("origin/main"),
+            HistoryQueryEngine::new(vec!["tip".into()], vec![dirty])
+                .newest_green("main", "origin/main"),
             NewestGreenOutcome::NoEvidence { .. }
         ));
     }
 
     #[test]
-    fn cache_invalidates_on_main_tip_or_ledger_change() {
+    fn cache_invalidates_on_branch_tip_or_ledger_change() {
         let report = NewestGreenReport {
             schema_version: 1,
-            main_tip: "tip-a".into(),
-            main_ref: "origin/main".into(),
+            branch: "main".into(),
+            branch_ref: "origin/main".into(),
+            branch_tip: "tip-a".into(),
             green: evidence(
                 "tip-a",
                 &row("tip-a", "2026-08-03T01:00:00Z", "full", "full", "pass"),
@@ -795,8 +809,9 @@ mod tests {
         };
         let cache = NewestGreenCache {
             schema_version: 2,
-            main_tip: "tip-a".into(),
-            main_ref: "origin/main".into(),
+            branch: "main".into(),
+            branch_ref: "origin/main".into(),
+            branch_tip: "tip-a".into(),
             ledger_path: "/tmp/ledger".into(),
             ledger_len: 100,
             ledger_modified_ns: 200,
@@ -805,24 +820,27 @@ mod tests {
         let path = Path::new("/tmp/ledger");
         assert!(cache_matches(
             &cache,
-            "tip-a",
+            "main",
             "origin/main",
+            "tip-a",
             path,
             100,
             200
         ));
         assert!(!cache_matches(
             &cache,
+            "main",
+            "origin/main",
             "tip-b",
-            "origin/main",
             path,
             100,
             200
         ));
         assert!(!cache_matches(
             &cache,
-            "tip-a",
+            "main",
             "origin/main",
+            "tip-a",
             path,
             101,
             201

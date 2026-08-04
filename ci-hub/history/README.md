@@ -94,13 +94,14 @@ command reruns validation:
 
 ```bash
 # Most recent main commit whose latest clean, anchored local run passed.
-ci-hub/ci-hub newest-green-main
+ci-hub/ci-hub newest-green
 
 # Newest retained PASS -> FAIL transition for an outer gate, DAG node, or test.
 ci-hub/ci-hub first-bad liteinst_detcore_strict_verify_micro_suite
 ```
 
-`newest-green-main` prints the exact profile and selection mode. A full/full
+`newest-green` defaults to `--branch main` and prints the exact profile and
+selection mode. A full/full
 result is labelled `full`; a smart-selected or narrower-profile run is labelled
 with that weaker guarantee. It also counts newer commits with no ledger record.
 Its cache is keyed by both the fetched `origin/main` tip and the ledger length +

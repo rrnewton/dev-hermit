@@ -49,6 +49,57 @@ const DEFAULT_WARN_THRESHOLD: usize = 10;
 const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
 const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
+const ROOT_HELP: &str = r#"Typed front door for dev-hermit CI state and operations
+
+Usage: ci-hub <COMMAND>
+
+START HERE
+  Begin with fleet-wide truth and ownership before narrowing the question.
+  quickstart              Print the opinionated five-step agent workflow
+  health                  Combine main CI, open PRs, and remediation obligations
+  active-work             Reconcile tasks, owners, and live ORC agents
+
+HISTORY & FORENSICS
+  Ask what is healthy, which branch commit was last green, and where failure began.
+  main-health             Query current main-branch GitHub workflow health
+  newest-green            Find the newest locally-green commit [default: --branch main]
+  first-bad               Find a retained PASS -> FAIL transition for a cell or gate
+  validate-status         Check whether one SHA has a clean full-validation receipt
+  local-history           Inspect local validate receipts across slots and worktrees
+  history                 Query the retained GitHub Actions timeline
+  refresh-history         Ingest fresh GitHub and local history into the local store
+  validate-worktrees      Show registered worktree validation runs
+
+PR & RUNNER HEALTH
+  Inspect live pull-request admission, runner capacity, and host pressure.
+  pr-status               Pull fresh open-PR CI status [alias: fresh]
+  runner-health           Summarize self-hosted runners and recent workflows
+  load-probe              Measure whether the host can safely start sensitive work
+  tick                    Run due scheduled operational-health gates
+
+LANDING & BATCH CONTROL
+  Serialize landings and manage the explicit policy state that gates them.
+  land-lock               Acquire, renew, inspect, or release the fleet landing mutex
+  apply-local-label       Label PR heads backed by a clean full-validation receipt
+  ci-mode                 Inspect or change constrained CI admission mode
+  batch                   Inspect or edit the named current CI batch
+
+POST-LAND REMEDIATION
+  Arm, discover, watch, and resolve durable exact-SHA verification obligations.
+  arm-land                Arm concurrent local and GitHub verification after a land
+  obligations             List open or actionable speculative-land obligations
+  inherit-obligations     Let a fresh lander claim obligations from a recycled agent
+  watch-obligations       Poll verifier state and trigger failure remediation
+  record-obligation-wake  Record an ORC wake-delivery attempt
+  resolve-obligation      Record a completed fix-forward or revert
+
+Run `ci-hub <COMMAND> --help` for exhaustive flags and `ci-hub quickstart` for
+the short operational workflow.
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+"#;
 const AGENT_QUICKSTART: &str = r#"ci-hub agent quickstart
 
 FOR: dev-hermit operational CI truth, local validation receipts, landing locks,
@@ -69,7 +120,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
 3. Recover local validation evidence after an agent or pane disappears:
      ./ci-hub/ci-hub local-history --since YYYY-MM-DD
      ./ci-hub/ci-hub validate-worktrees --runs 10
-     ./ci-hub/ci-hub newest-green-main
+     ./ci-hub/ci-hub newest-green
      ./ci-hub/ci-hub first-bad CELL_OR_GATE
    Receipts live under ignored/ci-hub and identify slot, SHA, profile, dirty
    state, result, wall seconds, and CPU seconds. Newest-green reports whether
@@ -97,7 +148,8 @@ pure and performs no workspace discovery, filesystem writes, or network calls.
     name = "ci-hub",
     about = "Typed front door for dev-hermit CI state and operations",
     version,
-    propagate_version = true
+    propagate_version = true,
+    override_help = ROOT_HELP
 )]
 struct Cli {
     #[command(subcommand)]
@@ -145,8 +197,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
-    /// Find the newest main commit whose latest local validation passed.
-    NewestGreenMain(NewestGreenMainArgs),
+    /// Find the newest branch commit whose latest local validation passed.
+    NewestGreen(NewestGreenArgs),
     /// Find the newest recorded PASS -> FAIL transition for a local cell or gate.
     FirstBad(FirstBadArgs),
     /// Apply `locally-validated` to PRs whose head has a clean full-validate record.
@@ -418,16 +470,16 @@ struct ValidateStatusArgs {
 
 #[derive(Args, Clone, Debug)]
 struct HistoryQueryArgs {
-    /// Hermit checkout whose first-parent main history is queried.
+    /// Hermit checkout whose first-parent branch history is queried.
     #[arg(long, default_value = "hermit")]
     repo_dir: PathBuf,
-    /// Main ref to walk, newest first.
-    #[arg(long, default_value = "origin/main")]
-    main_ref: String,
+    /// Remote branch to walk, newest first.
+    #[arg(long, default_value = "main")]
+    branch: String,
     /// Override the canonical local validate ledger.
     #[arg(long)]
     ledger: Option<PathBuf>,
-    /// Do not refresh origin/main before querying (offline/reproducible use).
+    /// Do not refresh origin/<branch> before querying (offline/reproducible use).
     #[arg(long)]
     no_fetch: bool,
     /// Emit a versioned machine-readable report.
@@ -436,13 +488,13 @@ struct HistoryQueryArgs {
 }
 
 #[derive(Args, Clone, Debug)]
-struct NewestGreenMainArgs {
+struct NewestGreenArgs {
     #[command(flatten)]
     query: HistoryQueryArgs,
     /// Override the cache path.
     #[arg(long)]
     cache: Option<PathBuf>,
-    /// Ignore a valid cache and recompute from the same ledger and main tip.
+    /// Ignore a valid cache and recompute from the same ledger and branch tip.
     #[arg(long)]
     no_cache: bool,
 }
@@ -772,9 +824,9 @@ impl HubCommand {
                 tool: "ci-hub/local-history",
                 basis: "not measured: ledger/store scan cost history is not retained".into(),
             },
-            Self::NewestGreenMain(_) => CostSpec {
-                tool: "ci-hub/newest-green-main",
-                basis: "not measured: one bounded main fetch plus local first-parent/ledger query; cache may avoid the query but not freshness check".into(),
+            Self::NewestGreen(_) => CostSpec {
+                tool: "ci-hub/newest-green",
+                basis: "not measured: one bounded branch fetch plus local first-parent/ledger query; cache may avoid the query but not freshness check".into(),
             },
             Self::FirstBad(_) => CostSpec {
                 tool: "ci-hub/first-bad",
@@ -1264,7 +1316,7 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
-        HubCommand::NewestGreenMain(args) => run_newest_green_main(root, args),
+        HubCommand::NewestGreen(args) => run_newest_green(root, args),
         HubCommand::FirstBad(args) => run_first_bad(root, args),
         HubCommand::ApplyLocalLabel(args) => run_apply_local_label(root, args),
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
@@ -2356,12 +2408,13 @@ fn history_repo_path(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn fetch_history_ref(repo: &Path, main_ref: &str) -> Result<(), CiHubError> {
-    let Some((remote, branch)) = main_ref.split_once('/') else {
+fn fetch_history_branch(repo: &Path, branch: &str) -> Result<(), CiHubError> {
+    if branch.is_empty() || branch.starts_with('-') {
         return Err(CiHubError::HistoryQuery(format!(
-            "cannot refresh main ref '{main_ref}'; use REMOTE/BRANCH or pass --no-fetch"
+            "invalid branch name '{branch}'"
         )));
-    };
+    }
+    let remote = "origin";
     let refspec = format!("refs/heads/{branch}:refs/remotes/{remote}/{branch}");
     let mut command = if on_path("with-proxy") {
         let mut command = Command::new("with-proxy");
@@ -2389,11 +2442,11 @@ fn fetch_history_ref(repo: &Path, main_ref: &str) -> Result<(), CiHubError> {
     Ok(())
 }
 
-fn main_history(repo: &Path, main_ref: &str) -> Result<Vec<String>, CiHubError> {
+fn branch_history(repo: &Path, branch_ref: &str) -> Result<Vec<String>, CiHubError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["rev-list", "--first-parent", main_ref])
+        .args(["rev-list", "--first-parent", branch_ref])
         .output()
         .map_err(|source| CiHubError::Launch {
             tool: "git rev-list main for history query".into(),
@@ -2401,7 +2454,7 @@ fn main_history(repo: &Path, main_ref: &str) -> Result<Vec<String>, CiHubError> 
         })?;
     if !output.status.success() {
         return Err(CiHubError::HistoryQuery(format!(
-            "cannot walk {main_ref}: {}",
+            "cannot walk {branch_ref}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
@@ -2413,7 +2466,7 @@ fn main_history(repo: &Path, main_ref: &str) -> Result<Vec<String>, CiHubError> 
         .collect();
     if commits.is_empty() {
         return Err(CiHubError::HistoryQuery(format!(
-            "{main_ref} has no commits"
+            "{branch_ref} has no commits"
         )));
     }
     Ok(commits)
@@ -2573,8 +2626,9 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         report.green.coverage.as_str(),
     );
     println!(
-        "MAIN-TIP {} commits-after-green={} recorded={} no-record={} cache={}",
-        report.main_tip,
+        "BRANCH {} tip={} commits-after-green={} recorded={} no-record={} cache={}",
+        report.branch,
+        report.branch_tip,
         report.commits_after_green,
         report.commits_with_records,
         report.commits_without_any_record,
@@ -2588,13 +2642,14 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
     }
 }
 
-fn run_newest_green_main(root: &Path, args: NewestGreenMainArgs) -> Result<i32, CiHubError> {
+fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubError> {
     let repo = history_repo_path(root, &args.query.repo_dir);
+    let branch_ref = format!("origin/{}", args.query.branch);
     if !args.query.no_fetch {
-        fetch_history_ref(&repo, &args.query.main_ref)?;
+        fetch_history_branch(&repo, &args.query.branch)?;
     }
-    let commits = main_history(&repo, &args.query.main_ref)?;
-    let main_tip = commits.first().expect("nonempty history");
+    let commits = branch_history(&repo, &branch_ref)?;
+    let branch_tip = commits.first().expect("nonempty history");
     let ledger = ledger_path(root, &args.query.ledger);
     let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
     let cache_path = history_queries::cache_path(root, &args.cache);
@@ -2602,8 +2657,9 @@ fn run_newest_green_main(root: &Path, args: NewestGreenMainArgs) -> Result<i32, 
         if let Some(cache) = read_newest_green_cache(&cache_path) {
             if history_queries::cache_matches(
                 &cache,
-                main_tip,
-                &args.query.main_ref,
+                &args.query.branch,
+                &branch_ref,
+                branch_tip,
                 &ledger,
                 ledger_len,
                 ledger_modified_ns,
@@ -2616,34 +2672,40 @@ fn run_newest_green_main(root: &Path, args: NewestGreenMainArgs) -> Result<i32, 
 
     let mut rows = load_ledger_rows(&ledger)?;
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows).newest_green(&args.query.main_ref) {
+    match HistoryQueryEngine::new(commits, rows)
+        .newest_green(&args.query.branch, &branch_ref)
+    {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
                 schema_version: 2,
-                main_tip: report.main_tip.clone(),
-                main_ref: args.query.main_ref,
+                branch: report.branch.clone(),
+                branch_ref: report.branch_ref.clone(),
+                branch_tip: report.branch_tip.clone(),
                 ledger_path: ledger.display().to_string(),
                 ledger_len,
                 ledger_modified_ns,
-                report: report.clone(),
+                report: (*report).clone(),
             };
             write_newest_green_cache(&cache_path, &cache)?;
             print_newest_green(&report, false, args.query.json);
             Ok(0)
         }
-        NewestGreenOutcome::FailedOnly { main_tip, recorded } => {
+        NewestGreenOutcome::FailedOnly {
+            branch_tip,
+            recorded,
+        } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "main_tip": main_tip, "trustworthy_recorded_commits": recorded}));
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "trustworthy_recorded_commits": recorded}));
             } else {
-                println!("NEWEST-GREEN FAILED main-tip={main_tip} -- {recorded} main commit(s) have clean anchored records, but none has a latest PASS");
+                println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} -- {recorded} branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch);
             }
             Ok(3)
         }
-        NewestGreenOutcome::NoEvidence { main_tip } => {
+        NewestGreenOutcome::NoEvidence { branch_tip } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "main_tip": main_tip}));
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip}));
             } else {
-                println!("NEWEST-GREEN NOT-VALIDATED main-tip={main_tip} -- no clean commit-anchored main validation record exists");
+                println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} -- no clean commit-anchored branch validation record exists", args.query.branch);
             }
             Ok(4)
         }
@@ -2711,6 +2773,7 @@ fn print_first_bad(report: &history_queries::FirstBadReport, json: bool) {
         report.first_bad.profile,
         report.first_bad.selection_mode,
     );
+    println!("BRANCH {} ref={}", report.branch, report.branch_ref);
     println!(
         "LAST-GOOD {} observed={} commits-between={} no-cell-record={} first-bad-mixed={}",
         report.last_good.sha,
@@ -2740,10 +2803,11 @@ fn print_first_bad(report: &history_queries::FirstBadReport, json: bool) {
 
 fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
     let repo = history_repo_path(root, &args.query.repo_dir);
+    let branch_ref = format!("origin/{}", args.query.branch);
     if !args.query.no_fetch {
-        fetch_history_ref(&repo, &args.query.main_ref)?;
+        fetch_history_branch(&repo, &args.query.branch)?;
     }
-    let commits = main_history(&repo, &args.query.main_ref)?;
+    let commits = branch_history(&repo, &branch_ref)?;
     let main_set: std::collections::BTreeSet<&str> =
         commits.iter().map(String::as_str).collect();
     let ledger = ledger_path(root, &args.query.ledger);
@@ -2755,7 +2819,11 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             .unwrap_or(false)
     });
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows).first_bad(&args.cell_or_gate) {
+    match HistoryQueryEngine::new(commits, rows).first_bad(
+        &args.cell_or_gate,
+        &args.query.branch,
+        &branch_ref,
+    ) {
         FirstBadOutcome::Found(mut report) => {
             report.files_touched = files_touched(&repo, &report.first_bad.sha)?;
             report.plausibility = assess_diff_plausibility(
@@ -2771,7 +2839,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             failure,
         } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "query": query, "matched_name": matched_name, "failure": failure, "reason": "failure exists but no earlier PASS is retained"}));
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "query": query, "matched_name": matched_name, "failure": failure, "reason": "failure exists but no earlier PASS is retained"}));
             } else {
                 println!("FIRST-BAD FAILED cell={matched_name} sha={} -- failure exists but no earlier PASS is retained", failure.sha);
             }
@@ -2779,7 +2847,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
         }
         FirstBadOutcome::NoEvidence { query, available_names } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "query": query, "suggestions": available_names, "reason": "no retained cell/gate record"}));
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "suggestions": available_names, "reason": "no retained cell/gate record"}));
             } else {
                 println!("FIRST-BAD NOT-VALIDATED cell={query} -- no retained cell/gate record; absence is not PASS");
                 if !available_names.is_empty() {
@@ -2790,7 +2858,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
         }
         FirstBadOutcome::NoTransition { query, matched_name, observations } => {
             if args.query.json {
-                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "query": query, "matched_name": matched_name, "observations": observations, "reason": "no retained PASS-to-FAIL transition"}));
+                println!("{}", serde_json::json!({"schema_version": 1, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "query": query, "matched_name": matched_name, "observations": observations, "reason": "no retained PASS-to-FAIL transition"}));
             } else {
                 println!("FIRST-BAD NOT-VALIDATED cell={matched_name} observations={observations} -- no retained PASS-to-FAIL transition");
             }
@@ -3259,20 +3327,23 @@ mod tests {
     fn parses_shared_history_query_commands() {
         let newest = Cli::try_parse_from([
             "ci-hub",
-            "newest-green-main",
+            "newest-green",
+            "--branch",
+            "release-frontier",
             "--no-fetch",
             "--no-cache",
             "--json",
         ])
         .unwrap()
         .command;
-        let HubCommand::NewestGreenMain(args) = newest else {
+        let HubCommand::NewestGreen(args) = newest else {
             panic!("wrong command variant")
         };
         assert!(args.query.no_fetch);
+        assert_eq!(args.query.branch, "release-frontier");
         assert!(args.no_cache);
         assert!(args.query.json);
-        assert!(HubCommand::NewestGreenMain(args).cost_spec().is_some());
+        assert!(HubCommand::NewestGreen(args).cost_spec().is_some());
 
         let first_bad = Cli::try_parse_from([
             "ci-hub",
@@ -3287,7 +3358,53 @@ mod tests {
         };
         assert_eq!(args.cell_or_gate, "test.detcore_misc");
         assert!(args.query.no_fetch);
+        assert_eq!(args.query.branch, "main");
         assert!(HubCommand::FirstBad(args).cost_spec().is_some());
+    }
+
+    #[test]
+    fn root_help_groups_commands_for_first_time_users() {
+        let error = Cli::try_parse_from(["ci-hub", "--help"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let help = error.to_string();
+        let headings = [
+            "START HERE",
+            "HISTORY & FORENSICS",
+            "PR & RUNNER HEALTH",
+            "LANDING & BATCH CONTROL",
+            "POST-LAND REMEDIATION",
+        ];
+        let mut previous = 0;
+        for heading in headings {
+            let position = help.find(heading).expect("missing help group");
+            assert!(position >= previous, "help groups are out of order");
+            previous = position;
+        }
+        assert!(help.contains("newest-green"));
+        assert!(help.contains("[default: --branch main]"));
+        assert!(help.contains("history                 Query the retained GitHub Actions timeline"));
+        assert!(help.contains("local-history           Inspect local validate receipts"));
+        assert!(!help.contains(&["newest", "green", "main"].join("-")));
+
+        let clap_commands: std::collections::BTreeSet<String> =
+            <Cli as clap::CommandFactory>::command()
+                .get_subcommands()
+                .map(|command| command.get_name().to_string())
+                .collect();
+        let listed: Vec<String> = ROOT_HELP
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|word| clap_commands.contains(*word))
+            .map(str::to_string)
+            .collect();
+        let listed_commands: std::collections::BTreeSet<String> =
+            listed.iter().cloned().collect();
+        assert_eq!(listed.len(), listed_commands.len(), "duplicate help command");
+        assert_eq!(
+            listed_commands, clap_commands,
+            "root help must classify every public subcommand exactly once"
+        );
     }
 
     #[test]
@@ -3299,7 +3416,7 @@ mod tests {
         assert!(AGENT_QUICKSTART.starts_with("ci-hub agent quickstart\n"));
         assert!(AGENT_QUICKSTART.contains("ci-hub/ci-hub health"));
         assert!(AGENT_QUICKSTART.contains("validate-worktrees"));
-        assert!(AGENT_QUICKSTART.contains("newest-green-main"));
+        assert!(AGENT_QUICKSTART.contains("newest-green"));
         assert!(AGENT_QUICKSTART.contains("first-bad CELL_OR_GATE"));
         assert!(AGENT_QUICKSTART.contains("obligations --actionable"));
         assert!(AGENT_QUICKSTART.contains("land-lock run"));
