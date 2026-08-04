@@ -8,6 +8,14 @@ Aggressively drive hermit toward its final form: a production-grade deterministi
 
 Don't forget your general princples around CLEAR and SPECIFIC communication (which programs ran what under what mode and which branch/version was experimented with?) and presenting EVIDENCE for claims, including wherever possible reproducer commands.
 
+## Applications
+
+All the internal implementation priorities below are focused on making hermit USEFUL on real applications, which currently include but are not limited to:
+
+ - Linux kernel (and driver, and file system) concurrency testing and debugging inside QEMU inside hermit. Example milestones include getting our Linux demos running on non-ptrace hermit backends with improved performance.
+ - Reproducible builds: including unblocking a watertight content addressable store mode for Nix, and being adoption ready for the Debian Reproducible Builds project or other distros or package managers.  Example milestones include enabling parallelism in detcore so `make -j` can use real parallelism, ideally with minimal determinism overhead from an efficient (non-ptrace) Reverie backend.
+ - Record/replay debugging of userspace apps a la Mozilla rr. Example milestones include recording firefox (controlled by playwright) like rr originally targetted.
+
 ## Priorities
 
 We expand compatibility across a set of tracked programs, most of which are part of the CI suite (but we can do periodic testing outside of it). We have have a common denominator for ALL tests in our CI manifests, and terminology for "cells" (mode x backend x test) which should monotonically increase in total coverage, both for DETERMINISM and for the stronger PARITY level of achievement (i.e. backend X runs program Y deterministically AND bitwise identical to the ptrace reference impl).
@@ -42,7 +50,7 @@ Agents will constantly try to put up fake results that mislead you, where they h
 
 1. **Lost inertia:** "0 busy, 0 ready" is a P0 alarm, not "nothing to do." Generate work immediately.
 2. **Heartbeat/fleet-monitor paused:** NEVER pause these workflows. They are mission-critical safety nets.
-3. **Agent exhaustion:** When agents hit 100% context, spawn fresh ones immediately at `~/work/dev-hermit/hermit`. Don't let all agents exhaust simultaneously.
+3. **Agent exhaustion:** Try to /compact agents before they run out of context, but when agents hit 100% context, spawn fresh ones immediately at `~/work/dev-hermit/hermit`. Don't let all agents exhaust simultaneously.
 4. **Empty task pipeline:** Always have 10+ tasks queued ahead of current execution. Pre-generate work.
 5. **Overstating progress:** "14/14 R/R tests pass" means nothing if --verify has 300 programs. Measure gaps, not victories.
 6. **Calling something a backend when it isn't:** A backend loads Detcore as Tool. One shared copy of the code. Prototypes and stubs are NOT backends.

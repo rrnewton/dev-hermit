@@ -1,7 +1,13 @@
 {
   "question": "Does rustc codegen (opt-level / codegen-units / LTO) materially move the Detcore deterministic-mode per-syscall coordinator-RPC floor (~13.6us/syscall) that dominates all backends?",
-  "answer": "NO. The floor is ~69% system/kernel-IPC time (sendto/recvfrom/epoll_wait round-trip) plus cross-thread scheduling latency, and only ~31% user-space CPU. Hermit/detcore is ALREADY built at opt-level=3; the residual codegen levers (cgu 16->1, LTO) act only on that 31% user fraction and typically yield single-digit % on already-opt3 code, so best-case whole-floor improvement is <~5% -- within measurement noise. The real lever is eliminating the per-syscall coordinator round-trip (in-process/shared-memory Detcore fastpath, in-guest RCB via rdpmc), not recompiling the coordinator.",
-  "method": "CPU-time (user+sys) slope across two N under `hermit run --backend liteinst` (deterministic by default), boxed to K free cores via scratch/run-on-k-free-cores.py; /usr/bin/time -v for user/sys/wall/ctx-switch. The load-independent decision quantity is the user:sys RATIO, not absolute ns (shared loaded host).",
+  "answer": "NO. The floor is ~65.5% system/kernel time (pidfd_open/clock_nanosleep/openat scheduling + IPC, busy-poll) and only ~34.5% user-space CPU (median K=2 anchor, sched_yield). Hermit/detcore is ALREADY built at opt-level=3; the untried levers are measured-inert: codegen-units=1 = +2.2% (noise, inguest-handler study) and LTO = <=2% runtime + net compile loss with 83% supervisor CPU in kernel (ci-build-profile-lto study, same day). Best-case whole-floor improvement ~0.35*~5% ~= 2%, within noise. Real lever = eliminate the per-syscall coordinator round-trip (in-process/shared-mem fastpath, in-guest RCB via rdpmc).",
+  "method": "Median-of-5 CPU-time (user+sys) + wall slope across well-separated N (10000->50000) under `hermit run --backend liteinst` (deterministic by default), boxed via scratch/run-on-k-free-cores.py; /usr/bin/time -v. K=2 (coordinator RPC LIVELOCKS at K=1 -- it is a 2-thread guest<->coordinator ping-pong, not single-threaded; that livelock is itself proof of IPC/scheduling-bound cost). Absolute us are load-inflated on shared host; only the ~35/65 user:sys RATIO is relied upon (reproduced across 5 cells).",
+  "codegen_knobs_already_measured": {
+    "opt_level": "already 3 (release default, confirmed no [profile] stanzas); opt0->3 = 3.5x but captured",
+    "codegen_units_1": "+2.2% (noise) -- experiments/inguest-handler-codegen-sensitivity_20260804",
+    "lto": "<=2% runtime, +35% thin / +164% full compile = net loss, 83% supervisor CPU is kernel -- experiments/ci-build-profile-lto_20260804"
+  },
+  "one_cpu_box_livelock": "K=1: sched_yield RPC hangs (rc=124, 45s, N=2000); native sched_yield 1e6 on same K=1 box = 0.16s; RPC completes at K=2. Minimum core count for RPC progress = 2.",
   "host": "devbig014.atn7.facebook.com",
   "cores_total": 316,
   "hermit_sha": "c369be3ff8e2c751a313b27979fa8f470dafecf0",
@@ -13,8 +19,10 @@
     "syscall_loop": "../dbi_perf_leader_baseline_20260801/src/syscall_loop -- getpid loop (PassThrough, NO coordinator RPC)"
   },
   "key_findings": {
-    "user_cpu_fraction": 0.31,
-    "sys_cpu_fraction": 0.69,
+    "user_cpu_fraction": 0.345,
+    "sys_cpu_fraction": 0.655,
+    "coordinator_rpc_us_per_call_loaded_box": {"user": 22.0, "sys": 41.75, "wall": 62.25},
+    "owner_cited_idle_box_us": 13.6,
     "getpid_is_vacuous_probe": "getpid marginal ~81us wall / ~31% user -- PassThrough, does not round-trip coordinator; cannot probe the RPC",
     "heisenbug": "getpid loop under default-deterministic liteinst intermittently hangs (>90-120s) at N=10000 and N>=1e5 while N=20000/40000 complete -- a scheduling livelock heisenbug, not per-call cost; out of scope for this question",
     "absolute_ns_caveat": "absolute per-call us here (yield ~59us, getpid ~81us wall) are load-inflated on a shared box and possibly coordinator busy-poll; only the 31/69 split is relied upon"
