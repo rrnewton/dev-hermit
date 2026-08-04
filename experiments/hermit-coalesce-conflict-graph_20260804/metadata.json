@@ -1,0 +1,14 @@
+{
+  "question": "Conflict graph over open rrnewton/hermit PRs for the reverie-final coalesce/staging build",
+  "repo": "rrnewton/hermit",
+  "base": "origin/main b384187efd725c504d69281f043d442325d4fcb2",
+  "date": "2026-08-04",
+  "open_prs_total": 73,
+  "main_targeted": 71,
+  "stacked_on_codex_branches": [1585, 1451],
+  "method": "file-overlap union-find (glue-excluded) to find candidate edges, then git merge-tree --write-tree --name-only verification of every candidate edge and every PR-vs-main, keeping only conflicts on non-glue paths",
+  "glue_definition": "Cargo.lock, **/Cargo.toml, tests/backend-parity/{matrix.tsv,README.md}, ci/expected-e2e-plan.json, tests/e2e/manifests/**, docs/*COMPATIBILITY.md, .github/workflows/**, .gitignore",
+  "cost": {"fetch_warm_s": 1.6, "pairwise_plus_base_merge_tree_s": 14.9, "edges_verified": 218, "pr_vs_main_probes": 71},
+  "host": "devserver linux 6.18",
+  "git": "2.53.0-Meta"
+}
