@@ -311,6 +311,38 @@ rebase_wrapper.py record --source <X> --base <Y> --result <Z> \
 See memory `ci-hub-ledger-cannot-record-soft-vs-hard-green` (the validate ledger
 cannot record soft-vs-hard green — this store carries the provenance it can't).
 
+## Canonical store, reconciliation, and cross-host provenance
+
+**One store per host, never per-checkout.** The store path resolves from
+`CI_HUB_REBASE_STORE` (override outright — a fleet pins one shared path), else
+`ignored/rebase-records.jsonl` under `parent_root()`, which honours
+`DEV_HERMIT_PARENT` and only *then* falls back to the module location. It is
+**never** anchored to `__file__`: a scratch/worktree-slot copy of the wrapper has
+a different `__file__`, so a `__file__`-derived path would send the producer's
+records to a store the lander never reads — the same producer-wrote-own /
+consumer-read-other gap `eligible` exists to kill, merely relocated onto the
+filesystem. With the env set once on a host, every copy converges on one store.
+
+**`eligible` list mode reconciles against the LIVE open-PR population** (`gh pr
+list`, default `rrnewton/hermit`; `--no-reconcile` for store-only) so *invisible
+!= nothing-pending*. Every open pushed PR is accounted for exactly once and lands
+in a bucket: `eligible`, `pending-no-receipt` (soft-green + base OK, awaiting
+validate@Z), **`receipt-unknown`** (the receipt authority was unreachable —
+VISIBLE and non-landable, **never** collapsed to absent, so a validate-status
+failure can no longer make an eligible head vanish silently), `unaccounted` (open
+PR with no record — pushed by a path that never called the wrapper), or
+`disqualified`. Recorded heads matching no open PR are reported `recorded_not_open`
+(superseded / force-pushed away — the chronic push-rewrites-the-head orphan case).
+
+**Cross-host durability (opt-in).** A machine-local JSONL cannot carry the one
+non-derivable datum (the soft-green level + resolver judgement + rationale) to
+another host. `record`/`rebase --publish-provenance` publishes exactly that datum,
+content-addressed and keyed by Z, to the shared `validation-receipts` branch;
+`eligible --durable-provenance` recovers an otherwise-`unaccounted` open-PR head by
+dereferencing it — then holds it to the **same live floor + receipt gates** as a
+local record (durability supplies the datum, never landability). Network stays off
+the default hot path.
+
 ## Notes
 
 - `run` is preferred over bare `acquire`/`release`: it releases on every observed

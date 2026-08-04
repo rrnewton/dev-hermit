@@ -108,16 +108,25 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 
 # Reuse the floor half of the contract verbatim: one enumeration, one verifier.
-_VALIDATE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "validate")
+_CIHUB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_VALIDATE_DIR = os.path.join(_CIHUB_DIR, "validate")
 sys.path.insert(0, _VALIDATE_DIR)
 import gate_floors  # noqa: E402  (path injected above)
+
+# A2 durable provenance reuses the receipts-branch plumbing verbatim (one
+# publisher, one branch-head creator, one gh wrapper) so rebase provenance and
+# validate receipts live on the SAME shared branch with identical semantics.
+_VALIDATION_DIR = os.path.join(_CIHUB_DIR, "validation")
+sys.path.insert(0, _VALIDATION_DIR)
+import publish_receipt  # noqa: E402  (path injected above)
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -128,11 +137,53 @@ NETWORK_TIMEOUT = 120.0
 
 DEFAULT_CHECKOUT = gate_floors.DEFAULT_CHECKOUT
 DEFAULT_REGISTRY = gate_floors.DEFAULT_REGISTRY
-# Beside the validate ledger (ignored/validate-run-ledger.jsonl) at parent root,
-# so a lander finds both provenance stores in one place.
-_PARENT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_STORE = os.path.join(_PARENT_ROOT, "ignored", "rebase-records.jsonl")
+
+
+def parent_root() -> str:
+    """The canonical dev-hermit parent root, resolved the SAME way every ci-hub
+    tool resolves it (matches validate/aggregate.py:parent_root): the
+    DEV_HERMIT_PARENT env when set, else three levels up from THIS file.
+
+    Anchoring to the ENV (not `__file__`) is the load-bearing half of Fix A. A
+    scratch/worktree-slot COPY of this wrapper has a DIFFERENT `__file__`, so a
+    `__file__`-derived root resolves a DIFFERENT parent -> a DIFFERENT store: the
+    producer writes a store the lander never reads. That is the same
+    producer-wrote-own / consumer-read-other mailbox gap `eligible` was built to
+    kill, merely relocated onto a filesystem path (dbi's reopened finding, and
+    empirically live: ci-hub/landing/ and scratch/.../ci-hub/landing/ each
+    resolved their own root). With DEV_HERMIT_PARENT set once on a host, EVERY
+    copy converges on ONE store.
+    """
+    env = os.environ.get("DEV_HERMIT_PARENT")
+    if env and os.path.isdir(env):
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
+
+def default_store() -> str:
+    """Canonical rebase-records store path -- beside the validate ledger
+    (ignored/validate-run-ledger.jsonl) at the parent root, so a lander finds
+    both provenance stores in one place.
+
+    CI_HUB_REBASE_STORE overrides outright (a fleet can pin ONE shared path);
+    otherwise the path is anchored to the canonical `parent_root()`, NEVER to
+    `__file__`, so every copy of the wrapper on a host writes and reads the same
+    store. This closes per-checkout divergence ON ONE HOST. Cross-HOST sharing is
+    the A2 follow-up (publish the non-derivable soft-green provenance to the
+    shared validation-receipts branch and treat this JSONL as a pure cache);
+    until then, `eligible`'s reconciliation against the LIVE open-PR population
+    already surfaces a cross-host gap as UNACCOUNTED (a loud row) rather than
+    silent absence -- invisible != nothing-pending.
+    """
+    env = os.environ.get("CI_HUB_REBASE_STORE")
+    if env:
+        return os.path.abspath(env)
+    return os.path.join(parent_root(), "ignored", "rebase-records.jsonl")
+
+
+_PARENT_ROOT = parent_root()
+DEFAULT_STORE = default_store()
 
 SCHEMA_VERSION = 1
 
@@ -146,10 +197,25 @@ VALID_JUDGEMENTS = {RISK_RETAIN, RISK_VALIDATE}
 SOFT_ZERO_CONFLICT = "soft-green(zero-conflict)"
 SOFT_RESOLVER_JUDGED = "soft-green(resolver-judged)"
 
+# Receipt at Z is a TRI-STATE, never a boolean-with-a-hidden-third-value. The
+# whole mechanism exists to kill invisible failures, so the query must NEVER
+# conflate "authority answered: no receipt" (ABSENT, a real pending head) with
+# "authority could not be reached" (UNKNOWN). Fail-closing an UNKNOWN to
+# ABSENT/None makes a genuinely-eligible head VANISH silently -- the exact
+# invisible-failure class reproduced inside the tool built to eliminate it.
+RECEIPT_VALIDATED = "validated"   # authority dereferenced a clean full receipt.
+RECEIPT_ABSENT = "absent"         # authority answered: no qualifying receipt yet.
+RECEIPT_UNKNOWN = "unknown"       # authority unreachable/unparseable -> VISIBLE.
+
 # The ONE receipt authority: `ci-hub validate-status` dereferences the validate
 # ledger and answers "does exactly this SHA carry a clean full-validation receipt?"
 # We never re-derive that verdict here (one verifier per authority) -- we call it.
 _CI_HUB = os.path.join(_PARENT_ROOT, "ci-hub", "ci-hub")
+
+# Reconciliation population: the lander lands HERMIT PRs, so the open-PR set is
+# rrnewton/hermit by default (matches `ci-hub validate-status --repo`'s default).
+# The population authority is GitHub PR state (shared/remote), NOT the local store.
+DEFAULT_PR_REPO = "rrnewton/hermit"
 
 
 class RebaseError(Exception):
@@ -180,11 +246,13 @@ def _is_hexish(rev: str) -> bool:
 # --------------------------------------------------------------------------- #
 def landable_reason(soft_green: str | None, base_clears_floor: bool,
                     base_unmet: list[dict], receipt_present: bool,
-                    result: str = "") -> str:
+                    result: str = "", receipt_state: str | None = None) -> str:
     """The single explanation of landability -- shared by record and the live
     `eligible` re-check so both speak with one voice. The order mirrors the
     landability conjunction: soft-green first, then the base floor (carry Y),
-    then the receipt at the pushed head Z (carry the receipt)."""
+    then the receipt at the pushed head Z (carry the receipt). `receipt_state`
+    distinguishes an ABSENT receipt (authority answered "not yet") from an
+    UNKNOWN one (authority unreachable) -- the latter is VISIBLE, never vanished."""
     if soft_green is None:
         return "resolver-flagged-needs-full-validate: verify the tip before landing"
     if not base_clears_floor:
@@ -193,6 +261,13 @@ def landable_reason(soft_green: str | None, base_clears_floor: bool,
                 "a clean rebase onto a sub-floor base still yields an unlandable "
                 "Z -- rebase onto a base at/after every floor")
     if not receipt_present:
+        if receipt_state == RECEIPT_UNKNOWN:
+            return (f"receipt-unknown: could NOT dereference the validate-status "
+                    f"authority for pushed head {_short(result) or 'Z'} "
+                    f"(tool/network/parse failure). This head is VISIBLE and "
+                    f"UNKNOWN -- NOT vanished and NOT assumed absent. Never land "
+                    f"on an unknown receipt; re-query once the authority is "
+                    f"reachable (`ci-hub validate-status --sha {_short(result) or '<Z>'}`).")
         return (f"no-receipt-at-pushed-head: soft-green + base clears every floor, "
                 f"but NO clean full-validation receipt is bound to the PUSHED head "
                 f"{_short(result) or 'Z'}. The push rewrites the head, so a receipt "
@@ -281,34 +356,75 @@ def receipt_identity(report: dict | None, result: str) -> dict | None:
     }
 
 
-def receipt_at(result: str) -> dict | None:
-    """Dereference the receipt authority at the PUSHED head Z. Returns the receipt
-    identity or None. A tool/parse failure returns None -- unknown is NOT a receipt
-    and must never read as landable; an absent receipt is VISIBLE (null), never an
-    error a caller might swallow into "assume green". `validate-status` exits
-    nonzero for NOT-VALIDATED, so stdout is parsed regardless of return code."""
+def receipt_status(result: str) -> dict:
+    """Dereference the ONE receipt authority at the PUSHED head Z and return a
+    TRI-STATE: {status: validated|absent|unknown, identity: {...}|None, detail}.
+
+    The load-bearing distinction (this is the reopened finding): an authority
+    FAILURE is UNKNOWN, never ABSENT. `validate-status --json` on a full sha
+    ALWAYS emits a parseable JSON verdict (VALIDATED / NOT-VALIDATED / ...) and
+    exits nonzero for not-validated, so:
+      - JSON parses  -> the authority ANSWERED: VALIDATED (with a qualifying
+                        record) => `validated`; anything else => `absent`.
+      - could not run / stdout does not parse -> the authority could NOT be
+                        reached => `unknown` (VISIBLE; never read as absent, never
+                        landable). This is what stops an eligible head vanishing.
+    """
     if not result or not _is_hexish(result):
-        return None
+        return {"status": RECEIPT_UNKNOWN, "identity": None,
+                "detail": f"result {result!r} is not a 7-40 hex sha"}
     try:
         cp = _run([_CI_HUB, "validate-status", "--sha", result, "--json"],
                   timeout=NETWORK_TIMEOUT)
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except (OSError, subprocess.SubprocessError) as err:
+        return {"status": RECEIPT_UNKNOWN, "identity": None,
+                "detail": f"validate-status could not be invoked: {err}"}
     try:
         report = json.loads(cp.stdout)
     except ValueError:
-        return None
-    return receipt_identity(report, result)
+        return {"status": RECEIPT_UNKNOWN, "identity": None,
+                "detail": ("validate-status emitted no parseable JSON "
+                           f"(rc={cp.returncode}); authority NOT reached")}
+    ident = receipt_identity(report, result)
+    if ident is not None:
+        return {"status": RECEIPT_VALIDATED, "identity": ident, "detail": ""}
+    return {"status": RECEIPT_ABSENT, "identity": None,
+            "detail": (f"authority answered verdict={report.get('verdict')!r}, "
+                       "qualifying_count="
+                       f"{report.get('qualifying_count')}: no receipt at Z yet")}
+
+
+def receipt_at(result: str) -> dict | None:
+    """Record-time snapshot convenience: the receipt IDENTITY at Z, or None.
+    Delegates to `receipt_status`; None here folds absent+unknown together, which
+    is acceptable ONLY for the frozen snapshot (null is re-checked live by
+    `eligible`, which uses the full tri-state and never lets UNKNOWN vanish)."""
+    return receipt_status(result)["identity"]
 
 
 # --------------------------------------------------------------------------- #
 # Store I/O                                                                     #
 # --------------------------------------------------------------------------- #
 def append_record(store: str, record: dict) -> None:
+    """Append one record under an exclusive advisory lock. The land-lock covers
+    the merge, not this JSONL; concurrent producers (rebase front + resolvers)
+    append here, so serialise writes to keep a partial line from interleaving."""
     try:
         os.makedirs(os.path.dirname(store), exist_ok=True)
         with open(store, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass  # advisory lock unavailable (some network FS); O_APPEND still
+                      # gives atomic small writes on POSIX -- best-effort either way.
+            try:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+                fh.flush()
+            finally:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
     except OSError as err:
         raise RebaseError(f"cannot append to rebase store {store}: {err}") from err
 
@@ -403,6 +519,173 @@ def base_floor_status(registry: str, checkout: str, base: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# open-PR population -- the reconciliation authority (dereferenced, not a file) #
+# --------------------------------------------------------------------------- #
+def open_pushed_prs(pr_repo: str) -> list[dict]:
+    """Dereference the LIVE set of open pushed PRs for `pr_repo` via `gh`. This is
+    the population authority for reconciliation: a query that lists only store
+    records cannot tell "quiet because landed" from "quiet because never written".
+    Reconciling the store against THIS set is what makes invisible != nothing-
+    pending. A gh/parse failure RAISES (visible ERROR) -- it must never degrade
+    silently into a store-only answer that looks complete."""
+    cmd = ["gh", "pr", "list", "--repo", pr_repo, "--state", "open",
+           "--limit", "500", "--json", "number,headRefOid,headRefName,url,state"]
+    if gate_floors._on_path("with-proxy"):
+        cmd = ["with-proxy", *cmd]
+    try:
+        cp = _run(cmd, timeout=NETWORK_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as err:
+        raise RebaseError(
+            f"gh pr list --repo {pr_repo} could not be invoked for "
+            f"reconciliation: {err} (pass --no-reconcile for store-only, which "
+            "CANNOT assert invisible != nothing-pending)") from err
+    if cp.returncode != 0:
+        raise RebaseError(
+            f"gh pr list --repo {pr_repo} failed (rc {cp.returncode}): "
+            f"{(cp.stderr or cp.stdout).strip()}")
+    try:
+        prs = json.loads(cp.stdout)
+    except ValueError as err:
+        raise RebaseError(f"cannot parse gh pr list JSON: {err}") from err
+    return [p for p in prs if p.get("headRefOid")]
+
+
+# --------------------------------------------------------------------------- #
+# A2: durable, cross-host soft-green provenance on the shared receipts branch   #
+# --------------------------------------------------------------------------- #
+# The store's ONE irreducibly non-derivable datum is HOW the soft-green was
+# earned: the confidence level, and (for a conflict) the resolver's risk
+# judgement + rationale. Everything else in a record is re-derived LIVE from a
+# shared authority -- the base floor from gate_floors, the receipt at Z from
+# `ci-hub validate-status`. So a clean checkout on ANOTHER host can reconstruct
+# every field EXCEPT this one. A machine-local JSONL cannot carry it across hosts
+# (dbi's finding: two hosts each write their own store, each lander sees the
+# other's landable heads as UNTRACKED forever). Publishing just this datum,
+# content-addressed and keyed by Z, to the SAME validation-receipts branch the
+# validate receipts already use makes the JSONL a pure cache: any host
+# dereferences the durable provenance. Content-addressing (path carries the
+# body's digest) makes a judgement UPGRADE (needs-full-validate -> retained after
+# a tip validate) a NEW immutable file under the same Z/ prefix -- never a
+# rewrite, matching the ledger's latest-per-Z semantics without mutable state.
+RECEIPT_REPO = publish_receipt.RECEIPT_REPO
+RECEIPT_BRANCH = publish_receipt.RECEIPT_BRANCH
+
+
+def provenance_body(rec: dict) -> bytes:
+    """Canonicalise the non-derivable soft-green provenance for a record.
+
+    Carries ONLY what another host cannot re-derive (Proxy-Binding: the value
+    records its own conditions). Floor status and the receipt at Z are omitted on
+    purpose -- they are live-authority reads, and freezing them here would let a
+    stale copy assert landability the live checks must own."""
+    prov = {
+        "schema_version": SCHEMA_VERSION,
+        "source_rev": rec.get("source_rev"),
+        "base": rec.get("base"),
+        "result": rec.get("result"),
+        "conflicts": rec.get("conflicts", []),
+        "soft_green": rec.get("soft_green"),
+        "risk_judgement": rec.get("risk_judgement"),
+        "rationale": rec.get("rationale", ""),
+        "resolver": rec.get("resolver", ""),
+        "recorded_utc": rec.get("recorded_utc"),
+    }
+    return json.dumps(prov, sort_keys=True, separators=(",", ":")).encode()
+
+
+def provenance_path(z: str, digest: str) -> str:
+    return f"rebase-provenance/{z}/{digest}.json"
+
+
+def publish_provenance(rec: dict, *, repo: str = RECEIPT_REPO,
+                       branch: str = RECEIPT_BRANCH) -> dict:
+    """Publish one record's soft-green provenance to the shared receipts branch.
+    Content-addressed + immutable (publish_receipt.publish refuses a same-path
+    different-body write). Returns {path, digest, commit}. Only a soft-green
+    result with a real Z is publishable (a null soft-green carries no durable
+    claim; a conflict-abort record has no Z)."""
+    z = rec.get("result")
+    if not z or not _is_hexish(z):
+        raise RebaseError(f"cannot publish provenance: result {z!r} is not a sha")
+    if rec.get("soft_green") is None:
+        raise RebaseError(
+            "cannot publish provenance for a null soft-green (no durable claim to "
+            "make); resolver said needs-full-validate or the rebase was aborted")
+    import hashlib
+    body = provenance_body(rec)
+    digest = hashlib.sha256(body).hexdigest()
+    path = provenance_path(z, digest)
+    commit = publish_receipt.publish(repo, branch, path, body)
+    return {"path": path, "digest": digest, "commit": commit}
+
+
+def fetch_provenance(z: str, *, repo: str = RECEIPT_REPO,
+                     branch: str = RECEIPT_BRANCH) -> dict | None:
+    """Dereference durable provenance for Z from the shared branch, or None.
+
+    Reads every content-addressed file under rebase-provenance/{Z}/ and returns
+    the latest by recorded_utc (mirrors the JSONL latest-per-Z, so a published
+    judgement upgrade wins). A missing dir / unreachable branch returns None (the
+    caller renders that as its own visible state, never as a silent landable)."""
+    if not z or not _is_hexish(z):
+        return None
+    listing = publish_receipt.gh(
+        ["api", f"repos/{repo}/contents/rebase-provenance/{z}?ref={branch}"],
+        check=False)
+    if listing.returncode != 0:
+        return None
+    try:
+        entries = json.loads(listing.stdout)
+    except ValueError:
+        return None
+    if not isinstance(entries, list):
+        return None
+    provs: list[dict] = []
+    for ent in entries:
+        if not isinstance(ent, dict) or ent.get("type") != "file":
+            continue
+        blob = publish_receipt.gh(
+            ["api", f"repos/{repo}/contents/{ent.get('path')}?ref={branch}"],
+            check=False)
+        if blob.returncode != 0:
+            continue
+        try:
+            import base64
+            content = base64.b64decode(json.loads(blob.stdout)["content"])
+            provs.append(json.loads(content))
+        except (ValueError, KeyError):
+            continue
+    if not provs:
+        return None
+    return max(provs, key=lambda p: p.get("recorded_utc") or "")
+
+
+def record_from_provenance(prov: dict) -> dict:
+    """Adapt a durable provenance blob into a record shape `_classify_row` accepts.
+    Carries ONLY the non-derivable soft-green datum plus source/base/result; the
+    base floor and the receipt at Z are re-derived LIVE by the classifier, so a
+    durable-provenance head is held to the exact same live gates as a local one --
+    durability never grants landability, it only supplies the datum a fresh
+    checkout cannot reconstruct."""
+    return {
+        "source_rev": prov.get("source_rev"),
+        "base": prov.get("base"),
+        "result": prov.get("result"),
+        "conflicts": prov.get("conflicts", []),
+        "resolver": prov.get("resolver", ""),
+        "rationale": prov.get("rationale", ""),
+        "risk_judgement": prov.get("risk_judgement"),
+        "soft_green": prov.get("soft_green"),
+        "recorded_utc": prov.get("recorded_utc"),
+        "receipt_at_Z": None,          # never trust a frozen receipt; re-check live
+        "base_clears_floor": False,    # re-derived live (recheck_floor default on)
+        "base_unmet_floors": [],
+        "landable": False,
+        "provenance_source": "durable-shared-branch",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # record                                                                        #
 # --------------------------------------------------------------------------- #
 def build_record(source: str, base: str, result: str, conflicts: list[str],
@@ -449,8 +732,24 @@ def do_record(args) -> int:
                        args.resolver, verdict, now, receipt=receipt)
     rec["rationale"] = (args.rationale or "").strip()
     append_record(args.store, rec)
+    maybe_publish_provenance(args, rec)
     emit_record(rec, args.json, action="RECORDED")
     return EXIT_OK
+
+
+def maybe_publish_provenance(args, rec: dict) -> None:
+    """Publish durable provenance iff asked AND there is a soft-green claim to make.
+    A publish failure is a visible ERROR here (the datum is the whole point of A2)
+    -- never swallowed into a store-only success that looks complete."""
+    if not getattr(args, "publish_provenance", False):
+        return
+    if rec.get("soft_green") is None or not rec.get("result"):
+        return  # nothing durable to claim (aborted / needs-full-validate)
+    info = publish_provenance(rec)
+    rec["provenance"] = info
+    if not getattr(args, "json", False):
+        print(f"  durable provenance published: {RECEIPT_REPO}@"
+              f"{_short(info['commit'])}:{info['path']}", file=sys.stderr)
 
 
 def parse_conflicts(raw: str | None) -> list[str]:
@@ -554,6 +853,7 @@ def do_rebase(args) -> int:
     rec = build_record(source, base, result, [], args.resolver, verdict,
                        utc_now(), receipt=receipt)
     append_record(args.store, rec)
+    maybe_publish_provenance(args, rec)
     # Leave the tree on a clean detached base (stateless, like union-rebase.sh).
     _git(checkout, ["checkout", "-q", "--detach", base])
     emit_record(rec, args.json, action="RECORDED")
@@ -570,6 +870,51 @@ def conflicted_files(checkout: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # eligible (consumer query for the lander)                                     #
 # --------------------------------------------------------------------------- #
+def _classify_row(z: str, rec: dict, floors, args) -> dict:
+    """Compute a head's live landability row, carrying the TRI-STATE receipt.
+
+    Re-checks the base floor live (a floor added after recording must demote a
+    stale head) and re-derives the receipt at Z live via the tri-state authority
+    (a receipt earned later promotes Z; one revoked demotes it). CRITICALLY, an
+    UNKNOWN receipt is carried as UNKNOWN, never collapsed to absent -- so the
+    head is VISIBLE and non-landable, never silently gone."""
+    soft = rec.get("soft_green")
+    base_ok = rec.get("base_clears_floor", False)
+    unmet = rec.get("base_unmet_floors", [])
+    if floors is not None and rec.get("base"):
+        live = gate_floors.clears_all(floors, args.repo_checkout, rec["base"])
+        base_ok = live["ok"]
+        unmet = [{"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
+                 for f in live["unmet"]]
+    if args.recheck_receipt and z:
+        rs = receipt_status(z)
+    else:
+        snap = rec.get("receipt_at_Z")
+        rs = {"status": RECEIPT_VALIDATED if snap else RECEIPT_ABSENT,
+              "identity": snap,
+              "detail": "frozen snapshot (--no-recheck-receipt)"}
+    r_state, receipt = rs["status"], rs["identity"]
+    receipt_present = r_state == RECEIPT_VALIDATED
+    landable = soft is not None and base_ok and receipt_present
+    return {**rec, "base_clears_floor": base_ok, "base_unmet_floors": unmet,
+            "receipt_at_Z": receipt, "receipt_state": r_state,
+            "receipt_detail": rs.get("detail", ""), "landable": landable,
+            "landable_reason": landable_reason(soft, base_ok, unmet,
+                                               receipt_present, z, r_state)}
+
+
+def _bucket_of(row: dict) -> str:
+    """Which reconciliation bucket a classified record row belongs to."""
+    if row["landable"]:
+        return "eligible"
+    if row["receipt_state"] == RECEIPT_UNKNOWN:
+        return "receipt-unknown"          # VISIBLE: authority unreachable, NOT gone.
+    if (row.get("soft_green") is not None and row.get("base_clears_floor")
+            and row["receipt_state"] == RECEIPT_ABSENT):
+        return "pending-no-receipt"       # soft-green, base ok, awaiting validate@Z.
+    return "disqualified"                 # not soft-green / base below floor.
+
+
 def do_eligible(args) -> int:
     records = load_records(args.store)
     latest = latest_by_result(records)
@@ -582,63 +927,136 @@ def do_eligible(args) -> int:
         except gate_floors.FloorError as err:
             raise RebaseError(str(err)) from err
 
-    rows = []
-    for z, rec in latest.items():
-        soft = rec.get("soft_green")
-        base_ok = rec.get("base_clears_floor", False)
-        unmet = rec.get("base_unmet_floors", [])
-        if floors is not None and rec.get("base"):
-            live = gate_floors.clears_all(floors, args.repo_checkout, rec["base"])
-            base_ok = live["ok"]
-            unmet = [{"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
-                     for f in live["unmet"]]
-        # Re-derive the receipt at Z live by default: a receipt earned after the
-        # record must promote Z, and one revoked must demote it. The push rewrites
-        # the head, so this binds landability to the CURRENT authority for the
-        # exact Z -- never a stale snapshot on a discarded SHA.
-        receipt = rec.get("receipt_at_Z")
-        if args.recheck_receipt and z:
-            receipt = receipt_at(z)
-        receipt_present = receipt is not None
-        landable = soft is not None and base_ok and receipt_present
-        row = {**rec, "base_clears_floor": base_ok, "base_unmet_floors": unmet,
-               "receipt_at_Z": receipt, "landable": landable,
-               "landable_reason": landable_reason(soft, base_ok, unmet,
-                                                  receipt_present, z)}
-        rows.append(row)
-
+    # Single-head targeted check (the lander's `eligible --result Z`): no
+    # population reconciliation, no gh -- just this exact head's live verdict.
     if args.result:
-        match = next((r for r in rows if r["result"] == args.result), None)
-        if match is None:
+        rec = latest.get(args.result)
+        if rec is None:
             out = {"result": args.result, "eligible": False,
                    "reason": "no rebase record for this result sha"}
             _print_query(out, args.json)
             raise Refused(f"no rebase record for result {_short(args.result)}")
+        match = _classify_row(args.result, rec, floors, args)
         out = {"result": match["result"], "source_rev": match.get("source_rev"),
                "base": match.get("base"), "eligible": match["landable"],
                "soft_green": match.get("soft_green"),
+               "receipt_state": match.get("receipt_state"),
                "receipt_at_Z": match.get("receipt_at_Z"),
                "reason": match.get("landable_reason")}
         _print_query(out, args.json)
         return EXIT_OK if match["landable"] else EXIT_REFUSED
 
-    eligible = [r for r in rows if r["landable"]]
-    if args.source:
-        eligible = [r for r in eligible if r.get("source_rev") == args.source]
-    if args.json:
-        print(json.dumps({"schema_version": SCHEMA_VERSION,
-                          "eligible": eligible,
-                          "total_records": len(latest)}, indent=2))
+    # List mode: RECONCILE the store against the live open-PR population so
+    # "invisible" != "nothing pending" (default; --no-reconcile for store-only).
+    prs = None if args.no_reconcile else open_pushed_prs(args.pr_repo)
+
+    buckets: dict[str, list] = {"eligible": [], "pending-no-receipt": [],
+                                "receipt-unknown": [], "disqualified": [],
+                                "unaccounted": []}
+    recorded_not_open: list[str] = []
+
+    if prs is not None:
+        # Population = open pushed PRs. Every PR head is accounted for exactly once;
+        # a PR with no store record is UNACCOUNTED (pushed by a path that never
+        # called the wrapper) -- surfaced, never silently omitted.
+        for pr in prs:
+            z = pr.get("headRefOid")
+            rec = latest.get(z)
+            if rec is None and args.durable_provenance:
+                # A2 cross-host recovery: this host's local cache has no record,
+                # but another host may have published the soft-green provenance to
+                # the shared branch. Dereference it and classify as if local --
+                # the base floor and the receipt at Z are STILL re-checked live,
+                # so durability supplies only the non-derivable soft-green datum.
+                prov = fetch_provenance(z)
+                if prov is not None:
+                    rec = record_from_provenance(prov)
+            if rec is None:
+                buckets["unaccounted"].append({
+                    "result": z, "number": pr.get("number"),
+                    "headRefName": pr.get("headRefName"), "url": pr.get("url"),
+                    "reason": ("open pushed PR with NO rebase record -- pushed by a "
+                               "path that does not call the wrapper (union-rebase.sh"
+                               "/land-pr.sh/manual), or provenance not published to "
+                               "the shared branch. UNACCOUNTED: invisible != "
+                               "nothing-pending.")})
+                continue
+            row = _classify_row(z, rec, floors, args)
+            row["pr_number"] = pr.get("number")
+            row["url"] = pr.get("url")
+            buckets[_bucket_of(row)].append(row)
+        pr_heads = {pr.get("headRefOid") for pr in prs}
+        # Store records whose Z is no open PR's head: superseded / force-pushed
+        # away (a re-rebase mints a new Z). Excluded from the population, noted.
+        recorded_not_open = [z for z in latest if z not in pr_heads]
     else:
-        if not eligible:
-            print("ELIGIBLE-HEADS: none "
-                  f"({len(latest)} recorded result head(s), none landable)")
-        for r in eligible:
-            print(f"ELIGIBLE {_short(r['result'])} "
-                  f"src={_short(r.get('source_rev',''))} "
-                  f"base={_short(r.get('base',''))} {r.get('soft_green')} "
-                  f"resolver={r.get('resolver') or '-'}")
+        # Offline / --no-reconcile: store-only, still tri-state so nothing vanishes,
+        # but this mode CANNOT assert invisible != nothing-pending.
+        for z, rec in latest.items():
+            row = _classify_row(z, rec, floors, args)
+            buckets[_bucket_of(row)].append(row)
+
+    if args.source:
+        for k in buckets:
+            if k != "unaccounted":
+                buckets[k] = [r for r in buckets[k]
+                              if r.get("source_rev") == args.source]
+
+    summary = {k: len(v) for k, v in buckets.items()}
+    summary["recorded_not_open"] = len(recorded_not_open)
+    if prs is not None:
+        summary["open_pushed_prs"] = len(prs)
+
+    if args.json:
+        print(json.dumps({
+            "schema_version": SCHEMA_VERSION,
+            "reconciled": prs is not None,
+            "pr_repo": args.pr_repo if prs is not None else None,
+            "summary": summary,
+            "eligible": buckets["eligible"],
+            "pending_no_receipt": buckets["pending-no-receipt"],
+            "receipt_unknown": buckets["receipt-unknown"],
+            "unaccounted": buckets["unaccounted"],
+            "disqualified": buckets["disqualified"],
+            "recorded_not_open": recorded_not_open,
+            "total_records": len(latest),
+        }, indent=2))
+    else:
+        _print_reconciliation(buckets, summary, recorded_not_open, prs is not None)
     return EXIT_OK
+
+
+def _print_reconciliation(buckets, summary, recorded_not_open, reconciled) -> None:
+    if reconciled:
+        print(f"RECONCILED against {summary.get('open_pushed_prs', 0)} open pushed "
+              f"PR(s): eligible={summary['eligible']} "
+              f"pending-no-receipt={summary['pending-no-receipt']} "
+              f"receipt-unknown={summary['receipt-unknown']} "
+              f"unaccounted={summary['unaccounted']} "
+              f"disqualified={summary['disqualified']}")
+    else:
+        print("STORE-ONLY (not reconciled -- cannot assert invisible != nothing-"
+              f"pending): eligible={summary['eligible']} "
+              f"pending-no-receipt={summary['pending-no-receipt']} "
+              f"receipt-unknown={summary['receipt-unknown']} "
+              f"disqualified={summary['disqualified']}")
+    for r in buckets["eligible"]:
+        print(f"  ELIGIBLE {_short(r['result'])} "
+              f"src={_short(r.get('source_rev',''))} "
+              f"base={_short(r.get('base',''))} {r.get('soft_green')} "
+              f"pr=#{r.get('pr_number','?')} resolver={r.get('resolver') or '-'}")
+    for r in buckets["receipt-unknown"]:
+        print(f"  RECEIPT-UNKNOWN {_short(r['result'])} pr=#{r.get('pr_number','?')} "
+              f"-- {r.get('receipt_detail','')} (VISIBLE, not vanished)")
+    for r in buckets["pending-no-receipt"]:
+        print(f"  PENDING-NO-RECEIPT {_short(r['result'])} pr=#{r.get('pr_number','?')} "
+              f"-- soft-green, base ok, awaiting validate@Z")
+    for r in buckets["unaccounted"]:
+        print(f"  UNACCOUNTED pr=#{r.get('number','?')} {_short(r.get('result',''))} "
+              f"{r.get('headRefName','')} -- no rebase record")
+    if recorded_not_open:
+        print(f"  ({len(recorded_not_open)} recorded head(s) match no open PR: "
+              "superseded / force-pushed away)")
 
 
 def _print_query(out: dict, as_json: bool) -> None:
@@ -646,7 +1064,9 @@ def _print_query(out: dict, as_json: bool) -> None:
         print(json.dumps(out, indent=2))
     else:
         verdict = "ELIGIBLE" if out.get("eligible") else "NOT-ELIGIBLE"
-        print(f"{verdict} {_short(out.get('result',''))} -- {out.get('reason')}")
+        rstate = out.get("receipt_state")
+        tag = f" [receipt={rstate}]" if rstate and not out.get("eligible") else ""
+        print(f"{verdict} {_short(out.get('result',''))}{tag} -- {out.get('reason')}")
 
 
 # --------------------------------------------------------------------------- #
@@ -683,7 +1103,7 @@ def build_parser() -> argparse.ArgumentParser:
     def common(p):
         p.add_argument("--repo-checkout", default=DEFAULT_CHECKOUT)
         p.add_argument("--registry", default=DEFAULT_REGISTRY)
-        p.add_argument("--store", default=DEFAULT_STORE)
+        p.add_argument("--store", default=default_store())
         p.add_argument("--json", action="store_true")
 
     pr = sub.add_parser("record", help="record a completed rebase outcome")
@@ -701,6 +1121,12 @@ def build_parser() -> argparse.ArgumentParser:
                     action="store_true",
                     help="record receipt_at_Z=null without querying validate-status "
                          "(offline); yields NOT-LANDABLE until `eligible` re-checks")
+    pr.add_argument("--publish-provenance", dest="publish_provenance",
+                    action="store_true",
+                    help="ALSO publish the non-derivable soft-green provenance "
+                         "(level+judgement+rationale) durably to the shared "
+                         f"{RECEIPT_BRANCH} branch so any host can dereference it "
+                         "(A2 cross-host close; no-op for a null soft-green)")
     pr.add_argument("--no-fetch", action="store_true")
     pr.set_defaults(func=do_record)
 
@@ -719,6 +1145,10 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--no-receipt-check", dest="no_receipt_check",
                     action="store_true",
                     help="skip binding the receipt at the pushed head Z (offline)")
+    rb.add_argument("--publish-provenance", dest="publish_provenance",
+                    action="store_true",
+                    help="ALSO publish the soft-green provenance durably to the "
+                         f"shared {RECEIPT_BRANCH} branch (A2 cross-host close)")
     rb.add_argument("--no-fetch", action="store_true")
     rb.set_defaults(func=do_rebase)
 
@@ -740,6 +1170,18 @@ def build_parser() -> argparse.ArgumentParser:
     el.add_argument("--no-recheck-receipt", dest="recheck_receipt",
                     action="store_false",
                     help="trust the frozen receipt_at_Z snapshot (offline)")
+    el.add_argument("--pr-repo", dest="pr_repo", default=DEFAULT_PR_REPO,
+                    help="repo whose open PRs are the reconciliation population "
+                         f"(default {DEFAULT_PR_REPO}); the lander lands its PRs")
+    el.add_argument("--no-reconcile", dest="no_reconcile", action="store_true",
+                    help="store-only listing; skip reconciling against open PRs "
+                         "(offline -- CANNOT assert invisible != nothing-pending)")
+    el.add_argument("--durable-provenance", dest="durable_provenance",
+                    action="store_true",
+                    help="on reconcile, recover an UNACCOUNTED open-PR head from "
+                         f"the shared {RECEIPT_BRANCH} branch (A2 cross-host): a "
+                         "head recorded on ANOTHER host is dereferenced and held "
+                         "to the same LIVE floor+receipt gates as a local record")
     el.set_defaults(func=do_eligible)
     return ap
 

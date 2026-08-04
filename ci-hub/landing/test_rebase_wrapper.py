@@ -298,7 +298,10 @@ def test_eligible_live_receipt_flips_head_landable(tmp_path, monkeypatch) -> Non
          "--no-recheck-receipt"])
     assert M.do_eligible(q0) == M.EXIT_REFUSED
     # Validate at Z now completes; the live re-check dereferences the authority.
-    monkeypatch.setattr(M, "receipt_at", lambda z: _STUB_RECEIPT)
+    # The live path is `receipt_status` (tri-state), NOT the record-time snapshot
+    # helper `receipt_at` -- stub the authority the re-check actually calls.
+    monkeypatch.setattr(M, "receipt_status", lambda z: {
+        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
     q1 = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
     assert M.do_eligible(q1) == M.EXIT_OK
@@ -315,6 +318,310 @@ def test_eligible_live_receipt_revocation_demotes(tmp_path, monkeypatch) -> None
     q = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
     assert M.do_eligible(q) == M.EXIT_REFUSED
+
+
+# --------------------------------------------------------------------------- #
+# Fix A: canonical store resolution -- a COPY must not diverge onto its own store #
+# --------------------------------------------------------------------------- #
+def test_default_store_env_override_wins(monkeypatch, tmp_path) -> None:
+    """CI_HUB_REBASE_STORE pins ONE shared path regardless of __file__/parent."""
+    target = str(tmp_path / "shared" / "rebase-records.jsonl")
+    monkeypatch.setenv("CI_HUB_REBASE_STORE", target)
+    assert M.default_store() == __import__("os").path.abspath(target)
+
+
+def test_default_store_anchored_to_parent_env_not_file(monkeypatch, tmp_path) -> None:
+    """With no explicit store, the path anchors to DEV_HERMIT_PARENT -- so a copy
+    of the wrapper with a DIFFERENT __file__ still resolves the SAME store. This is
+    the divergence dbi flagged (scratch/slot copy -> its own store), closed."""
+    monkeypatch.delenv("CI_HUB_REBASE_STORE", raising=False)
+    monkeypatch.setenv("DEV_HERMIT_PARENT", str(tmp_path))
+    got = M.default_store()
+    assert got == str(tmp_path / "ignored" / "rebase-records.jsonl")
+    # parent_root honours the env over __file__ (the copy-independence guarantee).
+    assert M.parent_root() == str(tmp_path)
+
+
+def test_default_store_falls_back_to_file_when_no_env(monkeypatch) -> None:
+    monkeypatch.delenv("CI_HUB_REBASE_STORE", raising=False)
+    monkeypatch.delenv("DEV_HERMIT_PARENT", raising=False)
+    # No env -> three levels up from the module file (dev-hermit parent).
+    assert M.default_store().endswith("/ignored/rebase-records.jsonl")
+
+
+# --------------------------------------------------------------------------- #
+# receipt_status: an authority FAILURE is UNKNOWN, never ABSENT                 #
+# --------------------------------------------------------------------------- #
+def _cp(returncode=0, stdout="", stderr=""):
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=returncode,
+                                       stdout=stdout, stderr=stderr)
+
+
+def test_receipt_status_validated(monkeypatch) -> None:
+    report = {"verdict": "VALIDATED", "qualifying_count": 1,
+              "newest_qualifying": {"profile": "full", "selection_mode": "full",
+                                    "result": "pass", "finished_at": "t",
+                                    "slot": "s", "host": "h"}}
+    monkeypatch.setattr(M, "_run", lambda *a, **k: _cp(0, json.dumps(report)))
+    rs = M.receipt_status(Z)
+    assert rs["status"] == M.RECEIPT_VALIDATED and rs["identity"]["sha"] == Z
+
+
+def test_receipt_status_absent_when_authority_answers_not_validated(monkeypatch) -> None:
+    report = {"verdict": "NOT-VALIDATED", "qualifying_count": 0,
+              "newest_qualifying": None}
+    monkeypatch.setattr(M, "_run", lambda *a, **k: _cp(1, json.dumps(report)))
+    rs = M.receipt_status(Z)
+    assert rs["status"] == M.RECEIPT_ABSENT and rs["identity"] is None
+
+
+def test_receipt_status_unknown_on_authority_failure(monkeypatch) -> None:
+    """The load-bearing distinction: could-not-reach is UNKNOWN, never ABSENT."""
+    # (a) tool cannot be invoked.
+    def boom(*a, **k):
+        raise OSError("validate-status not found")
+    monkeypatch.setattr(M, "_run", boom)
+    assert M.receipt_status(Z)["status"] == M.RECEIPT_UNKNOWN
+    # (b) tool ran but emitted no parseable JSON.
+    monkeypatch.setattr(M, "_run", lambda *a, **k: _cp(3, "traceback: kaboom"))
+    assert M.receipt_status(Z)["status"] == M.RECEIPT_UNKNOWN
+
+
+# --------------------------------------------------------------------------- #
+# CLOSURE BAR: a planted eligible head SURVIVES a validate-status failure       #
+# --------------------------------------------------------------------------- #
+def _unknown_receipt(_z):
+    return {"status": M.RECEIPT_UNKNOWN, "identity": None,
+            "detail": "validate-status unreachable"}
+
+
+def test_closure_bar_targeted_head_survives_validate_status_failure(
+        tmp_path, monkeypatch, capsys) -> None:
+    """Plant a would-be-eligible head (soft-green, base clears, receipt bound), then
+    make the receipt authority FAIL on the live re-check. The head must NOT vanish:
+    it stays VISIBLE as receipt-unknown and non-landable -- the invisible-failure
+    class must not be rebuilt inside the fix for it."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=True))
+    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    monkeypatch.setattr(M, "receipt_status", _unknown_receipt)
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--json"])
+    rc = M.do_eligible(q)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == M.EXIT_REFUSED                    # not landed on an unknown ...
+    assert out["result"] == Z                      # ... but the head is PRESENT ...
+    assert out["eligible"] is False
+    assert out["receipt_state"] == M.RECEIPT_UNKNOWN   # ... and VISIBLE as unknown
+    assert "receipt-unknown" in out["reason"]
+
+
+def test_closure_bar_reconciled_head_survives_as_receipt_unknown(
+        tmp_path, monkeypatch, capsys) -> None:
+    """List/reconcile mode: the head is an open PR; the receipt authority fails. It
+    must land in the receipt-unknown bucket (VISIBLE), never be silently dropped
+    from the population -- 'invisible != nothing-pending' includes 'unknown'."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=True))
+    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 7, "headRefOid": Z,
+                                       "headRefName": "feat", "url": "u"}])
+    monkeypatch.setattr(M, "receipt_status", _unknown_receipt)
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["summary"]["receipt-unknown"] == 1
+    assert out["summary"]["eligible"] == 0
+    assert out["receipt_unknown"][0]["result"] == Z      # present, not vanished
+    assert out["reconciled"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Fix B: reconcile against the LIVE open-PR population (invisible != nothing)   #
+# --------------------------------------------------------------------------- #
+def test_reconcile_unaccounted_open_pr_fires(tmp_path, monkeypatch, capsys) -> None:
+    """An open pushed PR with NO record is UNACCOUNTED, not silently omitted."""
+    store = str(tmp_path / "empty.jsonl")
+    other = "e" * 40
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 9, "headRefOid": other,
+                                       "headRefName": "pushed-elsewhere",
+                                       "url": "u"}])
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["summary"]["unaccounted"] == 1
+    assert out["summary"]["open_pushed_prs"] == 1
+    assert out["unaccounted"][0]["result"] == other
+
+
+def test_reconcile_recorded_landable_is_eligible_not_inert(
+        tmp_path, monkeypatch, capsys) -> None:
+    """The positive bracket: a recorded landable head that IS an open PR fires as
+    ELIGIBLE -- the gate is live, not inert."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=True))
+    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 3, "headRefOid": Z,
+                                       "headRefName": "feat", "url": "u"}])
+    monkeypatch.setattr(M, "receipt_status", lambda z: {
+        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["summary"]["eligible"] == 1
+    assert out["eligible"][0]["result"] == Z
+    assert out["eligible"][0]["pr_number"] == 3
+
+
+def test_reconcile_orphaned_head_is_recorded_not_open(
+        tmp_path, monkeypatch, capsys) -> None:
+    """100%-orphan-rate reality: a head we recorded whose PR moved (re-rebased /
+    force-pushed away) is no open PR's head. It must be reported as
+    recorded_not_open (superseded), NOT counted as eligible."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=True))
+    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    # The live population has a DIFFERENT head (the orphaning re-rebase minted Z2).
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 5, "headRefOid": Z2,
+                                       "headRefName": "feat", "url": "u"}])
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert Z in out["recorded_not_open"]           # our stale head, surfaced
+    assert out["summary"]["eligible"] == 0         # never landed on a moved head
+    assert out["summary"]["unaccounted"] == 1      # the new head Z2 is unaccounted
+
+
+# --------------------------------------------------------------------------- #
+# A2: durable, cross-host soft-green provenance                                 #
+# --------------------------------------------------------------------------- #
+def test_provenance_body_carries_only_nonderivable() -> None:
+    rec = {"source_rev": X, "base": Y, "result": Z, "conflicts": [],
+           "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
+           "rationale": "", "resolver": "", "recorded_utc": "t",
+           "base_clears_floor": True, "receipt_at_Z": {"sha": Z}}
+    prov = json.loads(M.provenance_body(rec))
+    assert prov["soft_green"] == M.SOFT_ZERO_CONFLICT and prov["result"] == Z
+    # Live-authority fields must NOT be frozen into durable provenance.
+    assert "base_clears_floor" not in prov and "receipt_at_Z" not in prov
+
+
+def test_publish_provenance_refuses_null_soft_green() -> None:
+    rec = {"result": Z, "soft_green": None}
+    try:
+        M.publish_provenance(rec)
+    except M.RebaseError:
+        return
+    raise AssertionError("null soft-green carries no durable claim; must refuse")
+
+
+def test_publish_provenance_content_addressed_immutable_path(monkeypatch) -> None:
+    import hashlib
+    captured = {}
+
+    def fake_publish(repo, branch, path, body):
+        captured.update(repo=repo, branch=branch, path=path, body=body)
+        return "cafe" * 10
+    monkeypatch.setattr(M.publish_receipt, "publish", fake_publish)
+    rec = {"source_rev": X, "base": Y, "result": Z, "conflicts": [],
+           "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
+           "rationale": "", "resolver": "", "recorded_utc": "t"}
+    info = M.publish_provenance(rec)
+    digest = hashlib.sha256(M.provenance_body(rec)).hexdigest()
+    assert captured["path"] == f"rebase-provenance/{Z}/{digest}.json"
+    assert captured["branch"] == M.RECEIPT_BRANCH
+    assert info["digest"] == digest
+
+
+def test_fetch_provenance_picks_latest_by_time(monkeypatch) -> None:
+    import base64
+    old = {"result": Z, "soft_green": M.SOFT_RESOLVER_JUDGED,
+           "risk_judgement": M.RISK_VALIDATE, "recorded_utc": "2026-08-04T00:00:00Z"}
+    new = {"result": Z, "soft_green": M.SOFT_RESOLVER_JUDGED,
+           "risk_judgement": M.RISK_RETAIN, "recorded_utc": "2026-08-04T02:00:00Z"}
+
+    def fake_gh(argv, check=True):
+        url = argv[-1]
+        if url.endswith(f"rebase-provenance/{Z}?ref={M.RECEIPT_BRANCH}"):
+            return _cp(0, json.dumps([
+                {"type": "file", "path": f"rebase-provenance/{Z}/a.json"},
+                {"type": "file", "path": f"rebase-provenance/{Z}/b.json"}]))
+        blob = old if "a.json" in url else new
+        return _cp(0, json.dumps(
+            {"content": base64.b64encode(json.dumps(blob).encode()).decode()}))
+    monkeypatch.setattr(M.publish_receipt, "gh", fake_gh)
+    got = M.fetch_provenance(Z)
+    assert got["risk_judgement"] == M.RISK_RETAIN   # the later upgrade wins
+
+
+def test_fetch_provenance_missing_returns_none(monkeypatch) -> None:
+    monkeypatch.setattr(M.publish_receipt, "gh", lambda argv, check=True: _cp(1, ""))
+    assert M.fetch_provenance(Z) is None
+
+
+def test_durable_provenance_recovers_unaccounted_cross_host(
+        tmp_path, monkeypatch, capsys) -> None:
+    """A2 cross-host close: this host's local store is EMPTY, but the head is an
+    open PR whose soft-green provenance another host published. With
+    --durable-provenance it is recovered and (base floor + receipt re-checked live)
+    classified ELIGIBLE -- not left UNACCOUNTED forever."""
+    store = str(tmp_path / "empty.jsonl")
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 11, "headRefOid": Z,
+                                       "headRefName": "feat", "url": "u"}])
+    monkeypatch.setattr(M, "fetch_provenance", lambda z: {
+        "source_rev": X, "base": Y, "result": Z, "conflicts": [],
+        "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
+        "rationale": "", "resolver": "", "recorded_utc": "t"})
+    # Live gates still apply: floor clears, receipt validated.
+    monkeypatch.setattr(M.gate_floors, "load_floors", lambda p: [])
+    monkeypatch.setattr(M.gate_floors, "clears_all",
+                        lambda floors, co, base: {"ok": True, "unmet": []})
+    monkeypatch.setattr(M, "receipt_status", lambda z: {
+        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--durable-provenance", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["summary"]["unaccounted"] == 0       # recovered, not orphaned
+    assert out["summary"]["eligible"] == 1
+    assert out["eligible"][0]["result"] == Z
+
+
+def test_durable_provenance_off_leaves_head_unaccounted(
+        tmp_path, monkeypatch, capsys) -> None:
+    """Without --durable-provenance the same head stays UNACCOUNTED (network stays
+    OFF the default hot path); the cross-host recovery is strictly opt-in."""
+    store = str(tmp_path / "empty.jsonl")
+    monkeypatch.setattr(M, "open_pushed_prs",
+                        lambda repo: [{"number": 11, "headRefOid": Z,
+                                       "headRefName": "feat", "url": "u"}])
+    # fetch_provenance must NOT be called; make it explode if it is.
+    monkeypatch.setattr(M, "fetch_provenance",
+                        lambda z: (_ for _ in ()).throw(AssertionError("called")))
+    q = M.build_parser().parse_args(
+        ["eligible", "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q) == M.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert out["summary"]["unaccounted"] == 1
 
 
 if __name__ == "__main__":
