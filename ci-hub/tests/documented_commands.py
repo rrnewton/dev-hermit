@@ -18,10 +18,11 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = (
     ROOT / "ci-hub/README.md",
+    ROOT / "ci-hub/directives/README.md",
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 38
+EXPECTED_COMMANDS = 39
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -107,6 +108,8 @@ def _classify(text: str) -> str:
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
     if normalized.startswith("./ci-hub/bin/close-task "):
         return "parse"
+    if normalized == "./ci-hub/directives/check.py --quickstart":
+        return "local-read"
     if normalized.startswith("with-proxy gh "):
         return "live-read"
     match = re.match(r"^(?:\./)?scripts/agent-podman\.rs\s+(\S+)", normalized)
@@ -491,6 +494,7 @@ def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
     commands = extract_commands(
         (
             root / "ci-hub/README.md",
+            root / "ci-hub/directives/README.md",
             root / "ci-hub/landing/README.md",
             root / "ci-hub/containers/README.md",
         )

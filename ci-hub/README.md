@@ -91,6 +91,7 @@ policy requires this gateway and forbids raw terminal-status updates.
 | Object | Owns | Does not own |
 | --- | --- | --- |
 | `bin/` | Stable wrappers and pinned shared-tool materialization. | CI classification, scheduling, or history logic. |
+| `directives/` | Versioned owner tooling obligations and fresh target-branch ancestry verdicts. | Implementation, review, or treating quoted instructions as completion. |
 | `health/` | Dev-hermit-specific current-main, PR, primary, and agent health adapters plus tick configuration. | Generic cadence or PR-CI classification engines. |
 | `history/` | Incremental/idempotent GitHub Actions and local commit/CI knowledge store, ingestion, and queries. | Current-live status presentation. |
 | `remediation/` | Mandatory post-land dual verification, exact-SHA local execution, watcher, and remediation recommendation. | CI-history ingestion or automatic source-code reverts. |

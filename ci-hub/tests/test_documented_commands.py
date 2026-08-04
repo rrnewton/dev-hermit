@@ -26,7 +26,12 @@ class DocumentedCommandsTest(unittest.TestCase):
             {command.mode for command in commands},
             {"setup", "parse", "local-read", "live-read"},
         )
-        self.assertTrue(any("land_and_arm.py" in command.text for command in commands))
+        self.assertTrue(
+            any(
+                "directives/check.py --quickstart" in command.text
+                for command in commands
+            )
+        )
         self.assertTrue(any("ci-hub/ci-hub quickstart" in command.text for command in commands))
         self.assertTrue(any("systemd-run --user" in command.text for command in commands))
 

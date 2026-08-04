@@ -4,6 +4,19 @@ description: |-
   cadence and only emits actions when a hard warning is required.
 
 reminders:
+  - name: owner_tooling_directives
+    cadence_secs: 3600
+    gate:
+      cmd: ./ci-hub/directives/check.py
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: owner-tooling-directives
+      title: "owner tooling directives need action: {summary}"
+
   - name: speculative_land_obligations
     cadence_secs: 300
     gate:
