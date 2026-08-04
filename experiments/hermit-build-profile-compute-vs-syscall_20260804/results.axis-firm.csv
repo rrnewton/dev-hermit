@@ -1,0 +1,3 @@
+profile,guest,mode,placement,cores,run,wall_s,cpu_s
+release-o0,syscall_bound,hermit,unpinned,-,1,606.40,555.040
+release-o0,syscall_bound,hermit,unpinned,-,2,613.35,549.920

@@ -72,4 +72,66 @@ python3 analyze.py                   # medians.csv + verdict table
 
 ## Results
 
-_Pending build_and_run.sh completion (runs after the PR drain to preserve SOLO)._
+### Compile cost per profile (`compile.csv`, `cargo build -p hermit` class)
+
+| profile | compile wall (s) | compile CPU-s |
+|---|---:|---:|
+| `release` (opt3, shipped) | 83.9 | 437.5 |
+| `release-o0` | 29.1 | **129.1** (−70% CPU) |
+| `debug` | 47.1 | 191.9 |
+
+**`release-o0` compiles cheaper than `debug`** (129 vs 192 CPU-s): `debug` carries
+debuginfo + debug-assertions + overflow-checks. The fastest-compiling *semantics-safe*
+profile is `release-o0`, not `debug`.
+
+### Runtime cost per profile (`medians.csv`, CPU-s = contention-proof)
+
+| profile | compute_bound CPU-s | syscall_bound CPU-s |
+|---|---:|---:|
+| `release` (opt3) | 107.3 (N=7) | 510.7 (N=5) |
+| `release-o0` | 107.3 (N=3) — **identical** | ~552 (N=2: 555.0, 549.9), **+8%** |
+| `debug` | (compute ≈ neutral, unmeasured) | (not measured — excluded, semantics-changing) |
+
+- **opt-level is runtime-NEUTRAL for compute-bound guests** → confirms the owner's
+  "hermit doesn't do much compute" clause **for compute guests** (hermit not the hot path).
+- **opt-level COSTS ~8% for syscall-bound guests** → confirms the owner's **exception**
+  (hermit *is* the hot path per-syscall). `release-o0` syscall was N=1 (614.7, weak); firmed
+  to **N=2 (555.0, 549.9 → ~552 cpu-s, +8%)** by `firm_axis_syscall.sh` →
+  `results.axis-firm.csv`. The N=1 outlier overstated the penalty; the firmed value is +8%.
+  The `debug` syscall cell was not measured (debug is excluded from any recommendation —
+  it flips debug-assertions/overflow-checks). *The DAG-wall verdict below does not depend on
+  this magnitude — the penalty's sign, not its size, is what makes the fast-compile profile a loss.*
+- Semantics byte-identical across all three profiles for both guests (`semantics.txt`).
+  `debug` still flips debug-assertions/overflow-checks → **excluded** from any determinism
+  recommendation; `release-o0` keeps release's assertion settings (only opt-level differs).
+
+### DAG-wall verdict — the profile lever is a dead end for THIS DAG
+
+The compile+test **sum** is decided by **DAG topology**, not the CPU-s arithmetic:
+
+- **Release compile is OFF the critical path.** The release hermit binary is built by
+  `build.dbi_release` (240s) + `build.sabre_release` (90s), which hang off `build.workspace`
+  and run **in parallel** with the `clippy(300) → strict_compat(600)` critical-path chain
+  (verified: `ci/dag/portable.json` deps). Speeding that compile up (`release-o0`) buys
+  **~0 DAG wall** — compile is parallelizable on a 316-core box.
+- **Release runtime is ON the critical path.** `strict_compat` (600s = **47% of the
+  critical path**) runs `validate.sh --portable-strict-compat-only`, executing short
+  exec/syscall-heavy utilities under `target/release/hermit` → hermit is partly the hot
+  path → an `o0` release binary would run those **slower**, lengthening the serial tail.
+- **Net:** `release-o0` trades a parallel/off-path compile saving for a serial/on-path
+  runtime penalty = **strict loss**. Amdahl, grounded in the real topology.
+
+**We DO build both** debug (`build.workspace` → `target/debug/hermit`, `HERMIT_BIN`,
+`validate.sh:735`) and release (`build.{dbi,sabre,liteinst_runtime}_release` →
+`target/release/hermit`, `validate.sh:738-739,4138`). They are **separate shared build
+nodes** feeding distinct consumer sets — compiled twice total, **not** duplicated per node.
+The current debug/release split already implements the compile+test-sum optimum:
+compile-fast (debug) on the compile-bound critical node, run-fast (release) on the
+guest-execution nodes. **The real levers are de-serializing the strict_compat tail and the
+`hermit_guest` cap — not the build profile.**
+
+_Provenance: `compile.csv`, `medians.csv`, `semantics.txt` (measured, hermit
+`8f656b4d` / reverie `9e7af7df`, devbig014); topology from `hermit/ci/dag/portable.json`
++ `validate.sh` @ main. `release-o0` syscall cell firmed to N=2 (`results.axis-firm.csv`,
++8% vs release, correcting the N=1 outlier); `debug` syscall cell not measured (excluded).
+Verdict is topology-bound and independent of that magnitude._
