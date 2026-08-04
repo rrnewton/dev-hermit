@@ -89,15 +89,18 @@ profile is `release-o0`, not `debug`.
 | profile | compute_bound CPU-s | syscall_bound CPU-s |
 |---|---:|---:|
 | `release` (opt3) | 107.3 (N=7) | 510.7 (N=5) |
-| `release-o0` | 107.3 (N=3) — **identical** | 614.7 (N=1, +20% — weak) |
-| `debug` | (compute ≈ neutral, unmeasured) | (firming) |
+| `release-o0` | 107.3 (N=3) — **identical** | ~552 (N=2: 555.0, 549.9), **+8%** |
+| `debug` | (compute ≈ neutral, unmeasured) | (not measured — excluded, semantics-changing) |
 
 - **opt-level is runtime-NEUTRAL for compute-bound guests** → confirms the owner's
   "hermit doesn't do much compute" clause **for compute guests** (hermit not the hot path).
-- **opt-level COSTS ~20% for syscall-bound guests** → confirms the owner's **exception**
-  (hermit *is* the hot path per-syscall). `release-o0` syscall is N=1; being firmed by
-  `firm_axis_syscall.sh` → `results.axis-firm.csv` (o0 + debug syscall, N=3). *The DAG-wall
-  verdict below does not depend on this magnitude.*
+- **opt-level COSTS ~8% for syscall-bound guests** → confirms the owner's **exception**
+  (hermit *is* the hot path per-syscall). `release-o0` syscall was N=1 (614.7, weak); firmed
+  to **N=2 (555.0, 549.9 → ~552 cpu-s, +8%)** by `firm_axis_syscall.sh` →
+  `results.axis-firm.csv`. The N=1 outlier overstated the penalty; the firmed value is +8%.
+  The `debug` syscall cell was not measured (debug is excluded from any recommendation —
+  it flips debug-assertions/overflow-checks). *The DAG-wall verdict below does not depend on
+  this magnitude — the penalty's sign, not its size, is what makes the fast-compile profile a loss.*
 - Semantics byte-identical across all three profiles for both guests (`semantics.txt`).
   `debug` still flips debug-assertions/overflow-checks → **excluded** from any determinism
   recommendation; `release-o0` keeps release's assertion settings (only opt-level differs).
@@ -129,5 +132,6 @@ guest-execution nodes. **The real levers are de-serializing the strict_compat ta
 
 _Provenance: `compile.csv`, `medians.csv`, `semantics.txt` (measured, hermit
 `8f656b4d` / reverie `9e7af7df`, devbig014); topology from `hermit/ci/dag/portable.json`
-+ `validate.sh` @ main. `release-o0`/`debug` syscall cells being firmed (N=1→N=3) by
-`firm_axis_syscall.sh`; verdict is topology-bound and independent of that magnitude._
++ `validate.sh` @ main. `release-o0` syscall cell firmed to N=2 (`results.axis-firm.csv`,
++8% vs release, correcting the N=1 outlier); `debug` syscall cell not measured (excluded).
+Verdict is topology-bound and independent of that magnitude._
