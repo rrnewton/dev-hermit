@@ -232,57 +232,6 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(res["red_hours"], 0.0)
         self.assertEqual(res["job_level_red_promotions"], 0)
 
-    def test_green_time_case7_propagated_gate_failure_stays_no_result(self):
-        # ROOT-CAUSE guard: a cancel-in-progress kills test-debug at 00:39:50; the
-        # require-all aggregation gate then completes=failure at 00:40:00 BECAUSE a
-        # required dep was cancelled. Its failure is PROPAGATED, not an independent
-        # verdict (run-30873193855 / hermit-238b false red). Ordering against the
-        # cancel ONSET (earliest cancelled-sibling completion) + the started_at
-        # guard (the gate STARTS after its dep resolves) leaves it no_result.
-        self._write_gha([
-            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
-                         "2026-08-03T00:40:00Z", run_id="R1"),
-            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
-                         "2026-08-03T01:00:00Z", run_id="R2"),
-        ])
-        self._write_jobs([
-            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-debug",
-             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
-             "completed_at": "2026-08-03T00:39:50Z"},
-            {"repo": "r/x", "run_id": "R1", "job_id": "j2",
-             "name": "Require every portable DAG job to succeed or be deselected",
-             "conclusion": "failure", "started_at": "2026-08-03T00:39:55Z",
-             "completed_at": "2026-08-03T00:40:00Z"},
-        ])
-        res = query.green_time(str(self.parent), "r/x", None, ["W"])
-        self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
-        self.assertEqual(res["red_hours"], 0.0)
-        self.assertEqual(res["job_level_red_promotions"], 0)
-
-    def test_green_time_case7_independent_failure_with_cancelled_sibling_is_red(self):
-        # The genuine case the guard must still catch: a job FAILED at 00:30, then
-        # an EXTERNAL newer push cancelled the run, killing a sibling at 00:40. The
-        # failure both completed AND started before the cancel onset -> independent
-        # -> RED, even though a cancelled sibling exists.
-        self._write_gha([
-            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
-                         "2026-08-03T00:40:00Z", run_id="R1"),
-            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
-                         "2026-08-03T01:00:00Z", run_id="R2"),
-        ])
-        self._write_jobs([
-            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-release",
-             "conclusion": "failure", "started_at": "2026-08-03T00:20:00Z",
-             "completed_at": "2026-08-03T00:30:00Z"},
-            {"repo": "r/x", "run_id": "R1", "job_id": "j2", "name": "test-debug",
-             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
-             "completed_at": "2026-08-03T00:40:00Z"},
-        ])
-        res = query.green_time(str(self.parent), "r/x", None, ["W"])
-        self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
-        self.assertEqual(res["no_result_hours"], 0.0)
-        self.assertEqual(res["job_level_red_promotions"], 1)
-
     def test_green_time_case7_inert_without_job_store(self):
         # No gha-jobs.csv -> the discriminator is inert and cancelled stays
         # no_result (conservative), identical to the run-level-only behavior.

@@ -27,10 +27,29 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
-/// Workspace homeostasis caps. Disk is the real cap (expressed in GB); the slot
-/// count is a secondary advisory against the active-worktree policy limit.
-/// Override the disk cap with HERMIT_WORKTREE_GB_CAP.
-const DEFAULT_DISK_CAP_GB: u64 = 200;
+/// Workspace homeostasis caps. Disk is the primary advisory (expressed in GB);
+/// the slot count is a secondary advisory against the active-worktree policy
+/// limit. Override the disk cap with HERMIT_WORKTREE_GB_CAP.
+///
+/// UNIT: this cap is compared against `du -sb` (see `dir_size_bytes`), i.e. the
+/// APPARENT / pre-compression / reflink-referenced logical size of worktrees/.
+/// btrfs zstd is transparent to `du`, so `du -sb` overstates the real on-disk
+/// footprint. Measured 2026-08-03 on this box (compsize over worktrees/):
+///   du -sb (apparent, referenced) : actual disk = 639.7 GB : 163 GB = 3.92 : 1
+/// so this apparent cap corresponds to ~1/3.9 as much real disk.
+///
+/// DERIVATION (do not "round" — recompute from measurements when the box or the
+/// slot budget changes). Three recorded inputs, all in the apparent/`du -sb`
+/// unit the check uses:
+///   measured_per_tree = 95 GB  (mean of the 5 heaviest fully-built trees
+///                               measured 2026-08-03: 54/66/87/110/152 GB ≈ 94,
+///                               taken as 95 for margin; PRE-compression apparent)
+///   target_count      = 12     (active-worktree policy limit, Hard Invariant 13)
+///   headroom          = 1.25   (parked slots + build growth)
+///   cap = 95 * 12 * 1.25 = 1425 GB apparent
+/// Real-disk sanity: 1425 GB apparent / 3.92 ≈ 363 GB actual (≈475 GB even at a
+/// conservative 3:1), vs 2158 GB free here — ~17-22% of free at the cap.
+const DEFAULT_DISK_CAP_GB: u64 = 1425;
 const SLOT_COUNT_ADVISORY: usize = 12;
 const LANGUISH_HOURS: i64 = 24;
 
@@ -64,11 +83,13 @@ Options:
                       slots, slot sprawl) and exit WITHOUT allocating anything.
   -h, --help          Show this help.
 
-Homeostasis (advisory, never blocks): every allocation also prints a LOUD
-banner if worktrees/ disk exceeds the GB cap (env HERMIT_WORKTREE_GB_CAP,
-default 200 GB), if any physical slot has had no file edits in >24h (registered
-or orphaned), or if slot dirs exceed a soft count. The GB cap is the real limit;
-slot count is advisory.
+Homeostasis (ADVISORY, never blocks — allocation always completes): every
+allocation also prints an informational banner if worktrees/ apparent size
+(du -sb) exceeds the GB soft cap (env HERMIT_WORKTREE_GB_CAP, default 1425 GB
+apparent; note du -sb overstates real btrfs on-disk use ~3.9x here), if any
+physical slot has had no file edits in >24h (registered or orphaned), or if slot
+dirs exceed a soft count. These are housekeeping heads-ups, not stop signs; your
+slot is allocated and you should proceed.
 
 Policy:
   * One mutating owner per slot; a second mutating agent is refused.
@@ -223,10 +244,12 @@ fn physical_slot_count(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// LOUD workspace-health check: disk cap (GB), languishing slots (>24h), and a
-/// slot-count advisory. Emits a banner impossible to miss. Never fails the run —
-/// homeostasis is advisory so allocation is never blocked, but the warnings are
-/// printed to stderr with a heavy banner so agents notice and act.
+/// Advisory workspace-health check: disk soft cap (GB, apparent/du -sb),
+/// languishing slots (>24h), and a slot-count advisory. Never fails the run and
+/// never blocks allocation — it prints an informational banner to stderr so
+/// agents notice and can do housekeeping, NOT a stop sign. Wording is
+/// deliberately advisory: a firing banner must not read as a reason to refuse
+/// work.
 fn homeostasis_check(root: &Path) {
     let cap_gb: u64 = std::env::var("HERMIT_WORKTREE_GB_CAP")
         .ok()
@@ -241,13 +264,15 @@ fn homeostasis_check(root: &Path) {
 
     if gb > cap_gb as f64 {
         warnings.push(format!(
-            "DISK OVER CAP: worktrees/ = {gb:.1} GB > {cap_gb} GB cap.\n     \
-             Reclaim: blast target/ dirs and release idle slots:\n     \
+            "disk heads-up: worktrees/ = {gb:.1} GB apparent (du -sb) > {cap_gb} GB soft cap.\n     \
+             This is advisory only — btrfs compression means real on-disk use is far\n     \
+             lower, and nothing is blocked. When convenient (or leave for the\n     \
+             coordinator), reclaim build dirs / idle slots:\n     \
              find worktrees -name target -type d -maxdepth 3 -exec rm -rf {{}} +\n     \
              scripts/release-worktree.rs --slot <slot> --clean"
         ));
     } else {
-        eprintln!("homeostasis: worktrees/ = {gb:.1} GB / {cap_gb} GB cap (ok)");
+        eprintln!("homeostasis: worktrees/ = {gb:.1} GB apparent / {cap_gb} GB soft cap (ok)");
     }
 
     let languish_hours: i64 = std::env::var("HERMIT_WORKTREE_LANGUISH_HOURS")
@@ -327,16 +352,19 @@ fn homeostasis_check(root: &Path) {
 
     if !warnings.is_empty() {
         eprintln!();
-        eprintln!("╔════════════════════════════════════════════════════════════════════╗");
-        eprintln!("║  ⚠  WORKTREE HOMEOSTASIS WARNING  ⚠   (workspace health degraded)   ║");
-        eprintln!("╚════════════════════════════════════════════════════════════════════╝");
+        eprintln!("┌────────────────────────────────────────────────────────────────────┐");
+        eprintln!("│  ℹ  WORKTREE HOMEOSTASIS — ADVISORY (nothing blocked; keep working) │");
+        eprintln!("└────────────────────────────────────────────────────────────────────┘");
+        eprintln!("  Your slot IS allocated. The item(s) below are housekeeping heads-ups,");
+        eprintln!("  not errors and not a reason to stop or refuse work. Address them when");
+        eprintln!("  convenient, or leave them for the coordinator.");
         for (n, w) in warnings.iter().enumerate() {
             eprintln!("  {}. {w}", n + 1);
         }
         eprintln!(
             "  See ai_docs/transient/2026-07-27-worktree-management-map.md §5 (disk hygiene)."
         );
-        eprintln!("═══════════════════════════════════════════════════════════════════════");
+        eprintln!("────────────────────────────────────────────────────────────────────────");
         eprintln!();
     }
 }
