@@ -1,3 +1,4 @@
 profile,guest,mode,placement,cores,run,wall_s,cpu_s
 release-o0,compute_bound,hermit,unpinned,-,1,321.26,107.250
 release-o0,compute_bound,hermit,unpinned,-,2,326.90,108.870
+release-o0,compute_bound,hermit,unpinned,-,3,318.75,106.400
