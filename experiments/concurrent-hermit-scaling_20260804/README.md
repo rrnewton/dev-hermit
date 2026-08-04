@@ -154,6 +154,47 @@ would scale far wider. The precise *quiet-box* throughput knee past 150 is **sti
 this run's makespan is self-saturated — but the user/sys decomposition already fixes the answer's
 *shape*: supervision-bound workloads wall out well before 150; compute-bound ones do not.
 
+## Finding 5 — the background-robust answer: achieved parallelism (Σcpu/makespan)
+
+Three separate sweeps on this shared box confirmed that **makespan-based throughput cannot yield a
+clean knee here**: makespan is dominated by a heavy straggler tail (at N=96–316, median per-instance
+cpu is 11–22s but the *slowest* instance is 43–53s), and every wide run either fights other agents
+(baseline load 30–45) or self-saturates (load → 235–415). Makespan/throughput are therefore reported
+but are lower bounds only.
+
+The metric that **does** survive background contamination is **achieved parallelism = Σ(cpu-s) /
+makespan** — the number of cores'-worth of *this experiment's own* work completed concurrently
+(Σcpu counts only my hermit instances, via `/usr/bin/time`, so background load cannot inflate it):
+
+| N | Σ my cpu-s | makespan | **achieved cores** | failures | bg load |
+|---|---|---|---|---|---|
+| 32 | 139 | 7.1 | 19.5 | 1 | 33 |
+| 64 | 506 | 13.6 | 37.3 | 2 | 37 |
+| 128 | 1921 | 43.1 | 44.5 | 1 | 54 |
+| 150 | 2535 | 24.1 | **105.1** | 3 | 71 |
+| 175 | 3430 | 30.3 | **113.0** | 3 | 110 |
+| 256 | 4995 | 53.0 | 94.3 | 8 | 176 |
+| 316 | 7039 | 57.0 | **123.5** | 15 | 235 |
+
+**Achieved parallelism keeps climbing past 150 — to ~124 cores at N=316 — it does not flatten at a
+low N.** Even with 235 of background load competing, 316 concurrent hermit instances extracted ~124
+cores of useful concurrent work, and per-instance **compute (user) time never degraded** (0.6s
+throughout). The jitter (105→63→113 at N=150/158/175) is straggler-driven makespan noise, not a
+ceiling. On a genuinely quiet box the achieved-cores line would sit higher and smoother.
+
+### Bottom line for the owner's question
+- **Does concurrent hermit scale past 150 cores?** For *throughput of useful work*, **yes,
+  directionally** — achieved parallelism rises through N=150 to ~124 effective cores at N=316 on a
+  contended box (a lower bound). Compute scales perfectly. It does **not** flatten before 150.
+- **The limiter is the `--strict` supervision path (system time), not compute**, plus the clone-crash
+  cell loss (Finding 3, ~3–9% past N≈128).
+- **Does the drain strategy invert?** *Partially.* Running the corpus **wider than full-serialize is
+  justified** (throughput and achieved-parallelism both rise well past the current posture). But the
+  naive "fan out all cells at once" inversion is **not** supported unqualified: (a) supervision
+  system-time contention grows with N, (b) SIGSEGV loses cells past ~128 without retry, and (c) the
+  precise *quiet-box* throughput knee was not obtainable on this shared box. **Recommended posture:
+  run wide but bounded (well below the ~128 crash onset, with crash-retry), not unbounded-wide.**
+
 ---
 
 ## What is NOT established here
