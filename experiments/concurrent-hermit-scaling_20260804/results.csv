@@ -30,3 +30,13 @@ free_sweep_to400,200,free_no_taskset,300000000,36.797,1.6306,23.11,5,contended_s
 free_sweep_to400,256,free_no_taskset,300000000,41.885,1.8336,18.30,14,contended_self_saturated,med_user=0.65 med_sys=17.56 load293-377
 free_sweep_to400,316,free_no_taskset,300000000,55.792,1.6992,21.115,17,contended_self_saturated,med_user=0.66 med_sys=20.455 load>316 GENUINELY oversubscribed
 free_sweep_to400,400,free_no_taskset,300000000,66.000,1.8182,27.54,8,contended_self_saturated,med_user=0.67 med_sys=26.865 load342-415 oversubscribed; USER STILL FLAT at 0.67
+knee_sweep,32,free_no_taskset,300000000,7.138,1.3449,4.345,1,contended,bg_load33; achieved_cores=Sigma_cpu/makespan=19.5; med_user0.61 med_sys3.745
+knee_sweep,64,free_no_taskset,300000000,13.560,1.4159,7.9,2,contended,bg_load37; achieved_cores=37.3; med_user0.61 med_sys7.3
+knee_sweep,96,free_no_taskset,300000000,43.857,0.6567,10.835,2,contended,bg_load46; achieved_cores=23.7 (straggler makespan max_cpu=43.8); med_sys10.2
+knee_sweep,128,free_no_taskset,300000000,43.130,0.8903,15.01,1,contended,bg_load54; achieved_cores=44.5 (straggler max_cpu=42.8)
+knee_sweep,150,free_no_taskset,300000000,24.113,1.8662,16.9,3,contended,bg_load71; achieved_cores=105.1
+knee_sweep,158,free_no_taskset,300000000,45.686,1.0375,18.355,6,contended,bg_load111; achieved_cores=63.5 (straggler max_cpu=45.6)
+knee_sweep,175,free_no_taskset,300000000,30.346,1.7300,19.6,3,contended,bg_load110; achieved_cores=113.0
+knee_sweep,200,free_no_taskset,300000000,49.522,1.2116,23.41,7,contended,bg_load162; achieved_cores=94.5
+knee_sweep,256,free_no_taskset,300000000,52.987,1.4494,19.51,8,contended,bg_load176; achieved_cores=94.3
+knee_sweep,316,free_no_taskset,300000000,56.999,1.6632,22.275,15,contended,bg_load235; achieved_cores=123.5 (~124 cores of useful work at N=316 despite heavy bg)
