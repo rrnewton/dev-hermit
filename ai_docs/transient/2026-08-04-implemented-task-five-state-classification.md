@@ -1,21 +1,32 @@
 # Implemented-Task Five-State Classification
 
-Captured 2026-08-04T10:27:49Z. The filed denominator of 138 had already
-drifted: 137 tasks remained when the audit was claimed and 136 remained at the
-final snapshot. This report classifies the 136 tasks whose status was
-`IN_PROGRESS` and whose tags included `implemented`.
+The filed snapshot contained 138 tasks whose status was `IN_PROGRESS` and whose
+tags included `implemented`. The live set fell to 137 when the audit was claimed
+and 136 by 2026-08-04T10:27:49Z because two tasks closed during the audit. Both
+departing rows were independently closure-verified as `LANDED`, so the original
+138-row denominator can be reconstructed without inference.
 
 | State | Tasks | Meaning |
 | --- | ---: | --- |
-| LANDED | 77 | A recorded merge replay or direct-main commit is ancestral to freshly fetched main. |
+| LANDED | 79 | A recorded merge replay, direct-main commit, or tracked research artifact is ancestry-confirmed on main. |
 | IN-FLIGHT | 40 | A recorded implementation PR or internal diff is open. |
 | STRANDED | 9 | The recorded implementation PR is closed unmerged and its exact head is absent from main. |
 | NOT-SUBMITTED | 0 | A remotely reachable implementation branch exists with no PR. |
 | UNVERIFIABLE | 10 | The task has no ancestry-testable implementation reference. |
-| **Total** | **136** | |
+| **Total** | **138** | |
 
-The complete per-task table is
+The complete filed-snapshot table is
+[`2026-08-04-implemented-task-five-state-classification-filed-138.csv`](2026-08-04-implemented-task-five-state-classification-filed-138.csv).
+The live 136-row table captured before final publication remains
 [`2026-08-04-implemented-task-five-state-classification.csv`](2026-08-04-implemented-task-five-state-classification.csv).
+
+The two rows closed during the audit were:
+
+- `obligation_revert_path_lone`: `LANDED`, parent commit
+  `5c573184e62935948f3a31ee3b39b3fbef7a639f`, closure-gateway verified.
+- `strict-compat-is-the-serial-tail-47pc-of-critical-path`: `LANDED`, research
+  artifact `ai_docs/strict-compat-serial-tail-tradeoff_20260804.md` durably
+  committed at parent `79c9ab3b7f11bd0b1365a6d6bf3c416fa68b7d04` and closure-gateway verified.
 
 ## Method
 
