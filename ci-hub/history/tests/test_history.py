@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import sys
 import tempfile
@@ -125,41 +126,197 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(out["test.a"]["max_wall_s"], 1.0)
         self.assertTrue(out["test.a"]["thin"])
 
-    def test_green_time_interval_fraction(self):
-        # Authoritative workflow "W". failure 00:00->01:00 (1h red), then
-        # success 01:00->03:00 (evaluated to 'now'); we fix now via the last
-        # interval only by adding a trailing success far in the past so the
-        # open-ended tail is negligible. Instead assert the closed intervals.
-        wf = "W"
-        rows = [
-            {"repo": "r/x", "run_id": "1", "run_attempt": "1", "workflow_name": wf,
-             "head_branch": "main", "status": "completed", "conclusion": "failure",
-             "created_at": "2026-08-03T00:00:00Z", "updated_at": "2026-08-03T00:00:00Z"},
-            {"repo": "r/x", "run_id": "2", "run_attempt": "1", "workflow_name": wf,
-             "head_branch": "main", "status": "completed", "conclusion": "success",
-             "created_at": "2026-08-03T01:00:00Z", "updated_at": "2026-08-03T01:00:00Z"},
-        ]
-        self._write_gha(rows)
-        res = query.green_time(str(self.parent), "r/x", None, [wf])
-        self.assertEqual(res["samples"], 2)
-        # First interval (failure) is exactly 1h; the success tail runs to now.
-        # green_hours grows with wall time, so assert the red hour is fixed at 1.
-        self.assertAlmostEqual(res["total_hours"] - res["green_hours"], 1.0, places=1)
-        self.assertEqual(res["current_state"], "success")
+    def _gha_wf(self, sha, concl, created, updated, wf="W", status="completed",
+                run_id=None):
+        return {"repo": "r/x", "run_id": run_id or (sha + concl),
+                "run_attempt": "1", "workflow_name": wf, "head_branch": "main",
+                "head_sha": sha, "status": status, "conclusion": concl,
+                "created_at": created, "updated_at": updated}
 
-    def test_green_time_ignores_non_main_and_non_authoritative(self):
-        rows = [
-            {"repo": "r/x", "run_id": "1", "run_attempt": "1", "workflow_name": "W",
-             "head_branch": "feature", "status": "completed", "conclusion": "success",
-             "created_at": "2026-08-03T00:00:00Z", "updated_at": "2026-08-03T00:00:00Z"},
-            {"repo": "r/x", "run_id": "2", "run_attempt": "1", "workflow_name": "Other",
-             "head_branch": "main", "status": "completed", "conclusion": "success",
-             "created_at": "2026-08-03T00:00:00Z", "updated_at": "2026-08-03T00:00:00Z"},
-        ]
-        self._write_gha(rows)
+    def test_green_time_red_reign_is_fixed_hour(self):
+        # Commit A: run created+terminal-failure at 00:00; commit B: created
+        # 01:00 (bounds A's reign to exactly 1h), success. A completes instantly
+        # so its whole 1h reign is red; B's success tail runs to now.
+        self._write_gha([
+            self._gha_wf("a" * 40, "failure", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["samples"], 2)
+        self.assertAlmostEqual(res["red_hours"], 1.0, places=1)
+        # denominator is fully accounted: the four states sum to total.
+        self.assertAlmostEqual(
+            res["green_hours"] + res["red_hours"] + res["no_result_hours"]
+            + res["gap_hours"], res["total_hours"], places=1)
+        self.assertEqual(res["current_state"], "green")
+        self.assertEqual(res["definition_date"], query.GREEN_TIME_DEFINITION_DATE)
+
+    def test_green_time_pending_tip_is_gap_not_green(self):
+        # The owner's example: main has zero reds but the current tip's
+        # authoritative run is still pending -> the tip reign is GAP, never green.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", status="in_progress"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["current_state"], "gap")
+        self.assertEqual(res["current_reason"], "pending")
+        self.assertGreater(res["gap_hours"], 0.0)
+        self.assertEqual(res["red_hours"], 0.0)  # zero reds, yet not fully green
+
+    def test_green_time_cancelled_is_no_result_not_red(self):
+        # A supersede/manual cancel is a destroyed answer, not a failure: it is
+        # no_result, never red, and never green.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["no_result_hours"], 1.0, places=1)
+        self.assertEqual(res["red_hours"], 0.0)
+
+    def _write_jobs(self, rows):
+        path = self.parent / "ignored" / "ci-hub" / "gha-jobs.csv"
+        cols = ["repo", "run_id", "job_id", "name", "conclusion",
+                "started_at", "completed_at"]
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                w.writerow({c: r.get(c, "") for c in cols})
+
+    def test_green_time_case7_job_failed_before_cancel_is_red(self):
+        # Seventh case: run-level cancelled, but a job FAILED at 00:30, before the
+        # run's cancel at 00:40 -> ORDERING says the failure was independent ->
+        # the reign is RED, not no_result.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "build",
+             "conclusion": "failure", "completed_at": "2026-08-03T00:30:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        # reign 00:00-01:00: pending until the run resolves at 00:40 (0.67h gap),
+        # then the verdict 00:40-01:00 (0.33h) is RED via the ordering promotion.
+        self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
+        self.assertAlmostEqual(res["gap_hours"], 0.67, places=1)
+        self.assertEqual(res["no_result_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 1)
+
+    def test_green_time_case7_job_killed_by_cancel_stays_no_result(self):
+        # A job killed BY the cancel (its red conclusion completes AFTER the
+        # cancel moment) is not an independent failure -> stays no_result.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "build",
+             "conclusion": "failure", "completed_at": "2026-08-03T00:55:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        # completed AFTER the 00:40 cancel -> killed by it -> stays no_result.
+        self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
+        self.assertEqual(res["red_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_case7_inert_without_job_store(self):
+        # No gha-jobs.csv -> the discriminator is inert and cancelled stays
+        # no_result (conservative), identical to the run-level-only behavior.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
+        self.assertEqual(res["red_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_commit_without_authoritative_run_is_gap_no_record(self):
+        # Commit B ran only a NON-authoritative workflow: no authoritative check
+        # record -> gap(no-record), never carried-forward as A's green.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", wf="Other"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["current_state"], "gap")
+        self.assertEqual(res["current_reason"], "no-record")
+        self.assertAlmostEqual(res["green_hours"], 1.0, places=1)  # only A's reign
+
+    def test_green_time_ignores_non_main(self):
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+        ])
+        # override branch to feature by rewriting the single row
+        self._write_gha([{**self._gha_wf("a" * 40, "success",
+                          "2026-08-03T00:00:00Z", "2026-08-03T00:00:00Z"),
+                          "head_branch": "feature"}])
         res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertEqual(res["samples"], 0)
         self.assertIsNone(res["green_pct"])
+
+    def test_green_time_multi_workflow_requires_all_success(self):
+        # Two authoritative workflows at commit A: one success, one failure ->
+        # combined red (green requires ALL).
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z", wf="W1"),
+            self._gha_wf("a" * 40, "failure", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z", wf="W2"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", wf="W1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", wf="W2"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W1", "W2"])
+        self.assertAlmostEqual(res["red_hours"], 1.0, places=1)  # A's reign red
+        self.assertEqual(res["current_state"], "green")           # B all-success
+
+    def test_green_time_trend_buckets_per_day(self):
+        self._write_gha([
+            self._gha_wf("a" * 40, "failure", "2026-08-01T00:00:00Z",
+                         "2026-08-01T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-02T00:00:00Z",
+                         "2026-08-02T00:00:00Z"),
+        ])
+        tr = query.green_time_trend(str(self.parent), "r/x", None, ["W"], "day")
+        self.assertEqual(tr["bucket"], "day")
+        self.assertGreaterEqual(len(tr["buckets"]), 1)
+        # first day bucket is the failure reign -> 0% green
+        self.assertEqual(tr["buckets"][0]["green_pct"], 0.0)
+
+    def test_green_time_append_log_writes_jsonl(self):
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        path = str(self.parent / "gtlog.jsonl")
+        query.append_green_time_log(str(self.parent), res, path)
+        query.append_green_time_log(str(self.parent), res, path)
+        with open(path) as fh:
+            lines = [json.loads(x) for x in fh if x.strip()]
+        self.assertEqual(len(lines), 2)  # appends, never truncates
+        self.assertEqual(lines[0]["repo"], "r/x")
+        self.assertIn("green_pct", lines[0])
 
 
     def _gha_run(self, **over):

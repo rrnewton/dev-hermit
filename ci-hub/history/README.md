@@ -137,12 +137,31 @@ the effective wait (measured for terminal runs, lower bound for queued), so a
 run stuck in the queue is flagged instead of reading `0`. See
 `ai_docs/ci-hub-history-queued-wait-lower-bound_20260803.md` for the reasoning.
 
-`green-time` counts only `conclusion == success` as green; `cancelled`,
-`failure`, etc. are non-green. The store preserves every conclusion and
-timestamp, so an alternative definition (e.g. carry-forward across `cancelled`
-supersedes) can be computed later without re-ingesting. Authoritative workflow
-defaults: hermit `CI (GitHub-managed portable)`, reverie `Rust`; override with
-`--workflow` (repeatable).
+`green-time` implements a dated four-state definition (see the `GREEN-TIME
+DEFINITION` block at the top of `query.py`, `GREEN_TIME_DEFINITION_DATE`). Main's
+wall-clock is partitioned into **green / red / no_result / gap**, where **green
+is a positive success record, never the absence of red**. `success`/`neutral` ->
+green; a genuine failing verdict -> red; `cancelled`/`skipped`/`stale`/unknown ->
+no_result (a destroyed or withheld answer, re-dispatch not revert); pending or
+no-record -> gap. green requires ALL authoritative workflows to succeed
+(precedence red > gap > no_result > green).
+
+The definition names a **seven-case taxonomy** so "not red" is not collapsed into
+one bucket: cancelled-below-cap (supersede/manual) is no_result, cancelled-at-cap
+(self-timeout kill) is red, environmental/harness-caused failure is no_result,
+and the **seventh case** — a run-level `cancelled` that masks a *job* which
+failed first — is red, discriminated by **ordering** (the job's red conclusion
+completed at/before the run's cancel moment). Cases that the run-level store
+cannot yet discriminate (self-timeout annotation; per-job failure) stay
+conservatively in no_result, so an offline blind spot can only UNDER-count red,
+never inflate green. The seventh-case discriminator (`_resolve_cancelled_run`) is
+implemented but inert until a per-job store (`gha-jobs.csv`) exists.
+
+The store preserves every conclusion and timestamp, so a refined definition can
+be recomputed later without re-ingesting. Authoritative workflow defaults: hermit
+`CI (GitHub-managed portable)`, reverie `Rust`; override with `--workflow`
+(repeatable). Use `--trend {day,week}` for the trend and `--append-log` to
+persist a durable JSONL snapshot per run.
 
 ## Join keys (file contract — join ONLY via these)
 

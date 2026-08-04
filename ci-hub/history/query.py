@@ -50,6 +50,114 @@ AUTHORITATIVE = {
     "rrnewton/reverie": ["Rust"],
 }
 
+# ---------------------------------------------------------------------------
+# GREEN-TIME DEFINITION (stated + dated so the metric's basis is challengeable).
+#
+# A metric whose basis is unstated becomes a number nobody can challenge. This is
+# the definition the code implements, as of GREEN_TIME_DEFINITION_DATE. Change
+# the date whenever the definition below changes.
+#
+# GREEN IS A POSITIVE SUCCESS RECORD, NOT THE ABSENCE OF RED. The wall-clock
+# timeline of main is partitioned into FOUR mutually exclusive states so the
+# whole denominator is accounted for and no non-green time is ever silently
+# credited as green:
+#
+#   green      the latest attempt of EVERY authoritative workflow at the current
+#              main commit completed with success/neutral.
+#   red        any authoritative workflow at that commit produced a genuine BAD
+#              answer (see the seven-case table for exactly which sub-cases).
+#   no_result  the latest attempt was an answer that was destroyed, withheld, or
+#              caused by our own harness rather than the product code under test.
+#              Never remediates by revert, never counts as green.
+#   gap        no terminal authoritative answer exists for the commit yet: the
+#              run is still pending/queued/in_progress ("pending"), or the
+#              authoritative workflow has no record at all for that commit
+#              ("no-record"). We cannot claim health, so it is NOT green.
+#
+# SEVEN-CASE TAXONOMY. "Not red" is not one thing. When you look closely, an
+# authoritative-workflow observation falls into one of seven cases; each maps to
+# exactly one of the four states above. The DISCRIMINATOR column is what tells
+# two look-alike cases apart, and DERIVABLE says whether the current RUN-LEVEL
+# store (gha-runs.csv) can see that discriminator offline:
+#
+#  # observation                     -> state       discriminator          derivable now?
+#  1 all authoritative wf success       green        run.conclusion         YES
+#  2 genuine failing TEST verdict       red          run.conclusion         YES
+#  3 cancelled BELOW its timeout cap    no_result    check annotation       NO (needs
+#      (supersede / manual / queue         (signal destroyed;               annotations;
+#       cancel-in-progress)                re-dispatch)                      duration is
+#                                                                           NOT a proxy)
+#  4 cancelled AT its timeout cap       red          check annotation       NO (needs
+#      (self-timeout kill: a hang           ("exceeded the maximum          annotations)
+#       hit our timeout-minutes box)        execution time")
+#  5 environmental / harness-caused     no_result    local-leg signature    PARTIAL (only on
+#      (sandbox EPERM, cold-build           (protocol.py); on the           the local-validate
+#       link flake, inner-MemoryMax         GitHub leg it presents          leg; the GitHub
+#       OOM, PID-sandbox timeout)           as bare `failure`)              leg cannot split it)
+#  6 no run of the authoritative wf,    gap          run absent / status    YES
+#      or run still pending/queued         !completed
+#  7 run-level CANCELLED but a JOB      red          ORDERING: the job's    NO (needs
+#      inside it FAILED first               red conclusion completed        job-level rows;
+#      (run-level and job-level             at/before the run's cancel      run-level store
+#       conclusions DISAGREE)               moment -> failed on its own     has no per-job
+#                                           -> real red; killed BY the      conclusion)
+#                                           cancel -> stays no_result
+#
+# WHY THE GREEN NUMBER IS ROBUST TO ALL OF THIS. Cases 3-5 and 7 are all
+# NON-green (none is a success record), so which bucket they land in NEVER moves
+# green_pct up or down. The taxonomy refines the RED <-> NO_RESULT split, which
+# is what drives the ACTION, not the health headline:
+#    red       -> a genuine bad answer: fix-forward or revert.
+#    no_result -> a destroyed/withheld/harness-caused answer: RE-DISPATCH, never
+#                 revert a healthy tip.
+#    gap       -> fill the hole (dispatch / wait for the pending run).
+# The un-derivable splits (3-vs-4, 5, 7) are all CONSERVATIVE for green: an
+# undiscriminated case sits in no_result, so the worst offline error is
+# UNDER-counting red (a hidden failure reads as "no answer"), NEVER inflating
+# green. Case 5 on the GitHub leg is the one over-count (a harness cause reads as
+# red) and still cannot touch green.
+#
+# COMBINE + REIGN. A commit's state combines its authoritative workflows with
+# precedence red > gap > no_result > green: one real failure dominates; absent
+# that, a missing/pending answer blocks a green claim. Each main commit "reigns"
+# from its first observed run creation until the next commit's first run creation
+# (the last commit reigns to now). Within a reign, [became-head,
+# all-authoritative-terminal) is gap(pending) and the remainder takes the
+# combined terminal state. green_pct = green wall-clock / window wall-clock;
+# red/no_result/gap percentages complete the denominator.
+#
+# TRINARY / FLAKY: green_pct is the exact fraction of time in the unambiguous
+# green state. Anything below 100% is time that was NOT green — reported broken
+# out as red/no_result/gap. A window that is (e.g.) 80% green is 20% unhealthy;
+# it is never rounded up to "green". A flaky period shows as mixed red+gap time,
+# which is not green time.
+#
+# OFFLINE LIMITS (stated, not hidden — query.py never touches the network):
+#  * cases 3/4: cancelled cannot be split supersede-vs-self-timeout offline
+#    (needs check annotations; duration is NOT a discriminator — a supersede was
+#    measured cancelled 4s under a 300s cap). ALL cancelled -> no_result here
+#    UNLESS case 7 promotes it; the self-timeout -> red promotion lives only in
+#    the live github_main_health dashboard until annotations are ingested.
+#  * case 5: environmental failures are only separable on the local-validate leg
+#    (protocol.py); on the GitHub authoritative leg they present as `failure` and
+#    are counted as red here.
+#  * case 7: the seventh-case ORDERING discriminator is implemented (see
+#    _resolve_cancelled_run) but INERT until a per-job store (gha-jobs.csv, owned
+#    by the ci-hub history-store task) exists; with only run-level rows every
+#    cancelled run stays no_result (conservative).
+#  * a commit with NO run of ANY workflow in the store is invisible (no reign
+#    boundary); the store cannot see it. Commits with some-but-not-authoritative
+#    runs ARE counted as gap(no-record).
+GREEN_TIME_DEFINITION_DATE = "2026-08-04"
+
+# MUST stay in lockstep with ci-hub/health/github_main_health.py (the canonical
+# live-health taxonomy — task cancelled-run-classified-as-red). Anything not
+# listed falls through to no_result (unknown on the safe side).
+_GREEN_CONCLUSIONS = frozenset(("success", "neutral"))
+_RED_CONCLUSIONS = frozenset(("failure", "timed_out", "error", "startup_failure"))
+_NO_RESULT_CONCLUSIONS = frozenset(
+    ("cancelled", "action_required", "stale", "skipped", ""))
+
 PRUNE = {"target", ".git", "node_modules", ".cargo", "incremental", "deps",
          "build", ".venv", "__pycache__"}
 
@@ -67,6 +175,19 @@ def store_dir(parent: str) -> str:
 
 def gha_store_path(parent: str) -> str:
     return os.path.join(store_dir(parent), "gha-runs.csv")
+
+
+def jobs_store_path(parent: str) -> str:
+    """Optional per-job store for the seventh-case ordering discriminator.
+
+    PROPOSED file contract (owned by the ci-hub history-store task, not yet
+    produced): one row per job of a run, columns at least
+    repo, run_id, job_id, name, conclusion, started_at, completed_at
+    (mirrors `gh api repos/{repo}/actions/runs/{id}/jobs`). Joined to gha-runs by
+    (repo, run_id). Absent today -> the discriminator is inert (see
+    _resolve_cancelled_run) and every cancelled run stays no_result.
+    """
+    return os.path.join(store_dir(parent), "gha-jobs.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -263,55 +384,301 @@ def _table(hdr, body) -> str:
 # green-time  (owner headline metric — derived, never estimated)
 # ---------------------------------------------------------------------------
 
-def green_time(parent: str, repo: str, since: str | None,
-               workflows: list[str] | None) -> dict:
-    wanted = workflows or AUTHORITATIVE.get(repo, [])
-    rows = load_gha_rows(parent, repo, since, branch="main")
-    # Only terminal authoritative runs define the state timeline.
-    events = []
-    for r in rows:
-        if wanted and r.get("workflow_name") not in wanted:
-            continue
-        if r.get("status") != "completed":
-            continue
-        ts = _epoch(r.get("updated_at"))
-        if ts is None:
-            continue
-        events.append((ts, r.get("conclusion") or "", r.get("head_sha") or "",
-                       r.get("updated_at") or ""))
-    events.sort()
+def _classify_terminal(conclusion: str) -> str:
+    """A single completed run's terminal conclusion -> green/red/no_result."""
+    c = (conclusion or "").lower()
+    if c in _GREEN_CONCLUSIONS:
+        return "green"
+    if c in _RED_CONCLUSIONS:
+        return "red"
+    return "no_result"  # cancelled/skipped/... and every unknown, on the safe side
 
-    if not events:
-        return {"repo": repo, "workflows": wanted, "samples": 0,
-                "green_pct": None,
-                "note": "no terminal authoritative main-branch runs in store"}
+
+def load_jobs_index(parent: str, repo: str | None) -> dict[str, list[dict]]:
+    """run_id -> [job rows] from the optional gha-jobs.csv, or {} when absent."""
+    path = jobs_store_path(parent)
+    if not os.path.isfile(path):
+        return {}
+    idx: dict[str, list[dict]] = {}
+    with open(path, newline="", errors="replace") as fh:
+        for row in csvmod.DictReader(fh):
+            if repo and row.get("repo") != repo:
+                continue
+            idx.setdefault(row.get("run_id") or "", []).append(row)
+    return idx
+
+
+def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
+    """Seventh case: run-level CANCELLED, but a JOB inside it may have FAILED.
+
+    Run-level and job-level conclusions disagree; the discriminator is ORDERING.
+    A job whose conclusion is red (failure/timed_out/...) that COMPLETED at or
+    before the run's cancel moment failed on its own — the later run-level cancel
+    only masked it — so the run is a real RED. A job still running when the cancel
+    landed (no completion, or a completion after the cancel) was killed BY the
+    cancel: its non-answer stays no_result.
+
+    Returns 'red' when a job failed independently of the cancel, else None (the
+    caller keeps the run-level no_result classification). Inert when `jobs` is
+    empty/None (no per-job store exists yet).
+    """
+    if not jobs:
+        return None
+    cancel_at = _epoch(run.get("updated_at"))  # cancelled run's terminal stamp
+    for j in jobs:
+        if (j.get("conclusion") or "").lower() not in _RED_CONCLUSIONS:
+            continue
+        done = _epoch(j.get("completed_at"))
+        if done is None:
+            continue  # a red job with no completion time cannot be ordered
+        # ORDERING: the failure landed at/before the cancel -> independent of it.
+        if cancel_at is None or done <= cancel_at:
+            return "red"
+    return None
+
+
+def _combine_states(states: list[str]) -> str:
+    """Combine per-workflow states with precedence red > gap > no_result > green.
+
+    One genuine failure dominates; absent that, a missing/pending answer blocks a
+    green claim; a destroyed answer (no_result) is preferred over green only when
+    there is no gap. `states` is non-empty.
+    """
+    if "red" in states:
+        return "red"
+    if "gap" in states:
+        return "gap"
+    if "no_result" in states:
+        return "no_result"
+    return "green"
+
+
+def _iso_utc(epoch: float) -> str:
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+
+def state_timeline(parent: str, repo: str, since: str | None,
+                   workflows: list[str] | None) -> dict:
+    """Partition main's wall-clock into (start, end, state, reason) intervals.
+
+    See the GREEN-TIME DEFINITION block above. Purely store-derived: reign
+    boundaries come from run creation times in gha-runs.csv, verdicts from the
+    authoritative-workflow runs at each commit. Returns intervals plus metadata;
+    ``green_time`` and the trend view both build on it.
+    """
+    wanted = list(workflows) if workflows else list(AUTHORITATIVE.get(repo, []))
+    rows = load_gha_rows(parent, repo, since, branch="main")
+    jobs_index = load_jobs_index(parent, repo)  # {} until gha-jobs.csv exists
+    job_promotions = 0  # case-7 cancelled->red reclassifications (auditable)
+
+    # Commit universe + reign boundary: first observed run creation for the
+    # commit, across ANY workflow (so a commit with only non-authoritative runs
+    # still bounds a reign and shows as gap(no-record) for the metric).
+    first_seen: dict[str, float] = {}
+    # Latest attempt of each authoritative workflow at each commit.
+    latest: dict[tuple[str, str], dict] = {}
+    by_concl: dict[str, int] = {}
+    for r in rows:
+        sha = r.get("head_sha") or ""
+        created = _epoch(r.get("created_at"))
+        if created is not None:
+            prev = first_seen.get(sha)
+            if prev is None or created < prev:
+                first_seen[sha] = created
+        wf = r.get("workflow_name") or ""
+        if wanted and wf not in wanted:
+            continue
+        key = (sha, wf)
+        cur = latest.get(key)
+        cur_created = _epoch(cur.get("created_at")) if cur else None
+        if cur is None or (created is not None and cur_created is not None
+                           and created > cur_created):
+            latest[key] = r
+
+    if not first_seen:
+        return {"repo": repo, "workflows": wanted, "intervals": [], "samples": 0,
+                "note": "no main-branch runs in store"}
 
     now = dt.datetime.now(dt.timezone.utc).timestamp()
-    total = 0.0
-    green = 0.0
-    for i, (ts, concl, _sha, _iso) in enumerate(events):
-        end = events[i + 1][0] if i + 1 < len(events) else now
-        span = max(0.0, end - ts)
-        total += span
-        if concl == "success":
-            green += span
-    by_concl: dict[str, int] = {}
-    for _ts, concl, _sha, _iso in events:
-        by_concl[concl] = by_concl.get(concl, 0) + 1
+    order = sorted(first_seen, key=lambda s: first_seen[s])
+    intervals: list[dict] = []
+    for i, sha in enumerate(order):
+        t0 = first_seen[sha]
+        t1 = first_seen[order[i + 1]] if i + 1 < len(order) else now
+        if t1 <= t0:
+            continue
+        wf_states: list[str] = []
+        terminal_times: list[float] = []
+        any_pending = False
+        any_no_record = False
+        for wf in (wanted or [""]):
+            run = latest.get((sha, wf))
+            if run is None:
+                wf_states.append("gap")
+                any_no_record = True
+            elif (run.get("status") or "") != "completed":
+                wf_states.append("gap")
+                any_pending = True
+            else:
+                c = (run.get("conclusion") or "").lower()
+                state = _classify_terminal(c)
+                # Seventh case: a run-level cancelled that actually masks a job
+                # that failed first is a real red (ORDERING discriminator).
+                if state == "no_result" and c == "cancelled":
+                    if _resolve_cancelled_run(
+                            run, jobs_index.get(run.get("run_id") or "")) == "red":
+                        state = "red"
+                        job_promotions += 1
+                wf_states.append(state)
+                tt = _epoch(run.get("updated_at"))
+                if tt is not None:
+                    terminal_times.append(tt)
+                by_concl[c] = by_concl.get(c, 0) + 1
+        gap_present = any_pending or any_no_record
+        if gap_present or not terminal_times:
+            reason = "pending" if any_pending else "no-record"
+            intervals.append({"start": t0, "end": t1, "state": "gap",
+                              "reason": reason, "sha": sha})
+            continue
+        # All authoritative workflows terminal: gap(pending) until the last one
+        # completes, then the combined verdict. A green claim needs every answer
+        # in, so the split anchors on the max terminal time.
+        split = min(max(max(terminal_times), t0), t1)
+        combined = _combine_states(wf_states)
+        if split > t0:
+            intervals.append({"start": t0, "end": split, "state": "gap",
+                              "reason": "pending", "sha": sha})
+        intervals.append({"start": split, "end": t1, "state": combined,
+                          "reason": None, "sha": sha})
     return {
         "repo": repo,
         "workflows": wanted,
-        "samples": len(events),
-        "window_start": events[0][3],
-        "window_end_utc": dt.datetime.fromtimestamp(
-            now, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "green_pct": round(100.0 * green / total, 2) if total > 0 else None,
-        "green_hours": round(green / 3600.0, 2),
-        "total_hours": round(total / 3600.0, 2),
+        "intervals": intervals,
+        "samples": len(order),
+        "window_start": _iso_utc(first_seen[order[0]]),
+        "window_end_utc": _iso_utc(now),
         "runs_by_conclusion": by_concl,
-        "current_state": events[-1][1],
-        "current_sha": events[-1][2],
+        "job_level_red_promotions": job_promotions,
+        "current_sha": order[-1],
     }
+
+
+def _sum_by_state(intervals: list[dict], lo: float | None = None,
+                  hi: float | None = None) -> tuple[dict[str, float], float]:
+    """Seconds per state over [lo, hi) (unbounded when lo/hi are None)."""
+    buckets = {"green": 0.0, "red": 0.0, "no_result": 0.0, "gap": 0.0}
+    total = 0.0
+    for iv in intervals:
+        s = iv["start"] if lo is None else max(iv["start"], lo)
+        e = iv["end"] if hi is None else min(iv["end"], hi)
+        span = e - s
+        if span <= 0:
+            continue
+        buckets[iv["state"]] = buckets.get(iv["state"], 0.0) + span
+        total += span
+    return buckets, total
+
+
+def green_time(parent: str, repo: str, since: str | None,
+               workflows: list[str] | None) -> dict:
+    tl = state_timeline(parent, repo, since, workflows)
+    wanted = tl["workflows"]
+    intervals = tl.get("intervals", [])
+    if not intervals:
+        return {"repo": repo, "workflows": wanted, "samples": 0,
+                "green_pct": None,
+                "definition_date": GREEN_TIME_DEFINITION_DATE,
+                "note": tl.get("note", "no authoritative main-branch runs")}
+    sec, total = _sum_by_state(intervals)
+    hrs = {k: round(v / 3600.0, 2) for k, v in sec.items()}
+    pct = {k: (round(100.0 * v / total, 2) if total > 0 else None)
+           for k, v in sec.items()}
+    return {
+        "repo": repo,
+        "workflows": wanted,
+        "definition_date": GREEN_TIME_DEFINITION_DATE,
+        "combine_rule": "green requires ALL authoritative workflows success; "
+                        "precedence red>gap>no_result>green",
+        "samples": tl["samples"],
+        "window_start": tl["window_start"],
+        "window_end_utc": tl["window_end_utc"],
+        "green_pct": pct["green"],
+        "red_pct": pct["red"],
+        "no_result_pct": pct["no_result"],
+        "gap_pct": pct["gap"],
+        "green_hours": hrs["green"],
+        "red_hours": hrs["red"],
+        "no_result_hours": hrs["no_result"],
+        "gap_hours": hrs["gap"],
+        "total_hours": round(total / 3600.0, 2),
+        "runs_by_conclusion": tl["runs_by_conclusion"],
+        "job_level_red_promotions": tl.get("job_level_red_promotions", 0),
+        "current_state": intervals[-1]["state"],
+        "current_reason": intervals[-1].get("reason"),
+        "current_sha": tl["current_sha"],
+    }
+
+
+_BUCKET_SECONDS = {"day": 86400.0, "week": 604800.0}
+
+
+def green_time_trend(parent: str, repo: str, since: str | None,
+                     workflows: list[str] | None, bucket: str) -> dict:
+    """green_pct per fixed-width time bucket, so a trend (not just a snapshot) is
+    visible — a single number cannot show whether we are improving."""
+    tl = state_timeline(parent, repo, since, workflows)
+    intervals = tl.get("intervals", [])
+    width = _BUCKET_SECONDS[bucket]
+    out = {"repo": repo, "workflows": tl["workflows"], "bucket": bucket,
+           "definition_date": GREEN_TIME_DEFINITION_DATE, "buckets": []}
+    if not intervals:
+        out["note"] = tl.get("note", "no authoritative main-branch runs")
+        return out
+    lo = intervals[0]["start"]
+    hi = intervals[-1]["end"]
+    b0 = (lo // width) * width
+    while b0 < hi:
+        b1 = b0 + width
+        sec, total = _sum_by_state(intervals, b0, b1)
+        if total > 0:
+            out["buckets"].append({
+                "bucket_start": _iso_utc(b0),
+                "green_pct": round(100.0 * sec["green"] / total, 2),
+                "red_pct": round(100.0 * sec["red"] / total, 2),
+                "no_result_pct": round(100.0 * sec["no_result"] / total, 2),
+                "gap_pct": round(100.0 * sec["gap"] / total, 2),
+                "hours": round(total / 3600.0, 2),
+            })
+        b0 = b1
+    return out
+
+
+def append_green_time_log(parent: str, snapshot: dict, path: str | None) -> str:
+    """Append a point-in-time green-time snapshot as one JSONL line, so hourly
+    status updates build a DURABLE trend even if the store is later pruned. The
+    file is ignored runtime data (like the CSV stores)."""
+    if path is None:
+        path = os.path.join(store_dir(parent), "green-time-log.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    record = {
+        "computed_at": _iso_utc(dt.datetime.now(dt.timezone.utc).timestamp()),
+        "repo": snapshot.get("repo"),
+        "workflows": snapshot.get("workflows"),
+        "definition_date": snapshot.get("definition_date"),
+        "since": snapshot.get("window_start"),
+        "green_pct": snapshot.get("green_pct"),
+        "red_pct": snapshot.get("red_pct"),
+        "no_result_pct": snapshot.get("no_result_pct"),
+        "gap_pct": snapshot.get("gap_pct"),
+        "total_hours": snapshot.get("total_hours"),
+        "samples": snapshot.get("samples"),
+        "current_state": snapshot.get("current_state"),
+        "current_sha": snapshot.get("current_sha"),
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True) + "\n")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +959,12 @@ def main() -> int:
     p_gt.add_argument("--workflow", action="append",
                       help="authoritative workflow name (repeatable)")
     p_gt.add_argument("--format", choices=["text", "json"], default="text")
+    p_gt.add_argument("--trend", choices=["day", "week"],
+                      help="green%% per fixed-width bucket (trend, not snapshot)")
+    p_gt.add_argument("--append-log", nargs="?", const="", default=None,
+                      metavar="PATH",
+                      help="append this snapshot as JSONL (default store dir) so "
+                           "hourly runs build a durable trend")
 
     p_ru = sub.add_parser("runs",
                           help="summary + recent-runs listing (alias of default)")
@@ -612,20 +985,61 @@ def main() -> int:
         print(render_node_budgets(rows, args.format))
         return 0
     if args.cmd == "green-time":
+        if getattr(args, "trend", None):
+            tr = green_time_trend(parent, args.repo, args.since, args.workflow,
+                                  args.trend)
+            if args.format == "json":
+                print(json.dumps(tr, indent=2))
+            elif not tr["buckets"]:
+                print(f"{tr['repo']}: no green-time trend — "
+                      f"{tr.get('note', 'no data')}")
+            else:
+                print(f"{tr['repo']} green-time trend per {tr['bucket']} "
+                      f"(authoritative {tr['workflows']}; "
+                      f"def {tr['definition_date']}):")
+                hdr = ("BUCKET_START", "GREEN%", "RED%", "NO_RESULT%", "GAP%",
+                       "HOURS")
+                body = [(b["bucket_start"], f"{b['green_pct']:g}",
+                         f"{b['red_pct']:g}", f"{b['no_result_pct']:g}",
+                         f"{b['gap_pct']:g}", f"{b['hours']:g}")
+                        for b in tr["buckets"]]
+                print(_table(hdr, body))
+            return 0
         res = green_time(parent, args.repo, args.since, args.workflow)
+        if getattr(args, "append_log", None) is not None and \
+                res.get("green_pct") is not None:
+            log_path = append_green_time_log(
+                parent, res, args.append_log or None)
+            res["appended_log"] = log_path
         if args.format == "json":
             print(json.dumps(res, indent=2))
         else:
             if res.get("green_pct") is None:
                 print(f"{res['repo']}: green-time UNAVAILABLE — {res.get('note','')}")
             else:
+                # green is a POSITIVE success record; the remaining time is broken
+                # out (red/no_result/gap) so the whole denominator is accounted for
+                # and non-green time is never silently credited as green.
                 print(f"{res['repo']} main green-time (authoritative "
-                      f"{res['workflows']}): {res['green_pct']}% "
-                      f"({res['green_hours']}h green / {res['total_hours']}h) "
-                      f"over {res['samples']} runs since {res['window_start']}; "
-                      f"current state={res['current_state']} @ "
-                      f"{res['current_sha'][:8]}")
+                      f"{res['workflows']}; definition {res['definition_date']}): "
+                      f"{res['green_pct']}% GREEN")
+                print(f"  = {res['green_hours']}h green + {res['red_hours']}h red "
+                      f"+ {res['no_result_hours']}h no_result + "
+                      f"{res['gap_hours']}h gap  (of {res['total_hours']}h)")
+                print(f"  red={res['red_pct']}% no_result={res['no_result_pct']}% "
+                      f"gap={res['gap_pct']}%  over {res['samples']} commits "
+                      f"since {res['window_start']}")
+                cur = res['current_state']
+                reason = res.get('current_reason')
+                cur_disp = f"{cur}({reason})" if reason else cur
+                print(f"  current state={cur_disp} @ {res['current_sha'][:8]}"
+                      + (f"; logged -> {res['appended_log']}"
+                         if res.get("appended_log") else ""))
                 print(f"  runs by conclusion: {res['runs_by_conclusion']}")
+                promo = res.get("job_level_red_promotions", 0)
+                if promo:
+                    print(f"  case-7 job-failed-under-cancel -> red: {promo} "
+                          f"(run cancelled, a job failed first by ordering)")
         return 0
     if args.cmd == "runs" or args.cmd is None:
         return emit_history(parent, args)
