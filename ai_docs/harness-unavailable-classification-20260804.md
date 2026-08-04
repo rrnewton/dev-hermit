@@ -127,6 +127,41 @@ environmental and ❌ test-fail:
 - if the rate ever DID approach 100%, THEN and only then does the GitHub-free
   landing rule lose its producer — so the tally is the early-warning signal.
 
+## 6. Fleet scope — is untrusted compute running UNBOXED? NO (systematic-violation alarm REFUTED)
+
+Corrected question (2026-08-04): does the Python orchestrator's boxing path
+succeed inside an agent sandbox, or fail silently? Settled by what runs DID, not
+by flags:
+
+- **Live capability test, inside a confirmed 3pai sandbox** (5 `META_3PAI` vars,
+  cgroup `…/3pai_sandbox.slice/run-p3109228-….scope`):
+  `systemd-run --user --scope -p Delegate=yes /bin/true` -> **exit 0**. Agent
+  sandboxes CAN create delegated cgroup-v2 scopes; BpfJailer does not categorically
+  deny it.
+- **Fails CLOSED, never silent.** The default (no `--allow-cgroup-failure`) path
+  returns exit 3 (`cli.py:1181,1210`). Silent-unboxed requires the explicit flag,
+  which across the ENTIRE fleet is passed in only two CI-only spots
+  (`run-node.sh:122` gated on `$GITHUB_ACTIONS`/`$CI`; `test_harness.sh:357`). No
+  benchmark / corpus / experiment / stress harness passes it.
+- **Log evidence:** 330 retained `/tmp/*-validate.*.log` -> **0** degraded-unboxed
+  banners, **18** explicit `cgroup boxing ACTIVE`.
+- **A real agent-benchmark box existed:** `dbibuild-cap8g-598976.scope` — a
+  `systemd-run` cgroup created by the lander-slot DBI build measurement, reading
+  `memory.peak`/`memory.max`/`memory.events` from its own cgroup. Direct proof an
+  agent benchmark ran inside a real box.
+- **`experiments/cpu-timeout-enforcement-verified_20260803/metadata.json`** records
+  `boxing: fail-closed default (no --allow-cgroup-failure); systemd transient scope
+  safe-ci-*.scope; two-level cgroup-v2` for an agent run.
+
+**Verdict: possibility (2) of the corrected framing — Python boxes by default AND
+succeeds in sandboxes.** The problem is scoped to the validate wrapper's TRANSIENT
+scope-acquisition failure (~0.5-0.7%), not a fleet-wide violation. Tonight's
+benchmarks were NOT measured unboxed via this mechanism; the silent-unboxed
+worst case did not occur, so hermit-220's parallelism numbers do not need
+re-examination *on this basis* (a raw `hermit run` that never routes through the
+runner or systemd-run is a separate, pre-existing "not auto-boxed" question,
+unrelated to the BpfJailer finding).
+
 ## Evidence
 
 - Ledgers: `ignored/validate-run-ledger.jsonl` (182), `ignored/validate-run-global.jsonl`
