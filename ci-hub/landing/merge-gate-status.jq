@@ -1,15 +1,7 @@
-# Select the latest gate that actually ran for this PR head. The workflow_run
-# controller runs on main and only dispatches the PR-head workflow, so it is
-# deliberately excluded. PR statusCheckRollup is deliberately not the source:
-# it can omit the workflow_dispatch success.
-[
-  .workflow_runs[]
-  | select(.head_sha == $sha)
-  | select(.event == "pull_request" or .event == "workflow_dispatch")
-]
-| sort_by(.created_at)
-| last
-| if . == null then
+# Format the exact-head/latest run already selected by check_outcome.py. Keeping
+# selection in the canonical authority prevents jq and Python consumers from
+# drifting on head filtering, timestamps, or run-ID tie-breaking.
+if . == null or . == {} then
     ["MISSING", "PENDING", "-", "-", "-", "-"]
   else
     [
@@ -20,5 +12,5 @@
       .html_url,
       .created_at
     ]
-  end
+end
 | @tsv

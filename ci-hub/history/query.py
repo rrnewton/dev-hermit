@@ -794,8 +794,18 @@ def state_timeline(parent: str, repo: str, since: str | None,
         key = (sha, wf)
         cur = latest.get(key)
         cur_created = _epoch(cur.get("created_at")) if cur else None
-        if cur is None or (created is not None and cur_created is not None
-                           and created > cur_created):
+        run_id = str(r.get("run_id") or "")
+        cur_run_id = str(cur.get("run_id") or "") if cur else ""
+        run_id_key = (int(run_id) if run_id.isdigit() else -1, run_id)
+        cur_run_id_key = (
+            int(cur_run_id) if cur_run_id.isdigit() else -1,
+            cur_run_id,
+        )
+        if cur is None or (
+            created is not None
+            and cur_created is not None
+            and (created, run_id_key) > (cur_created, cur_run_id_key)
+        ):
             latest[key] = r
 
     if not first_seen:

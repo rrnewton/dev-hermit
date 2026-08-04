@@ -254,7 +254,10 @@ while (( SECONDS < deadline )); do
   if actions_json=$(with-proxy gh api \
       "repos/$R/actions/workflows/merge-gate.yml/runs?head_sha=$HEAD&per_page=100" \
       2>/dev/null); then
-    row=$(jq -r --arg sha "$HEAD" -f "$selector" <<<"$actions_json")
+    gate_run=$(python3 "$outcome_helper" \
+        --select-latest-run --head-sha "$HEAD" \
+        --event pull_request --event workflow_dispatch <<<"$actions_json")
+    row=$(jq -r -f "$selector" <<<"$gate_run")
     IFS=$'\t' read -r gate_status gate_conclusion gate_event gate_run gate_url gate_created <<<"$row"
     cj="${gate_status}/${gate_conclusion}"
     gate_detail="event=$gate_event run=$gate_run created=$gate_created url=$gate_url"

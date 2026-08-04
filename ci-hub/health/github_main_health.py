@@ -81,6 +81,14 @@ class RepoUnavailable(RuntimeError):
     """One live GitHub query exceeded its explicit wall-time budget."""
 
 
+def _run_order_key(run: MainRun) -> tuple[str, int, str]:
+    try:
+        numeric_id = int(run.run_id)
+    except ValueError:
+        numeric_id = -1
+    return run.created_at, numeric_id, run.run_id
+
+
 def _run_gh(command: Sequence[str], *, timeout: float) -> str:
     try:
         result = subprocess.run(
@@ -271,7 +279,7 @@ def evaluate_repo(
     latest_by_workflow: dict[str, MainRun] = {}
     for run in candidates:
         previous = latest_by_workflow.get(run.workflow)
-        if previous is None or run.created_at > previous.created_at:
+        if previous is None or _run_order_key(run) > _run_order_key(previous):
             latest_by_workflow[run.workflow] = run
     # Disambiguate cancelled current-tip runs: fetch annotations only for them
     # (rare) and promote a self-timeout kill to RED. A failed/absent annotation

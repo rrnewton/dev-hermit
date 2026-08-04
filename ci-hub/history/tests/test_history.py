@@ -439,6 +439,36 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(res["current_state"], "green")
         self.assertEqual(res["definition_date"], query.GREEN_TIME_DEFINITION_DATE)
 
+    def test_same_timestamp_uses_newest_run_id(self):
+        # Two opposite conclusions at one exact head must not depend on CSV/API
+        # order. GitHub run IDs break a timestamp tie deterministically.
+        self._write_gha([
+            self._gha_wf(
+                "a" * 40,
+                "failure",
+                "2026-08-03T00:00:00Z",
+                "2026-08-03T00:00:00Z",
+                run_id="10",
+            ),
+            self._gha_wf(
+                "a" * 40,
+                "success",
+                "2026-08-03T00:00:00Z",
+                "2026-08-03T00:00:00Z",
+                run_id="11",
+            ),
+            self._gha_wf(
+                "b" * 40,
+                "success",
+                "2026-08-03T01:00:00Z",
+                "2026-08-03T01:00:00Z",
+                run_id="12",
+            ),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["red_hours"], 0.0)
+        self.assertEqual(res["current_state"], "green")
+
     def test_green_time_pending_tip_is_gap_not_green(self):
         # The owner's example: main has zero reds but the current tip's
         # authoritative run is still pending -> the tip reign is GAP, never green.

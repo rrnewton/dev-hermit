@@ -225,6 +225,33 @@ class ProtocolTest(unittest.TestCase):
         runs = protocol._parse_github_runs(json.dumps(payload), SHA)
         self.assertEqual([run["databaseId"] for run in runs], [1])
 
+    def test_newest_no_result_never_falls_back_to_older_failure(self) -> None:
+        runs = protocol._parse_github_runs(
+            json.dumps(
+                [
+                    {
+                        "databaseId": 10,
+                        "headSha": SHA,
+                        "workflowName": protocol.DEFAULT_WORKFLOW,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "createdAt": "2026-08-04T15:12:05Z",
+                    },
+                    {
+                        "databaseId": 11,
+                        "headSha": SHA,
+                        "workflowName": protocol.DEFAULT_WORKFLOW,
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "createdAt": "2026-08-04T15:24:36Z",
+                    },
+                ]
+            ),
+            SHA,
+        )
+        self.assertEqual(runs[0]["databaseId"], 11)
+        self.assertIsNone(protocol._latest_resolved_github_run(runs))
+
     def test_estimate_uses_only_recorded_history(self) -> None:
         ledger = self.root / "ledger.jsonl"
         ledger.write_text(

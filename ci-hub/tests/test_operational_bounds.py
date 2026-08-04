@@ -508,6 +508,7 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("CHILD_DEADLINE=$((GATE_DEADLINE * 2))", script)
         self.assertIn("child deadline must be greater than gate deadline", script)
         self.assertIn("actions/workflows/merge-gate.yml/runs?head_sha=$HEAD", script)
+        self.assertIn("--select-latest-run --head-sha \"$HEAD\"", script)
         self.assertNotIn(
             'gh pr view "$PR" -R "$R" --json statusCheckRollup', script
         )
@@ -574,7 +575,7 @@ class OperationalBoundsTest(unittest.TestCase):
                     "conclusion": "failure",
                     "id": 10,
                     "html_url": "https://example.invalid/runs/10",
-                    "created_at": "2026-08-04T02:40:00Z",
+                    "created_at": "2026-08-04T02:48:24Z",
                 },
                 {
                     "head_sha": sha,
@@ -605,17 +606,32 @@ class OperationalBoundsTest(unittest.TestCase):
                 },
             ]
         }
+        selected = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "ci-hub/check_outcome.py"),
+                "--select-latest-run",
+                "--head-sha",
+                sha,
+                "--event",
+                "pull_request",
+                "--event",
+                "workflow_dispatch",
+            ],
+            input=json.dumps(fixture),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
         result = subprocess.run(
             [
                 "jq",
                 "-r",
-                "--arg",
-                "sha",
-                sha,
                 "-f",
                 str(ROOT / "ci-hub/landing/merge-gate-status.jq"),
             ],
-            input=json.dumps(fixture),
+            input=selected.stdout,
             text=True,
             capture_output=True,
             check=True,

@@ -748,6 +748,21 @@ def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _latest_resolved_github_run(
+    runs: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    """Return the newest run only when that run produced a real verdict.
+
+    ``github_runs`` is sorted newest-first at one exact head. Looking past a
+    newest NO_RESULT would revive stale pass/fail evidence and make duplicate
+    same-head runs order-dependent.
+    """
+    if not runs:
+        return None
+    latest = runs[0]
+    return latest if _github_state(latest) in {"green", "red"} else None
+
+
 def ensure_github_verification(
     obligation_id: str,
     *,
@@ -763,14 +778,9 @@ def ensure_github_verification(
     dispatched = False
     while True:
         runs = github_runs(repo, sha)
-        # A cancelled/skipped/stale run is a HOLE, not an answer. Terminate only on
-        # the newest run that actually resolved (green or red); otherwise keep
-        # polling and re-dispatch to fill the hole rather than recording a false
-        # red for a run that was merely superseded (task
-        # cancelled-run-classified-as-red).
-        usable = next(
-            (run for run in runs if _github_state(run) in {"green", "red"}), None
-        )
+        # Classify only the newest exact-head run. A cancelled/skipped/stale run
+        # is a HOLE, not permission to fall through to an older opposite answer.
+        usable = _latest_resolved_github_run(runs)
         if usable is not None:
             obligations.transition(
                 obligation_id, "github-observed", _github_patch(usable), store_path
