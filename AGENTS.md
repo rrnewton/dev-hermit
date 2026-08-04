@@ -22,7 +22,7 @@ replace a product-specific requirement with a summary.
 ## Conventions
 
 - **PR role tag:** ALL PR descriptions/comments MUST start with `[impl agent, MODEL]`, `[adversarial-reviewer agent, MODEL]`, `[coordinator, MODEL]`, or `[Human]` (e.g. `[impl agent, gpt-5.6-sol]`).
-- **Mechanism tags:** when a task or PR changes a load-bearing mechanism, apply the same stable `mechanism:<slug>` tag to both (create the label when needed). Before landing, run `ci-hub pr-status`: a mechanism shared by two open PRs requires coordinator review and appears beside file conflicts in the landing plan. The tag exposes semantic overlap only, not conflicting intent.
+- **Mechanism tags:** when a task or PR changes a load-bearing mechanism, apply the same stable `mechanism:<slug>` tag to both (create the label when needed). Before landing, run `ci-hub pr-status`: a mechanism shared by two open PRs requires coordinator review and appears beside file conflicts in the landing plan (semantic overlap only, not conflicting intent).
 - **Stable descriptive naming:** use a stable, descriptive, lowercase-hyphenated slug for every option/wave/workstream/phase/task/semantic unit — name the work/outcome (`btrfs-flood-fix`), unchanged across updates. Never a bare ordinal/placeholder (`Option-A`, `phase-1`, `round-N`, `wave-X`); enumerate variants by suffix (`btrfs-flood-fix/claude-agent`). Existing infra IDs (PR/slot numbers, canonical agent names) stay valid. Define a coined term once beside the artifact that owns it; link later uses. In user-facing updates, lead with the observable consequence and the decision it creates; put internal names after.
 
 ## Primary Checkout Invariant
@@ -43,22 +43,17 @@ project. It coordinates product submodules plus one optional tooling submodule, 
 - `agent-utils/`: shared tooling incl. `tick-hub`; `update = none` keeps it out of ordinary recursive init, materialized on demand.
 
 The parent owns orchestration policy, worktree registries, experiments, AI notes, exact submodule pins;
-product source/tests/build/docs stay in their submodule. Hermit product work uses `feature branch -> PR ->
-rrnewton/hermit:main`. The parent harness works directly on shared `main`; parent-only policy work commits
-there only when a task explicitly names+authorizes the parent files. `worktrees/ACTIVE.md` is ignored
-machine-local state — never commit or merge it. Confirm the destination before publishing Reverie work. Stale
-`integration`/legacy-lead/per-machine parent branches do not override this.
+product source/tests/build/docs stay in their submodule. The parent harness works directly on shared `main`;
+parent-only policy work commits there only when a task explicitly names+authorizes the parent files.
+`worktrees/ACTIVE.md` is ignored machine-local state — never commit or merge it. Confirm the destination
+before publishing Reverie work. Stale `integration`/legacy-lead/per-machine parent branches do not override this.
 
 ## Vocabulary (full glossary in companion doc)
 
 - **Primary checkout**: `{hermit,reverie,liteinst2}/`; coordinator-owned integration surface.
-- **Submodule**: a repo the parent records as an exact gitlink SHA — a commit, not a branch, not uncommitted contents.
 - **Slot**: one paired workspace under `worktrees/`. **Active**: assigned to live work, in `ACTIVE.md`. **Parked**: clean, detached, retained for cache reuse, omitted from `ACTIVE.md`. **Legacy**: pre-policy non-canonical slot; may finish its task but must be removed, not reused.
-- **Feature branch**: task-specific branch in one product worktree; slot names are unrelated to branch names.
-- **Hermit base**: current `rrnewton/hermit:main` unless a task names another reviewed base. **Hermit upstream**: `facebookexperimental/hermit`, reference only — not the default landing target.
 - **Shared slot**: one used by multiple research-only agents, or mutating agents with explicitly disjoint file ownership in `ACTIVE.md`. No two agents may edit the same file concurrently.
-- **Handoff SHA**: the exact commit tested and offered for integration. A branch name alone is not evidence.
-- **3pai agent sandbox**: agent execution environment identified by `META_3PAI_*` vars and the `3pai_sandbox.slice` cgroup; file/network policy enforced by BpfJailer.
+- **Submodule**, **Feature branch**, **Hermit base**/**upstream**, **Handoff SHA**, **3pai agent sandbox**: see companion glossary (their predicates also appear inline where they bind action).
 
 ## Canonical Layout (full tree in companion doc)
 
@@ -66,8 +61,7 @@ machine-local state — never commit or merge it. Confirm the destination before
 `worktrees/<slot>/{hermit,reverie,liteinst2}` where `<slot>` is a named agent (`kvm`, `dbi`, `sabre`,
 `e9patch`, `liteinst`, `ci`, `coord`, `lander`, `opt` — `hermit-` prefix stripped) or a generic `slotNN`;
 exactly one mutating agent owns a slot. Old flat layout (`worktrees/slotNN` + sibling `worktrees_reverie/`)
-and primary-nested `hermit/.worktrees/…` scratch trees are deprecated — do not create either. Physical
-worktrees, build output, `worktree-state.json`, and `ACTIVE.md` are gitignored; `ARCHIVED.md` is durable.
+and primary-nested `hermit/.worktrees/…` scratch trees are deprecated — do not create either.
 **`ai_docs/transient/2026-07-27-worktree-management-map.md` indexes every place worktree information lives —
 read it before any worktree operation.**
 
@@ -91,12 +85,12 @@ read it before any worktree operation.**
 
 ## Clean Start And Checkout Ownership
 
-Before dispatching or beginning work, inspect the parent, all primaries, and the assigned slot (`git status
---short --branch`; `git submodule status`; the same for each product and the slot's children). A dirty checkout
-is not an invitation to clean it; a `+` submodule status is not automatically an error (integration may be in
-flight — attribute before acting; status-flag legend in the companion doc). Primaries are integration surfaces:
-only the coordinator, or an agent explicitly assigned an integration operation, may mutate them; ordinary agents
-may read them and use their build caches as copy sources. Record ownership in `ACTIVE.md` and task notes. Modify
+Before dispatching or starting work, inspect the parent, all primaries, and the assigned slot (`git status
+--short --branch`; `git submodule status`; same for each product and the slot's children). A dirty checkout is
+not an invitation to clean it; a `+` submodule status is not automatically an error (integration may be in
+flight — attribute before acting; status-flag legend in companion doc). Primaries are integration surfaces:
+only the coordinator or an agent explicitly assigned an integration op may mutate them; ordinary agents may
+read them and use their build caches as copy sources. Record ownership in `ACTIVE.md` and task notes. Modify
 the parent root only when a task names parent files and ownership is explicit; never mix a parent edit into an
 unrelated product task.
 
@@ -115,12 +109,10 @@ reconcile the registry with all Git worktree registries (`git worktree list --po
 ## Strict Slot Pool
 
 All new work uses a canonical slot name under `worktrees/<slot>/`. **Branch and task names never appear in
-worktree paths.** A slot is **Active** (registered; children may be on feature branches; shared mutating work
-needs disjoint paths, shared research stays read-only) or **Parked** (all children clean and detached in
-place). At five parked slots, reclaim the least useful before creating another. Active slots are never evicted
-to satisfy the parked cap; a dirty/blocked slot stays active until handed off. Do not move or rename a slot
-directory. Pre-policy non-canonical worktrees are exceptions only while their task is active; at closeout,
-archive and remove them — do not park/rename/reassign.
+worktree paths.** At five parked slots, reclaim the least useful before creating another. Active slots are
+never evicted to satisfy the parked cap; a dirty/blocked slot stays active until handed off. Do not move or
+rename a slot directory. Pre-policy non-canonical worktrees are exceptions only while their task is active; at
+closeout, archive and remove them — do not park/rename/reassign.
 
 **Provision/release with the registry-aware scripts, never raw `git worktree add`.** `scripts/allocate-worktree.rs`
 and `scripts/release-worktree.rs` enforce one-owner-per-slot and one-slot-per-agent and are the **single
@@ -129,7 +121,7 @@ manual fallback that does NOT touch the registry). Provisioning is coordinator-o
 first, then `scripts/allocate-worktree.rs --agent <agent> --task <id> --product all --purpose "<one-line>"`.
 Seed caches with CoW copies (`cp -a --reflink=auto`); never symlink `target/` or another writable cache between
 checkouts. Share a slot only when the registry names every agent, task, branch, and owned path
-(`--i-promise-this-agent-is-read-mostly`); never allow concurrent edits to the same file or branch.
+(`--i-promise-this-agent-is-read-mostly`); no concurrent edits to the same file or branch (Invariant 2).
 
 **Starting work in a slot.** Before the first edit: confirm the parent slot and all nested submodules are
 registered and clean; fetch relevant remotes without changing checked-out files; branch Hermit from current
@@ -176,7 +168,6 @@ Require authoritative gates green at the exact PR head: Hermit `Regular tests (G
 known-environmental self-hosted failure per current documented policy; never bypass a genuine product failure);
 Reverie both `Regular tests` and `Host-dependent tests`. A skipped/missing/queued/stale/cancelled authoritative
 check is NOT green. Do not merge with unresolved adversarial-review findings or merely because local tests pass.
-Report infrastructure failures explicitly rather than weakening hardware-sensitive assertions.
 
 ### Proxy Binding Review Axis (predicate; full rationale, registry, 12 examples, 3-layer taxonomy in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
@@ -218,8 +209,8 @@ inherited remediation before taking new queue work (wake messages are advisory, 
 mechanics + obligation lifecycle: companion doc). Merge only when the task explicitly authorizes landing,
 adversarial review is resolved, and authoritative checks are green at the current head SHA. Human-owner review
 is post-facto and does not block landing. Never push directly to Hermit `main`, force-push shared branches, or
-use a local primary to bypass PR controls. Parent-only policy and gitlink changes go to shared `main` only when
-a task explicitly authorizes them; `worktrees/ACTIVE.md` never participates in commits or merges.
+use a local primary to bypass PR controls. Parent-only policy/gitlink changes go to shared `main` only when a
+task explicitly authorizes them; `worktrees/ACTIVE.md` never participates in commits or merges.
 
 ## Task Lifecycle And Closure
 
@@ -267,9 +258,9 @@ destination to its `rrnewton` fork, rejects unrelated repositories, and supplies
 Use ownership boundaries, not convenience. **Parent** tracks: workspace policy (this guide), `.gitmodules`,
 exact gitlinks and ignore rules, `worktrees/ARCHIVED.md`, generic workspace scripts/coordination tooling,
 durable AI research/handoffs under `ai_docs/`, reproducible experiments under `experiments/`. Ignored parent
-locations hold transient material (`scratch/`, physical `worktrees/slot*/` contents, local
-locks/registries/runtime state/credentials, build output, core dumps, coverage, downloads). An experiment is
-durable only when another engineer can repeat it: `experiments/<name>_YYYYMMDD/` with `README.md` (question,
+locations hold transient material (`scratch/`, physical `worktrees/slot*/` contents, local runtime
+state/registries/credentials, build output, core dumps, coverage, downloads). An experiment is durable only
+when another engineer can repeat it: `experiments/<name>_YYYYMMDD/` with `README.md` (question,
 method, results, interpretation, reproduction), `metadata.json` (repo SHAs, command, host, toolchain, seed,
 inputs), `results.csv`. **Hermit** source/APIs/CLI/tests/build/docs belong in `hermit`; do not copy Hermit code
 into a parent script to dodge a proper product change. **Reverie** source/APIs/tests/build/docs belong in
@@ -395,15 +386,15 @@ to commits, not branch names.
 
 ## Coordinator Judgement Rules (predicates; full rationale in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
-- **Establish what you have before acting.** A **note** is one agent's unverified belief — do not launder "X appears to be Y" into "X is Y, fix it." When a premise comes from a note or second-hand observation, attribute it to its source, mark it **UNVERIFIED**, and make "verify the premise" the explicit first step ("premise refuted" is a valid outcome). A **number** is unqualified until you state **what it measures** (the quantity the decision needs, or a proxy?), its **unit** (a count is not a rate; an aggregate is not a per-unit; a load average is not a utilisation), and its **denominator**. When a ratio looks surprising, interrogate the denominator first.
-- **Verify a mechanism by the running thing, not its config.** A flag can be a deprecated no-op; an exit code can come from a different wrapper. Find the running thing and ask what holds it — e.g. for cgroup boxing, walk `/sys/fs/cgroup/...` for the live PID's `cgroup.procs` and print the containing scope, rather than reading a flag or exit code.
+- **Establish what you have before acting.** A **note** is one agent's unverified belief — do not launder "X appears to be Y" into "X is Y, fix it." When a premise comes from a note or second-hand observation, attribute it to its source, mark it **UNVERIFIED**, and make "verify the premise" the explicit first step ("premise refuted" is a valid outcome). A **number** is unqualified until you state **what it measures** (the decision's quantity, or a proxy?), its **unit** (a count is not a rate; a load average is not a utilisation), and its **denominator** — interrogate a surprising ratio's denominator first.
+- **Verify a mechanism by the running thing, not its config.** A flag can be a deprecated no-op; an exit code can come from a different wrapper. Find the running thing and ask what holds it — e.g. for cgroup boxing, walk `/sys/fs/cgroup/...` for the live PID's `cgroup.procs`, not a flag/exit code.
 - **Record every measurement immediately.** First check whether the number already exists (`experiments/`, task notes, ci-hub history store). Any measurement — even incidental — goes into a task note immediately with units, context, and **how obtained (a polled aggregate is not a cgroup-recorded peak)**.
 - **Trust the ledger, not a handed SHA.** A handed SHA — or a "latest green"/"known-good" commit — is a claim, not evidence. Establish the validated frontier yourself: `ci-hub newest-green` (default `--branch main`; `--json`; `--no-fetch` offline) returns the newest commit whose latest LOCAL validation passed. If the handed SHA and the ledger disagree, the ledger wins — report the discrepancy.
 
 ## Failure, Recovery, And Concurrent Work
 
-Other agents may update the parent, primaries, registries, or branches while a task runs. Re-read state before
-every integration or pinning step; unexpected movement is a reason to reassess, not to restore an older snapshot.
+Other agents may update the parent, primaries, registries, or branches mid-task. Re-read state before every
+integration or pinning step; unexpected movement is a reason to reassess, not to restore an older snapshot.
 
 - Do not use `git reset --hard`, `git checkout -- <path>`, or destructive cleanup on changes you did not create.
 - Do not move uncommitted work between slots without recording its owner and exact recovery procedure. Do not silently adopt another agent's branch or worktree.
@@ -419,7 +410,7 @@ agents share this box and its binary paths (`hermit`, `cargo`, `python3`, …), 
 user/`ps|grep|kill` match kills siblings' live work. Kill only processes you started: capture the child PID
 (`$!` for a backgrounded command) or run it in its own process group and signal the negative PGID (`setsid cmd
 & pgid=$!; kill -- -$pgid`). If you cannot prove a PID/PGID is your own child, do not kill it. (War story:
-companion doc — this rule does not survive recycling unless it lives in this file.)
+companion doc.)
 
 ## Coordinator Checklist
 
