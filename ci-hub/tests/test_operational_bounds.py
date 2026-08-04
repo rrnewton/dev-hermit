@@ -252,7 +252,15 @@ class OperationalBoundsTest(unittest.TestCase):
                 self.run_bounded(*args, expected=expected, env=environment)
 
     def test_composite_health_returns_explicit_partial_result_on_stalls(self) -> None:
-        env = self.env | {"CI_HUB_AGENT_TOOL": str(self.stall)}
+        # Isolate the obligations store: the composite `health` precedence ranks an
+        # OPEN speculative-land obligation (print_obligations -> 1) above the stall's
+        # degraded-2, so reading the live ignored/ci-hub/obligations.jsonl makes this
+        # test fail whenever the real fleet has an open obligation. Point it at the
+        # empty per-test store, exactly as the remediation sibling below does.
+        env = self.env | {
+            "CI_HUB_AGENT_TOOL": str(self.stall),
+            "CI_HUB_OBLIGATIONS_STORE": str(self.store),
+        }
         result = self.run_bounded(
             "health",
             "--repo",
