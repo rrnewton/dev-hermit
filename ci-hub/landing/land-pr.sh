@@ -7,12 +7,11 @@
 # can outlive a dead agent and wedge the FIFO (the 2040-minute starvation bug).
 #
 # Sequence (while holding the land-lock):
-#   fetch fresh main -> GitHub-free eligibility gate (label present OR clean
-#   full-validate record for the exact pre-rebase head, via ci-hub
-#   validate-status; else ABANDON, never fabricate green) -> rebase (union|plain)
-#   + push -> re-stamp locally-validated (metadata, AFTER push, since
-#   `synchronize` strips it) -> bounded merge-gate poll -> gh pr merge --rebase
-#   (NEVER --admin) -> ancestry-verify.
+#   fetch fresh main -> GitHub-free eligibility gate (clean full-validate record
+#   for the exact pre-rebase head; the label is non-authoritative) -> rebase
+#   (union|plain) + push -> require a clean record for the exact pushed head ->
+#   derive locally-validated through apply-local-label -> bounded merge-gate poll
+#   -> gh pr merge --rebase (NEVER --admin) -> ancestry-verify.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
 #   1. Trinary gate poll: PASSED lands, FAILED stops, and NO_RESULT blocks while
@@ -170,28 +169,20 @@ with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main faile
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
 # 1b. GITHUB-FREE LANDING GATE (owner P0 lander-lands-on-local-validate-only).
-# We stamp locally-validated in step 4 to satisfy the merge-gate WITHOUT waiting
-# on hosted CI. That stamp is only legitimate if this PR has ALREADY earned it:
-# either the label is present already, OR the local validate ledger holds a clean
-# full-coverage PASS for the PR's exact PRE-REBASE head. A clean rebase (step 2)
-# replays that validated content; a conflicting rebase abandons before any stamp.
-# This is the single decision point for GitHub-free eligibility -- never stamp a
-# head we cannot show was validated (no fabricated green). The predicate lives in
-# ci-hub validate-status (lib/validate_status.rs), never looser than the
-# validate.sh:4161 stamp guard.
+# The label is only a cache. It never authorizes landing independently of the
+# source ledger, including when shared credentials applied it. The exact PR head
+# must have a clean full-coverage PASS record. The same predicate is checked
+# again after rebase because a SHA-changing rebase invalidates the old receipt.
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
 PRELABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-if grep -q locally-validated <<<"$PRELABELS"; then
-  say "landing eligibility: locally-validated already present (head=$ORIG)"
-else
-  VS=$("$ROOT/ci-hub/ci-hub" validate-status --sha "$ORIG" 2>&1); VRC=$?
-  say "validate-status(head=$ORIG) rc=$VRC: $VS"
-  case "$VRC" in
-    0) say "landing eligibility: clean full-validate record for $ORIG" ;;
-    3) abandon "GitHub-free landing gate: PR head $ORIG has a clean full-validate record that FAILED (known-failing); refusing to land" 4 ;;
-    *) abandon "GitHub-free landing gate: PR head $ORIG has neither the locally-validated label nor a clean full-validate PASS record (validate-status rc=$VRC); refusing to fabricate green" 4 ;;
-  esac
-fi
+VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$ORIG" "$PRELABELS" 2>&1); VRC=$?
+say "local-validation eligibility(head=$ORIG) rc=$VRC: $VS"
+case "$VRC" in
+  0) say "landing eligibility: clean full-validate record for $ORIG" ;;
+  3) abandon "GitHub-free landing gate: PR head $ORIG has a clean full-validate record that FAILED (known-failing); refusing to land" 4 ;;
+  4) abandon "GitHub-free landing gate: PR head $ORIG has no clean full-validate PASS record; observed labels are non-authoritative" 4 ;;
+  *) abandon "GitHub-free landing gate: could not evaluate exact-head validation evidence (rc=$VRC)" 4 ;;
+esac
 
 # 2. rebase onto latest main + push
 if [ "$UNION" -eq 1 ]; then
@@ -219,13 +210,19 @@ with-proxy git -C "$WT" fetch -q origin "$BR"
 HEAD=$(git -C "$WT" rev-parse "origin/$BR")
 say "pushed head=$HEAD"
 
-# 4. re-stamp locally-validated (METADATA only) AFTER the push, then verify it
-# stuck. The push's `synchronize` strips it; re-stamping never re-pushes.
-with-proxy gh pr edit "$PR" -R "$R" --add-label locally-validated >/dev/null || abandon "add locally-validated label failed" 4
+# 4. The pushed exact head needs its own ledger receipt. A rebase that changed
+# the SHA cannot inherit the old authorization. Only the ledger-guarded applier
+# may materialize the cache label; the lander never types it directly.
+PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
+VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
+say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"
+[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no clean exact-head full-validate PASS record; validate it before stamping" 4
+"$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
+  || abandon "ledger-guarded apply-local-label failed" 4
 sleep 4
 LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
 grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
-say "stamped; labels=$LB"
+say "ledger-derived label present; labels=$LB"
 
 # 4b. a draft PR cannot be merged; marking ready fires a fresh (label-present)
 # merge-gate run, which the poll below waits on.
