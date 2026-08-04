@@ -1,0 +1,12 @@
+{
+  "question": "Does setting memory.oom.group=1 on safe-ci-dag-runner per-step cgroups make an OOM breach land on the offending step as a whole unit, without killing innocent neighbours or well-behaved co-tenant processes?",
+  "agent_utils_sha": "dfefbdb8fd0ce449d5689f6183aca1e28b3f177f",
+  "agent_utils_branch_base": "origin/main (dfefbdb)",
+  "change_under_test": "cgroup.py enter_delegated_scope + Cgroups.prepare_command; cgroup.rs Cgroups: write memory.oom.group=1 where memory.max is set (best-effort)",
+  "host": "devbig014.atn7.facebook.com",
+  "cores": 316,
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "boxing": "systemd-run --user --scope -p Delegate=yes -p MemorySwapMax=0; +memory subtree_control; per-step child cgroups with memory.max=64MiB",
+  "allocator": "python bounded allocator, touches 4MiB chunks to a target then holds",
+  "date": "2026-08-04"
+}

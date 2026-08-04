@@ -1,0 +1,112 @@
+== ptrace NON-LEADER run1 ==
+PRE  tid=5 pid=3 leader=0 t_pre=1767225600005171000
+2026-08-04T09:13:18.651793Z ERROR reverie_ptrace::task: Error in tracee tid 5: -10 ECHILD (No child processes)
+2026-08-04T09:13:18.651871Z ERROR reverie_ptrace::task: Failed to detach from 5: tracee 5 is a zombie
+
+thread 'main' (1) panicked at /home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/safeptrace/src/lib.rs:389:22:
+InvalidState(Wait(Stopped(Stopped(Pid(3), TraceeToken { event: EventHandle(EventGeneration { event: Event { exit_waiters: ExitWaiters { waiters: Mutex { data: [(Weak)] } }, exit_publication: Mutex { data: () }, status_waker: WakerSlot { waker: Mutex { data: Some(Waker { data: 0x55c9efc0b300, vtable: 0x55c9ebaf4fc0 }) }, data: 0x55c9efc0b300, vtable: 0x55c9ebaf4fc0 }, status: Mutex { data: StatusState { pending: [], terminal: -1 } }, status_changed: Condvar { .. }, exit_status: 1, exit_capability: 2, registration_error: Mutex { data: None }, worker_state: 2, worker_done_lock: Mutex { data: () }, worker_done_changed: Condvar { .. }, cleanup_cancel_requested: false, cleanup_claim_waiters: 0, wait_owner: 2, wait_owner_lock: Mutex { data: () }, wait_owner_changed: Condvar { .. } }, identity: OnceLock(WorkerIdentity { pid: Pid(3), snapshot: WorkerProcSnapshot { tgid: Pid(3), tracer_pid: Pid(1), start_time: 51895372 }, pidfd: OwnedFd { fd: 13 }, proc_dir: OwnedFd { fd: 14 }, proc_inode: 1444306354 }), authoritative: OnceLock(<uninit>) }) }), Exec(Pid(5)))))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (1) panicked at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:     0x55c9eb9fa471 - std[74eb2aff46e51e81]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:     0x55c9eb9fa471 - std[74eb2aff46e51e81]::backtrace_rs::backtrace::trace_unsynchronized::<std[74eb2aff46e51e81]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:     0x55c9eb9fa471 - std[74eb2aff46e51e81]::sys::backtrace::_print_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:74:9
+   3:     0x55c9eb9fa471 - <<std[74eb2aff46e51e81]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[7aff35c028b048a4]::fmt::Display>::fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:44:26
+   4:     0x55c9eba1523a - <core[7aff35c028b048a4]::fmt::rt::Argument>::fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/fmt/rt.rs:152:76
+   5:     0x55c9eba1523a - core[7aff35c028b048a4]::fmt::write
+   6:     0x55c9eba01b6c - core[7aff35c028b048a4]::io::write::default_write_fmt::<std[74eb2aff46e51e81]::sys::stdio::unix::Stderr>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/io/write.rs:402:11
+   7:     0x55c9eba01b6c - <std[74eb2aff46e51e81]::sys::stdio::unix::Stderr as core[7aff35c028b048a4]::io::write::Write>::write_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/io/write.rs:335:13
+   8:     0x55c9eb9d0136 - <std[74eb2aff46e51e81]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:47:9
+   9:     0x55c9eb9d0136 - std[74eb2aff46e51e81]::panicking::default_hook::{closure#0}
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:292:27
+  10:     0x55c9eb9ef2b1 - std[74eb2aff46e51e81]::panicking::default_hook
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:319:9
+  11:     0x55c9eb9ef5db - std[74eb2aff46e51e81]::panicking::panic_with_hook
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:815:13
+  12:     0x55c9eb9d0214 - std[74eb2aff46e51e81]::panicking::panic_handler::{closure#0}
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:681:13
+  13:     0x55c9eb9c7969 - std[74eb2aff46e51e81]::sys::backtrace::__rust_end_short_backtrace::<std[74eb2aff46e51e81]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:182:18
+  14:     0x55c9eb9d11bd - __rustc[49844a0cf2bb6b0d]::rust_begin_unwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:679:5
+  15:     0x55c9eba158dd - core[7aff35c028b048a4]::panicking::panic_nounwind_fmt::runtime
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:122:22
+  16:     0x55c9eba158dd - core[7aff35c028b048a4]::panicking::panic_nounwind_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/intrinsics/mod.rs:2618:9
+  17:     0x55c9eba1585b - core[7aff35c028b048a4]::panicking::panic_nounwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:225:5
+  18:     0x55c9eba159e7 - core[7aff35c028b048a4]::panicking::panic_cannot_unwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:350:5
+  19:     0x55c9eb4db0a1 - reverie_process[f1640f6d209612e5]::clone::clone_with_stack::callback
+                               at /home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/reverie-process/src/clone.rs:27:5
+  20:     0x7fcec030fac4 - __clone
+  21:                0x0 - <unknown>
+thread caused non-unwinding panic. aborting.
+Error: Sandbox container exited unexpectedly
+     > Process exited with code: Signaled(SIGSEGV, true)
+== ptrace NON-LEADER run2 (determinism) ==
+PRE  tid=5 pid=3 leader=0 t_pre=1767225600005171000
+2026-08-04T09:13:19.607631Z ERROR reverie_ptrace::task: Error in tracee tid 5: -10 ECHILD (No child processes)
+2026-08-04T09:13:19.607701Z ERROR reverie_ptrace::task: Failed to detach from 5: tracee 5 is a zombie
+
+thread 'main' (1) panicked at /home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/safeptrace/src/lib.rs:389:22:
+InvalidState(Wait(Stopped(Stopped(Pid(3), TraceeToken { event: EventHandle(EventGeneration { event: Event { exit_waiters: ExitWaiters { waiters: Mutex { data: [(Weak)] } }, exit_publication: Mutex { data: () }, status_waker: WakerSlot { waker: Mutex { data: Some(Waker { data: 0x5602bd0c8300, vtable: 0x5602b8fb1fc0 }) }, data: 0x5602bd0c8300, vtable: 0x5602b8fb1fc0 }, status: Mutex { data: StatusState { pending: [], terminal: -1 } }, status_changed: Condvar { .. }, exit_status: 1, exit_capability: 2, registration_error: Mutex { data: None }, worker_state: 2, worker_done_lock: Mutex { data: () }, worker_done_changed: Condvar { .. }, cleanup_cancel_requested: false, cleanup_claim_waiters: 0, wait_owner: 2, wait_owner_lock: Mutex { data: () }, wait_owner_changed: Condvar { .. } }, identity: OnceLock(WorkerIdentity { pid: Pid(3), snapshot: WorkerProcSnapshot { tgid: Pid(3), tracer_pid: Pid(1), start_time: 51895468 }, pidfd: OwnedFd { fd: 13 }, proc_dir: OwnedFd { fd: 14 }, proc_inode: 1444402916 }), authoritative: OnceLock(<uninit>) }) }), Exec(Pid(5)))))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (1) panicked at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:     0x5602b8eb7471 - std[74eb2aff46e51e81]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:     0x5602b8eb7471 - std[74eb2aff46e51e81]::backtrace_rs::backtrace::trace_unsynchronized::<std[74eb2aff46e51e81]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:     0x5602b8eb7471 - std[74eb2aff46e51e81]::sys::backtrace::_print_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:74:9
+   3:     0x5602b8eb7471 - <<std[74eb2aff46e51e81]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[7aff35c028b048a4]::fmt::Display>::fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:44:26
+   4:     0x5602b8ed223a - <core[7aff35c028b048a4]::fmt::rt::Argument>::fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/fmt/rt.rs:152:76
+   5:     0x5602b8ed223a - core[7aff35c028b048a4]::fmt::write
+   6:     0x5602b8ebeb6c - core[7aff35c028b048a4]::io::write::default_write_fmt::<std[74eb2aff46e51e81]::sys::stdio::unix::Stderr>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/io/write.rs:402:11
+   7:     0x5602b8ebeb6c - <std[74eb2aff46e51e81]::sys::stdio::unix::Stderr as core[7aff35c028b048a4]::io::write::Write>::write_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/io/write.rs:335:13
+   8:     0x5602b8e8d136 - <std[74eb2aff46e51e81]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:47:9
+   9:     0x5602b8e8d136 - std[74eb2aff46e51e81]::panicking::default_hook::{closure#0}
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:292:27
+  10:     0x5602b8eac2b1 - std[74eb2aff46e51e81]::panicking::default_hook
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:319:9
+  11:     0x5602b8eac5db - std[74eb2aff46e51e81]::panicking::panic_with_hook
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:815:13
+  12:     0x5602b8e8d214 - std[74eb2aff46e51e81]::panicking::panic_handler::{closure#0}
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:681:13
+  13:     0x5602b8e84969 - std[74eb2aff46e51e81]::sys::backtrace::__rust_end_short_backtrace::<std[74eb2aff46e51e81]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/sys/backtrace.rs:182:18
+  14:     0x5602b8e8e1bd - __rustc[49844a0cf2bb6b0d]::rust_begin_unwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/std/src/panicking.rs:679:5
+  15:     0x5602b8ed28dd - core[7aff35c028b048a4]::panicking::panic_nounwind_fmt::runtime
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:122:22
+  16:     0x5602b8ed28dd - core[7aff35c028b048a4]::panicking::panic_nounwind_fmt
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/intrinsics/mod.rs:2618:9
+  17:     0x5602b8ed285b - core[7aff35c028b048a4]::panicking::panic_nounwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:225:5
+  18:     0x5602b8ed29e7 - core[7aff35c028b048a4]::panicking::panic_cannot_unwind
+                               at /rustc/26ae60a9eeb20b4935be49d7a931a650fa1d2923/library/core/src/panicking.rs:350:5
+  19:     0x5602b89980a1 - reverie_process[f1640f6d209612e5]::clone::clone_with_stack::callback
+                               at /home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/reverie-process/src/clone.rs:27:5
+  20:     0x7f09fe70fac4 - __clone
+  21:                0x0 - <unknown>
+thread caused non-unwinding panic. aborting.
+Error: Sandbox container exited unexpectedly
+     > Process exited with code: Signaled(SIGSEGV, true)

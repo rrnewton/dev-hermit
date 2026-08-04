@@ -1,0 +1,13 @@
+{
+  "question": "Does an unoptimized (debug) hermit build run guests materially slower than optimized (release), and does it depend on guest shape?",
+  "hermit_sha": "8f656b4d8f0318a26994bd96b12af8b06bd36ebc",
+  "reverie_sha": "9e7af7df8d55696586504705e3eeb7446a8203c8",
+  "host": "devbig014.atn7.facebook.com",
+  "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "guests": {"compute_bound": "ITERS=800000000 -O2", "syscall_bound": "ITERS=1000000 -O2 raw syscall(SYS_getpid)"},
+  "box": "systemd-run --user CPUQuota=100% (1-CPU, not pinned)",
+  "profiles": ["release (--release, as shipped)", "debug (default unoptimized)"],
+  "runs_per_cell": 7,
+  "metrics": ["wall_s", "cpu_s (user+sys)"],
+  "status": "scaffolding complete; build_and_run pending drain completion"
+}

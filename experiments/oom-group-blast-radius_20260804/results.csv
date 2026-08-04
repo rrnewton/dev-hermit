@@ -1,0 +1,6 @@
+case,config,sentinel,allocator,offender,neighbour,oom_kill,oom_group_kill,n_legit_alive,n_legit_total,cgroups_removed,cgroups_failed
+case1_fix,oom.group=1 over-cap,DEAD,DEAD,,,4,1,,,,
+control,oom.group=0 over-cap,ALIVE,DEAD,,,1,0,,,,
+case2_neighbour,oom.group=1 per-step-cap,,,DEAD,ALIVE,0,1,,,,
+case3_legit,oom.group=1 under-cap x10,,,,,0,0,10,10,,
+case4_cleanup,rmdir all,,,,,,,,,14,0

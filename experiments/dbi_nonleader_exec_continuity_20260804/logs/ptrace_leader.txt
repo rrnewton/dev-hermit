@@ -1,0 +1,6 @@
+== ptrace leader (control) run1 ==
+PRE  tid=3 pid=3 leader=1 t_pre=1767225600003045915
+POST tid=3 pid=3 leader=1 t_post=1767225600005298720
+== ptrace leader (control) run2 ==
+PRE  tid=3 pid=3 leader=1 t_pre=1767225600003045915
+POST tid=3 pid=3 leader=1 t_post=1767225600005298720
