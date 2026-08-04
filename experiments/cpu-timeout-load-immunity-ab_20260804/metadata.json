@@ -1,0 +1,18 @@
+{
+  "date": "2026-08-04",
+  "question": "Is the DAG runner's per-node cpu_timeout verdict load-immune? I.e. when host load rises ~10x, does the kill-decision variable (per-cgroup accrued CPU-seconds) stay put so a burner is still caught and healthy nodes are not false-killed?",
+  "host": "devbig014.atn7.facebook.com (2x AMD EPYC 9D85 158-Core = 316 cores)",
+  "runner": "agent-utils checkout 1c7c855 (parent gitlink), python engine (SAFE_CI_DAG_RUNNER_ENGINE=python); enforces per-step cpu_timeout via 1 Hz cpu.stat usage_usec poll + whole-cgroup reap (#7 / 0eb4203, landed both engines)",
+  "runner_git_sha_in_profile": "b883ace53822159c94c7910f43de09acf89bea5e",
+  "parent_main_at_run": "9534790",
+  "hermit_main_at_run": "ca719dfa",
+  "boxing": "systemd --user transient scope; per-step child cgroups; cpu.stat usage_usec attributed per-step (sibling-independent, CPUQuota not cpuset -> co-tenant CPU cannot inflate a step's own usage_usec)",
+  "dag": "probe.json (3 nodes): cpu_breach (busy-loop, cpu_timeout=2), compliant_idle (sleep 4, cpu_timeout=2), compliant_cpu (~1 CPU-s then exit, cpu_timeout=5)",
+  "command": "systemd-run --user --scope --setenv=SAFE_CI_DAG_RUNNER_ENGINE=python -- safe-ci-dag-runner run --dag probe.json -j 3 -k --perf-dir perf_<leg> -v",
+  "legs": {
+    "idle": "no injected load; box executing ~5% (13/316 cores), load1 42.6",
+    "busy": "128 self-owned busy-loop workers in one process group (PGID 2130415, killed by negative PGID after the run); box executing ~48% (152/316 cores), load1 62.5. Kept under the ci-hub 50% SUITABLE policy (>=160 cores left free) to remain a good co-tenant."
+  },
+  "load_generator_disposition": "self-owned PGID 2130415 confirmed killed; load returned to 4.2% executing; PGID empty verified",
+  "limitation": "~160 cores stayed free even in the busy leg, so the probe's OWN wall was not core-starved (cpu_breach wall 3.02->3.03s). This A/B therefore proves CPU-accounting sibling-independence (host load +10x, per-node usage_usec flat, verdict unchanged), NOT wall-inflation-under-scarcity. The all-wall/no-cpu limiting case (a healthy blocking wait surviving a tight CPU budget) is covered by compliant_idle here and in cpu-timeout-enforcement-verified_20260803. Deliberately did not saturate all 316 cores on a shared 18-agent box."
+}

@@ -1,0 +1,7 @@
+node,leg,returncode,cpu_timed_out,ok,wall_s,cpu_usage_s,load1_start,verdict
+probe.cpu_breach,idle,-9,True,False,3.02,3.001,42.6,KILLED at CPU budget
+probe.cpu_breach,busy,-9,True,False,3.03,2.957,62.53,KILLED at CPU budget (load +10x, kill unchanged)
+probe.compliant_idle,idle,0,False,True,4.04,0.002,42.6,PASS (high wall / ~0 cpu)
+probe.compliant_idle,busy,0,False,True,4.08,0.003,62.53,PASS (blocking wait ignored under load)
+probe.compliant_cpu,idle,0,False,True,0.41,0.165,42.6,PASS (work < budget)
+probe.compliant_cpu,busy,0,False,True,0.15,0.068,62.53,PASS (no false-kill under load)
