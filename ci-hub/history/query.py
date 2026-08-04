@@ -382,6 +382,164 @@ def _table(hdr, body) -> str:
 
 
 # ---------------------------------------------------------------------------
+# kill taxonomy  (splits the green-time no_result bucket)
+#
+# A wall/cpu kill is not one thing.  It is either a LIVELOCK — CPU burned at
+# ~a full core for the whole budget, a product defect that retry can NEVER fix —
+# or CONTENTION — low CPU against high wall, the step was waiting, environmental,
+# and a re-dispatch works.  Opposite causes, opposite correct responses, and
+# only the cpu/wall RATIO at the kill separates them.  The producer already
+# records that ratio: the safe-ci-dag-runner writes cpu (user_s+sys_s and cgroup
+# cpu.usage_usec) alongside wall (elapsed_s) and the kill flags (timed_out /
+# cpu_timed_out / oom_kills) into step_profiles for EVERY step it runs, pass or
+# kill — so this consumer needs no new producer emit for DAG-runner nodes.
+# ---------------------------------------------------------------------------
+
+# cpu/wall thresholds.  On a multi-core box a genuinely blocked/contended step
+# spends most of its wall waiting, so cpu/wall stays low; a spinning step pegs
+# ~one core, so cpu ~= wall (the measured livelock signature was 599.986 cpu /
+# 600.013 wall -> ratio ~= 1.0).  Ratios are reported alongside the verdict, not
+# in place of it, so a reader can audit every boundary call.
+LIVELOCK_RATIO = 0.8    # cpu/wall >= this: CPU-bound (>=~one core) -> livelock
+CONTENTION_RATIO = 0.3  # cpu/wall <  this: wait-bound -> contention/flake
+
+
+def _cpu_wall(row: dict):
+    """(cpu_s, wall_s, ratio) for one step_profiles row.
+
+    cpu prefers user_s+sys_s and falls back to cgroup cpu.usage_usec so a row
+    carrying only the cgroup counter still yields a ratio.  ratio is None when
+    wall is absent/zero — never divide by a missing denominator.
+    """
+    wall = _float(row.get("elapsed_s"))
+    user = _float(row.get("user_s"))
+    sys_ = _float(row.get("sys_s"))
+    cpu = None
+    if user is not None or sys_ is not None:
+        cpu = (user or 0.0) + (sys_ or 0.0)
+    else:
+        usec = _float(row.get("cpu.usage_usec"))
+        if usec is not None:
+            cpu = usec / 1e6
+    ratio = (cpu / wall) if (cpu is not None and wall not in (None, 0.0)) else None
+    return cpu, wall, ratio
+
+
+def _kill_kind(row: dict):
+    """Which budget/killer fired, or None if the row is not a kill."""
+    if (row.get("cpu_timed_out") or "").strip() == "True":
+        return "cpu_timeout"
+    if (row.get("timed_out") or "").strip() == "True":
+        return "wall_timeout"
+    oom = _float(row.get("oom_kills"))
+    if oom and oom > 0:
+        return "oom"
+    return None
+
+
+def _kill_verdict(kind, ratio):
+    """Classify a kill.  OOM is a MEMORY kill, orthogonal to the cpu/wall spin
+    question, so it gets its own bucket rather than being forced into
+    livelock/contention.  For a time kill (cpu/wall timeout) the ratio decides:
+    ~a full core burned (>=0.8) is a livelock (retry-futile); mostly waiting
+    (<0.3) is contention (retry-valid).  A high ratio (>>1) is legitimately
+    parallel CPU-bound work that also cannot be fixed by retry, so it still
+    lands in the livelock (retry-futile) bucket alongside single-core spin."""
+    if kind == "oom":
+        return "oom"
+    if ratio is None:
+        return "unknown"
+    if ratio >= LIVELOCK_RATIO:
+        return "livelock"
+    if ratio < CONTENTION_RATIO:
+        return "contention"
+    return "ambiguous"
+
+
+def kill_taxonomy(parent: str, repo: str | None, since: str | None) -> dict:
+    profiles = discover_step_profiles(parent, repo)
+    since_sha = since if since and SHA_RE.match(since) else None
+    since_date = since if since and not since_sha else None
+
+    kills = []
+    node_ratios: dict[str, list[float]] = {}
+    for r in profiles:
+        node = (r.get("step") or "").strip()
+        if not node:
+            continue
+        if since_sha and not (r.get("git_sha") or "").startswith(since_sha):
+            continue
+        if since_date and (r.get("timestamp") or "") < since_date:
+            continue
+        cpu, wall, ratio = _cpu_wall(r)
+        if ratio is not None:
+            node_ratios.setdefault(node, []).append(ratio)
+        kind = _kill_kind(r)
+        if kind is not None:
+            kills.append({
+                "node": node,
+                "git_sha": (r.get("git_sha") or "")[:12],
+                "timestamp": r.get("timestamp") or "",
+                "kill_kind": kind,
+                "wall_s": round(wall, 3) if wall is not None else None,
+                "cpu_s": round(cpu, 3) if cpu is not None else None,
+                "cpu_wall_ratio": round(ratio, 3) if ratio is not None else None,
+                "effective_cores": _float(r.get("effective_cores")),
+                "verdict": _kill_verdict(kind, ratio),
+            })
+
+    summary = {"livelock": 0, "contention": 0, "ambiguous": 0,
+               "oom": 0, "unknown": 0}
+    for k in kills:
+        summary[k["verdict"]] += 1
+
+    node_stats = []
+    for node, ratios in sorted(node_ratios.items()):
+        rs = sorted(ratios)
+        node_stats.append({
+            "node": node,
+            "n": len(rs),
+            "p50_ratio": round(percentile(rs, 50), 3) if rs else None,
+            "max_ratio": round(rs[-1], 3) if rs else None,
+        })
+
+    return {
+        "repo": repo,
+        "livelock_ratio": LIVELOCK_RATIO,
+        "contention_ratio": CONTENTION_RATIO,
+        "n_kills": len(kills),
+        "summary": summary,
+        # highest ratio first: the most livelock-like kills lead.
+        "kills": sorted(kills, key=lambda k: -(k["cpu_wall_ratio"] or -1.0)),
+        "node_ratios": node_stats,
+    }
+
+
+def render_kill_taxonomy(res: dict, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(res, indent=2)
+    s = res["summary"]
+    lines = [
+        f"{res.get('repo') or 'all'} kill taxonomy "
+        f"(cpu/wall >= {res['livelock_ratio']} = livelock [retry-futile], "
+        f"< {res['contention_ratio']} = contention [retry-valid]): "
+        f"{res['n_kills']} kills -> {s['livelock']} livelock, "
+        f"{s['contention']} contention, {s['ambiguous']} ambiguous, "
+        f"{s['oom']} oom, {s['unknown']} unknown"
+    ]
+    if res["kills"]:
+        hdr = ("NODE", "SHA", "KILL", "WALL(s)", "CPU(s)", "CPU/WALL", "CORES",
+               "VERDICT")
+        body = [(k["node"], k["git_sha"], k["kill_kind"],
+                 _s(k["wall_s"]), _s(k["cpu_s"]), _s(k["cpu_wall_ratio"]),
+                 _s(k["effective_cores"]), k["verdict"]) for k in res["kills"]]
+        lines.append(_table(hdr, body))
+    else:
+        lines.append("  (no killed/timed-out/oom rows in the profile window)")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # green-time  (owner headline metric — derived, never estimated)
 # ---------------------------------------------------------------------------
 
@@ -412,12 +570,29 @@ def load_jobs_index(parent: str, repo: str | None) -> dict[str, list[dict]]:
 def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """Seventh case: run-level CANCELLED, but a JOB inside it may have FAILED.
 
-    Run-level and job-level conclusions disagree; the discriminator is ORDERING.
-    A job whose conclusion is red (failure/timed_out/...) that COMPLETED at or
-    before the run's cancel moment failed on its own — the later run-level cancel
-    only masked it — so the run is a real RED. A job still running when the cancel
-    landed (no completion, or a completion after the cancel) was killed BY the
-    cancel: its non-answer stays no_result.
+    Run-level and job-level conclusions disagree; the discriminator is ORDERING
+    AND ROOT-CAUSE. A job whose conclusion is red (failure/timed_out/...) that
+    completed at/before the cancel BEGAN, and that was not itself waiting on a
+    cancelled dependency, failed on its own — the later run-level cancel only
+    masked it — so the run is a real RED. A job killed BY the cancel, or one whose
+    failure is PROPAGATED from a cancelled dependency, is not an independent
+    verdict and stays no_result.
+
+    Ordering reference: the CANCEL ONSET, not the run's terminal `updated_at`
+    stamp. A cancel-in-progress kills the in-flight jobs, and a downstream
+    aggregation gate (`needs:` all of them, "succeed or be deselected") then
+    completes=failure BECAUSE a required dependency was cancelled — a PROPAGATED
+    failure that finalizes at the run's cancel moment, not a product verdict.
+    Ordering a red job against `updated_at` alone would flag that propagated gate
+    RED (measured: it reproduces the run-30873193855 / hermit-238b false red —
+    task cancellation_taxonomy_distinguish_self). So the reference is the earliest
+    cancelled-sibling completion (when the cancel began killing jobs); a red job
+    is INDEPENDENT only if it both COMPLETED and STARTED at/before that onset. A
+    downstream gate STARTS only after its cancelled dependency resolves, so its
+    start lands after the onset and it is correctly left as no_result even when
+    second-granularity timestamps tie its completion with the onset. With no
+    cancelled sibling the run was cancelled with nothing in flight, so the onset
+    falls back to `updated_at`.
 
     Returns 'red' when a job failed independently of the cancel, else None (the
     caller keeps the run-level no_result classification). Inert when `jobs` is
@@ -425,15 +600,25 @@ def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """
     if not jobs:
         return None
-    cancel_at = _epoch(run.get("updated_at"))  # cancelled run's terminal stamp
+    cancel_onsets = [
+        _epoch(j.get("completed_at"))
+        for j in jobs
+        if (j.get("conclusion") or "").lower() == "cancelled"
+    ]
+    cancel_onsets = [c for c in cancel_onsets if c is not None]
+    onset = min(cancel_onsets) if cancel_onsets else _epoch(run.get("updated_at"))
     for j in jobs:
         if (j.get("conclusion") or "").lower() not in _RED_CONCLUSIONS:
             continue
         done = _epoch(j.get("completed_at"))
         if done is None:
             continue  # a red job with no completion time cannot be ordered
-        # ORDERING: the failure landed at/before the cancel -> independent of it.
-        if cancel_at is None or done <= cancel_at:
+        if onset is None:
+            return "red"
+        # ORDERING + ROOT-CAUSE: the failure both finished and began at/before the
+        # cancel onset -> it did not wait on a cancelled dependency -> independent.
+        started = _epoch(j.get("started_at"))
+        if done <= onset and (started is None or started <= onset):
             return "red"
     return None
 
@@ -967,6 +1152,13 @@ def main() -> int:
                       help="append this snapshot as JSONL (default store dir) so "
                            "hourly runs build a durable trend")
 
+    p_kt = sub.add_parser("kill-taxonomy",
+                          help="split wall/cpu kills into livelock vs "
+                               "contention via the cpu/wall ratio")
+    p_kt.add_argument("--repo")
+    p_kt.add_argument("--since", help="git SHA prefix or YYYY-MM-DD")
+    p_kt.add_argument("--format", choices=["text", "json"], default="text")
+
     p_ru = sub.add_parser("runs",
                           help="summary + recent-runs listing (alias of default)")
     p_ru.add_argument("--repo")
@@ -984,6 +1176,10 @@ def main() -> int:
     if args.cmd == "node-cpu-budgets":
         rows = node_cpu_budgets(parent, args.repo, args.since, args.min_samples)
         print(render_node_budgets(rows, args.format))
+        return 0
+    if args.cmd == "kill-taxonomy":
+        res = kill_taxonomy(parent, args.repo, args.since)
+        print(render_kill_taxonomy(res, args.format))
         return 0
     if args.cmd == "green-time":
         if getattr(args, "trend", None):

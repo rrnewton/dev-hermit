@@ -86,6 +86,12 @@ class TempParentTest(unittest.TestCase):
         prof.mkdir(parents=True)
         path = prof / "step_profiles_machine_class.csv"
         cols = ["timestamp", "git_sha", "step", "elapsed_s", "user_s", "sys_s"]
+        # widen the header to any extra columns the row carries (kill flags,
+        # cgroup counters, ...) so a test can exercise them without dropping data.
+        for r in node_rows:
+            for k in r:
+                if k not in cols:
+                    cols.append(k)
         with open(path, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=cols)
             w.writeheader()
@@ -125,6 +131,87 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(out["test.a"]["n_samples"], 0)   # no cpu sample
         self.assertEqual(out["test.a"]["max_wall_s"], 1.0)
         self.assertTrue(out["test.a"]["thin"])
+
+    def _prof_row(self, step, elapsed_s, sha="a" * 40, ts="2026-08-03T00:00:00Z",
+                  **extra):
+        row = {"timestamp": ts, "git_sha": sha, "step": step,
+               "elapsed_s": elapsed_s}
+        row.update(extra)
+        return row
+
+    def test_kill_taxonomy_livelock_vs_contention_vs_oom(self):
+        # Same wall-budget kill, opposite cause, opposite verdict — the cpu/wall
+        # ratio at the kill is the ONLY discriminator. Plant one of each and a
+        # genuine pass, and assert both the summary counts and the per-kill ratio.
+        self._write_step_profiles([
+            # LIVELOCK: cpu ~= wall (a full core burned) -> retry-futile. This is
+            # the measured detcore_misc signature (600.013 wall / 599.986 cpu).
+            self._prof_row("test.detcore_misc", 600.013, user_s=590.0, sys_s=9.986,
+                           timed_out="True", cpu_timed_out="True"),
+            # CONTENTION: high wall, low cpu -> the step was waiting -> retry-valid.
+            self._prof_row("test.waiter", 600.0, user_s=30.0, sys_s=30.0,
+                           timed_out="True", cpu_timed_out="False"),
+            # OOM is a MEMORY kill, orthogonal to the spin question -> own bucket
+            # regardless of ratio (a parallel build can have cpu >> wall).
+            self._prof_row("build.dbi_release", 50.0, user_s=1800.0, sys_s=100.0,
+                           timed_out="False", oom_kills="1"),
+            # A genuine PASS: no kill flag -> contributes a ratio but NO kill row
+            # (proves the classifier does not manufacture a kill from a pass).
+            self._prof_row("test.ok", 10.0, user_s=9.0, sys_s=0.5),
+        ])
+        res = query.kill_taxonomy(str(self.parent), None, None)
+        self.assertEqual(res["n_kills"], 3)  # the pass is excluded
+        self.assertEqual(res["summary"]["livelock"], 1)
+        self.assertEqual(res["summary"]["contention"], 1)
+        self.assertEqual(res["summary"]["oom"], 1)
+        by = {k["node"]: k for k in res["kills"]}
+        self.assertEqual(by["test.detcore_misc"]["verdict"], "livelock")
+        self.assertAlmostEqual(by["test.detcore_misc"]["cpu_wall_ratio"], 1.0,
+                               places=2)
+        self.assertEqual(by["test.waiter"]["verdict"], "contention")
+        self.assertAlmostEqual(by["test.waiter"]["cpu_wall_ratio"], 0.1, places=2)
+        self.assertEqual(by["build.dbi_release"]["verdict"], "oom")
+        # node_ratios covers EVERY node with a ratio, pass or kill (the ratio is
+        # informative on passes too, per requirement 1).
+        ratio_nodes = {n["node"] for n in res["node_ratios"]}
+        self.assertIn("test.ok", ratio_nodes)
+
+    def test_kill_taxonomy_ambiguous_band(self):
+        # A ratio in [0.3, 0.8) is neither a clean spin nor a clean wait -> it is
+        # surfaced as 'ambiguous' rather than force-bucketed, so a reader audits it.
+        self._write_step_profiles([
+            self._prof_row("test.mid", 100.0, user_s=50.0, sys_s=0.0,
+                           timed_out="True", cpu_timed_out="False"),
+        ])
+        res = query.kill_taxonomy(str(self.parent), None, None)
+        self.assertEqual(res["summary"]["ambiguous"], 1)
+        self.assertEqual(res["kills"][0]["verdict"], "ambiguous")
+
+    def test_kill_taxonomy_cgroup_usec_fallback(self):
+        # A row carrying only the cgroup counter (no user_s/sys_s) still yields a
+        # ratio: cpu.usage_usec / 1e6 -> cpu-seconds.
+        self._write_step_profiles([
+            self._prof_row("test.cg", 100.0, user_s="", sys_s="",
+                           timed_out="True", cpu_timed_out="True",
+                           **{"cpu.usage_usec": "95000000"}),  # 95 cpu-s
+        ])
+        res = query.kill_taxonomy(str(self.parent), None, None)
+        k = res["kills"][0]
+        self.assertAlmostEqual(k["cpu_s"], 95.0, places=2)
+        self.assertAlmostEqual(k["cpu_wall_ratio"], 0.95, places=2)
+        self.assertEqual(k["verdict"], "livelock")
+
+    def test_kill_taxonomy_no_wall_is_unknown_not_a_divide(self):
+        # No/zero wall -> ratio is None (never divide by a missing denominator);
+        # a kill with no ratio is 'unknown', not silently dropped.
+        self._write_step_profiles([
+            self._prof_row("test.nowall", "", user_s=5.0, sys_s=0.0,
+                           timed_out="True", cpu_timed_out="False"),
+        ])
+        res = query.kill_taxonomy(str(self.parent), None, None)
+        self.assertEqual(res["n_kills"], 1)
+        self.assertIsNone(res["kills"][0]["cpu_wall_ratio"])
+        self.assertEqual(res["kills"][0]["verdict"], "unknown")
 
     def _gha_wf(self, sha, concl, created, updated, wf="W", status="completed",
                 run_id=None):
@@ -231,6 +318,57 @@ class TempParentTest(unittest.TestCase):
         self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
         self.assertEqual(res["red_hours"], 0.0)
         self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_case7_propagated_gate_failure_stays_no_result(self):
+        # ROOT-CAUSE guard: a cancel-in-progress kills test-debug at 00:39:50; the
+        # require-all aggregation gate then completes=failure at 00:40:00 BECAUSE a
+        # required dep was cancelled. Its failure is PROPAGATED, not an independent
+        # verdict (run-30873193855 / hermit-238b false red). Ordering against the
+        # cancel ONSET (earliest cancelled-sibling completion) + the started_at
+        # guard (the gate STARTS after its dep resolves) leaves it no_result.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-debug",
+             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:39:50Z"},
+            {"repo": "r/x", "run_id": "R1", "job_id": "j2",
+             "name": "Require every portable DAG job to succeed or be deselected",
+             "conclusion": "failure", "started_at": "2026-08-03T00:39:55Z",
+             "completed_at": "2026-08-03T00:40:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
+        self.assertEqual(res["red_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_case7_independent_failure_with_cancelled_sibling_is_red(self):
+        # The genuine case the guard must still catch: a job FAILED at 00:30, then
+        # an EXTERNAL newer push cancelled the run, killing a sibling at 00:40. The
+        # failure both completed AND started before the cancel onset -> independent
+        # -> RED, even though a cancelled sibling exists.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-release",
+             "conclusion": "failure", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:30:00Z"},
+            {"repo": "r/x", "run_id": "R1", "job_id": "j2", "name": "test-debug",
+             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:40:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
+        self.assertEqual(res["no_result_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 1)
 
     def test_green_time_case7_inert_without_job_store(self):
         # No gha-jobs.csv -> the discriminator is inert and cancelled stays
