@@ -87,7 +87,9 @@ def _ambiguous_check(context: str) -> dict[str, object]:
         "name": context,
         "status": "AMBIGUOUS",
         "conclusion": "",
-        "_selectionError": "duplicate check context has no run id or timestamp",
+        "_selectionError": (
+            "duplicate check context has equal ordering identity and contrary verdicts"
+        ),
     }
 
 

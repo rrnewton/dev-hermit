@@ -169,6 +169,7 @@ class CheckOutcomeContractTests(unittest.TestCase):
             selected = select_latest_checks(rollup)
             self.assertEqual(len(selected), 1)
             self.assertEqual(selected[0]["status"], "AMBIGUOUS")
+            self.assertIn("equal ordering identity", selected[0]["_selectionError"])
             self.assertIs(
                 classify_check(selected[0]["status"], selected[0]["conclusion"]),
                 CheckOutcome.NO_RESULT,
