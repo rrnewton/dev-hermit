@@ -1,0 +1,26 @@
+{
+  "question": "Does PR #15's shipped path (apply_core_box after reexec_in_scope) deliver a HARD core box in the 3pai sandbox, proven by mutation?",
+  "date_utc": "2026-08-04T14:00:00Z",
+  "host": "devserver, nproc=316 (cores 0-315)",
+  "agent_utils_branch": "codex/runner-cpuset-core-box",
+  "agent_utils_branch_head": "1c7c8556e6f8523634592a2f39ca8462c377460c",
+  "agent_utils_main": "7c532d4ffbcfbf3a6fd021a7bd851c31cf985b37",
+  "claim_on_main": "TRUE: runner reads cpuset.cpus.effective (cgroup.py:486,860) but never writes core affinity; reexec_in_scope passes Delegate=yes/MemorySwapMax=0/CPUQuota/MemoryMax, no AllowedCPUs",
+  "call_path": "cli.main -> reexec_in_scope (cgroup.py:526-601, plain scope) -> opt-in --cores K -> apply_core_box (cli.py:1391, cgroup.py:985) -> _try_cgroup_cpuset (needs cpuset controller) else sched_setaffinity",
+  "app_slice_controllers": "cpuset cpu io memory pids",
+  "app_slice_subtree_control": "io memory pids",
+  "plain_scope_controllers": "io memory pids (no cpuset delegated)",
+  "scope_with_p_AllowedCPUs_controllers": "cpuset io memory pids (cpuset.cpus.effective=1-2)",
+  "mutation_result": {
+    "requested_k": 2,
+    "cores": [1, 2],
+    "count": 2,
+    "mechanism_used": "sched_setaffinity",
+    "child_inherited": "1-2",
+    "escape_target_excluded_core": 0,
+    "escape_taskset_rc": 0,
+    "child_allowed_after_escape": "0",
+    "verdict": "SOFT/escapable - NOT a real bound"
+  },
+  "conclusion": "PR #15 shipped path degrades to soft sched_setaffinity in this sandbox because the plain Delegate=yes scope lacks cpuset delegation. Fix-forward: pass -p AllowedCPUs=<set> in reexec_in_scope (the mutation-proven-hard mechanism), not _try_cgroup_cpuset on a plain scope."
+}
