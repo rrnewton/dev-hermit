@@ -157,7 +157,10 @@ never wedges a land:
    a bounded retry loop, which forces GitHub to recompute mergeability.
 3. **Treat the label only as a cache** — exact-head ledger evidence is required
    before and after rebase. Only `apply-local-label` may materialize the label;
-   a genuine gate failure is never overwritten by re-stamping metadata.
+   it requires a nonzero executed-test count, hashes the referenced log, and
+   publishes the selected ledger row as an immutable receipt on
+   `rrnewton/dev-hermit:validation-receipts` before commenting or labeling. A
+   genuine gate failure is never overwritten by re-stamping metadata.
 
 Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
 PR comment — so an abandoned PR never silently languishes (the #244 pattern).

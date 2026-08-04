@@ -2453,34 +2453,6 @@ fn gh_open_prs(root: &Path, repo: &str) -> Result<Vec<u64>, CiHubError> {
         .collect())
 }
 
-/// Read a PR's current label names.
-fn gh_pr_labels(root: &Path, repo: &str, pr: u64) -> Result<Vec<String>, CiHubError> {
-    let pr_arg = pr.to_string();
-    let output = gh_command(
-        root,
-        &[
-            "pr", "view", &pr_arg, "--repo", repo, "--json", "labels", "-q",
-            ".labels[].name",
-        ],
-    )
-    .output()
-    .map_err(|source| CiHubError::Launch {
-        tool: "gh pr view labels".into(),
-        source,
-    })?;
-    if !output.status.success() {
-        return Err(CiHubError::Gh {
-            context: format!("pr view #{pr} labels"),
-            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect())
-}
-
 const LOCALLY_VALIDATED_LABEL: &str = "locally-validated";
 
 /// One qualifying record rendered for human/JSON output.
@@ -3047,6 +3019,7 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
 
     let mut actions: Vec<serde_json::Value> = Vec::new();
     let mut applied = 0i32;
+    let mut failed = 0i32;
     for pr in prs {
         // In sweep mode a single unreadable PR must not abort the whole run.
         let head = match gh_pr_head(root, &args.repo, pr) {
@@ -3063,37 +3036,35 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": verdict.as_str()}));
             continue;
         }
-        let labels = gh_pr_labels(root, &args.repo, pr).unwrap_or_default();
-        if labels.iter().any(|l| l == LOCALLY_VALIDATED_LABEL) {
-            println!("PR #{pr}: already labeled (head validated)");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "already-labeled"}));
-            continue;
-        }
-        if args.dry_run {
-            println!("PR #{pr}: WOULD add {LOCALLY_VALIDATED_LABEL} (head validated)");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "would-add"}));
-            continue;
-        }
+        // The label is a cache, not evidence. The publisher re-reads the ledger,
+        // requires a counted exact-head row, publishes an immutable receipt, and
+        // only then writes the evidence comment and label. Existing labels also
+        // pass through this path so an unbacked cache entry gets bound or fails.
+        let publisher = root.join("ci-hub/validation/publish_receipt.py");
         let pr_arg = pr.to_string();
-        let status = gh_command(
-            root,
-            &[
-                "pr", "edit", &pr_arg, "--repo", &args.repo, "--add-label",
-                LOCALLY_VALIDATED_LABEL,
-            ],
-        )
-        .status()
+        let ledger_arg = path.display().to_string();
+        let mut command = Command::new("python3");
+        command
+            .arg(&publisher)
+            .args(["--pr", &pr_arg, "--repo", &args.repo, "--sha", &head, "--ledger", &ledger_arg])
+            .current_dir(root);
+        if args.dry_run {
+            command.arg("--dry-run");
+        }
+        let status = command.status()
         .map_err(|source| CiHubError::Launch {
-            tool: "gh pr edit".into(),
+            tool: publisher.display().to_string(),
             source,
         })?;
         if status.success() {
-            println!("PR #{pr}: applied {LOCALLY_VALIDATED_LABEL} (head validated)");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "added"}));
+            let action = if args.dry_run { "would-bind" } else { "bound" };
+            println!("PR #{pr}: {action} {LOCALLY_VALIDATED_LABEL} to counted exact-head receipt");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": action}));
             applied += 1;
         } else {
-            eprintln!("ci-hub: apply-local-label: PR #{pr}: gh pr edit exited nonzero");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "edit-failed"}));
+            eprintln!("ci-hub: apply-local-label: PR #{pr}: receipt publisher exited nonzero");
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "receipt-failed"}));
+            failed += 1;
         }
     }
 
@@ -3101,7 +3072,7 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
         let report = serde_json::json!({"schema_version": 1, "applied": applied, "actions": actions});
         println!("{}", serde_json::to_string_pretty(&report).expect("serialize report"));
     }
-    Ok(0)
+    Ok(if failed == 0 { 0 } else { 1 })
 }
 
 fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubError> {

@@ -600,7 +600,9 @@ systemd-run --user --unit=<name> --description='...' --working-directory=<worktr
 ```
 
 Both legs of GitHub-free landing require a validate record, and until this path nothing could produce one.
-Let `apply-local-label` add the label FROM the ledger record — never by hand. Derive the safe concurrency
+Let `apply-local-label` add the label FROM the ledger record — never by hand. It publishes an immutable,
+remotely readable receipt containing the exact counted ledger row and log digest before the label; a
+well-shaped comment that points at no such receipt is not evidence. Derive the safe concurrency
 against total cores before fanning out records; do not guess (contended runs are a recurring bug class).
 
 ## Product Vision
