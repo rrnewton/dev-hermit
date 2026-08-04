@@ -1,0 +1,691 @@
+{
+  "base": "main",
+  "conflict_edges": [
+    {
+      "a": 221,
+      "b": 287,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 287,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 344,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 345,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 347,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 349,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 351,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 353,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 354,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 355,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 358,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    },
+    {
+      "a": 287,
+      "b": 359,
+      "paths": [
+        "reverie-ptrace/src/task.rs"
+      ]
+    }
+  ],
+  "diagnostics": {
+    "evaluate_once_race": [],
+    "flaky_reds": [],
+    "outage_prs": [],
+    "outage_suspected": false,
+    "real_reds": [
+      344,
+      355
+    ],
+    "stale_gates": [
+      221,
+      223,
+      287,
+      359
+    ]
+  },
+  "file_overlap_edges": [
+    {
+      "a": 221,
+      "b": 223,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 344,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 345,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 347,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 349,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 221,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 344,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 345,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 347,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 349,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 223,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 344,
+      "b": 345,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 344,
+      "b": 347,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 344,
+      "b": 349,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 344,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 344,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 345,
+      "b": 347,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 345,
+      "b": 349,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 345,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 345,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 347,
+      "b": 349,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 347,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 347,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 349,
+      "b": 353,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 349,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    },
+    {
+      "a": 353,
+      "b": 354,
+      "paths": [
+        "reverie-kvm/src/executor.rs"
+      ]
+    }
+  ],
+  "held_prs": [
+    {
+      "pr": 287,
+      "reasons": [
+        "local-base-conflict",
+        "github-base-conflicting"
+      ]
+    }
+  ],
+  "mechanism_overlap_edges": [],
+  "nodes": [
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "CI green on head; required gate 'merge-gate' is stale (ds-4171)",
+      "freshness_behind": 11,
+      "gate_ok": false,
+      "head": "dccd0c8b6bc562b00acec00a5aaa3a99f7460804",
+      "held": false,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 221,
+      "priority": 0,
+      "red_class": "stale-required-check",
+      "size": 59,
+      "title": "kvm: advance direct worker logical clocks",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "CI green on head; required gate 'merge-gate' is stale (ds-4171)",
+      "freshness_behind": 11,
+      "gate_ok": false,
+      "head": "2ee68d4f8263d598d872ce4fd87834a597a66228",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 223,
+      "priority": 0,
+      "red_class": "stale-required-check",
+      "size": 37182,
+      "title": "kvm: synthesize process maps for stack discovery",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "CI green on head; required gate 'merge-gate' is stale (ds-4171)",
+      "freshness_behind": 78,
+      "gate_ok": false,
+      "head": "8d3a041001fa929ba9e2a898781c3b2d31dab09a",
+      "held": true,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 287,
+      "priority": 0,
+      "red_class": "stale-required-check",
+      "size": 107,
+      "title": "Fix legacy vsyscall seccomp returns",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: merge-gate",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "d58bc00cf53bb4c21bf27599e0ca1b62ade5741f",
+      "held": false,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 344,
+      "priority": 0,
+      "red_class": "real",
+      "size": 162,
+      "title": "reverie-kvm: determinize seccomp(2) to EOPNOTSUPP (ptrace parity)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "b5fcb52e58c1919cebba175c6e1f911862d23c63",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 345,
+      "priority": 0,
+      "red_class": null,
+      "size": 251,
+      "title": "reverie-kvm: canonicalize SO_INCOMING_CPU to virtual CPU 0",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "f9ccb9ff59c8c6e81441f5edd8d614add2683cea",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 347,
+      "priority": 0,
+      "red_class": null,
+      "size": 107,
+      "title": "kvm: accept AF_UNIX SOCK_SEQPACKET sockets (unix_autobind_seqpacket parity)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "48b072b2f5ddbf6a5741b81ea58cce2109d44418",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 349,
+      "priority": 0,
+      "red_class": null,
+      "size": 269,
+      "title": "reverie-kvm: forward AF_INET/AF_INET6 connect and AF_INET6 bind to host",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "c6e10a3795f1c81c7eb2dabc1bbaca5a69e747d0",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 351,
+      "priority": 0,
+      "red_class": null,
+      "size": 14,
+      "title": "docs: correct GlobalState RPC architecture (KVM/ptrace in-process, no runtime serde)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "8d37e7d443605701e2710b5a13f6e7ac064510aa",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 353,
+      "priority": 0,
+      "red_class": null,
+      "size": 83,
+      "title": "reverie-kvm: regression-test memfd MAP_SHARED mmap copy-in",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "6dca0536a2359373f9e87592edd6e8ffbcdf8398",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 354,
+      "priority": 0,
+      "red_class": null,
+      "size": 95,
+      "title": "reverie-kvm: credential-setting family parity with ptrace/detcore",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Host-dependent tests (self-hosted), merge-gate",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "2ca758f0c7cffd3cae8987dbde4ac7746d7eb376",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 355,
+      "priority": 0,
+      "red_class": "real",
+      "size": 55,
+      "title": "safeptrace: consume dead ptrace status on decode error to end ESRCH hot spin",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "pending",
+      "ci_detail": "pending",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "52395de1909a60d3037e0ade95d98a288bca9d2f",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 358,
+      "priority": 0,
+      "red_class": null,
+      "size": 4,
+      "title": "docs: define LiteInst Mode A and Mode B",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "CI green on head; required gate 'merge-gate' is stale (ds-4171)",
+      "freshness_behind": 0,
+      "gate_ok": false,
+      "head": "273330733b4f3f8f0092c9514f7ab0c01a005d29",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 359,
+      "priority": 0,
+      "red_class": "stale-required-check",
+      "size": 788859,
+      "title": "Package third-party backend payloads from pinned source",
+      "validation_evidence": "none"
+    }
+  ],
+  "ordering_edges": [],
+  "plan": {
+    "batch": [],
+    "land_now": [],
+    "order": [
+      358,
+      351,
+      355,
+      221,
+      353,
+      354,
+      347,
+      344,
+      345,
+      349,
+      223,
+      359
+    ],
+    "parallel_safe_groups": [
+      [
+        358,
+        351,
+        355,
+        221,
+        353,
+        354,
+        347,
+        344,
+        345,
+        349,
+        223,
+        359
+      ]
+    ],
+    "per_pr_actions": [
+      {
+        "action": "refire-stale-gate",
+        "group": 0,
+        "pr": 221,
+        "why": "CI green on head; required gate 'merge-gate' is stale (ds-4171)"
+      },
+      {
+        "action": "refire-stale-gate",
+        "group": 0,
+        "pr": 223,
+        "why": "CI green on head; required gate 'merge-gate' is stale (ds-4171)"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 287,
+        "why": "held: local-base-conflict, github-base-conflicting — rebase onto base to resolve"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 344,
+        "why": "real red on: merge-gate"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 345,
+        "why": "CI pending"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 347,
+        "why": "CI pending"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 349,
+        "why": "CI pending"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 351,
+        "why": "CI pending"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 353,
+        "why": "CI pending"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 354,
+        "why": "CI pending"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 355,
+        "why": "real red on: Host-dependent tests (self-hosted), merge-gate"
+      },
+      {
+        "action": "wait",
+        "group": 0,
+        "pr": 358,
+        "why": "CI pending"
+      },
+      {
+        "action": "refire-stale-gate",
+        "group": 0,
+        "pr": 359,
+        "why": "CI green on head; required gate 'merge-gate' is stale (ds-4171)"
+      }
+    ],
+    "rebase_economics": {
+      "rationale": "The locally-validated / clean-validate record is keyed to the exact head SHA, so a rebase changes the head and INVALIDATES the record — forcing a fresh validate run. Serial draining rebases every queued PR onto the moved base, so N serial rebases invalidate N SHA-keyed validate records (self-defeating: each land destroys the validation evidence of everything queued behind it). Landing each real-conflict cluster as ONE stack collapses that to one rebase and one validate per cluster, so clustering avoids the same count of rebases AND validate runs.",
+      "rebases_avoided_by_clustering": 12,
+      "validate_record_keyed_to": "head_sha",
+      "validate_runs_avoided_by_clustering": 12
+    }
+  },
+  "repository": "rrnewton/reverie",
+  "stacks": []
+}

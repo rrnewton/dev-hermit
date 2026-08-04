@@ -72,6 +72,26 @@ merge-ORDER problem: either land them serially with rebase, or restructure the
 manifests to be append-friendly (per-PR fragment files that a generator concats).
 The latter would dissolve most of the 310 conflicts at the source.
 
+## Validate-record economics (owner input 2026-08-04, now emitted in the plan)
+The locally-validated / clean-validate record is keyed to the exact head SHA, so a
+REBASE changes the head and INVALIDATES the record — forcing a fresh validate run.
+Serial draining rebases every queued PR onto the moved base, so N serial rebases
+invalidate N SHA-keyed validate records: self-defeating, because each land destroys
+the validation evidence of everything queued behind it. This makes the clustering
+case stronger than the rebase argument alone — clustering avoids the same count of
+rebases AND validate runs (1:1).
+
+The planner now emits this in `plan.rebase_economics` (landed agent-utils eeaa14d):
+`{validate_record_keyed_to: head_sha, rebases_avoided_by_clustering,
+validate_runs_avoided_by_clustering, rationale}`, plus `validate_runs_avoided` in
+the clusters summary and the tick-hub actions block.
+
+LIVE numbers (each drain is one conflict-connected component, so landing it as one
+stack instead of N serial rebases avoids size-1):
+- reverie: rebases_avoided = validate_runs_avoided = 12 (measured, eeaa14d)
+- hermit:  rebases_avoided = validate_runs_avoided = 32 (measured, eeaa14d)
+- combined: 44 rebases AND 44 validate runs avoided vs naive serial draining.
+
 ## Cost model CONFIRMED
 Fetch amortises (one fetch of all refs, then local git ops): hermit 33 PRs in 104s,
 reverie 13 in 16.5s, dominated by O(N^2) merge-tree + per-head fetch, not the
