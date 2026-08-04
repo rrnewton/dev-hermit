@@ -1,0 +1,14 @@
+# Real clean-DEBUG cargo build of `-p hermit` (default features), boxed (systemd transient scope),
+# host devbig014 (2x AMD EPYC 9D85 158-Core = 316 cores). 3-pass sweep, medians in *_median columns.
+# Each run: fresh mktemp CARGO_TARGET_DIR (clean build), so widths are commensurable. wall=elapsed_s.
+# CPU-s = user_s+sys_s. peak_rss from cgroup memory.peak (peak_bytes). Speedup vs j1 median wall.
+inner_jobs,wall_p1_s,wall_p2_s,wall_p3_s,wall_median_s,speedup_vs_j1,user_s_median,sys_s_median,cpu_s_median,peak_rss_gib_median
+1,186.497,202.235,198.629,198.63,1.00,157.5,34.6,192.1,2.53
+2,102.433,98.953,106.062,102.43,1.94,157.4,30.5,188.0,2.54
+4,64.548,63.048,59.852,63.05,3.15,160.2,31.6,191.8,2.70
+8,45.486,41.074,42.569,42.57,4.67,160.4,31.5,191.9,3.24
+16,36.934,35.086,49.221,36.93,5.38,171.8,29.8,201.6,3.23
+32,34.982,32.583,36.939,34.98,5.68,161.6,28.5,190.1,3.23
+64,34.083,34.551,34.782,34.40,5.77,164.1,30.6,194.7,3.28
+128,36.122,33.649,34.900,34.90,5.69,161.1,35.3,196.4,3.19
+316,43.767,33.537,36.949,36.95,5.38,161.5,30.1,191.5,3.29

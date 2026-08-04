@@ -67,6 +67,58 @@ captured / delegability trap" observation was an artifact of that flag; the
 systemd transient-scope path sidesteps direct-delegation limits. **Always sweep
 WITHOUT the flag so memory is recorded.**
 
+## REAL BUILD STEP curve (clean DEBUG `cargo build -p hermit`) — the owner's ≥j64 question
+
+Sweep of a real clean-debug build of `-p hermit` (default features), boxed, 3
+passes, medians. Each run gets a fresh `mktemp` `CARGO_TARGET_DIR` so every width
+is a commensurable clean build (no cache carry-over). Full data in
+`results-real-build.csv`.
+
+```
+ j   wall_s  speedup(vs j1)  CPU-s(user+sys)  peak RSS
+ 1   198.63     1.00x            192.1         2.53 GiB
+ 2   102.43     1.94x            188.0         2.54 GiB
+ 4    63.05     3.15x            191.8         2.70 GiB
+ 8    42.57     4.67x            191.9         3.24 GiB
+16    36.93     5.38x            201.6         3.23 GiB
+32    34.98     5.68x            190.1         3.23 GiB
+64    34.40     5.77x            194.7         3.28 GiB   <- WALL FLOOR (max-j FOR NOW)
+128   34.90     5.69x            196.4         3.19 GiB   <- dip: wall rises
+316   36.95     5.38x            191.5         3.29 GiB   <- dip continues
+```
+
+**Three findings, measured not inferred:**
+
+1. **Wall-clock dip is at j64.** Wall bottoms at j64 (34.40 s, 5.77× over j1);
+   j128 (34.90) and j316 (36.95) are slower. By the owner's "FOR NOW take the
+   first thread setting before the dip" rule, **max-`j` for this step = j64.**
+   This *meets* the owner's ≥j64 build expectation — it is NOT a below-j64
+   finding. (In practice j32/j64/j128 are all ~34–35 s, a plateau within noise;
+   the plateau *begins* ~j32. A CPU-thrift alternative — the owner's optional
+   "almost as good with less wasted CPU" — is j16: 5.38× at 1/4 the cores, within
+   7% of the j64 floor.)
+
+2. **CPU-seconds are ~invariant across width: median 194.8, range 183.7–213.5
+   CPU-s.** A clean debug build of `-p hermit` costs ~195 CPU-s of work no matter
+   the `-j`. This is the input a `cpu_timeout` should be derived from (relayed to
+   hermit-231b) — not the wall time, which collapses 6× from j1→j64.
+
+3. **Memory model: peak RSS ≈ 2.5 GiB at j1–j2, rises to ~3.2–3.3 GiB by j8 and
+   is FLAT thereafter (3.2–3.3 GiB, j8→j316).** It does not grow with width past
+   j8 because concurrent `rustc` count saturates around the `-p hermit` crate-DAG
+   width (~27 threads). **Peak ~3.3 GiB EXCEEDS the 2 GiB validate reserve** — an
+   admission-control build node must be sized for ~3.3 GiB, not 2 GiB.
+
+**Runner `plan` knee-pick vs the owner's "for now" rule (a policy gap to flag):**
+`plan` returns `rec_inner_jobs=4` (its curve, over a partly-contaminated store:
+`1:1.00 2:1.72 4:4.03 8:4.31 16:5.90 32:5.45 64:5.21 …`). That is the *CPU-thrifty
+marginal-gain knee* (`_SPEEDUP_MIN_MARGINAL_GAIN` 1.15× stops at j4 because
+j4→j8 median gain is <15% in its trimmed view). The owner's stated **"for now =
+first setting before the dip" = j64**, which is *more* parallelism than the coded
+knee returns. So the tool already implements the owner's OPTIONAL future thrift
+policy, but not the "for now" wall-floor policy — a knob to reconcile before this
+drives per-step max-`j` caps.
+
 ## First step's full curve (build.app, TOY simulated CPU+shell work)
 
 Boxed, `sweep --step build.app --jobs 1..8`. Single-run live table (fastest) plus
