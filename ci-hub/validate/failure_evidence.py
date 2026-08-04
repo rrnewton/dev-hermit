@@ -323,6 +323,24 @@ def build_evidence(
     cells = failed_substeps(log_text)
     cell_set = set(cells)
     flaky_failed = sorted(cell for cell in cells if cell in registry)
+    classes = classify_failed_substeps(log_text, flaky_registry=registry)
+    # Top-level, standalone verbatim fault line (already bounded by
+    # _first_error_line_for). This is the headline line the PRODUCER serializes
+    # with one jq extraction (`.first_error_line`) as a peer of the other scalar
+    # fields, so a red row is attributable to WHICH BUG — not just which bucket —
+    # from the row alone, after the /tmp log is evicted. It is the first failing
+    # node's first substantive error line (node-sorted, matching the classes
+    # order); the per-node lines remain in ``failed_substep_classes`` for a
+    # multi-node red. Deliberately NOT classified/parsed: a class is a lossy
+    # summary and ``failed_substep_classes`` already carries it.
+    first_error_line = next(
+        (
+            cls["first_error_line"]
+            for cls in classes
+            if cls.get("first_error_line")
+        ),
+        None,
+    )
     confirmation_row: dict[str, object] | None = None
     if dag_jobs == 4 and concurrent_validates == 0 and cell_set:
         candidates = [
@@ -338,9 +356,8 @@ def build_evidence(
             )
     return {
         "failed_substeps": cells,
-        "failed_substep_classes": classify_failed_substeps(
-            log_text, flaky_registry=registry
-        ),
+        "failed_substep_classes": classes,
+        "first_error_line": first_error_line,
         "flaky_failed_substeps": flaky_failed,
         "known_flaky_failure": bool(flaky_failed),
         "solo_rerun_confirmation": confirmation_row is not None,

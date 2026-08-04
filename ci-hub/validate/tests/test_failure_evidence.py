@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from failure_evidence import classify_failed_substeps  # noqa: E402
+from failure_evidence import build_evidence, classify_failed_substeps  # noqa: E402
 
 
 def _fail(node: str, *body_lines: str) -> str:
@@ -401,6 +401,47 @@ def test_first_error_line_is_length_bounded():
     [rec] = classify_failed_substeps(log)
     assert len(rec["first_error_line"]) <= 500
     assert rec["first_error_line"].endswith("…")
+
+
+# --- build_evidence surfaces a top-level, producer-extractable fault line ------
+
+
+def _evidence(log: str):
+    return build_evidence(
+        log_text=log,
+        registry=set(),
+        prior=[],
+        commit="deadbeef",
+        dag_jobs=4,
+        concurrent_validates=0,
+    )
+
+
+def test_build_evidence_surfaces_top_level_first_error_line():
+    """The producer wires ONE jq extraction (`.first_error_line`); the field must
+    exist at the top level and carry the VERBATIM headline fault line, so a red
+    row is attributable to which bug from the row alone after the log evicts."""
+    log = _fail(
+        "build.runtime_release",
+        "scheduler_impl.h:1325: undefined reference to "
+        "`dynamorio::drmemtrace::op_infile[abi:cxx11]'",
+        "collect2: error: ld returned 1 exit status",
+    )
+    ev = _evidence(log)
+    assert "first_error_line" in ev
+    # Verbatim symbol line wins over the generic collect2/ld envelope.
+    assert ev["first_error_line"] == (
+        "scheduler_impl.h:1325: undefined reference to "
+        "`dynamorio::drmemtrace::op_infile[abi:cxx11]'"
+    )
+    # And it is exactly the first failing node's line (no separate parse path).
+    assert ev["first_error_line"] == ev["failed_substep_classes"][0]["first_error_line"]
+
+
+def test_build_evidence_first_error_line_is_none_on_a_clean_run():
+    ev = _evidence("[test.workspace] test result: ok. 12 passed\n")
+    assert ev["first_error_line"] is None
+    assert ev["failed_substeps"] == []
 
 
 if __name__ == "__main__":

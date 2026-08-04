@@ -48,6 +48,21 @@ DEFAULT_LEDGER = (
     Path(__file__).resolve().parents[2] / "ignored" / "validate-run-ledger.jsonl"
 )
 
+# The durable capture. WHY IT EXISTS: the run ledger's ``log_file`` points at
+# ephemeral /tmp state that outlives neither recycling nor a reboot, so a red row
+# is attributable only while its log happens to survive — every evicted log
+# strands its row permanently. Until the PRODUCER (hermit validate.sh) inlines the
+# verbatim fault line into every red row it writes, this sidecar is the read-side
+# that captures it NOW: run before a log is evicted, it lifts the node / fault
+# class / VERBATIM first_error_line out of each surviving red log and appends a
+# durable record keyed to the red run, so the attribution survives the log. It is
+# APPEND-ONLY (O_APPEND) and idempotent (a red run+node already recorded is
+# skipped), so it races no concurrent ledger appender and can run on every
+# landing. It never fabricates: a red whose log is gone contributes nothing.
+DEFAULT_ATTRIBUTION = (
+    Path(__file__).resolve().parents[2] / "ignored" / "validate-red-attribution.jsonl"
+)
+
 
 def _is_red(row: Mapping[str, object]) -> bool:
     """A row worth attributing: it recorded a genuine failure.
@@ -117,6 +132,88 @@ def attribute_row(
     return record
 
 
+def _attribution_key(commit: str, finished_at: object, node: object) -> str:
+    """Stable idempotency key for one persisted red-node attribution."""
+    return f"{commit}\x1f{finished_at or ''}\x1f{node or ''}"
+
+
+def _existing_attribution_keys(path: Path) -> set[str]:
+    keys: set[str] = set()
+    if not path.is_file():
+        return keys
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            keys.add(
+                _attribution_key(
+                    str(rec.get("commit") or ""),
+                    rec.get("finished_at"),
+                    rec.get("node"),
+                )
+            )
+    return keys
+
+
+def persist_attributions(
+    records: list[Mapping[str, object]], path: Path
+) -> tuple[int, int]:
+    """Append durable per-red-node attribution rows to ``path``, idempotently.
+
+    For every attributed row whose log was PRESENT, emit one durable record per
+    failing node carrying the verbatim ``first_error_line`` (and the node / fault
+    class it was read from). A red run+node already present in ``path`` is skipped,
+    so this is safe to run repeatedly and on every landing. Rows whose log was
+    missing contribute nothing — the line is only ever captured from a real log,
+    never fabricated. Returns ``(appended, skipped_existing)``.
+
+    The write is a single ``O_APPEND`` open so it races no concurrent producer
+    appending to a different ledger; each line is one self-contained JSON object.
+    """
+    seen = _existing_attribution_keys(path)
+    pending: list[str] = []
+    skipped = 0
+    for record in records:
+        if record.get("log_status") != "present":
+            continue
+        commit = str(record.get("commit") or "")
+        finished_at = record.get("finished_at")
+        for cls in record.get("classes") or []:
+            node = cls.get("node")
+            key = _attribution_key(commit, finished_at, node)
+            if key in seen:
+                skipped += 1
+                continue
+            seen.add(key)
+            pending.append(
+                json.dumps(
+                    {
+                        "commit": commit,
+                        "finished_at": finished_at,
+                        "log_file": record.get("log_file"),
+                        "node": node,
+                        "sub_step_class": cls.get("sub_step_class"),
+                        "fault_class": cls.get("fault_class"),
+                        "infra_signature": cls.get("infra_signature"),
+                        "first_error_line": cls.get("first_error_line"),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+    if pending:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            for line in pending:
+                handle.write(line + "\n")
+    return len(pending), skipped
+
+
 def _render(record: Mapping[str, object]) -> str:
     commit = str(record.get("commit") or "")[:12]
     finished = record.get("finished_at") or "-"
@@ -154,6 +251,20 @@ def main(argv: list[str] | None = None) -> int:
         help="attribute the most recent N failed rows (0 = all)",
     )
     parser.add_argument("--json", action="store_true", help="emit JSON, not text")
+    parser.add_argument(
+        "--persist",
+        nargs="?",
+        type=Path,
+        const=DEFAULT_ATTRIBUTION,
+        default=None,
+        metavar="PATH",
+        help=(
+            "append durable per-red-node attribution (verbatim first_error_line) "
+            "captured from each surviving log into PATH (default "
+            "ignored/validate-red-attribution.jsonl) — append-only and idempotent, "
+            "so it can run on every landing to beat /tmp log eviction"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -171,6 +282,13 @@ def main(argv: list[str] | None = None) -> int:
         reds = reds[: args.last]
 
     records = [attribute_row(r, registry=registry) for r in reds]
+
+    if args.persist is not None:
+        appended, skipped = persist_attributions(records, args.persist)
+        print(
+            f"— persisted {appended} durable attribution row(s) to {args.persist} "
+            f"({skipped} already present); these survive /tmp log eviction"
+        )
 
     if args.json:
         print(json.dumps(records, separators=(",", ":"), sort_keys=True))
