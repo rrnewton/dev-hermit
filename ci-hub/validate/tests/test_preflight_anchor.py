@@ -42,7 +42,7 @@ def _seed_entry(sha: str = ANCHOR) -> dict:
 
 class LoadAnchorsTest(unittest.TestCase):
     def test_real_anchors_file_parses_and_has_seed(self):
-        # The shipped producer-anchors.json must parse and carry bfb0a9ef.
+        # The shipped rebase-base-floors.json must parse and carry bfb0a9ef.
         anchors = pa.load_anchors(pa.DEFAULT_ANCHORS)
         shas = {a["sha"] for a in anchors}
         self.assertIn(ANCHOR, shas)
