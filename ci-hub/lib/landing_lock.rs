@@ -1096,13 +1096,13 @@ mod tests {
         let holder = LockState {
             agent: "hermit-ci".into(),
             pr: "1533".into(),
-            host: "devbig014".into(),
+            host: "testhost".into(),
             acquired_at: 100,
             acquired_human: "1970-01-01T00:01:40+0000".into(),
             expires_at: 1_000,
             reclaimed_from: Some("hermit-dbi".into()),
         };
-        let rendered = "agent=hermit-ci\npr=1533\nhost=devbig014\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-dbi\n";
+        let rendered = "agent=hermit-ci\npr=1533\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-dbi\n";
         assert_eq!(holder.render(), rendered);
         assert_eq!(LockState::parse(rendered).unwrap(), holder);
     }
@@ -1124,12 +1124,12 @@ mod tests {
     #[test]
     fn process_owner_sidecar_round_trips_without_changing_holder_format() {
         let owner = ProcessOwner {
-            host: "devbig014".into(),
+            host: "testhost".into(),
             boot_id: "boot-1".into(),
             pid: 42,
             start_ticks: 123_456,
         };
-        let rendered = "host=devbig014\nboot_id=boot-1\npid=42\nstart_ticks=123456\n";
+        let rendered = "host=testhost\nboot_id=boot-1\npid=42\nstart_ticks=123456\n";
         assert_eq!(owner.render(), rendered);
         assert_eq!(ProcessOwner::parse(rendered).unwrap(), owner);
     }

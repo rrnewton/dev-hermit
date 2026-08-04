@@ -65,7 +65,7 @@ MAX_FETCH_ATTEMPTS = 3
 # Timeout basis (derived, not a plausible constant):
 #   planner engine — the binding cost is the FETCH, not the conflict analysis.
 #   With the pre-#14 pinned agent-utils it fetches per PR: measured 2026-08-03
-#   on devbig014, the reverie planner completed in 35.17s for 26 open PRs =>
+#   on a devserver, the reverie planner completed in 35.17s for 26 open PRs =>
 #   ~1.35s/PR of sequential proxied `git fetch` (hermit's 128 open PRs =>
 #   ~173s happy-path; combined ~208s), which is what these budgets are sized
 #   for. agent-utils PR #14 collapses that fan-out to ONE batched fetch (0.85s

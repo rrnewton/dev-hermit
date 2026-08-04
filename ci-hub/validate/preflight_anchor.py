@@ -40,7 +40,7 @@ gate the same way with, e.g.:
 
 Usage:
   preflight_anchor.py [--head <sha-or-ref> | --pr <N>]
-                      [--repo-checkout <path>]   # default /home/.../dev-hermit/hermit
+                      [--repo-checkout <path>]   # default <repo-root>/hermit
                       [--repo <owner/name>]      # default rrnewton/hermit
                       [--anchors <path>] [--json]
 """
@@ -53,7 +53,7 @@ import subprocess
 import sys
 
 DEFAULT_REPO = "rrnewton/hermit"
-DEFAULT_CHECKOUT = "/home/newton/work/dev-hermit/hermit"
+DEFAULT_CHECKOUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "hermit")
 # Single source of truth for every rebase-base floor (producer-anchor AND
 # merge-gate kinds). gate_floors.py derives the effective (newest) floor from the
 # same file; this guard refuses a head that predates ANY of them before a doomed

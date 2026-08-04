@@ -463,7 +463,7 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
+            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"testhost",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
@@ -618,7 +618,7 @@ mod tests {
     fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
-            r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
+            r#"{"schema_version":3,"host":"testhost","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );

@@ -93,7 +93,7 @@ Command: ./ci/test_harness.sh e2e
 :: Run1...
 """
 
-HEADER = "Root: /home/newton/work/dev-hermit/hermit\nLevel: full\n"
+HEADER = "Root: /home/user/work/dev-hermit/hermit\nLevel: full\n"
 
 
 class ClassifyTest(unittest.TestCase):
@@ -207,7 +207,7 @@ class RenderTest(unittest.TestCase):
 # property), matching hermit — the record stores only exit_code, not a kind.
 REVERIE_HEADER = (
     "Reverie validation log\n"
-    "Root: /home/newton/work/dev-hermit/worktrees/slot01/reverie\n"
+    "Root: /home/user/work/dev-hermit/worktrees/slot01/reverie\n"
     "Level: reverie-full\n"
     "Host OS: Linux\n"
     "Commit: 0123456789abcdef0123456789abcdef01234567 (clean tree, commit-anchored)\n"
@@ -253,7 +253,7 @@ class RepoAttributionTest(unittest.TestCase):
         self.assertEqual(run["repo"], "reverie")
 
     def test_reverie_primary_slot(self):
-        self.assertEqual(agg.slot_from_cwd("/home/x/dev-hermit/reverie"), "primary")
+        self.assertEqual(agg.slot_from_cwd("/home/user/dev-hermit/reverie"), "primary")
 
 
 class ReverieReconstructionTest(unittest.TestCase):
