@@ -1,12 +1,11 @@
 # Hermit Architecture Overview
 
-Status: current architecture and backend boundary as of 2026-07-21.
-
 Hermit makes a Linux process tree reproducible by controlling the events where
 it can observe or influence nondeterminism. The production path combines the
-Hermit CLI, Detcore, and Reverie's ptrace backend. SaBRe and KVM are separate
-backend experiments with materially different capability sets; neither is a
-drop-in production replacement.
+Hermit CLI, Detcore (Hermit's deterministic-execution policy engine), and
+Reverie's ptrace backend, which intercepts the guest's system calls. SaBRe and
+KVM are separate backend experiments with materially different capability sets;
+neither is a drop-in production replacement.
 
 ## Component map
 

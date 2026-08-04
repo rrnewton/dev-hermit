@@ -1,16 +1,41 @@
 # Hermit Development Workspace
 
-This repository is the multi-repository development harness for the maintained
-Hermit fork. It pins Hermit and Reverie, stores durable research and
-experiments, and provides isolated paired worktrees for concurrent tasks.
+**Hermit runs an ordinary Linux program deterministically: given the same
+inputs, the program — even a multithreaded one — behaves identically every time,
+down to thread scheduling, timers, and the results of system calls.** It does
+this by intercepting the points where a process can observe or influence
+nondeterminism — system calls, signals, thread scheduling, and instructions such
+as `rdtsc`, `rdrand`, and `cpuid` — and making each of them reproducible.
 
-Product development happens in:
+That determinism is useful for:
+
+- **Reproducible builds** — run a build under Hermit and get byte-identical
+  output on every machine, which unblocks content-addressed build caches and
+  distribution "reproducible builds" efforts.
+- **Debugging concurrency bugs** — a race that reproduces once under Hermit
+  reproduces every time; Hermit's *chaos mode* goes further and deliberately
+  perturbs the schedule to surface races that rarely appear on their own.
+- **Record and replay** — capture a run once and replay it exactly afterward, in
+  the spirit of [Mozilla rr](https://rr-project.org/).
+
+Hermit is an open-source project [originally from Meta][upstream-hermit], built
+on [Reverie][upstream-reverie], a framework for intercepting a guest process's
+system calls. **This repository — `dev-hermit` — is the workspace for developing
+Hermit and Reverie**, not a separate product: it pins the exact versions of the
+two that build and test together, carries the build/test/setup tooling, and
+provides isolated worktrees so several changes can be worked on at once. If you
+only want to build and run the `hermit` binary, skip to
+[Build Hermit directly](#build-hermit-directly).
+
+Active development happens on the maintained forks — `rrnewton/hermit` and
+`rrnewton/reverie` — which is where day-to-day changes land; the historical Meta
+upstreams remain useful references.
 
 - <https://github.com/rrnewton/hermit>
 - <https://github.com/rrnewton/reverie>
 
-The historical upstream repositories remain useful references, but day-to-day
-Hermit changes flow through `rrnewton/hermit:main`.
+[upstream-hermit]: https://github.com/facebookexperimental/hermit
+[upstream-reverie]: https://github.com/facebookexperimental/reverie
 
 ## Clone the workspace
 
@@ -43,18 +68,23 @@ that initialization explicitly. These Make targets use `with-proxy`
 automatically when the wrapper is installed and fall back to plain `git`
 elsewhere.
 
-The parent `agent-utils` submodule is separate on-demand agent tooling, not a
-product or backend source dependency. It remains excluded from ordinary
-recursive initialization and is materialized by the scripts that require it.
+The parent `agent-utils` submodule is separate on-demand tooling, not a product
+or backend source dependency. It stays out of ordinary recursive initialization
+and is materialized by the scripts that require it.
 
-Read `AGENTS.md` and `WORKTREES.md` before creating a feature worktree. Do not
-develop in the primary `hermit/` or `reverie/` checkout.
+`WORKTREES.md` explains the optional paired-worktree layout for working on
+several changes concurrently. Whichever layout you use, do not develop directly
+in the top-level `hermit/` or `reverie/` checkout — those are kept pinned so the
+workspace always describes a known-good combination.
 
 ## Workspace dependency profiles
 
-The parent Makefile separates the lightweight ptrace build from optional
-full-backend and QEMU demo dependencies. Each installer may invoke `sudo` and
-is followed by the corresponding non-mutating doctor:
+Hermit intercepts programs through interchangeable *backends*. The default
+backend uses the Linux `ptrace` API and needs only a compiler and Rust; optional
+backends — dynamic binary instrumentation (DBI) via DynamoRIO, and the QEMU
+demos — need extra tooling. The parent Makefile therefore separates the
+lightweight `ptrace` build from those optional dependencies. Each installer may
+invoke `sudo` and is followed by the corresponding non-mutating doctor:
 
 ```bash
 make install-deps-core   # compiler, native libraries, Rust, Python/GDB
@@ -80,7 +110,7 @@ seccomp, and PMU availability. PMU and Ninja are warnings because compilation
 does not require them; missing required tools or runtime capabilities fail the
 selected profile.
 
-Build the lightweight ptrace binary or the full default feature set with:
+Build the lightweight `ptrace` binary or the full default feature set with:
 
 ```bash
 make                 # release Hermit without optional DBI dependencies
@@ -89,7 +119,8 @@ make build-full      # release Hermit with default features, including DBI
 
 ## Build Hermit directly
 
-For a standalone product checkout:
+You do not need this workspace to build Hermit. For a standalone product
+checkout:
 
 ```bash
 git clone https://github.com/rrnewton/hermit.git
@@ -112,7 +143,7 @@ Fedora/CentOS dependencies:
 sudo dnf install -y gcc gcc-c++ git libunwind-devel xz-devel
 ```
 
-Build and run:
+Build and run a first command under Hermit:
 
 ```bash
 cargo build --workspace
@@ -136,10 +167,10 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-`cargo test --workspace` does not represent the complete historical Buck test
+`cargo test --workspace` does not cover the complete historical Buck test
 matrix. Report PMU, CPUID, namespace, ignored, quarantined, and unlanded cases
-separately. `validate.sh` is the broader repository gate, but hardware-specific
-steps require a suitable self-hosted environment.
+separately. `validate.sh` is the broader repository gate, but its
+hardware-specific steps require a suitably provisioned host.
 
 ## Contribution flow
 
@@ -149,20 +180,23 @@ Hermit product changes use:
 feature branch -> pull request -> rrnewton/hermit:main
 ```
 
-Use `origin` for the maintained fork and `upstream` for
+Use the `origin` remote for the maintained fork and `upstream` for
 `facebookexperimental/hermit`. Do not push feature work directly to `main`.
-Keep commits scoped, include exact validation evidence, and preserve explicit
-human-review holds even when CI is green.
+Keep commits scoped, include exact validation evidence (the commands you ran and
+their results), and leave any human-review hold in place even when CI is green.
 
-For GitHub CLI access in this environment:
-
-In Meta environments, use appropriate proxies for accessing the web.
+Networked `git` and `gh` in a Meta environment must go through the proxy
+wrapper:
 
 ```bash
 with-proxy gh pr list -R rrnewton/hermit
 ```
 
 ## Documentation map
+
+Design and reference notes live in [`ai_docs/`](ai_docs/README.md); dated,
+situational investigation records are kept separately under
+[`ai_docs/transient/`](ai_docs/transient/) and are not maintained. Start here:
 
 - [Architecture overview](ai_docs/architecture-overview.md)
 - [Container deployment](ai_docs/container-deployment.md)
