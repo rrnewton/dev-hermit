@@ -48,6 +48,10 @@ pub struct NewestGreenReport {
     pub branch: String,
     pub branch_ref: String,
     pub branch_tip: String,
+    pub range_oldest_commit: String,
+    pub branch_commits_in_range: usize,
+    pub trustworthy_recorded_commits_in_range: usize,
+    pub full_green_commits_in_range: usize,
     pub green: ValidationEvidence,
     pub commits_after_green: usize,
     pub commits_without_any_record: usize,
@@ -156,7 +160,10 @@ impl HistoryQueryEngine {
 
     pub fn newest_green(&self, branch: &str, branch_ref: &str) -> NewestGreenOutcome {
         let branch_tip = self.commits.first().cloned().unwrap_or_default();
-        let mut recorded = 0usize;
+        let range_oldest_commit = self.commits.last().cloned().unwrap_or_default();
+        let mut trustworthy_recorded = 0usize;
+        let mut full_green_commits = 0usize;
+        let mut newest_full_green = None;
         for (index, sha) in self.commits.iter().enumerate() {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
@@ -164,20 +171,30 @@ impl HistoryQueryEngine {
             let Some(row) = latest_trustworthy_row(rows) else {
                 continue;
             };
-            recorded += 1;
-            if row.result.as_deref() != Some("pass") {
-                continue;
+            trustworthy_recorded += 1;
+            if row.result.as_deref() == Some("pass") && coverage(row) == CoverageStrength::Full {
+                full_green_commits += 1;
+                if newest_full_green.is_none() {
+                    newest_full_green = Some((index, sha, row));
+                }
             }
+        }
+
+        if let Some((index, sha, row)) = newest_full_green {
             let newer = &self.commits[..index];
             let missing = newer
                 .iter()
                 .filter(|commit| !self.rows_by_commit.contains_key(*commit))
                 .count();
             let report = NewestGreenReport {
-                schema_version: 1,
+                schema_version: 2,
                 branch: branch.to_string(),
                 branch_ref: branch_ref.to_string(),
                 branch_tip,
+                range_oldest_commit,
+                branch_commits_in_range: self.commits.len(),
+                trustworthy_recorded_commits_in_range: trustworthy_recorded,
+                full_green_commits_in_range: full_green_commits,
                 green: evidence(sha, row),
                 commits_after_green: newer.len(),
                 commits_without_any_record: missing,
@@ -185,10 +202,10 @@ impl HistoryQueryEngine {
             };
             return NewestGreenOutcome::Found(Box::new(report));
         }
-        if recorded > 0 {
+        if trustworthy_recorded > 0 {
             NewestGreenOutcome::FailedOnly {
                 branch_tip,
-                recorded,
+                recorded: trustworthy_recorded,
             }
         } else {
             NewestGreenOutcome::NoEvidence { branch_tip }
@@ -637,7 +654,7 @@ pub fn cache_matches(
     ledger_len: u64,
     ledger_modified_ns: u128,
 ) -> bool {
-    cache.schema_version == 2
+    cache.schema_version == 3
         && cache.branch == branch
         && cache.branch_ref == branch_ref
         && cache.branch_tip == branch_tip
@@ -689,21 +706,32 @@ mod tests {
     }
 
     #[test]
-    fn newest_green_uses_latest_state_and_reports_gaps_and_profile() {
-        let commits = vec!["tip".into(), "gap".into(), "green".into()];
+    fn newest_green_uses_full_evidence_and_reports_gaps_and_profile() {
+        let commits = vec!["tip".into(), "gap".into(), "selected".into(), "full".into()];
         let rows = vec![
             row("tip", "2026-08-03T03:00:00Z", "full", "full", "fail"),
-            row("green", "2026-08-03T01:00:00Z", "full", "selective", "pass"),
+            row(
+                "selected",
+                "2026-08-03T02:00:00Z",
+                "full",
+                "selective",
+                "pass",
+            ),
+            row("full", "2026-08-03T01:00:00Z", "full", "full", "pass"),
         ];
         let NewestGreenOutcome::Found(report) =
             HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
         else {
             panic!("expected green")
         };
-        assert_eq!(report.green.sha, "green");
-        assert_eq!(report.green.coverage, CoverageStrength::SmartSelection);
-        assert_eq!(report.commits_after_green, 2);
+        assert_eq!(report.green.sha, "full");
+        assert_eq!(report.green.coverage, CoverageStrength::Full);
+        assert_eq!(report.commits_after_green, 3);
         assert_eq!(report.commits_without_any_record, 1);
+        assert_eq!(report.commits_with_records, 2);
+        assert_eq!(report.branch_commits_in_range, 4);
+        assert_eq!(report.trustworthy_recorded_commits_in_range, 3);
+        assert_eq!(report.full_green_commits_in_range, 1);
     }
 
     #[test]
@@ -741,6 +769,27 @@ mod tests {
         assert_eq!(report.green.sha, "tip");
         assert_eq!(report.green.coverage, CoverageStrength::Full);
         assert_eq!(report.commits_after_green, 0);
+        assert_eq!(report.branch_commits_in_range, 3);
+        assert_eq!(report.trustworthy_recorded_commits_in_range, 3);
+        assert_eq!(report.full_green_commits_in_range, 3);
+    }
+
+    #[test]
+    fn newest_green_counts_distinct_commits_not_duplicate_receipts() {
+        let commits = vec!["tip".into(), "oldest".into()];
+        let rows = vec![
+            row("tip", "2026-08-03T03:00:00Z", "full", "full", "pass"),
+            row("tip", "2026-08-03T04:00:00Z", "full", "full", "pass"),
+            row("oldest", "2026-08-03T01:00:00Z", "full", "full", "pass"),
+        ];
+        let NewestGreenOutcome::Found(report) =
+            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
+        else {
+            panic!("expected newest green")
+        };
+
+        assert_eq!(report.trustworthy_recorded_commits_in_range, 2);
+        assert_eq!(report.full_green_commits_in_range, 2);
     }
 
     #[test]
@@ -832,10 +881,14 @@ mod tests {
     #[test]
     fn cache_invalidates_on_branch_tip_or_ledger_change() {
         let report = NewestGreenReport {
-            schema_version: 1,
+            schema_version: 2,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
+            range_oldest_commit: "root".into(),
+            branch_commits_in_range: 2,
+            trustworthy_recorded_commits_in_range: 1,
+            full_green_commits_in_range: 1,
             green: evidence(
                 "tip-a",
                 &row("tip-a", "2026-08-03T01:00:00Z", "full", "full", "pass"),
@@ -845,7 +898,7 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 2,
+            schema_version: 3,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),

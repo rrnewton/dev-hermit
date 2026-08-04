@@ -100,10 +100,13 @@ ci-hub/ci-hub newest-green
 ci-hub/ci-hub first-bad liteinst_detcore_strict_verify_micro_suite
 ```
 
-`newest-green` defaults to `--branch main` and prints the exact profile and
-selection mode. A full/full
-result is labelled `full`; a smart-selected or narrower-profile run is labelled
-with that weaker guarantee. It also counts newer commits with no ledger record.
+`newest-green` defaults to `--branch main` and returns only a clean, anchored
+`full`-profile/`full`-selection pass. It prints the exact profile and selection
+mode, plus the count of distinct full-green commits in the named branch's
+first-parent history. The report states that range's oldest commit, tip, total
+commit denominator, and trustworthy-record count; duplicate receipts for one
+SHA count once. PR-only heads are excluded because they are not rebase bases.
+It also counts newer commits with no ledger record.
 Its cache is keyed by both the fetched `origin/main` tip and the ledger length +
 modification time, so a new main commit or a newly appended validation record
 invalidates it. Use `--no-fetch` only for an intentionally offline snapshot.
