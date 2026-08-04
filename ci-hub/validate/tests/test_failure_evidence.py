@@ -360,15 +360,19 @@ def test_first_error_line_falls_back_to_envelope_when_only_envelope():
     )
 
 
-def test_first_error_line_is_none_without_an_error_line():
-    # A failing node that printed no error-diagnostic line yields None — never a
-    # fabricated string; the triager falls back to the fault classification.
+def test_first_error_line_falls_back_to_harness_verdict_without_toolchain_line():
+    # A test lane that fails via the harness verdict (no rustc/gcc ``error:`` line)
+    # still records a fact: the runner's own ``✗ FAIL`` terminal summary, never a
+    # fabricated string. (Old contract returned None here; the verdict line is a
+    # strictly better fact — every classified red node carries at least this.)
     log = _fail("test.cli", "test result: FAILED. 0 passed; 1 failed")
     [rec] = classify_failed_substeps(log)
-    assert rec["first_error_line"] is None
+    assert rec["first_error_line"] == "✗ FAIL   test.cli (exit 101)"
 
 
 def test_first_error_line_ignores_the_word_error_without_a_colon():
+    # "error handling" / "warning:" are NOT toolchain diagnostics, so they are not
+    # surfaced; the node falls back to its harness verdict, not the prose line.
     log = _fail(
         "test.cli",
         "the test exercises error handling paths",
@@ -376,7 +380,7 @@ def test_first_error_line_ignores_the_word_error_without_a_colon():
         "test result: FAILED. 0 passed; 1 failed",
     )
     [rec] = classify_failed_substeps(log)
-    assert rec["first_error_line"] is None
+    assert rec["first_error_line"] == "✗ FAIL   test.cli (exit 101)"
 
 
 def test_first_error_line_does_not_leak_across_nodes():
@@ -391,9 +395,50 @@ def test_first_error_line_does_not_leak_across_nodes():
     assert recs["build.runtime_release"]["first_error_line"] == (
         "error: cannot update the lock file X because --locked was passed"
     )
-    # test.cli emitted no error line of its own — it must not inherit the other
-    # node's error string.
-    assert recs["test.cli"]["first_error_line"] is None
+    # test.cli emitted no error line of its own — it must record its OWN harness
+    # verdict, never inherit the other node's toolchain error string.
+    assert recs["test.cli"]["first_error_line"] == "✗ FAIL   test.cli (exit 101)"
+
+
+def test_harness_per_case_fail_beats_the_terminal_summary():
+    # A manifest/parity node names the exact failing case on a ``FAIL  … <case> -
+    # <detail>`` line; that per-case fact is preferred over the generic terminal
+    # ``✗ FAIL`` summary that follows it.
+    log = _fail(
+        "e2e.manifest_system_utils",
+        "FAIL  portable   custom      liteinst  system-utils/clock-determinism"
+        " - custom runs=5 failed_runs=1 distinct=2",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == (
+        "FAIL  portable   custom      liteinst  system-utils/clock-determinism"
+        " - custom runs=5 failed_runs=1 distinct=2"
+    )
+
+
+def test_harness_summary_carries_the_timeout_disposition():
+    # A lane KILLED by a wall/cpu timeout emits no ``error:`` line — the disposition
+    # in the ``✗ FAIL`` summary is the interpretable cause and must be recorded.
+    log = (
+        "[test.command_strict_verify] running cases\n"
+        "[test.command_strict_verify] ✗ FAIL   Portable command strict"
+        " verification (900s, TIMEOUT >900s)\n"
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == (
+        "✗ FAIL   Portable command strict verification (900s, TIMEOUT >900s)"
+    )
+
+
+def test_toolchain_diagnostic_still_wins_over_harness_verdict():
+    # A build node with a real compile error keeps that diagnostic; the harness
+    # fallback must not shadow it (no regression to the compile/link path).
+    log = _fail(
+        "build.workspace",
+        "error[E0432]: unresolved import `foo::bar`",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == "error[E0432]: unresolved import `foo::bar`"
 
 
 def test_first_error_line_is_length_bounded():
