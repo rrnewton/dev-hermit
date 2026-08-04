@@ -31,6 +31,30 @@ DEFAULT_NETWORK_TIMEOUT = float(
     os.environ.get("CI_HUB_REMEDIATION_NETWORK_TIMEOUT", "120")
 )
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
+# Only a genuine failing ANSWER remediates. A no_result (a cancelled hosted run,
+# an OOM-killed local validate, a lost runner, a network error reaching GitHub)
+# is the ABSENCE of an answer, never a failing one: it is a hole to RE-DISPATCH,
+# never a red to revert on. Misreading a no_result as red once put an automated
+# revert of a healthy main tip one step away (task
+# obligation-path-must-consume-no-result-taxonomy).
+REMEDIATION_STATES = frozenset(("red",))
+# A local validate exit code is not a truth value. Exit 0 is the only passing
+# answer; a clean nonzero exit is a genuine failing answer; but a validate
+# process the ENVIRONMENT killed — OOM/SIGKILL (137), SIGTERM (143), or any
+# signal (a negative subprocess returncode) — never delivered a verdict at all.
+# That is a no_result, exactly like a cancelled hosted run.
+_LOCAL_INFRA_EXITS = frozenset((137, 143))
+DEFAULT_LOCAL_REDISPATCH_LIMIT = int(
+    os.environ.get("CI_HUB_LOCAL_REDISPATCH_LIMIT", "2")
+)
+
+
+def _local_state(exit_code: int) -> str:
+    if exit_code == 0:
+        return "green"
+    if exit_code < 0 or exit_code in _LOCAL_INFRA_EXITS:
+        return "no_result"
+    return "red"
 
 
 class ProtocolError(RuntimeError):
@@ -345,7 +369,7 @@ def _failure_details(record: Mapping[str, Any]) -> tuple[str, str]:
     failed: list[tuple[str, Mapping[str, Any]]] = []
     for source in ("local", "github"):
         verification = record[source]
-        if verification.get("state") in {"red", "error"}:
+        if verification.get("state") in REMEDIATION_STATES:
             failed.append((source, verification))
     if not failed:
         raise ProtocolError("failure details requested for a non-failing obligation")
@@ -386,6 +410,27 @@ def remediation_recommendation(
     }
 
 
+def _remediation_ready(record: Mapping[str, Any]) -> bool:
+    """Whether a failing answer is CONFIRMED enough to revert a landed tip.
+
+    A GitHub red is authoritative and independent — hosted CI does not flake the
+    way a loaded local box does, and cancelled/absent is already no_result — so it
+    remediates at once. A local red is only PROVISIONAL: a single local validate
+    that failed while the corroborating GitHub leg has not itself gone red is a
+    candidate flake or environmental blip (the incident that fired against
+    e8a0d8d3: a cold-cache portable DAG cell and an OOM sub-profile, both of which
+    a re-run passed). We re-dispatch such a red to reproduce it, and only treat it
+    as confirmed once it survives the whole re-dispatch budget. This is the
+    post-mortem's own remedy — re-validate before acting — made mechanical.
+    """
+    if record["github"]["state"] == "red":
+        return True
+    if record["local"]["state"] == "red":
+        spent = int(record["local"].get("redispatch_count") or 0)
+        return spent >= DEFAULT_LOCAL_REDISPATCH_LIMIT
+    return False
+
+
 def evaluate_obligation(
     obligation_id: str,
     *,
@@ -401,7 +446,7 @@ def evaluate_obligation(
     ):
         first_terminal_at = now
 
-    if any(state in {"red", "error"} for state in states):
+    if _remediation_ready(record):
         source, summary = _failure_details(record)
         if main_sha is None:
             try:
@@ -691,7 +736,10 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
     cost_path = Path(cost["record_path"])
     started = time.monotonic()
     exit_code = 2
-    state = "error"
+    # A setup that never reaches validate.sh (clone/checkout/submodule failure)
+    # is infrastructure, not a product verdict: leave the leg no_result so it is
+    # re-dispatched, never reverted on.
+    state = "no_result"
     print(
         f"ci-hub obligation={obligation_id} repo={record['repo']} sha={record['landed_sha']} "
         f"started_at={obligations.utc_now()}",
@@ -699,10 +747,11 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
     )
     try:
         workspace.mkdir(parents=True, exist_ok=True)
+        # This workspace is obligation-scoped ignored scratch. A re-dispatched
+        # local leg (a prior attempt that came back no_result) must be able to
+        # reclaim its own checkout; a stale one is not another owner's work.
         if checkout.exists():
-            raise ProtocolError(
-                f"isolated validation checkout already exists: {checkout}"
-            )
+            shutil.rmtree(checkout, ignore_errors=True)
         _run(
             ("git", "clone", "--shared", "--no-checkout", str(source), str(checkout)),
             check=True,
@@ -775,7 +824,7 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
             env=environment,
         )
         exit_code = result.returncode
-        state = "green" if exit_code == 0 else "red"
+        state = _local_state(exit_code)
         try:
             measured_cost = json.loads(cost_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
@@ -841,19 +890,89 @@ def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
     ):
         record = obligations.get_record(obligation_id, store_path)
         if record["local"]["state"] == "running":
+            # A runner that vanished never returned a verdict: it is a hole to
+            # re-dispatch, never a red to revert on.
             record = obligations.transition(
                 obligation_id,
                 "local-runner-lost",
                 {
                     "local": {
-                        "state": "error",
+                        "state": "no_result",
                         "finished_at": obligations.utc_now(),
                         "exit_code": 2,
                     }
                 },
                 store_path,
             )
+    record = _maybe_redispatch_local(obligation_id, record, store_path)
     return evaluate_obligation(obligation_id, store_path=store_path)
+
+
+def _maybe_redispatch_local(
+    obligation_id: str, record: Mapping[str, Any], store_path: Path
+) -> dict[str, Any]:
+    """Re-run the local leg to fill a hole or reproduce a provisional red.
+
+    A no_result (OOM/SIGKILL, a lost runner, a setup failure) is a hole; a lone
+    local red not yet corroborated by GitHub is provisional. Both are re-dispatched
+    — never reverted on — until the leg resolves green, GitHub corroborates a red,
+    or the bounded budget is spent (a spent red is then confirmed by
+    ``_remediation_ready``; a spent no_result stays an unresolved hole, still never
+    a revert).
+    """
+    local = record["local"]
+    state = local.get("state")
+    if state not in {"no_result", "red"}:
+        return dict(record)
+    if state == "red" and record["github"]["state"] == "red":
+        return dict(record)  # GitHub already corroborates the red; let it remediate
+    spent = int(local.get("redispatch_count") or 0)
+    if spent >= DEFAULT_LOCAL_REDISPATCH_LIMIT:
+        return dict(record)
+    if _pid_alive(local.get("pid")):
+        return dict(record)  # a runner is already producing the next answer
+    source = local.get("source")
+    if not source or not Path(source).is_dir():
+        return dict(record)  # cannot re-run without the donor checkout
+    log_path = Path(
+        local.get("log_path")
+        or ROOT / "ignored/ci-hub/obligations" / obligation_id / "local-validate.log"
+    )
+    pid = _spawn_detached(
+        (
+            "_local-run",
+            obligation_id,
+            "--source",
+            str(source),
+            "--store",
+            str(store_path),
+        ),
+        log_path,
+    )
+    reason = (
+        "reproduce a provisional local red"
+        if state == "red"
+        else "fill a local no_result hole"
+    )
+    print(
+        f"LOCAL RE-DISPATCH: obligation={obligation_id} attempt={spent + 1} "
+        f"reason={reason} pid={pid}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return obligations.transition(
+        obligation_id,
+        "local-redispatched",
+        {
+            "local": {
+                "state": "running",
+                "pid": pid,
+                "finished_at": None,
+                "redispatch_count": spent + 1,
+            }
+        },
+        store_path,
+    )
 
 
 def _watch_complete(record: Mapping[str, Any]) -> bool:
@@ -1059,6 +1178,11 @@ def arm(args: argparse.Namespace) -> int:
                 "started_at": obligations.utc_now(),
                 "log_path": str(local_log),
                 "workspace": str(workspace / "hermit"),
+                # Persisted so a watcher poll can re-dispatch the local leg (fill a
+                # no_result hole / reproduce a provisional red) without the donor
+                # checkout being re-supplied. redispatch_count bounds those re-runs.
+                "source": str(source),
+                "redispatch_count": 0,
                 "cost": {
                     "estimate": cost_estimate,
                     "actual": None,
@@ -1100,13 +1224,16 @@ def arm(args: argparse.Namespace) -> int:
         )
     except ProtocolError as error:
         github_error = error
+        # A network/tooling error reaching GitHub is the ABSENCE of a hosted
+        # verdict, not a failing one: leave the leg no_result so it is re-polled,
+        # never reverted on.
         obligations.transition(
             obligation_id,
             "github-arm-error",
             {
                 "github": {
-                    "state": "error",
-                    "finished_at": obligations.utc_now(),
+                    "state": "no_result",
+                    "finished_at": None,
                     "last_poll_error": str(error),
                 }
             },

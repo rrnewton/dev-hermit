@@ -99,7 +99,11 @@ class ProtocolTest(unittest.TestCase):
         self.assertIsNone(estimate["cpu_seconds"])
         self.assertTrue(estimate["basis"].startswith("not measured:"))
 
-    def test_first_failure_immediately_requires_revert_at_tip(self) -> None:
+    def test_lone_local_red_is_provisional_not_an_immediate_revert(self) -> None:
+        # Regression (task obligation-path-must-consume-no-result-taxonomy): a
+        # single local red whose GitHub leg has not corroborated it once drove an
+        # automated revert of a healthy main tip (e8a0d8d3); re-validation passed.
+        # An uncorroborated, un-reproduced local red must NOT remediate.
         self.create()
         self.transition(
             {
@@ -108,6 +112,29 @@ class ProtocolTest(unittest.TestCase):
                     "finished_at": "2026-08-03T01:00:00Z",
                     "exit_code": 1,
                     "log_path": "/tmp/local.log",
+                    "redispatch_count": 0,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        with redirect_stderr(io.StringIO()):
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+
+    def test_reproduced_local_red_requires_revert_at_tip(self) -> None:
+        # Once the local red survives the whole re-dispatch budget it is confirmed,
+        # not a flake, and a still-at-tip failing land must revert.
+        self.create()
+        self.transition(
+            {
+                "local": {
+                    "state": "red",
+                    "finished_at": "2026-08-03T01:00:00Z",
+                    "exit_code": 1,
+                    "log_path": "/tmp/local.log",
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
                 },
                 "github": {"state": "running"},
             }
@@ -139,7 +166,9 @@ class ProtocolTest(unittest.TestCase):
 
     def test_remediation_trigger_is_idempotent(self) -> None:
         self.create()
-        self.transition({"local": {"state": "red", "exit_code": 1}})
+        # A corroborated GitHub red is remediation-ready without re-dispatch; a
+        # lone local red is provisional (see the redispatch tests).
+        self.transition({"github": {"state": "red"}})
         with redirect_stderr(io.StringIO()):
             first = protocol.evaluate_obligation(
                 "test-obligation", store_path=self.store, main_sha=SHA
@@ -155,7 +184,7 @@ class ProtocolTest(unittest.TestCase):
 
     def test_wake_delivery_is_unhandled_until_reader_acknowledges(self) -> None:
         self.create()
-        self.transition({"local": {"state": "red", "exit_code": 1}})
+        self.transition({"github": {"state": "red"}})
         with redirect_stderr(io.StringIO()):
             protocol.evaluate_obligation(
                 "test-obligation", store_path=self.store, main_sha=SHA
@@ -245,7 +274,7 @@ class ProtocolTest(unittest.TestCase):
                 ),
                 1,
             )
-        self.transition({"local": {"state": "red", "exit_code": 1}})
+        self.transition({"github": {"state": "red"}})
         with redirect_stderr(io.StringIO()):
             protocol.evaluate_obligation(
                 "test-obligation", store_path=self.store, main_sha=SHA
@@ -407,6 +436,116 @@ class GithubStateClassificationTest(unittest.TestCase):
                 )
             self.assertNotEqual(record.get("overall_state"), "remediation_required")
             self.assertNotEqual(record.get("overall_state"), "satisfied")
+
+
+class LocalStateClassificationTest(unittest.TestCase):
+    """A local validate exit code is not a truth value: OOM/SIGKILL != red."""
+
+    def test_clean_exit_is_green(self) -> None:
+        self.assertEqual(protocol._local_state(0), "green")
+
+    def test_clean_nonzero_exit_is_red(self) -> None:
+        for code in (1, 2, 3, 42):
+            self.assertEqual(protocol._local_state(code), "red", code)
+
+    def test_environment_kill_is_no_result_not_red(self) -> None:
+        # Regression (task obligation-path-must-consume-no-result-taxonomy): an
+        # OOM/SIGKILL (137) sub-profile build was misread as red and helped drive
+        # an automated revert of a healthy main tip. A killed process never
+        # delivered a verdict; it is a hole to re-dispatch.
+        for code in (137, 143, -9, -15):
+            self.assertEqual(protocol._local_state(code), "no_result", code)
+
+
+class LocalRedispatchTest(unittest.TestCase):
+    """A no_result / uncorroborated red re-dispatches instead of remediating."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.store = self.root / "obligations.jsonl"
+        self.source = self.root / "hermit"
+        self.source.mkdir()
+        obligations.create_obligation(
+            repo="rrnewton/hermit",
+            landed_sha=SHA,
+            land_mode="speculative",
+            actor="tester",
+            obligation_id="ob",
+            path=self.store,
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _seed(self, patch: dict) -> None:
+        obligations.transition("ob", "seed", patch, self.store)
+
+    def test_no_result_local_re_dispatches_and_never_remediates(self) -> None:
+        self._seed(
+            {
+                "local": {
+                    "state": "no_result",
+                    "exit_code": 137,
+                    "source": str(self.source),
+                    "redispatch_count": 0,
+                    "pid": None,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        with mock.patch.object(
+            protocol, "_spawn_detached", return_value=4321
+        ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                record = protocol.poll_obligation("ob", self.store)
+        spawn.assert_called_once()
+        self.assertEqual(record["local"]["state"], "running")
+        self.assertEqual(record["local"]["redispatch_count"], 1)
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+
+    def test_provisional_local_red_re_dispatches_not_reverts(self) -> None:
+        self._seed(
+            {
+                "local": {
+                    "state": "red",
+                    "exit_code": 1,
+                    "source": str(self.source),
+                    "redispatch_count": 0,
+                    "pid": None,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        with mock.patch.object(
+            protocol, "_spawn_detached", return_value=4321
+        ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                record = protocol.poll_obligation("ob", self.store)
+        spawn.assert_called_once()
+        self.assertEqual(record["local"]["state"], "running")
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+
+    def test_spent_budget_red_does_not_re_dispatch(self) -> None:
+        self._seed(
+            {
+                "local": {
+                    "state": "red",
+                    "exit_code": 1,
+                    "source": str(self.source),
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                    "pid": None,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        with mock.patch.object(
+            protocol, "_spawn_detached", return_value=4321
+        ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                record = protocol.poll_obligation("ob", self.store)
+        spawn.assert_not_called()
+        self.assertEqual(record["overall_state"], "remediation_required")
 
 
 if __name__ == "__main__":
