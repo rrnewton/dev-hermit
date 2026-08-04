@@ -1,0 +1,4592 @@
+{
+  "base": "main",
+  "conflict_edges": [
+    {
+      "a": 1147,
+      "b": 1200,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1213,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1221,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1229,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1243,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1244,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1254,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1275,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1296,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1299,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1365,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1380,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1388,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1397,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1412,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1430,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1443,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1445,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1468,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1470,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1471,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1472,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1473,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1474,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1475,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1498,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1514,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1532,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1553,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1556,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1571,
+      "paths": [
+        "detcore-dbi/src/lib.rs",
+        "hermit-cli/src/bin/hermit/backends.rs",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1221,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1229,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1243,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1244,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1275,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1299,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1200,
+      "b": 1532,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1229,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1243,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1244,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1275,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1380,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1388,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1243,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1244,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1275,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1299,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1365,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1380,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1388,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1296,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1299,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1365,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1380,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1388,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1470,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1471,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1475,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1532,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1553,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1556,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1571,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1299,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1365,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1380,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1388,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1471,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1475,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1532,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1299,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1365,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1380,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1388,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1471,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1475,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1532,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1296,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1299,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1365,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1380,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1388,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1470,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1471,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1475,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1532,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1553,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1556,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1571,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1299,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1365,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1380,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1388,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1532,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1532,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1468,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1470,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1471,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1475,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1532,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1553,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1556,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1571,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1468,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1470,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1471,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1475,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1532,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1553,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1556,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1467,
+      "b": 1571,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1470,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1532,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1553,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1556,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1571,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/c-programs.toml",
+        "tests/e2e/manifests/system-utils.toml"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1532,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1472,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1532,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1475,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1532,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1556,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1571,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1475,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1532,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1556,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1571,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1475,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1532,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1556,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1571,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1532,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1553,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1556,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1571,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1498,
+      "b": 1532,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1498,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1498,
+      "b": 1556,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1498,
+      "b": 1571,
+      "paths": [
+        "tests/backend-parity/matrix.tsv",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1532,
+      "b": 1553,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    },
+    {
+      "a": 1532,
+      "b": 1556,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    },
+    {
+      "a": 1532,
+      "b": 1571,
+      "paths": [
+        ".github/workflows/demo-hot-path.yml"
+      ]
+    }
+  ],
+  "diagnostics": {
+    "evaluate_once_race": [],
+    "flaky_reds": [],
+    "outage_prs": [],
+    "outage_suspected": false,
+    "real_reds": [
+      1147,
+      1200,
+      1213,
+      1221,
+      1229,
+      1243,
+      1244,
+      1254,
+      1275,
+      1296,
+      1299,
+      1365,
+      1380,
+      1388,
+      1397,
+      1412,
+      1430,
+      1443,
+      1445,
+      1467,
+      1470,
+      1471,
+      1472,
+      1473,
+      1474,
+      1475,
+      1498,
+      1514,
+      1532,
+      1553,
+      1556,
+      1571
+    ],
+    "stale_gates": []
+  },
+  "file_overlap_edges": [
+    {
+      "a": 1147,
+      "b": 1200,
+      "paths": [
+        "detcore/src/tool_global.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1243,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1275,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1397,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1412,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1430,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1443,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1553,
+      "paths": [
+        "hermit-cli/src/bin/hermit/backends.rs"
+      ]
+    },
+    {
+      "a": 1147,
+      "b": 1571,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1213,
+      "b": 1445,
+      "paths": [
+        "detcore/src/syscalls/files.rs"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1229,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1244,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1221,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1244,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1299,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1229,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1275,
+      "paths": [
+        "docs/SABRE_COMPATIBILITY.md",
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1243,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1254,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1299,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/data-handling.toml"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1244,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1296,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/inventory/test-files.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1299,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1254,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1275,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/c-programs.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1299,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1468,
+      "paths": [
+        "ci/expected-e2e-plan.json",
+        "tests/e2e/manifests/language-runtimes.toml"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1296,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1365,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1299,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1380,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1365,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1388,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1380,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1468,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1388,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1397,
+      "b": 1430,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1397,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1397,
+      "b": 1571,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1412,
+      "b": 1430,
+      "paths": [
+        "hermit-cli/tests/cli.rs"
+      ]
+    },
+    {
+      "a": 1412,
+      "b": 1443,
+      "paths": [
+        "hermit-cli/src/lib.rs",
+        "hermit-cli/tests/cli.rs"
+      ]
+    },
+    {
+      "a": 1412,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1430,
+      "b": 1443,
+      "paths": [
+        "hermit-cli/tests/cli.rs"
+      ]
+    },
+    {
+      "a": 1430,
+      "b": 1445,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1430,
+      "b": 1571,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1443,
+      "b": 1467,
+      "paths": [
+        "hermit-cli/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1443,
+      "b": 1553,
+      "paths": [
+        "hermit-cli/src/bin/hermit/run.rs"
+      ]
+    },
+    {
+      "a": 1445,
+      "b": 1571,
+      "paths": [
+        "detcore/src/lib.rs"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1470,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1468,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1471,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1470,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1472,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1473,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1474,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/backend-parity-c.toml",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1471,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1473,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1472,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1474,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1473,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1475,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1498,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv",
+        "tests/backend-parity/run_matrix.py",
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1474,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv"
+      ]
+    },
+    {
+      "a": 1475,
+      "b": 1498,
+      "paths": [
+        "tests/e2e/manifests/inventory/test-files.json"
+      ]
+    },
+    {
+      "a": 1498,
+      "b": 1553,
+      "paths": [
+        "tests/backend-parity/README.md",
+        "tests/backend-parity/matrix.tsv"
+      ]
+    }
+  ],
+  "held_prs": [
+    {
+      "pr": 1147,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1221,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1229,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1243,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1244,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1254,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1275,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1296,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1299,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1365,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1380,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1388,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1445,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1467,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1468,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1471,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1472,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1473,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1474,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1475,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1498,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    },
+    {
+      "pr": 1532,
+      "reasons": [
+        "local-base-conflict"
+      ]
+    }
+  ],
+  "mechanism_overlap_edges": [],
+  "nodes": [
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Regular tests (GitHub-managed portable), core-review-protocol, merge-gate",
+      "freshness_behind": 232,
+      "gate_ok": false,
+      "head": "683fb5ca25b6b4af2391c634a01f5245349a46ad",
+      "held": true,
+      "labels": [
+        "post-facto-human-review",
+        "adversarial-review-codex1",
+        "adversarial-review-claude1"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1147,
+      "priority": 0,
+      "red_class": "real",
+      "size": 429,
+      "title": "dbi: land shared coordinator and robust-list parity",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: P0 demo gate (demos 1-8), core-review-protocol, merge-gate",
+      "freshness_behind": 10,
+      "gate_ok": false,
+      "head": "9761a4ac53e8ea0f842386541514fab1102169c7",
+      "held": false,
+      "labels": [
+        "post-facto-human-review",
+        "adversarial-review-codex1",
+        "adversarial-review-claude1",
+        "adversarial-review-claude2",
+        "passed-review-claude",
+        "adversarial-review-codex2",
+        "adversarial-review-claude3"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1200,
+      "priority": 0,
+      "red_class": "real",
+      "size": 501,
+      "title": "Defer racy run-queue admissions to a deterministic drain point",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, merge-gate",
+      "freshness_behind": 89,
+      "gate_ok": false,
+      "head": "8a6fd5933178de1289375cf28d7d6e796eda6eae",
+      "held": false,
+      "labels": [
+        "post-facto-human-review",
+        "adversarial-review-codex1",
+        "adversarial-review-claude1",
+        "adversarial-review-claude2",
+        "adversarial-review-codex2"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1213,
+      "priority": 0,
+      "red_class": "real",
+      "size": 671,
+      "title": "Virtualize timerfd against virtual time (determinize GHC RTS ticker; stock parallel GHC reproducible)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: merge-gate",
+      "freshness_behind": 47,
+      "gate_ok": false,
+      "head": "4df1b2bd1577fdcdecd0490fba5674541b7b3cfc",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1221,
+      "priority": 0,
+      "red_class": "real",
+      "size": 452,
+      "title": "tests(backend-parity): add multiprocess fork+exec parity contract",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 50,
+      "gate_ok": false,
+      "head": "1b96c431be8ffb517bd28f3382b5f189fbb77e6e",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1229,
+      "priority": 0,
+      "red_class": "real",
+      "size": 602,
+      "title": "Add python-dict-hash-iteration e2e determinism test",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Regular tests (GitHub-managed portable), Reverie pin is current, core-review-protocol, invalidate-local-validation, merge-gate, test: strict-compat, test: unit",
+      "freshness_behind": 89,
+      "gate_ok": false,
+      "head": "8559279317ac652b03c9309e4707de8fcef66608",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1243,
+      "priority": 0,
+      "red_class": "real",
+      "size": 39,
+      "title": "Enable SaBRe arch_prctl strict verification",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), Reverie pin is current, core-review-protocol, e2e: determinism-stress__chaos__ptrace, invalidate-local-validation, merge-gate",
+      "freshness_behind": 91,
+      "gate_ok": false,
+      "head": "e2cb9207bae74dca996f164804f5ab4b77315988",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1244,
+      "priority": 0,
+      "red_class": "real",
+      "size": 131,
+      "title": "Add SQLite database-engine e2e determinism test",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Preflight (fmt + abstraction + portability), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 72,
+      "gate_ok": false,
+      "head": "ada1f719d15eb7f1b65557e741b68bd237b1743c",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1254,
+      "priority": 0,
+      "red_class": "real",
+      "size": 132,
+      "title": "Add language-runtimes/tcl-rand-clock e2e determinism test",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 70,
+      "gate_ok": false,
+      "head": "5d388b72a398598317cfc38d1b3adef8b17141a7",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1275,
+      "priority": 0,
+      "red_class": "real",
+      "size": 90,
+      "title": "e2e: ratchet SaBRe file-state coverage",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 50,
+      "gate_ok": false,
+      "head": "8cc5194e9f7a2c7ac9c83b7b57367809c7121972",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1296,
+      "priority": 0,
+      "red_class": "real",
+      "size": 1398,
+      "title": "Add python-hashseed e2e determinism test",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: P0 demo gate (demos 1-8), merge-gate",
+      "freshness_behind": 41,
+      "gate_ok": false,
+      "head": "4566b835b14f85e6c2c62995f5eb197a6b22f7ff",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1299,
+      "priority": 0,
+      "red_class": "real",
+      "size": 130,
+      "title": "tests/backend-parity: fadvise_hints file-advice contract",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, merge-gate",
+      "freshness_behind": 41,
+      "gate_ok": false,
+      "head": "9f7f51715bba1fae7077bfaeacec65a7acc443ba",
+      "held": true,
+      "labels": [
+        "locally-validated"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1365,
+      "priority": 0,
+      "red_class": "real",
+      "size": 134,
+      "title": "Add fchmodat2 flags-argument backend-parity contract",
+      "validation_evidence": "locally-validated"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, invalidate-local-validation, merge-gate",
+      "freshness_behind": 33,
+      "gate_ok": false,
+      "head": "863cc621a1e0062439b5062e82fda75a6864e1ef",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1380,
+      "priority": 0,
+      "red_class": "real",
+      "size": 131,
+      "title": "[impl agent, opus-4.8] backend-parity: socketpair_flags contract (KVM getsockopt gap)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, invalidate-local-validation, merge-gate",
+      "freshness_behind": 23,
+      "gate_ok": false,
+      "head": "fe313b29b3f8e6755c95eb758b8bf35978c017a7",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1388,
+      "priority": 0,
+      "red_class": "real",
+      "size": 104,
+      "title": "Add set_tid_address backend-parity contract (triple-pass caller-TID identity)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Privileged capability and E2E tests, Reverie pin is current, core-review-protocol, merge-gate",
+      "freshness_behind": 176,
+      "gate_ok": false,
+      "head": "19e43ec0a81dd831e5b83b1817f82de58e13c6df",
+      "held": false,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1397,
+      "priority": 0,
+      "red_class": "real",
+      "size": 53,
+      "title": "Preserve LiteInst arch-prctl GS state",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Privileged capability and E2E tests, Reverie pin is current, core-review-protocol, merge-gate",
+      "freshness_behind": 146,
+      "gate_ok": false,
+      "head": "78fe91e056f6d355e44ebdabc23fe6b84bc4537e",
+      "held": false,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1412,
+      "priority": 0,
+      "red_class": "real",
+      "size": 150,
+      "title": "Add lazy common backend statistics reporting",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 70,
+      "gate_ok": false,
+      "head": "e856c479577372c395e1e62ebb1bfa30e70da070",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1430,
+      "priority": 0,
+      "red_class": "real",
+      "size": 136,
+      "title": "detcore: hash guest environment into DETLOG at exec for cross-backend diffing",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), core-review-protocol, merge-gate",
+      "freshness_behind": 70,
+      "gate_ok": false,
+      "head": "90f263bbe65c45bc984fdbd2b97ab26b8e32ebb6",
+      "held": false,
+      "labels": [
+        "post-facto-human-review",
+        "adversarial-review-claude1"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1443,
+      "priority": 0,
+      "red_class": "real",
+      "size": 739,
+      "title": "Use the quiescent in-guest LiteInst fast path",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Reduce e2e parity archives, Regular tests (GitHub-managed portable), core-review-protocol, merge-gate, test: liteinst",
+      "freshness_behind": 70,
+      "gate_ok": false,
+      "head": "39e95cf8d48ae10710b57818b7d8a446c5995b8d",
+      "held": true,
+      "labels": [
+        "post-facto-human-review"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1445,
+      "priority": 0,
+      "red_class": "real",
+      "size": 99,
+      "title": "detcore: determinize terminal geometry/attributes (fixed winsize for TCGETS/TIOCGWINSZ)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 70,
+      "gate_ok": false,
+      "head": "05f7146a8d200002e64eecd45191c5b89a717bf5",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1467,
+      "priority": 0,
+      "red_class": "real",
+      "size": 163,
+      "title": "Report SaBRe patch and slow-path statistics",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "green",
+      "ci_detail": "green",
+      "freshness_behind": 59,
+      "gate_ok": true,
+      "head": "1932d70ede52f5c622775e714b0bf2d063976776",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1468,
+      "priority": 0,
+      "red_class": null,
+      "size": 102,
+      "title": "Ratchet SaBRe non-gated parity coverage",
+      "validation_evidence": "authoritative-ci"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, merge-gate",
+      "freshness_behind": 10,
+      "gate_ok": false,
+      "head": "87359f7aa2a307ab6f743227e22a7b08d6917622",
+      "held": false,
+      "labels": [
+        "locally-validated"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1470,
+      "priority": 0,
+      "red_class": "real",
+      "size": 406,
+      "title": "Add prctl_identity backend-parity contract (ptrace/DBI pass, KVM gap)",
+      "validation_evidence": "locally-validated"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: P0 demo gate (demos 1-8), e2e: language-runtimes__verify__ptrace, merge-gate",
+      "freshness_behind": 49,
+      "gate_ok": false,
+      "head": "acec38c1fbf34f624cd50bc7e8f6f62c9b60eacd",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1471,
+      "priority": 0,
+      "red_class": "real",
+      "size": 222,
+      "title": "Add rlimit_identity backend-parity contract (ptrace/DBI pass; KVM gap)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build hermit + stage guests once, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 146,
+      "gate_ok": false,
+      "head": "4c1a437cf487a5449ad900a78e03ce65602c1daa",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1472,
+      "priority": 0,
+      "red_class": "real",
+      "size": 111,
+      "title": "Add getcpu_identity backend-parity contract fixture",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build hermit + stage guests once, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 146,
+      "gate_ok": false,
+      "head": "dd77cfcf4e8c88f3b8543de4dfb821cfab3225c3",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1473,
+      "priority": 0,
+      "red_class": "real",
+      "size": 109,
+      "title": "Add sched_getaffinity_identity backend-parity contract fixture",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build hermit + stage guests once, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 146,
+      "gate_ok": false,
+      "head": "f2547237a31f7594192c218b0941fc262b729193",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1474,
+      "priority": 0,
+      "red_class": "real",
+      "size": 122,
+      "title": "Add getpriority_identity backend-parity contract fixture",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: P0 demo gate (demos 1-8), Reduce e2e parity archives, Regular tests (GitHub-managed portable), e2e: data-handling__verify__ptrace, merge-gate",
+      "freshness_behind": 49,
+      "gate_ok": false,
+      "head": "9b026367c3f65327db46565780efe58a9c2dbec5",
+      "held": true,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1475,
+      "priority": 0,
+      "red_class": "real",
+      "size": 166,
+      "title": "Add numa_node_identity backend-parity contract fixture",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Preflight (fmt + abstraction + portability), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), core-review-protocol, merge-gate",
+      "freshness_behind": 72,
+      "gate_ok": false,
+      "head": "83dbe44103e475f0f3ba140fd799dc5498a5341b",
+      "held": true,
+      "labels": [
+        "locally-validated"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1498,
+      "priority": 0,
+      "red_class": "real",
+      "size": 422,
+      "title": "Relocate backend parity tracking to outer scorecard",
+      "validation_evidence": "locally-validated"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate",
+      "freshness_behind": 69,
+      "gate_ok": false,
+      "head": "90ed194b023f8b062126195427ad5f57c9bc5bcc",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1514,
+      "priority": 0,
+      "red_class": "real",
+      "size": 144,
+      "title": "scripts: bust rust-script caches when the shared prelude changes",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: core-review-protocol, merge-gate",
+      "freshness_behind": 47,
+      "gate_ok": false,
+      "head": "affa6e573de49e4e71baf5f46af735289a27cabd",
+      "held": true,
+      "labels": [
+        "locally-validated"
+      ],
+      "policy_class": "unclassified",
+      "pr": 1532,
+      "priority": 0,
+      "red_class": "real",
+      "size": 14,
+      "title": "ci(demo-gate): stop triggering demo runs for test-metadata-only PRs (follow-up)",
+      "validation_evidence": "locally-validated"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: merge-gate",
+      "freshness_behind": 14,
+      "gate_ok": false,
+      "head": "7db588d614e2d0446a30a04382cc2fa180281fa0",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1553,
+      "priority": 0,
+      "red_class": "real",
+      "size": 63,
+      "title": "Thread --verify-allow through the DBI verify path (exit_status L2 detlog)",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: merge-gate",
+      "freshness_behind": 10,
+      "gate_ok": false,
+      "head": "f247986908b4a2b9e943b9d05cdd10cc3d51801d",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1556,
+      "priority": 0,
+      "red_class": "real",
+      "size": 115,
+      "title": "validate.sh: add load-immune per-gate CPU-time budget",
+      "validation_evidence": "none"
+    },
+    {
+      "assigned_agent": null,
+      "author": "rrnewton",
+      "base_ref": "main",
+      "ci": "red",
+      "ci_detail": "real red on: merge-gate",
+      "freshness_behind": 4,
+      "gate_ok": false,
+      "head": "cc7617e23e2bec34c665c7562fe45a7321ed3452",
+      "held": false,
+      "labels": [],
+      "policy_class": "unclassified",
+      "pr": 1571,
+      "priority": 0,
+      "red_class": "real",
+      "size": 203,
+      "title": "Derive Detcore backend-abstraction lint coverage",
+      "validation_evidence": "none"
+    }
+  ],
+  "ordering_edges": [],
+  "plan": {
+    "batch": [],
+    "land_now": [],
+    "order": [
+      1397,
+      1553,
+      1556,
+      1430,
+      1514,
+      1412,
+      1571,
+      1470,
+      1200,
+      1213,
+      1443
+    ],
+    "parallel_safe_groups": [
+      [
+        1397,
+        1553,
+        1556,
+        1430,
+        1514,
+        1412,
+        1571,
+        1470,
+        1200,
+        1213,
+        1443
+      ]
+    ],
+    "per_pr_actions": [
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1147,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1200,
+        "why": "real red on: P0 demo gate (demos 1-8), core-review-protocol, merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1213,
+        "why": "real red on: core-review-protocol, merge-gate"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1221,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1229,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1243,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1244,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1254,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1275,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1296,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1299,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1365,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1380,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1388,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1397,
+        "why": "real red on: Privileged capability and E2E tests, Reverie pin is current, core-review-protocol, merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1412,
+        "why": "real red on: Privileged capability and E2E tests, Reverie pin is current, core-review-protocol, merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1430,
+        "why": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1443,
+        "why": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), core-review-protocol, merge-gate"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1445,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1467,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1468,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": 0,
+        "pr": 1470,
+        "why": "locally-validated at exact head; rebase 10 commit(s) then land without waiting for merge-gate"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1471,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1472,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1473,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1474,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1475,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1498,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1514,
+        "why": "real red on: Build debug workspace + guests once, Build release backends once (dbi + sabre + liteinst), P0 demo gate (demos 1-8), Privileged capability and E2E tests, Reduce e2e parity archives, Regular tests (GitHub-managed portable), merge-gate"
+      },
+      {
+        "action": "rebase-then-land",
+        "group": null,
+        "pr": 1532,
+        "why": "held: local-base-conflict — rebase onto base to resolve"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1553,
+        "why": "real red on: merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1556,
+        "why": "real red on: merge-gate"
+      },
+      {
+        "action": "hold-fix",
+        "group": 0,
+        "pr": 1571,
+        "why": "real red on: merge-gate"
+      }
+    ]
+  },
+  "repository": "rrnewton/hermit",
+  "stacks": []
+}
