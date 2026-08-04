@@ -1,0 +1,27 @@
+{
+  "reps": 9,
+  "K": 2,
+  "ns": [
+    10000,
+    50000
+  ],
+  "median_wall_s": {
+    "before_10000": 3.38,
+    "before_50000": 3.69,
+    "after_10000": 1.12,
+    "after_50000": 15.63
+  },
+  "hop_us_slope": {
+    "before": 7.750000000000002,
+    "after": 362.75000000000006
+  },
+  "hop_slope_reduction_pct": -4580.645161290322,
+  "paired_ratio_hi_after_over_before_median": 1.0063653723742838,
+  "paired_ratio_hi_iqr": [
+    0.22384273937856689,
+    1.0063653723742838,
+    4.327913279132791
+  ],
+  "paired_reduction_hi_pct_median": -0.6365372374283806,
+  "paired_delta_hi_us_per_hop_median": -1.9999999999999927
+}
