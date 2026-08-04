@@ -3962,7 +3962,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
 
 /// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
 /// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 for every
-/// re-measurement state (TRUNCATED, NEEDS-RERUN, or NOT-VALIDATED).
+/// re-measurement state (TRUNCATED, NEEDS-RERUN, NO-RESULT, or NOT-VALIDATED).
 fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
@@ -4026,6 +4026,12 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             validate_status::Verdict::NeedsRerun => {
                 println!(
                     "# validate NEEDS-RERUN {} -- red evidence lacks complete solo execution conditions or is known-flaky/contended; rerun solo at -j 4",
+                    assessment.sha,
+                );
+            }
+            validate_status::Verdict::NoResult => {
+                println!(
+                    "# validate NO-RESULT {} -- red gates could not run (command-not-found storm or sub-second collapse); an environment fault, not a product defect; re-dispatch required",
                     assessment.sha,
                 );
             }
