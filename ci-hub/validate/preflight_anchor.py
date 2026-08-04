@@ -17,7 +17,7 @@ So: any consumer-side receipt requirement added after a PR was branched is
 unsatisfiable by that PR until it rebases. Running a ~17-minute validate against
 such a head is doomed before it starts. This guard makes that a 2-second REFUSE.
 
-WHAT IT DOES. For each required anchor in producer-anchors.json, decide whether
+WHAT IT DOES. For each required floor in rebase-base-floors.json, decide whether
 the target head CONTAINS the anchor commit:
   * local first: `git -C <checkout> merge-base --is-ancestor <anchor> <head>`
     (rc 0 == head contains anchor). Works whenever the head/ref is known locally.
@@ -54,8 +54,12 @@ import sys
 
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_CHECKOUT = "/home/newton/work/dev-hermit/hermit"
+# Single source of truth for every rebase-base floor (producer-anchor AND
+# merge-gate kinds). gate_floors.py derives the effective (newest) floor from the
+# same file; this guard refuses a head that predates ANY of them before a doomed
+# validate starts.
 DEFAULT_ANCHORS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "producer-anchors.json")
+                               "rebase-base-floors.json")
 # A local ancestry check or a single compare API call is a few seconds; the
 # whole point is refusing FAST rather than launching a doomed ~17-min validate.
 NETWORK_TIMEOUT = 60.0
@@ -104,6 +108,7 @@ def load_anchors(path: str) -> list[dict]:
                 "`_pending` until its commit lands")
         out.append({
             "sha": sha.lower(),
+            "kind": a.get("kind") or "producer-anchor",
             "field": a.get("field") or "?",
             "landed_utc": a.get("landed_utc") or "?",
             "reason": a.get("reason") or "",
@@ -210,11 +215,21 @@ def preflight(head: str, *, checkout: str, repo: str, anchors_path: str) -> dict
 
 
 def refuse_line(head: str, a: dict) -> str:
-    return (f"REFUSE: head {_short(head)} predates producer anchor "
-            f"{_short(a['sha'])} ({a['field']}, landed {a['landed_utc']}); its "
-            f"validate.sh emits {a['field']} NULL and is_clean_full_pass is "
-            f"fail-closed -> no qualifying receipt possible. Rebase onto current "
-            f"origin/main (>= {_short(a['sha'])}) before validating.")
+    kind = a.get("kind", "producer-anchor")
+    head_s, sha_s = _short(head), _short(a["sha"])
+    remedy = (f"Rebase onto current origin/main (>= {sha_s}) before "
+              f"validating/landing.")
+    if kind == "merge-gate":
+        # green-but-refused: the run is green, the gate still rejects it.
+        return (f"REFUSE: head {head_s} predates merge-gate floor {sha_s} "
+                f"({a['field']}, landed {a['landed_utc']}); a receipt from it "
+                f"does not satisfy the merge gate -> validates GREEN yet the "
+                f"landing is refused. {remedy}")
+    # producer-anchor: green-but-null-fielded.
+    return (f"REFUSE: head {head_s} predates producer anchor {sha_s} "
+            f"({a['field']}, landed {a['landed_utc']}); its validate.sh emits "
+            f"{a['field']} NULL and is_clean_full_pass is fail-closed -> no "
+            f"qualifying receipt possible. {remedy}")
 
 
 def render(res: dict) -> str:
@@ -239,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", default=DEFAULT_REPO,
                     help="owner/name for the gh compare/pr fallbacks")
     ap.add_argument("--anchors", default=DEFAULT_ANCHORS,
-                    help="producer-anchors.json path")
+                    help="rebase-base-floors.json path")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 

@@ -1,0 +1,64 @@
+{
+  "_README": [
+    "REBASE-BASE FLOORS -- the single, queryable enumeration of every schema/gate/anchor",
+    "transition that a rebase base (or a PR head) MUST clear. Consumed by",
+    "ci-hub/validate/gate_floors.py (derives the effective floor at call time) and by",
+    "ci-hub/validate/preflight_anchor.py (refuses a doomed head before validate starts).",
+    "",
+    "WHY A FLOOR EXISTS. A commit can be fully GREEN and still sit on the WRONG SIDE of a",
+    "schema transition. The signature of a floor is a CONSUMER THAT FAILS CLOSED on a",
+    "MISSING or NULL field: the field did not exist before some commit, so any head",
+    "predating that commit can never satisfy the consumer no matter how green its run.",
+    "Two kinds have been observed, IDENTICAL in structure:",
+    "  * kind=producer-anchor -- the PRODUCER (validate.sh) predating `sha` emits the",
+    "    required receipt field NULL; the fail-closed certifier rejects every record.",
+    "    (green-but-null-fielded; a doomed ~17-min validate.)",
+    "  * kind=merge-gate -- the head predating `sha` validates GREEN yet the merge gate /",
+    "    branch protection REFUSES the landing (green-but-refused).",
+    "",
+    "THE EFFECTIVE FLOOR = THE NEWEST of these on the branch's first-parent history.",
+    "A base must clear ALL floors; clearing the newest clears every older one ONLY when",
+    "the newest is a descendant of each older -- gate_floors.py verifies membership on",
+    "first-parent history and REFUSES rather than guessing when a floor is off-history or",
+    "when GREEN and at-or-after-floor have an empty intersection.",
+    "",
+    "ADD A NEW ENTRY HERE whenever a receipt-schema requirement or a gate version is",
+    "tightened to fail closed. Its `sha` is the commit on rrnewton/hermit:main that",
+    "introduced the fail-close. Until that commit lands, leave it in `_pending` -- an",
+    "entry with a placeholder SHA would refuse every head.",
+    "",
+    "See memory: validate-producer-version-coupled-rebase-before-greening,",
+    "merge-gate-v2-floor-invalidates-pre-floor-greens."
+  ],
+  "gate_schema": "merge-gate-v2",
+  "_pending": [
+    {
+      "_comment": "EXAMPLE / TBD -- the absent-counts + filtered_tests==0 tightening (hermit-243). is_clean_full_pass also requires executed_tests>0 AND filtered_tests==0; a producer predating the commit that makes validate.sh's append_validation_ledger emit those counts writes them NULL and is rejected. MOVE this into `anchors` with the real 40-hex `sha` and `landed_utc` ONCE that commit lands on rrnewton/hermit:main.",
+      "sha": "TBD-hermit-243-counts-filtered-anchor",
+      "landed_utc": "TBD",
+      "kind": "producer-anchor",
+      "field": "executed_tests/filtered_tests",
+      "reason": "producer predating this commit emits executed_tests/filtered_tests NULL; is_clean_full_pass requires executed_tests>0 AND filtered_tests==0, so no qualifying receipt is possible"
+    }
+  ],
+  "anchors": [
+    {
+      "sha": "c369be3ff8e2c751a313b27979fa8f470dafecf0",
+      "landed_utc": "2026-08-04T15:45:04Z",
+      "kind": "merge-gate",
+      "field": "merge-gate-v2",
+      "consumer": "rrnewton/hermit branch protection + ci-hub merge gate (validation/verify_receipt.sh)",
+      "signature": "green-but-refused: a head predating this validates GREEN yet the merge-gate-v2 transition refuses its receipt at landing",
+      "reason": "the merge-gate version transition was made fail-closed at this commit ('Make merge gate version transition fail closed'); a receipt produced by a head before it does not satisfy merge-gate-v2, so branch protection refuses the landing no matter how green the run"
+    },
+    {
+      "sha": "bfb0a9ef1c303d1977f5f02903b70cc93e514cb5",
+      "landed_utc": "2026-08-03T18:43:14Z",
+      "kind": "producer-anchor",
+      "field": "commit_anchored",
+      "consumer": "ci-hub/lib/validate_status.rs::is_clean_full_pass (landing/cache certifier)",
+      "signature": "green-but-null-fielded: a head predating this emits commit_anchored/selection_mode/tree_dirty NULL and the fail-closed certifier rejects every record",
+      "reason": "producer predating this commit emits commit_anchored/selection_mode/tree_dirty NULL; is_clean_full_pass is fail-closed and rejects every record from it no matter how green the run"
+    }
+  ]
+}
