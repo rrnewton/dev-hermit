@@ -172,6 +172,12 @@ run_one(){
   # stays the authoritative fail-closed gate. The slot worktree holds the head.
   "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$wt" || true
 
+  # Capture the VERBATIM first_error_line of every surviving red log into the
+  # durable append-only sidecar BEFORE its /tmp log is evicted (append-only +
+  # idempotent; best-effort; never affects the verdict below). Preserves
+  # attribution that would otherwise die with the log.
+  python3 "$ROOT/ci-hub/validate/attribute_reds.py" --last 0 --persist >/dev/null 2>&1 || true
+
   # Landing verdict comes from the ledger, not the exit code: validate-status is
   # the same predicate land-pr.sh gates on -- never looser, never fabricated.
   local vs; vs=$($VALIDATE_STATUS_CMD --pr "$pr" 2>&1)

@@ -222,6 +222,15 @@ say "pushed head=$HEAD"
 # producer that failed to inline its counts. Best-effort: never aborts landing —
 # eligibility below remains the authoritative fail-closed gate.
 "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" || true
+# Capture the VERBATIM first_error_line of every surviving red log into the
+# durable append-only sidecar (ignored/validate-red-attribution.jsonl) BEFORE the
+# /tmp log is evicted. Append-only + idempotent, so it races no appender and never
+# duplicates; best-effort (never a fatal error) and never affects the landing
+# verdict below -- it only preserves attribution that would otherwise die with the
+# log. Until hermit validate.sh inlines first_error_line into the red row it
+# writes, this is what makes a red attributable to which BUG (not just which gate)
+# after the log is gone.
+python3 "$ROOT/ci-hub/validate/attribute_reds.py" --last 0 --persist >/dev/null 2>&1 || true
 PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
 VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
 say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"
