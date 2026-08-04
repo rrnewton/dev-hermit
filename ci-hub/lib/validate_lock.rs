@@ -54,6 +54,15 @@ const REFUSED_EXIT_CODE: i32 = 3;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
+/// Exit code reported when admission REFUSES a validate whose base predates a
+/// rebase-base floor. Same 3 as an ownership refusal: a refusal, not a crash.
+const STALE_BASE_EXIT_CODE: i32 = 3;
+/// Env override for the base-admission predicate command (space-split argv). The
+/// target head is appended as `--head <sha>`. Defaults to the in-tree
+/// `ci-hub/validate/preflight_anchor.py`. Overridable so tests need neither
+/// python nor a hermit checkout, mirroring `PREFLIGHT_CMD` in
+/// `ci-hub/landing/parallel-prevalidate.sh`.
+const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
 
 #[derive(Args, Clone, Debug)]
 pub struct ValidateLockArgs {
@@ -119,6 +128,11 @@ pub struct AcquireArgs {
     pub hold: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
+    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
+    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
+    /// while offline). Never a default; every use is announced on stderr.
+    #[arg(long, default_value_t = false)]
+    pub skip_base_check: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -157,6 +171,11 @@ pub struct RunArgs {
     pub child_deadline: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
+    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
+    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
+    /// while offline). Never a default; every use is announced on stderr.
+    #[arg(long, default_value_t = false)]
+    pub skip_base_check: bool,
     #[arg(last = true, required = true)]
     pub child: Vec<OsString>,
 }
@@ -357,6 +376,12 @@ pub enum ValidateLockError {
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
+    /// Admission refused a validate whose base predates a rebase-base floor. The
+    /// message is the preflight_anchor refuse line, which NAMES the remedy
+    /// (rebase onto current origin/main >= <floor sha>). This is the mechanical
+    /// enforcement of REBASE-BEFORE-VALIDATE: a stale base never gets a slot.
+    #[error("{0}")]
+    StaleBase(String),
     #[error(
         "validate-lock: {operation}: process {pid} owns the supervised lease, not this process"
     )]
@@ -373,6 +398,7 @@ impl ValidateLockError {
             | Self::ProcessNotOwner { .. }
             | Self::ReclaimNotProven(_)
             | Self::GuardTimeout
+            | Self::StaleBase(_)
             | Self::InvalidState(_) => 3,
             Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline | Self::BadMax => 2,
         }
@@ -434,6 +460,7 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
     match args.command {
         ValidateLockCommand::Acquire(args) => {
             reject_bad_max(args.max)?;
+            base_admission_check(root, &args.target, args.kind, args.skip_base_check)?;
             lock.acquire(&args.agent, args.kind, &args.target, args.wait, args.hold)
         }
         ValidateLockCommand::Renew(args) => {
@@ -449,7 +476,7 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
             Ok(0)
         }
         ValidateLockCommand::ReclaimDead => lock.reclaim_dead(),
-        ValidateLockCommand::Run(args) => lock.run(args),
+        ValidateLockCommand::Run(args) => lock.run(args, root),
     }
 }
 
@@ -459,6 +486,117 @@ fn reject_bad_max(max: u64) -> Result<(), ValidateLockError> {
         return Err(ValidateLockError::BadMax);
     }
     Ok(())
+}
+
+/// A 40-char lowercase-hex commit SHA — the only target shape the base-floor
+/// check can act on. A ref, a PR number, or a test placeholder (`sha-3`) is not
+/// resolvable here, so it is passed through un-gated rather than refused.
+fn is_full_sha(target: &str) -> bool {
+    target.len() == 40 && target.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` whose base
+/// head predates a rebase-base floor, so the convention we keep restating and
+/// violating is enforced at the ONE admission chokepoint every wrapper path
+/// funnels through. The refusal NAMES the remedy (the preflight_anchor refuse
+/// line: "Rebase onto current origin/main (>= <sha>) ...") — a bare "refused"
+/// gets a gate disabled.
+///
+/// Non-Validate kinds, non-40-hex targets, and an explicit `--skip-base-check`
+/// pass through so the gate never refuses everything (a gate that grants nothing
+/// gets removed). The predicate is shelled out to `preflight_anchor.py` — the
+/// SAME authority `parallel-prevalidate.sh` and `reconcile_receipts.py` use — so
+/// the remedy string and the local-merge-base/gh-compare fallback are not
+/// re-implemented here and cannot drift. Overridable via
+/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither python nor a checkout.
+///
+/// Fail-CLOSED: preflight exit 2 (REFUSED) and any other non-zero (ERROR: head
+/// unresolved) both become `StaleBase`. An admission gate that admitted on "I
+/// couldn't check" would be advisory, not mechanical.
+fn base_admission_check(
+    root: &Path,
+    target: &str,
+    kind: Kind,
+    skip: bool,
+) -> Result<(), ValidateLockError> {
+    if kind != Kind::Validate {
+        return Ok(()); // bench is not landed; no rebase-base floor applies
+    }
+    if skip {
+        eprintln!(
+            "validate-lock: BASE CHECK SKIPPED for {target} via --skip-base-check \
+             — the rebase-base-floor admission gate is DISABLED for this run; a \
+             stale base will validate but cannot land."
+        );
+        return Ok(());
+    }
+    if !is_full_sha(target) {
+        // A ref/PR/placeholder cannot be floor-checked here; preflight_anchor
+        // gates the resolvable head on the producer paths. Do not block.
+        return Ok(());
+    }
+
+    let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
+        Ok(cmd) if !cmd.trim().is_empty() => {
+            cmd.split_whitespace().map(OsString::from).collect()
+        }
+        _ => vec![
+            OsString::from("python3"),
+            root.join("ci-hub/validate/preflight_anchor.py")
+                .into_os_string(),
+        ],
+    };
+    argv.push(OsString::from("--head"));
+    argv.push(OsString::from(target));
+
+    let (program, rest) = argv.split_first().expect("argv is never empty");
+    let output = match Command::new(program).args(rest).output() {
+        Ok(o) => o,
+        Err(err) => {
+            return Err(ValidateLockError::StaleBase(format!(
+                "validate-lock: base-floor admission check could not run \
+                 ({err}); base for {target} is UNRESOLVED. Rebase onto current \
+                 origin/main before validating, or pass --skip-base-check to \
+                 override."
+            )));
+        }
+    };
+    let code = output.status.code();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match code {
+        Some(0) => Ok(()),
+        Some(2) => {
+            // preflight prints its NAMED refuse line (with the rebase remedy) on
+            // stdout; carry it verbatim so the operator sees the exact floor.
+            let msg = if stdout.is_empty() {
+                format!(
+                    "REFUSE: base for {target} predates a rebase-base floor. \
+                     Rebase onto current origin/main before validating."
+                )
+            } else {
+                stdout
+            };
+            Err(ValidateLockError::StaleBase(msg))
+        }
+        other => {
+            // ERROR (3) or an unexpected code: fail closed — an unresolved base
+            // is treated as stale, not waved through.
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("exit {other:?}")
+            };
+            Err(ValidateLockError::StaleBase(format!(
+                "validate-lock: base-floor admission check for {target} did not \
+                 resolve ({detail}); treating the base as STALE. Rebase onto \
+                 current origin/main before validating, or pass \
+                 --skip-base-check to override."
+            )))
+        }
+    }
 }
 
 impl ValidateLock {
@@ -726,7 +864,7 @@ impl ValidateLock {
         Ok(0)
     }
 
-    fn run(&self, args: RunArgs) -> Result<i32, ValidateLockError> {
+    fn run(&self, args: RunArgs, root: &Path) -> Result<i32, ValidateLockError> {
         if args.child.is_empty() {
             return Err(ValidateLockError::EmptyChild);
         }
@@ -734,6 +872,20 @@ impl ValidateLock {
             return Err(ValidateLockError::UnboundedChildDeadline);
         }
         reject_bad_max(args.max)?;
+
+        // MECHANICAL rebase-before-validate at the admission chokepoint: refuse a
+        // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
+        // with STALE_BASE_EXIT_CODE (mirroring the --no-wait Held refusal) so a
+        // wrapper reads a distinct, non-crashing exit and can surface the remedy.
+        if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check) {
+            match err {
+                ValidateLockError::StaleBase(msg) => {
+                    eprintln!("{msg}");
+                    return Ok(STALE_BASE_EXIT_CODE);
+                }
+                other => return Err(other),
+            }
+        }
 
         // Admission: block FIFO, or refuse immediately under --no-wait. Never
         // silently admit a second box-exclusive holder.
@@ -1214,13 +1366,13 @@ mod tests {
             agent: "hermit-247".into(),
             kind: "validate".into(),
             target: "0123456789abcdef0123456789abcdef01234567".into(),
-            host: "testhost".into(),
+            host: "devbig014".into(),
             acquired_at: 100,
             acquired_human: "1970-01-01T00:01:40+0000".into(),
             expires_at: 1_000,
             reclaimed_from: Some("hermit-opt".into()),
         };
-        let rendered = "agent=hermit-247\nkind=validate\ntarget=0123456789abcdef0123456789abcdef01234567\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-opt\n";
+        let rendered = "agent=hermit-247\nkind=validate\ntarget=0123456789abcdef0123456789abcdef01234567\nhost=devbig014\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-opt\n";
         assert_eq!(holder.render(), rendered);
         assert_eq!(ValidateLockState::parse(rendered).unwrap(), holder);
 
@@ -1248,17 +1400,21 @@ mod tests {
         };
         for i in 0..3 {
             let code = lock
-                .run(RunArgs {
-                    agent: format!("validate-agent-{i}"),
-                    kind: Kind::Validate,
-                    target: format!("sha-{i}"),
-                    no_wait: false,
-                    wait: 0,
-                    hold: 30,
-                    child_deadline: 30,
-                    max: 1,
-                    child: vec![OsString::from("/bin/true")],
-                })
+                .run(
+                    RunArgs {
+                        agent: format!("validate-agent-{i}"),
+                        kind: Kind::Validate,
+                        target: format!("sha-{i}"),
+                        no_wait: false,
+                        wait: 0,
+                        hold: 30,
+                        child_deadline: 30,
+                        max: 1,
+                        skip_base_check: false,
+                        child: vec![OsString::from("/bin/true")],
+                    },
+                    paths.lock.parent().unwrap(),
+                )
                 .unwrap();
             assert_eq!(code, 0, "sequential validate {i} should be admitted");
             assert!(
@@ -1279,21 +1435,25 @@ mod tests {
             && test -r \"$CI_HUB_VALIDATE_LOCK_OWNER_FILE\" \
             && test \"$(sed -n 's/^pid=//p' \"$CI_HUB_VALIDATE_LOCK_OWNER_FILE\")\" = \"$PPID\"";
         let code = lock
-            .run(RunArgs {
-                agent: "proof-agent".into(),
-                kind: Kind::Validate,
-                target: "proof-sha".into(),
-                no_wait: false,
-                wait: 0,
-                hold: 30,
-                child_deadline: 30,
-                max: 1,
-                child: vec![
-                    OsString::from("/bin/sh"),
-                    OsString::from("-c"),
-                    OsString::from(command),
-                ],
-            })
+            .run(
+                RunArgs {
+                    agent: "proof-agent".into(),
+                    kind: Kind::Validate,
+                    target: "proof-sha".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![
+                        OsString::from("/bin/sh"),
+                        OsString::from("-c"),
+                        OsString::from(command),
+                    ],
+                },
+                paths.lock.parent().unwrap(),
+            )
             .unwrap();
         assert_eq!(code, 0, "child must verify the live wrapper owner proof");
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
@@ -1324,17 +1484,21 @@ mod tests {
 
         // (b) the --no-wait refuse path returns exit code 3.
         let code = lock
-            .run(RunArgs {
-                agent: "agent2".into(),
-                kind: Kind::Validate,
-                target: "sha2".into(),
-                no_wait: true,
-                wait: 0,
-                hold: 60,
-                child_deadline: 30,
-                max: 1,
-                child: vec![OsString::from("/bin/true")],
-            })
+            .run(
+                RunArgs {
+                    agent: "agent2".into(),
+                    kind: Kind::Validate,
+                    target: "sha2".into(),
+                    no_wait: true,
+                    wait: 0,
+                    hold: 60,
+                    child_deadline: 30,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![OsString::from("/bin/true")],
+                },
+                paths.lock.parent().unwrap(),
+            )
             .unwrap();
         assert_eq!(code, REFUSED_EXIT_CODE, "no-wait must refuse with exit 3");
 
@@ -1369,17 +1533,21 @@ mod tests {
         };
         let started = Instant::now();
         let code = lock
-            .run(RunArgs {
-                agent: "stuck-validate".into(),
-                kind: Kind::Validate,
-                target: "sha-stuck".into(),
-                no_wait: false,
-                wait: 0,
-                hold: 30,
-                child_deadline: 1,
-                max: 1,
-                child: vec![OsString::from("sleep"), OsString::from("120")],
-            })
+            .run(
+                RunArgs {
+                    agent: "stuck-validate".into(),
+                    kind: Kind::Validate,
+                    target: "sha-stuck".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 1,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![OsString::from("sleep"), OsString::from("120")],
+                },
+                paths.lock.parent().unwrap(),
+            )
             .unwrap();
         assert_eq!(code, CHILD_DEADLINE_EXIT_CODE);
         assert!(
@@ -1399,17 +1567,21 @@ mod tests {
             paths: paths.clone(),
         };
         let error = lock
-            .run(RunArgs {
-                agent: "greedy".into(),
-                kind: Kind::Validate,
-                target: "sha-greedy".into(),
-                no_wait: false,
-                wait: 0,
-                hold: 30,
-                child_deadline: 30,
-                max: 2,
-                child: vec![OsString::from("/bin/true")],
-            })
+            .run(
+                RunArgs {
+                    agent: "greedy".into(),
+                    kind: Kind::Validate,
+                    target: "sha-greedy".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    max: 2,
+                    skip_base_check: false,
+                    child: vec![OsString::from("/bin/true")],
+                },
+                paths.lock.parent().unwrap(),
+            )
             .unwrap_err();
         assert!(matches!(error, ValidateLockError::BadMax));
         assert!(lock.read_holder().unwrap().is_none());
@@ -1451,5 +1623,158 @@ mod tests {
         assert!(holder.reclaimed_from.unwrap().contains("dead owner"));
         lock.release("replacement-validate", false).unwrap();
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    // --- rebase-base-floor admission gate (mechanical REBASE-BEFORE-VALIDATE) ---
+    // These serialize on ENV_LOCK because they mutate a process-global env var.
+    // Non-hex-target tests above never read the env (is_full_sha short-circuits),
+    // so they are unaffected and need no lock.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn write_stub(name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = env::temp_dir().join(format!(
+            "ci-hub-preflight-stub-{name}-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::write(&path, body).unwrap();
+        let mut perm = fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o755);
+        fs::set_permissions(&path, perm).unwrap();
+        path
+    }
+
+    const HEX_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    // NEGATIVE direction: a floor-blocked head is REFUSED, and the refusal
+    // carries the NAMED remedy (not a bare "refused"). This is the mutation that
+    // proves the gate fires — swap the stub to exit 0 and it must stop refusing.
+    #[test]
+    fn base_admission_refuses_stale_and_names_remedy() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub(
+            "refuse",
+            "#!/bin/sh\necho 'REFUSE: head 01234567 predates merge-gate floor \
+             c369be3f; Rebase onto current origin/main (>= c369be3f) before \
+             validating/landing.'\nexit 2\n",
+        );
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+        match res {
+            Err(ValidateLockError::StaleBase(m)) => assert!(
+                m.contains("Rebase onto"),
+                "refusal must NAME the remedy, got: {m}"
+            ),
+            other => panic!("expected StaleBase refusal, got {other:?}"),
+        }
+    }
+
+    // POSITIVE direction: a current head is GRANTED. Required so the gate is not
+    // one that "refuses everything" — such a gate gets disabled.
+    #[test]
+    fn base_admission_admits_current_head() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("ok", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+        assert!(res.is_ok(), "a current head must be GRANTED, got {res:?}");
+    }
+
+    // FAIL-CLOSED: an ERROR (unresolvable base) is treated as stale, never waved
+    // through — an admission gate that admits on "couldn't check" is advisory.
+    #[test]
+    fn base_admission_fails_closed_on_error() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("err", "#!/bin/sh\necho boom >&2\nexit 3\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+        match res {
+            Err(ValidateLockError::StaleBase(m)) => assert!(
+                m.contains("STALE") || m.contains("Rebase"),
+                "ERROR must fail closed to a stale-base refusal, got: {m}"
+            ),
+            other => panic!("ERROR must fail closed to StaleBase, got {other:?}"),
+        }
+    }
+
+    // PASS-THROUGH: bench kind, a non-40-hex target, and the explicit escape
+    // hatch must all return Ok WITHOUT invoking the predicate (the stub would
+    // REFUSE if it ran), so the gate never blocks what it cannot floor-check.
+    #[test]
+    fn base_admission_passes_through_bench_nonhex_and_skip() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub(
+            "pass",
+            "#!/bin/sh\necho 'REFUSE: would block if invoked'\nexit 2\n",
+        );
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let r = Path::new("/nonexistent");
+        assert!(
+            base_admission_check(r, HEX_SHA, Kind::Bench, false).is_ok(),
+            "bench is never floor-gated"
+        );
+        assert!(
+            base_admission_check(r, "sha-3", Kind::Validate, false).is_ok(),
+            "a non-40-hex target is not resolvable here and must pass through"
+        );
+        assert!(
+            base_admission_check(r, HEX_SHA, Kind::Validate, true).is_ok(),
+            "--skip-base-check must bypass the gate"
+        );
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+    }
+
+    // END-TO-END through run(): a stale base is refused with STALE_BASE_EXIT_CODE
+    // and NEVER consumes the box — a doomed ~17-min validate never starts.
+    #[test]
+    fn run_refuses_stale_base_without_consuming_box() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let paths = temp_paths("run-stale-base");
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let stub = write_stub(
+            "run-refuse",
+            "#!/bin/sh\necho 'REFUSE: predates floor; Rebase onto current \
+             origin/main before validating/landing.'\nexit 2\n",
+        );
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let code = lock
+            .run(
+                RunArgs {
+                    agent: "stale-runner".into(),
+                    kind: Kind::Validate,
+                    target: HEX_SHA.into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    max: 1,
+                    skip_base_check: false,
+                    // If the gate DIDN'T fire, this child would run and exit 0.
+                    child: vec![OsString::from("/bin/true")],
+                },
+                paths.lock.parent().unwrap(),
+            )
+            .unwrap();
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        assert_eq!(
+            code, STALE_BASE_EXIT_CODE,
+            "stale base must refuse (not run the child to a 0 exit)"
+        );
+        assert!(
+            lock.read_holder().unwrap().is_none(),
+            "a refused validate must not have held the box"
+        );
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+        let _ = fs::remove_file(&stub);
     }
 }
