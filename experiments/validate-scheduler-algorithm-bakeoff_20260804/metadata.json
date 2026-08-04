@@ -5,13 +5,17 @@
   "host": "devbig014",
   "cores": 316,
   "cpu": "AMD EPYC 9D85 158-Core x2",
-  "hermit_sha": "e8a0d8d3be3b53985dc898bb8e5cbb696a6a719f",
+  "hermit_sha": "0f891e432a75c51e57ea4215cd649fa253d8e2c0",
   "agent_utils_sha": "7c532d4ffbcfbf3a6fd021a7bd851c31cf985b37",
-  "runner_version": "0.12.0",
-  "runner_note": "hermit-vendored agent-utils is v0.2.0 (84580db) and has NO --planner flag; the three planners exist only in parent/scratch agent-utils v0.12.0. Bakeoff drives v0.12.0 runner directly against hermit/ci/dag/portable.json, replicating run-dag.sh's invocation (cwd=hermit root, run --dag ci/dag/portable.json --planner P).",
+  "runner_version": "0.11.0",
+  "runner_note": "hermit-vendored agent-utils is v0.2.0 (84580db) and has NO --planner flag; the three planners exist only in parent/scratch agent-utils. Bakeoff drives the parent v0.11.0 runner directly against hermit/ci/dag/portable.json, replicating run-dag.sh's invocation (cwd=hermit root, run --dag ci/dag/portable.json --planner P).",
   "dag": "hermit/ci/dag/portable.json",
   "dag_nodes": 47,
+  "measured_subset_nodes": 20,
+  "measured_subset_note": "verified all-pass 20-node subset via --only, so every run completes n_failed=0 and wall_s is a real makespan comparable across planners; full-DAG fail-fast walls are archived in results-failfast-INVALID.csv and are NOT comparable across planners.",
   "planners": ["greedy-lpt", "critical-path", "cpa"],
   "estimate_source": "DAG-authored hints (0 learned samples on this box)",
-  "cache_state": "warm primary hermit target (67G, debug bin present)"
+  "cache_state": "warm primary hermit target (debug bin present)",
+  "reproduce": "PYTHONPATH=<parent>/agent-utils/py THIRD_PARTY_BUILD_JOBS=48 bash ignored/run-bakeoff-v2.sh   (NROUNDS=5 greedy/critical alternating + 3 cpa; medians over all-pass runs only)",
+  "result_summary": "greedy-lpt median wall 67.8s, critical-path 69.4s (within noise; PLANNER WALL-NEUTRAL); cpa fails (injects -j into commands that reject it); observed CPU/wall ~3.5x (NOT 21.8x), observed concurrency ~40/316 cores."
 }
