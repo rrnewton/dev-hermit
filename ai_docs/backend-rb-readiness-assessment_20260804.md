@@ -82,8 +82,37 @@ Refuted three independent ways against live data (2026-08-04):
    = **B2 base**; e9patch & liteinst not in the levels table. The doc explicitly warns *"parity rates are
    diagnostics for B2.1; they are not B3 measurements."*
 
-So: parity **rates** (§1) are the honest live diagnostic; **B-levels are not advanced** since the last proven
-snapshot. Any B-number must state it is a diagnostic rate at hermit `f80b1c09` (2026-08-04), not a conferred level.
+### 3a. B-levels RE-DERIVED from the gate ladder against live data (2026-08-04)
+
+Applying the maturity-model gate criteria to the live artifacts (NOT the doc's stale 07-28 "current levels"
+table). The **B2.1 gate is the examples cross-backend scorecard** (all of `examples/` = `date.sh, devrand.sh,
+race.sh, rand.py, timed-progress-bar.py` must be parity-clean vs ptrace). Live examples-parity from the Aug-4
+fullcorpus scorecard (hermit `f80b1c09`):
+
+| Backend | Examples parity (B2.1 gate) | Freshly-provable level @ date/SHA | Binding gate (failing live number) |
+|---|---|---|---|
+| ptrace | 5/5 (reference) | **B2.1** @ Aug 4 / `f80b1c09` | B2.2: only 163/181 C cells pass `--strict --verify` |
+| e9patch | 5/5 | **B2.1** @ Aug 4 / `f80b1c09` *(caveat below)* | B2.2: 163/181 C cells |
+| sabre | 4/5 (fails `example-date`) | **B2 base** @ Aug 4 / `f80b1c09` | B2.1: example-date parity=0 |
+| dbi | 3/5 (fails `example-race`, `example-date`) | **B2 base** @ Aug 4 / `f80b1c09` | B2.1: 2 examples diverge |
+| liteinst | 2/5 (fails race/date/devrand) | **B2 base** @ Aug 4 / `f80b1c09` | B2.1: 3 examples diverge |
+| kvm | not freshly evaluable | **B2 base** @ Aug 1 / `82a8e853` | B2.1 gate **not evaluable** — Aug-1 KVM artifact lacks the `example-*` rows; Aug-4 scorecard excludes KVM |
+
+**Verdict (freshly derived, 2026-08-04): no backend is above B2.x.** Ceiling = **B2.1**, held only by ptrace
+(reference) and e9patch. **B3 is structurally blocked for every backend** because B3 *requires B2.4* (full
+envelope, selected==expected) and B2.4 is unmet — no backend passes even 100% of the C subset (best is
+163/181), and B2.4 completeness is not fully evaluable from the current scorecard buckets. So every parity
+figure (e9patch 88%, dbi 70%, sabre 69%, liteinst 58%, kvm 56%) is a **diagnostic rate, not a conferred level**.
+
+> **e9patch B2.1 caveat:** e9patch's 5/5 examples + 88% parity mirror ptrace's passes, and its Detcore path is
+> 100% ptrace-hosted (§2). The B2 gate explicitly **fails on silent ptrace fallback**; the scorecard alone
+> cannot prove e9patch instrumentation was actually active rather than falling through to ptrace. Its B2.1 is
+> therefore provisional pending an active-instrumentation disclosure check. **This is the sharpest form of the
+> constraint-4 point: the backend that LEADS on B-level and compat is the one architecturally disqualified for RB.**
+
+*B-levels re-derived by walking the gate ladder (`ai_docs/backend-maturity-model.md`, parent `d83a34b3`)
+against the live Aug-4 fullcorpus scorecard + parity matrix; the doc's own "current levels" table (hermit
+`adbfaca3`, 2026-07-28) was NOT quoted.*
 
 ---
 
