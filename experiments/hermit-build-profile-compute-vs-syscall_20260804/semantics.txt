@@ -1,0 +1,4 @@
+profile guest exit stdout_sha256
+release compute_bound 0 bd3a26b06859eee0
+release syscall_bound 0 5973b7b8afbd2cbe
+release-o0 compute_bound 0 bd3a26b06859eee0
