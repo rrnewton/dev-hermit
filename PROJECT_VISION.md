@@ -8,6 +8,14 @@ Aggressively drive hermit toward its final form: a production-grade deterministi
 
 Don't forget your general princples around CLEAR and SPECIFIC communication (which programs ran what under what mode and which branch/version was experimented with?) and presenting EVIDENCE for claims, including wherever possible reproducer commands.
 
+## Applications
+
+All the internal implementation priorities below are focused on making hermit USEFUL on real applications, which currently include but are not limited to:
+
+ - Linux kernel (and driver, and file system) concurrency testing and debugging inside QEMU inside hermit. Example milestones include getting our Linux demos running on non-ptrace hermit backends with improved performance.
+ - Reproducible builds: including unblocking a watertight content addressable store mode for Nix, and being adoption ready for the Debian Reproducible Builds project or other distros or package managers.  Example milestones include enabling parallelism in detcore so `make -j` can use real parallelism, ideally with minimal determinism overhead from an efficient (non-ptrace) Reverie backend.
+ - Record/replay debugging of userspace apps a la Mozilla rr. Example milestones include recording firefox (controlled by playwright) like rr originally targetted.
+
 ## Priorities
 
 We expand compatibility across a set of tracked programs, most of which are part of the CI suite (but we can do periodic testing outside of it). We have have a common denominator for ALL tests in our CI manifests, and terminology for "cells" (mode x backend x test) which should monotonically increase in total coverage, both for DETERMINISM and for the stronger PARITY level of achievement (i.e. backend X runs program Y deterministically AND bitwise identical to the ptrace reference impl).
