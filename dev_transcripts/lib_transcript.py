@@ -69,15 +69,18 @@ DEFAULT_CWD_MARKER = "dev-hermit"
 # output. Preserve the short host name while removing the datacenter/domain
 # suffix before generated artifacts are written.
 _INTERNAL_FQDN_RE = re.compile(
-    r"\b([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)"
-    r"(?:\.[A-Za-z0-9-]+)+\.facebook\.com\b",
+    r"\b(?:(dev(?:big|vm)[0-9]+)(?:\.[A-Za-z0-9-]+)*"
+    r"|([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)"
+    r"(?:\.[A-Za-z0-9-]+)+)\.facebook\.com\b",
     re.IGNORECASE,
 )
 
 
 def scrub_internal_fqdns(text: str) -> str:
     """Replace Meta-internal FQDNs with their short host names."""
-    return _INTERNAL_FQDN_RE.sub(lambda match: match.group(1), text)
+    return _INTERNAL_FQDN_RE.sub(
+        lambda match: match.group(1) or match.group(2), text
+    )
 
 
 def scrub_internal_fqdns_tree(value):

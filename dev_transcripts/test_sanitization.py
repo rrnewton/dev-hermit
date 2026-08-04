@@ -12,12 +12,13 @@ from render import render_day
 class TranscriptSanitizationTest(unittest.TestCase):
     def test_internal_fqdns_become_short_names(self) -> None:
         text = (
-            "run on devbig014.atn7.facebook.com and fetch from "
+            "run on devbig014.atn7.facebook.com or devbig030.facebook.com "
+            "and fetch from "
             "git.vip.facebook.com; keep developers.facebook.com and "
             "github.com unchanged"
         )
         self.assertEqual(
-            "run on devbig014 and fetch from git; keep "
+            "run on devbig014 or devbig030 and fetch from git; keep "
             "developers.facebook.com and github.com unchanged",
             scrub_internal_fqdns(text),
         )
