@@ -25,18 +25,25 @@
 //!
 //! A record satisfies the predicate for a commit iff it is clean,
 //! commit-anchored, FULL-profile, FULL-selection, `result == "pass"`, AND:
-//!   * it passes two UNIVERSAL guards that hold at every schema — `executed_tests
-//!     != Some(0)` (a demonstrated zero-test run is a no-result, never green) and
-//!     no positive `filtered_tests` (any name-filtered subset is a narrowed scope
-//!     masquerading as the full profile); AND
+//!   * it passes ONE UNIVERSAL guard that holds at every schema — `executed_tests
+//!     != Some(0)` (a demonstrated zero-test run is a no-result, never green).
+//!     There is NO `filtered_tests` guard: a real full run legitimately filters
+//!     hundreds of other-shard tests, so `filtered_tests == 0` rejected every real
+//!     full green — it is DELETED and superseded by the per-node `coverage`
+//!     obligation, which distinguishes legitimate full-run filtering from a
+//!     narrowed-subset masquerade; AND
 //!   * IF the receipt is count-capable (`schema_version >= COUNTS_SCHEMA`, i.e.
-//!     written by a count-emitting writer) OR actually carries both counts, it is
-//!     held STRICT: `executed_tests == Some(n>0) && filtered_tests == Some(0)`.
-//!     An absent count from a count-capable writer is a writer DEFECT, refused.
-//!   * ELSE it is a genuinely pre-count receipt and is GRANDFATHERED: the two
-//!     universal guards plus clean/full/full/pass suffice (the pre-tightening
+//!     written by a coverage-emitting writer) it is held to the FULL per-node
+//!     contract: `executed_tests == Some(n>0)` AND a `coverage` object that
+//!     satisfies its obligation (a planned test node set, none inert, none
+//!     absent). Absent counts OR absent coverage from a count-capable writer is a
+//!     writer DEFECT, refused.
+//!   * ELSE IF it carries both counts under an old schema (`aggregate.py`) it
+//!     predates per-node coverage but is held to `executed_tests == Some(n>0)`.
+//!   * ELSE it is a genuinely pre-count receipt and is GRANDFATHERED: the
+//!     universal guard plus clean/full/full/pass suffice (the pre-tightening
 //!     rule). This strands nobody and un-breaks the drain; new receipts pick up
-//!     STRICT automatically as count-emitting writers roll out.
+//!     the full per-node contract automatically as coverage-emitting writers roll out.
 //!
 //! The grandfather branch is schema/presence-keyed, NOT time-keyed, so it never
 //! expires-and-strands: it self-liquidates as pre-count receipts age out. See
@@ -59,7 +66,7 @@
 //! as full coverage. `commit_anchored`/`tree_dirty` guarantee the record
 //! describes the actual commit, not a dirty tree (the tree is not the commit).
 
-use crate::records::HistoryRow;
+use crate::records::{CoverageRow, HistoryRow};
 use std::collections::BTreeSet;
 
 /// Canonical ledger path relative to the workspace root. This is the exact file
@@ -144,27 +151,44 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// present". 5 is the first clean anchor.
 pub const COUNTS_SCHEMA: u32 = 5;
 
+/// A per-node coverage obligation is SATISFIED iff the run planned at least one
+/// test-bearing DAG node AND no planned test node was inert (ran but executed 0
+/// countable tests) or absent (never produced a terminal result). Carrying the
+/// NAMES in the receipt lets this verdict be re-derived here without re-reading a
+/// log (Proxy Binding: the condition travels with the value).
+fn coverage_satisfied(cov: &CoverageRow) -> bool {
+    cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
+}
+
 /// The landing / cache predicate — version-aware over the count-schema
 /// transition (see the module docs and the transition design note). Over and
 /// above clean full coverage (`is_clean_full_coverage`) and `result == "pass"`:
 ///
-///   * TWO UNIVERSAL GUARDS, applied at EVERY schema (grandfather or strict):
+///   * ONE UNIVERSAL GUARD, applied at EVERY schema (grandfather or strict):
 ///     `executed_tests != Some(0)` — a demonstrated zero-test run is a no-result
 ///     wearing a success badge (the `--features`-gated build that compiled the
-///     tests out), never a green; and no positive `filtered_tests` — a
-///     NAME-FILTERED subset (`1 passed; 154 filtered out`) covered a narrowed
-///     scope while claiming the full profile, the same scope-masquerade as a
-///     partial profile. Neither is ever grandfathered.
-///   * THEN, if the receipt is COUNT-CAPABLE (`schema_version >= COUNTS_SCHEMA`)
-///     OR actually CARRIES both counts, it is held STRICT: `executed_tests ==
-///     Some(n>0) && filtered_tests == Some(0)`. This catches a count-capable
-///     writer that emits nothing (a DEFECT) and enforces the full Proxy Binding
-///     rule on every receipt able to prove its coverage — including
-///     `aggregate.py`, which carries counts under an OLD schema.
+///     tests out), never a green, and never grandfathered.
+///   * There is NO `filtered_tests` guard. A real full run legitimately filters
+///     hundreds of other-lane/other-shard tests (~693 measured), so a positive
+///     aggregate filtered count says NOTHING about coverage; the blunt
+///     `filtered_tests == 0` predicate rejected every real full green and is
+///     DELETED. The narrowed-subset masquerade it tried to catch is caught
+///     precisely by the PER-NODE `coverage` obligation below (a subset run leaves
+///     required nodes absent or inert), and by the profile/selection full-coverage
+///     gates upstream. `filtered_tests` is retained only as a diagnostic.
+///   * THEN, if the receipt is COUNT-CAPABLE (`schema_version >= COUNTS_SCHEMA`),
+///     it is held to the FULL per-node contract: `executed_tests == Some(n>0)`
+///     AND a `coverage` object that SATISFIES its obligation. A count-capable
+///     receipt that omits `coverage` (or the counts) is a writer DEFECT and is
+///     rejected fail-closed — it was contractually required to emit them.
+///   * ELSE if the receipt CARRIES both counts under an old schema
+///     (`aggregate.py`, schema 1), it predates per-node coverage but can still
+///     prove nonzero execution: held to `executed_tests == Some(n>0)`. (It cannot
+///     be required to carry `coverage` it never emitted.)
 ///   * ELSE the receipt is a genuinely PRE-COUNT receipt (writer predates count
 ///     emission, carried neither count): it is GRANDFATHERED under the
-///     pre-tightening rule (the two guards + clean/full/full/pass). This is the
-///     transition allowance that un-breaks the drain without stranding the
+///     pre-tightening rule (the universal guard + clean/full/full/pass). This is
+///     the transition allowance that un-breaks the drain without stranding the
 ///     backlog; it strands nobody and self-liquidates as pre-count receipts age.
 ///
 /// Everything short of the applicable rule is NotValidated (exit 4 = re-dispatch),
@@ -176,23 +200,27 @@ pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
     if !(is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")) {
         return false;
     }
-    // Universal guards: a demonstrated zero-test run and any positive filtered
-    // count are never a full green, at any schema — never grandfathered.
+    // Universal guard: a demonstrated zero-test run is never a full green, at any
+    // schema — never grandfathered. (No filtered_tests guard: see the doc above.)
     if row.executed_tests == Some(0) {
-        return false;
-    }
-    if matches!(row.filtered_tests, Some(f) if f > 0) {
         return false;
     }
     let count_capable = row.schema_version.is_some_and(|v| v >= COUNTS_SCHEMA);
     let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
-    if count_capable || counts_present {
-        // STRICT: the receipt can prove coverage (count-capable writer, or an
-        // old-schema writer that carried both counts) — so require it to.
-        matches!(row.executed_tests, Some(n) if n > 0) && row.filtered_tests == Some(0)
+    if count_capable {
+        // FULL per-node contract: the coverage-capable writer MUST carry a
+        // nonzero executed count AND a satisfied per-node coverage obligation.
+        // Missing either on a count-capable receipt is a writer defect -> reject.
+        matches!(row.executed_tests, Some(n) if n > 0)
+            && row.coverage.as_ref().is_some_and(coverage_satisfied)
+    } else if counts_present {
+        // Old-schema writer that carried counts but predates per-node coverage
+        // (aggregate.py): hold it to the strongest thing it can prove — nonzero
+        // execution. Filtered no longer gates.
+        matches!(row.executed_tests, Some(n) if n > 0)
     } else {
-        // GRANDFATHER: a genuinely pre-count receipt that cleared both universal
-        // guards — accept under the pre-tightening clean/full/full/pass rule.
+        // GRANDFATHER: a genuinely pre-count receipt that cleared the universal
+        // guard — accept under the pre-tightening clean/full/full/pass rule.
         true
     }
 }
@@ -342,6 +370,18 @@ mod tests {
         ))
     }
 
+    /// A SATISFIED per-node coverage obligation: a nonempty planned set, every
+    /// planned test node executed, none inert, none absent — the shape a real
+    /// full run stamps. `sat_coverage(13)` matches the measured 13-node lane set.
+    fn sat_coverage(planned: u64) -> CoverageRow {
+        CoverageRow {
+            planned_test_nodes: planned,
+            executed_test_nodes: planned,
+            zero_executed_nodes: vec![],
+            absent_nodes: vec![],
+        }
+    }
+
     #[test]
     fn clean_full_pass_validates() {
         let rows = vec![clean_full_pass(PASS_SHA)];
@@ -444,29 +484,47 @@ mod tests {
     }
 
     #[test]
-    fn grandfather_still_refuses_the_two_universal_guards() {
+    fn grandfather_still_refuses_the_zero_test_guard() {
         // NEGATIVE: grandfathering is NOT a free pass. A pre-count receipt whose
-        // OWN banners nonetheless prove a zero-test run, or a positive filtered
-        // count, is refused at every schema — those are never a full green.
+        // OWN banners nonetheless prove a zero-test run is refused at every schema
+        // — a demonstrated zero-test run is never a full green.
         let mut zero = clean_full_pass(PASS_SHA);
         zero.schema_version = Some(3);
         zero.filtered_tests = None;
         zero.executed_tests = Some(0);
         assert_eq!(assess(&[zero], PASS_SHA).verdict, Verdict::NotValidated);
-
-        let mut filt = clean_full_pass(PASS_SHA);
-        filt.schema_version = Some(3);
-        filt.executed_tests = None;
-        filt.filtered_tests = Some(154);
-        assert_eq!(assess(&[filt], PASS_SHA).verdict, Verdict::NotValidated);
     }
 
     #[test]
-    fn old_schema_carrying_counts_is_held_strict() {
-        // aggregate.py stamps schema_version 1 but DOES emit both counts. Because
-        // the counts are PRESENT the receipt can prove coverage, so it is held
-        // STRICT even on the old schema: a positive count validates, a
-        // demonstrated zero does not.
+    fn filtered_out_no_longer_rejects_a_full_green() {
+        // TRANSITION POSITIVE (criterion 2 — the one that matters): a positive
+        // aggregate filtered count is legitimate on a real full run (each shard
+        // filters out other shards' tests; ~693 measured). The old blunt
+        // `filtered_tests == 0` predicate rejected every such green and recreated
+        // the stall "with better vocabulary". It is DELETED: a pre-count receipt
+        // carrying only a filtered count is grandfathered, and an old-schema
+        // counted receipt with filtered>0 + nonzero executed still validates.
+        let mut grand = clean_full_pass(PASS_SHA);
+        grand.schema_version = Some(3);
+        grand.executed_tests = None;
+        grand.filtered_tests = Some(154);
+        assert_eq!(assess(&[grand], PASS_SHA).verdict, Verdict::Validated);
+
+        let mut counted = clean_full_pass(PASS_SHA);
+        counted.schema_version = Some(1); // aggregate.py, counts present
+        counted.executed_tests = Some(749);
+        counted.filtered_tests = Some(693);
+        assert_eq!(assess(&[counted], PASS_SHA).verdict, Verdict::Validated);
+    }
+
+    #[test]
+    fn old_schema_carrying_counts_validates_on_nonzero_execution() {
+        // aggregate.py stamps schema_version 1 but DOES emit both counts. It
+        // predates per-node coverage, so it is held to the strongest thing it can
+        // prove: NONZERO execution. `filtered` no longer gates (a positive count
+        // is filtered=0 or filtered>0 alike), and coverage cannot be required of a
+        // writer that never emitted it. A positive count validates, a demonstrated
+        // zero does not.
         let mut ok = clean_full_pass(PASS_SHA);
         ok.schema_version = Some(1);
         ok.executed_tests = Some(47);
@@ -498,35 +556,91 @@ mod tests {
     }
 
     #[test]
-    fn count_capable_full_green_validates() {
-        // POSITIVE: a count-capable receipt carrying a nonzero executed count and
-        // zero filtered is the fully-qualified green the transition converges on.
-        let mut r = clean_full_pass(PASS_SHA);
-        r.schema_version = Some(COUNTS_SCHEMA);
-        r.executed_tests = Some(36);
-        r.filtered_tests = Some(0);
-        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::Validated);
-    }
-
-    #[test]
-    fn filtered_subset_is_not_validated() {
-        // NEGATIVE: the `1 passed; 154 filtered out` narrowed-scope trap. A
-        // full-coverage `pass` with a nonzero executed count but a POSITIVE
-        // filtered count ran a name-filtered subset while claiming the full
-        // profile — the same scope masquerade as a partial profile. Both
-        // filtered=1 and filtered=154 are refused.
-        for filtered in [1_i64, 154] {
+    fn count_capable_full_green_with_legit_filters_validates() {
+        // CRITERION 2 (the one that matters), N=2 stated: a count-capable receipt
+        // that carries a SATISFIED per-node coverage obligation validates EVEN WITH
+        // a large positive aggregate filtered count. Both cases below are real full
+        // greens; the second is the measured shape (749 executed / 693 filtered out
+        // across the DAG's cross-shard nodes) that the deleted `filtered==0` guard
+        // used to reject. A bind that rejected these would recreate the stall with
+        // better vocabulary.
+        let cases: [(i64, i64); 2] = [(36, 0), (749, 693)];
+        for (executed, filtered) in cases {
             let mut r = clean_full_pass(PASS_SHA);
-            r.executed_tests = Some(1);
+            r.schema_version = Some(COUNTS_SCHEMA);
+            r.executed_tests = Some(executed);
             r.filtered_tests = Some(filtered);
+            r.coverage = Some(sat_coverage(13));
             let a = assess(&[r], PASS_SHA);
             assert_eq!(
                 a.verdict,
-                Verdict::NotValidated,
-                "filtered={filtered} must be NotValidated"
+                Verdict::Validated,
+                "executed={executed} filtered={filtered} must be Validated"
             );
-            assert_eq!(a.verdict.exit_code(), 4);
+            assert_eq!(a.verdict.exit_code(), 0);
         }
+    }
+
+    #[test]
+    fn count_capable_inert_or_absent_node_is_not_validated() {
+        // CRITERION 1 (skipped/inert required node fails), decided from the receipt
+        // WITHOUT reading a log: the narrowed-subset masquerade is now caught here,
+        // per-node, not by the aggregate `filtered` count. A count-capable receipt
+        // whose coverage names an ABSENT planned node (never ran) or an INERT node
+        // (ran but executed 0 countable tests) violates its obligation.
+        // ABSENT: a required node produced no terminal result at all.
+        let mut absent = clean_full_pass(PASS_SHA);
+        absent.schema_version = Some(COUNTS_SCHEMA);
+        absent.executed_tests = Some(749);
+        absent.filtered_tests = Some(693);
+        absent.coverage = Some(CoverageRow {
+            planned_test_nodes: 13,
+            executed_test_nodes: 12,
+            zero_executed_nodes: vec![],
+            absent_nodes: vec!["test.detcore_unit".into()],
+        });
+        let a = assess(&[absent], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+
+        // INERT: a required node ran but every crate filtered-to-empty / compiled
+        // out (passed-sum 0) — the true `1 passed; 154 filtered out`-style subset.
+        let mut inert = clean_full_pass(PASS_SHA);
+        inert.schema_version = Some(COUNTS_SCHEMA);
+        inert.executed_tests = Some(749);
+        inert.filtered_tests = Some(693);
+        inert.coverage = Some(CoverageRow {
+            planned_test_nodes: 13,
+            executed_test_nodes: 12,
+            zero_executed_nodes: vec!["test.cli".into()],
+            absent_nodes: vec![],
+        });
+        assert_eq!(assess(&[inert], PASS_SHA).verdict, Verdict::NotValidated);
+
+        // NO planned test node at all is not a satisfied obligation either.
+        let mut empty = clean_full_pass(PASS_SHA);
+        empty.schema_version = Some(COUNTS_SCHEMA);
+        empty.executed_tests = Some(749);
+        empty.filtered_tests = Some(693);
+        empty.coverage = Some(sat_coverage(0));
+        assert_eq!(assess(&[empty], PASS_SHA).verdict, Verdict::NotValidated);
+    }
+
+    #[test]
+    fn count_capable_missing_coverage_is_a_defect() {
+        // DEFECT (fail-closed): a count-capable receipt that carries counts but
+        // OMITS the coverage object was contractually required to emit it. Nonzero
+        // executed + positive filtered is NOT enough on schema >= COUNTS_SCHEMA;
+        // without coverage the run cannot prove no required node was inert/absent.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.schema_version = Some(COUNTS_SCHEMA);
+        r.executed_tests = Some(749);
+        r.filtered_tests = Some(693);
+        r.coverage = None;
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+        assert_eq!(a.qualifying.len(), 0);
     }
 
     #[test]
@@ -537,20 +651,22 @@ mod tests {
         //   - GRANDFATHER: pre-count writer, no counts (schema 2 and 3).
         //   - OLD-WITH-COUNTS: aggregate.py carries counts under schema 1.
         //   - COUNT-CAPABLE: new writer, schema >= COUNTS_SCHEMA, counts present.
-        // (schema_version, executed, filtered)
-        let legit: [(u32, Option<i64>, Option<i64>); 6] = [
-            (2, None, None),        // grandfather
-            (3, None, None),        // grandfather (the 35/35 raw-validate.sh case)
-            (1, Some(1), Some(0)),  // old schema carrying counts
-            (1, Some(47), Some(0)), // old schema carrying counts
-            (COUNTS_SCHEMA, Some(36), Some(0)), // count-capable full green
-            (COUNTS_SCHEMA, Some(332), Some(0)), // count-capable full green
+        // A count-capable green must carry a SATISFIED coverage obligation; the
+        // older branches never emitted one. (schema_version, executed, filtered, coverage)
+        let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 6] = [
+            (2, None, None, None),        // grandfather
+            (3, None, None, None),        // grandfather (the 35/35 raw-validate.sh case)
+            (1, Some(1), Some(0), None),  // old schema carrying counts
+            (1, Some(47), Some(693), None), // old schema carrying counts, legit filters
+            (COUNTS_SCHEMA, Some(36), Some(0), Some(sat_coverage(13))), // count-capable green
+            (COUNTS_SCHEMA, Some(332), Some(693), Some(sat_coverage(13))), // count-capable, legit filters
         ];
-        for (sv, executed, filtered) in legit {
+        for (sv, executed, filtered, coverage) in legit {
             let mut r = clean_full_pass(PASS_SHA);
             r.schema_version = Some(sv);
             r.executed_tests = executed;
             r.filtered_tests = filtered;
+            r.coverage = coverage;
             let a = assess(&[r], PASS_SHA);
             assert_eq!(
                 a.verdict,
