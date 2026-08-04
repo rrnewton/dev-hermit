@@ -493,6 +493,14 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("[coordinator, $MODEL] ABANDONED", script)
         self.assertIn("CI_HUB_LANDING_LOG_DIR", script)
         self.assertIn("DETACHED LAND: pid=%s log=%s", script)
+        self.assertIn("GATE_DEADLINE=1080", script)
+        self.assertIn("CHILD_DEADLINE=$((GATE_DEADLINE * 2))", script)
+        self.assertIn("child deadline must be greater than gate deadline", script)
+        self.assertIn("actions/workflows/merge-gate.yml/runs?head_sha=$HEAD", script)
+        self.assertNotIn(
+            'gh pr view "$PR" -R "$R" --json statusCheckRollup', script
+        )
+        self.assertIn("merge-gate deadline ${GATE_DEADLINE}s exceeded", script)
 
         plugin = (ROOT / ".orc/plugins/hermit-dev/index.ts").read_text()
         heartbeat = plugin[plugin.index("speculativeLandRemediationHeartbeat") :]
@@ -500,6 +508,71 @@ class OperationalBoundsTest(unittest.TestCase):
         record = heartbeat.index("hermitSpeculativeLandWakeSent", wake)
         self.assertLess(wake, record)
         self.assertIn("sent but not yet acknowledged", plugin)
+
+    def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
+        """Plant the run shape PR statusCheckRollup omitted for PR #1219."""
+        sha = "a" * 40
+        fixture = {
+            "workflow_runs": [
+                {
+                    "head_sha": sha,
+                    "event": "pull_request",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "id": 10,
+                    "html_url": "https://example.invalid/runs/10",
+                    "created_at": "2026-08-04T02:40:00Z",
+                },
+                {
+                    "head_sha": sha,
+                    "event": "workflow_dispatch",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "id": 11,
+                    "html_url": "https://example.invalid/runs/11",
+                    "created_at": "2026-08-04T02:48:24Z",
+                },
+                {
+                    "head_sha": "b" * 40,
+                    "event": "workflow_dispatch",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "id": 12,
+                    "html_url": "https://example.invalid/runs/12",
+                    "created_at": "2026-08-04T02:49:00Z",
+                },
+                {
+                    "head_sha": "c" * 40,
+                    "event": "workflow_run",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "id": 13,
+                    "html_url": "https://example.invalid/runs/13",
+                    "created_at": "2026-08-04T02:50:00Z",
+                },
+            ]
+        }
+        result = subprocess.run(
+            [
+                "jq",
+                "-r",
+                "--arg",
+                "sha",
+                sha,
+                "-f",
+                str(ROOT / "ci-hub/landing/merge-gate-status.jq"),
+            ],
+            input=json.dumps(fixture),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        self.assertEqual(
+            result.stdout.strip(),
+            "COMPLETED\tSUCCESS\tworkflow_dispatch\t11\t"
+            "https://example.invalid/runs/11\t2026-08-04T02:48:24Z",
+        )
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ ci-hub/ci-hub land-lock release --agent hermit-ci
 # background heartbeat that renews the lease so a long land keeps the lock, and
 # a HARD --child-deadline that kills a wedged land subtree and releases the lock.
 ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
-  --child-deadline 1800 -- ./my-land-sequence.sh
+  --child-deadline 2160 -- ./my-land-sequence.sh
 ```
 
 ### Subcommands
@@ -94,8 +94,8 @@ ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
 | `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → always release |
 
 Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
-15 min so a dead holder self-clears), `--child-deadline 1800` (kill a wedged
-land subtree after 30 min). Poll interval 3s.
+15 min so a dead holder self-clears), `--child-deadline 2160` (kill a wedged
+land subtree after 36 min). Poll interval 3s.
 
 Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal ·
 `124` child-deadline breach (land subtree killed, lock released).
@@ -144,9 +144,14 @@ The land sequence itself lives here too, not only in `scratch/`:
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
 never wedges a land:
 
-1. **Race-tolerant gate poll** — evaluate the *latest* merge-gate run by
-   `startedAt` and ride through a transient `FAILURE`/`IN_PROGRESS` to `SUCCESS`;
-   bounded by `--gate-deadline` (default 600s), then ABANDON.
+1. **Race-tolerant exact-head gate poll** — query the Actions workflow runs for
+   the rebased head and evaluate the latest `pull_request` or
+   `workflow_dispatch` run. The dispatch event matters: the `workflow_run`
+   controller runs on `main`, and its dispatched PR-head success can be absent
+   from `statusCheckRollup`. Ride through transient
+   `FAILURE`/`IN_PROGRESS`/`QUEUED` states to `SUCCESS`; bounded by
+   `--gate-deadline` (default 1080s), then ABANDON with the last event, run ID,
+   URL, and state.
 2. **The merge command is the mergeability arbiter** — do not gate on
    `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
    a bounded retry loop, which forces GitHub to recompute mergeability.
@@ -169,6 +174,33 @@ The default launcher uses `nohup` plus a new session and returns immediately,
 before lock acquisition. The printed timestamped log is the durable observation
 surface across the agent shell's 120-second cap and agent recycling. Use
 `--foreground` only for short diagnostics; it does not change any deadline.
+
+### Deadline basis and scope
+
+The gate default is derived from successful `demo-hot-path.yml` pull-request
+runs created from `2026-08-03T23:00:00Z` through measurement on 2026-08-04:
+`n=11`, min `372s`, median `586s`, p90 `646s`, p95/p99/max `864s` (nearest-rank
+percentiles). The `1080s` gate deadline is `ceil(864 * 1.25)`. This is an
+operational baseline for the current runner, not a claim that every future gate
+finishes within it; refresh the dated sample when the runner or workflow changes.
+
+Every wait in one landing attempt has an explicit scope:
+
+| wait | bound | scope |
+| --- | ---: | --- |
+| lock acquisition | 1800s | FIFO wait before this landing owns the lock |
+| lock lease | 900s, renewed every 300s | dead-holder safety; not a land duration |
+| merge-gate | 1080s by default | exact-head Actions runs; caller may override |
+| whole child | 2160s by default | entire lock-held subtree; `land-pr.sh` derives twice an overridden gate deadline unless explicitly set |
+| merge retry | 12 attempts, 15s sleeps | at most 180s of explicit retry sleep |
+| gate poll | 15s interval | included in the gate deadline |
+| label / ready settling | 4s each | fixed sleeps before polling |
+| termination grace | 5s | SIGTERM-to-SIGKILL interval after child timeout |
+
+Individual `git` and `gh` calls do not have separate per-call timers. They are
+inside the whole-child process-group deadline, so a stalled call cannot hold the
+landing lock beyond that ceiling. The child deadline must be greater than the
+gate deadline; zero is rejected rather than meaning unbounded.
 
 ## Verifying your land (before you release)
 

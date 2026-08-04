@@ -16,7 +16,9 @@
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
 #   1. Race-tolerant gate poll: never bail on a transient merge-gate FAILURE; poll
-#      the LATEST run by startedAt and ride through FAILURE/IN_PROGRESS to SUCCESS.
+#      the latest exact-head pull_request/workflow_dispatch Actions run and ride
+#      through FAILURE/IN_PROGRESS to SUCCESS. PR statusCheckRollup is too narrow:
+#      it omits the workflow_run-triggered dispatch that can carry the success.
 #   2. The merge command is the mergeability arbiter, NOT mergeStateStatus (which
 #      sticks at UNKNOWN); attempt `gh pr merge --rebase` in a bounded retry loop.
 #   3. Self-heal the lagging-invalidate label strip: on a COMPLETED/FAILURE run
@@ -34,9 +36,10 @@
 #   --union          use the additive manifest union-rebase (union-rebase.sh);
 #                    default is a plain `git rebase origin/main`.
 #   --agent NAME     lock holder + PR-comment role tag (default: hermit-lander).
-#   --gate-deadline  bound on the merge-gate poll (default 600).
-#   --child-deadline hard ceiling for the whole land subtree (default 1800);
-#                    passed to `land-lock run`, which kills + releases on breach.
+#   --gate-deadline  bound on the merge-gate poll (default 1080).
+#   --child-deadline hard ceiling for the whole land subtree (default: twice the
+#                    gate deadline); passed to `land-lock run`, which kills and
+#                    releases on breach. It must be greater than gate-deadline.
 #   --foreground     diagnostic escape hatch; default launches under nohup+setsid
 #                    with a durable timestamped log and returns immediately.
 set -uo pipefail
@@ -44,8 +47,11 @@ set -uo pipefail
 PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
-GATE_DEADLINE=600
-CHILD_DEADLINE=1800
+# Measured 2026-08-04 over 11 successful pull_request demo-hot-path runs created
+# since 2026-08-03T23:00Z: median=586s, p90=646s, p95/p99/max=864s. The default
+# is ceil(max * 1.25) = 1080s; the whole-child ceiling gets two gate windows.
+GATE_DEADLINE=1080
+CHILD_DEADLINE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --union) UNION=1 ;;
@@ -66,7 +72,14 @@ if [ -z "$PR" ] || [ -z "$BR" ]; then
   exit 2
 fi
 case "$GATE_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: gate deadline must be positive seconds" >&2; exit 2 ;; esac
+if [ -z "$CHILD_DEADLINE" ]; then
+  CHILD_DEADLINE=$((GATE_DEADLINE * 2))
+fi
 case "$CHILD_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: child deadline must be positive seconds" >&2; exit 2 ;; esac
+if [ "$CHILD_DEADLINE" -le "$GATE_DEADLINE" ]; then
+  echo "land-pr: child deadline must be greater than gate deadline" >&2
+  exit 2
+fi
 if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
   printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s agent=%s\n' \
     "$PR" "$BR" "$UNION" "$AGENT"
@@ -217,18 +230,28 @@ if [ "$(with-proxy gh pr view "$PR" -R "$R" --json isDraft -q .isDraft)" = "true
   sleep 4
 fi
 
-# 5. FIX 1 + FIX 3: bounded, race-tolerant merge-gate poll. Evaluate the LATEST
-# merge-gate run by startedAt; ride through transient FAILURE/IN_PROGRESS/QUEUED
-# to COMPLETED/SUCCESS. On a COMPLETED/FAILURE with the label now absent (the
-# lagging-invalidate strip), re-add it -- the `labeled` event refires green. Do
-# NOT gate on mergeStateStatus (it sticks at UNKNOWN); the merge in step 6 is the
-# real arbiter. Bounded by --gate-deadline: on timeout we ABANDON (not wait
-# forever), which is the whole point -- UNKNOWN/stuck is actionable, not "wait".
-deadline=$((SECONDS+GATE_DEADLINE)); gate=""; cj=""
+# 5. FIX 1 + FIX 3: bounded, race-tolerant merge-gate poll. Query Actions by the
+# exact PR head and admit only pull_request/workflow_dispatch runs. The latter is
+# load-bearing: merge-gate's workflow_run controller dispatches the real PR-head
+# gate, but that success is absent from PR statusCheckRollup. Ride through
+# transient FAILURE/IN_PROGRESS/QUEUED to COMPLETED/SUCCESS. On a failure with
+# the label now absent, re-add it so `labeled` refires the gate. UNKNOWN/stuck is
+# actionable: at the measured deadline, ABANDON visibly instead of waiting.
+selector="$SCRIPT_DIR/merge-gate-status.jq"
+deadline=$((SECONDS+GATE_DEADLINE)); gate=""; cj="UNAVAILABLE/PENDING"; gate_detail="no successful Actions query"
 while (( SECONDS < deadline )); do
-  cj=$(with-proxy gh pr view "$PR" -R "$R" --json statusCheckRollup -q \
-     '[.statusCheckRollup[]|select(.name=="merge-gate")]|sort_by(.startedAt)|last|(.status//"?")+"/"+(.conclusion//"PENDING")' 2>/dev/null)
-  say "merge-gate(latest)=$cj"
+  if actions_json=$(with-proxy gh api \
+      "repos/$R/actions/workflows/merge-gate.yml/runs?head_sha=$HEAD&per_page=100" \
+      2>/dev/null); then
+    row=$(jq -r --arg sha "$HEAD" -f "$selector" <<<"$actions_json")
+    IFS=$'\t' read -r gate_status gate_conclusion gate_event gate_run gate_url gate_created <<<"$row"
+    cj="${gate_status}/${gate_conclusion}"
+    gate_detail="event=$gate_event run=$gate_run created=$gate_created url=$gate_url"
+  else
+    cj="UNAVAILABLE/PENDING"
+    gate_detail="Actions API unavailable"
+  fi
+  say "merge-gate(exact-head)=$cj $gate_detail"
   [ "$cj" = "COMPLETED/SUCCESS" ] && { gate=ok; break; }
   if [ "$cj" = "COMPLETED/FAILURE" ]; then
     lb=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
@@ -239,7 +262,7 @@ while (( SECONDS < deadline )); do
   fi
   sleep 15
 done
-[ "$gate" = ok ] || abandon "merge-gate did not reach SUCCESS within ${GATE_DEADLINE}s (last=$cj)" 5
+[ "$gate" = ok ] || abandon "merge-gate deadline ${GATE_DEADLINE}s exceeded for exact head $HEAD (last=$cj; $gate_detail)" 5
 
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to

@@ -22,9 +22,12 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 /// Hard ceiling on how long a `run` child may execute before it is killed and the
 /// lock is released. A stuck land holding the lock is a head-of-line block for
 /// every other FIFO waiter (the ~2040-minute starvation this bounds against): an
-/// unbounded wait is unboxed compute. A real land is minutes; 30 min is a
-/// generous ceiling far below any starvation.
-const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 1_800;
+/// unbounded wait is unboxed compute. A real land is minutes; this measured
+/// ceiling is far below any starvation.
+// Measured 2026-08-04: 11 successful demo-gate runs had p99/max 864s. The
+// lander gate bound is 1080s (max + 25%); the whole-child ceiling allows two
+// complete gate windows while still guaranteeing release on a wedged child.
+const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
 /// Grace period between SIGTERM and SIGKILL when terminating a timed-out child.
