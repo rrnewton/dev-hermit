@@ -24,6 +24,39 @@ conflated**:
 **Do not publish a bare green% as health.** Publish it beside the gap fraction (the tool already
 does this) and only after the green side is ledger-verified and the largest gap bucket is closed.
 
+## UPDATE 2026-08-04T10:0xZ — step 4 SHIPPED (green split ledger-corroborated vs conclusion-only)
+
+Landed on parent `main` (`e6138c2`): `green-time` now reports `green_ledger_pct` (green-by-conclusion
+**and** a `validate-run-ledger` receipt at that exact SHA satisfies `is_clean_full_pass` **plus** the
+new `filtered_tests == 0` clause) **separately** from `green_conclusion_only_pct` — **never summed**.
+Rows missing the schema-3 count fields fall to conclusion-only by design; `green_pct` stays as the
+combined back-compat figure. Impl `ci-hub/history/query.py` (`load_ledger_index` / `_row_full_pass`
+/ `_ledger_corroborates` / `_split_green_by_ledger`), 32 tests pass (3 added: no-ledger,
+positive-corroboration, filtered>0-does-not-corroborate).
+
+**Measured split (proves summing was the lie):**
+
+| Repo / wf | GREEN (combined) | ledger-corroborated | conclusion-only |
+|---|---|---|---|
+| hermit `CI (GitHub-managed portable)` | 0.79% | **0.0%** | 0.79% |
+| reverie `Rust` | 80.07% | **0.0%** | 80.07% |
+
+**Today every green is conclusion-only.** Ledger has 255 rows; **only 1** carries
+executed/filtered/full_coverage and it is `result=fail`; 33 clean-full-pass rows lack the count
+fields (live `validate.sh` writer omits them) → conclusion-only. The ledger path is not inert: a
+synthetic qualifying row moves a real slice into `green_ledger` (verified in-process + unit test).
+Positive confirmation against the *live* ledger is **not yet possible** (0 qualifying rows) — that is
+exactly what step 1 (fix the live writer) unblocks.
+
+**Reverie denominator, stated separately (per owner):** reverie's 80% is **entirely conclusion-only
+and will stay so until #364 lands a receipt writer.** Counting reverie as anything but conclusion-only
+green today measures our tooling gap, not reverie's health. Do not fold reverie into a ledger-based
+green until #364.
+
+**tick-hub NOT wired (per owner):** an hourly log of a gap-dominated, not-yet-corroborated number
+institutionalises a metric everyone learns to ignore. Steps 1 (fix live writer), 5 (#364 reverie
+writer), then the GAP-coverage work come before wiring the hourly log.
+
 ## Measured — state the window on every number
 
 `ci-hub/history/query.py green-time`, definition-date 2026-08-04, run 2026-08-04 ~10:0xZ:
