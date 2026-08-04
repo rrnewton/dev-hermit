@@ -665,3 +665,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/ci` | hermit-251 / check-reverie-pin-misses-tracked-lockfiles (branch `codex/check-reverie-pin-lockfiles`) | Hermit `37f8ef3c6578aa0bcc98ede1f722fc0eaca8b63a`; Reverie `d5b95fea4da7d42c88a9b69830775dc79db3b88a`; LiteInst2 `8bffae9da68e0636ec4b6dc473a0fd29ac589d20` | All three children clean + detached; `git rev-list HEAD --not --remotes --count == 0` per child (every HEAD reachable from a remote — fully recoverable). Feature branch `codex/check-reverie-pin-lockfiles` preserved on origin (never deleted). | Slot was already `released` in `worktree-state.json` (owner hermit-251 done; live `hermit-ci` is a separate unslotted coordinator agent that does not use this dir). Physically reclaimed during drain-duty cap relief (24 active worktrees → 23; hard cap is 12). Removed via `scripts/release-worktree.rs --slot ci --clean` (safe: clean + fully pushed, no `--force`). |
+
+### Recovered `detwait4` slot (2026-08-04)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/detwait4` | detwait4 / detcore-wait4-nondelivery-sigkilled-child | Hermit `14332cb783aecd7b9682366fa6402353dbfe9902`; no Reverie or LiteInst2 child | The closed task left one clean Hermit commit unreachable from any remote. The existing feature ref had diverged, so the commit was preserved without rewriting history at `origin/recovery/detwait4-14332cb7`; the recovery is also recorded on the task. | Original Reverie fix landed separately as Reverie #355. The stale slot had no live process and was reclaimed only after the Hermit recovery ref existed. |
