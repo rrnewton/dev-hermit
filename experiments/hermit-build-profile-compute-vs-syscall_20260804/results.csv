@@ -3,3 +3,7 @@ release,compute_bound,hermit,unpinned,-,5,153.49,99.370
 release,syscall_bound,hermit,unpinned,-,1,977.20,510.650
 release,syscall_bound,hermit,unpinned,-,2,888.73,443.910
 release,syscall_bound,hermit,unpinned,-,3,1172.12,499.610
+release,syscall_bound,hermit,unpinned,-,4,1717.80,572.440
+release,syscall_bound,hermit,unpinned,-,5,991.81,536.790
+release,syscall_bound,hermit,pinned1,picked,1,520.23,515.160
+release,syscall_bound,hermit,pinned1,picked,2,514.35,512.750
