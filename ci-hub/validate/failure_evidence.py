@@ -61,6 +61,121 @@ def failed_substeps(log_text: str) -> list[str]:
     )
 
 
+# safe-ci-dag-runner tags every node ``<group>.<job>`` (see hermit/ci/dag/*.json).
+# The GROUP already names WHICH sub-step failed, so a triager never has to read
+# the aggregate lane name (`portable CI DAG manifest`) that today covers three
+# unrelated causes. Groups whose failure is a BUILD/preparation step rather than a
+# product test — a corrupt/missing artifact here is an INFRASTRUCTURE fault, not a
+# code defect. (portable.json groups: check, setup, build, e2e, test, lint, doc.)
+_BUILD_GROUPS = frozenset({"build", "setup"})
+
+# Log signatures that make a failure an INFRASTRUCTURE fault (a corrupt/missing
+# build artifact or a shared-cache fault), NOT a code defect. Each is a
+# toolchain/linker/archive/cache message the PRODUCT under test cannot emit as a
+# test assertion. To keep a guest that merely PRINTS these words from forging the
+# class, a signature is only honored when it appears on a line attributed (by the
+# ``[<node.tag>] `` stream prefix) to the SAME failing node — a test node's own
+# stdout is never scanned for another node's infra signature.
+_INFRA_SIGNATURES = (
+    "in archive is not an object",   # corrupt static lib (e.g. libdynamorio_static.a)
+    "archive has no index",          # ar/ranlib index corruption
+    "malformed archive",             # truncated/garbled .a
+    "file format not recognized",    # linker on a corrupt object
+    "bad file descriptor while reading archive",
+    "failed to verify the checksum", # cargo cache poisoning (specific, before generic)
+    # CMakeCache relocation: a build dir/cache inherited from ANOTHER checkout
+    # (e.g. a reflink/CoW seed) whose absolute paths no longer match this tree.
+    # This is a stale-state INFRASTRUCTURE fault, not a source defect.
+    "is different than the directory",  # "current CMakeCache.txt directory X is different than the directory Y"
+    "does not match the source",        # CMAKE_HOME_DIRECTORY / cache dir mismatch
+    "corrupted",                     # generic cargo/registry cache corruption tell
+    # DynamoRIO third-party build/link fault: a stale / ABI-mismatched DynamoRIO
+    # tree (reflink seed or partial rebuild) fails to link its drmemtrace op_*
+    # symbols. Scoped to the `dynamorio::` namespace so a genuine PRODUCT link
+    # error stays a code fault — a bare "undefined reference" is NOT a signature.
+    "undefined reference to `dynamorio::",
+    # Harness could not exec the target binary: GNU coreutils (`timeout`, `env`, …)
+    # print "<prog>: failed to run command '<path>': No such file or directory"
+    # (exit 127) when target/debug/hermit was never built or sits at a stale path.
+    # An ENVIRONMENT/harness fault, not a product test assertion. Anchored to the
+    # coreutils "<prog>: failed to run command" shape (leading ": ") so product
+    # text merely containing "failed to run command" is less likely to match.
+    ": failed to run command",
+)
+
+_NODE_PREFIX_RE = per_node_counts.__globals__["_NODE_PREFIX_RE"]
+
+
+def _node_lines(log_text: str, node: str) -> list[str]:
+    """Lines of the merged DAG stream attributed to ``node`` by its ``[tag] ``
+    prefix. Attribution is by the EXACT node tag, so one node's stdout can never
+    be read as another node's evidence."""
+    out = []
+    for raw in log_text.splitlines():
+        m = _NODE_PREFIX_RE.match(raw)
+        if m and m.group(1) == node:
+            out.append(m.group(2))
+    return out
+
+
+def _infra_signature_for(log_text: str, node: str) -> str | None:
+    """The first infrastructure signature seen on ``node``'s own lines, or None.
+    Case-insensitive; returns the canonical signature string (not the raw line)."""
+    hay = "\n".join(_node_lines(log_text, node)).lower()
+    for sig in _INFRA_SIGNATURES:
+        if sig in hay:
+            return sig
+    return None
+
+
+def classify_failed_substeps(
+    log_text: str, *, flaky_registry: set[str] | None = None
+) -> list[dict[str, object]]:
+    """Turn an aggregate DAG failure into a per-node, triageable verdict list.
+
+    For every node that terminated ``✗ FAIL`` this returns one record:
+    ``{"node", "group", "sub_step_class", "fault_class", "infra_signature",
+    "known_flaky"}`` — sorted by node. This is the read-side answer to
+    "one-gate-name-for-three-unrelated-causes": instead of a single lane name and
+    exit=1, a consumer sees WHICH node failed, whether it is a build/prep step or
+    a product test, and whether the failure is an INFRASTRUCTURE fault (corrupt
+    artifact / poisoned cache) or a CODE fault.
+
+    ``fault_class`` rules (biased so a real code defect is never hidden as infra):
+      * ``infrastructure`` — an infra signature (corrupt archive, poisoned cargo
+        cache, …) appears on THIS node's own stream lines. This wins regardless of
+        group: a build node dying on a corrupt ``.a`` and a test node whose prep
+        hit a poisoned cache are both infra.
+      * ``code`` — otherwise. A failing build/setup node with no infra signature
+        is a genuine compile error in the change under test (still ``code``); a
+        failing test/e2e/lint/doc node is a product failure.
+    ``known_flaky`` is advisory only (a failing test node whose name is in the
+    measured-flake registry); it never downgrades ``fault_class`` — a flake is
+    still a code-domain result to be re-run, not an infra fault.
+    """
+    registry = flaky_registry or set()
+    records: list[dict[str, object]] = []
+    for node in failed_substeps(log_text):
+        group = node.split(".", 1)[0] if "." in node else ""
+        signature = _infra_signature_for(log_text, node)
+        fault = "infrastructure" if signature else "code"
+        sub_step = "dependency-build" if group in _BUILD_GROUPS else "lane-run"
+        cell = node if "." in node else f"test.{node}"
+        records.append(
+            {
+                "node": node,
+                "group": group,
+                "sub_step_class": sub_step,
+                "fault_class": fault,
+                "infra_signature": signature,
+                "known_flaky": fault == "code"
+                and sub_step == "lane-run"
+                and cell in registry,
+            }
+        )
+    return records
+
+
 def row_failed_substeps(row: Mapping[str, object]) -> set[str]:
     result = set()
     gates = row.get("gates")
@@ -112,6 +227,9 @@ def build_evidence(
             )
     return {
         "failed_substeps": cells,
+        "failed_substep_classes": classify_failed_substeps(
+            log_text, flaky_registry=registry
+        ),
         "flaky_failed_substeps": flaky_failed,
         "known_flaky_failure": bool(flaky_failed),
         "solo_rerun_confirmation": confirmation_row is not None,
