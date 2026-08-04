@@ -1,0 +1,7 @@
+profile,guest,mode,n,wall_med_s,cpu_med_s
+native,compute_bound,native,7,1.630,1.620
+native,syscall_bound,native,7,0.070,0.070
+release,compute_bound,hermit,7,214.490,107.260
+release,syscall_bound,hermit,7,991.810,510.650
+release-o0,compute_bound,hermit,3,321.260,107.250
+release-o0,syscall_bound,hermit,1,1844.450,614.730
