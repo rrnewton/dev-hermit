@@ -96,6 +96,36 @@ with getcpu's directly-measured **3.75×** to 0.5% (two independent methods). Ab
 also 174 ns lower (784 vs 958 ns) — the removed kernel-injection floor. **Actionable answer
 unchanged:** the dominant lever is opt-level=3 and release already ships it.
 
+## Supplement 2: `sched_getaffinity` cross-probe + secondary-knob noise limit (2026-08-04)
+
+To confirm the ~3.7× handler-codegen swing is not specific to `getcpu`, re-ran the primary
+A(opt3)/D(opt0) contrast on a **third** zero-kernel syscall: `sched_getaffinity`, also
+Determinized locally in detcore (`detcore/src/threads.rs:1010`, fixed mask, no kernel inject,
+no RPC). Same box/method, vacuity-guarded. Also attempted the secondary knobs (B cu1, C
+lto-fat) on the `getcpu` path. Files: `affinity_loop.c`, `run-affinity-and-getcpu-allvar.sh`,
+`results-affinity-and-getcpu-allvar.csv`.
+
+| probe                | A opt3 | D opt0 | D/A |
+|----------------------|-------:|-------:|-----|
+| `getcpu` (suppl. 1)  | 784.2  | 2942.1 | **3.75×** |
+| `sched_getaffinity`  | 784.2  | 2900.0 | **3.70×** |
+
+The primary opt-level effect is now confirmed on **three independent zero-kernel syscalls**
+(getcpu 3.75×, sched_getaffinity 3.70×, getpid floor-subtracted 3.73×) — the ~3.7× handler
+codegen swing is robust.
+
+**Secondary knobs (cu1, LTO) are NOT resolvable at this box load — reported as a limitation,
+not a result.** Dispersion analysis: *within-run* rep MAD is ~0 (≤0.04 s on 2–6 s totals),
+but *cross-run* the same `getcpu` A config drifted 1.64 s → 1.98 s (~21%) — a co-runner on
+core 300 inflating user CPU-time via cache pressure (`taskset` soft-pins others, doesn't
+exclude them). That run's inflated A baseline made C(lto-fat) look like −23%; against the
+reliable baseline (run-1 getcpu A and this run's affinity A agree at ~1.64 s), C is ≈ −5% —
+**consistent with, and no stronger than, the getpid finding** (cu1 ~0%, LTO ~−5%). The ~0–5%
+secondary effects sit below the ~20% cross-block contention floor on this loaded 316-core
+host, so they cannot be cleanly separated here; a quiet host or `cpuset`-exclusive core would
+be needed. **Conclusion unchanged: opt-level=3 is the dominant lever and release already
+ships it.**
+
 ## Reproduction
 
 ```
