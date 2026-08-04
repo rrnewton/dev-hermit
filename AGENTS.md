@@ -268,47 +268,71 @@ qualification is missing. Reviewers must ask what conditions made the value true
 travel with it, and whether they are still current at the decision point.
 
 For test and validation results, **a green must carry what it verified** in one result record: exact SHA,
-profile, discovered count, selected count, executed count, filtered/skipped count, and failure count. A full
-green requires the full profile, a nonzero executed count, zero unexpected filtering, and zero failures. A
-partial-profile `PASS` row is not a full green, and `test result: ok` with zero executed tests is a no-result,
-not success. Keep these qualifications together at the ledger-write point so no downstream reader can pair a
-bare `PASS` with inferred coverage.
+profile, discovered count, selected count, executed count, filtered/skipped count, failure count, and the
+declared per-node coverage obligations. A full green requires the full profile, nonzero execution, satisfied
+coverage obligations, and zero failures. A bare `filtered == 0` predicate is not completeness: legitimate
+suites can filter tests (693 in one measured full run), while an incomplete discovery set can report zero
+filtered. A partial-profile `PASS` row is not a full green, and `test result: ok` with zero executed tests is a
+no-result, not success. Keep these qualifications together at the ledger-write point so no downstream reader
+can pair a bare `PASS` with inferred coverage.
 
 Verification must bracket guarded behavior from both sides. **Negative:** plant the violating case and
 confirm **refusal** (proves the mechanism is not permissive). **Positive:** plant the genuine qualifying
 case and confirm it **fires** (proves the mechanism is not inert). Neither alone is verification: a guard
-that refuses everything passes every negative test.
+that refuses everything passes every negative test. State the counts on both sides. PR #1468 is the model:
+9 cells / 18 executions remained eligible with zero fallback and zero trusted-native sites, while the
+`random-device` negative was rejected with 66 trusted-native sites.
+
+Do **not** plant an artifact that is itself an authorization. Hand-adding a merge/review/validation label,
+dispatching a workflow that can auto-merge, or arming another live gate tests by creating the hazard. Exercise
+the consumer with an inert fixture, a dry-run/read-only mode, or an isolated test repository; the negative
+control must be incapable of authorizing the action whose refusal it tests.
 
 A check fails when it keys on a correlated proxy without an observable identity, causal, coverage, or
 provenance link to the claimed condition. Reviewers name the claimed fact, the observed evidence, the
 conditions under which it was measured, and the binding between them; passing tests do not supply a missing
-binding. Recurring worked examples include: a marker substring instead of a causally bound skid result;
-a typed error compared via `.to_string()`; pin consistency that omits a tracked lockfile or behavioral
-currency; a backend lint that covers only part of the backend registry; a status rollup that omits required
-gates; PR-head ancestry used as landed identity; a merge gate running stale branch-owned workflow YAML;
-green without exact-SHA execution evidence; success with zero executed tests; a partial-profile pass presented
-as a full green or a pass with unexpectedly filtered tests; a parity percentage hashing piped stdout only;
-retryability inferred by grepping a rendered SIGPIPE message; and a bare `hard_mem_max_bytes` measured at an
-unstated parallelism.
+binding. The current twelve worked examples are:
+
+1. A `locally-validated` label with no exact-head ledger record: the label is a cache, not the source of truth.
+2. A merge gate that authorizes on bare label presence without reading the ledger.
+3. `workflow_dispatch` running the PR branch's older YAML, allowing a weaker historical gate to emit the same green.
+4. `is-ancestor <PR head>` encoding a merge-commit model under rebase-merge, where the PR head is never ancestral to replayed main (it undercounted landings by 33); use `mergeCommit.oid` after a fresh fetch.
+5. A pin checker walking `Cargo.toml` but not tracked `Cargo.lock`, reporting consistency over an incomplete file set.
+6. A green result with no executed count: success is not bound to any work having run.
+7. `filtered == 0` used as completeness although 693 filters are legitimate and an incomplete discovery set can also report zero.
+8. A `parity%` derived from piped-stdout SHA-256 but presented as full INFO + detlog-stack + detlog-heap parity.
+9. `ACTIVE.md` naming a branch the slot does not hold, while reconciliation passes by comparing row counts rather than row contents.
+10. `--cgroups` accepted by a CLI but producing no cgroup behavior or typed acknowledgement.
+11. A cancelled run classified as red: a no-result is rendered as a result.
+12. Dispatch boilerplate listing `commit` as destructive, causing agents to withhold the durable handoff the protocol requires.
+
+Earlier marker-substring, error-string, partial-backend, rendered-SIGPIPE, and unqualified-memory-cap cases are
+the same class. In each case ask: **what binds this signal to the fact it claims, and can I observe that
+binding rather than infer it?**
 
 Mechanical enforcement is deliberately split by layer:
 
 - **Source/config lint:** reject representations whose missing qualification is syntactically observable.
-  The Rust proxy lint rejects error display strings used for classification. A typed config schema can
-  reject a bare memory cap in favor of `{ jobs, bytes }`; a boundary-specific lint can forbid log-text retry
-  classification or PR-head landing identity. These checks prove only that the qualification is present,
-  not that it is truthful or sufficient.
+  Of the twelve examples above, only **3/12** are source/config-lintable without pretending to understand
+  runtime semantics: #2 can forbid a label-presence authorization branch, #4 can forbid PR-head ancestry at
+  the typed landed-identity boundary, and #12 can reject `commit` in the destructive-operation list of the
+  dispatch template that owns it. The existing Rust error-string proxy lint covers **0/12** of this new
+  catalogue; it correctly covers an earlier syntactic instance and must not claim more. These checks prove
+  only that a known bad representation is absent, not that the replacement binding is truthful or sufficient.
 - **Runtime/result checks:** require one ledger record carrying run ID, exact SHA, durable log, profile,
-  discovered/selected/executed/filtered counts, and failures; mechanically reject a full green unless the
-  profile is full, execution is nonzero, unexpected filtering is zero, and failures are zero. Also require
-  `mergeCommit.oid` ancestry after a fresh fetch behind landed, and compare observed workflow provenance and
-  gate IDs with an authoritative required set. These are evidence validators, not source lint.
+  discovered/selected/executed/filtered counts, failures, and declared coverage obligations; mechanically
+  reject full green unless the profile is full, execution is nonzero, coverage obligations are satisfied,
+  and failures are zero. This layer catches #1, #3, #6, #9, #10, and #11 with ledger/provenance/content/
+  behavioral/classifier checks. Require `mergeCommit.oid` ancestry after a fresh fetch behind landed. A
+  planted stale `Cargo.lock` fixture can regression-test the known half of #5, but it cannot prove that every
+  future relevant file is in the checker's universe. These are evidence validators and contract tests, not
+  source lint.
 - **Semantic review:** determine whether a marker is causally bound, a file/backend/gate registry is
-  complete, pin state is behaviorally current, a parity artifact covers the full claimed trace, and a
-  memory anchor plus scaling model matches the concurrency actually used. Review must also establish that the
-  discovered test universe and declared profile are the suite the result claims to cover; perfect counts over
-  an incomplete discovery set remain a proxy. No general lint can infer these facts. Do not stretch a
-  syntactic lint to claim coverage of them.
+  complete (#5), coverage obligations actually define the intended suite (#7), and a parity artifact covers
+  the full claimed trace (#8). It must also establish workflow/registry freshness, behavioral currency, and
+  causal validity even where a mechanical detector exists. Perfect counts over an incomplete discovery set
+  remain a proxy. No general lint can infer these facts. Do not stretch a syntactic lint to claim coverage of
+  them; a lint claiming all twelve would itself fail Proxy Binding.
 
 ### Post-Facto Human Review
 
