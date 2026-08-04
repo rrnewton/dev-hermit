@@ -103,3 +103,24 @@ glue-driven blob-of-100 artifact). The larger real win is the 33 free merges nee
 Reproduce: `cluster.py` (overlap), `verify.py` (merge-tree base + pairwise),
 `characterize.py` (binding files + patching membership). Inputs: `pr-snapshot.json`.
 Output: `conflict-graph.json`.
+
+## Emitted stack orders (base → tip)
+
+Ordering heuristic: **CLEAN → GLUE-ONLY → SOURCE-CONFLICT**, tie-break by PR number. Risky
+(source-conflict-vs-main) and droppable members sit at the **tip**, so dropping one only
+re-chains what is above it — the clean base is never disturbed. The sabre sub-chain
+(1302→1381→1467→1468, bound by detcore-sabre/src/lib.rs + sabre_ptrace.rs) is kept contiguous
+at A's tip = the architecture-blocked patching lane, landed last.
+
+### Component B (15) — single-file run_matrix.py stack
+```
+1590(CLEAN) 1233 1235 1242 1245 1246 1247 1250 1252 1477 1498(glue) | 1227 1464 1472 1473(src-conf)
+```
+
+### Component A (23)
+```
+1200 1412 1430 1515 1543 1546 1547 1549 1559 1578 1587 1591(CLEAN)
+  1443 1552 1576(glue)
+  1147 1445 1555 1571(src-conf)
+  1302 1381 1467 1468(sabre sub-chain, tip, land LAST)
+```
