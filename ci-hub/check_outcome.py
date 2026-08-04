@@ -158,30 +158,86 @@ def select_latest_workflow_run(
     events: Sequence[str] = (),
 ) -> dict[str, object]:
     """Select the latest Actions run at one exact head, with a stable ID tie-break."""
+    candidates = select_latest_workflow_attempts(
+        value, head_sha=head_sha, events=events
+    )
+    if not candidates:
+        return {}
+    return max(candidates, key=_workflow_order_key)
+
+
+def _workflow_head(run: Mapping[str, object]) -> str:
+    return _text(run.get("head_sha") or run.get("headSha"))
+
+
+def _workflow_name(run: Mapping[str, object]) -> str:
+    return _text(run.get("workflowName") or run.get("workflow_name") or run.get("name"))
+
+
+def _workflow_order_key(run: Mapping[str, object]) -> tuple[str, int]:
+    try:
+        run_id = int(run.get("id") or run.get("databaseId") or run.get("run_id") or 0)
+    except (TypeError, ValueError):
+        run_id = 0
+    return _text(run.get("created_at") or run.get("createdAt")), run_id
+
+
+def select_latest_workflow_attempts(
+    value: object,
+    *,
+    head_sha: str = "",
+    events: Sequence[str] = (),
+    workflows: Sequence[str] = (),
+) -> list[dict[str, object]]:
+    """Return one latest attempt per exact ``(head, workflow)`` authority."""
     if isinstance(value, Mapping):
         value = value.get("workflow_runs", [])
     if not isinstance(value, list):
-        return {}
-    allowed = set(events)
-    candidates: list[dict[str, object]] = []
+        return []
+    allowed_events = set(events)
+    allowed_workflows = set(workflows)
+    latest: dict[tuple[str, str], dict[str, object]] = {}
+    order: list[tuple[str, str]] = []
     for raw in value:
         if not isinstance(raw, Mapping):
             continue
         run = {str(key): item for key, item in raw.items()}
-        if _text(run.get("head_sha") or run.get("headSha")) != head_sha:
+        run_head = _workflow_head(run)
+        workflow = _workflow_name(run)
+        if head_sha and run_head != head_sha:
             continue
-        if allowed and _text(run.get("event")) not in allowed:
+        if allowed_events and _text(run.get("event")) not in allowed_events:
             continue
-        candidates.append(run)
-    if not candidates:
-        return {}
-    return max(
-        candidates,
-        key=lambda run: (
-            _text(run.get("created_at") or run.get("createdAt")),
-            int(run.get("id") or run.get("databaseId") or 0),
-        ),
-    )
+        if allowed_workflows and workflow not in allowed_workflows:
+            continue
+        key = (run_head, workflow)
+        previous = latest.get(key)
+        if previous is None:
+            order.append(key)
+            latest[key] = run
+            continue
+        candidate_key = _workflow_order_key(run)
+        previous_key = _workflow_order_key(previous)
+        if candidate_key > previous_key:
+            latest[key] = run
+        elif candidate_key == previous_key:
+            same_verdict = (
+                _text(previous.get("status")) == _text(run.get("status"))
+                and _text(previous.get("conclusion")) == _text(run.get("conclusion"))
+            )
+            if not same_verdict:
+                ambiguous = dict(previous)
+                ambiguous.update(
+                    {
+                        "status": "AMBIGUOUS",
+                        "conclusion": "",
+                        "_selectionError": (
+                            "duplicate workflow attempt has equal identity and contrary verdicts"
+                        ),
+                    }
+                )
+                latest[key] = ambiguous
+    return [latest[key] for key in order]
 
 
 def classify_check(

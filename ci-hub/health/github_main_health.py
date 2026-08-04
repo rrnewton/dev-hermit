@@ -16,7 +16,7 @@ from typing import Sequence
 CI_HUB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CI_HUB))
 
-from check_outcome import CheckOutcome, classify_check
+from check_outcome import CheckOutcome, classify_check, select_latest_workflow_attempts
 
 DEFAULT_REPOS = (
     "rrnewton/dev-hermit",
@@ -81,14 +81,6 @@ class RepoUnavailable(RuntimeError):
     """One live GitHub query exceeded its explicit wall-time budget."""
 
 
-def _run_order_key(run: MainRun) -> tuple[str, int, str]:
-    try:
-        numeric_id = int(run.run_id)
-    except ValueError:
-        numeric_id = -1
-    return run.created_at, numeric_id, run.run_id
-
-
 def _run_gh(command: Sequence[str], *, timeout: float) -> str:
     try:
         result = subprocess.run(
@@ -135,6 +127,7 @@ def fetch_main_runs(
     repo: str,
     limit: int = DEFAULT_RUN_LIMIT,
     *,
+    head_sha: str,
     timeout: float = DEFAULT_CALL_TIMEOUT,
 ) -> list[MainRun]:
     output = _run_gh(
@@ -164,7 +157,7 @@ def fetch_main_runs(
         raise RuntimeError(f"{repo}: gh run list returned a non-list payload")
 
     runs: list[MainRun] = []
-    for raw in payload:
+    for raw in select_latest_workflow_attempts(payload, head_sha=head_sha):
         if not isinstance(raw, dict):
             raise RuntimeError(f"{repo}: malformed workflow run: {raw!r}")
         runs.append(
@@ -269,23 +262,16 @@ def evaluate_repo(
         for run in fetch_main_runs(
             repo,
             limit,
+            head_sha=main_sha,
             timeout=_remaining_timeout(deadline, per_call_timeout, repo),
         )
-        if run.head_sha == main_sha
     ]
 
-    # gh returns newest first. Keep only the newest attempt for each workflow so
-    # a successful rerun supersedes an older failed/cancelled attempt.
-    latest_by_workflow: dict[str, MainRun] = {}
-    for run in candidates:
-        previous = latest_by_workflow.get(run.workflow)
-        if previous is None or _run_order_key(run) > _run_order_key(previous):
-            latest_by_workflow[run.workflow] = run
     # Disambiguate cancelled current-tip runs: fetch annotations only for them
     # (rare) and promote a self-timeout kill to RED. A failed/absent annotation
     # fetch leaves the run NO_RESULT (safe): never invent a red we cannot prove.
     enriched: list[MainRun] = []
-    for run in latest_by_workflow.values():
+    for run in candidates:
         if run.conclusion == "cancelled" and run.run_id:
             try:
                 messages = fetch_run_annotations(

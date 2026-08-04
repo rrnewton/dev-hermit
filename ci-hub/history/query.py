@@ -44,7 +44,12 @@ from pathlib import Path
 CI_HUB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CI_HUB))
 
-from check_outcome import CheckOutcome, FAIL_CONCLUSIONS, classify_check
+from check_outcome import (
+    CheckOutcome,
+    FAIL_CONCLUSIONS,
+    classify_check,
+    select_latest_workflow_attempts,
+)
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
@@ -778,8 +783,6 @@ def state_timeline(parent: str, repo: str, since: str | None,
     # commit, across ANY workflow (so a commit with only non-authoritative runs
     # still bounds a reign and shows as gap(no-record) for the metric).
     first_seen: dict[str, float] = {}
-    # Latest attempt of each authoritative workflow at each commit.
-    latest: dict[tuple[str, str], dict] = {}
     by_concl: dict[str, int] = {}
     for r in rows:
         sha = r.get("head_sha") or ""
@@ -788,25 +791,10 @@ def state_timeline(parent: str, repo: str, since: str | None,
             prev = first_seen.get(sha)
             if prev is None or created < prev:
                 first_seen[sha] = created
-        wf = r.get("workflow_name") or ""
-        if wanted and wf not in wanted:
-            continue
-        key = (sha, wf)
-        cur = latest.get(key)
-        cur_created = _epoch(cur.get("created_at")) if cur else None
-        run_id = str(r.get("run_id") or "")
-        cur_run_id = str(cur.get("run_id") or "") if cur else ""
-        run_id_key = (int(run_id) if run_id.isdigit() else -1, run_id)
-        cur_run_id_key = (
-            int(cur_run_id) if cur_run_id.isdigit() else -1,
-            cur_run_id,
-        )
-        if cur is None or (
-            created is not None
-            and cur_created is not None
-            and (created, run_id_key) > (cur_created, cur_run_id_key)
-        ):
-            latest[key] = r
+    latest = {
+        (str(run.get("head_sha") or ""), str(run.get("workflow_name") or "")): run
+        for run in select_latest_workflow_attempts(rows, workflows=wanted)
+    }
 
     if not first_seen:
         return {"repo": repo, "workflows": wanted, "intervals": [], "samples": 0,

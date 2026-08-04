@@ -14,6 +14,7 @@ from check_outcome import (
     CheckOutcome,
     classify_check,
     select_latest_checks,
+    select_latest_workflow_attempts,
     select_latest_workflow_run,
 )
 
@@ -193,6 +194,65 @@ class CheckOutcomeContractTests(unittest.TestCase):
             payload, head_sha=sha, events=("pull_request", "workflow_dispatch")
         )
         self.assertEqual(selected["id"], 11)
+
+    def test_latest_workflow_attempts_groups_by_head_and_workflow(self) -> None:
+        payload = [
+            {
+                "headSha": "a",
+                "workflowName": "ci",
+                "createdAt": "t",
+                "databaseId": 10,
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "headSha": "a",
+                "workflowName": "ci",
+                "createdAt": "t",
+                "databaseId": 11,
+                "status": "completed",
+                "conclusion": "success",
+            },
+            {
+                "headSha": "a",
+                "workflowName": "docs",
+                "createdAt": "t",
+                "databaseId": 12,
+                "status": "completed",
+                "conclusion": "success",
+            },
+            {
+                "headSha": "b",
+                "workflowName": "ci",
+                "createdAt": "t",
+                "databaseId": 13,
+                "status": "completed",
+                "conclusion": "failure",
+            },
+        ]
+        selected = select_latest_workflow_attempts(payload, head_sha="a")
+        self.assertEqual(
+            {(run["workflowName"], run["databaseId"]) for run in selected},
+            {("ci", 11), ("docs", 12)},
+        )
+
+    def test_tied_workflow_attempts_with_contrary_verdicts_are_no_result(self) -> None:
+        failure = {
+            "headSha": "a",
+            "workflowName": "ci",
+            "createdAt": "t",
+            "databaseId": 10,
+            "status": "completed",
+            "conclusion": "failure",
+        }
+        success = {**failure, "conclusion": "success"}
+        for payload in ([failure, success], [success, failure]):
+            selected = select_latest_workflow_attempts(payload, head_sha="a")
+            self.assertEqual(len(selected), 1)
+            self.assertIs(
+                classify_check(selected[0]["status"], selected[0]["conclusion"]),
+                CheckOutcome.NO_RESULT,
+            )
 
 
 if __name__ == "__main__":

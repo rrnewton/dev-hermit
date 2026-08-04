@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "ci-hub/history"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import obligations
-from check_outcome import CheckOutcome, classify_check
+from check_outcome import CheckOutcome, classify_check, select_latest_workflow_attempts
 from check_outcome import FAIL_CONCLUSIONS as _RED_CONCLUSIONS
 from nonzero_result import is_zero_test_green
 
@@ -668,20 +668,10 @@ def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
         raise ProtocolError("gh run list returned invalid JSON") from error
     if not isinstance(payload, list):
         raise ProtocolError("gh run list returned a non-list payload")
-    runs = [
-        run
-        for run in payload
-        if isinstance(run, dict)
-        and str(run.get("headSha", "")).lower() == sha
-        and run.get("workflowName") == DEFAULT_WORKFLOW
-    ]
-    return sorted(
-        runs,
-        key=lambda run: (
-            str(run.get("createdAt", "")),
-            int(run.get("databaseId") or 0),
-        ),
-        reverse=True,
+    return select_latest_workflow_attempts(
+        payload,
+        head_sha=sha,
+        workflows=(DEFAULT_WORKFLOW,),
     )
 
 
