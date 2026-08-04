@@ -18,12 +18,16 @@ All CSVs live **in this outer dev-hermit repo**, never inside the inner
 
 Rows are e2e manifest buckets plus a `TOTAL`. The leftmost column is the golden
 **ptrace** integer count — tests passing `--strict` + replay — which is the B4
-denominator. Every other backend column is `parity%, determinism%` as a fraction
-of that ptrace denominator:
+denominator. Every other backend column is `stdout-parity%, determinism%` as a
+fraction of that ptrace denominator:
 
-- **parity%** — bitwise-identical guest-observable result vs the ptrace reference.
+- **stdout-parity%** — piped guest stdout has a SHA-256 match with the ptrace
+  reference. This is an **upper bound**, not full cross-backend parity: it does
+  not compare the INFO log, stack detlog, or heap detlog required by the
+  four-signal parity standard. TTY behavior is also outside this scorecard.
 - **determinism%** — the backend is self-deterministic (run1 == run2), whether or
-  not it matches ptrace. By construction `determinism% >= parity%`.
+  not it matches ptrace. Determinism and stdout parity are independent signals;
+  neither implies the other.
 
 A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-green).
 
@@ -72,7 +76,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
           │      --results hermit/ignored/e2e/compat-envelope/L/B/BE.jsonl    ← JSONL intermediate
           │      (bash+jq runner — NOT nextest; also emits …/junit.xml)
           ├─ reads that JSONL (outcome, duration_ms, reason)
-          ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → parity
+          ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → stdout parity
           └─ appends 19-col rows → compat-envelope/scorecard.csv
       └─ collect-reverie-compat.rs → reverie-scorecard.csv
       └─ render-scorecard.rs --csv scorecard.csv --all               → rendered table
@@ -115,9 +119,10 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
 - **Auto-detects** backends from the binary's `--backend` enum + host
   (`/dev/kvm` for KVM; `--features third-party-backends` for dbi/sabre/e9patch);
   a missing backend is recorded `n/a`, never a false red.
-- Runs **ptrace first** to write the parity reference, then each other backend:
-  `det` = `--strict --verify` exits 0; `parity` = backend stdout SHA-256 ==
-  reference.
+- Runs **ptrace first** to write the stdout reference, then each other backend:
+  `det` = `--strict --verify` exits 0; `parity` (the legacy CSV field name) =
+  backend stdout SHA-256 == reference. The renderer labels this value
+  `stdout-parity`; it is not the four-signal parity standard.
 - **Parity reference gotcha (important):** the reference is captured with plain
   `hermit run --strict`, *not* `--strict --verify`. `--verify` does an internal
   double-run and emits **no** guest stdout to the parent, so a `--verify` capture
@@ -145,8 +150,9 @@ output_hash,duration_ms,max_rss_kb,reason
 - `cell_state` — `enabled` (in the regression envelope) | `disabled` (expansion
   candidate).
 - `outcome` — `pass` | `diverge` | `fail` | `skip`.
-- `deterministic` / `parity` — `1` | `0` | blank (unknown). `deterministic`
-  records run1==run2 **independent of parity**.
+- `deterministic` / `parity` — `1` | `0` | blank (unknown). `parity` is the
+  legacy schema name for stdout-only parity. `deterministic` records run1==run2
+  **independent of stdout parity**.
 - `output_hash` — the comparable observable (hermit: guest-output hash; reverie:
   the syscall total).
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
@@ -216,11 +222,11 @@ busybox applets.
     --backends kvm --all
 ```
 
-Only tools that have both launchers become parity cells; a ptrace-only example
+Only tools that have both launchers become stdout-parity cells; a ptrace-only example
 records its KVM cell as not-runnable (0/0), never faked.
 
 **Current finding** (reverie `a4f33d69`, hermit `2f3689bd`, this host with
-`/dev/kvm`): KVM is `0% parity, 100% determinism` — fully self-deterministic but
+`/dev/kvm`): KVM is `0% stdout-parity, 100% determinism` — fully self-deterministic but
 surfaces a **constant 4 fewer syscalls** to the shared Tool callback than ptrace
 (`true` 12→8, `echo hi` 15→11, `pwd` 16→12). That is a real Guest-contract
 interception-surface gap, not a determinism defect, and is exactly the honest
@@ -237,8 +243,8 @@ two arms and asks: is the e9tool-rewritten ELF's output bitwise-identical (L2) t
 the same guest run **without** rewriting (the golden reference)?
 
 - The `ptrace` column is the golden, un-rewritten reference arm (the denominator).
-- The `e9patch` column is the e9tool-rewritten variant arm; its `parity` = e9
-  output == golden output, both under ptrace.
+- The `e9patch` column is the e9tool-rewritten variant arm; its legacy CSV
+  `parity` field means e9 stdout == golden stdout, both under ptrace.
 
 It lives in its own `e9patch-scorecard.csv` (like reverie), never as a column in
 the backend `scorecard.csv`, because a literal `e9patch` token in a backend field
@@ -274,26 +280,30 @@ disk (defaults resolve to the `worktrees/e9patch` checkout).
 ## Rendering
 
 ```bash
-./render-scorecard.rs --all                       # hermit, default denominator=verify
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --all  # full corpus
+./render-scorecard.rs --csv scorecard.csv --all             # CI/regression subset
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter --backends kvm --all
 ./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch --latest
-./render-scorecard.rs --all --json                # machine-readable
-./render-scorecard.rs --latest                    # only the newest run_id
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --all --json
 ```
+
+`--csv` is required. A bare invocation exits 2 rather than silently choosing
+`scorecard.csv`, whose CI/regression population is much smaller than the full
+corpus. The input path is repeated in human and JSON output.
 
 ## Table markers (never let a `0` be ambiguous)
 
-- `X%?` — parity **never measured** for that bucket → UNKNOWN, not a confirmed 0.
-- `X%~` — **partial** parity coverage (some denom cells measured, some not).
+- `X%?` — stdout parity **never measured** for that bucket → UNKNOWN, not a confirmed 0.
+- `X%~` — **partial** stdout-parity coverage (some denom cells measured, some not).
 - `n/a` — backend **ran zero** denom cells here (binary absent / not
   manifest-enabled) → not measurable, **not** a confirmed fail.
 
 A real red (ran + failed) is `0%, 0%` with no marker; the markers keep it
 visually distinct from "not measured" and "not runnable", which is what the
 phase-2 bar (*every red a CONFIRMED red*) requires. Machine-readable
-`--json`/`--tsv` carry `parity_measured_count`/`ran_count` per cell.
+`--json`/`--tsv` carry `stdout_parity_measured_count`/`ran_count` per cell.
 
-## Parity measurement
+## Stdout-parity measurement
 
 `collect-envelope.rs --with-parity` runs the same guest under ptrace and the
 backend and compares stdout SHA-256. `.sh` fixtures run via `--run`, `direct`
@@ -309,8 +319,8 @@ and refuses to launch a guest from. Backend availability is probed once up front
 1. A cell exists **only** for a B1.5+ backend running the canonical shared tool.
    Pre-B1.5 work is "progress toward", not a cell.
 2. Not-run / not-runnable cells are `n/a` or `0/0`, never blank-rendered-as-green.
-3. `determinism%` never implies `parity%`; a deterministic backend that diverges
-   from ptrace reads `0% parity, N% determinism`.
+3. `determinism%` never implies full parity; a deterministic backend whose
+   stdout diverges from ptrace reads `0% stdout-parity, N% determinism`.
 4. Every number is produced by an actual run recorded in the CSV with its SHAs.
-5. An **unmeasured** parity (`?`) or **unavailable** backend (`n/a`) is never
+5. An **unmeasured** stdout parity (`?`) or **unavailable** backend (`n/a`) is never
    presented as a confirmed 0 — measured-and-failed is the only real red.
