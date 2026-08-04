@@ -1,0 +1,26 @@
+{
+  "question": "Does rustc codegen (opt-level, codegen-units, LTO) affect the IN-GUEST liteinst syscall-handler hot path in a way it did NOT for the ptrace supervisor?",
+  "date": "2026-08-04",
+  "host": "devbig014.atn7.facebook.com",
+  "cores": 316,
+  "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "hermit_sha": "02a47ef718b4fdb40378654d0dd75e4f4d773ae6",
+  "reverie_liteinst_rev": "3eda4286ff222069ef22437c5755d35a9c181ce2",
+  "liteinst2_rev": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
+  "backend": "liteinst (in-guest direct_hook path, ptrace_installation=0)",
+  "guest": "experiments/dbi_perf_leader_baseline_20260801/src/syscall_loop (tight raw getpid loop)",
+  "supervisor_binary": "hermit release bin, held FIXED across all runs (lifecycle-only for liteinst)",
+  "artifact_under_test": "libreverie_liteinst.so, selected per-run via HERMIT_LITEINST_RUNTIME; only its codegen varies",
+  "metric": "ns per in-guest getpid handler invocation = CPU-time (user+sys) SLOPE across N=1e5 and N=2e6, /(dN)*1e9; fixed startup/patch/teardown cancels in the slope; CPU-time immune to wall noise floor",
+  "box_state": "single-core pinned (taskset -c 300) + boxed (systemd-run --user unit); serial; 5 measured reps/point + 1 discarded warmup; median",
+  "vacuity_guard": "every timed run required direct_hook=N+1 and ptrace_installation=0 (proves in-guest path exercised, no ptrace, no silent fallback)",
+  "profile_facts": "hermit workspace Cargo.toml and liteinst-runtime-build/Cargo.toml BOTH have zero [profile.*] stanzas => release inherits cargo defaults opt-level=3, codegen-units=16, lto=false. Variant A == shipping config.",
+  "matrix": {
+    "A": "release default: opt-level=3, codegen-units=16, lto=off (SHIPS)",
+    "B": "codegen-units=1 (owner untested knob)",
+    "C": "lto=fat + codegen-units=1 (max cross-unit + cross-crate inline)",
+    "D": "opt-level=0 (CONTROL / discriminator: proves the metric responds to codegen)"
+  },
+  "command": "systemd-run --user --unit=inguest-codegen-matrix -p (implicit) bash run-matrix.sh A:so/A.so B:so/B.so C:so/C.so D:so/D.so ; then rebuild_csv.py (parses raw /usr/bin/time -v files) ; analyze.py",
+  "note_on_csv": "The live run-matrix.sh CPU extractor had a leading-TAB awk bug (all cpu=0). Raw /usr/bin/time -v files were correct; results.csv was rebuilt from them via rebuild_csv.py. The run-matrix.sh copy here retains the taskset pin; use rebuild_csv.py as the authoritative parser."
+}
