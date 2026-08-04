@@ -1,0 +1,30 @@
+{
+  "experiment": "backend-perf-1cpu-box-allbackends",
+  "date": "2026-08-04",
+  "lane": "hermit-perf",
+  "task": "backend-rb-readiness-assessment (single-core CPU-time extension)",
+  "question": "Put all six backends (esp. the previously-unboxed DBI/SaBRe/e9patch) on the contamination-proof single-core CPU-time instrument, comparable in one session to the ptrace/liteinst anchors.",
+  "host": "devbig014.atn7.facebook.com",
+  "cpu": "AMD EPYC 9D85, 316 logical CPUs",
+  "box_mechanism": "sched_setaffinity",
+  "box_mechanism_reason": "cgroup cpuset NOT delegated on 3pai sandbox (cgroup.controllers = io memory pids); sched_setaffinity is the only working size-K box on this host",
+  "box_k": 1,
+  "box_recipe": "scratch/run-on-k-free-cores.py",
+  "reverie_sha": "bfea4d5aa7d662cacf21f41ff2df5b60925dff2d",
+  "landed_shootout_ancestor": "a9f25aa7a19faeb716b69e463e92c7160ab48c03",
+  "harness": "reverie/benchmarks/counter2-shootout/run.py",
+  "profile": "release",
+  "seed": 1,
+  "target_seconds": 3,
+  "repetitions": 3,
+  "warmups": 1,
+  "backends_measured": ["ptrace", "liteinst", "dbi", "sabre", "e9patch"],
+  "backends_anchors": ["ptrace", "liteinst"],
+  "native_baselines": true,
+  "workloads": {
+    "counter2-cpu-heavy": {"getpid_stride": 65536},
+    "counter2-syscall-mix": {"getpid_stride": 4096}
+  },
+  "provenance_caveat": "Measured while 6 orphaned hermit processes (ppid=1, 99.9% CPU, ~4.1h elapsed) consumed 6 cores continuously (detcore_misc livelock victims, reverie#355; symptoms not causes, correctly not killed). CPU-time (cgroup-charged / boxed single core) is contamination-proof against this; NO wall-clock figure was taken. Numbers comparable to a future clean-box run only on the CPU-time/native-normalized axis.",
+  "results_pending": true
+}
