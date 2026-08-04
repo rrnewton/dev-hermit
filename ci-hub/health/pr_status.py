@@ -130,6 +130,16 @@ _PASSED_REVIEW_LABELS = {
     "claude": "passed-review-claude",
 }
 _MECHANISM_TAG_PREFIX = "mechanism:"
+HEALTH_VERDICT_RULE = (
+    "ready non-draft PR GitHub check rollups only: UNHEALTHY iff any available "
+    "repo has real_reds>0 or outage_suspected=yes"
+)
+HEALTH_VERDICT_EXCLUDES = (
+    "local validation receipts",
+    "draft PRs",
+    "main-branch health",
+    "queue depth",
+)
 
 
 class RepoUnavailable(RuntimeError):
@@ -845,10 +855,44 @@ def _render_mechanism_overlaps(
             )
 
 
+def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
+    """Explain the top-level banner from the exact inputs that determine it."""
+    unhealthy = any(status.unhealthy for status in statuses)
+    unavailable = [status for status in statuses if not status.available]
+    state = "unhealthy" if unhealthy else ("degraded" if unavailable else "healthy")
+    inputs: list[dict[str, object]] = []
+    for status in statuses:
+        stale_base_reds = sum(
+            pr.get("red_class") == "stale-base" for pr in status.prs
+        )
+        inputs.append(
+            {
+                "repo": status.repo,
+                "available": status.available,
+                "ready_prs": status.open,
+                "green": status.green,
+                "real_reds": status.real_reds,
+                "stale_base_reds": stale_base_reds,
+                "undetermined_reds": status.undetermined_reds,
+                "no_result": status.pending,
+                "outage_suspected": status.outage_suspected,
+                "triggers_unhealthy": status.unhealthy,
+                "unavailable_reason": status.reason if not status.available else "",
+            }
+        )
+    return {
+        "state": state,
+        "rule": HEALTH_VERDICT_RULE,
+        "inputs": inputs,
+        "not_inputs": list(HEALTH_VERDICT_EXCLUDES),
+    }
+
+
 def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: str) -> str:
     total = sum(status.open for status in statuses if status.available)
     unavailable = [status for status in statuses if not status.available]
-    if any(status.unhealthy for status in statuses):
+    verdict = health_verdict(statuses)
+    if verdict["state"] == "unhealthy":
         heading = "CI health: UNHEALTHY"
     elif unavailable:
         heading = (
@@ -864,7 +908,23 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         ),
         "planner": "pinned agent-utils/pr-landing-planner status (per-PR git fetch)",
     }.get(engine, engine)
-    lines = [heading, f"Source: {source}"]
+    lines = [
+        heading,
+        f"Source: {source}",
+        f"Verdict rule: {HEALTH_VERDICT_RULE}",
+        "Verdict does not read: " + ", ".join(HEALTH_VERDICT_EXCLUDES),
+        "Verdict inputs:",
+    ]
+    for item in verdict["inputs"]:
+        assert isinstance(item, dict)
+        lines.append(
+            "  {repo}: available={available} ready={ready_prs} green={green} "
+            "real_reds={real_reds} stale_base_reds={stale_base_reds} "
+            "undetermined_reds={undetermined_reds} no_result={no_result} "
+            "outage={outage_suspected} triggers_unhealthy={triggers_unhealthy}".format(
+                **item
+            )
+        )
     for status in statuses:
         if not status.available:
             lines.append(f"  {status.repo}: UNAVAILABLE — {status.reason}")
@@ -1016,7 +1076,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         print(
             json.dumps(
-                {"engine": args.engine, "repos": [asdict(s) for s in statuses]},
+                {
+                    "engine": args.engine,
+                    "verdict": health_verdict(statuses),
+                    "repos": [asdict(s) for s in statuses],
+                },
                 sort_keys=True,
             )
         )

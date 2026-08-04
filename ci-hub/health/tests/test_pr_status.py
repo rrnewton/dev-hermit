@@ -497,6 +497,34 @@ class RenderTests(unittest.TestCase):
         report = pr_status.render_report([status], warn_threshold=10, engine="gh")
         self.assertIn("CI health: HEALTHY", report)
         self.assertIn("red=1", report)
+        self.assertIn("Verdict rule:", report)
+        self.assertIn("local validation receipts", report)
+
+    def test_unhealthy_verdict_names_exact_trigger_inputs(self) -> None:
+        status = pr_status.RepoStatus(
+            repo="rrnewton/hermit",
+            open=4,
+            green=1,
+            red=3,
+            pending=0,
+            real_reds=2,
+            outage_suspected=False,
+            prs=(
+                {"red_class": "real-red"},
+                {"red_class": "real-red"},
+                {"red_class": "stale-base"},
+            ),
+        )
+
+        verdict = pr_status.health_verdict([status])
+        self.assertEqual(verdict["state"], "unhealthy")
+        self.assertEqual(verdict["inputs"][0]["real_reds"], 2)
+        self.assertEqual(verdict["inputs"][0]["stale_base_reds"], 1)
+        self.assertTrue(verdict["inputs"][0]["triggers_unhealthy"])
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("real_reds=2", report)
+        self.assertIn("stale_base_reds=1", report)
+        self.assertIn("triggers_unhealthy=True", report)
 
     def test_render_surfaces_undetermined_caution(self) -> None:
         status = pr_status.RepoStatus(
