@@ -230,8 +230,16 @@ hermit_build() {
   copy_run_root "$package" hermit
   local root="$runs/$package/hermit/rootfs"
 
+  # Box the bare hermit run under the reaper. detached-verify only captures/greps the guest
+  # output (it does not cgroup-box), so the strict --verify subtree can still leak a burned
+  # core; --passthrough streams the guest output byte-identically into detached-verify's
+  # --grep/--tail capture while cgroup.kill tears the whole subtree down. This is a full
+  # dpkg-buildpackage under hermit, so the CPU budget is set high (2h CPU) to reap only a
+  # genuine runaway, never a legitimately long build.
   "$detached" run --name "drb-$package-hermit" --tail 16 \
     --grep 'determin' --grep 'verification' --grep error --grep failed -- \
+    "$workspace/scripts/hermit-box-run" --passthrough --label "drb-$package" \
+    --cpu-budget 7200 -- \
     "$HERMIT_BIN" run --strict --verify --base-env=minimal --network=local \
     --bind="$root:/tmp/drb-root" \
     --mount=type=bind,source=/proc,target=/tmp/drb-root/proc \

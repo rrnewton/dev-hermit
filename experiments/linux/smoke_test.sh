@@ -53,7 +53,15 @@ printf 'kernel=%s\ninitramfs=%s\nconsole=%s\n' \
   "$kernel_image" "$initramfs_image" "$console_log"
 
 set +e
-timeout --signal=KILL "${timeout_seconds}s" \
+# Box the bare hermit run under the reaper (box OUTSIDE the wall `timeout`). `timeout
+# --signal=KILL` reaches only the outer hermit; a QEMU/hermit escapee would leak. With the
+# box outermost, when the inner `timeout` fires the box's cgroup.kill teardown sweeps the
+# whole scope subtree (an outer SIGKILL to the box itself cannot be trapped, so timeout stays
+# INSIDE the scope). --passthrough keeps the QEMU serial (console_log) byte-identical for the
+# marker grep; the box CPU-budget (4x) reaps only a true runaway; `status` is the real exit.
+"$repo_root/scripts/hermit-box-run" --passthrough --label linux-smoke \
+  --cpu-budget "$((timeout_seconds * 4))" -- \
+  timeout --signal=KILL "${timeout_seconds}s" \
   "$hermit_bin" --log error run \
   --no-sequentialize-threads \
   --max-timeslice disabled \

@@ -46,8 +46,14 @@ while IFS=$'\t' read -r name args; do
   echo "run: $name  [$args]"
   for s in $(seq 1 "$N"); do
     cp -f "$IMG" "$SCR"
+    # Box the bare hermit run under the reaper. run_scoped.sh (`$SC`) only kills the child
+    # process GROUP (`kill -- -PGID`), which misses setsid/double-fork escapees — the exact
+    # leak. --passthrough streams the guest output byte-identically into run_scoped's r.out
+    # capture (so the sha256 interleaving signature is unchanged) while cgroup.kill reaps the
+    # whole subtree; CPU budget 4x the per-run wall cap.
     # shellcheck disable=SC2086
     "$SC" --timeout "$PERRUN" --output "$WORK/r.out" -- \
+        "$ROOT/scripts/hermit-box-run" --passthrough --cpu-budget "$((PERRUN * 4))" -- \
         "$H" $args --seed "$s" -- "$BOX" rescue chunk-recover -y -v "$SCR" >/dev/null 2>&1
     ex=$(grep -o 'command_exit=[0-9]*' "$WORK/r.out.status" 2>/dev/null | cut -d= -f2)
     ems=$(grep -o 'elapsed_ms=[0-9]*' "$WORK/r.out.status" 2>/dev/null | cut -d= -f2)
