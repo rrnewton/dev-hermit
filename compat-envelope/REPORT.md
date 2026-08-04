@@ -39,19 +39,37 @@ columns are apples-to-apples with the ptrace reference.
 
 - **`deterministic` (det)** = backend `--strict --verify` exits 0 (self-verified
   bitwise-identical repeat).
-- **`parity`** = backend `--strict` stdout is bitwise-identical to the ptrace
-  `--strict` reference **and** the cell is deterministic (parity ⊆ det).
+- **`stdout parity`** = backend `--strict` piped stdout has the same SHA-256 as
+  the ptrace `--strict` reference. This is measured independently of the
+  backend's `--strict --verify` result.
+
+**Measurement limit:** stdout parity is an upper bound on four-signal
+cross-backend parity. These data do not compare the other three required
+signals: the INFO log, stack detlog, and heap detlog. TTY behavior is also
+outside this scorecard. A `100%` stdout-parity cell can therefore still diverge
+on any of those unmeasured signals.
+
+**Measured counterexample (2026-08-03):** the `backend-parity/exit_zero` guest
+(`/bin/true`) at Hermit `e8a0d8d3be3b53985dc898bb8e5cbb696a6a719f` exited 0
+under ptrace and DBI with `--strict --no-virtualize-cpuid
+--max-timeslice=disabled`, and produced the same empty stdout (`e3b0c442...`).
+After removing only the wall-clock log prefix, the DETLOG payloads differed in
+every measured mode: INFO
+`56c018b3...` vs `c0a4cb5e...`, stack `0e17fb5a...` vs `992c02fd...`, and heap
+`56c018b3...` vs `bf3875dc...` (ptrace vs DBI). This is a real cell for which
+stdout parity is green while three required full-parity signals are red. TTY
+behavior was not measured.
 
 ### Full-corpus scorecard (absolute counts)
 
 `ptrace` is the golden denominator (integer cells passing L2). Every other
-backend shows `det / parity` absolute counts, where `det` = backend
-`--strict --verify` exits 0 and `parity` = backend guest stdout is SHA-256-identical
+backend shows `det / stdout parity` absolute counts, where `det` = backend
+`--strict --verify` exits 0 and `stdout parity` = backend guest stdout is SHA-256-identical
 to the plain-`--strict` ptrace reference. All six backends are now populated with
-**measured** data at hermit `82a8e853` (uniform lane flags). Parity is measured
+**measured** data at hermit `82a8e853` (uniform lane flags). Stdout parity is measured
 against a race-free plain-`--strict` ptrace reference regenerated for this run
 (`ptref235.out`); 20 cells where ptrace itself fails under plain `--strict` are
-parity-unmeasured for every non-ptrace backend (det still measured).
+stdout-parity-unmeasured for every non-ptrace backend (det still measured).
 
 ```
 bucket                 corpus  ptrace     kvm         lite        dbi         sabre       e9patch
@@ -73,12 +91,13 @@ util-c                      1   0/1        0/0         0/0         0/0         0
 TOTAL                     200 179/200    130/112     118/108     156/137     164/142     179/173
 ```
 
-### Same scorecard as `parity%, determinism%` of the ptrace-green count
+### Same scorecard as `stdout-parity%, determinism%` of the ptrace-green count
 
 (Rendered by
 `render-scorecard.rs --csv fullcorpus-scorecard.csv --all --backends dbi,kvm,sabre,liteinst,e9patch`;
-each backend cell is `parity%, determinism%` as a fraction of that bucket's
-ptrace-green count, `det% ≥ parity%` by construction.)
+each backend cell is `stdout-parity%, determinism%` as a fraction of that
+bucket's ptrace-green count. The two measurements are independent; the
+stdout-only limitation above applies to every percentage in this table.)
 
 ```
 bucket                  ptrace               dbi               kvm             sabre          liteinst           e9patch
@@ -107,11 +126,11 @@ TOTAL                      179          76%, 87%          63%, 72%          79%,
 | **Corpus / denominator** | **200** | ptrace-verify cells (202 `[[test]]`; 13 buckets). Replaces the "28". |
 | **ptrace L2 green** | **179/200 (89.5%)** | measured at `82a8e853`, uniform flags. |
 | ptrace L2 green (default flags) | 178/200 (89.0%) | preemption on; cross-validates the denominator is **flag-robust**. |
-| **KVM** | det **130/200 (65%)**, parity **112** | of 184 parity-measurable cells (16 non-C: ptrace-side fail → parity unmeasured). |
-| **LiteInst** | det **118/200 (59%)**, parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
-| **DBI** | det **156/200 (78%)**, parity **137** | `--features third-party-backends` binary at `82a8e853`; parity of 180 measurable cells. |
-| **SaBRe** | det **164/200 (82%)**, parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
-| **e9patch** | **AUTHORITATIVE (whole-corpus re-sweep `c7531a83`): 183/184 (99.46%) parity AND det on the ptrace-green denominator.** *(The `82a8e853` column below — det 179/200, parity 173 — is SUPERSEDED.)* | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. The **only** e9patch-specific gap is `rcx-canonicalization` (inherent instruction relocation); the parity gap collapsed 7 → 1 vs `82a8e853` as landed detcore fixes (stdio-inode `ee746bde`, proc-fd fixture `c7531a83`, backend-independent virtual clock) flipped in. Evidence: `experiments/e9patch_fullcorpus_resweep_c7531a83_20260802/`. |
+| **KVM** | det **130/200 (65%)**, stdout parity **112** | of 184 stdout-parity-measurable cells (16 non-C: ptrace-side fail → stdout parity unmeasured). |
+| **LiteInst** | det **118/200 (59%)**, stdout parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
+| **DBI** | det **156/200 (78%)**, stdout parity **137** | `--features third-party-backends` binary at `82a8e853`; stdout parity of 180 measurable cells. |
+| **SaBRe** | det **164/200 (82%)**, stdout parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
+| **e9patch** | **AUTHORITATIVE (whole-corpus re-sweep `c7531a83`): 183/184 (99.46%) stdout parity AND det on the ptrace-green denominator.** *(The `82a8e853` column below — det 179/200, stdout parity 173 — is SUPERSEDED.)* | e9patch AOT rewrite + ptrace runtime; tracks ptrace closely because the runtime *is* ptrace. The **only measured stdout gap** is `rcx-canonicalization` (inherent instruction relocation); the stdout-parity gap collapsed 7 → 1 vs `82a8e853` as landed detcore fixes (stdio-inode `ee746bde`, proc-fd fixture `c7531a83`, backend-independent virtual clock) flipped in. Evidence: `experiments/e9patch_fullcorpus_resweep_c7531a83_20260802/`. |
 | **Portable / privileged** | **200 / 2** | was 199 / 3; `cpuid-probe` reclassified portable. |
 
 Honest caveats:
@@ -131,16 +150,16 @@ Honest caveats:
   e9patch); SaBRe is a genuine ELF-loader backend (`libdetcore_sabre.so` +
   coordinator RPC, confirmed via `--log=trace`); DBI is DynamoRIO in-process
   and pays the most from preemption/re-entrancy limits (see the DBI notes).
-- **Parity reference correctness.** Parity is measured against a plain-`--strict`
+- **Stdout-reference correctness.** Stdout parity is measured against a plain-`--strict`
   ptrace reference (`ptref235.out`) regenerated race-free for this run, because
   the earlier `--verify`-based reference emitted no guest stdout (double-run mode
-  suppresses it), which had spuriously deflated every backend's parity. 20 cells
-  where ptrace itself errors under plain `--strict` are parity-unmeasured (not
+  suppresses it), which had spuriously deflated every backend's stdout parity. 20 cells
+  where ptrace itself errors under plain `--strict` are stdout-parity-unmeasured (not
   counted as 0) for all non-ptrace backends; det remains measured on all 200.
 - **e9patch ratchet ADVANCED — the earlier "7 inherent gaps / SATURATED" claim is
   RETRACTED.** That claim was made at `82a8e853`. Re-measured at `e8ddd925` (exact
   portable-lane flags `--strict --no-virtualize-cpuid --max-timeslice=disabled`,
-  real corpus guests), **6 of the 7 flipped to parity-green + L2-deterministic**:
+  real corpus guests), **6 of the 7 flipped to stdout-parity-green + L2-deterministic**:
     - `proc-fd-link-aliases` → green via **`ee746bde` "Stabilize stdio inode
       identity across backends"** (fd 1's `readlink` now emits a fixed
       `pipe:[1001]` = `DET_SPECIAL_INODE_OFFSET+1`, independent of loader activity
@@ -162,11 +181,11 @@ Honest caveats:
     re-check above left the full column stale at `82a8e853`; a fresh
     `collect-fullcorpus.sh --backends ptrace,e9patch` sweep at current main
     (hermit `c7531a83`, reverie `ef5ffebc`, 235-cell corpus, 184 ptrace-green)
-    now gives the authoritative figure: **e9patch 183/184 (99.46%) parity AND
-    det on the ptrace-green denominator.** The parity gap is down to **1** — the
+    now gives the authoritative figure: **e9patch 183/184 (99.46%) stdout parity AND
+    det on the ptrace-green denominator.** The stdout-parity gap is down to **1** — the
     sole cell where ptrace passes det but e9patch does not is
-    `rcx-canonicalization`; there are **zero** parity-only gaps, and the 21
-    parity-unmeasured cells are all ones where **ptrace itself fails** (qemu-*,
+    `rcx-canonicalization`; there are **zero** stdout-parity-only gaps, and the 21
+    stdout-parity-unmeasured cells are all ones where **ptrace itself fails** (qemu-*,
     thread-contention, ipc/signal/mmap-determinism, shell-pipeline, pmu-skid, …),
     which e9patch mirrors rather than regresses. The product-side ratchet is thus
     at its achievable bar, this time confirmed by whole-corpus measurement, not
@@ -225,18 +244,18 @@ TOTAL                        6          0%, 100%
 
 Honest finding (host with `/dev/kvm`): KVM is **fully self-deterministic**
 (`100%` determinism) but surfaces a **constant 4 fewer syscalls** to the shared
-Tool callback than ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` parity. A
+Tool callback than ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` stdout parity. A
 real **B1.5 Guest-contract interception-surface gap**, measured and confirmed 0
 (no `?`), not a determinism defect.
 
 ## Legend (anti-fakery markers)
 
-- `det / parity` (absolute table) — cells self-verified L2 / cells also
-  bitwise-identical to ptrace. parity ⊆ det.
-- `parity%` / `determinism%` (percent table) — fraction of that bucket's
-  ptrace-green count. det% ≥ parity% by construction.
-- `X%?` — parity never measured (UNKNOWN, not a confirmed 0).
-- `X%~` — partial parity coverage.
+- `det / stdout parity` (absolute table) — cells self-verified L2 / cells whose
+  piped stdout is bitwise-identical to ptrace. These are independent signals.
+- `stdout-parity%` / `determinism%` (percent table) — fraction of that bucket's
+  ptrace-green count. Neither percentage implies the other.
+- `X%?` — stdout parity never measured (UNKNOWN, not a confirmed 0).
+- `X%~` — partial stdout-parity coverage.
 - `n/a` — backend ran **zero** cells here (binary absent / not built). **Not** a
   confirmed fail. A real red (ran + failed) is visually distinct from "not
   runnable here".
@@ -248,7 +267,7 @@ real **B1.5 Guest-contract interception-surface gap**, measured and confirmed 0
 experiments/ptrace_fullcorpus_scorecard_20260801/sweep.sh            # ptrace L2 (uniform flags)
 NOFLAGS=1 ROWS=.../rows-default OUTCSV=.../scorecard-ptrace-default.csv \
   experiments/ptrace_fullcorpus_scorecard_20260801/sweep.sh          # ptrace L2 (default flags)
-experiments/ptrace_fullcorpus_scorecard_20260801/sweep-liteinst.sh   # LiteInst det + parity
+experiments/ptrace_fullcorpus_scorecard_20260801/sweep-liteinst.sh   # LiteInst det + stdout parity
 experiments/kvm_fullcorpus_scorecard_20260801/sweep.sh               # KVM (C cells)
 experiments/kvm_fullcorpus_scorecard_20260801/sweep-nonc.sh          # KVM (shell/interpreter cells)
 
@@ -256,9 +275,9 @@ experiments/kvm_fullcorpus_scorecard_20260801/sweep-nonc.sh          # KVM (shel
 HERMIT_BIN=scratch/featured235-target/release/hermit BACKEND=dbi \
   experiments/ptrace_fullcorpus_scorecard_20260801/sweep-backend.sh   # (also sabre, e9patch)
 
-# Regenerate the plain --strict ptrace PARITY reference (ptref235.out) — the
-# --verify-based ptv.out is empty (double-run suppresses stdout), so parity must
-# use this; then recompute the backend parity columns against it:
+# Regenerate the plain --strict ptrace STDOUT reference (ptref235.out) — the
+# --verify-based ptv.out is empty (double-run suppresses stdout), so stdout
+# parity must use this; then recompute the backend stdout-parity columns:
 HERMIT_BIN=scratch/featured235-target/release/hermit \
   experiments/ptrace_fullcorpus_scorecard_20260801/gen-ptrace-parity-ref.sh
 experiments/ptrace_fullcorpus_scorecard_20260801/recompute-parity.sh
