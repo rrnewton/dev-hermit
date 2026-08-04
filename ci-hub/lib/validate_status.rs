@@ -14,16 +14,21 @@
 //!
 //! A record satisfies the predicate for a commit iff it is a clean,
 //! commit-anchored, FULL-profile, FULL-selection PASS that CARRIES WHAT IT
-//! VERIFIED — a nonzero executed-test count:
+//! VERIFIED — a nonzero executed-test count AND zero filtered-out:
 //!   commit == <sha> && commit_anchored == true && tree_dirty == false &&
 //!   selection_mode == "full" && profile == "full" && result == "pass" &&
-//!   executed_tests != Some(0).
+//!   executed_tests == Some(n) with n > 0 && filtered_tests == Some(0).
 //!
-//! The last two clauses are the same rule from two sides: a green must carry
-//! WHAT IT COVERED (profile/selection — a partial `*-only` profile or a subset
-//! selection is fail-closed rejected) and HOW MUCH IT VERIFIED (executed count —
-//! a zero-test green is a no-result, not a pass). `executed_tests == None` is
-//! UNKNOWN (the count absent from the record), fail-safe left alone.
+//! The count clauses are the SAME rule from two sides: a green must carry WHAT IT
+//! COVERED (profile/selection — a partial `*-only` profile or a subset selection
+//! is fail-closed rejected) and HOW MUCH IT VERIFIED (executed count — a zero-
+//! test green is a no-result, not a pass; a filtered subset is a narrowed scope,
+//! not the full suite). A green that does NOT carry these counts is refused: an
+//! absent count is an unqualified claim, and this reader gates on the fields the
+//! writer already records, so the writer's three fields (profile/executed/
+//! filtered) and this consumer enforce ONE judgement, matching the Proxy Binding
+//! truth table at AGENTS.md. `validate.sh`'s `append_validation_ledger` must emit
+//! both counts for its receipts to be trusted for landing.
 //!
 //! This is intentionally NEVER LOOSER than `hermit/validate.sh`'s own
 //! `locally-validated` stamp guard, which fires only when
@@ -105,20 +110,45 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
         && row.profile.as_deref() == Some("full")
 }
 
-/// The landing / cache predicate: a clean full-coverage PASS for the commit
-/// that CARRIES A NONZERO executed-test count. A green whose own banners prove
-/// zero tests ran is a no-result wearing a success badge (the `--features`-gated
-/// build that compiled the tests out), never a pass. FAIL-SAFE: only an explicit
-/// `Some(0)` is refused; `None` — the field absent, which is every `validate.sh`
-/// ledger row today, since `append_validation_ledger` does not yet emit the count
-/// — is UNKNOWN, not zero, so existing records are unaffected. The guard is live
-/// now for any record that CARRIES the count (aggregate.py emits `executed_tests`)
-/// and closes fully once the ledger write point emits it too. Mirrors the fail-
-/// safe direction of `nonzero_result.is_zero_test_green`.
+/// The landing / cache predicate: a clean full-coverage PASS for the commit that
+/// CARRIES a nonzero executed-test count AND filtered nothing out. A green MUST
+/// carry what it verified; a receipt that does not is not a green, it is an
+/// unqualified claim. Three ways a full-profile `pass` row nonetheless verifies
+/// less than it claims, each refused here:
+///   * `executed_tests` ABSENT — the receipt never states how much it ran. This
+///     is WORSE than a demonstrated zero: a zero-test run at least logs
+///     `running 0 tests` (greppable, catchable); an absent count leaves nothing
+///     to catch. A green with no count is a proxy for a green.
+///   * `executed_tests == Some(0)` — the banners prove zero tests ran, a
+///     no-result wearing a success badge (the `--features`-gated build that
+///     compiled the tests out).
+///   * `filtered_tests != Some(0)` — a NAME-FILTERED subset (`1 passed; 154
+///     filtered out`) covered a narrowed scope while claiming the full profile. A
+///     genuinely full `cargo test` filters nothing, so a positive filtered count
+///     is the same scope-masquerade defect as a partial profile, and an ABSENT
+///     filtered count is again an unqualified claim: the run does not state that
+///     it filtered nothing.
+///
+/// So a full green requires, over and above clean full coverage: `result==pass`,
+/// `executed_tests == Some(n)` with `n > 0`, and `filtered_tests == Some(0)`.
+/// Missing either count, zero execution, or any positive filtered count is
+/// NotValidated (exit 4 = re-dispatch), never FailedOnRecord — the run is
+/// UNVERIFIED, not known-bad. This is the reader half of the SAME three-field
+/// judgement the writer records (`aggregate.py` emits profile, executed, and
+/// filtered) and the SAME truth table the Proxy Binding rule states at AGENTS.md
+/// ("a green must carry what it verified": profile=full, executed>0, filtered=0,
+/// failures=0). Recording a field and gating on it are different things; this
+/// closes the gap where the writer carried all three and the reader enforced one.
+///
+/// DRAIN NOTE: `validate.sh`'s `append_validation_ledger` must emit both counts
+/// (via `nonzero_result.py --ledger-fields`) for a validate.sh receipt to satisfy
+/// this predicate; a receipt written without the counts reads NotValidated and is
+/// re-dispatched, by design — an uncounted green is not trusted for landing.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
     is_clean_full_coverage(row, sha)
         && row.result.as_deref() == Some("pass")
-        && row.executed_tests != Some(0)
+        && matches!(row.executed_tests, Some(n) if n > 0)
+        && row.filtered_tests == Some(0)
 }
 
 /// A clean full-coverage run for the commit that is a genuine FAILURE (a
@@ -252,11 +282,16 @@ mod tests {
         serde_json::from_str(json).expect("valid HistoryRow json")
     }
 
+    /// The canonical LEGITIMATE full green: clean, commit-anchored, full/full,
+    /// `result==pass`, and — as a green must — CARRYING its counts: a nonzero
+    /// executed count and zero filtered-out. Negative tests override one field to
+    /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
             r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
+                "executed_tests":36,"filtered_tests":0,
                 "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90}}"#
         ))
     }
@@ -347,13 +382,71 @@ mod tests {
     }
 
     #[test]
-    fn absent_count_is_backward_compatible() {
-        // FAIL-SAFE: a record with no executed_tests field (every validate.sh
-        // ledger row today) is UNKNOWN, not zero, so it still validates. The
-        // clean_full_pass helper omits the field, so this is the default case.
-        let r = clean_full_pass(PASS_SHA);
-        assert_eq!(r.executed_tests, None);
-        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::Validated);
+    fn absent_executed_count_is_not_validated() {
+        // NEGATIVE: a green that does not STATE how much it ran is an unqualified
+        // claim, not a green. Worse than a demonstrated zero — a zero-test run
+        // logs `running 0 tests` (greppable); an absent count leaves nothing to
+        // catch. It is unverified, so NotValidated (re-dispatch), not known-bad.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.executed_tests = None;
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+        assert_eq!(a.qualifying.len(), 0);
+    }
+
+    #[test]
+    fn absent_filtered_count_is_not_validated() {
+        // NEGATIVE: a full-profile green that does not STATE it filtered nothing
+        // out is likewise unqualified. Only an explicit `filtered==0` proves the
+        // full suite ran unnarrowed.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.filtered_tests = None;
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn filtered_subset_is_not_validated() {
+        // NEGATIVE: the `1 passed; 154 filtered out` narrowed-scope trap. A
+        // full-coverage `pass` with a nonzero executed count but a POSITIVE
+        // filtered count ran a name-filtered subset while claiming the full
+        // profile — the same scope masquerade as a partial profile. Both
+        // filtered=1 and filtered=154 are refused.
+        for filtered in [1_i64, 154] {
+            let mut r = clean_full_pass(PASS_SHA);
+            r.executed_tests = Some(1);
+            r.filtered_tests = Some(filtered);
+            let a = assess(&[r], PASS_SHA);
+            assert_eq!(
+                a.verdict,
+                Verdict::NotValidated,
+                "filtered={filtered} must be NotValidated"
+            );
+            assert_eq!(a.verdict.exit_code(), 4);
+        }
+    }
+
+    #[test]
+    fn positive_control_three_legitimate_full_passes_validate() {
+        // POSITIVE CONTROL, N=3: the guard must not reject everything. Three
+        // legitimate clean full/full passes carrying nonzero executed counts
+        // (1, 47, 332) and filtered==0 all remain VALIDATED (rc=0). Without this
+        // control a consumer that rejects absent AND filtered would pass every
+        // negative test above and still be useless — it would refuse real greens.
+        for executed in [1_i64, 47, 332] {
+            let mut r = clean_full_pass(PASS_SHA);
+            r.executed_tests = Some(executed);
+            r.filtered_tests = Some(0);
+            let a = assess(&[r], PASS_SHA);
+            assert_eq!(
+                a.verdict,
+                Verdict::Validated,
+                "executed={executed} filtered=0 must be Validated"
+            );
+            assert_eq!(a.verdict.exit_code(), 0);
+        }
     }
 
     #[test]
