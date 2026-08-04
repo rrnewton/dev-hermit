@@ -106,6 +106,25 @@ _BUILD_SCRIPT_FAILURE_MARKERS = (
     "failed to run custom build command for",  # cargo build-script failure line
 )
 _BUILD_SCRIPT_PANIC_RE = re.compile(r"panicked at [^\n]*build\.rs")
+# An inner-MemoryMax OOM inside a boxed DAG node — the safe-ci-dag-runner reaped a
+# step because it crossed its cgroup memory.max — is an ENVIRONMENTAL cap breach,
+# not a product test verdict, even when its victim happens to be a test process and
+# the node then surfaces "N failed"/"panicked at". It reproduces every run at the
+# same cap, so it is a hole to re-dispatch (and fix-forward by RAISING the cap),
+# never a tip to revert. It is recognised BEFORE the build-script and test-verdict
+# markers so neither shared vocabulary can manufacture a false red, and because
+# "raise this node's cap" is the actionable label even when the OOM also panicked a
+# build.rs. BLAST-RADIUS CAVEAT (see the task note): the runner does not set
+# memory.oom.group, so the kernel may kill an innocent process INSIDE the breaching
+# node rather than the allocator that crossed the cap — attribution is sound at
+# DAG-NODE granularity, NOT per-process. Do not blame the named victim; the reason
+# points at the node's cap, which is the correct fix. Exact runner strings:
+# model.rs `OOM-KILLED (hit inner MemoryMax; N oom_kill event(s))` and scheduler.rs
+# `MEMORY CAP HIT: OOM-killed at its inner cgroup MemoryMax`.
+_INNER_MEMORYMAX_OOM_MARKERS = (
+    "oom-killed (hit inner memorymax",  # model.rs step reason
+    "oom-killed at its inner cgroup memorymax",  # scheduler.rs cap-hit banner
+)
 # Diagnostic-only labels for a no_result. Grouped by CAUSE, but NON-load-bearing:
 # they name which box to fix in the log, they do NOT gate red vs no_result, so
 # this set can be incomplete without ever producing a false red.
@@ -180,6 +199,18 @@ def _infra_signature(output: str) -> str | None:
     return None
 
 
+def _is_inner_memorymax_oom(output: str) -> bool:
+    """Whether a boxed DAG node was OOM-reaped at its inner cgroup memory.max.
+
+    A cap breach is environmental (raise the cap), not a product test verdict —
+    even when the reaped victim is a test process and the node then renders
+    "N failed"/"panicked at". Recognising it keeps that shared vocabulary from
+    manufacturing a false red; attribution is sound only at DAG-NODE granularity.
+    """
+    lowered = output.lower()
+    return any(marker in lowered for marker in _INNER_MEMORYMAX_OOM_MARKERS)
+
+
 def _is_build_phase_failure(output: str) -> bool:
     """Whether the failure originates in the BUILD phase, not a product test.
 
@@ -206,6 +237,13 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
         return "green", "clean exit"
     if exit_code < 0 or exit_code in _LOCAL_INFRA_EXITS:
         return "no_result", f"environment-killed (exit={exit_code})"
+    if _is_inner_memorymax_oom(output):
+        # A boxed node reaped at its inner cgroup memory.max is an environmental
+        # cap breach (fix-forward = raise the cap), NOT a failing test verdict —
+        # even when the reaped victim is a test process and the node then rendered
+        # "N failed"/"panicked at". Recognised BEFORE build-script/test markers so
+        # neither shared vocabulary can manufacture a revert: re-dispatch, never revert.
+        return "no_result", "non-test-failure:inner-memorymax-oom"
     if _is_build_phase_failure(output):
         # A build-script panic / "failed to run custom build command" surfaced
         # through the DAG runner's "N failed" / "panicked at" summary is a

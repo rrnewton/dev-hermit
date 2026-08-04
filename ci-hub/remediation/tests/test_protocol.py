@@ -697,6 +697,51 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
         self.assertEqual(state, "red")
         self.assertEqual(reason, "test-failure")
 
+    def test_inner_memorymax_oom_in_test_node_is_no_result_not_red(self) -> None:
+        # Sixth env signature (task cancellation_taxonomy_distinguish_self note
+        # 2026-08-04, validate SHA 37f8ef3c): an inner-cgroup MemoryMax OOM inside a
+        # boxed TEST node SIGKILLs a test process, so the node surfaces a genuine
+        # test-failure VERDICT ("N failed"/panic). Build-script recognition alone
+        # does NOT catch this (no build.rs panic), so without the OOM signature
+        # _has_test_failures would fire -> false red. The OOM string is the tell:
+        # this is a cap breach to re-dispatch (fix-forward = raise the cap), never a
+        # tip to revert. Runner strings planted verbatim (model.rs / scheduler.rs).
+        output = (
+            "[test.hermit_integration] ▲ MEMORY CAP HIT: OOM-killed at its inner "
+            "cgroup MemoryMax (4.0 GiB); peak 4.0 GiB, 14 oom_kill event(s)\n"
+            "❌ portable CI DAG manifest (0 passed, 1 failed, exit 1: "
+            "[test.hermit_integration] OOM-KILLED (hit inner MemoryMax; 14 oom_kill "
+            "event(s)))\n"
+            "thread 'detcore::sched::tests::t' panicked at src/lib.rs:9:1: SIGKILL\n"
+            "test result: FAILED. 20 passed; 1 failed; 0 ignored\n"
+        )
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:inner-memorymax-oom")
+
+    def test_inner_memorymax_oom_that_also_panicked_build_rs_labels_oom(self) -> None:
+        # When an OOM reaps a child rustc/cc1plus and reverie-dbi/build.rs then
+        # panics, BOTH the OOM string and the build.rs panic are present. The OOM
+        # signature is checked FIRST because "raise this node's cap" is the
+        # actionable label; the outcome is no_result either way, never a revert.
+        output = (
+            "[build.dbi_release] ▲ MEMORY CAP HIT: OOM-killed at its inner cgroup "
+            "MemoryMax (8.0 GiB); peak 8.0 GiB, 1 oom_kill event(s)\n"
+            "thread 'main' panicked at reverie-dbi/build.rs:339:5: rustc killed\n"
+            "❌ Validation summary [full] (3 passed, 2 failed)\n"
+        )
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:inner-memorymax-oom")
+
+    def test_genuine_test_failure_without_oom_stays_red(self) -> None:
+        # Symmetric guard: a real failing test verdict with NO OOM string is still a
+        # red that must revert -- the OOM signature never swallows a genuine failure.
+        output = "test result: FAILED. 40 passed; 1 failed; 0 ignored\n"
+        state, reason = protocol._classify_local(101, output)
+        self.assertEqual(state, "red")
+        self.assertEqual(reason, "test-failure")
+
     def test_network_proxy_drop_is_no_result(self) -> None:
         output = "error: failed to get `serde`\nCaused by: could not resolve host: github.com\n"
         state, _ = protocol._classify_local(101, output)
