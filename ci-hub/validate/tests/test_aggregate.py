@@ -200,6 +200,30 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(agg.gate_kind({"exit_code": 0}), "pass")
 
 
+class SummaryCompletenessTest(unittest.TestCase):
+    def test_truncated_is_not_counted_as_result_or_product_failure(self):
+        truncated = {
+            "profile": "full", "result": "fail", "checks": 2,
+            "gates_run": 2, "gates_expected": 5, "failures": 2,
+        }
+        genuine = {
+            "profile": "full", "result": "fail", "checks": 5,
+            "gates_run": 5, "gates_expected": 5, "failures": 1,
+        }
+        # N=2 legitimate passes are the unaffected positive controls.
+        passes = [
+            {"profile": "full", "result": "pass", "checks": 5,
+             "gates_run": 5, "gates_expected": 5, "failures": 0},
+            {"profile": "full", "result": "pass", "checks": 5,
+             "gates_run": 5, "gates_expected": 5, "failures": 0},
+        ]
+        out = agg.summarize([truncated, genuine, *passes], [], 0)
+        self.assertIn("fail=1", out)
+        self.assertIn("pass=2", out)
+        self.assertIn("truncated=1", out)
+        self.assertIn("product-fail=1", out)
+
+
 # A full reverie run in the shape reverie/validate.sh emits: `Reverie validation
 # log` product line, Root/Level/Host OS header, a commit SHA line, then the same
 # `=== name ===` / Command: / Exit: / Duration: gate markers hermit writes. The

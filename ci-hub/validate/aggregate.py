@@ -57,6 +57,15 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "remediation"))
 from nonzero_result import executed_test_count, filtered_test_count  # noqa: E402
 
+# Flake/contention reclassification of reds lives beside this aggregator (same
+# validate/ dir). A recorded `fail` that is actually a known-flaky-cell coin-flip
+# or a cargo-cache contention artifact gets a `flake_analysis` annotation so the
+# false red surfaces for re-measurement instead of permanently condemning a
+# healthy commit. Read-side half; the producer (hermit/validate.sh) records the
+# -j width + concurrent-validate count and enforces re-run-before-write.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import flake_class  # noqa: E402
+
 SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 DUR_RE = re.compile(r"(\d+)")
 
@@ -532,7 +541,7 @@ def render_table(runs: list[dict]) -> str:
             (r.get("slot") or "?")[:16],
             (r.get("commit") or "?")[:8],
             (r.get("profile") or "?"),
-            r.get("result") or "?",
+            r.get("effective_result") or flake_class.effective_result(r) or "?",
             ngates,
             fmt_secs(r.get("real_seconds")),
             fmt_secs(r.get("user_seconds")),
@@ -555,7 +564,8 @@ def render_table(runs: list[dict]) -> str:
 def summarize(runs, profiles, linked) -> str:
     by_result, by_slot, by_src, by_repo = {}, {}, {}, {}
     for r in runs:
-        by_result[r.get("result")] = by_result.get(r.get("result"), 0) + 1
+        result = flake_class.effective_result(r)
+        by_result[result] = by_result.get(result, 0) + 1
         by_slot[r.get("slot")] = by_slot.get(r.get("slot"), 0) + 1
         by_src[r.get("_source")] = by_src.get(r.get("_source"), 0) + 1
         repo = r.get("repo") or "hermit"
@@ -564,7 +574,11 @@ def summarize(runs, profiles, linked) -> str:
     # product failures vs cut-off runs are separate attributions.
     killed = sum(r.get("killed_by_bound") or 0 for r in runs)
     incomplete = sum(r.get("incomplete_gates") or 0 for r in runs)
-    prod_fail = sum(r.get("failures") or 0 for r in runs)
+    prod_fail = sum(
+        r.get("failures") or 0
+        for r in runs
+        if flake_class.effective_result(r) in ("fail", "timeout")
+    )
     out = ["", "=== Machine-wide validate-run summary ==="]
     out.append(f"  total runs        : {len(runs)}")
     out.append(f"  by repo           : " +
@@ -574,7 +588,7 @@ def summarize(runs, profiles, linked) -> str:
     out.append(f"  gate attribution  : "
                f"product-fail={prod_fail}, killed-by-bound={killed} "
                f"(timeout/cgroup/contention), incomplete={incomplete} (run cut off)"
-               "   (RESULT values: pass/pass-partial/no_result/fail/timeout/incomplete;"
+               "   (RESULT values: pass/pass-partial/no_result/fail/timeout/incomplete/truncated;"
                " pass-partial=non-full profile, no_result=zero tests executed)")
     out.append(f"  by source         : " +
                ", ".join(f"{k}={v}" for k, v in sorted(by_src.items(), key=lambda x: str(x[0]))) +
@@ -598,12 +612,34 @@ def main() -> int:
     ap.add_argument("--slot", metavar="NAME", help="filter to one slot/worktree")
     ap.add_argument("--profiling", action="store_true",
                     help="show profiling-source coverage instead of the run table")
+    ap.add_argument("--false-reds", action="store_true",
+                    help="list recorded reds reclassified as needs-rerun "
+                         "(known-flaky cell or contended run) — the false reds "
+                         "that permanently condemn a healthy commit until re-run")
     args = ap.parse_args()
 
     parent = parent_root()
     runs = load_all_runs(parent)
     profiles = discover_profiles(parent)
     linked = link_profiling(runs, profiles)
+
+    # Resolve the -j width parent-side for profiled runs: the safe-ci-dag-runner
+    # profiling CSV records `jobs` even though the ledger row does not yet (that
+    # is the schema-4 producer change). A run whose width is knowable is a
+    # stronger contention judgement than one whose width is unrecorded.
+    for r in runs:
+        if r.get("jobs") is None and isinstance(r.get("_profiling"), dict):
+            j = (r["_profiling"].get("sample") or {}).get("jobs")
+            if j not in (None, ""):
+                try:
+                    r["jobs"] = int(j)
+                except (TypeError, ValueError):
+                    pass
+    # Annotate every red with defect-vs-flake/contention analysis (additive;
+    # never mutates `result`).
+    flake_class.annotate(runs)
+    for r in runs:
+        r["effective_result"] = flake_class.effective_result(r)
 
     if args.since:
         runs = [r for r in runs if (r.get("_sortkey") or "") >= args.since]
@@ -621,6 +657,28 @@ def main() -> int:
                   f"first={ts[0]}  last={ts[-1]}")
             print(f"      dir: {ckt}/.safe-ci-dag-runner/profiles/")
         print(f"\n  total profiling rows: {len(profiles)} across {len(by_ckt)} checkouts")
+        return 0
+
+    if args.false_reds:
+        flagged = [r for r in runs
+                   if (r.get("flake_analysis") or {}).get("verdict") == "needs-rerun"]
+        if not flagged:
+            print("No recorded reds reclassify as needs-rerun "
+                  f"(scanned {len(runs)} runs).")
+            return 0
+        print(f"{len(flagged)} recorded red(s) are NEEDS-RERUN, not defects — a "
+              "single FAILED here condemns a healthy commit until re-run:\n")
+        for r in flagged:
+            fa = r["flake_analysis"]
+            t = (r.get("started_at") or r.get("finished_at") or "?")[:19]
+            print(f"  {t}  {(r.get('repo') or 'hermit')}  "
+                  f"{(r.get('commit') or '?')[:10]}  profile={r.get('profile')}  "
+                  f"result={r.get('result')}")
+            print(f"      cells={fa.get('failing_cells') or '-'}  "
+                  f"concurrent_validates={fa.get('concurrent_validates')}  "
+                  f"jobs={fa.get('jobs')}")
+            for reason in fa.get("reasons", []):
+                print(f"      - {reason}")
         return 0
 
     if args.write_global:
