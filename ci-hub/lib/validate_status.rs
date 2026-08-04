@@ -13,9 +13,17 @@
 //! ## The predicate (VALIDATED)
 //!
 //! A record satisfies the predicate for a commit iff it is a clean,
-//! commit-anchored, FULL-profile, FULL-selection PASS:
+//! commit-anchored, FULL-profile, FULL-selection PASS that CARRIES WHAT IT
+//! VERIFIED — a nonzero executed-test count:
 //!   commit == <sha> && commit_anchored == true && tree_dirty == false &&
-//!   selection_mode == "full" && profile == "full" && result == "pass".
+//!   selection_mode == "full" && profile == "full" && result == "pass" &&
+//!   executed_tests != Some(0).
+//!
+//! The last two clauses are the same rule from two sides: a green must carry
+//! WHAT IT COVERED (profile/selection — a partial `*-only` profile or a subset
+//! selection is fail-closed rejected) and HOW MUCH IT VERIFIED (executed count —
+//! a zero-test green is a no-result, not a pass). `executed_tests == None` is
+//! UNKNOWN (the count absent from the record), fail-safe left alone.
 //!
 //! This is intentionally NEVER LOOSER than `hermit/validate.sh`'s own
 //! `locally-validated` stamp guard, which fires only when
@@ -97,14 +105,31 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
         && row.profile.as_deref() == Some("full")
 }
 
-/// The landing / cache predicate: a clean full-coverage PASS for the commit.
+/// The landing / cache predicate: a clean full-coverage PASS for the commit
+/// that CARRIES A NONZERO executed-test count. A green whose own banners prove
+/// zero tests ran is a no-result wearing a success badge (the `--features`-gated
+/// build that compiled the tests out), never a pass. FAIL-SAFE: only an explicit
+/// `Some(0)` is refused; `None` — the field absent, which is every `validate.sh`
+/// ledger row today, since `append_validation_ledger` does not yet emit the count
+/// — is UNKNOWN, not zero, so existing records are unaffected. The guard is live
+/// now for any record that CARRIES the count (aggregate.py emits `executed_tests`)
+/// and closes fully once the ledger write point emits it too. Mirrors the fail-
+/// safe direction of `nonzero_result.is_zero_test_green`.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
-    is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")
+    is_clean_full_coverage(row, sha)
+        && row.result.as_deref() == Some("pass")
+        && row.executed_tests != Some(0)
 }
 
-/// A clean full-coverage run for the commit that did NOT pass.
+/// A clean full-coverage run for the commit that is a genuine FAILURE (a
+/// known-bad commit). A `no_result` (a zero-test green already downgraded by the
+/// aggregator) is deliberately EXCLUDED: it is not known-bad, it is unverified,
+/// so it falls through to `NotValidated` (exit 4 = re-dispatch), never
+/// `FailedOnRecord` (exit 3 = known failing).
 fn is_clean_full_nonpass(row: &HistoryRow, sha: &str) -> bool {
-    is_clean_full_coverage(row, sha) && row.result.as_deref() != Some("pass")
+    is_clean_full_coverage(row, sha)
+        && row.result.as_deref() != Some("pass")
+        && row.result.as_deref() != Some("no_result")
 }
 
 /// The outcome of assessing a commit against the ledger.
@@ -295,6 +320,52 @@ mod tests {
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );
         assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::FailedOnRecord);
+    }
+
+    #[test]
+    fn zero_test_green_is_not_validated() {
+        // NEGATIVE: a clean full-coverage "pass" whose own banners prove zero
+        // tests ran is a no-result, not a landing-eligible green. It is neither a
+        // pass nor a known failure, so it must fall through to NotValidated
+        // (exit 4 = re-dispatch), never Validated and never FailedOnRecord.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.executed_tests = Some(0);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+        assert_eq!(a.qualifying.len(), 0);
+    }
+
+    #[test]
+    fn counted_pass_validates() {
+        // POSITIVE: the same clean full-coverage pass with a NONZERO executed
+        // count is validated. Proves the guard is not inert — it does not reject
+        // every green, only the demonstrably empty one.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.executed_tests = Some(47);
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::Validated);
+    }
+
+    #[test]
+    fn absent_count_is_backward_compatible() {
+        // FAIL-SAFE: a record with no executed_tests field (every validate.sh
+        // ledger row today) is UNKNOWN, not zero, so it still validates. The
+        // clean_full_pass helper omits the field, so this is the default case.
+        let r = clean_full_pass(PASS_SHA);
+        assert_eq!(r.executed_tests, None);
+        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::Validated);
+    }
+
+    #[test]
+    fn no_result_verdict_is_not_failed_on_record() {
+        // A `no_result` (the aggregator's downgrade of a zero-test green) is
+        // unverified, not known-bad: NotValidated (re-dispatch), not
+        // FailedOnRecord.
+        let mut r = clean_full_pass(PASS_SHA);
+        r.result = Some("no_result".into());
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
     }
 
     #[test]

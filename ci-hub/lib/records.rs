@@ -121,6 +121,22 @@ pub struct HistoryRow {
     pub tree_dirty: Option<bool>,
     #[serde(default)]
     pub result: Option<String>,
+    /// Tests EXECUTED per the run's own test-runner banners. `None` = unknown (no
+    /// banner in the log), distinct from `Some(0)` = a demonstrably inert green
+    /// (a `--features`-gated build that compiled the tests out). A green carries
+    /// this so a reader — and the landing predicate — can tell a real pass from a
+    /// no-result wearing a success badge.
+    #[serde(default)]
+    pub executed_tests: Option<i64>,
+    /// Tests FILTERED OUT by the run's selection. `Some(0)` alongside
+    /// `executed_tests == Some(0)` is an empty target; `Some(n>0)` is a filtered
+    /// subset (the `1 passed; 154 filtered out` narrowed-scope trap).
+    #[serde(default)]
+    pub filtered_tests: Option<i64>,
+    /// Whether the run covered the FULL profile (`level == "full"`), not a
+    /// partial `*-only` profile whose pass reads identically to a full green.
+    #[serde(default)]
+    pub full_coverage: Option<bool>,
     #[serde(default)]
     pub checks: Option<u64>,
     #[serde(default)]

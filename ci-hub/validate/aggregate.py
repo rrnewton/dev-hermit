@@ -49,6 +49,14 @@ import os
 import re
 import sys
 
+# ONE extractor, not a second regex copy that could drift: the executed- and
+# filtered-test counting logic lives solely in the remediation `nonzero_result`
+# module (also imported by remediation/protocol.py). This aggregator feeds that
+# module the candidate banner lines it already reads while streaming; it does not
+# re-implement `running N tests` parsing.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "remediation"))
+from nonzero_result import executed_test_count, filtered_test_count  # noqa: E402
+
 SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 DUR_RE = re.compile(r"(\d+)")
 
@@ -232,10 +240,24 @@ def parse_raw_log(path: str) -> dict:
     cur = None
     commit = None
     header_repo = None
+    test_banner_lines: list[str] = []
+    selection = None
     try:
         with open(path, errors="replace") as fh:
             for ln in fh:
                 ln = ln.rstrip("\n")
+                # Test-runner banners live inside gate output, not on the gate
+                # structure lines, so collect the candidate banner lines here
+                # (independently of the gate-parsing elif chain below) and hand
+                # them to the shared counter after the loop. The `in` pre-filter
+                # is a cheap SUPERSET of what nonzero_result's regexes match, so
+                # nothing that would count is dropped, and the count logic itself
+                # stays single-sourced there.
+                if "running " in ln or "test result:" in ln:
+                    test_banner_lines.append(ln)
+                # validate.sh prints `... ; selection: <mode>` on the Commit line.
+                if selection is None and "selection:" in ln:
+                    selection = ln.rsplit("selection:", 1)[1].strip() or None
                 if header_repo is None and ln.startswith("Hermit validation"):
                     header_repo = "hermit"
                 elif header_repo is None and ln.startswith("Reverie validation"):
@@ -283,16 +305,48 @@ def parse_raw_log(path: str) -> dict:
         counts[g["kind"]] += 1
         for k in ("_has_command", "_skipped", "_timed_out", "_has_exit"):
             g.pop(k, None)
+    # Executed- and filtered-test counts via the shared extractor. `None` means
+    # UNKNOWN (no banner seen — a build-only/skipped-gate log), distinct from `0`
+    # (banners present and every one executed zero tests). `filtered_tests` tells
+    # a zero-executed EMPTY TARGET (filtered==0) apart from a FILTERED-TO-EMPTY
+    # run (filtered>0), and exposes the `1 passed; 154 filtered out` narrowed-
+    # scope trap on an otherwise-green row. See nonzero_result.
+    banner_text = "\n".join(test_banner_lines)
+    executed_tests = executed_test_count(banner_text)
+    filtered_tests = filtered_test_count(banner_text)
+    # A PASS must also carry WHAT it covered. `validate.sh` overrides the profile
+    # name to the "-only" form for every partial run (and to `selective`/`only-X`
+    # for subset selections), so `Level:` — parsed into `level` — is `full` iff
+    # the run was a full-coverage validate. `full_coverage` lets any reader tell a
+    # full green from a partial one WITHOUT knowing which profile names are
+    # partial; the verdict below types a partial pass `pass-partial`, never a bare
+    # `pass`. (`selection` corroborates but cannot override: a subset selection
+    # already forces a non-`full` profile.)
+    full_coverage = level == "full"
     # Run verdict, most-severe first. Killed-by-a-bound (`timeout`: a RESOURCE
     # story) is deliberately kept distinct from a product `fail` and from an
-    # `incomplete` (cut-off) run, so attribution is never conflated. Banners and
-    # skipped gates cannot decide the verdict.
+    # `incomplete` (cut-off) run, so attribution is never conflated. Skipped
+    # gates cannot decide the verdict.
     if counts["fail"]:
         result = "fail"
     elif counts["timeout"]:
         result = "timeout"
     elif counts["incomplete"]:
         result = "incomplete"
+    elif executed_tests == 0:
+        # A GREEN must carry a NONZERO executed-test count. Every gate exited 0
+        # yet the banners prove zero tests ran — a no-result wearing a success
+        # badge (the classic `--features`-gated build that compiles the tests
+        # out). Downgrade to `no_result` so it is never certified as a pass.
+        # `None` (unknown) is NOT `0`, so a banner-less green is untouched.
+        result = "no_result"
+    elif not full_coverage:
+        # A partial-profile run (e.g. portable-strict-compat-only: 2 gates) that
+        # passes is a real pass over a NARROWED scope. Typing it `pass-partial`
+        # keeps it from reading as a full-coverage green to anyone who does not
+        # know the profile taxonomy. (The landing certifier already refuses it
+        # via its profile==full predicate; this makes the row self-describing.)
+        result = "pass-partial"
     else:
         result = "pass"
     non_banner = sum(counts[k] for k in GATE_KINDS if k != "banner")
@@ -308,6 +362,10 @@ def parse_raw_log(path: str) -> dict:
         "profile": level,
         "commit": commit or "unknown",
         "result": result,
+        "executed_tests": executed_tests,
+        "filtered_tests": filtered_tests,
+        "selection_mode": selection,
+        "full_coverage": full_coverage,
         "checks": non_banner,
         "failures": counts["fail"],            # product failures only
         "killed_by_bound": counts["timeout"],  # resource story: timeout/cgroup/contention
@@ -516,7 +574,8 @@ def summarize(runs, profiles, linked) -> str:
     out.append(f"  gate attribution  : "
                f"product-fail={prod_fail}, killed-by-bound={killed} "
                f"(timeout/cgroup/contention), incomplete={incomplete} (run cut off)"
-               "   (RESULT values: pass/fail/timeout/incomplete)")
+               "   (RESULT values: pass/pass-partial/no_result/fail/timeout/incomplete;"
+               " pass-partial=non-full profile, no_result=zero tests executed)")
     out.append(f"  by source         : " +
                ", ".join(f"{k}={v}" for k, v in sorted(by_src.items(), key=lambda x: str(x[0]))) +
                "   (L=ledger, R=reconstructed-from-raw-log)")

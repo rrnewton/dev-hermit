@@ -66,6 +66,7 @@ future log-FETCH consumer (GitHub job log / ``locally-validated`` label) the sam
 from __future__ import annotations
 
 import re
+import sys
 
 # libtest per-binary banner: `running 12 tests` (and `running 1 test`). This is
 # the literal count of tests EXECUTED by that binary — the clean executed signal.
@@ -74,6 +75,10 @@ _RUNNING_RE = re.compile(r"\brunning (\d+) tests?\b")
 # `ok.` form carries a passing verdict; the passed count corroborates execution
 # when a `running N` banner was truncated out of the captured window.
 _RESULT_OK_RE = re.compile(r"\btest result: ok\. (\d+) passed\b")
+# libtest summary tail: `... 154 filtered out; finished in 0.00s`. The count of
+# tests the SELECTION excluded from this run. It is emitted on every `test
+# result:` line (ok or not), so it is scanned independently of the `ok.` verdict.
+_FILTERED_RE = re.compile(r"\b(\d+) filtered out\b")
 
 
 def executed_test_count(output: str) -> int | None:
@@ -98,6 +103,30 @@ def executed_test_count(output: str) -> int | None:
     return None
 
 
+def filtered_test_count(output: str) -> int | None:
+    """Total tests FILTERED OUT (excluded by name/selection) per the run's own
+    `test result:` summary lines.
+
+    Returns the summed filtered-out count when at least one `test result:` line
+    is present, or ``None`` when no such line is seen (UNKNOWN). This is the
+    companion of :func:`executed_test_count`: together they tell a zero-executed
+    run's two distinct shapes apart. ``executed==0 and filtered==0`` is an
+    EMPTY TARGET (no tests exist — the classic `--features`-gated build that
+    compiles the tests out); ``executed==0 and filtered>0`` is FILTERED TO EMPTY
+    (tests exist but the selection excluded every one). Both read as `ok` and
+    verify nothing, but the cause — and the fix — differ, so the count is carried
+    rather than collapsed. A nonzero-executed run with ``filtered>0`` is a real
+    pass over a NARROWED scope (the `1 passed; 154 filtered out` trap): still a
+    pass, but the consumer must see the scope it did not cover.
+    """
+    if not output:
+        return None
+    filtered = [int(m) for m in _FILTERED_RE.findall(output)]
+    if filtered:
+        return sum(filtered)
+    return None
+
+
 def is_zero_test_green(output: str) -> bool:
     """Whether a passing run executed a DEMONSTRABLY zero test count.
 
@@ -108,3 +137,64 @@ def is_zero_test_green(output: str) -> bool:
     answers whether that success is backed by any executed test.
     """
     return executed_test_count(output) == 0
+
+
+def _json_literal(value: int | None) -> str:
+    """A count as a JSON literal: an integer, or ``null`` for UNKNOWN (``None``).
+
+    Chosen so a shell caller can splice the token straight into a JSONL record
+    without a JSON parser: both forms are valid JSON values on their own.
+    """
+    return "null" if value is None else str(value)
+
+
+def _ledger_fields(output: str) -> str:
+    """The two count fields for a validate-run ledger row, single-sourced.
+
+    Prints ``<executed_tests> <filtered_tests>`` as two space-separated JSON
+    literals (an integer or ``null``) — the SAME extractor the aggregator and the
+    landing predicate read, so a bash ledger writer never carries a second
+    `running N tests` / `N filtered out` regex that could drift from this module.
+    ``null`` is UNKNOWN (no banner in the log), which the reader treats fail-safe;
+    ``0`` is a demonstrated zero, which the reader refuses as a green.
+    """
+    return f"{_json_literal(executed_test_count(output))} {_json_literal(filtered_test_count(output))}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI so a NON-Python ledger writer (`validate.sh`) can call the ONE
+    extractor instead of re-implementing the banner regexes in bash.
+
+    ``nonzero_result.py --ledger-fields <log>`` prints the two JSON-literal counts
+    for embedding in a ledger record; ``-`` reads the log from stdin. A missing or
+    unreadable log prints ``null null`` (UNKNOWN, fail-safe) and still exits 0, so
+    the writer never fabricates a zero and never fails the run over a read hiccup.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--ledger-fields",
+        metavar="LOG",
+        required=True,
+        help="print `<executed_tests> <filtered_tests>` (JSON literals) for LOG (`-`=stdin)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.ledger_fields == "-":
+        output = sys.stdin.read()
+    else:
+        try:
+            with open(args.ledger_fields, errors="replace") as fh:
+                output = fh.read()
+        except OSError:
+            # No evidence to read -> UNKNOWN, never a fabricated zero. The writer
+            # emits nulls; the reader leaves such a record alone (fail-safe).
+            print("null null")
+            return 0
+    print(_ledger_fields(output))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
