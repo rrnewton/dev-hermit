@@ -9,7 +9,8 @@
 //!   * the leftmost data column is **ptrace** as an *integer count* — the number
 //!     of tests in that bucket that pass the golden strict+replay determinism
 //!     check (`verify` mode). This is the B4 denominator;
-//!   * every other backend column is `"stdout-parity%, determinism%"` where
+//!   * the canonical Hermit backend columns are
+//!     `"stdout-parity%, determinism%"` where
 //!       - **stdout-parity%** = fraction of the ptrace denominator whose piped
 //!                              stdout SHA-256 matches the ptrace reference;
 //!       - **determinism%**  = fraction of the ptrace denominator that is itself
@@ -21,6 +22,8 @@
 //!     the other. A cell the backend never ran counts as 0 in both, so a small
 //!     envelope reads as a low percentage — that is the honest, anti-fakery
 //!     signal, not a bug.
+//!     Reverie counter CSVs select `--observable tool-count` instead and are
+//!     labeled `tool-count-parity%`; the two observables are never conflated.
 //!
 //! The machine-readable projection (`--json` / `--tsv`) is printed underneath /
 //! instead of the human table, so downstream tooling never scrapes the ASCII.
@@ -29,6 +32,7 @@
 //!   compat-envelope/render-scorecard.rs --csv PATH [--run-id ID|--latest]
 //!                                       [--denominator MODE] [--json|--tsv]
 //!                                       [--backends b1,b2,...]
+//!                                       [--observable stdout|tool-count]
 //!
 //!   --csv PATH        Scorecard CSV. Required so the population is explicit;
 //!                     use fullcorpus-scorecard.csv for the full corpus.
@@ -37,10 +41,12 @@
 //!                     --run-id nor --all is given).
 //!   --all             Aggregate across every run in the CSV (last-writer-wins
 //!                     per (run_mode,lane,bucket,test_id,test_mode,backend)).
-//!   --denominator M   Which test_mode defines "passing strict+replay" for the
-//!                     ptrace count (default: verify).
+//!   --denominator M   Which passing ptrace test_mode defines the denominator
+//!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
+//!   --observable O    Observable compared by the legacy CSV `parity` field
+//!                     (default: stdout; use tool-count for Reverie counters).
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
 //! ```cargo
@@ -48,7 +54,7 @@
 //! serde_json = "1"
 //! ```
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -64,8 +70,9 @@ Options:
   --run-id ID       Render only rows from this run_id.
   --latest          Render only the most recent run_id (default).
   --all             Aggregate across every run (last-writer-wins per cell).
-  --denominator M   test_mode defining the ptrace strict+replay count (def: verify).
+  --denominator M   Passing ptrace test_mode defining the count (def: verify).
   --backends LIST   Comma-separated backend columns (def: dbi,kvm,sabre,liteinst).
+  --observable O    stdout (default) or tool-count; labels parity honestly.
   --json | --tsv    Machine-readable output instead of the table.
   -h, --help        Show this help.
 "#;
@@ -164,6 +171,7 @@ fn main() {
     let mut all = false;
     let mut denom_mode = "verify".to_string();
     let mut backends_arg: Option<String> = None;
+    let mut observable = "stdout".to_string();
     let mut fmt = "table";
 
     let mut it = env::args().skip(1);
@@ -179,6 +187,7 @@ fn main() {
             "--all" => all = true,
             "--denominator" => denom_mode = it.next().unwrap_or_else(|| die("--denominator needs a mode")),
             "--backends" => backends_arg = Some(it.next().unwrap_or_else(|| die("--backends needs a list"))),
+            "--observable" => observable = it.next().unwrap_or_else(|| die("--observable needs a value")),
             "--json" => fmt = "json",
             "--tsv" => fmt = "tsv",
             other => die(&format!("unknown argument {other}")),
@@ -188,6 +197,27 @@ fn main() {
     let csv_path = csv.unwrap_or_else(|| {
         die("--csv is required: choose `compat-envelope/fullcorpus-scorecard.csv` for the full corpus or `compat-envelope/scorecard.csv` for the CI/regression subset")
     });
+    let (parity_label, parity_key, parity_meaning, full_parity_not_measured) =
+        match observable.as_str() {
+            "stdout" => (
+                "stdout-parity",
+                "stdout_parity",
+                "piped guest stdout SHA-256 equality with ptrace; upper bound on four-signal cross-backend parity",
+                vec!["INFO log", "stack detlog", "heap detlog"],
+            ),
+            "tool-count" => (
+                "tool-count-parity",
+                "tool_count_parity",
+                "shared Tool callback-count equality with ptrace; not cross-backend execution parity",
+                vec!["stdout", "INFO log", "stack detlog", "heap detlog"],
+            ),
+            _ => die("--observable must be `stdout` or `tool-count`"),
+        };
+    let denominator_meaning = if denom_mode == "verify" {
+        "tests passing golden ptrace strict+replay (verify)".to_string()
+    } else {
+        format!("ptrace rows passing test_mode `{denom_mode}`")
+    };
     let text = fs::read_to_string(&csv_path)
         .unwrap_or_else(|e| die(&format!("cannot read {}: {e}", csv_path.display())));
 
@@ -405,23 +435,17 @@ fn main() {
                 let mut backs = serde_json::Map::new();
                 for b in &backend_cols {
                     let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
-                    backs.insert(
-                        b.clone(),
-                        json!({
-                            "stdout_parity_count": p,
-                            "determinism_count": d,
-                            // How many denom cells actually had stdout compared vs
-                            // ptrace. A lower count means the remaining cells'
-                            // stdout parity is UNKNOWN, not confirmed 0.
-                            "stdout_parity_measured_count": m,
-                            // How many denom cells were actually RUN on this backend
-                            // (not unavailable/skipped). ran_count 0 => backend not
-                            // measurable here; the 0% figures are N/A, not reds.
-                            "ran_count": r,
-                            "stdout_parity_pct": (pct(p, row.ptrace) * 10.0).round() / 10.0,
-                            "determinism_pct": (pct(d, row.ptrace) * 10.0).round() / 10.0,
-                        }),
+                    let mut metrics = serde_json::Map::new();
+                    metrics.insert(format!("{parity_key}_count"), json!(p));
+                    metrics.insert(format!("{parity_key}_measured_count"), json!(m));
+                    metrics.insert(
+                        format!("{parity_key}_pct"),
+                        json!((pct(p, row.ptrace) * 10.0).round() / 10.0),
                     );
+                    metrics.insert("determinism_count".into(), json!(d));
+                    metrics.insert("determinism_pct".into(), json!((pct(d, row.ptrace) * 10.0).round() / 10.0));
+                    metrics.insert("ran_count".into(), json!(r));
+                    backs.insert(b.clone(), Value::Object(metrics));
                 }
                 out_rows.push(json!({
                     "bucket": name,
@@ -439,10 +463,15 @@ fn main() {
                 "source_csv": csv_path.display().to_string(),
                 "run_scope": scope_run.clone().unwrap_or_else(|| "all".into()),
                 "denominator_mode": denom_mode,
-                "denominator_meaning": "tests passing golden ptrace strict+replay (verify)",
-                "stdout_parity_meaning": "piped guest stdout SHA-256 equality with ptrace; upper bound on full cross-backend parity",
-                "full_parity_not_measured": ["INFO log", "stack detlog", "heap detlog"],
-                "additional_unmeasured_context": ["TTY behavior"],
+                "denominator_meaning": denominator_meaning,
+                "parity_metric": {
+                    "label": parity_label,
+                    "observable": observable,
+                    "meaning": parity_meaning,
+                    "is_full_parity": false,
+                    "full_parity_not_measured": full_parity_not_measured,
+                    "additional_unmeasured_context": ["TTY behavior"],
+                },
                 "backend_columns": backend_cols,
                 "rows": out_rows,
             });
@@ -451,9 +480,9 @@ fn main() {
         "tsv" => {
             let mut cols = vec!["bucket".to_string(), "ptrace".to_string()];
             for b in &backend_cols {
-                cols.push(format!("{b}_stdout_parity_pct"));
+                cols.push(format!("{b}_{parity_key}_pct"));
                 cols.push(format!("{b}_det_pct"));
-                cols.push(format!("{b}_stdout_parity_measured"));
+                cols.push(format!("{b}_{parity_key}_measured"));
                 cols.push(format!("{b}_ran"));
             }
             println!("{}", cols.join("\t"));
@@ -476,14 +505,19 @@ fn main() {
         _ => {
             // Human table in the owner's exact shape.
             println!(
-                "Compat-envelope scorecard  (run: {}, denominator: {} = golden ptrace strict+replay)",
+                "Compat-envelope scorecard  (run: {}, denominator: {} = {})",
                 scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into()),
-                denom_mode
+                denom_mode,
+                denominator_meaning,
             );
             println!("Input CSV: {}", csv_path.display());
-            println!("Each backend cell is `stdout-parity%, determinism%` of the ptrace count. The two measurements are independent.");
-            println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");
-            println!("Stdout-parity suffix: `?` = stdout parity never measured for that bucket (UNKNOWN, not confirmed 0); `~` = partial coverage (some cells unmeasured).");
+            println!("Each backend cell is `{parity_label}%, determinism%` of the ptrace count. The two measurements are independent.");
+            if observable == "stdout" {
+                println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");
+            } else {
+                println!("CAVEAT: tool-count-parity% compares only the shared Tool callback total. It does not measure stdout, INFO logs, stack detlogs, or heap detlogs, and is not full cross-backend parity. TTY behavior is also outside this scorecard.");
+            }
+            println!("{parity_label} suffix: `?` = the observable was never compared for that bucket (UNKNOWN, not confirmed 0); `~` = partial coverage (some cells unmeasured).");
             println!("`n/a` = backend not runnable here (binary absent / not enabled) — 0 cells run, NOT a confirmed fail.");
             println!();
             let mut header = format!("{:<22} {:>7}", "bucket", "ptrace");
