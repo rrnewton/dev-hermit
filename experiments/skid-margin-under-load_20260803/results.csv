@@ -11,3 +11,7 @@ load_1x,316,3,147.23,2,1556,54.03,177,3112
 load_2x,632,1,203.83,24,384,58.32,198,768
 load_2x,632,2,203.83,25,421,54.30,157,842
 load_2x,632,3,203.83,36,15244,83.37,128,30488
+# --- 2026-08-03 addendum (hermit-250): integrated micro_suite under 64-burner load ---
+# instrument_skid_max_rcb_under_load,127038,100364,40466,37182  (exceed both 1000 margin and 66276 proposed)
+# integrated_microsuite_strict_verify_under_load,runs=95,green=95,markers=0,divergences=0
+# integrated_microsuite_strict_verify_baseline,runs=1,green=1,seconds=23.4
