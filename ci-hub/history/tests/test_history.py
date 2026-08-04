@@ -132,6 +132,25 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(out["test.a"]["max_wall_s"], 1.0)
         self.assertTrue(out["test.a"]["thin"])
 
+    def _write_github_step_profiles(self, node_rows):
+        # ci-perf artifacts downloaded from GitHub land under
+        # store_dir/gha-profiles -> discover_step_profiles tags these origin=github
+        # (source=github-ciperf). Still cpu-bearing (runner output), but a
+        # DIFFERENT environment than the local box.
+        prof = (self.parent / "ignored" / "ci-hub" / "gha-profiles")
+        prof.mkdir(parents=True, exist_ok=True)
+        path = prof / "step_profiles_gh_class.csv"
+        cols = ["timestamp", "git_sha", "step", "elapsed_s", "user_s", "sys_s"]
+        for r in node_rows:
+            for k in r:
+                if k not in cols:
+                    cols.append(k)
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols)
+            w.writeheader()
+            for r in node_rows:
+                w.writerow(r)
+
     def _prof_row(self, step, elapsed_s, sha="a" * 40, ts="2026-08-03T00:00:00Z",
                   **extra):
         row = {"timestamp": ts, "git_sha": sha, "step": step,
@@ -175,6 +194,33 @@ class TempParentTest(unittest.TestCase):
         # informative on passes too, per requirement 1).
         ratio_nodes = {n["node"] for n in res["node_ratios"]}
         self.assertIn("test.ok", ratio_nodes)
+
+    def test_kill_taxonomy_records_path_provenance_and_splits_populations(self):
+        # PREREQUISITE for any no_result split: every record carries which PATH
+        # produced it, and the summary splits by source. Two paths, same node,
+        # opposite ratios -> their ratios must NOT be pooled and the mix must be
+        # visible, or a split would produce a precise-looking meaningless number.
+        self._write_step_profiles([  # runner-native (local box): a spin
+            self._prof_row("test.x", 100.0, user_s=95.0, sys_s=0.0,
+                           timed_out="True", cpu_timed_out="True"),
+        ])
+        self._write_github_step_profiles([  # github-ciperf: same node, a wait
+            self._prof_row("test.x", 100.0, user_s=5.0, sys_s=0.0,
+                           timed_out="True", cpu_timed_out="False"),
+        ])
+        res = query.kill_taxonomy(str(self.parent), None, None)
+        self.assertEqual(res["n_kills"], 2)
+        srcs = {k["source"] for k in res["kills"]}
+        self.assertEqual(srcs, {"runner-native", "github-ciperf"})
+        # by_source splits the mix: livelock came from the box, contention from GH.
+        self.assertEqual(res["by_source"]["runner-native"]["livelock"], 1)
+        self.assertEqual(res["by_source"]["github-ciperf"]["contention"], 1)
+        # node_ratios are keyed per (source, node) -> two rows for one node name,
+        # NOT one pooled ratio that averages a 0.95 spin with a 0.05 wait.
+        xrows = {n["source"]: n for n in res["node_ratios"] if n["node"] == "test.x"}
+        self.assertEqual(set(xrows), {"runner-native", "github-ciperf"})
+        self.assertAlmostEqual(xrows["runner-native"]["p50_ratio"], 0.95, places=2)
+        self.assertAlmostEqual(xrows["github-ciperf"]["p50_ratio"], 0.05, places=2)
 
     def test_kill_taxonomy_ambiguous_band(self):
         # A ratio in [0.3, 0.8) is neither a clean spin nor a clean wait -> it is
@@ -318,6 +364,57 @@ class TempParentTest(unittest.TestCase):
         self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
         self.assertEqual(res["red_hours"], 0.0)
         self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_case7_propagated_gate_failure_stays_no_result(self):
+        # ROOT-CAUSE guard: a cancel-in-progress kills test-debug at 00:39:50; the
+        # require-all aggregation gate then completes=failure at 00:40:00 BECAUSE a
+        # required dep was cancelled. Its failure is PROPAGATED, not an independent
+        # verdict (run-30873193855 / hermit-238b false red). Ordering against the
+        # cancel ONSET (earliest cancelled-sibling completion) + the started_at
+        # guard (the gate STARTS after its dep resolves) leaves it no_result.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-debug",
+             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:39:50Z"},
+            {"repo": "r/x", "run_id": "R1", "job_id": "j2",
+             "name": "Require every portable DAG job to succeed or be deselected",
+             "conclusion": "failure", "started_at": "2026-08-03T00:39:55Z",
+             "completed_at": "2026-08-03T00:40:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["no_result_hours"], 0.33, places=1)
+        self.assertEqual(res["red_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 0)
+
+    def test_green_time_case7_independent_failure_with_cancelled_sibling_is_red(self):
+        # The genuine case the guard must still catch: a job FAILED at 00:30, then
+        # an EXTERNAL newer push cancelled the run, killing a sibling at 00:40. The
+        # failure both completed AND started before the cancel onset -> independent
+        # -> RED, even though a cancelled sibling exists.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:40:00Z", run_id="R1"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="R2"),
+        ])
+        self._write_jobs([
+            {"repo": "r/x", "run_id": "R1", "job_id": "j1", "name": "test-release",
+             "conclusion": "failure", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:30:00Z"},
+            {"repo": "r/x", "run_id": "R1", "job_id": "j2", "name": "test-debug",
+             "conclusion": "cancelled", "started_at": "2026-08-03T00:20:00Z",
+             "completed_at": "2026-08-03T00:40:00Z"},
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
+        self.assertEqual(res["no_result_hours"], 0.0)
+        self.assertEqual(res["job_level_red_promotions"], 1)
 
     def test_green_time_case7_inert_without_job_store(self):
         # No gha-jobs.csv -> the discriminator is inert and cancelled stays

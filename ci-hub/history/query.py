@@ -456,13 +456,46 @@ def _kill_verdict(kind, ratio):
     return "ambiguous"
 
 
+def _source(row: dict) -> str:
+    """Which PATH produced this record — PROVENANCE, recorded per record.
+
+    Both values below are safe-ci-dag-runner step profiles and both carry cpu,
+    so both are classifiable — but they run in DIFFERENT environments (this box
+    vs GitHub-hosted/self-hosted runners) with different contention, so their
+    cpu/wall ratios must never be pooled into one distribution.
+
+    The wall-only GitHub-*jobs* population (gha-jobs.csv, what green-time's
+    no_result is built from) is a THIRD path that carries NO cpu field and is
+    NEVER ingested here — kill-taxonomy reads step_profiles only, so it
+    structurally cannot mix a classifiable population with an unclassifiable one.
+    Recording the source per record is the prerequisite that lets a future
+    green-time no_result split REFUSE to attach a runner-native verdict to a
+    GitHub-jobs run that has no cpu: a split without this tag would silently mix
+    two populations and produce a ratio that looks precise and means nothing.
+    Provenance must exist BEFORE the split is enabled, not be retrofitted after.
+    """
+    o = (row.get("_origin") or "").strip()
+    if o == "local":
+        return "runner-native"
+    if o == "github":
+        return "github-ciperf"
+    return o or "unknown"
+
+
+def _empty_verdicts() -> dict:
+    return {"livelock": 0, "contention": 0, "ambiguous": 0, "oom": 0,
+            "unknown": 0}
+
+
 def kill_taxonomy(parent: str, repo: str | None, since: str | None) -> dict:
     profiles = discover_step_profiles(parent, repo)
     since_sha = since if since and SHA_RE.match(since) else None
     since_date = since if since and not since_sha else None
 
     kills = []
-    node_ratios: dict[str, list[float]] = {}
+    # keyed by (source, node): ratios from different producing paths are NOT
+    # pooled — a node run both locally and on a GitHub runner is two populations.
+    node_ratios: dict[tuple[str, str], list[float]] = {}
     for r in profiles:
         node = (r.get("step") or "").strip()
         if not node:
@@ -471,13 +504,15 @@ def kill_taxonomy(parent: str, repo: str | None, since: str | None) -> dict:
             continue
         if since_date and (r.get("timestamp") or "") < since_date:
             continue
+        src = _source(r)
         cpu, wall, ratio = _cpu_wall(r)
         if ratio is not None:
-            node_ratios.setdefault(node, []).append(ratio)
+            node_ratios.setdefault((src, node), []).append(ratio)
         kind = _kill_kind(r)
         if kind is not None:
             kills.append({
                 "node": node,
+                "source": src,
                 "git_sha": (r.get("git_sha") or "")[:12],
                 "timestamp": r.get("timestamp") or "",
                 "kill_kind": kind,
@@ -488,16 +523,21 @@ def kill_taxonomy(parent: str, repo: str | None, since: str | None) -> dict:
                 "verdict": _kill_verdict(kind, ratio),
             })
 
-    summary = {"livelock": 0, "contention": 0, "ambiguous": 0,
-               "oom": 0, "unknown": 0}
+    summary = _empty_verdicts()
+    # by_source makes the population mix VISIBLE: a reader (and any future split)
+    # sees exactly how many kills came from each producing path, so a
+    # mixed-population count can never masquerade as one clean number.
+    by_source: dict[str, dict] = {}
     for k in kills:
         summary[k["verdict"]] += 1
+        by_source.setdefault(k["source"], _empty_verdicts())[k["verdict"]] += 1
 
     node_stats = []
-    for node, ratios in sorted(node_ratios.items()):
+    for (src, node), ratios in sorted(node_ratios.items()):
         rs = sorted(ratios)
         node_stats.append({
             "node": node,
+            "source": src,
             "n": len(rs),
             "p50_ratio": round(percentile(rs, 50), 3) if rs else None,
             "max_ratio": round(rs[-1], 3) if rs else None,
@@ -509,6 +549,7 @@ def kill_taxonomy(parent: str, repo: str | None, since: str | None) -> dict:
         "contention_ratio": CONTENTION_RATIO,
         "n_kills": len(kills),
         "summary": summary,
+        "by_source": by_source,
         # highest ratio first: the most livelock-like kills lead.
         "kills": sorted(kills, key=lambda k: -(k["cpu_wall_ratio"] or -1.0)),
         "node_ratios": node_stats,
@@ -527,12 +568,20 @@ def render_kill_taxonomy(res: dict, fmt: str) -> str:
         f"{s['contention']} contention, {s['ambiguous']} ambiguous, "
         f"{s['oom']} oom, {s['unknown']} unknown"
     ]
+    # population mix, so a ratio is never read as one clean number across paths.
+    for src, sv in sorted(res.get("by_source", {}).items()):
+        lines.append(
+            f"  source={src}: {sv['livelock']} livelock, {sv['contention']} "
+            f"contention, {sv['ambiguous']} ambiguous, {sv['oom']} oom, "
+            f"{sv['unknown']} unknown"
+        )
     if res["kills"]:
-        hdr = ("NODE", "SHA", "KILL", "WALL(s)", "CPU(s)", "CPU/WALL", "CORES",
-               "VERDICT")
-        body = [(k["node"], k["git_sha"], k["kill_kind"],
-                 _s(k["wall_s"]), _s(k["cpu_s"]), _s(k["cpu_wall_ratio"]),
-                 _s(k["effective_cores"]), k["verdict"]) for k in res["kills"]]
+        hdr = ("NODE", "SOURCE", "SHA", "KILL", "WALL(s)", "CPU(s)", "CPU/WALL",
+               "CORES", "VERDICT")
+        body = [(k["node"], k.get("source", "unknown"), k["git_sha"],
+                 k["kill_kind"], _s(k["wall_s"]), _s(k["cpu_s"]),
+                 _s(k["cpu_wall_ratio"]), _s(k["effective_cores"]), k["verdict"])
+                for k in res["kills"]]
         lines.append(_table(hdr, body))
     else:
         lines.append("  (no killed/timed-out/oom rows in the profile window)")
@@ -570,12 +619,29 @@ def load_jobs_index(parent: str, repo: str | None) -> dict[str, list[dict]]:
 def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """Seventh case: run-level CANCELLED, but a JOB inside it may have FAILED.
 
-    Run-level and job-level conclusions disagree; the discriminator is ORDERING.
-    A job whose conclusion is red (failure/timed_out/...) that COMPLETED at or
-    before the run's cancel moment failed on its own — the later run-level cancel
-    only masked it — so the run is a real RED. A job still running when the cancel
-    landed (no completion, or a completion after the cancel) was killed BY the
-    cancel: its non-answer stays no_result.
+    Run-level and job-level conclusions disagree; the discriminator is ORDERING
+    AND ROOT-CAUSE. A job whose conclusion is red (failure/timed_out/...) that
+    completed at/before the cancel BEGAN, and that was not itself waiting on a
+    cancelled dependency, failed on its own — the later run-level cancel only
+    masked it — so the run is a real RED. A job killed BY the cancel, or one whose
+    failure is PROPAGATED from a cancelled dependency, is not an independent
+    verdict and stays no_result.
+
+    Ordering reference: the CANCEL ONSET, not the run's terminal `updated_at`
+    stamp. A cancel-in-progress kills the in-flight jobs, and a downstream
+    aggregation gate (`needs:` all of them, "succeed or be deselected") then
+    completes=failure BECAUSE a required dependency was cancelled — a PROPAGATED
+    failure that finalizes at the run's cancel moment, not a product verdict.
+    Ordering a red job against `updated_at` alone would flag that propagated gate
+    RED (measured: it reproduces the run-30873193855 / hermit-238b false red —
+    task cancellation_taxonomy_distinguish_self). So the reference is the earliest
+    cancelled-sibling completion (when the cancel began killing jobs); a red job
+    is INDEPENDENT only if it both COMPLETED and STARTED at/before that onset. A
+    downstream gate STARTS only after its cancelled dependency resolves, so its
+    start lands after the onset and it is correctly left as no_result even when
+    second-granularity timestamps tie its completion with the onset. With no
+    cancelled sibling the run was cancelled with nothing in flight, so the onset
+    falls back to `updated_at`.
 
     Returns 'red' when a job failed independently of the cancel, else None (the
     caller keeps the run-level no_result classification). Inert when `jobs` is
@@ -583,15 +649,25 @@ def _resolve_cancelled_run(run: dict, jobs: list[dict] | None) -> str | None:
     """
     if not jobs:
         return None
-    cancel_at = _epoch(run.get("updated_at"))  # cancelled run's terminal stamp
+    cancel_onsets = [
+        _epoch(j.get("completed_at"))
+        for j in jobs
+        if (j.get("conclusion") or "").lower() == "cancelled"
+    ]
+    cancel_onsets = [c for c in cancel_onsets if c is not None]
+    onset = min(cancel_onsets) if cancel_onsets else _epoch(run.get("updated_at"))
     for j in jobs:
         if (j.get("conclusion") or "").lower() not in _RED_CONCLUSIONS:
             continue
         done = _epoch(j.get("completed_at"))
         if done is None:
             continue  # a red job with no completion time cannot be ordered
-        # ORDERING: the failure landed at/before the cancel -> independent of it.
-        if cancel_at is None or done <= cancel_at:
+        if onset is None:
+            return "red"
+        # ORDERING + ROOT-CAUSE: the failure both finished and began at/before the
+        # cancel onset -> it did not wait on a cancelled dependency -> independent.
+        started = _epoch(j.get("started_at"))
+        if done <= onset and (started is None or started <= onset):
             return "red"
     return None
 
