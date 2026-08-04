@@ -42,7 +42,7 @@ Agents will constantly try to put up fake results that mislead you, where they h
 
 1. **Lost inertia:** "0 busy, 0 ready" is a P0 alarm, not "nothing to do." Generate work immediately.
 2. **Heartbeat/fleet-monitor paused:** NEVER pause these workflows. They are mission-critical safety nets.
-3. **Agent exhaustion:** When agents hit 100% context, spawn fresh ones immediately at `~/work/dev-hermit/hermit`. Don't let all agents exhaust simultaneously.
+3. **Agent exhaustion:** Try to /compact agents before they run out of context, but when agents hit 100% context, spawn fresh ones immediately at `~/work/dev-hermit/hermit`. Don't let all agents exhaust simultaneously.
 4. **Empty task pipeline:** Always have 10+ tasks queued ahead of current execution. Pre-generate work.
 5. **Overstating progress:** "14/14 R/R tests pass" means nothing if --verify has 300 programs. Measure gaps, not victories.
 6. **Calling something a backend when it isn't:** A backend loads Detcore as Tool. One shared copy of the code. Prototypes and stubs are NOT backends.
