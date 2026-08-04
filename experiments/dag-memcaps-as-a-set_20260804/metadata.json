@@ -1,0 +1,13 @@
+{
+  "question": "Are the 54 DAG per-node hard_mem_max_bytes caps derived as a mutually-consistent SET, or hand-picked round constants that let OOM migrate node-to-node?",
+  "repo_shas": {"hermit_main_tip": "b384187efd725c504d69281f043d442325d4fcb2",
+                "hermit_newest_green_full": "e8a0d8d3be3b53985dc898bb8e5cbb696a6a719f"},
+  "dag_config": ["hermit/ci/dag/portable.json (47 steps)", "hermit/ci/dag/privileged.json (7 steps)"],
+  "measured_inputs": {
+    "results_csv": "experiments/dag-mem-caps-pinned-jobs_20260804/results.csv (10 nodes, j8 warm-shared, cgroup memory.peak)",
+    "codex_note": "tg derive-all-dag-memory-caps-as-a-set-not-reactively note 2026-08-04T14:30 (5 light nodes, j1 serial)",
+    "oom_points": "rr_suite_contract 2.0G cap=peak (2 oom_kill); strict_compat 6.0G cap=peak (8 oom_kill)"
+  },
+  "host": "devbig014 (~316 cores)",
+  "caveat": "j8-warm peaks are LOWER BOUNDS for production: safe-ci CPU quota leaks into cargo as NUM_JOBS=nproc(~284), so compile-bearing peaks scale up with real -j. A cap without its {j} is unqualified."
+}
