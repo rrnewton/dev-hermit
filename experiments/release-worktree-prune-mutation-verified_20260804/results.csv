@@ -1,0 +1,6 @@
+check,arm,operation,outcome,data_on_disk,admin_entry,verdict
+mechanism,buggy,unconditional_prune_after_partial_failed_remove,orphaned,present,removed,PASS
+mechanism,fixed,skip_prune_after_partial_failed_remove,retained,present,present,PASS
+controlflow,fixed,real_remove_failure_locked_worktree,remove_failed_prune_skipped,present,present,PASS
+normal,fixed,successful_remove_then_prune,fully_removed,absent,removed,PASS
+normal_count,fixed,successful_remove_then_prune,5_of_5_fully_clean,absent,removed,PASS

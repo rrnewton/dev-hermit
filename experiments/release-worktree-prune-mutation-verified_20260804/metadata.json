@@ -1,0 +1,15 @@
+{
+  "experiment": "release-worktree-prune-mutation-verified",
+  "date": "2026-08-04",
+  "question": "Does release-worktree.rs 7c61509 actually prevent data-dir orphaning when `git worktree remove` fails, and do N normal releases still fully clean up?",
+  "parent_head_sha": "7c61509c259ea99d75363303c2da352224991462",
+  "fix_commit_sha": "7c61509c259ea99d75363303c2da352224991462",
+  "subject_file": "scripts/release-worktree.rs",
+  "subject_lines": "452-500 (--clean remove/prune loop)",
+  "host": "devbig014.atn7.facebook.com",
+  "toolchain": { "git": "2.53.0-Meta", "shell": "bash" },
+  "command": "bash mutation-test.sh",
+  "n_normal_releases": 5,
+  "sandbox": "isolated /tmp repos; no shared parent/primary/slot state touched",
+  "result": "ALL CHECKS PASSED (harness exit 0)"
+}
