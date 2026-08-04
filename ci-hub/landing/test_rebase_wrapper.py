@@ -4,8 +4,10 @@
 Verifies BOTH directions the owner named: a zero-conflict rebase is soft-greened
 mechanically; a conflicted rebase WITHOUT a risk judgement is refused, never
 defaulted to green. Also that the base's floor status is carried (a clean rebase
-onto a sub-floor base is NOT landable) and that the lander's `eligible` query
-answers both directions.
+onto a sub-floor base is NOT landable), that a receipt at the PUSHED head Z is
+carried (a push with NO receipt is NOT landable, and a receipt appearing later
+flips Z eligible via the live re-check), and that the lander's `eligible` query
+answers every direction.
 """
 from __future__ import annotations
 
@@ -85,6 +87,66 @@ def test_soft_green_levels_are_distinguishable() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# receipt at Z: the afternoon-cost gap. A push with NO receipt is NOT landable. #
+# --------------------------------------------------------------------------- #
+def test_zero_conflict_no_receipt_at_pushed_head_is_not_landable() -> None:
+    v = M.derive_verdict([], None, None, base_clears_floor=True, base_unmet=[],
+                         receipt_present=False, result=Z)
+    # The confidence LEVEL still records the zero-conflict bet ...
+    assert v["soft_green"] == M.SOFT_ZERO_CONFLICT
+    # ... but with no receipt bound to the pushed head, Z is NOT landable.
+    assert v["landable"] is False
+    assert "no-receipt-at-pushed-head" in v["landable_reason"]
+
+
+def test_zero_conflict_with_receipt_is_landable() -> None:
+    v = M.derive_verdict([], None, None, base_clears_floor=True, base_unmet=[],
+                         receipt_present=True, result=Z)
+    assert v["landable"] is True
+    assert "receipt bound at Z" in v["landable_reason"]
+
+
+def test_resolver_retained_but_no_receipt_is_not_landable() -> None:
+    v = M.derive_verdict(["src/lib.rs"], M.RISK_RETAIN, "trivial reorder",
+                         base_clears_floor=True, base_unmet=[],
+                         receipt_present=False, result=Z)
+    assert v["soft_green"] == M.SOFT_RESOLVER_JUDGED
+    assert v["landable"] is False
+    assert "no-receipt-at-pushed-head" in v["landable_reason"]
+
+
+def test_landable_reason_order_floor_before_receipt() -> None:
+    # Both the floor and the receipt fail; the floor is named first (it makes the
+    # base unusable regardless of any receipt on the derived Z).
+    unmet = [{"sha": "e" * 40, "kind": "merge-gate", "field": "v2"}]
+    r = M.landable_reason(M.SOFT_ZERO_CONFLICT, base_clears_floor=False,
+                          base_unmet=unmet, receipt_present=False, result=Z)
+    assert "unlandable-base-below-floor" in r
+
+
+# --------------------------------------------------------------------------- #
+# receipt_identity: pure map from validate-status report -> receipt or None    #
+# --------------------------------------------------------------------------- #
+def test_receipt_identity_validated_carries_what_it_verified() -> None:
+    report = {"verdict": "VALIDATED", "qualifying_count": 1,
+              "newest_qualifying": {"profile": "full", "selection_mode": "full",
+                                    "result": "pass", "finished_at": "t",
+                                    "slot": "lander2", "host": "devbig014"}}
+    r = M.receipt_identity(report, Z)
+    assert r is not None
+    assert r["sha"] == Z and r["verdict"] == "VALIDATED" and r["profile"] == "full"
+
+
+def test_receipt_identity_not_validated_is_none() -> None:
+    assert M.receipt_identity({"verdict": "NOT-VALIDATED", "qualifying_count": 0,
+                               "newest_qualifying": None}, Z) is None
+    # A VALIDATED verdict with no qualifying record is still no receipt.
+    assert M.receipt_identity({"verdict": "VALIDATED", "qualifying_count": 0,
+                               "newest_qualifying": None}, Z) is None
+    assert M.receipt_identity(None, Z) is None
+
+
+# --------------------------------------------------------------------------- #
 # parse_conflicts                                                              #
 # --------------------------------------------------------------------------- #
 def test_parse_conflicts() -> None:
@@ -113,12 +175,19 @@ def test_store_roundtrip_and_latest_wins(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # do_record + do_eligible end-to-end (git stubbed out)                         #
 # --------------------------------------------------------------------------- #
-def _args(argv, store, monkeypatch, clears=True, unmet=None):
-    """Parse argv, point the store at tmp, and stub the floor check + clock."""
+_STUB_RECEIPT = {"sha": Z, "verdict": "VALIDATED", "profile": "full",
+                 "qualifying_count": 1}
+
+
+def _args(argv, store, monkeypatch, clears=True, unmet=None, receipt=True):
+    """Parse argv, point the store at tmp, and stub the floor + receipt checks +
+    clock. `receipt=True` binds a validated receipt at Z; False/None binds none."""
     args = M.build_parser().parse_args(argv + ["--store", store, "--no-fetch"]
                                        if "record" == argv[0] else argv + ["--store", store])
     monkeypatch.setattr(M, "base_floor_status",
                         lambda *a, **k: {"ok": clears, "unmet": unmet or []})
+    monkeypatch.setattr(M, "receipt_at",
+                        lambda *a, **k: (_STUB_RECEIPT if receipt else None))
     monkeypatch.setattr(M, "utc_now", lambda: "2026-08-04T00:00:00Z")
     return args
 
@@ -132,9 +201,11 @@ def test_do_record_zero_conflict_then_eligible_query(tmp_path, monkeypatch) -> N
     rec = M.load_records(store)[-1]
     assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT and rec["landable"] is True
 
-    # Lander QUERIES: this exact head is eligible -> exit 0.
+    # Lander QUERIES: this exact head is eligible -> exit 0 (trust the frozen
+    # floor + receipt snapshot; live re-checks are exercised separately).
     q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--no-recheck-receipt"])
     assert M.do_eligible(q) == M.EXIT_OK
 
 
@@ -159,14 +230,16 @@ def test_eligible_result_not_landable_exits_refused(tmp_path, monkeypatch) -> No
          "a.rs", "--risk-judgement", M.RISK_VALIDATE, "--rationale", "fixture"],
         store, monkeypatch))
     q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--no-recheck-receipt"])
     assert M.do_eligible(q) == M.EXIT_REFUSED
 
 
 def test_eligible_unknown_head_is_refused(tmp_path) -> None:
     store = str(tmp_path / "empty.jsonl")
     q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--no-recheck-receipt"])
     try:
         M.do_eligible(q)
     except M.Refused:
@@ -188,7 +261,59 @@ def test_eligible_recheck_floor_demotes_stale_record(tmp_path, monkeypatch) -> N
                             "ok": False,
                             "unmet": [{"sha": "f" * 40, "kind": "merge-gate",
                                        "field": "v3"}]})
-    q = M.build_parser().parse_args(["eligible", "--result", Z, "--store", store])
+    # Trust the frozen receipt so the ONLY demoting factor is the new floor.
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-receipt"])
+    assert M.do_eligible(q) == M.EXIT_REFUSED
+
+
+def test_do_record_no_receipt_is_not_landable(tmp_path, monkeypatch) -> None:
+    """A clean rebase whose pushed head Z has NO receipt yet is recorded VISIBLY
+    with receipt_at_Z=null and NOT-LANDABLE -- the afternoon-cost gap, closed."""
+    store = str(tmp_path / "s.jsonl")
+    rc = M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=False))
+    assert rc == M.EXIT_OK
+    rec = M.load_records(store)[-1]
+    assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT   # the bet is still recorded
+    assert rec["receipt_at_Z"] is None                  # ... but null is VISIBLE
+    assert rec["landable"] is False
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--no-recheck-receipt"])
+    assert M.do_eligible(q) == M.EXIT_REFUSED
+
+
+def test_eligible_live_receipt_flips_head_landable(tmp_path, monkeypatch) -> None:
+    """The mailbox-free promotion: a head recorded with NO receipt becomes eligible
+    once a receipt is bound live to the exact pushed Z -- no re-record needed."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=False))
+    # Frozen snapshot: still not eligible.
+    q0 = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
+         "--no-recheck-receipt"])
+    assert M.do_eligible(q0) == M.EXIT_REFUSED
+    # Validate at Z now completes; the live re-check dereferences the authority.
+    monkeypatch.setattr(M, "receipt_at", lambda z: _STUB_RECEIPT)
+    q1 = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+    assert M.do_eligible(q1) == M.EXIT_OK
+
+
+def test_eligible_live_receipt_revocation_demotes(tmp_path, monkeypatch) -> None:
+    """Symmetric: a head recorded landable is demoted if the live receipt vanishes
+    (e.g. the ledger record was superseded / the push rewrote Z again)."""
+    store = str(tmp_path / "s.jsonl")
+    M.do_record(_args(
+        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
+         "none"], store, monkeypatch, receipt=True))
+    monkeypatch.setattr(M, "receipt_at", lambda z: None)
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
     assert M.do_eligible(q) == M.EXIT_REFUSED
 
 

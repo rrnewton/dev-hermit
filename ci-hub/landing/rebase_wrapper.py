@@ -20,7 +20,7 @@ LOW BASE-RATE-OF-BREAKAGE bet, and post-facto validation of the tip covers the
 residual risk the rebase does not eliminate: land on the prior, verify the tip,
 fix forward fast. The two halves are one system.
 
-THREE THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
+FOUR THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
 
   1. SOFT-GREEN IS A CONFIDENCE LEVEL, NOT A BOOLEAN. `soft-green(zero-conflict)`
      and `soft-green(resolver-judged)` are DIFFERENT BETS. A consumer deciding
@@ -40,9 +40,24 @@ THREE THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
      the base's floor status is carried in the record and RE-CHECKED live at query
      time, so a floor added after recording demotes a stale record.
 
+  4. CARRY THE RECEIPT AT Z, THE *PUSHED* HEAD. This wrapper OWNS the whole span
+     rebase -> push -> validate-at-pushed-head -> record: not just the rebase.
+     THE PUSH REWRITES THE HEAD, so a receipt earned on the pre-push SHA dies with
+     it -- and the merge gate checks the pushed Z, for which no receipt then
+     exists. That exact gap cost an afternoon (2026-08-04): 15 heads rebased,
+     pushed, marked ready; NONE could merge (`qualifying_count: 0`) because every
+     receipt was bound to a SHA the push had discarded. No agent was wrong -- the
+     missing step lived in the GAP between the rebase front (ends at push) and the
+     lander (assumes a receipt). So `receipt_at_Z` is a FIRST-CLASS RECORD FIELD
+     and a null there is VISIBLE (a missing receipt inside an assumption is not),
+     landability REQUIRES it, and `eligible` RE-CHECKS it live by dereferencing the
+     ONE receipt authority (`ci-hub validate-status --sha Z`). A push with no
+     subsequent receipt is REFUSED as landable, never silently queued.
+
 CONSUMER: the lander QUERIES for eligible heads (`eligible`) rather than reading
 posted notes -- a query has no mailbox to miss, closing the producer-posted-to-
-the-wrong-task gap. See memory: ci-hub-ledger-cannot-record-soft-vs-hard-green
+the-wrong-task gap (12 verified heads were invisible that day because a producer
+posted to its own task). See memory: ci-hub-ledger-cannot-record-soft-vs-hard-green
 (the validate ledger CANNOT record soft-vs-hard green; this store carries the
 provenance the ledger cannot), rebase-base-floors-queryable-gate-floors-py,
 merge-gate-v2-floor-invalidates-pre-floor-greens.
@@ -53,20 +68,25 @@ RECORD SCHEMA (ignored/rebase-records.jsonl, append-only, latest-per-Z wins):
       retained-soft-green | needs-full-validate | n/a,
     rationale, soft_green: null | soft-green(zero-conflict) |
       soft-green(resolver-judged),
-    base_clears_floor, base_unmet_floors: [...], landable, landable_reason }
+    base_clears_floor, base_unmet_floors: [...],
+    receipt_at_Z: null | { sha: Z, verdict: VALIDATED, profile, selection_mode,
+      finished_at, slot, host, qualifying_count },   # bound to the PUSHED head Z
+    landable, landable_reason }
 
 SUBCOMMANDS
   record    Record a completed rebase outcome and derive its soft-green level.
             The mechanical zero-conflict path and the resolver path both funnel
-            here; this is where refusal-on-absent-judgement lives.
+            here; this is where refusal-on-absent-judgement lives. Binds the
+            receipt at Z (best-effort snapshot; re-checked live by `eligible`).
   rebase    OWN the mechanical rebase in a checkout: fetch, resolve the base
             (--onto <sha> | --onto newest-green), attempt `git rebase`. Zero
             conflicts -> complete, record soft-green(zero-conflict) mechanically,
-            optionally push. Conflicts -> abort cleanly, report the conflicted
-            files, and REFUSE to soft-green (the resolver resolves, then calls
-            `record --risk-judgement ...`).
+            optionally push, then bind the receipt at the PUSHED head Z. Conflicts
+            -> abort cleanly, report the conflicted files, and REFUSE to soft-green
+            (the resolver resolves, then calls `record --risk-judgement ...`).
   eligible  Consumer query for the lander: list (or test) heads that are eligible
-            to land NOW -- soft-green AND the base clears every live floor.
+            to land NOW -- soft-green AND the base clears every live floor AND a
+            clean full-validation receipt is bound live to the pushed head Z.
 
 EXIT CODES (shared with the sibling floor tools)
   0  OK       recorded / listed / the queried head IS eligible
@@ -126,6 +146,11 @@ VALID_JUDGEMENTS = {RISK_RETAIN, RISK_VALIDATE}
 SOFT_ZERO_CONFLICT = "soft-green(zero-conflict)"
 SOFT_RESOLVER_JUDGED = "soft-green(resolver-judged)"
 
+# The ONE receipt authority: `ci-hub validate-status` dereferences the validate
+# ledger and answers "does exactly this SHA carry a clean full-validation receipt?"
+# We never re-derive that verdict here (one verifier per authority) -- we call it.
+_CI_HUB = os.path.join(_PARENT_ROOT, "ci-hub", "ci-hub")
+
 
 class RebaseError(Exception):
     """Git / store / registry failure (an ERROR, exit 3 -- not a REFUSE)."""
@@ -153,14 +178,42 @@ def _is_hexish(rev: str) -> bool:
 # --------------------------------------------------------------------------- #
 # Pure verdict derivation -- the heart of the mechanism, git-free and testable. #
 # --------------------------------------------------------------------------- #
+def landable_reason(soft_green: str | None, base_clears_floor: bool,
+                    base_unmet: list[dict], receipt_present: bool,
+                    result: str = "") -> str:
+    """The single explanation of landability -- shared by record and the live
+    `eligible` re-check so both speak with one voice. The order mirrors the
+    landability conjunction: soft-green first, then the base floor (carry Y),
+    then the receipt at the pushed head Z (carry the receipt)."""
+    if soft_green is None:
+        return "resolver-flagged-needs-full-validate: verify the tip before landing"
+    if not base_clears_floor:
+        unmet = ", ".join(_short(f["sha"]) for f in base_unmet) or "?"
+        return (f"unlandable-base-below-floor: base predates floor(s) {unmet}; "
+                "a clean rebase onto a sub-floor base still yields an unlandable "
+                "Z -- rebase onto a base at/after every floor")
+    if not receipt_present:
+        return (f"no-receipt-at-pushed-head: soft-green + base clears every floor, "
+                f"but NO clean full-validation receipt is bound to the PUSHED head "
+                f"{_short(result) or 'Z'}. The push rewrites the head, so a receipt "
+                f"on the pre-push SHA does not count -- that is the gap that cost an "
+                f"afternoon. Run validate at Z, then `ci-hub validate-status --sha "
+                f"{_short(result) or '<Z>'}` must read VALIDATED (re-checked live).")
+    return f"landable via {soft_green}; base clears all floors; receipt bound at Z"
+
+
 def derive_verdict(conflicts: list[str], risk_judgement: str | None,
                    rationale: str | None, base_clears_floor: bool,
-                   base_unmet: list[dict]) -> dict:
-    """Map (conflicts, judgement, base-floor-status) -> soft-green + landability.
+                   base_unmet: list[dict], receipt_present: bool = True,
+                   result: str = "") -> dict:
+    """Map (conflicts, judgement, base-floor, receipt-at-Z) -> soft-green + landability.
 
     RAISES Refused when conflicts exist without a valid judgement + rationale --
     an absent judgement must NEVER read as approval. Returns the derived fields
-    otherwise; landability is soft-green AND the base clears every floor.
+    otherwise; landability is soft-green AND the base clears every floor AND a
+    receipt is bound to the pushed head Z. `receipt_present` defaults True so the
+    pure floor/conflict dimensions can be exercised in isolation; every real
+    record/query path passes it explicitly.
     """
     if conflicts:
         rj = (risk_judgement or "").strip()
@@ -187,16 +240,7 @@ def derive_verdict(conflicts: list[str], risk_judgement: str | None,
         soft_green = SOFT_ZERO_CONFLICT
         judgement = RISK_NA
 
-    landable = soft_green is not None and base_clears_floor
-    if soft_green is None:
-        reason = "resolver-flagged-needs-full-validate: verify the tip before landing"
-    elif not base_clears_floor:
-        unmet = ", ".join(_short(f["sha"]) for f in base_unmet) or "?"
-        reason = (f"unlandable-base-below-floor: base predates floor(s) {unmet}; "
-                  "a clean rebase onto a sub-floor base still yields an unlandable "
-                  "Z -- rebase onto a base at/after every floor")
-    else:
-        reason = f"landable via {soft_green}; base clears all floors"
+    landable = soft_green is not None and base_clears_floor and receipt_present
     return {
         "risk_judgement": judgement,
         "soft_green": soft_green,
@@ -205,8 +249,56 @@ def derive_verdict(conflicts: list[str], risk_judgement: str | None,
             {"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
             for f in base_unmet],
         "landable": landable,
-        "landable_reason": reason,
+        "landable_reason": landable_reason(soft_green, base_clears_floor,
+                                           base_unmet, receipt_present, result),
     }
+
+
+# --------------------------------------------------------------------------- #
+# receipt at Z -- the ONE receipt authority, dereferenced (never re-derived)   #
+# --------------------------------------------------------------------------- #
+def receipt_identity(report: dict | None, result: str) -> dict | None:
+    """Pure map from a `ci-hub validate-status --json` report to a receipt identity
+    bound to Z, or None. A receipt has no opaque id; its IDENTITY is what it
+    verified (Proxy-Binding: carry the condition with the value) -- the exact SHA
+    plus the qualifying record's profile/selection/timestamp/host/slot. Anything
+    short of a VALIDATED verdict with a qualifying record is None (no receipt)."""
+    if not report or report.get("verdict") != "VALIDATED":
+        return None
+    nq = report.get("newest_qualifying")
+    if not nq or (report.get("qualifying_count") or 0) < 1:
+        return None
+    return {
+        "sha": result,
+        "verdict": "VALIDATED",
+        "qualifying_count": report.get("qualifying_count"),
+        "profile": nq.get("profile"),
+        "selection_mode": nq.get("selection_mode"),
+        "result": nq.get("result"),
+        "finished_at": nq.get("finished_at"),
+        "slot": nq.get("slot"),
+        "host": nq.get("host"),
+    }
+
+
+def receipt_at(result: str) -> dict | None:
+    """Dereference the receipt authority at the PUSHED head Z. Returns the receipt
+    identity or None. A tool/parse failure returns None -- unknown is NOT a receipt
+    and must never read as landable; an absent receipt is VISIBLE (null), never an
+    error a caller might swallow into "assume green". `validate-status` exits
+    nonzero for NOT-VALIDATED, so stdout is parsed regardless of return code."""
+    if not result or not _is_hexish(result):
+        return None
+    try:
+        cp = _run([_CI_HUB, "validate-status", "--sha", result, "--json"],
+                  timeout=NETWORK_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        report = json.loads(cp.stdout)
+    except ValueError:
+        return None
+    return receipt_identity(report, result)
 
 
 # --------------------------------------------------------------------------- #
@@ -314,7 +406,8 @@ def base_floor_status(registry: str, checkout: str, base: str) -> dict:
 # record                                                                        #
 # --------------------------------------------------------------------------- #
 def build_record(source: str, base: str, result: str, conflicts: list[str],
-                 resolver: str | None, verdict: dict, now_utc: str) -> dict:
+                 resolver: str | None, verdict: dict, now_utc: str,
+                 receipt: dict | None = None) -> dict:
     rec = {
         "schema_version": SCHEMA_VERSION,
         "recorded_utc": now_utc,
@@ -324,6 +417,7 @@ def build_record(source: str, base: str, result: str, conflicts: list[str],
         "conflicts": conflicts,
         "resolver": resolver or "",
         "rationale": "",
+        "receipt_at_Z": receipt,  # bound to the PUSHED head; null is VISIBLE.
     }
     rec.update(verdict)
     return rec
@@ -342,11 +436,17 @@ def do_record(args) -> int:
         except RebaseError:
             pass  # offline is not fatal for a purely-local ancestry check
     fstatus = base_floor_status(args.registry, args.repo_checkout, args.base)
+    # Bind the receipt at the pushed head Z (best-effort snapshot; `eligible`
+    # re-checks it live, so a receipt that lands after recording still flips Z
+    # eligible, and one revoked demotes it). --no-receipt-check records null.
+    receipt = None if args.no_receipt_check else receipt_at(args.result)
     verdict = derive_verdict(conflicts, args.risk_judgement, args.rationale,
-                             fstatus["ok"], fstatus["unmet"])
+                             fstatus["ok"], fstatus["unmet"],
+                             receipt_present=receipt is not None,
+                             result=args.result)
     now = utc_now()
     rec = build_record(args.source, args.base, args.result, conflicts,
-                       args.resolver, verdict, now)
+                       args.resolver, verdict, now, receipt=receipt)
     rec["rationale"] = (args.rationale or "").strip()
     append_record(args.store, rec)
     emit_record(rec, args.json, action="RECORDED")
@@ -421,7 +521,7 @@ def do_rebase(args) -> int:
                 f"{_short(source)} --base {_short(base)} --result <Z> --conflicts "
                 f"'{','.join(conflicts)}' --risk-judgement {RISK_RETAIN}|"
                 f"{RISK_VALIDATE} --rationale ...`"),
-        }, utc_now())
+        }, utc_now(), receipt=None)  # no result yet -> no receipt to bind
         append_record(args.store, rec)
         emit_record(rec, args.json, action="REFUSED")
         msg = (f"CONFLICTS ({len(conflicts)}): {', '.join(conflicts)}. Rebase "
@@ -433,7 +533,6 @@ def do_rebase(args) -> int:
 
     # Zero conflicts: mechanical soft-green(zero-conflict).
     fstatus = base_floor_status(args.registry, checkout, base)
-    verdict = derive_verdict([], None, None, fstatus["ok"], fstatus["unmet"])
     if args.push:
         push_ref = args.push_ref or f"refs/heads/rebasewrap/{_short(source)}-on-{_short(base)}"
         cmd = ["git", "-C", checkout, "push", "--force-with-lease",
@@ -444,11 +543,22 @@ def do_rebase(args) -> int:
         if pcp.returncode != 0:
             _git(checkout, ["checkout", "-q", "--detach", base])
             raise RebaseError(f"push failed: {(pcp.stderr or pcp.stdout).strip()}")
-    rec = build_record(source, base, result, [], args.resolver, verdict, utc_now())
+    # Bind the receipt at the PUSHED head Z -- this is the step that closes the
+    # afternoon-cost gap. Right after a push it is almost always null (validate at
+    # Z has not run yet): the record is written with receipt_at_Z=null and
+    # NOT-LANDABLE, and `eligible` re-derives the receipt live so Z flips landable
+    # once validate at Z completes -- no re-record, no handoff to drop.
+    receipt = None if args.no_receipt_check else receipt_at(result)
+    verdict = derive_verdict([], None, None, fstatus["ok"], fstatus["unmet"],
+                             receipt_present=receipt is not None, result=result)
+    rec = build_record(source, base, result, [], args.resolver, verdict,
+                       utc_now(), receipt=receipt)
     append_record(args.store, rec)
     # Leave the tree on a clean detached base (stateless, like union-rebase.sh).
     _git(checkout, ["checkout", "-q", "--detach", base])
     emit_record(rec, args.json, action="RECORDED")
+    if not receipt and not args.json:
+        print(rec["landable_reason"], file=sys.stderr)
     return EXIT_OK
 
 
@@ -482,9 +592,19 @@ def do_eligible(args) -> int:
             base_ok = live["ok"]
             unmet = [{"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
                      for f in live["unmet"]]
-        landable = soft is not None and base_ok
+        # Re-derive the receipt at Z live by default: a receipt earned after the
+        # record must promote Z, and one revoked must demote it. The push rewrites
+        # the head, so this binds landability to the CURRENT authority for the
+        # exact Z -- never a stale snapshot on a discarded SHA.
+        receipt = rec.get("receipt_at_Z")
+        if args.recheck_receipt and z:
+            receipt = receipt_at(z)
+        receipt_present = receipt is not None
+        landable = soft is not None and base_ok and receipt_present
         row = {**rec, "base_clears_floor": base_ok, "base_unmet_floors": unmet,
-               "landable": landable}
+               "receipt_at_Z": receipt, "landable": landable,
+               "landable_reason": landable_reason(soft, base_ok, unmet,
+                                                  receipt_present, z)}
         rows.append(row)
 
     if args.result:
@@ -497,6 +617,7 @@ def do_eligible(args) -> int:
         out = {"result": match["result"], "source_rev": match.get("source_rev"),
                "base": match.get("base"), "eligible": match["landable"],
                "soft_green": match.get("soft_green"),
+               "receipt_at_Z": match.get("receipt_at_Z"),
                "reason": match.get("landable_reason")}
         _print_query(out, args.json)
         return EXIT_OK if match["landable"] else EXIT_REFUSED
@@ -538,12 +659,15 @@ def emit_record(rec: dict, as_json: bool, *, action: str) -> None:
     conf = "none" if not rec["conflicts"] else f"[{', '.join(rec['conflicts'])}]"
     sg = rec.get("soft_green") or "NONE"
     land = "LANDABLE" if rec.get("landable") else "NOT-LANDABLE"
+    receipt = rec.get("receipt_at_Z")
+    rct = (f"{receipt.get('verdict')}@{_short(receipt.get('sha',''))}"
+           f"({receipt.get('profile')})") if receipt else "null"
     print(f"{action}: {_short(rec['source_rev'])} rebased on "
           f"{_short(rec['base'])} -> {_short(rec['result']) or '(no result)'} "
           f"conflicts={conf} soft-green={sg} {land}")
     print(f"  risk-judgement={rec.get('risk_judgement') or '(absent)'} "
           f"base-clears-floor={rec.get('base_clears_floor')} "
-          f"resolver={rec.get('resolver') or '-'}")
+          f"receipt-at-Z={rct} resolver={rec.get('resolver') or '-'}")
     print(f"  {rec.get('landable_reason')}")
 
 
@@ -573,6 +697,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--risk-judgement", dest="risk_judgement",
                     help=f"{RISK_RETAIN}|{RISK_VALIDATE} (required iff conflicts)")
     pr.add_argument("--rationale", help="justification (required iff conflicts)")
+    pr.add_argument("--no-receipt-check", dest="no_receipt_check",
+                    action="store_true",
+                    help="record receipt_at_Z=null without querying validate-status "
+                         "(offline); yields NOT-LANDABLE until `eligible` re-checks")
     pr.add_argument("--no-fetch", action="store_true")
     pr.set_defaults(func=do_record)
 
@@ -588,6 +716,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="push the zero-conflict result to origin")
     rb.add_argument("--push-ref", dest="push_ref",
                     help="destination ref for --push")
+    rb.add_argument("--no-receipt-check", dest="no_receipt_check",
+                    action="store_true",
+                    help="skip binding the receipt at the pushed head Z (offline)")
     rb.add_argument("--no-fetch", action="store_true")
     rb.set_defaults(func=do_rebase)
 
@@ -601,6 +732,14 @@ def build_parser() -> argparse.ArgumentParser:
     el.add_argument("--no-recheck-floor", dest="recheck_floor",
                     action="store_false",
                     help="trust the frozen record verdict (offline)")
+    el.add_argument("--recheck-receipt", dest="recheck_receipt",
+                    action="store_true", default=True,
+                    help="re-derive the receipt at Z live via validate-status "
+                         "(default) -- binds landability to the current authority "
+                         "for the exact pushed head")
+    el.add_argument("--no-recheck-receipt", dest="recheck_receipt",
+                    action="store_false",
+                    help="trust the frozen receipt_at_Z snapshot (offline)")
     el.set_defaults(func=do_eligible)
     return ap
 

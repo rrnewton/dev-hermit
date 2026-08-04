@@ -234,9 +234,11 @@ and `mergeCommit`, not the merge-state. Also note the merged SHA is the
 
 # Rebase wrapper + soft-green query (`rebase_wrapper.py`)
 
-`ci-hub/landing/rebase_wrapper.py` is ci-hub's **own** rebase wrapper. It records
-`revision X rebased on main Y -> Z` and derives a **soft-green confidence level**,
-so a lander can decide whether to land on the prior or wait for a tip validate.
+`ci-hub/landing/rebase_wrapper.py` is ci-hub's **own** rebase wrapper. It owns the
+whole span **rebase → push → validate-at-pushed-head → record** (not just the
+rebase): it records `revision X rebased on main Y -> Z`, derives a **soft-green
+confidence level**, and binds the **receipt at the pushed head Z**, so a lander
+can decide whether to land on the prior or wait for a tip validate.
 
 **Soft-green is a level, not a boolean.** Zero textual conflicts is a
 high-confidence *prior*, not a proof (git conflict detection is line-based;
@@ -251,10 +253,36 @@ contract has no conflict and still breaks). So:
   is **REFUSED (exit 2)**, never defaulted to green.
 
 **Landability carries the base Y.** A clean rebase onto a base **below a gate
-floor** yields an unlandable Z even with zero conflicts. `landable` = soft-green
-AND the base clears every floor in `validate/rebase-base-floors.json` (delegated
-to `gate_floors.py`, re-checked live at query time so a newly-added floor demotes
-a stale record).
+floor** yields an unlandable Z even with zero conflicts. So `landable` includes
+"the base clears every floor in `validate/rebase-base-floors.json`" (delegated to
+`gate_floors.py`, re-checked live at query time so a newly-added floor demotes a
+stale record).
+
+**Landability carries the receipt at the *pushed* head Z.** THE PUSH REWRITES THE
+HEAD, so a receipt earned on the pre-push SHA dies with it — and the merge gate
+checks the pushed Z, for which no receipt then exists. That exact gap cost an
+afternoon (2026-08-04): 15 heads rebased, pushed, marked ready; **none could
+merge** (`qualifying_count: 0`) because every receipt was bound to a SHA the push
+had discarded. No agent was wrong — the missing step lived in the gap between the
+rebase front (ends at push) and the lander (assumes a receipt). So `receipt_at_Z`
+is a **first-class record field** (a `null` there is *visible*; a missing receipt
+inside an assumption is not), and `eligible` **re-derives it live** by
+dereferencing the one receipt authority `ci-hub validate-status --sha Z`. A
+receipt appearing after recording promotes Z with **no re-record**; one revoked
+demotes it. Right after `--push` the receipt is normally `null` (validate at Z has
+not run yet) — the head is recorded `NOT-LANDABLE` and flips eligible only once
+validate at Z completes.
+
+**Full landability:** `landable` = soft-green **AND** base clears every live floor
+**AND** a clean full-validation receipt is bound live to the pushed head Z. A push
+with **no subsequent receipt is REFUSED as landable, never silently queued**.
+
+**Record schema** (`ignored/rebase-records.jsonl`, append-only, latest-per-Z):
+`{ schema_version, recorded_utc, source_rev:X, base:Y, result:Z, conflicts:[]|
+[files], resolver, risk_judgement, rationale, soft_green, base_clears_floor,
+base_unmet_floors, receipt_at_Z: null|{sha:Z, verdict:VALIDATED, profile,
+selection_mode, finished_at, slot, host, qualifying_count}, landable,
+landable_reason }`.
 
 ## Consumer contract (the lander QUERIES; it does not read notes)
 
@@ -264,8 +292,11 @@ ci-hub/landing/rebase_wrapper.py eligible --result <Z>    # exit 0 eligible / 2 
 ```
 
 A query has no mailbox to miss — this closes the producer-posted-to-the-wrong-task
-gap. Records live beside the validate ledger at `ignored/rebase-records.jsonl`
-(append-only, latest-per-Z wins). Producer paths:
+gap (12 verified heads were invisible that day because a producer posted to its
+own task). By default `eligible` re-checks **both** the base floor and the receipt
+at Z **live**; `--no-recheck-floor` / `--no-recheck-receipt` trust the frozen
+record snapshot (offline). Records live beside the validate ledger at
+`ignored/rebase-records.jsonl` (append-only, latest-per-Z wins). Producer paths:
 
 ```
 # mechanical: ci-hub owns the rebase, auto-soft-greens the zero-conflict case
