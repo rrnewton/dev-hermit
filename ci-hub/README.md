@@ -71,6 +71,23 @@ on its own; a non-ancestral replay SHA is `NOT_LANDED`, detecting a later
 force-push orphan. A PR without `mergeCommit.oid` is `UNVERIFIABLE`, never an
 inferred failure or success. `verify-landed-pr` remains a compatibility alias.
 
+Task closure is a separate, fail-closed consumer of that verifier:
+
+```bash
+./ci-hub/bin/close-task TASK --code PR_OR_FULL_SHA --repo OWNER/REPO --source CHECKOUT
+./ci-hub/bin/close-task TASK --artifact ai_docs/path.md
+./ci-hub/bin/close-task TASK --run-id GITHUB_RUN_ID --repo OWNER/REPO
+```
+
+The gateway records `CLOSURE-VERIFIED` on the task before changing its status.
+It closes only a landed code reference, a URL that resolves or a local artifact
+tracked on freshly fetched parent `main`, or a GitHub Actions run ID that
+resolves. `REFUSED` exits 1 for a reference known not to satisfy the criterion;
+`UNVERIFIABLE` exits 2 when no answer can be obtained.
+Neither nonzero state calls `tg`. Use `--check-only` to validate evidence without
+mutating a live task. The upstream `tg` binary has no project hook, so project
+policy requires this gateway and forbids raw terminal-status updates.
+
 ## Object map and ownership
 
 | Object | Owns | Does not own |
@@ -82,6 +99,7 @@ inferred failure or success. `verify-landed-pr` remains a compatibility alias.
 | `validate/` | Legacy/local `validate.sh` ledger aggregation and linkage to retained profiles. | The generic DAG runner/profile format. |
 | `runners/` | Self-hosted runner image, lifecycle, and host status tooling. | Generic CI scheduling. |
 | `landing/` | Shared-file **landing mutex** (`land-lock`) that serializes PR landings touching the shared manifest registries. | The land sequence itself (re-union/push/stamp/merge). |
+| `closure/` | Verification and evidence recording required before TaskGraph closure. | Task implementation or coordinator judgement that a goal is complete. |
 
 Runtime data is untracked under `ignored/ci-hub/`; versioned code and schemas
 live here. Reproducible experiment producers and their frozen outputs remain

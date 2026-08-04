@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Close a TaskGraph task only after its recorded reference verifies."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+Run = Callable[..., subprocess.CompletedProcess[str]]
+
+CLOSED = 0
+REFUSED = 1
+UNVERIFIABLE = 2
+
+
+@dataclass(frozen=True)
+class Evidence:
+    state: str
+    kind: str
+    reference: str
+    resolved: str | None = None
+    reason: str | None = None
+
+    @property
+    def rc(self) -> int:
+        return {"verified": CLOSED, "refused": REFUSED}.get(
+            self.state, UNVERIFIABLE
+        )
+
+
+def _run(
+    command: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 120,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(command),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return subprocess.CompletedProcess(list(command), UNVERIFIABLE, "", str(error))
+
+
+def _json_object(output: str) -> dict[str, object] | None:
+    try:
+        value = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def verify_code(
+    reference: str,
+    *,
+    repo: str,
+    source: Path,
+    target: str,
+    run: Run = _run,
+) -> Evidence:
+    result = run(
+        (
+            sys.executable,
+            str(ROOT / "ci-hub/remediation/protocol.py"),
+            "verify-landing",
+            reference,
+            "--repo",
+            repo,
+            "--source",
+            str(source),
+            "--target",
+            target,
+            "--json",
+        ),
+        cwd=ROOT,
+    )
+    payload = _json_object(result.stdout.strip())
+    if payload is None:
+        detail = (result.stderr or result.stdout or "verifier emitted no JSON").strip()
+        return Evidence("unverifiable", "code", reference, reason=detail)
+    state = str(payload.get("state") or "unverifiable")
+    resolved = str(payload.get("resolved_sha") or "") or None
+    reason = str(payload.get("reason") or state)
+    if result.returncode == CLOSED and state == "landed" and resolved:
+        return Evidence("verified", "code", reference, resolved=resolved)
+    if result.returncode == REFUSED and state == "not-landed":
+        return Evidence("refused", "code", reference, resolved=resolved, reason=reason)
+    return Evidence("unverifiable", "code", reference, resolved=resolved, reason=reason)
+
+
+def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
+    if reference.startswith(("https://", "http://")):
+        result = run(
+            (
+                "with-proxy",
+                "curl",
+                "--fail",
+                "--location",
+                "--silent",
+                "--output",
+                "/dev/null",
+                reference,
+            ),
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            return Evidence("verified", "artifact", reference, resolved=reference)
+        detail = (result.stderr or "URL did not resolve").strip()
+        return Evidence("unverifiable", "artifact", reference, reason=detail)
+
+    path = Path(reference).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    if not path.is_file():
+        return Evidence("refused", "artifact", reference, reason="artifact is not a file")
+    try:
+        relative = str(path.relative_to(ROOT))
+    except ValueError:
+        return Evidence(
+            "refused",
+            "artifact",
+            reference,
+            reason="local artifact is outside the versioned workspace; use a URL",
+        )
+    tracked = run(("git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative), cwd=ROOT)
+    if tracked.returncode != 0:
+        return Evidence(
+            "refused", "artifact", reference, reason="artifact is not version-controlled"
+        )
+    fetched = run(
+        (
+            "with-proxy",
+            "git",
+            "-C",
+            str(ROOT),
+            "fetch",
+            "origin",
+            "refs/heads/main:refs/remotes/origin/main",
+        ),
+        cwd=ROOT,
+    )
+    if fetched.returncode != 0:
+        return Evidence(
+            "unverifiable",
+            "artifact",
+            reference,
+            reason=(fetched.stderr or "cannot fetch parent main").strip(),
+        )
+    present = run(
+        ("git", "-C", str(ROOT), "cat-file", "-e", f"origin/main:{relative}"),
+        cwd=ROOT,
+    )
+    if present.returncode != 0:
+        return Evidence(
+            "refused", "artifact", reference, reason="artifact is not on parent main"
+        )
+    tip = run(("git", "-C", str(ROOT), "rev-parse", "origin/main"), cwd=ROOT)
+    resolved = f"{relative}@{tip.stdout.strip()}"
+    return Evidence("verified", "artifact", reference, resolved=resolved)
+
+
+def verify_run(run_id: str, *, repo: str, run: Run = _run) -> Evidence:
+    if not run_id.isdecimal() or int(run_id) <= 0:
+        return Evidence("unverifiable", "run", run_id, reason="run ID must be positive")
+    result = run(
+        (
+            "with-proxy",
+            "gh",
+            "run",
+            "view",
+            run_id,
+            "-R",
+            repo,
+            "--json",
+            "databaseId,url,status,conclusion",
+        ),
+        cwd=ROOT,
+    )
+    payload = _json_object(result.stdout.strip())
+    if result.returncode != 0 or payload is None:
+        detail = (result.stderr or result.stdout or "run did not resolve").strip()
+        return Evidence("unverifiable", "run", run_id, reason=detail)
+    if str(payload.get("databaseId") or "") != run_id:
+        return Evidence("unverifiable", "run", run_id, reason="GitHub returned another run")
+    url = str(payload.get("url") or "")
+    if not url:
+        return Evidence("unverifiable", "run", run_id, reason="run has no URL")
+    return Evidence("verified", "run", run_id, resolved=url)
+
+
+def close_task(task: str, evidence: Evidence, *, run: Run = _run) -> int:
+    if evidence.state != "verified" or not evidence.resolved:
+        return evidence.rc
+    note = (
+        "CLOSURE-VERIFIED: "
+        f"kind={evidence.kind} reference={evidence.reference} "
+        f"resolved={evidence.resolved} verifier=ci-hub/bin/close-task"
+    )
+    noted = run(("tg", "note", task, note), cwd=ROOT)
+    if noted.returncode != 0:
+        print(
+            "UNVERIFIABLE "
+            f"task={task} reason=failed-to-record-reference detail="
+            f"{(noted.stderr or noted.stdout).strip()}",
+            file=sys.stderr,
+        )
+        return UNVERIFIABLE
+    closed = run(("tg", "update", task, "--status", "closed"), cwd=ROOT)
+    if closed.returncode != 0:
+        print(
+            "UNVERIFIABLE "
+            f"task={task} reason=task-update-failed detail="
+            f"{(closed.stderr or closed.stdout).strip()}",
+            file=sys.stderr,
+        )
+        return UNVERIFIABLE
+    print(
+        f"CLOSED task={task} kind={evidence.kind} "
+        f"reference={evidence.reference} resolved={evidence.resolved} rc=0"
+    )
+    return CLOSED
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Verify and record a durable reference before closing a task"
+    )
+    parser.add_argument("task")
+    reference = parser.add_mutually_exclusive_group(required=True)
+    reference.add_argument("--code", metavar="PR_OR_SHA")
+    reference.add_argument("--artifact", metavar="PATH_OR_URL")
+    reference.add_argument("--run-id")
+    parser.add_argument("--repo", default="rrnewton/hermit")
+    parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    parser.add_argument("--target", default="main")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="verify without recording or closing (safe for live tasks)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None, *, run: Run = _run) -> int:
+    args = parse_args(argv)
+    if args.code is not None:
+        evidence = verify_code(
+            args.code,
+            repo=args.repo,
+            source=args.source,
+            target=args.target,
+            run=run,
+        )
+    elif args.artifact is not None:
+        evidence = verify_artifact(args.artifact, run=run)
+    else:
+        evidence = verify_run(args.run_id, repo=args.repo, run=run)
+
+    if evidence.state != "verified":
+        print(
+            f"{evidence.state.upper()} task={args.task} kind={evidence.kind} "
+            f"reference={evidence.reference} reason={evidence.reason or evidence.state} "
+            f"rc={evidence.rc}",
+            file=sys.stderr,
+        )
+        return evidence.rc
+    if args.check_only:
+        print(
+            f"VERIFIED task={args.task} kind={evidence.kind} "
+            f"reference={evidence.reference} resolved={evidence.resolved} rc=0"
+        )
+        return CLOSED
+    return close_task(args.task, evidence, run=run)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

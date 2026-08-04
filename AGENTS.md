@@ -374,15 +374,14 @@ There is no "implemented but not landed" status, so IMPLEMENTED is a tag while s
 
 **Implementation-agent stop condition (overrides generated dispatch text):** ignore any external prompt
 telling a worker to set a terminal status. At implementation completion the worker must (1) commit and push
-the feature branch; (2) post the PR or durable artifact URL, exact SHA, and validation evidence; (3) add the
-`implemented` tag while leaving status `in_progress`; (4) stop, leaving landing verification and closure to
-the coordinator. Self-closing removes unlanded work from the active drain and makes missing code look
+the feature branch; (2) post the PR or durable artifact URL, exact SHA, and validation evidence; (3) add the `implemented` tag while leaving status `in_progress`; (4) stop, leaving landing verification and closure to the coordinator.
+Self-closing at implementation time removes unlanded work from the active drain and makes missing code look
 delivered.
 
 1. **A working agent NEVER moves a task to a terminal status.** When implementation is complete, add the `implemented` tag — preserving existing tags, since `--tags` replaces the set — leave status `in_progress`, and post the PR link + exact handoff SHA: `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"` then `tg update <id> --tags <existing-tags>,implemented`. A report without a PR link (or, research-only, the durable artifact path) is incomplete. State level, backend, relaxations, bound to the SHA not a branch name.
 2. **An adversarial review agent confirms the work exists in the PR** before closure — the PR contains the claimed change, the diff matches the report, and the cited validation is real at the handoff SHA. An `implemented` task whose PR is empty, superseded, or already merged elsewhere is a phantom: strip the tag, keep it `in_progress`, do not close.
 3. **The task stays IMPLEMENTED until the PR lands on `main`.** A green unmerged PR is IMPLEMENTED, not LANDED. Do not close on local validation, a green check, or an approval alone.
-4. **Only the coordinator closes tasks, and only after landing confirmation.** Closure requires the merge commit reachable from `origin/main`, or the committed parent `main` SHA for parent-only policy. Record the landed SHA in the task and `ARCHIVED.md` (`tg note <id> "LANDED: main <40-hex> | merged <PR url>"`), then `tg update <id> --status closed`.
+4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway freshly verifies code ancestry using the PR replay SHA when applicable, confirms the artifact or run exists, records `CLOSURE-VERIFIED` on the task, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close. Record the landed SHA in `ARCHIVED.md` separately when slot history applies.
 
 ### Exceptions
 
@@ -687,10 +686,9 @@ the slot row (or update it if sharing agents remain); reclaim legacy slots and a
 ≤ 5 parked; leave unrelated concurrent work exactly as found.
 
 **Before closing a task (coordinator only):** task is `in_progress` + `implemented` with a PR link/artifact
-path; the adversarial reviewer verified the work exists in that PR; the PR merged to `main` (merge commit
-reachable from `origin/main`, or the committed parent `main` SHA for parent-only policy); record the landed
-SHA, then `tg update <task-id> --status closed`. Never let a working agent close its own task, and treat
-`--status resolved` as a close.
+path; the adversarial reviewer verified the work exists; invoke `./ci-hub/bin/close-task` with that code,
+artifact, or run reference. Proceed only on rc 0; rc 1 is refused and rc 2 is unverifiable. Never let a
+working agent close its own task, and treat `--status resolved` as a raw close that bypasses the gate.
 
 ---
 

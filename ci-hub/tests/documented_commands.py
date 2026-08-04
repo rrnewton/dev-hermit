@@ -21,7 +21,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 33
+EXPECTED_COMMANDS = 38
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -94,9 +94,16 @@ def _classify(text: str) -> str:
             return "local-read"
         if command == "land-lock" and re.search(r"\bland-lock\s+status\b", normalized):
             return "local-read"
-        if command in {"land-lock", "refresh-history", "resolve-obligation"}:
+        if command in {
+            "land-lock",
+            "refresh-history",
+            "resolve-obligation",
+            "verify-landing",
+        }:
             return "parse"
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
+    if normalized.startswith("./ci-hub/bin/close-task "):
+        return "parse"
     if normalized.startswith("with-proxy gh "):
         return "live-read"
     match = re.match(r"^(?:\./)?scripts/agent-podman\.rs\s+(\S+)", normalized)
@@ -194,6 +201,8 @@ def _parse_probe(command: str) -> str:
         return "systemd-run --help"
     if normalized.startswith("systemctl --user status "):
         return "systemctl --help"
+    if normalized.startswith("./ci-hub/bin/close-task "):
+        return "./ci-hub/bin/close-task --help"
     return command
 
 
