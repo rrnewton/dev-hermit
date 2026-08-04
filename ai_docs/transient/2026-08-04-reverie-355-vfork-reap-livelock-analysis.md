@@ -171,3 +171,56 @@ took the 16-wide hang from ~20% to 0/336, and it neither touches nor regresses t
 - MEDIUM: "sufficient" generalizes beyond the in-process detcore vfork tests / this host / 16-way — not
   measured against full validate or a large real hermit workload; 0/336 bounds but cannot prove zero.
 - Not attempted: a standalone reproduction independent of the detcore test harness.
+
+---
+
+## FINAL VERIFICATION AT THE LANDED PIN (assiduous-debugger, 2026-08-04)
+
+Re-verified the whole thing at the **landed** state, binding every result to my own runs
+(not a handed log). Pins: hermit main `8f656b4d`, reverie `79517704` (== hermit `Cargo.lock` rev).
+
+### Provenance verified by the running thing, not the config
+The reused `tests_misc-61b9396040d7da30` binary sits in a slot whose committed hermit `Cargo.lock`
+reads reverie `d973a85b` (the OLD unfixed rev) with **no `[patch]`** and a clean tree — so the config
+*looks* like it built against the unfixed reverie. It did not. The binary embeds
+`reverie-2fc770f7a9c80803/7951770` and the build log shows `Compiling safeptrace … rev=79517704…#79517704`.
+The build-time `[patch]` was applied, built, then reverted (leaving the child clean). **The artifact is
+genuinely built against the landed fix.** (Had I trusted the lockfile, I would have wrongly concluded the
+16-wide result was against unfixed reverie.)
+
+### Gate 1 — 16-wide livelock repro (end-to-end), with a load-robust discriminator
+A wall-only harness at this box's load (up to ~383/316 cores) cannot distinguish the livelock (burned
+core: CPU≈wall) from mere contention (slow: CPU≪wall). I wrote `harness16-cpuwall.sh`, which for any
+over-budget run reads `/proc/PID/stat` utime+stime and classifies **LIVELOCK (CPU≥70% of wall)** vs
+**CONTENTION**. Result on the `79517704` binary:
+
+    livelock=0  contention=0  over 640 runs (40 rounds x 16-wide)  at load 123–168  →  NO-LIVELOCK
+
+Nothing even exceeded the 30 s budget. Combined with the predecessor's 320 and hermit-250's 336,
+~1,300 fixed-side 16-wide runs with **zero** livelock. Harness-is-not-inert: same harness family showed
+**23/112 (~20%) hangs on baseline `d973a85b`** (hermit-250) — it demonstrably detects the livelock.
+
+### Gate 2 — rollback contract NOT regressed (the "tension"), powered
+Ran the 4 contract/guard tests directly on the pin-`79517704` `safeptrace` test binary (93 tests
+compiled with `--features notifier`; NOT a 0-test silent build), powered ×10:
+
+    decode_error_rolls_back_return_transaction_and_wakes_cleanup      (rollback contract — the tension)
+    new_child_decode_return_precedes_cleanup_for_fork_vfork_and_clone (Died-consume — the fix, positive)
+    notifier_clone_parent_decode_error_preserves_fifo_front           (async non-Died rollback, negative)
+    synchronous_clone_parent_decode_error_preserves_fifo_front        (sync rollback, negative)
+    → 10/10 rounds, all 4 pass every round (0 failures)
+
+### Why the "tension" is genuinely dissolved (not merely untriggered)
+The originally-measured PR tip `faf8a342` consumed on **all** decode errors — that is the version that
+broke the rollback contract. What **landed** (`79517704`) is refined: it consumes **only** on
+`Err(error @ Error::Died(_))` and rolls back every other error (`Err(error) => return Err(error)`). So
+the fix (kill the ESRCH/Died hot spin) and the contract (roll back non-death errors) no longer conflict —
+the narrow-fix the task asked for is exactly what merged. Sync path is byte-for-byte unchanged.
+
+### Verdict
+Both non-negotiable gates GREEN at the landed pin on my own runs, provenance-checked. The narrow
+vfork/reap fix that preserves the SyncWaitOwner rollback contract EXISTS, is LANDED as reverie #355 (as
+merged, `79517704`), and is pinned in hermit main `8f656b4d`. detcore_misc's 16-wide livelock is
+resolved. Per owner directive: keep the task open (do not close); tag `implemented`.
+
+Logs: `scratch/assiduous-vfork-logs/{detcore_misc-16wide-cpuwall.log,reverie-unit-direct-79517704.log,harness16-cpuwall.sh}`.
