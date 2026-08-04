@@ -229,9 +229,17 @@ where the earlier contended `knee_sweep` was weakest:
    **self-saturates a 316-thread box even with zero peers** (load here climbed 21 → 92 → 228 driven by my
    own sweep). You cannot measure a 316-way knee without *being* the 316-way load that contaminates the
    makespan. The correct operating metric is therefore **achieved parallelism at the largest
-   non-self-saturating width (~N=128 → ~89 cores)**, not a mythical quiet 316-way makespan. This retires
-   the "still needs a quiet box" caveat: no shared *or* dedicated <~1000-core box can give a clean 316-way
-   makespan for this workload.
+   non-self-saturating width (~N=128 → ~89 cores)**, not a mythical quiet 316-way makespan.
+
+   **Correction (scope of "unobtainable").** The original wording overstated this. What is genuinely
+   unobtainable is a clean *316-way* (N≥~256) makespan: at that width a single fan-out demands >150 cores
+   and self-saturates a 316-thread box even with zero peers. But a **single-point** N=150–200 fan-out
+   reaches only load ~105–140 on a 316-thread box (each instance ≈`med_cpu`≈0.7 active cores) — the box is
+   still *under-subscribed*, so clean N=150/175/200 anchors **are** obtainable on a genuinely quiet box when
+   run one point at a time with recovery gaps between points. It was the *back-to-back* sweep (running every
+   N in sequence with no recovery) that piled load 21→92→228, not the width of any single point. So the true
+   residue is narrower than "needs a 1000-core box": a few single-point clean anchors at N=150–200 remain
+   measurable and unmeasured (see *What is NOT established*).
 
 3. **New operational ceiling: the 3pai sandbox (BpfJailer) blocks `FILE_OPEN` at ~N=211 concurrent
    instances** (`Enforcer: FS, Reason: FILE_OPEN` during the N=256 run; n_parsed=255, one instance's
@@ -248,11 +256,18 @@ makespan, crashes rise, and (in-sandbox) BpfJailer caps you near N=211 anyway. *
 ---
 
 ## What is NOT established here
-- ~~The high-N knee on a **quiet** box.~~ **RESOLVED as unobtainable (Finding 6):** the fan-out under
-  test *is* the load — a single N≥150 sweep self-saturates a 316-thread box with zero peers — so no shared
-  or dedicated <~1000-core box can yield a clean 316-way makespan for this workload. The answer is carried
+- The **316-way (N≥~256) knee** is unobtainable (Finding 6): at that width the fan-out under test *is* the
+  load — a single N≥256 sweep self-saturates a 316-thread box with zero peers — so no shared or dedicated
+  <~1000-core box can yield a clean 316-way makespan for this workload. The answer at that scale is carried
   by achieved parallelism at the largest non-self-saturating width (~N=128 → ~89 cores, clean, still
   climbing) plus the contended lower-bound climb to ~124 cores at N=316.
+- **Still open (narrower than first stated): single-point clean anchors at N=150/175/200.** These ARE
+  obtainable on a genuinely quiet box (a single N=150–200 fan-out leaves the box under-subscribed; only the
+  back-to-back sweep saturated it). They would move "scales past 150 cores" from *directional* (contended
+  lower bounds 105@N150, 113@N175, 123.5@N316, all ≥ their true value) to *definitive*. Harness ready
+  (`scratch/curve3-concurrent-hermit/free_sweep.sh`); run SINGLY with recovery gaps when storm≈0 and
+  load<15: `for N in 150 175 200; do bash free_sweep.sh $N $PWD/spin_guest_300m quiet_single; sleep 30; done`.
+  Not run here because the box was not quiet (load 56, storm 29 at this writing).
 - Per-N RSS-sum. Not a concern for this guest: measured maxRSS ≈ **10.6 MB/instance**, so even
   316-way ≈ 3.4 GB — memory is not a constraint for compute guests, and the memory.peak
   cap-inflation concern does not bind here (state it explicitly if a real corpus guest is used).
