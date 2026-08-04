@@ -1,0 +1,432 @@
+[
+  {
+    "id": "clone",
+    "verdict": "PASS",
+    "sec": 5.5
+  },
+  {
+    "id": "dbi-copied-tiocgpgrp",
+    "verdict": "PASS",
+    "sec": 5.8
+  },
+  {
+    "id": "dbi-exec-failure",
+    "verdict": "PASS",
+    "sec": 5.7
+  },
+  {
+    "id": "dbi-mmap-exec",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "dbi-prlimit-self",
+    "verdict": "PASS",
+    "sec": 5.4
+  },
+  {
+    "id": "get-robust-list-thread",
+    "verdict": "PASS",
+    "sec": 4.9
+  },
+  {
+    "id": "getcpu",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "getitimer-determinism-probe",
+    "verdict": "PASS",
+    "sec": 4.9
+  },
+  {
+    "id": "getsockopt-null",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "hello-alarm",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "hello-nostdlib",
+    "verdict": "PASS",
+    "sec": 4.9
+  },
+  {
+    "id": "hello-signals",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "io-uring-fallback",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "io-uring-ring-determinism",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "ioctl-siocethtool",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "just-spin",
+    "verdict": "PASS",
+    "sec": 6.2
+  },
+  {
+    "id": "keyctl-passthrough",
+    "verdict": "PASS",
+    "sec": 4.9
+  },
+  {
+    "id": "madvise-determinism",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "meminfo-available-deterministic",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "meminfo-cached-deterministic",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "meminfo-free-deterministic",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "memorypress",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "mmap-stress-determinism",
+    "verdict": "PASS",
+    "sec": 5.8
+  },
+  {
+    "id": "name-to-handle-at-eopnotsupp",
+    "verdict": "PASS",
+    "sec": 5.8
+  },
+  {
+    "id": "name-to-handle-directory-eopnotsupp",
+    "verdict": "PASS",
+    "sec": 5.6
+  },
+  {
+    "id": "name-to-handle-empty-path-eopnotsupp",
+    "verdict": "PASS",
+    "sec": 5.6
+  },
+  {
+    "id": "name-to-handle-regular-eopnotsupp",
+    "verdict": "PASS",
+    "sec": 5.5
+  },
+  {
+    "id": "nanosleep-par",
+    "verdict": "PASS",
+    "sec": 7.7
+  },
+  {
+    "id": "nanosleep-threads-nocrash",
+    "verdict": "PASS",
+    "sec": 5.4
+  },
+  {
+    "id": "netlink-autobind-generic",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "netlink-autobind-route",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "netlink-autobind-usersock",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "netns-cookie-tcp4",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "netns-cookie-tcp6",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "netns-cookie-udp4",
+    "verdict": "PASS",
+    "sec": 5.9
+  },
+  {
+    "id": "periodic-setitimer-delivery",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "pidfd-open-self",
+    "verdict": "PASS",
+    "sec": 5.9
+  },
+  {
+    "id": "pidfd-poll-self",
+    "verdict": "PASS",
+    "sec": 6.5
+  },
+  {
+    "id": "ppoll-readv",
+    "verdict": "PASS",
+    "sec": 6.6
+  },
+  {
+    "id": "ppoll-simulation",
+    "verdict": "PASS",
+    "sec": 5.4
+  },
+  {
+    "id": "prctl-dumpable",
+    "verdict": "PASS",
+    "sec": 5.9
+  },
+  {
+    "id": "pread64-nostdlib",
+    "verdict": "PASS",
+    "sec": 5.6
+  },
+  {
+    "id": "print-memaddrs",
+    "verdict": "PASS",
+    "sec": 5.4
+  },
+  {
+    "id": "printf-with-threads",
+    "verdict": "PASS",
+    "sec": 5.4
+  },
+  {
+    "id": "proc-fd-link-aliases",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "proc-fdinfo",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "procfs-positioned-probe",
+    "verdict": "PASS",
+    "sec": 5.8
+  },
+  {
+    "id": "prodcons-determinism",
+    "verdict": "PASS",
+    "sec": 8.4
+  },
+  {
+    "id": "pty-nr-count",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "racewrite-nostdlib",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "random-sources",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "rcx-canonicalization",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "record-replay-fd-close",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "record-replay-file-state",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "record-replay-setsockopt",
+    "verdict": "PASS",
+    "sec": 4.9
+  },
+  {
+    "id": "recvmsg-scm-rights-mmap",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "sched-setattr-batch",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "sched-setattr-idle",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "sched-setattr-other",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "sched-yield-progress",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "scheduler-policy-queries",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "setitimer-determinism",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "sigmask-preemption",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "sigtimedwait-timeout-0s",
+    "verdict": "PASS",
+    "sec": 5.0
+  },
+  {
+    "id": "sigtimedwait-timeout-1s",
+    "verdict": "PASS",
+    "sec": 8.8
+  },
+  {
+    "id": "so-incoming-cpu-udp4",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "socket-cookie-tcp",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "socket-cookie-udp",
+    "verdict": "PASS",
+    "sec": 5.1
+  },
+  {
+    "id": "socket-cookie-unix",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "socket-timestamp-edge-cases",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "socket-timestamp-timespec",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "socket-timestamp-timeval",
+    "verdict": "PASS",
+    "sec": 5.5
+  },
+  {
+    "id": "syscall-file-io",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "syscall-file-metadata",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "syscall-quick-wins",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "sysinfo",
+    "verdict": "PASS",
+    "sec": 5.7
+  },
+  {
+    "id": "sysinfo-uptime",
+    "verdict": "PASS",
+    "sec": 11.9
+  },
+  {
+    "id": "thread-self-procfs-handoff",
+    "verdict": "PASS",
+    "sec": 6.0
+  },
+  {
+    "id": "threadexhaustion",
+    "verdict": "PASS",
+    "sec": 5.6
+  },
+  {
+    "id": "timer-create-determinism",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "uname",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "unix-autobind-dgram",
+    "verdict": "PASS",
+    "sec": 5.2
+  },
+  {
+    "id": "unix-autobind-seqpacket",
+    "verdict": "PASS",
+    "sec": 5.3
+  },
+  {
+    "id": "unix-autobind-stream",
+    "verdict": "PASS",
+    "sec": 5.6
+  },
+  {
+    "id": "vforkexec",
+    "verdict": "PASS",
+    "sec": 5.9
+  },
+  {
+    "id": "wait-on-child",
+    "verdict": "PASS",
+    "sec": 6.9
+  }
+]

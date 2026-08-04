@@ -1,0 +1,134 @@
+[
+  {
+    "id": "arch-prctl-determinism",
+    "verdict": "FAIL",
+    "status": "40",
+    "sec": 5.7
+  },
+  {
+    "id": "dbi-unsupported-syscall",
+    "verdict": "FAIL",
+    "status": "101",
+    "sec": 5.7
+  },
+  {
+    "id": "epoll-determinism",
+    "verdict": "FAIL",
+    "status": "2",
+    "sec": 5.6
+  },
+  {
+    "id": "fp-reduction-nondeterminism",
+    "verdict": "FAIL",
+    "status": "124",
+    "sec": 95.3
+  },
+  {
+    "id": "get-robust-list-child",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.8
+  },
+  {
+    "id": "mmap-determinism",
+    "verdict": "FAIL",
+    "status": "2",
+    "sec": 5.4
+  },
+  {
+    "id": "pidfd-waitid-child",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.2
+  },
+  {
+    "id": "proc-locks",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.2
+  },
+  {
+    "id": "pselect6-simulation",
+    "verdict": "FAIL",
+    "status": "124",
+    "sec": 95.1
+  },
+  {
+    "id": "ptrace-attach-eperm",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.7
+  },
+  {
+    "id": "ptrace-seize-eperm",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.9
+  },
+  {
+    "id": "record-replay-lseek-seek-cur",
+    "verdict": "FAIL",
+    "status": "2",
+    "sec": 5.4
+  },
+  {
+    "id": "resource-determinism",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.2
+  },
+  {
+    "id": "sigpipe-siginfo",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.2
+  },
+  {
+    "id": "sigtimedwait-no-timeout",
+    "verdict": "FAIL",
+    "status": "124",
+    "sec": 95.1
+  },
+  {
+    "id": "so-incoming-cpu-tcp4",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.1
+  },
+  {
+    "id": "so-incoming-cpu-tcp6",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.3
+  },
+  {
+    "id": "tcp-info-accept4",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.2
+  },
+  {
+    "id": "tcp-info-accept6",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.1
+  },
+  {
+    "id": "tcp-info-client4",
+    "verdict": "FAIL",
+    "status": "1",
+    "sec": 5.1
+  },
+  {
+    "id": "thread-sync-determinism",
+    "verdict": "FAIL",
+    "status": "2",
+    "sec": 5.0
+  },
+  {
+    "id": "writev-determinism",
+    "verdict": "FAIL",
+    "status": "124",
+    "sec": 95.1
+  }
+]

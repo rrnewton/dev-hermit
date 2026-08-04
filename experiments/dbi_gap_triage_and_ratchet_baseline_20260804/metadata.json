@@ -1,0 +1,13 @@
+{
+  "experiment": "dbi_gap_triage_and_ratchet_baseline",
+  "date": "2026-08-04",
+  "agent": "hermit-dbi (opus-4.8)",
+  "question": "Of the manifest-DBI-disabled c-programs cells: how many are disabled for a REAL reason vs never re-tried? Establish the denominators and the at-main landable ratchet.",
+  "hermit_sha": "e8a0d8d3",
+  "hermit_note": "current origin/main; does NOT carry PR #1200 (always-defer admission). B3 baseline (dbi_b3_ptrace_corpus_sweep_20260803) was measured on the #1200 branch 9761a4ac.",
+  "reverie_pin": "e376686",
+  "host": "devbig014",
+  "method": "Isolated SERIAL re-run (removes the parallelism=8 self-contention confound of the B3 sweep) via ci/test_harness.sh run --mode verify --backend dbi --probe-disabled. 22-gap triage timeout 300s outer (harness internal cap ~90s => status 124). 86-candidate reverify timeout 200s.",
+  "denominator": "c-programs.toml = 159 cells; 44 manifest-DBI-enabled, 115 manifest-DBI-disabled; of the 115, 7 ptrace itself fails (excluded) => 108 meaningful disabled; of the 108, DBI PASS 86 / FAIL 22 when force-probed.",
+  "reproduce": "worktrees/dbi/hermit/ignored/dbi-gap-triage.py and dbi-cand-reverify.py (HERMIT_BIN=target/release/hermit)"
+}
