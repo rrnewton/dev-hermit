@@ -96,6 +96,38 @@ Python, and the jq gate all read. Owners to coordinate: `validate_status.rs` +
 `query.py` = green-time; `publish_receipt.py` + `verify_receipt.sh` = landing/merge-gate;
 the counts fields = hermit-243 (`_pending` counts anchor still `sha:TBD`).
 
+## Verification BY MUTATION (the strong proof — perturb the registry, watch each answer)
+
+Static grep *classifies*; mutation *proves*. The registry's effective floor was
+swapped in a **copy** (live `rebase-base-floors.json` never touched — both readers
+take a path override: `gate_floors.py --registry`, `preflight_anchor.py --anchors`)
+from the real floor `c369be3f` (hermit first-parent idx 2) to `b4e94ce4` (idx 0,
+the current tip — the same SHA hermit-sabre is rebasing the 12 low-band heads onto).
+Discriminator head for the preflight: `1b12bc1a` (idx 1) — contains `c369be3f`,
+does NOT contain `b4e94ce4`.
+
+| Consumer | LIVE registry | MUTATED registry | Moved? |
+|----------|---------------|------------------|--------|
+| `gate_floors.py` `effective_floor` | `c369be3f` | `b4e94ce4` | **YES — reads it** |
+| `preflight_anchor.py --head 1b12bc1a` | OK / exit 0 | REFUSE / exit 2 (names `b4e94ce4`) | **YES — reads it** |
+| `ci-hub newest-green` (Rust) | (transitive) | (transitive) | **YES, transitively** — shells `gate_floors.py`, parses `effective_floor`; no independent registry path (guarded by test `effective_floor_follows_registry_output_without_a_rust_constant`). Not independently mutated because the binary hardcodes the registry path — which is the correct single-authority design |
+| `validate_status.rs::is_clean_full_pass` | — | — | **NO — cannot move** |
+| `history/query.py::_row_full_pass` | — | — | **NO — cannot move** |
+| `validation/publish_receipt.py::qualifying_row` | — | — | **NO — cannot move** |
+| `validation/verify_receipt.sh` | — | — | **NO — cannot move** |
+| `lib/history_queries.rs` anchor filters | — | — | **NO — cannot move** |
+
+The 5 "cannot move" verdicts are not asserted — they are **structural**: each of the
+five files has **0** references to `rebase-base-floors|gate_floors|effective_floor|
+preflight_anchor` (grepped). Their verdict is a pure function of the receipt row's
+fields; the floor SHA is never an input, so no registry mutation can reach them.
+**That is the covered-path defect, demonstrated by perturbation: 3 consumers move
+with the registry, 5 are blind to it** — and the 5 are exactly the ones re-encoding
+the floor's dual (the required-field set) inline, which is why they have already
+drifted 4 ways (above). Reproduce: `sed s/c369be3f…/b4e94ce4…/ registry >copy` then
+run each reader `--registry`/`--anchors copy` and grep the 5 certifiers for registry
+refs.
+
 ## Verification of this sweep
 
 `git grep` in `ci-hub/` for: floor SHAs (`c369be3f|bfb0a9ef|e8a0d8d3|525627be|4cdda392`);
