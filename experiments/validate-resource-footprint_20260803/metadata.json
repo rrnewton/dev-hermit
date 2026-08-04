@@ -1,0 +1,29 @@
+{
+  "question": "Resource footprint (peak memory + core occupancy) of one full validate.sh run, for admission-control memory reservation and core-allocation sizing",
+  "date": "2026-08-03",
+  "hermit_sha": "9ebe1608303c66bfaa4b9c7d0521a30d9519c182",
+  "checkout": "primary ~/work/dev-hermit/hermit (warm build cache)",
+  "command": "OUT=/tmp/validate-measure VALIDATE_TIMEOUT=2400 bash experiments/validate-resource-footprint_20260803/measure-validate.sh \"$HOME/work/dev-hermit/hermit\"",
+  "validate_level": "full",
+  "validate_exit_code": 0,
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "nproc": 316,
+  "mem_total_kb": 791458316,
+  "sampling_interval_s": 2,
+  "memory_meter": "sum of RSS over cgroup.procs (memory controller not delegable on populated sandbox scope; proxy for peak working set)",
+  "cpu_meter": "cgroup cpu.stat usage_usec",
+  "results": {
+    "peak_rss_bytes": 2130870272,
+    "peak_rss_gib": 1.98,
+    "mean_cores": 2.43,
+    "peak_cores": 25.71,
+    "wall_s": 527.7,
+    "cpu_seconds": 1280.1
+  },
+  "conclusion": {
+    "validate_box_mem_reservation_gib": 2,
+    "core_profile": "mean ~2.43 cores, transient peak ~25.71 cores (parallel cargo/DAG phase); memory binds admission, cores advisory"
+  },
+  "raw_data": "samples.csv"
+}

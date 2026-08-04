@@ -1,0 +1,18 @@
+{
+  "date": "2026-08-03",
+  "agent": "hermit-dbi",
+  "hermit_sha": "353fa8db0583326bf97cbfa631c0d70cdeb7218d",
+  "hermit_branch": "codex/dbi-getuid-identity-parity",
+  "base_origin_main": "cd96303e63c1b6fd3be006494c1afce112bbed57",
+  "pr": "https://github.com/rrnewton/hermit/pull/1549",
+  "manifest": "tests/e2e/manifests/backend-parity-c.toml",
+  "fixtures": 53,
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "binary": "target/release/hermit (release)",
+  "measure_flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
+  "cpuid_probe_flags": "--strict --max-timeslice=disabled (cpuid virtualization ON; --no-virtualize-cpuid is inappropriate for a cpuid-virtualization fixture)",
+  "compile": "cc -O2 -std=gnu11 -D_GNU_SOURCE -w",
+  "result_l1_parity": "53/53",
+  "result_l2_verify": "53/53"
+}

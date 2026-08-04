@@ -1,0 +1,19 @@
+[stage1 file-overlap] 107 PRs, 1050 same-file edges -> 8 components; sizes(top10)=[100, 1, 1, 1, 1, 1, 1, 1]
+[stage1] rebases_avoided(file-overlap)=99
+[stage1] LARGEST component size=100; members 1147..1575
+
+[stage2 merge-tree] real conflict probe within candidate of 100 PRs (~4950 pairs)
+  ...10/100 rows done, 616 real edges so far
+  ...20/100 rows done, 1216 real edges so far
+  ...30/100 rows done, 1718 real edges so far
+  ...40/100 rows done, 2158 real edges so far
+  ...50/100 rows done, 2576 real edges so far
+  ...60/100 rows done, 2886 real edges so far
+  ...70/100 rows done, 3194 real edges so far
+  ...80/100 rows done, 3406 real edges so far
+  ...90/100 rows done, 3540 real edges so far
+  ...100/100 rows done, 3576 real edges so far
+[stage2] real conflict edges=3576 (vs 1050 same-file edges on same subset)
+[stage2] real components: 1 total, 1 multi-PR; sizes=[100]
+[stage2] rebases_avoided(real merge-tree, this subset)=99
+    real stack size=100 members(base->tip)=[1147, 1168, 1180, 1200, 1210, 1213, 1219, 1221, 1227, 1229, 1233, 1235, 1237, 1242, 1243, 1244, 1245, 1246, 1247, 1250, 1252, 1254, 1275, 1296, 1299, 1301, 1302, 1303, 1306, 1308, 1311, 1312, 1314, 1316, 1317, 1318, 1320, 1323, 1324, 1341, 1365, 1380, 1381, 1386, 1388, 1393, 1397, 1412, 1422, 1429, 1430, 1443, 1444, 1445, 1464, 1467, 1468, 1469, 1470, 1471, 1472, 1473, 1474, 1475, 1477, 1495, 1498, 1511, 1513, 1514, 1515, 1517, 1528, 1532, 1534, 1538, 1543, 1544, 1546, 1547, 1548, 1549, 1550, 1551, 1552, 1553, 1554, 1555, 1556, 1559, 1561, 1564, 1566, 1567, 1569, 1570, 1571, 1572, 1574, 1575] conflict_paths(top5)=['.github/workflows/ci-dag.yml', '.github/workflows/ci-portable.yml', '.github/workflows/ci-privileged.yml', '.github/workflows/demo-hot-path.yml', '.github/workflows/merge-gate.yml']

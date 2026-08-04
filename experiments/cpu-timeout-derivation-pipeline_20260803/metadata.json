@@ -1,0 +1,32 @@
+{
+  "experiment": "cpu-timeout-derivation-pipeline",
+  "date": "2026-08-03",
+  "question": "Derive per-node cpu_timeout for the DAG manifests from measurement, via a reusable pipeline; leave nodes unset where data is insufficient.",
+  "tool": "hermit/ci/dag/derive-cpu-timeouts.rs",
+  "hermit_branch": "codex/cpu-timeout-derivation-pipeline",
+  "hermit_base_origin_main_sha": "3201d7b473f572e6a3fab1d5ffca339d32c5ae7d",
+  "parent_sha": "534a1e0195cb4623a93fd9edb6b1d0ac1a096f79",
+  "agent_utils_pinned_by_hermit": {"version": "v0.2.0", "sha": "84580db", "enforces_cpu_timeout": false},
+  "agent_utils_main": {"sha": "1c0e9c3", "line": "v0.11.x", "enforces_cpu_timeout": false, "note": "SOURCE-VERIFIED: no cpu_timeout in py/scheduler.py or rs/src; --cgroups still opt-in (cli.py:370)"},
+  "agent_utils_with_enforcement": {"branch": "codex/cpu-time-timeout", "pr": "rrnewton/agent-utils#5 (DRAFT)", "impl": "Python cgroup-monitor only; Rust not done; unmerged", "enforces_cpu_timeout": true},
+  "agent_utils_rlimit_cpu_branch": {"branch": "origin/ci/cpu-time-rlimit-timeout", "pr": "#4", "note": "RLIMIT_CPU/prlimit CPU-time cap — enforces WITHOUT the cgroup cpu controller (host-portable)"},
+  "design_change_2026_08_03": "Owner inverted the default: boxing OPT-OUT (--unsafe-no-cgroups), undeclared nodes get 1 core / 1GB / 10s CPU. Tight default is a forcing function; declarations derived from a breach-table run. See tasks enable-cgroups-and-cpu-timeouts-across-dag-nodes + cgroups-opt-out-with-small-default-cap.",
+  "command": "./ci/dag/derive-cpu-timeouts.rs --samples <ambient> --samples <controlled-load> --step e2e/metadata --format {human,json}",
+  "inputs": [
+    "experiments/cpu-time-timeout-manifest-node_20260803/ambient-samples.csv",
+    "experiments/cpu-time-timeout-manifest-node_20260803/controlled-load-samples.csv"
+  ],
+  "rule": "cpu_timeout = round(max(observed cpu_s) * headroom); headroom=1.5; floor=0; min_samples=5",
+  "result": {
+    "universe_unique_keys": 50,
+    "set": 1,
+    "unset": 49,
+    "set_nodes": {"e2e/metadata": {"n": 35, "max_cpu_s": 12.24, "cpu_timeout": 18}}
+  },
+  "host": {
+    "uname": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "os": "CentOS Stream 9",
+    "rust_script": "0.36.0",
+    "cgroup_v2_delegated_controllers": "io memory pids (NO cpu/cpuset) — cannot generate per-step cpu.usage_usec on this host"
+  }
+}

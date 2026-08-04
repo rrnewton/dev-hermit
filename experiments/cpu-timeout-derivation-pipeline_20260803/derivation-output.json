@@ -1,0 +1,402 @@
+[
+  {
+    "step": "check/backend_abstraction",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "check/portability_paths",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "check/script_sigpipe",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "setup/nextest",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/workspace",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/dbi_release",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/sabre_release",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/liteinst_runtime_release",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/metadata",
+    "samples": 35,
+    "max_cpu_s": 12.24,
+    "cpu_timeout": 18,
+    "status": "set",
+    "reason": null
+  },
+  {
+    "step": "build/manifest_guests",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_applications",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_backend_parity_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_bin_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_c_programs",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_chaos_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_data_handling",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_debugger_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_determinism_stress_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_determinism_stress",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_language_runtimes",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_shared_futex_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_system_utils",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "e2e/manifest_util_c",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/applications_e2e",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "lint/rustfmt",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "lint/clippy",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "doc/doctests",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "doc/rustdoc",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/regular_crates",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/flaky_harnesses",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/hermit_unit",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/detcore_unit",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/detcore_misc",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/detcore_parallel",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/hermit_integration",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/arbitrary_binaries",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/cli",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/liteinst_strict",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/sabre_examples",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/hermit_modes",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/app_strict_verify",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/command_strict_verify",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/ignored_syscall_regressions",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/rr_suite_contract",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/dbi_parity",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/envelope_levels",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "test/strict_compat",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "build/privileged_tests",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "cpuid/faulting",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  },
+  {
+    "step": "pmu/preemption",
+    "samples": 0,
+    "max_cpu_s": null,
+    "cpu_timeout": null,
+    "status": "unset",
+    "reason": "no CPU-time samples"
+  }
+]

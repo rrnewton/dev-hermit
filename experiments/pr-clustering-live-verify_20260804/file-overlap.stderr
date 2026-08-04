@@ -1,0 +1,2 @@
+pr-landing-planner: command failed (1): with-proxy gh pr list --repo rrnewton/hermit --state open --limit 500 --json number,title,author,baseRefName,headRefName,headRefOid,isDraft,mergeable,reviewDecision,createdAt,updatedAt,additions,deletions,labels,statusCheckRollup
+HTTP 504: We couldn't respond to your request in time. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (https://api.github.com/graphql)

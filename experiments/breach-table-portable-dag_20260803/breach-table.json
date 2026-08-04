@@ -1,0 +1,233 @@
+[
+  {
+    "step": "build.dbi_release",
+    "n": 4,
+    "invalid": 1,
+    "max_cpu_s": 892.4839999999999,
+    "max_peak_bytes": 8589934592.0,
+    "max_cores": 14.1448,
+    "max_wall_s": 63.096,
+    "breaches": "MEM(8.00GiB>1);CPU(892.5s>10);CORES(14.14>1)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "build.flaky_harnesses",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 0.76,
+    "max_peak_bytes": 145293312.0,
+    "max_cores": 0.7569,
+    "max_wall_s": 1.005,
+    "breaches": "-",
+    "cpu_timeout": "1"
+  },
+  {
+    "step": "build.liteinst_runtime_release",
+    "n": 3,
+    "invalid": 0,
+    "max_cpu_s": 237.371,
+    "max_peak_bytes": 3118059520.0,
+    "max_cores": 9.5759,
+    "max_wall_s": 24.788,
+    "breaches": "MEM(2.90GiB>1);CPU(237.4s>10);CORES(9.58>1)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "build.manifest_guests",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 13.812999999999999,
+    "max_peak_bytes": 192286720.0,
+    "max_cores": 1.0401,
+    "max_wall_s": 71.901,
+    "breaches": "CPU(13.8s>10);CORES(1.04>1)",
+    "cpu_timeout": "21"
+  },
+  {
+    "step": "build.sabre_release",
+    "n": 3,
+    "invalid": 0,
+    "max_cpu_s": 189.81900000000002,
+    "max_peak_bytes": 1745833984.0,
+    "max_cores": 4.1981,
+    "max_wall_s": 45.216,
+    "breaches": "MEM(1.63GiB>1);CPU(189.8s>10);CORES(4.20>1)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "build.workspace",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 918.657,
+    "max_peak_bytes": 8589934592.0,
+    "max_cores": 16.3211,
+    "max_wall_s": 56.286,
+    "breaches": "MEM(8.00GiB>1);CPU(918.7s>10);CORES(16.32>1)",
+    "cpu_timeout": "1378"
+  },
+  {
+    "step": "check.backend_abstraction",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 0.023,
+    "max_peak_bytes": 5513216.0,
+    "max_cores": 0.4197,
+    "max_wall_s": 0.103,
+    "breaches": "-",
+    "cpu_timeout": "0"
+  },
+  {
+    "step": "check.portability_paths",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 2.243,
+    "max_peak_bytes": 106500096.0,
+    "max_cores": 1.0572,
+    "max_wall_s": 2.257,
+    "breaches": "CORES(1.06>1)",
+    "cpu_timeout": "3"
+  },
+  {
+    "step": "check.script_sigpipe",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 0.13999999999999999,
+    "max_peak_bytes": 41091072.0,
+    "max_cores": 0.9138,
+    "max_wall_s": 0.155,
+    "breaches": "-",
+    "cpu_timeout": "0"
+  },
+  {
+    "step": "doc.doctests",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 14.009,
+    "max_peak_bytes": 1324650496.0,
+    "max_cores": 0.9848,
+    "max_wall_s": 14.225,
+    "breaches": "MEM(1.23GiB>1);CPU(14.0s>10)",
+    "cpu_timeout": "21"
+  },
+  {
+    "step": "doc.rustdoc",
+    "n": 4,
+    "invalid": 1,
+    "max_cpu_s": 34.924,
+    "max_peak_bytes": 5368709120.0,
+    "max_cores": 2.8765,
+    "max_wall_s": 12.141,
+    "breaches": "MEM(5.00GiB>1);CPU(34.9s>10);CORES(2.88>1)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "e2e.manifest_determinism_stress",
+    "n": 2,
+    "invalid": 0,
+    "max_cpu_s": 16.740000000000002,
+    "max_peak_bytes": 39993344.0,
+    "max_cores": 0.2761,
+    "max_wall_s": 302.938,
+    "breaches": "CPU(16.7s>10)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "e2e.manifest_language_runtimes",
+    "n": 1,
+    "invalid": 0,
+    "max_cpu_s": 43.359,
+    "max_peak_bytes": 160165888.0,
+    "max_cores": 0.5251,
+    "max_wall_s": 82.569,
+    "breaches": "CPU(43.4s>10)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "e2e.metadata",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 21.178,
+    "max_peak_bytes": 453427200.0,
+    "max_cores": 1.6325,
+    "max_wall_s": 12.973,
+    "breaches": "CPU(21.2s>10);CORES(1.63>1)",
+    "cpu_timeout": "32"
+  },
+  {
+    "step": "lint.clippy",
+    "n": 4,
+    "invalid": 1,
+    "max_cpu_s": 41.418,
+    "max_peak_bytes": 1363918848.0,
+    "max_cores": 0.9109,
+    "max_wall_s": 45.467,
+    "breaches": "MEM(1.27GiB>1);CPU(41.4s>10)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "lint.rustfmt",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 0.956,
+    "max_peak_bytes": 41742336.0,
+    "max_cores": 0.9503,
+    "max_wall_s": 1.006,
+    "breaches": "-",
+    "cpu_timeout": "1"
+  },
+  {
+    "step": "setup.nextest",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 0.047,
+    "max_peak_bytes": 11689984.0,
+    "max_cores": 0.4464,
+    "max_wall_s": 0.153,
+    "breaches": "-",
+    "cpu_timeout": "0"
+  },
+  {
+    "step": "test.detcore_unit",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 85.236,
+    "max_peak_bytes": 1993752576.0,
+    "max_cores": 0.2849,
+    "max_wall_s": 299.154,
+    "breaches": "MEM(1.86GiB>1);CPU(85.2s>10)",
+    "cpu_timeout": "128"
+  },
+  {
+    "step": "test.regular_crates",
+    "n": 5,
+    "invalid": 0,
+    "max_cpu_s": 52.536,
+    "max_peak_bytes": 2262335488.0,
+    "max_cores": 1.098,
+    "max_wall_s": 272.729,
+    "breaches": "MEM(2.11GiB>1);CPU(52.5s>10);CORES(1.10>1)",
+    "cpu_timeout": "79"
+  },
+  {
+    "step": "test.hermit_integration",
+    "n": 0,
+    "invalid": 5,
+    "max_cpu_s": null,
+    "max_peak_bytes": null,
+    "max_cores": null,
+    "max_wall_s": null,
+    "breaches": "UNMEASURED(all-samples-failed)",
+    "cpu_timeout": "UNSET"
+  },
+  {
+    "step": "test.rr_suite_contract",
+    "n": 0,
+    "invalid": 4,
+    "max_cpu_s": null,
+    "max_peak_bytes": null,
+    "max_cores": null,
+    "max_wall_s": null,
+    "breaches": "UNMEASURED(all-samples-failed)",
+    "cpu_timeout": "UNSET"
+  }
+]

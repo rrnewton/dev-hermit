@@ -1,0 +1,57 @@
+cpu_timeout derivation  (rule: round(max_cpu_s * 1.5), floor 0s, min 5 samples)
+
+step                                  n   max_cpu_s  cpu_timeout
+----------------------------------------------------------------
+e2e/metadata                         35       12.24           18
+
+SET (justified by measurement): 1/50
+UNSET (left without cpu_timeout, honestly): 49
+  - check/backend_abstraction        no CPU-time samples
+  - check/portability_paths          no CPU-time samples
+  - check/script_sigpipe             no CPU-time samples
+  - setup/nextest                    no CPU-time samples
+  - build/workspace                  no CPU-time samples
+  - build/dbi_release                no CPU-time samples
+  - build/sabre_release              no CPU-time samples
+  - build/liteinst_runtime_release   no CPU-time samples
+  - build/manifest_guests            no CPU-time samples
+  - e2e/manifest_applications        no CPU-time samples
+  - e2e/manifest_backend_parity_c    no CPU-time samples
+  - e2e/manifest_bin_c               no CPU-time samples
+  - e2e/manifest_c_programs          no CPU-time samples
+  - e2e/manifest_chaos_c             no CPU-time samples
+  - e2e/manifest_data_handling       no CPU-time samples
+  - e2e/manifest_debugger_c          no CPU-time samples
+  - e2e/manifest_determinism_stress_c no CPU-time samples
+  - e2e/manifest_determinism_stress  no CPU-time samples
+  - e2e/manifest_language_runtimes   no CPU-time samples
+  - e2e/manifest_shared_futex_c      no CPU-time samples
+  - e2e/manifest_system_utils        no CPU-time samples
+  - e2e/manifest_util_c              no CPU-time samples
+  - test/applications_e2e            no CPU-time samples
+  - lint/rustfmt                     no CPU-time samples
+  - lint/clippy                      no CPU-time samples
+  - doc/doctests                     no CPU-time samples
+  - doc/rustdoc                      no CPU-time samples
+  - test/regular_crates              no CPU-time samples
+  - build/flaky_harnesses            no CPU-time samples
+  - test/hermit_unit                 no CPU-time samples
+  - test/detcore_unit                no CPU-time samples
+  - test/detcore_misc                no CPU-time samples
+  - test/detcore_parallel            no CPU-time samples
+  - test/hermit_integration          no CPU-time samples
+  - test/arbitrary_binaries          no CPU-time samples
+  - test/cli                         no CPU-time samples
+  - test/liteinst_strict             no CPU-time samples
+  - test/sabre_examples              no CPU-time samples
+  - test/hermit_modes                no CPU-time samples
+  - test/app_strict_verify           no CPU-time samples
+  - test/command_strict_verify       no CPU-time samples
+  - test/ignored_syscall_regressions no CPU-time samples
+  - test/rr_suite_contract           no CPU-time samples
+  - test/dbi_parity                  no CPU-time samples
+  - test/envelope_levels             no CPU-time samples
+  - test/strict_compat               no CPU-time samples
+  - build/privileged_tests           no CPU-time samples
+  - cpuid/faulting                   no CPU-time samples
+  - pmu/preemption                   no CPU-time samples

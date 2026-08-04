@@ -1,0 +1,37 @@
+{
+  "task": "enable-cgroups-and-cpu-timeouts-across-dag-nodes",
+  "date": "2026-08-03",
+  "hermit_sha": "1cea8a6fbaa7a1fd9c08e105eaad7590edd841d1",
+  "hermit_ref": "origin/main (detached)",
+  "runner": "safe-ci-dag-runner 0.11.0",
+  "runner_repo": "rrnewton/agent-utils",
+  "runner_sha": "1c0e9c3",
+  "runner_branch": "feat/cgroups-defaults-cpuset-231b (== origin/main, no changes)",
+  "boxing": "cgroup-v2 two-level systemd --user scope; per-step cpu.stat + peak_bytes; no default per-step cap (sizing.rs:16 -> None for undeclared)",
+  "command": "ci/run-dag.sh portable -j 8 --perf-dir <run> --keep-going  (x5 sequential)",
+  "driver": "ignored/breach-table-231b/run-breach-measure.sh",
+  "aggregator": "ignored/breach-table-231b/aggregate-breach.py",
+  "raw_data": "ignored/breach-table-231b/run-0{1..5}/step_profiles_*.csv (+ run.log)",
+  "master_log": "ignored/breach-table-231b/master-20260803-092132.log",
+  "host": "AMD EPYC 9D85 158-Core",
+  "agent_role": "3pai_audit",
+  "derivation_rule": "cpu_timeout = round(max(cpu_s) * 1.5) when n_valid >= 5, else UNSET",
+  "cpu_s": "user_s + sys_s (fallback cpu.usage_usec/1e6)",
+  "valid_sample": "ok true AND oom_kills == 0 AND not timed_out",
+  "default_caps_under_test": {"cores": 1, "mem_bytes": 1073741824, "cpu_s": 10},
+  "summary": {
+    "nodes_measured": 21,
+    "derived_cpu_timeout": 12,
+    "unset": 9,
+    "bucket_A_under_default": 6,
+    "bucket_B_needs_declaration": 6,
+    "bucket_C_unset_true_breachers": "9 measured + ~11 e2e buckets unsampled"
+  },
+  "known_contamination": [
+    "BpfJailer 3pai_audit blocks cmake FILE_OPEN on DynamoRIO cold build",
+    "cold-build OOM thundering herd kills cc1plus/clippy-driver in run 1",
+    "e2e.manifest_* buckets ran inconsistently (selection); heavy ones n<5",
+    "test.rr_suite_contract hits 300s wall-clock gate"
+  ],
+  "recommendation": "Re-derive UNSET nodes from CI perflog history (GitHub-hosted portable DAG: no BpfJailer, many samples) via PR #1547 pipeline before flipping the default cap."
+}
