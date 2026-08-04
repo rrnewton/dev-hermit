@@ -1,0 +1,2 @@
+# compiled microbench binary (build artifact — reproduce with cc -O2, see README)
+/rcb_bracket_cost

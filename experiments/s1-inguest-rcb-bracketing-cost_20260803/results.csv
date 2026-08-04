@@ -1,0 +1,17 @@
+run,primitive,ns_per_read,rcb_per_read,Na,Nb,reps
+1,read_syscall,240.34,6.00,100000,1000000,20
+1,read_rdpmc,13.90,3.00,100000,1000000,20
+1,read_offset_stopped,0.68,2.00,100000,1000000,20
+1,ptrace_reset_dance,543.81,NA,5000,5000,20
+2,read_syscall,239.28,6.00,100000,1000000,20
+2,read_rdpmc,13.85,3.00,100000,1000000,20
+2,read_offset_stopped,0.68,2.00,100000,1000000,20
+2,ptrace_reset_dance,546.05,NA,5000,5000,20
+3,read_syscall,237.36,6.00,100000,1000000,20
+3,read_rdpmc,13.86,3.00,100000,1000000,20
+3,read_offset_stopped,0.68,2.00,100000,1000000,20
+3,ptrace_reset_dance,542.99,NA,5000,5000,20
+median,read_syscall,239.28,6.00,100000,1000000,20
+median,read_rdpmc,13.86,3.00,100000,1000000,20
+median,read_offset_stopped,0.68,2.00,100000,1000000,20
+median,ptrace_reset_dance,543.81,NA,5000,5000,20
