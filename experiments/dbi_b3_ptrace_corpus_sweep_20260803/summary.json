@@ -1,0 +1,8 @@
+{
+  "total": 159,
+  "ptrace_pass": 152,
+  "dbi_pass": 132,
+  "dbi_pass_within_ptrace_corpus": 130,
+  "b3_ratio": 0.855,
+  "elapsed_sec": 374.3
+}

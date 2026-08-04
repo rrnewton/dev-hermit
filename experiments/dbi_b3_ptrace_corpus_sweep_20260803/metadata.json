@@ -1,0 +1,21 @@
+{
+  "experiment": "dbi_b3_ptrace_corpus_sweep",
+  "date": "2026-08-03",
+  "agent": "hermit-dbi (opus-4.8)",
+  "question": "Honest B-level for the DBI/DynamoRIO (DBT) backend: what fraction of the ptrace --strict --verify corpus runs bitwise-deterministically under --backend dbi --strict --verify?",
+  "hermit_sha": "9761a4ac53e8ea0f842386541514fab1102169c7",
+  "hermit_branch": "work/fix-1200-codex-review",
+  "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90",
+  "note_on_binary": "Release --features dbi build (target/release/hermit + libdetcore_dbi.so, built 2026-08-03 12:21). This head carries PR #1200 (always-defer run-queue admission), which removes the tentative-pop poison hang on async backends; relevant to the zero-HANG result under my outer wrapper.",
+  "manifest": "hermit tests/e2e/manifests/c-programs.toml (schema 2, bucket c-programs, 159 tests)",
+  "harness": "ci/test_harness.sh run --mode verify; enabled cells via --include-manual, manifest-disabled cells forced via --probe-disabled",
+  "backends": ["ptrace", "dbi"],
+  "mode": "verify (hermit run --strict --verify; bitwise-deterministic guest output/memory-hash across two runs)",
+  "outer_timeout_seconds": 100,
+  "parallelism": 8,
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "cores": 316,
+  "dev_kvm": "crw-rw-rw- root kvm (unused; DBI does not need /dev/kvm)",
+  "reproduce": "cd worktrees/dbi/hermit && export HERMIT_BIN=$PWD/target/release/hermit && python3 experiments/.../sweep.py (adjust OUT/ROOT paths); raw per-cell logs+jsonl under hermit ignored/dbi-b3-sweep_20260803/"
+}
