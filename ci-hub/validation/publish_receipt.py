@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -119,7 +120,14 @@ def gh_command() -> list[str]:
 
 
 def gh(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(gh_command() + args, text=True, capture_output=True)
+    environment = os.environ.copy()
+    if not environment.get("GH_CONFIG_DIR"):
+        candidate = Path.home() / ".config" / "gh"
+        if (candidate / "hosts.yml").is_file():
+            environment["GH_CONFIG_DIR"] = str(candidate)
+    result = subprocess.run(
+        gh_command() + args, text=True, capture_output=True, env=environment
+    )
     if check and result.returncode:
         fail(f"{' '.join(args)} failed: {result.stderr.strip()}")
     return result

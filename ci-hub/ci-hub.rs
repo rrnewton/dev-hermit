@@ -1481,6 +1481,16 @@ fn on_path(binary: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// `validate.sh` intentionally points XDG_CONFIG_HOME at an isolated temporary
+/// directory. Preserve that isolation, but let the control-plane `gh` child read
+/// its dedicated credential directory when the caller did not set one.
+fn gh_config_dir() -> Option<PathBuf> {
+    env::var_os("GH_CONFIG_DIR").map(PathBuf::from).or_else(|| {
+        let candidate = PathBuf::from(env::var_os("HOME")?).join(".config/gh");
+        candidate.join("hosts.yml").is_file().then_some(candidate)
+    })
+}
+
 /// Build a `gh` invocation, prefixing `with-proxy` for external egress when
 /// available (mirrors the Python health probes' `with-proxy gh` default).
 fn gh_command(root: &Path, args: &[&str]) -> Command {
@@ -1492,6 +1502,9 @@ fn gh_command(root: &Path, args: &[&str]) -> Command {
         Command::new("gh")
     };
     command.args(args).current_dir(root);
+    if let Some(config_dir) = gh_config_dir() {
+        command.env("GH_CONFIG_DIR", config_dir);
+    }
     command
 }
 
@@ -3048,6 +3061,9 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             .arg(&publisher)
             .args(["--pr", &pr_arg, "--repo", &args.repo, "--sha", &head, "--ledger", &ledger_arg])
             .current_dir(root);
+        if let Some(config_dir) = gh_config_dir() {
+            command.env("GH_CONFIG_DIR", config_dir);
+        }
         if args.dry_run {
             command.arg("--dry-run");
         }
