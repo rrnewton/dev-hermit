@@ -1,0 +1,11 @@
+node,feature,target_state,result,memory_peak,cpu_time,wall_s
+build.workspace,third-party,warm-shared,FAIL(rc=127),14.7M,249ms,0
+build.dbi_release,third-party,n/a,UNMEASURABLE-IN-SANDBOX,NA,NA,0
+build.sabre_release,third-party,n/a,UNMEASURABLE-IN-SANDBOX,NA,NA,0
+doc.doctests,third-party,n/a,UNMEASURABLE-IN-SANDBOX,NA,NA,0
+test.hermit_unit,third-party,n/a,UNMEASURABLE-IN-SANDBOX,NA,NA,0
+lint.clippy,rust-only,cold-fresh,FAIL(rc=127),13.9M,237ms,1
+doc.rustdoc,rust-only,cold-fresh,FAIL(rc=127),15.8M,244ms,0
+test.regular_crates,rust-only,cold-fresh,FAIL(rc=127),13.2M,248ms,0
+build.flaky_harnesses,rust-only,cold-fresh,FAIL(rc=127),15.3M,243ms,0
+test.detcore_unit,rust-only,cold-fresh,FAIL(rc=127),15.3M,243ms,1

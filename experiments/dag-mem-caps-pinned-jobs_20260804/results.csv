@@ -1,0 +1,11 @@
+node,feature,target_state,result,memory_peak,cpu_time,wall_s
+build.workspace,third-party,warm-shared,PASS,6G,11min4.959s,88
+build.dbi_release,third-party,warm-shared,PASS,6.8G,26min15.574s,151
+build.sabre_release,third-party,warm-shared,PASS,944M,1min56.529s,30
+doc.doctests,third-party,warm-shared,PASS,208M,2.543s,3
+test.hermit_unit,third-party,warm-shared,PASS,4.6G,8min31.188s,83
+lint.clippy,rust-only,warm-shared,PASS,4G,9min22.439s,72
+doc.rustdoc,rust-only,warm-shared,PASS,1.1G,28.068s,9
+test.regular_crates,rust-only,warm-shared,PASS,2G,46.101s,8
+build.flaky_harnesses,rust-only,warm-shared,PASS,143.8M,691ms,0
+test.detcore_unit,rust-only,warm-shared,PASS,1.8G,1min18.978s,27

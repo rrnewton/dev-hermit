@@ -1,0 +1,11 @@
+node,cap_GiB,rc,oom_kill,peak,verdict
+build.flaky_harnesses,2.00,0,success,81.1M,PASS-NO-KILL
+doc.doctests,2.00,0,success,1.4G,PASS-NO-KILL
+doc.rustdoc,3.00,0,success,576.1M,PASS-NO-KILL
+test.detcore_unit,3.50,0,success,97.7M,PASS-NO-KILL
+test.regular_crates,3.50,0,success,361.1M,PASS-NO-KILL
+build.sabre_release,2.50,0,success,49.6M,PASS-NO-KILL
+test.hermit_unit,6.50,0,success,2.5G,PASS-NO-KILL
+lint.clippy,5.50,0,success,584.1M,PASS-NO-KILL
+build.workspace,8.00,0,success,1.2G,PASS-NO-KILL
+build.dbi_release,8.50,0,success,1.5G,PASS-NO-KILL

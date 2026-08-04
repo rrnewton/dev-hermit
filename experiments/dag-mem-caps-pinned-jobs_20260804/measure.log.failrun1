@@ -1,0 +1,16 @@
+shared warm target: /tmp/mc-target-g6MY
+=== 05:25:13 START build.workspace (target=warm-shared feature=third-party) ===
+=== 05:25:13 END   build.workspace -> FAIL(rc=127) peak=14.7M cpu=249ms wall=0s ===
+build.workspace FAILED (third-party/DynamoRIO not buildable in sandbox).
+Feature nodes marked UNMEASURABLE-IN-SANDBOX; measuring Rust-only nodes COLD (upper bound).
+=== 05:25:13 START lint.clippy (target=cold-fresh feature=rust-only) ===
+=== 05:25:14 END   lint.clippy -> FAIL(rc=127) peak=13.9M cpu=237ms wall=1s ===
+=== 05:25:14 START doc.rustdoc (target=cold-fresh feature=rust-only) ===
+=== 05:25:14 END   doc.rustdoc -> FAIL(rc=127) peak=15.8M cpu=244ms wall=0s ===
+=== 05:25:14 START test.regular_crates (target=cold-fresh feature=rust-only) ===
+=== 05:25:14 END   test.regular_crates -> FAIL(rc=127) peak=13.2M cpu=248ms wall=0s ===
+=== 05:25:14 START build.flaky_harnesses (target=cold-fresh feature=rust-only) ===
+=== 05:25:14 END   build.flaky_harnesses -> FAIL(rc=127) peak=15.3M cpu=243ms wall=0s ===
+=== 05:25:14 START test.detcore_unit (target=cold-fresh feature=rust-only) ===
+=== 05:25:15 END   test.detcore_unit -> FAIL(rc=127) peak=15.3M cpu=243ms wall=1s ===
+=== 05:25:15 MEASUREMENT COMPLETE ===

@@ -131,3 +131,12 @@ ACTIVE.md
 
 # safe-ci-dag-runner runtime scratch (per-node profiles). Machine-local, never committed.
 /.safe-ci-dag-runner/
+
+# Transient ops-poll output redirected into the parent root. These are stdout/stderr
+# capture files from `ci-hub health` (h.*) and pr_status runs (pr_status*), NOT tracked
+# artifacts — the real script lives at ci-hub/health/pr_status.py. Root-anchored so they
+# never dirty `git status`; does not match ci-hub/health/pr_status.py.
+/h.err
+/h.json
+/pr_status*.err
+/pr_status*.json
