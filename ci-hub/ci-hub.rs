@@ -1123,13 +1123,43 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                     json: args.json,
                 }),
             )?;
-            Ok(if obligation_code != 0 {
+            // Owner-existence cross-reference on EVERY health poll: surface any
+            // non-terminal task whose owner is no longer a live fleet agent
+            // (an agent recycles ~every 30-60 min; the owned task row survives,
+            // the owner does not, and nothing else emits a signal for it). This
+            // reuses the verified report-only detector; --gate makes it exit 1
+            // when a real orphan exists and 3 on a fail-safe unreadable-fleet
+            // abort. The detector prints a plain-text report, so it is skipped
+            // in --json mode (a JSON poller can call the detector directly).
+            let orphan_contrib = if args.json {
+                0
+            } else {
+                match run_bash(
+                    root,
+                    "scripts/orphaned-task-detector.sh",
+                    vec![OsString::from("--gate")],
+                )? {
+                    // A real orphan turns health non-green so the coordinator
+                    // routes it (reassign or close). Exit 1 stays inside the
+                    // range the live-health probe classifies as authoritative.
+                    1 => 1,
+                    // Fail-safe (exit 3, fleet unreadable) or clean (0): printed
+                    // but never reddens health — an unreadable fleet must not
+                    // masquerade as an orphan wave.
+                    _ => 0,
+                }
+            };
+            // Preserve the existing precedence (obligations > main > PR, keeping
+            // main/PR's more-informative exit 2); orphans only redden a health
+            // poll that would otherwise be green.
+            let base = if obligation_code != 0 {
                 obligation_code
             } else if main_code != 0 {
                 main_code
             } else {
                 pr_code
-            })
+            };
+            Ok(if base != 0 { base } else { orphan_contrib })
         }
         HubCommand::ActiveWork(args) => {
             let mut forwarded = vec![OsString::from("active-work")];
@@ -3214,6 +3244,13 @@ fn obligation_summary(record: &ObligationRecord) -> String {
 
 fn run_python(root: &Path, relative_script: &str, args: Vec<OsString>) -> Result<i32, CiHubError> {
     run_python_path(&root.join(relative_script), args)
+}
+
+fn run_bash(root: &Path, relative_script: &str, args: Vec<OsString>) -> Result<i32, CiHubError> {
+    let script = root.join(relative_script);
+    let mut command = Command::new("bash");
+    command.current_dir(root).arg(&script).args(args);
+    run_status(command, &script.display().to_string())
 }
 
 fn run_python_path(script: &Path, args: Vec<OsString>) -> Result<i32, CiHubError> {

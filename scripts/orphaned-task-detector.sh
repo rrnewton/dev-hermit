@@ -47,15 +47,28 @@
 # Usage:
 #   scripts/orphaned-task-detector.sh              # report orphaned IN_PROGRESS tasks
 #   scripts/orphaned-task-detector.sh --all-status # also scan OPEN/BACKLOG owned tasks
+#   scripts/orphaned-task-detector.sh --gate       # same report; exit 1 iff orphans found
 #
-# Exit codes: 0 = ran (orphans may or may not exist; see report); 3 = could not
-# determine the live fleet (nothing flagged); 64 = usage error.
+# --gate changes ONLY the exit code, never the output: it lets a composite health
+# poll (`ci-hub health`) go non-green when a real orphan exists, so orphans
+# surface on EVERY poll instead of a one-off audit. The default (no --gate)
+# keeps the report-only contract: exit 0 whether or not orphans exist. In BOTH
+# modes a fail-safe fleet-read abort is exit 3 and flags nothing.
+#
+# Exit codes:
+#   0  = ran; default mode (orphans may or may not exist, see report), or
+#        --gate mode with ZERO orphans.
+#   1  = --gate mode ONLY: ran and found >=1 orphan (actionable).
+#   3  = could not determine the live fleet (nothing flagged; fail-safe).
+#   64 = usage error.
 set -uo pipefail
 
 ALL_STATUS=0
+GATE=0
 while (($#)); do
     case "$1" in
         --all-status) ALL_STATUS=1 ;;
+        --gate) GATE=1 ;;
         -h | --help) sed -n '/^# orphaned-task-detector\.sh —/,/^# Exit codes:/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "orphaned-task-detector.sh: unknown argument: $1" >&2; exit 64 ;;
     esac
@@ -132,5 +145,10 @@ if (( orphan_n > 0 )); then
     echo "  * still wanted -> reassign: tg claim <task> (as the new owner) or tg update <task> --owner <agent>"
     echo "  * done/moot    -> close:    tg update <task> --status closed  (record why)"
     echo "This tool only DETECTS. It does not reassign or close anything."
+fi
+# --gate: signal orphan presence through the exit code so a composite health poll
+# can go non-green. Default mode stays report-only (exit 0 regardless).
+if (( GATE && orphan_n > 0 )); then
+    exit 1
 fi
 exit 0
