@@ -139,3 +139,96 @@ already names "shrink backend-build + strict-compat" as the residual busy-wall l
 - For (a): confirm no OOM at K concurrent guests, and that the node's declared
   `{jobs, bytes}` footprint matches the recorded peak.
 - For (b): confirm the raised `hermit_guest` cap does not OOM the spine at its new concurrency.
+
+---
+
+# MEASURED ADDENDUM 2026-08-04 (hermit-perf, opus-4.8) — the tradeoff is now measured, not just stated
+
+**How measured.** Ran the real release binary `hermit/target/release/hermit` (built 2026-08-03,
+primary on `main`) with the exact portable-strict-compat probe invocation
+`run --strict --verify --no-virtualize-cpuid --max-timeslice=disabled -- <util>`, on devbig014
+(unloaded, warm cache). Per-probe wall + user+sys CPU via `/usr/bin/time -f '%e %U %S %M %P'`.
+Effective cores = (user+sys)/wall. N=22 distinct probes. NOT a full-corpus wall run (that needs
+the boxed systemd-run producer path, not a bare 600s agent run) — this measures the *composition*.
+
+## Finding 1 (decisive): every probe runs at ~1.0-1.25 effective cores, uniformly
+
+| probe | wall | cores | maxRSS |
+|-------|------|-------|--------|
+| true/echo/pwd/cat/wc/head/base64/base32/id/seq (trivial x~200 in corpus) | 0.03-0.05s | 0.75-1.3 | 13-16MB |
+| openssl / ruby / python3 | 0.06-0.41s | 1.0-1.1 | 12-16MB |
+| node | 0.98s | 1.17 | 34MB |
+| java -version | 1.85s | 1.21 | 41MB |
+| git --version | 2.22s | 1.20 | 32MB |
+| rustc/make/cmake --version | 0.05-0.16s | 1.1-1.2 | 15-28MB |
+| **javac (compile H.java)** | **18.92s** | **1.23** | **380MB** |
+
+hermit `--strict --verify` determinizes the guest to ~serial execution, so **every probe uses ~1.2
+cores no matter how parallel the native workload is** (javac has JIT threads; still 1.23 cores under
+hermit). This REFUTES the "sweep is running at ~12 cores" framing in the task title: the node uses
+**~1.2 of its ~12-core budget, one probe at a time — ~10 cores sit idle for the node's entire
+duration.** That idle headroom is exactly what option (a) reclaims.
+
+## Finding 2: time is pole-dominated, not evenly spread
+
+`javac` (18.9s) is a single tall pole; `java`/`git` ~2s; `node` ~1s; the ~200 remaining probes are
+<=0.1s each (=~10-20s total). A serial batch of ~9 heavy + 21 trivial probes exceeded 120s wall,
+so the real `gcc/g++/make/cmake/rustc` *compile* probes (each spawning `cc1`/`as`/`ld` as separate
+hermit-traced processes) are the seconds-each heavy middle. Attacking a handful of heavy probes,
+not the 200 trivial ones, is where any speedup comes from.
+
+## Finding 3: memory per concurrent guest is bounded and small
+
+Per-guest RSS: 13-45MB typical, **380MB worst (javac)**. So K concurrent guests add K x (<=0.4GB),
+NOT the multi-GB OOM class the pre-measurement note feared. At the node's 6GiB hard cap: K is
+mem-bounded at ~15 (6GiB/0.4GB), core-bounded at ~10 (12 cores / 1.2). **The binding cap is cores.**
+
+## The measured ceiling (analytic model, parameterised by the above)
+
+    parallel_wall ~= max( longest_single_probe , total_cpu_seconds / K )
+    K = min( floor(effective_cores / 1.2) , floor(mem_budget_bytes / 400MB) )
+
+On a ~12-core validate slot: K~=10. With the DAG's declared 600s and pole=19s:
+`wall ~= max(19, 600/10) = ~60s` => **~10x**, strict_compat 600s -> ~60s.
+On ubuntu-latest (4 core): K~=3 => smaller win but smaller idle headroom too.
+
+**Projected critical-path re-measurement (VERIFY item 1, PROJECTION — no change landed):**
+CP 1265s, strict_compat 600->~60-100s => **CP ~= 745-805s**, strict_compat share **47% -> ~8-13%**.
+
+**Projected j-sweep (VERIFY item 2):** option (a) is INTRA-node, invisible to the OUTER `-j`
+scheduler, so the outer j-sweep flat-point (j>=5) does NOT move — only the CP FLOOR drops. Moving
+the outer flat-point rightward requires option (b) + a `hermit_guest` cap bump (a global width
+constant, the risky change). This corrects the artifact's earlier guess that (a) "should move past
+j=5" — it will not; (a) lowers the floor, (b)+cap raises the outer width.
+
+## The width caution is real and located (owner's explicit warning)
+
+`validate.sh:440 host_cpus = getconf _NPROCESSORS_ONLN || nproc` reads the FULL machine (316 on
+devbig), NOT the runner cgroup; nothing in validate.sh reads `cpuset.cpus.effective` or `cpu.max`.
+`validate.sh:466 SUPER_JOBS = (host_cpus*3+1)/2` = **474 on devbig** — the existing in-node parallel
+primitive ALREADY carries the nproc-leak (same class as CARGO_BUILD_JOBS -> NUM_JOBS=284). **Reusing
+SUPER_JOBS as-is for the corpus would spawn ~474 concurrent guests and oversubscribe catastrophically.**
+Any option (a) implementation must first derive K from the runner cgroup (cpuset.cpus.effective and
+cpu.max quota/period) AND the mem budget per the formula above — do not reuse SUPER_JOBS unfixed.
+
+## Attribution (VERIFY item 3): preserved by the existing primitive
+
+`run_super_probe` (validate.sh:1893-1923) already dispatches K probes concurrently, each to its own
+log file, and the corpus already emits per-utility TSV rows. Option (a) built on that primitive keeps
+per-utility attribution. Option (b) additionally gives each utility its own DAG-node timeout/retry.
+Today javac's 19s + 380MB is invisible inside the 600s aggregate — both options surface it; this is
+concrete evidence for the task's note that (b)'s attribution benefit may matter as much as scheduling.
+
+## Bottom line (owner picks the shape; both are now measured)
+
+- **(a) in-node parallel**, K derived from runner cgroup + mem: measured ceiling **~10x on a 12-core
+  slot** (600->~60s), cheap, zero DAG blast radius, memory bounded (<=0.4GB/guest), attribution kept.
+  Does NOT de-serialize the 16-node hermit_guest spine and does NOT move the outer j-sweep.
+- **(b) split into DAG nodes**: inert without a global `hermit_guest` cap bump (blast radius: all 16
+  hermit nodes; the cap is itself a width constant to derive, not hardcode); buys true outer
+  load-balancing + per-utility node timeouts/attribution; attacks the spine.
+- **Composable**: (a) now for the cheap ~10x on the fat node; (b) as the spine follow-up. The pole
+  (javac) argues for isolating heavy probes either way.
+
+Correction to prior note: the hermit_guest spine is **16 nodes** (measured from ci/dag/portable.json),
+not 20.
