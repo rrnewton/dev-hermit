@@ -200,3 +200,65 @@ the writer exists.
   aggregator verdict `aggregate.py:330-351`.
 - Taxonomy: `query.py:53-152` (four states + seven-case table `:83-104`).
 - Admission/burst-waste feed: `ai_docs/portable-ci-admission-limited-not-topology_20260804.md`.
+
+---
+
+## RE-MEASUREMENT after the 3-field consumer landed (hermit-ghdag, 2026-08-04, delta)
+
+The split (step 4) shipped at `e6138c2`. Since then the count mechanism landed on parent main:
+`8c53eb5` (writer: `aggregate.py` reconstructs executed/filtered via the single `nonzero_result.py`
+extractor + `--ledger-fields` CLI) and `ea43e23` (consumer: `is_clean_full_pass` now requires
+`executed_tests==Some(n>0) && filtered_tests==Some(0)`, **strict on everything**). Re-measured live:
+
+| repo | authoritative | GREEN | ledger-corroborated | conclusion-only | GAP | RED | NO_RESULT |
+|---|---|---|---|---|---|---|---|
+| hermit | CI portable | 0.78% | **0.0%** | 0.78% | 53.6% | 30.6% | 15.0% |
+| reverie | Rust | 80.1% | **0.0%** | 80.1% | 8.8% | 11.1% | 0.0% |
+
+hermit window 58.5h / 137 commits since 2026-08-02; reverie 324.6h / 301 commits since 2026-07-21.
+**Never summed** — ledger-corroborated and conclusion-only are separate claims by construction.
+
+### Why ledger-corroborated reads 0.0% — now a *checkable* zero with a named cause
+Live ledger `ignored/validate-run-ledger.jsonl`, 261 rows: **only 2 carry counts; only 1 fully
+qualifies (executed>0 & filtered==0) and its `result==fail`.** Zero qualifying PASS rows exist.
+Cause: **no producer emits counts.** `hermit/validate.sh` (main) writes `schema_version: 3` with
+null counts; only `aggregate.py` (schema 1 reconstruction) emits them, and it has produced 2 rows.
+`ea43e23` is strict-on-everything, so it rejects all 35 previously-VALIDATED schema-3 receipts
+(see `transition-design-executed-filtered-count-schema-tightening_20260804.md`, §blast radius).
+So the "checkable property" the ledger now supports currently returns a **legitimate, explained
+zero**, not an inert one (the split path is proven non-inert by unit test + synthetic-row injection).
+
+### Does pre-anchor OVERLAP the 54% gap? NO — it is a *second, orthogonal* absence class
+This is the crux the owner asked to settle. The two absences live in **different dimensions and do
+not double-count wall-time**:
+
+- **Dimension A — GitHub-conclusion axis** (what green-time's denominator is built on). GAP 53.6%
+  and NO_RESULT 15.0% are computed **purely from GHA run start/complete/conclusion — `green-time`
+  never reads the ledger** (`query.py:818-855`). A pre-anchor/pre-counts producer therefore cannot
+  move the GAP bucket by one second. **The 53.6% GAP is entirely a dispatch-coverage problem** (108
+  of 136 dispatched main runs cancelled under portable `cancel-in-progress:false` supersede).
+- **Dimension B — ledger-corroborated axis** (the split). The pre-anchor + pre-counts producer
+  absence lives *here*: it explains why 0.78% conclusion-green → 0.0% ledger-green. Compounded by
+  timing: **72.7% of the 58.5h window predates `bfb0a9ef` (2026-08-03 18:43 UTC)**, so most of the
+  window's producers emit null anchor fields too, on top of null counts.
+
+**Verdict:** pre-anchor is NOT hiding inside the 54% gap; it is a distinct absence class in the
+ledger dimension. **Do not fold it into dispatch-gap.** Fix for A = dispatch coverage; fix for B =
+producer rollout (`emit_executed_and_filtered`) + rebase, or the version-aware consumer.
+
+### reverie is a third absence class — tooling, not health
+reverie 80.1% is **100% conclusion-only**; ledger-corroborated is structurally 0.0% because
+`reverie/validate.sh` has no receipt writer. **#364 ("ci: write exact-head validation receipts")
+is OPEN/BLOCKED, not landed** (head `f9f11510`). Keep reverie labeled conclusion-only until #364;
+counting it as red measures our tooling gap, not reverie health.
+
+### Live landing hazard surfaced by the re-measurement (coordinator escalation)
+`ea43e23`'s strict-on-everything predicate is the **live** landing gate (`land-pr.sh:183-188`,
+`apply-local-label` at `ci-hub.rs:3044`, `parallel-prevalidate.sh:148-153`). With zero qualifying
+rows, the **ledger-PASS landing path is 100% dead right now** — only PRs holding a pre-`ea43e23`
+`locally-validated` label leak through. The transition-design doc recommends replacing it with a
+**version-aware (presence-keyed + schema escalator)** predicate that grandfathers old receipts and
+un-breaks the drain immediately, while `COUNTS_SCHEMA` writers roll strict enforcement in. That is a
+coordinator/hermit-243/231b decision; flagged here because it is on the greening critical path.
+
+### tick-hub still NOT wired (per owner sequencing) — steps 1 + #364 + gap-coverage first.
