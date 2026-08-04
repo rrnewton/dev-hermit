@@ -50,6 +50,18 @@ class FakeRunner:
                     "resolved_sha": identity,
                 }
                 return completed(command, rc=1, stdout=json.dumps(payload))
+            if identity.startswith("f"):
+                # The verifier reached the checkout but its fetch failed, exactly
+                # as `fetch --no-tags origin <sha>: fatal: remote` did in the
+                # field. The checker must not read this as a clean pass.
+                payload = {
+                    "state": "unverifiable",
+                    "reason": (
+                        "command failed: with-proxy git -C /checkout "
+                        f"fetch --no-tags origin {identity}: fatal: remote error"
+                    ),
+                }
+                return completed(command, rc=2, stdout=json.dumps(payload))
             payload = {"state": "unverifiable", "reason": "no mergeCommit.oid"}
             return completed(command, rc=2, stdout=json.dumps(payload))
         if command[:3] == ("git", "-C", str(directive_check.ROOT)) or (
@@ -66,8 +78,9 @@ def directive(
     task: str | None = None,
     owner: str = "agent",
     parent_id: str | None = None,
+    gate: str | None = None,
 ):
-    return {
+    record = {
         "id": item_id,
         "summary": item_id.replace("-", " "),
         "requested_at": "2026-08-04",
@@ -82,6 +95,9 @@ def directive(
         if identity is None
         else {"kind": "commit", "identity": identity},
     }
+    if gate is not None:
+        record["gate"] = gate
+    return record
 
 
 class DirectiveCheckTest(unittest.TestCase):
@@ -125,7 +141,7 @@ class DirectiveCheckTest(unittest.TestCase):
 
         self.assertEqual(1, report.exit_code)
         self.assertEqual(1, report.counts["missing_task"])
-        self.assertEqual(1, report.counts["missing_owner"])
+        self.assertEqual(1, report.counts["needs_owner"])
         self.assertEqual(0, report.counts.get("satisfied", 0))
         self.assertEqual(1, report.issue_counts["missing_task"])
         self.assertEqual(1, report.issue_counts["missing_owner"])
@@ -147,6 +163,72 @@ class DirectiveCheckTest(unittest.TestCase):
         self.assertEqual(1, report.exit_code)
         self.assertEqual(1, report.counts["open"])
         self.assertEqual([], runner.verifier_calls)
+
+    def test_named_gate_is_gated_not_drift(self):
+        report, runner = self.evaluate(
+            [directive("deferred", identity=None, gate="zero open PRs")]
+        )
+
+        gated = next(item for item in report.directives if item.id == "deferred")
+        self.assertEqual("gated", gated.state)
+        self.assertEqual("zero open PRs", gated.gate)
+        self.assertIn("zero open PRs", gated.reason)
+        # A gated directive is deferred on a named condition, never counted as
+        # drift, and never triggers an ancestry verification.
+        self.assertNotIn(gated.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.counts["gated"])
+        self.assertEqual([], runner.verifier_calls)
+
+    def test_unnamed_gate_is_invalid(self):
+        report, _runner = self.evaluate(
+            [directive("bare-gate", identity=None, gate="   ")]
+        )
+
+        item = next(item for item in report.directives if item.id == "bare-gate")
+        self.assertEqual("invalid", item.state)
+        self.assertIn("unnamed_gate", item.issues)
+
+    def test_gate_on_implemented_is_invalid(self):
+        report, _runner = self.evaluate(
+            [directive("landed-but-gated", identity="a" * 40, gate="zero open PRs")]
+        )
+
+        item = next(
+            item for item in report.directives if item.id == "landed-but-gated"
+        )
+        self.assertEqual("invalid", item.state)
+        self.assertIn("gate_on_implemented", item.issues)
+
+    def test_fetch_failure_is_distinct_from_not_checked_and_never_clean(self):
+        # Positive side: a fetch failure while verifying a claimed commit must
+        # land in `fetch_failed` — distinct from `not_checked` (never verified)
+        # and from a clean pass — and must drive the overall verdict to unknown.
+        directives = [
+            directive("landed", identity="a" * 40),
+            directive("fetch-broke", identity="f" * 40),
+        ]
+        report, _runner = self.evaluate(directives)
+
+        broke = next(item for item in report.directives if item.id == "fetch-broke")
+        self.assertEqual("fetch_failed", broke.state)
+        self.assertEqual("fetch_failed", broke.ancestry)
+        self.assertNotEqual("not_checked", broke.ancestry)
+        self.assertIn("fetch failed", broke.reason)
+        self.assertIn(broke.state, directive_check.DRIFT_STATES)
+        # Never green, and unknown (exit 2) rather than a confirmed not_landed red.
+        self.assertEqual("unknown", report.overall_state)
+        self.assertEqual(2, report.exit_code)
+        self.assertEqual(1, report.counts["fetch_failed"])
+
+    def test_plain_unverifiable_is_not_misread_as_fetch_failure(self):
+        # Negative side: an ambiguous verdict that is NOT a fetch failure (here
+        # "no mergeCommit.oid") stays `unverifiable`, so `fetch_failed` fires
+        # only on genuine fetch/network failures, not on every unknown.
+        report, _runner = self.evaluate([directive("ambiguous", identity="c" * 40)])
+
+        item = next(item for item in report.directives if item.id == "ambiguous")
+        self.assertEqual("unverifiable", item.state)
+        self.assertEqual(0, report.counts.get("fetch_failed", 0))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,46 @@ DEFAULT_REPORT = ROOT / "ignored/ci-hub/directives/latest.json"
 TASK_RE = re.compile(r"[A-Za-z0-9_.-]+")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 REPO_RE = re.compile(r"[^/\s]+/[^/\s]+")
+# States that are genuine drift — an unmet obligation nobody is demonstrably
+# advancing. `open` (owned, tasked, in progress) and `gated` (deferred on a
+# named blocking condition) are NOT drift: surfacing them as drift cries wolf
+# and gets the whole signal discounted.
+DRIFT_STATES = (
+    "needs_owner",
+    "missing_task",
+    "not_landed",
+    "invalid",
+    "unverifiable",
+    "fetch_failed",
+)
+# A fetch/network failure while verifying a claim is NOT the same as a claim
+# that was never made (`not_checked`/`open`) nor a genuinely absent commit
+# (`not_landed`): the checker itself could not reach the evidence. Conflating
+# the two lets a broken checker read as a clean "nothing to see here", which is
+# worse than an error, so it gets its own `fetch_failed` state (never green).
+FETCH_FAILURE_MARKERS = (
+    "not our ref",
+    "upload-pack",
+    "could not resolve host",
+    "unable to access",
+    "could not read from remote",
+    "fatal: remote error",
+    "connection timed out",
+    "connection refused",
+    "operation timed out",
+    "rpc failed",
+    "early eof",
+    "proxy",
+)
+
+
+def _looks_like_fetch_failure(*texts: str | None) -> bool:
+    blob = " ".join(text for text in texts if text).lower()
+    if any(marker in blob for marker in FETCH_FAILURE_MARKERS):
+        return True
+    # A failing fetch subcommand reported by the verifier, e.g.
+    # "command failed: with-proxy git -C <checkout> fetch ... origin <sha>".
+    return "fetch" in blob and ("command failed" in blob or "fatal" in blob)
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -48,6 +88,7 @@ class Directive:
     source_row: str | None
     parent_id: str | None
     implementation: Implementation | None
+    gate: str | None
 
 
 @dataclass(frozen=True)
@@ -63,6 +104,7 @@ class DirectiveResult:
     parent_id: str | None
     implementation_kind: str | None
     implementation_identity: str | None
+    gate: str | None
     state: str
     landing_state: str
     ancestry: str
@@ -124,6 +166,15 @@ def _parse_directive(payload: Mapping[str, object]) -> Directive:
         )
     elif raw_implementation is not None:
         raise LedgerError("implementation must be an object or null")
+    raw_gate = payload.get("gate")
+    if raw_gate is None:
+        gate = None
+    elif isinstance(raw_gate, str):
+        # Preserve "" (present but unnamed) distinct from absent (None) so the
+        # metadata check can reject a gate that names no blocking condition.
+        gate = raw_gate.strip()
+    else:
+        raise LedgerError("gate must be a string or null")
     return Directive(
         id=_text(payload.get("id")),
         summary=_text(payload.get("summary")),
@@ -136,6 +187,7 @@ def _parse_directive(payload: Mapping[str, object]) -> Directive:
         source_row=_text(payload.get("source_row")) or None,
         parent_id=_text(payload.get("parent_id")) or None,
         implementation=implementation,
+        gate=gate,
     )
 
 
@@ -246,6 +298,14 @@ def _metadata_issues(
             issues.append("invalid_pr_identity")
         elif kind not in {"commit", "pr"}:
             issues.append("invalid_implementation_kind")
+    if directive.gate is not None:
+        # A gate must NAME the blocking condition; a bare "gated" is a quieter
+        # form of unknown, so an empty gate is rejected as invalid metadata.
+        if not directive.gate:
+            issues.append("unnamed_gate")
+        elif directive.implementation is not None:
+            # An already-implemented directive cannot also be waiting on a gate.
+            issues.append("gate_on_implemented")
     return issues
 
 
@@ -272,6 +332,8 @@ def _verify_landing(
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         detail = (result.stderr or result.stdout or "verifier emitted no JSON").strip()
+        if _looks_like_fetch_failure(result.stderr, result.stdout):
+            return "fetch_failed", "fetch_failed", None, None, f"fetch failed: {detail}"
         return "unverifiable", "unverifiable", None, None, detail
     if not isinstance(payload, Mapping):
         return "unverifiable", "unverifiable", None, None, "invalid verifier JSON"
@@ -289,6 +351,11 @@ def _verify_landing(
         return "satisfied", landing_state, resolved, target_tip, "fresh-main ancestor"
     if result.returncode == 1 and landing_state == "not-landed":
         return "not_landed", landing_state, resolved, target_tip, reason
+    # The verifier ran but could not confirm landing. A fetch/network failure is
+    # distinct from an ambiguous verdict: the checker never reached the evidence,
+    # so it must not be conflated with a genuinely missing commit or a clean pass.
+    if _looks_like_fetch_failure(reason, result.stderr, result.stdout):
+        return "fetch_failed", "fetch_failed", resolved, target_tip, f"fetch failed: {reason}"
     return "unverifiable", landing_state, resolved, target_tip, reason
 
 
@@ -330,9 +397,11 @@ def evaluate(
                 state, landing_state, resolved, target_tip, reason = _verify_landing(
                     directive, run, max(1.0, remaining)
                 )
-                ancestry = "ancestor" if state == "satisfied" else (
-                    "not-ancestor" if state == "not_landed" else "unverifiable"
-                )
+                ancestry = {
+                    "satisfied": "ancestor",
+                    "not_landed": "not-ancestor",
+                    "fetch_failed": "fetch_failed",
+                }.get(state, "unverifiable")
         if any(issue in {"missing_task", "task_not_found"} for issue in issues):
             state = "missing_task"
             reason = "directive has no resolvable accountable task"
@@ -340,7 +409,7 @@ def evaluate(
             state = "unverifiable"
             reason = task_lookup_error or "TaskGraph lookup unavailable"
         elif "missing_owner" in issues:
-            state = "missing_owner"
+            state = "needs_owner"
             reason = "directive has no accountable owner"
         elif any(
             issue
@@ -349,6 +418,9 @@ def evaluate(
         ):
             state = "invalid"
             reason = "invalid directive metadata"
+        elif implementation is None and directive.gate:
+            state = "gated"
+            reason = f"gated on: {directive.gate}"
         elif implementation is None:
             state = "open"
         base[directive.id] = DirectiveResult(
@@ -363,6 +435,7 @@ def evaluate(
             parent_id=directive.parent_id,
             implementation_kind=implementation.kind if implementation else None,
             implementation_identity=implementation.identity if implementation else None,
+            gate=directive.gate or None,
             state=state,
             landing_state=landing_state,
             ancestry=ancestry,
@@ -399,7 +472,10 @@ def evaluate(
     issue_counts = dict(
         sorted(Counter(issue for item in results for issue in item.issues).items())
     )
-    if any(item.state in {"invalid", "unverifiable"} for item in results):
+    if any(item.state in {"invalid", "unverifiable", "fetch_failed"} for item in results):
+        # A fetch failure means the checker could not reach the evidence, so the
+        # verdict is genuinely unknown (exit 2), never a clean pass and never a
+        # confirmed "not landed" red — the same severity as `unverifiable`.
         overall_state, exit_code = "unknown", 2
     elif all(item.state == "satisfied" for item in results):
         overall_state, exit_code = "green", 0
@@ -425,22 +501,30 @@ def _field(value: object) -> str:
 
 
 def _print_fields(report: Report) -> None:
-    actionable = [item.id for item in report.directives if item.state != "satisfied"]
+    drift = [item.id for item in report.directives if item.state in DRIFT_STATES]
+    gated = [item.id for item in report.directives if item.state == "gated"]
+    in_progress = report.counts.get("open", 0)
+    if not drift:
+        summary = (
+            "no directive drift"
+            f"; in_progress={in_progress} gated={len(gated)}"
+        )
+    else:
+        summary = "drift=" + ",".join(drift[:8])
     fields = {
         "state": report.overall_state,
         "source_rows": report.source_rows,
         "records": report.records,
         "satisfied": report.counts.get("satisfied", 0),
         "partial": report.counts.get("partial", 0),
-        "open": report.counts.get("open", 0),
-        "missing_task": report.issue_counts.get("missing_task", 0)
-        + report.issue_counts.get("task_not_found", 0),
-        "missing_owner": report.issue_counts.get("missing_owner", 0),
+        "open": in_progress,
+        "gated": len(gated),
+        "needs_owner": report.counts.get("needs_owner", 0),
+        "missing_task": report.counts.get("missing_task", 0),
         "not_landed": report.counts.get("not_landed", 0),
         "unverifiable": report.counts.get("unverifiable", 0),
-        "summary": "all directives ancestry-confirmed"
-        if not actionable
-        else "actionable=" + ",".join(actionable[:8]),
+        "drift": len(drift),
+        "summary": summary,
     }
     for key, value in fields.items():
         print(f"{key}={_field(value)}")

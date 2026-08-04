@@ -185,7 +185,8 @@
       "owner": "hermit-dbi",
       "source_row": "9",
       "parent_id": null,
-      "implementation": null
+      "implementation": null,
+      "gate": "zero open Hermit PRs: a repo-wide dbi->dbt rename conflicts with every in-flight feature branch, so it is deliberately deferred until the PR queue drains"
     },
     {
       "id": "irq-aware-core-allocator",
