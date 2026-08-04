@@ -1,0 +1,40 @@
+{
+  "task": "parity-definition-is-wrong-stdout-not-bitwise",
+  "date_utc": "2026-08-04",
+  "type": "audit-measurement + one-landed-tooling-verification",
+  "hermit_origin_main_head_at_audit": "f5523c09",
+  "landed_rename_commit": "f5523c09",
+  "landed_rename_author": "staging-drain <staging-drain@dev-hermit.local>",
+  "landed_rename_time_utc": "2026-08-04T14:45:32Z",
+  "premise_refuted": "owner-handed 'unsafe rename never landed' — true at 14:41Z, false by 14:45:32Z",
+  "sources_read": [
+    "compat-envelope/collect-envelope.rs:435-445 (capture_parity)",
+    "compat-envelope/collect-envelope.rs:578-597 (run_and_hash; Sha256(stdout) only)",
+    "hermit/hermit-cli/src/bin/hermit/verify.rs:111-199 (compare_two_runs; strip_lines=true default @158)",
+    "hermit/hermit-cli/src/bin/hermit/run.rs:2700 (verbose=self.verify_verbose, default false)",
+    "hermit/hermit-cli/src/bin/hermit/record_start.rs:414 (verbose=false)",
+    "hermit/detcore/src/logdiff.rs:177-210 (strip_log_entry; every number->NUM)",
+    "hermit/detcore/src/logdiff.rs:44,695-712 (landed --unsafe-strip-lines flag + test)",
+    "hermit/tests/backend-parity/run_matrix.py:24-34,383 (detlog L2 via --verify, no --verify-verbose)"
+  ],
+  "findings": {
+    "cross_backend_parity_metric": "Sha256(guest stdout) equality ptrace-vs-backend; single --strict run, no --verify, no logs, no timestamps",
+    "verify_determinism_metric": "hermit run --strict --verify; strip_lines=true by default -> numbers+virtual-time timestamps normalized away; within-backend run1==run2",
+    "cells_comparing_full_infologs_with_matching_timestamps": 0,
+    "liteinst_stdout_channel_firm_brackets": 17,
+    "liteinst_stdout_channel_firm_brackets_note": "14 value-emitting + 3 meminfo-gate; 18 with #1397; <=23 incl 6 weak; from predecessor slice, stdout-channel only, NOT owner-bitwise",
+    "box_blocked_error_canon_cells": 43,
+    "box_blocked_disposition": "NOT estimated; needs per-syscall native host errno unavailable in agent sandbox",
+    "const_string_vacuous_cells": 4,
+    "cli_strip_lines_callers_in_scorecard": 0
+  },
+  "supersedes_framing_of": [
+    "parity-metric-has-no-negative-side-by-construction",
+    "parity-scorecard-cells-may-pass-on-tests-that-cannot-fail"
+  ],
+  "related_memory": [
+    "verify-verdict-bound-to-stripped-compare-not-bitwise",
+    "validate-sh-rr-ratchet-stdout-only-vs-record-verify",
+    "parity-scorecard-vacuity-two-axes"
+  ]
+}
