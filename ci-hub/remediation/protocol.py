@@ -20,8 +20,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub/history"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import obligations
+from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
@@ -234,6 +236,18 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
     re-dispatch, so an unknown failure mode can never manufacture a revert.
     """
     if exit_code == 0:
+        # A clean exit is a PROXY for "the tests passed"; the executed count the
+        # run itself printed is the fact. A validate that exited 0 having run a
+        # DEMONSTRABLY zero test count (every libtest banner reported 0 — the
+        # `--features` gating shape that compiles the target but excludes its
+        # tests) is a no-result wearing a success badge, not a pass. It is a hole
+        # to RE-DISPATCH (never a red to revert): downgrading here can only turn a
+        # provably inert green into a recoverable re-dispatch, never manufacture a
+        # revert. Absence of any banner stays green — is_zero_test_green fires only
+        # on positive evidence of zero-ness, so an unreadable/banner-less log is
+        # never downgraded.
+        if is_zero_test_green(output):
+            return "no_result", "zero-test-green"
         return "green", "clean exit"
     if exit_code < 0 or exit_code in _LOCAL_INFRA_EXITS:
         return "no_result", f"environment-killed (exit={exit_code})"
