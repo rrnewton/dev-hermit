@@ -18,6 +18,8 @@
 
 #[path = "lib/landing_lock.rs"]
 mod landing_lock;
+#[path = "lib/validate_lock.rs"]
+mod validate_lock;
 #[path = "lib/history_queries.rs"]
 mod history_queries;
 #[path = "lib/records.rs"]
@@ -80,6 +82,7 @@ PR & RUNNER HEALTH
 LANDING & BATCH CONTROL
   Serialize landings and manage the explicit policy state that gates them.
   land-lock               Acquire, renew, inspect, or release the fleet landing mutex
+  validate-lock            Box-exclusive gate: one validate/bench at a time (GRANT/QUEUE/REFUSE)
   apply-local-label       Label PR heads backed by a clean full-validation receipt
   ci-mode                 Inspect or change constrained CI admission mode
   batch                   Inspect or edit the named current CI batch
@@ -136,6 +139,8 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
 5. Serialize fleet landings through the evidence-based mutex:
      ./ci-hub/ci-hub land-lock status
      ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
+   Serialize box-exclusive compute (one validate OR bench, so load cannot forge FAILEDs):
+     ./ci-hub/ci-hub validate-lock run --agent A --kind validate --target SHA -- ./validate.sh
    Never force-release another owner. Dead-owner reclamation requires process
    evidence and is built into the lock.
 
@@ -209,6 +214,8 @@ enum HubCommand {
     ApplyLocalLabel(ApplyLocalLabelArgs),
     /// Operate the shared-file landing mutex.
     LandLock(landing_lock::LandLockArgs),
+    /// Operate the box-exclusive-compute admission gate (one validate/bench at a time).
+    ValidateLock(validate_lock::ValidateLockArgs),
     /// Inspect or switch the committed CI-constrained mode and its GitHub projection.
     CiMode(CiModeArgs),
     /// Inspect or edit the named current CI batch and its ci-batch PR labels.
@@ -879,6 +886,11 @@ impl HubCommand {
                 basis: "not measured: queue wait and optional child command vary; wait/lease values are bounds, not estimates"
                     .into(),
             },
+            Self::ValidateLock(args) if args.command.consumes_meaningful_time() => CostSpec {
+                tool: "ci-hub/validate-lock",
+                basis: "not measured: queue wait and optional child command vary; wait/lease/child-deadline values are bounds, not estimates"
+                    .into(),
+            },
             Self::Obligations(_)
             | Self::InheritObligations(_)
             | Self::RecordObligationWake(_)
@@ -889,7 +901,8 @@ impl HubCommand {
             | Self::Batch(_)
             | Self::ValidateStatus(_)
             | Self::ApplyLocalLabel(_)
-            | Self::LandLock(_) => return None,
+            | Self::LandLock(_)
+            | Self::ValidateLock(_) => return None,
         };
         Some(spec)
     }
@@ -982,12 +995,15 @@ enum CiHubError {
     Gh { context: String, message: String },
     #[error(transparent)]
     LandingLock(#[from] landing_lock::LandLockError),
+    #[error(transparent)]
+    ValidateLock(#[from] validate_lock::ValidateLockError),
 }
 
 impl CiHubError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::LandingLock(error) => error.exit_code(),
+            Self::ValidateLock(error) => error.exit_code(),
             _ => 2,
         }
     }
@@ -1401,6 +1417,7 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
         HubCommand::FirstBad(args) => run_first_bad(root, args),
         HubCommand::ApplyLocalLabel(args) => run_apply_local_label(root, args),
         HubCommand::LandLock(args) => landing_lock::execute(root, args).map_err(Into::into),
+        HubCommand::ValidateLock(args) => validate_lock::execute(root, args).map_err(Into::into),
         HubCommand::CiMode(args) => match args.command {
             CiModeCommand::Status(status_args) => ci_mode_status(root, status_args),
             CiModeCommand::Set(set_args) => ci_mode_set(root, set_args),

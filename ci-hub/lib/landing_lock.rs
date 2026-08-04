@@ -882,7 +882,7 @@ fn parse_unsigned(name: &str, value: &str) -> Result<u64, LandLockError> {
     })
 }
 
-fn current_host() -> String {
+pub(crate) fn current_host() -> String {
     Command::new("hostname")
         .arg("-s")
         .output()
@@ -901,7 +901,7 @@ fn current_boot_id() -> Result<String, LandLockError> {
         .map_err(|source| io_error("read", path, source))
 }
 
-fn process_start_ticks(pid: u32) -> io::Result<u64> {
+pub(crate) fn process_start_ticks(pid: u32) -> io::Result<u64> {
     let path = PathBuf::from(format!("/proc/{pid}/stat"));
     let stat = fs::read_to_string(path)?;
     let close = stat.rfind(')').ok_or_else(|| {
@@ -952,7 +952,7 @@ fn required<T>(value: Option<T>, name: &str) -> Result<T, LandLockError> {
     value.ok_or_else(|| LandLockError::InvalidState(format!("holder has no {name} field")))
 }
 
-fn suffix(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", path.display()))
 }
 
@@ -1057,14 +1057,14 @@ fn terminate_child_group(child: &mut Child, pr: &str) {
 }
 
 /// Send `signal` to the process `group` (a negative pid string) via `/bin/kill`.
-fn signal_group(signal: &str, group: &str) {
+pub(crate) fn signal_group(signal: &str, group: &str) {
     let _ = Command::new("kill")
         .arg(format!("-{signal}"))
         .arg(group)
         .status();
 }
 
-fn exit_status_code(status: ExitStatus) -> i32 {
+pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
     status
         .code()
         .or_else(|| status.signal().map(|signal| 128 + signal))
