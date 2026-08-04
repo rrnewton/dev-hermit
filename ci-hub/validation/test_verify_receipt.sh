@@ -83,6 +83,14 @@ write_comments "$path" "$digest"
 "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
     --fixture-receipts "$tmp/receipts" >/dev/null
 
+# The same legitimate receipt must not authorize a different (rebased) head.
+stale_sha=ffffffffffffffffffffffffffffffffffffffff
+if "$verifier" --sha "$stale_sha" --comments "$tmp/comments.json" \
+    --fixture-receipts "$tmp/receipts" >/dev/null 2>&1; then
+    echo "FAIL: receipt for the prior head authorized a rebased head" >&2
+    exit 1
+fi
+
 # A tampered body and a real zero-executed receipt are both refused.
 printf '\n' >>"$tmp/receipts/$receipt_commit/$path"
 if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
@@ -133,4 +141,4 @@ if [[ -e $plant_root ]]; then
 fi
 trap - EXIT
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; forged, tampered, zero-executed, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; stale-head, forged, tampered, zero-executed, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
