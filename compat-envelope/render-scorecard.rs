@@ -9,25 +9,29 @@
 //!   * the leftmost data column is **ptrace** as an *integer count* — the number
 //!     of tests in that bucket that pass the golden strict+replay determinism
 //!     check (`verify` mode). This is the B4 denominator;
-//!   * every other backend column is `"parity%, determinism%"` where
-//!       - **parity%**       = fraction of the ptrace denominator whose output is
-//!                             *bitwise-identical to the ptrace reference*;
+//!   * every other backend column is `"stdout-parity%, determinism%"` where
+//!       - **stdout-parity%** = fraction of the ptrace denominator whose piped
+//!                              stdout SHA-256 matches the ptrace reference;
 //!       - **determinism%**  = fraction of the ptrace denominator that is itself
 //!                             deterministic under that backend (run1 == run2).
-//!     By construction determinism% >= parity% (matching the reference implies
-//!     being deterministic). A cell the backend never ran counts as 0 in both,
-//!     so a small envelope reads as a low percentage — that is the honest,
-//!     anti-fakery signal, not a bug.
+//!     stdout-parity% is an upper bound on full cross-backend parity: it does not
+//!     compare INFO logs, stack detlogs, or heap detlogs. TTY behavior is also
+//!     outside this scorecard.
+//!     Determinism and stdout parity are independent signals; neither implies
+//!     the other. A cell the backend never ran counts as 0 in both, so a small
+//!     envelope reads as a low percentage — that is the honest, anti-fakery
+//!     signal, not a bug.
 //!
 //! The machine-readable projection (`--json` / `--tsv`) is printed underneath /
 //! instead of the human table, so downstream tooling never scrapes the ASCII.
 //!
 //! Usage:
-//!   compat-envelope/render-scorecard.rs [--csv PATH] [--run-id ID|--latest]
+//!   compat-envelope/render-scorecard.rs --csv PATH [--run-id ID|--latest]
 //!                                       [--denominator MODE] [--json|--tsv]
 //!                                       [--backends b1,b2,...]
 //!
-//!   --csv PATH        Scorecard CSV (default: scorecard.csv next to this script).
+//!   --csv PATH        Scorecard CSV. Required so the population is explicit;
+//!                     use fullcorpus-scorecard.csv for the full corpus.
 //!   --run-id ID       Render only rows from this run_id.
 //!   --latest          Render only the most recent run_id (default when neither
 //!                     --run-id nor --all is given).
@@ -48,15 +52,15 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::exit;
 
-const USAGE: &str = r#"Usage: compat-envelope/render-scorecard.rs [OPTIONS]
+const USAGE: &str = r#"Usage: compat-envelope/render-scorecard.rs --csv PATH [OPTIONS]
 
-Render the cross-backend compatibility-envelope scorecard from scorecard.csv.
+Render a cross-backend compatibility-envelope scorecard from an explicit CSV.
 
 Options:
-  --csv PATH        Scorecard CSV (default: scorecard.csv beside this script).
+  --csv PATH        Scorecard CSV (required; population must be explicit).
   --run-id ID       Render only rows from this run_id.
   --latest          Render only the most recent run_id (default).
   --all             Aggregate across every run (last-writer-wins per cell).
@@ -87,6 +91,7 @@ struct Cell {
     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
     outcome: String,   // pass | fail | error | timeout | oom | skip
     deterministic: Option<bool>,
+    // Legacy CSV field name: this stores stdout-only parity.
     parity: Option<bool>,
 }
 
@@ -180,7 +185,9 @@ fn main() {
         }
     }
 
-    let csv_path = csv.unwrap_or_else(|| script_dir().join("scorecard.csv"));
+    let csv_path = csv.unwrap_or_else(|| {
+        die("--csv is required: choose `compat-envelope/fullcorpus-scorecard.csv` for the full corpus or `compat-envelope/scorecard.csv` for the CI/regression subset")
+    });
     let text = fs::read_to_string(&csv_path)
         .unwrap_or_else(|e| die(&format!("cannot read {}: {e}", csv_path.display())));
 
@@ -401,17 +408,17 @@ fn main() {
                     backs.insert(
                         b.clone(),
                         json!({
-                            "parity_count": p,
+                            "stdout_parity_count": p,
                             "determinism_count": d,
-                            // How many denom cells actually had parity compared vs
-                            // ptrace. parity_measured < ptrace_count means the
-                            // remaining cells' parity is UNKNOWN, not confirmed 0.
-                            "parity_measured_count": m,
+                            // How many denom cells actually had stdout compared vs
+                            // ptrace. A lower count means the remaining cells'
+                            // stdout parity is UNKNOWN, not confirmed 0.
+                            "stdout_parity_measured_count": m,
                             // How many denom cells were actually RUN on this backend
                             // (not unavailable/skipped). ran_count 0 => backend not
                             // measurable here; the 0% figures are N/A, not reds.
                             "ran_count": r,
-                            "parity_pct": (pct(p, row.ptrace) * 10.0).round() / 10.0,
+                            "stdout_parity_pct": (pct(p, row.ptrace) * 10.0).round() / 10.0,
                             "determinism_pct": (pct(d, row.ptrace) * 10.0).round() / 10.0,
                         }),
                     );
@@ -427,11 +434,15 @@ fn main() {
             }
             emit("TOTAL", &total);
             let doc = json!({
-                "schema": 1,
+                "schema": 2,
                 "kind": "compat-envelope-scorecard",
+                "source_csv": csv_path.display().to_string(),
                 "run_scope": scope_run.clone().unwrap_or_else(|| "all".into()),
                 "denominator_mode": denom_mode,
                 "denominator_meaning": "tests passing golden ptrace strict+replay (verify)",
+                "stdout_parity_meaning": "piped guest stdout SHA-256 equality with ptrace; upper bound on full cross-backend parity",
+                "full_parity_not_measured": ["INFO log", "stack detlog", "heap detlog"],
+                "additional_unmeasured_context": ["TTY behavior"],
                 "backend_columns": backend_cols,
                 "rows": out_rows,
             });
@@ -440,9 +451,9 @@ fn main() {
         "tsv" => {
             let mut cols = vec!["bucket".to_string(), "ptrace".to_string()];
             for b in &backend_cols {
-                cols.push(format!("{b}_parity_pct"));
+                cols.push(format!("{b}_stdout_parity_pct"));
                 cols.push(format!("{b}_det_pct"));
-                cols.push(format!("{b}_parity_measured"));
+                cols.push(format!("{b}_stdout_parity_measured"));
                 cols.push(format!("{b}_ran"));
             }
             println!("{}", cols.join("\t"));
@@ -469,8 +480,10 @@ fn main() {
                 scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into()),
                 denom_mode
             );
-            println!("Each backend cell is `parity%, determinism%` of the ptrace count. det% >= parity% by construction.");
-            println!("Parity suffix: `?` = parity never measured for that bucket (UNKNOWN, not confirmed 0); `~` = partial coverage (some cells unmeasured).");
+            println!("Input CSV: {}", csv_path.display());
+            println!("Each backend cell is `stdout-parity%, determinism%` of the ptrace count. The two measurements are independent.");
+            println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");
+            println!("Stdout-parity suffix: `?` = stdout parity never measured for that bucket (UNKNOWN, not confirmed 0); `~` = partial coverage (some cells unmeasured).");
             println!("`n/a` = backend not runnable here (binary absent / not enabled) — 0 cells run, NOT a confirmed fail.");
             println!();
             let mut header = format!("{:<22} {:>7}", "bucket", "ptrace");
@@ -512,17 +525,4 @@ fn main() {
             emit("TOTAL", &total);
         }
     }
-}
-
-/// Directory this script's source lives in (rust-script runs a temp binary, so
-/// prefer CARGO_SCRIPT / arg re-derivation, falling back to CWD).
-fn script_dir() -> PathBuf {
-    // rust-script exposes the script's source directory here.
-    if let Ok(p) = env::var("RUST_SCRIPT_BASE_PATH") {
-        return PathBuf::from(p);
-    }
-    env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| env::current_dir().expect("cwd"))
 }
