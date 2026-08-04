@@ -1,0 +1,42 @@
+{
+  "experiment": "validate-wall-cpu-ratchet-and-two-level-resolution",
+  "date": "2026-08-04",
+  "owner_task": "did-the-dag-migration-make-builds-slower-nobody-checked",
+  "host": "devbig014",
+  "cores": 316,
+  "parent_repo_sha": "b92bba289417ae2c50cd5a2a48dc6b960b90125b",
+  "hermit_repo_sha": "b4e94ce4455daef251e10af2174c6998c1ae1a4d",
+  "input": {
+    "ledger": "ignored/validate-run-ledger.jsonl",
+    "ledger_rows": 375,
+    "ledger_span_days": 1.6,
+    "full_profile_passes": 101
+  },
+  "tool": "ci-hub/validate/wall_cpu_ratchet.py",
+  "tests": "ci-hub/validate/tests/test_wall_cpu_ratchet.py",
+  "commands": [
+    "python3 ci-hub/validate/wall_cpu_ratchet.py report",
+    "python3 ci-hub/validate/wall_cpu_ratchet.py check",
+    "python3 -m unittest ci-hub/validate/tests/test_wall_cpu_ratchet.py"
+  ],
+  "key_findings": {
+    "cpu_over_wall_full_pass": {"p10": 2.12, "median": 2.91, "p90": 9.05, "n": 101},
+    "two_level": {
+      "A1_outer_dag_ceiling": 1.78,
+      "A2_total_cpu_over_wall_median": 2.91,
+      "relation": "A2 = A1 x inner; excess is compile-node rustc fan-out"
+    },
+    "cache_split_cpu_over_wall": {"cold": 8.62, "warm": 2.38},
+    "concurrency_proxy": {"under_600s_avg": 6.3, "over_600s_avg": 11.0, "confounded_by_cache": false},
+    "admission_knee_concurrent_validates": 7,
+    "between_vs_within": "wall inflates with concurrency; cpu/wall ~flat => scheduling contention, not per-run -j",
+    "answerable_before_after": false,
+    "recommended_retention_days": 90,
+    "recommended_retention_policy": "permanent scalar ledger; prune only gates[] arrays if needed"
+  },
+  "caveats": [
+    "Single host (devbig014), 1.6-day window; numbers are current normals, not constants.",
+    "Box-load history not retained; concurrency proxy validated internally only.",
+    "Re-measure between/within split after hermit-238b one-fat-build collapse lands."
+  ]
+}

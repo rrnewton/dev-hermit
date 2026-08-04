@@ -1,0 +1,9 @@
+segment,band,n,median_wall_s,median_cpu_s,median_cpu_over_wall,budget_met_pct
+cache_state,warm,72,499,1186,2.38,79
+cache_state,cold,13,732,6312,8.62,8
+cache_state,partial,8,700,5478,7.82,25
+cache_state,unknown,8,616,2362,3.84,50
+concurrency_warm,1-4,27,465,1041,2.24,100
+concurrency_warm,5-7,25,484,1189,2.46,80
+concurrency_warm,8-11,2,748,3044,4.07,0
+concurrency_warm,12+,18,582,1383,2.38,56
