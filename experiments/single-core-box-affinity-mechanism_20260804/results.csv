@@ -1,0 +1,7 @@
+experiment,K,run,wall_s,median_wall_s,speedup_vs_K1,host,date
+2proc-cpu-tree,1,1,15.56,15.56,1.00,devbig014-316core,2026-08-04
+2proc-cpu-tree,1,2,15.45,15.56,1.00,devbig014-316core,2026-08-04
+2proc-cpu-tree,1,3,15.66,15.56,1.00,devbig014-316core,2026-08-04
+2proc-cpu-tree,2,1,7.92,8.42,1.85,devbig014-316core,2026-08-04
+2proc-cpu-tree,2,2,9.21,8.42,1.85,devbig014-316core,2026-08-04
+2proc-cpu-tree,2,3,8.42,8.42,1.85,devbig014-316core,2026-08-04
