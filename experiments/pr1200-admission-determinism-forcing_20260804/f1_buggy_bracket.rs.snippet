@@ -1,0 +1,53 @@
+// Insert into detcore/src/scheduler.rs `mod test` at commit c7667d45
+// (conditional-defer). Asserts the arrival-/window-independence invariant the
+// always-defer fix guarantees; FAILS here because the immediate path admits in
+// host arrival order when the tentative window is closed. This is the exact
+// analogue of the fixed-side test deferred_admission_side_is_arrival_order_independent.
+#[test]
+fn f1_buggy_bracket_admission_order_is_host_timing_dependent() {
+    let config = Config { sched_seed: Some(0xABCD), ..Default::default() };
+    let lower = DetTid::from_raw(21);
+    let higher = DetTid::from_raw(23);
+
+    let register = |sched: &mut Scheduler, tid: DetTid| {
+        sched.priorities.insert(tid, DEFAULT_PRIORITY);
+        sched.next_turns.insert(tid, ThreadNextTurn {
+            dettid: tid, child_tid_addr: 0,
+            req: Ivar::new(), resp: Ivar::new(),
+        });
+    };
+
+    let drained_order = |order: [DetTid; 2], open_window: bool| -> Vec<DetTid> {
+        let mut sched = Scheduler::new(&config);
+        let anchor = DetTid::from_raw(5);
+        register(&mut sched, anchor);
+        sched.runqueue_push_back(anchor);
+        register(&mut sched, lower);
+        register(&mut sched, higher);
+        if open_window {
+            assert_eq!(sched.run_queue.tentative_pop_next(), Some(anchor));
+            assert!(sched.run_queue.tentative_pop_in_progress());
+        }
+        for tid in order {
+            sched.admit_to_run_queue(tid, AdmitIntent::Fixed(AdmitSide::Back));
+        }
+        if open_window {
+            let _ = sched.run_queue.commit_tentative_pop();
+        }
+        sched.drain_pending_run_queue_admissions();
+        sched.run_queue.tids().copied()
+            .filter(|t| *t == lower || *t == higher).collect()
+    };
+
+    let closed_ab = drained_order([lower, higher], false);
+    let closed_ba = drained_order([higher, lower], false);
+    let open_ab   = drained_order([lower, higher], true);
+    eprintln!("closed window, arrival [lower,higher] -> {:?}", closed_ab);
+    eprintln!("closed window, arrival [higher,lower] -> {:?}", closed_ba);
+    eprintln!("open   window, arrival [lower,higher] -> {:?}", open_ab);
+
+    let baseline = drained_order([lower, higher], true);
+    assert_eq!(baseline, drained_order([higher, lower], true), "arrival order (window open)");
+    assert_eq!(baseline, closed_ab, "window state: closed must match open");
+    assert_eq!(baseline, closed_ba, "arrival order (window closed)");
+}

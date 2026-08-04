@@ -1,0 +1,18 @@
+{
+  "question": "Force PR #1200 codex findings F1 (host-timing-dependent admission order) and F3 (reconnect panic) on the unfixed code, and show stability on the fix, per the e9patch #359 template.",
+  "date": "2026-08-04",
+  "host": "devbig014.atn7.facebook.com",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "hermit_fix_sha": "1b6c9ef38669b1fbe20fe0e0c1a760297c65a063",
+  "hermit_fix_branch": "codex/fix-1200-admission-epoch",
+  "hermit_buggy_conditional_defer_sha": "c7667d453ad5ef28f1dfce48fd1dbadf72f8d523",
+  "pr1200_open_head_sha": "a03a8761e071bfc4ad8349e50979a53d878d4c86",
+  "commands": [
+    "cargo test -p detcore --lib -- f1_buggy_bracket_admission_order_is_host_timing_dependent --nocapture   (at c7667d45 + snippet)",
+    "cargo test -p detcore --lib -- deferred_admission_side_is_arrival_order_independent   (at 1b6c9ef3)",
+    "cargo test -p detcore --lib -- reconnect_fizzle_closes_window_so_next_removal_drain_is_safe --nocapture   (at 1b6c9ef3, with fizzle-arm undo disabled = buggy)",
+    "cargo test -p detcore --lib -- removal_drain_panics_if_tentative_window_left_open   (at 1b6c9ef3)"
+  ],
+  "seed": "sched_seed=0xABCD (F1 test); default Config otherwise",
+  "scope": "detcore --lib unit tests only; no validate.sh, no wide sweep, no validate capacity consumed"
+}

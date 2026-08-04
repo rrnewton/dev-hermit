@@ -1,0 +1,6 @@
+finding,code_state,sha,test,variation,outcome,evidence
+F1,buggy-conditional-defer,c7667d45,f1_buggy_bracket_admission_order_is_host_timing_dependent,"window closed, arrival [lower,higher] vs [higher,lower]",FAIL,"run queue = [21,23] vs [23,21] — order follows host arrival order"
+F1,fixed-always-defer,1b6c9ef3,deferred_admission_side_is_arrival_order_independent,"arrival order x window state (4 combos)",PASS,"all 4 combos identical run-queue order (DetTid-ordered drain)"
+F3,buggy-undo-disabled,1b6c9ef3+edit,reconnect_fizzle_closes_window_so_next_removal_drain_is_safe,"real async do_a_turn_blocking fizzle, undo removed",FAIL,"tentative_pop_in_progress stays true after fizzled reconnect turn"
+F3,buggy-open-window,1b6c9ef3,removal_drain_panics_if_tentative_window_left_open,"window left open then removal drain",PASS(should_panic),"remove_tid trips tentative_selection.is_none() guard"
+F3,fixed-always-defer,1b6c9ef3,reconnect_fizzle_closes_window_so_next_removal_drain_is_safe,"real async do_a_turn_blocking fizzle, undo present",PASS,"window closed by undo; next real step2 removal drain does not panic"
