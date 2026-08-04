@@ -43,10 +43,10 @@ sweep (`experiments/kvm_b3_corpus_sweep_20260730/results.tsv`, hermit `9cd955f9`
 Rows are the 13 e2e manifest buckets. **`ptrace corpus`** is the full
 ptrace-verify denominator per bucket. **`L2 green`** = measured passing `--strict`
 verify (canonical release run). **`L1 green`** = passing `--strict` 3× byte-
-identical exit+stdout (quiet-host sweep; C corpus only). **`kvm parity (L1)`** =
+identical exit+stdout (quiet-host sweep; C corpus only). **`kvm stdout parity (L1)`** =
 KVM output bitwise-identical to ptrace in that sweep.
 
-| bucket                | ptrace corpus | L2 green | L1 green (sweep) | kvm parity (L1) |
+| bucket                | ptrace corpus | L2 green | L1 green (sweep) | kvm stdout parity (L1) |
 |-----------------------|--------------:|---------:|-----------------:|----------------:|
 | c-programs            |           159 |        8 |          149/159 |          99/159 |
 | determinism-stress-c  |            10 |        1 |            8/10  |           2/10  |
@@ -70,7 +70,7 @@ KVM output bitwise-identical to ptrace in that sweep.
   The remaining ~172 ptrace-verify cells are **portable-but-uncalibrated**
   (`ci=false` during the C-corpus migration), not privileged — this is the
   calibration frontier, not a compat wall.
-- **L1 green = 166/183** and **kvm parity = 105/183** come from the quiet-host
+- **L1 green = 166/183** and **kvm stdout parity = 105/183** come from the quiet-host
   sweep and corroborate that the uncalibrated tail is mostly *passing* under
   ptrace (166/183 = 91% at L1); L2 `--strict --verify` calibration is the phase-2
   sweep. The `105/183` matches the KVM figure cited to the owner.
@@ -78,12 +78,16 @@ KVM output bitwise-identical to ptrace in that sweep.
   the calibrated c-programs slice (**8/8 bitwise-identical to ptrace, 8/8
   self-deterministic at L2** — `100%, 100%`); SaBRe is `n/a` here (loader not built
   in this checkout). See the calibrated-subset scorecard in `scorecard.csv` /
-  `REPORT.md` for the per-backend parity/determinism cells.
+  `REPORT.md` for the per-backend stdout-parity/determinism cells and the
+  four-signal limitation.
 
-## Table 2 — Reverie: example-tool parity (B1.5+ backends)
+## Table 2 — Reverie: Tool callback-count parity (B1.5+ backends)
 
 The shared Reverie `counter` Tool (counter1 + counter2), run through the ptrace
 launchers vs the KVM launchers over a static-busybox guest corpus.
+
+The first percentage compares callback totals only; it is not stdout or
+four-signal cross-backend parity.
 
 | bucket            | ptrace | kvm        |
 |-------------------|-------:|:-----------|
@@ -92,7 +96,7 @@ launchers vs the KVM launchers over a static-busybox guest corpus.
 
 - **KVM** is fully self-deterministic (`100%` determinism, 6/6 identical reruns)
   but surfaces a **constant 4 fewer syscalls** to the shared Tool callback than
-  ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` parity. A real **B1.5
+  ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` tool-count parity. A real **B1.5
   Guest-contract interception-surface gap**, measured and confirmed 0 (no `?`),
   not a determinism defect.
 
@@ -122,12 +126,12 @@ Fresh triage of every `lane=privileged` test (task
   True total, replacing the "28".
 - **Measured L2 green** (REPORT.md, hermit `82a8e853`) — ptrace **179/200
   (89.5%)** (flag-robust: 178/200 under default flags); KVM det **130/200**,
-  parity 112; LiteInst det **118/200**, parity 108.
+  stdout parity 112; LiteInst det **118/200**, stdout parity 108.
 - **Calibrated-CI subset** — **28** at L2 (older canonical release run; the
   `--ci-only ∩ portable` slice, not the corpus).
 - **Sweep corroboration** — ptrace **166/183** L1, KVM **105/183** L1 (quiet host).
 - **Portable/privileged** — **200 / 2** (was 199 / 3; cpuid-probe reclassified).
-- **Reverie** — ptrace **6**; KVM **0% parity, 100% determinism**.
+- **Reverie** — ptrace **6**; KVM **0% tool-count parity, 100% determinism**.
 
 ## Regenerate
 
