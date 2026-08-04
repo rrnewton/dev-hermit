@@ -465,16 +465,37 @@ fn main() {
                 let (ok, _, err) = git(&primary, &args);
                 if ok {
                     println!("  removed {label} worktree {}", p.display());
+                    // Prune ONLY after this product's remove succeeded. A prune run
+                    // after a FAILED remove reaps the half-removed worktree's admin
+                    // entry while its data dir is still on disk, ORPHANING the data
+                    // (recoverable-residue -> permanent artifact). A transient IO
+                    // fault (e.g. EROFS) plus a non-idempotent cleanup is strictly
+                    // worse than either alone, so prune is bound to remove success.
+                    git(&primary, &["worktree", "prune"]);
                 } else {
                     remove_failed = true;
                     eprintln!("  could not remove {label} worktree {}: {err}", p.display());
+                    eprintln!(
+                        "     NOT pruning {label} registry: a prune here would orphan the retained data dir {}.",
+                        p.display()
+                    );
+                    eprintln!(
+                        "     residue retained for recovery (data dir + admin entry kept together): {}",
+                        p.display()
+                    );
                 }
+            } else {
+                // Worktree dir already gone: prune is safe (nothing to orphan) and
+                // clears any stale admin entry left behind.
+                git(&primary, &["worktree", "prune"]);
             }
         }
-        git(&root.join("hermit"), &["worktree", "prune"]);
-        git(&root.join("reverie"), &["worktree", "prune"]);
-        git(&root.join("liteinst2"), &["worktree", "prune"]);
         if remove_failed {
+            eprintln!(
+                "ACTION: retry `release-worktree.rs --slot {slot} --clean` after the transient \
+                 fault clears (e.g. IO/EROFS); the retained product(s) above are recoverable, \
+                 not orphaned. Their data dir and admin entry were kept together."
+            );
             die("one or more product worktrees could not be removed; slot state retained");
         }
         // Remove the now-empty slot dir.
