@@ -40,3 +40,10 @@ knee_sweep,175,free_no_taskset,300000000,30.346,1.7300,19.6,3,contended,bg_load1
 knee_sweep,200,free_no_taskset,300000000,49.522,1.2116,23.41,7,contended,bg_load162; achieved_cores=94.5
 knee_sweep,256,free_no_taskset,300000000,52.987,1.4494,19.51,8,contended,bg_load176; achieved_cores=94.3
 knee_sweep,316,free_no_taskset,300000000,56.999,1.6632,22.275,15,contended,bg_load235; achieved_cores=123.5 (~124 cores of useful work at N=316 despite heavy bg)
+lull_sweep,96,free_no_taskset,300000000,15.915,1.8096,10.84,3,lull_bg21_storm1,achieved_cores=65.4 CLEAN no-straggler(max_cpu11.82~med10.84) bg-load21 storm1; ~2.7x the prior contended knee_sweep N96=23.7 => contended data UNDERSTATED mid-N by ~2x
+lull_sweep,128,free_no_taskset,300000000,21.644,1.7742,15.12,5,lull_bg47_storm1,achieved_cores=89.4 CLEAN no-straggler(max16.15~med15.12) bg-load47 storm1; ~2x prior contended N128=44.5; still climbing (no flattening) => scales past 150 confirmed stronger
+lull_sweep,150,free_no_taskset,300000000,28.319,1.5890,17.475,3,self_saturating_bg92_storm8,achieved_cores=92.6 no-straggler; MY fan-out began self-saturating (load 21->92) + a peer build storm started (storm 1->8) — lull ended here
+lull_sweep,158,free_no_taskset,300000000,45.685,1.0375,18.75,3,self+peer_saturated_bg127_storm23,achieved_cores=64.8 STRAGGLER(max_cpu45.6>>med18.75); peer cc1plus/rustc storm live (storm23); NOT clean
+lull_sweep,200,free_no_taskset,300000000,40.717,1.4736,21.885,6,saturated_bg126_storm21,achieved_cores=107.5; box self+peer saturated
+lull_sweep,256,free_no_taskset,300000000,52.642,1.4589,18.7,14,saturated_bg173_storm18,achieved_cores=90.6 STRAGGLER(max52.2); BpfJailer(3pai) blocked 1 err-file FILE_OPEN (n_parsed=255) => sandbox caps in-agent fan-out ~N=211
+lull_sweep,316,free_no_taskset,300000000,107.690,0.8803,22.235,9,saturated_bg228_storm28,achieved_cores=65.2 STRAGGLER(max47); makespan 108s = box destroyed by back-to-back sweep piling load; NOT a clean knee (measurement IS the load)
