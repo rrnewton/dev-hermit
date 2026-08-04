@@ -46,8 +46,10 @@ def test_measured_flake_is_bound_to_failed_cell() -> None:
     )
     assert evidence == {
         "failed_substeps": ["test.command_strict_verify"],
+        "flaky_failed_substeps": ["test.command_strict_verify"],
         "known_flaky_failure": True,
         "solo_rerun_confirmation": False,
+        "solo_rerun_of": None,
     }
 
 
@@ -58,9 +60,9 @@ def test_only_matching_solo_j4_run_confirms() -> None:
         prior=[prior()],
         commit=COMMIT,
     )
-    assert MODULE.build_evidence(
-        **base, dag_jobs=4, concurrent_validates=0
-    )["solo_rerun_confirmation"] is True
+    confirmed = MODULE.build_evidence(**base, dag_jobs=4, concurrent_validates=0)
+    assert confirmed["solo_rerun_confirmation"] is True
+    assert confirmed["solo_rerun_of"] == {"finished_at": None, "log_file": None}
     assert MODULE.build_evidence(
         **base, dag_jobs=16, concurrent_validates=0
     )["solo_rerun_confirmation"] is False

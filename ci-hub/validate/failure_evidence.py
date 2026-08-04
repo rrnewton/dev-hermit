@@ -96,19 +96,33 @@ def build_evidence(
 ) -> dict[str, object]:
     cells = failed_substeps(log_text)
     cell_set = set(cells)
-    known_flaky = any(cell in registry for cell in cells)
-    confirmation = False
+    flaky_failed = sorted(cell for cell in cells if cell in registry)
+    confirmation_row: dict[str, object] | None = None
     if dag_jobs == 4 and concurrent_validates == 0 and cell_set:
-        confirmation = any(
-            str(row.get("commit") or "") == commit
+        candidates = [
+            row
+            for row in prior
+            if str(row.get("commit") or "") == commit
             and prior_requires_rerun(row)
             and not cell_set.isdisjoint(row_failed_substeps(row))
-            for row in prior
-        )
+        ]
+        if candidates:
+            confirmation_row = max(
+                candidates, key=lambda row: str(row.get("finished_at") or "")
+            )
     return {
         "failed_substeps": cells,
-        "known_flaky_failure": known_flaky,
-        "solo_rerun_confirmation": confirmation,
+        "flaky_failed_substeps": flaky_failed,
+        "known_flaky_failure": bool(flaky_failed),
+        "solo_rerun_confirmation": confirmation_row is not None,
+        "solo_rerun_of": (
+            {
+                "finished_at": confirmation_row.get("finished_at"),
+                "log_file": confirmation_row.get("log_file"),
+            }
+            if confirmation_row is not None
+            else None
+        ),
     }
 
 
