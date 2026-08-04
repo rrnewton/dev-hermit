@@ -112,6 +112,48 @@ SIGSEGV unless it retries. **Follow-up worth filing:** characterize/repro the cl
 quiet box (is it a stack-allocation race, an mmap/thread limit, or a genuine data race in
 `clone_with_stack`?) — it may be a real reverie bug independent of this benchmark.
 
+## Finding 4 — full sweep to N=400 with load-robust user/sys decomposition (hermit-ghdag continuation, box self-saturated)
+
+The N=1→400 free-instance sweep was re-run capturing **per-instance user vs system CPU-seconds**
+(`/usr/bin/time -v` per instance), because that decomposition is **load-robust** where makespan is
+not: background load and self-saturation steal *wall* time, but a shared-kernel-contention knee
+(ptrace big-lock / MSR reprogram / clone mm-lock) shows up as per-instance **system-time inflation**,
+which is intrinsic to hermit. The box was **not quiet and the sweep saturated it itself** (load
+climbed 30 → 415 across the sweep), so makespan/throughput past ~N=16 are self-contended and are
+labeled `contended_self_saturated`; the user/sys split is the trustworthy signal.
+
+| N | med user (s) | med sys (s) | med cpu (s) | agg Giter/s | failures |
+|---|---|---|---|---|---|
+| 1 | 0.60 | 2.02 | 2.62 | 0.114 | 0 |
+| 8 | 0.60 | 2.16 | 2.76 | 0.838 | 1 |
+| 16 | 0.60 | **3.14** | 3.72 | 1.261 | 0 |
+| 32 | 0.61 | 6.20 | 6.82 | 1.050 | 2 |
+| 64 | 0.63 | 9.67 | 10.28 | 1.136 | 1 |
+| 128 | 0.64 | 18.2 | 18.81 | 0.823 | 5 |
+| 158 | 0.64 | 18.75 | 19.35 | 1.375 | 2 |
+| 256 | 0.65 | 17.56 | 18.30 | 1.834 | 14 |
+| 400 | **0.67** | 26.87 | 27.54 | 1.818 | 8 |
+
+**Two load-robust facts, both solid despite the dirty box:**
+
+1. **User (compute) time is INVARIANT: ~0.60 → 0.67s across N=1…400.** Each guest's actual
+   computation is unimpeded even at 400-way — the raw parallel *compute* capacity is fully present.
+   Whatever limits concurrent hermit, it is **not** the guest workload.
+2. **Every bit of the scaling loss is SYSTEM time** — the `--strict` ptrace/PMU supervision path:
+   med sys **2.0s → 27s** (13×). The inflection begins **early, ~N=16**, at a point where total
+   demand (16 instances + background ~35) is far under the 316-thread machine — so it is *not* mere
+   core saturation; it points to genuine shared-kernel contention in the supervision path (though
+   the concurrent `cc1plus` build storm shares mm/sched locks and partly confounds the exact onset).
+
+**Answer to the owner's question, as far as this (non-quiet) run can carry it:** concurrent hermit's
+*compute* scales flat to 400-way, but the `--strict` *supervision* path is the limiter and its
+per-instance system cost inflates continuously from ~N=16; combined with the clone-crash ceiling
+(Finding 3, ~3–9% loss past N≈128), a naive wide fan-out **past 150 pays a rising system-time tax
+and loses cells to SIGSEGV**. A compute-heavy guest (not this branch-dense `--strict` worst case)
+would scale far wider. The precise *quiet-box* throughput knee past 150 is **still not obtained** —
+this run's makespan is self-saturated — but the user/sys decomposition already fixes the answer's
+*shape*: supervision-bound workloads wall out well before 150; compute-bound ones do not.
+
 ---
 
 ## What is NOT established here

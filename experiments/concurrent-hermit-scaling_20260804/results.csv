@@ -16,3 +16,17 @@ corrected_free_sweep,16,free_no_taskset,300000000,3.633,1.321,,0,contended,
 corrected_free_sweep,32,free_no_taskset,300000000,4.468,2.148,,1,contended,~19x throughput vs N=1; first crash appears
 corrected_free_sweep,64,free_no_taskset,300000000,10.502,1.828,,7,contended,throughput REGRESSES + 7 crashes (lower bound on knee; box contended)
 stability_probe,96,free_no_taskset,300000000,,,,3,contended,3/96 (~3pct) crashed: reverie_process::clone::clone_with_stack non-unwinding panic -> SIGSEGV
+free_sweep_to400,1,free_no_taskset,300000000,2.636,0.1138,2.62,0,contended_self_saturated,med_user=0.60 med_sys=2.02 load~35; solo anchor
+free_sweep_to400,2,free_no_taskset,300000000,2.776,0.2161,2.71,0,contended_self_saturated,med_user=0.625 med_sys=2.085 load~31
+free_sweep_to400,4,free_no_taskset,300000000,2.809,0.4272,2.765,0,contended_self_saturated,med_user=0.625 med_sys=2.15 load~31
+free_sweep_to400,8,free_no_taskset,300000000,2.863,0.8383,2.755,1,contended_self_saturated,med_user=0.60 med_sys=2.155 load~31; user+sys still flat = near-ideal 7.4x
+free_sweep_to400,16,free_no_taskset,300000000,3.806,1.2612,3.715,0,contended_self_saturated,med_user=0.60 med_sys=3.135 load32-37; SYS inflection begins (2.1->3.1) while cores still free
+free_sweep_to400,32,free_no_taskset,300000000,9.140,1.0503,6.815,2,contended_self_saturated,med_user=0.61 med_sys=6.2 load37-45
+free_sweep_to400,64,free_no_taskset,300000000,16.901,1.1360,10.28,1,contended_self_saturated,med_user=0.63 med_sys=9.67 load45-79
+free_sweep_to400,128,free_no_taskset,300000000,46.657,0.8230,18.81,5,contended_self_saturated,med_user=0.64 med_sys=18.2 load79-109
+free_sweep_to400,150,free_no_taskset,300000000,52.138,0.8631,18.58,14,contended_self_saturated,med_user=0.65 med_sys=17.95 load109-232
+free_sweep_to400,158,free_no_taskset,300000000,34.462,1.3754,19.35,2,contended_self_saturated,med_user=0.64 med_sys=18.75 load~227
+free_sweep_to400,200,free_no_taskset,300000000,36.797,1.6306,23.11,5,contended_self_saturated,med_user=0.65 med_sys=22.475 load222-293
+free_sweep_to400,256,free_no_taskset,300000000,41.885,1.8336,18.30,14,contended_self_saturated,med_user=0.65 med_sys=17.56 load293-377
+free_sweep_to400,316,free_no_taskset,300000000,55.792,1.6992,21.115,17,contended_self_saturated,med_user=0.66 med_sys=20.455 load>316 GENUINELY oversubscribed
+free_sweep_to400,400,free_no_taskset,300000000,66.000,1.8182,27.54,8,contended_self_saturated,med_user=0.67 med_sys=26.865 load342-415 oversubscribed; USER STILL FLAT at 0.67
