@@ -53,6 +53,33 @@ CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
 
 Networked commands use `with-proxy` internally.
 
+## Standing receipt reconciliation
+
+A validate receipt is keyed to an exact commit SHA, so every rebase/push/mark-ready
+orphans the receipt earned at the old head. Nothing else sweeps for the receipts
+that are STILL valid, so earned ~500s evidence sits unread while the drain queues
+fresh runs. `reconcile-receipts` is the standing join — run it after every drain
+rebase wave:
+
+```bash
+./ci-hub/bin/reconcile-receipts          # human table
+./ci-hub/bin/reconcile-receipts --json   # machine-readable
+```
+
+It joins every distinct clean-full receipt commit (enumerated from
+`local-history`) against FRESHLY-FETCHED open-PR heads and classifies each,
+always WITH A DENOMINATOR ("valid 1 of 59"):
+
+- `VALID` — head matches, authoritatively `is_clean_full_pass` (via
+  `validate-status`, NOT the looser `local-history` prefilter), and clears every
+  rebase-base floor. Landable NOW: `apply-local-label` + merge, no new validate.
+- `FLOOR-BLOCKED` — matched + certified but the head predates a merge-gate or
+  producer floor; it validates green yet landing is refused. Lever is REBASE.
+- `NOT-CERTIFIED` — matched an open head but the authoritative certifier refuses
+  (a `local-history checks==5` match is not landability proof).
+- `ORPHANED` — no current open-PR head equals this commit; the head moved or the
+  PR landed. `orphaned/total` is the measured cost of push-rewrites-the-head.
+
 Landing verification is PR-aware and has machine-stable result codes:
 
 ```bash
