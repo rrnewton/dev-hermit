@@ -26,5 +26,11 @@
     "counter2-syscall-mix": {"getpid_stride": 4096}
   },
   "provenance_caveat": "Measured while 6 orphaned hermit processes (ppid=1, 99.9% CPU, ~4.1h elapsed) consumed 6 cores continuously (detcore_misc livelock victims, reverie#355; symptoms not causes, correctly not killed). CPU-time (cgroup-charged / boxed single core) is contamination-proof against this; NO wall-clock figure was taken. Numbers comparable to a future clean-box run only on the CPU-time/native-normalized axis.",
-  "results_pending": true
+  "box_core_selected": 101,
+  "box_note": "sched_setaffinity onto DISCOVERED least-busy free core, NOT systemd AllowedCPUs (a CPU set, not a count). Stateless recipe: no cross-run allocator. Contamination guard = ptrace anchor reproduced prior known-clean core-9 value to 0.1% (14018 vs 14032 ns/syscall), proving core 101 uncontended.",
+  "result_geomean_slowdown": {"liteinst": 1.027, "e9patch": 1.044, "sabre": 1.049, "ptrace": 1.569, "dbi": 5.549},
+  "result_marginal_ns_per_syscall": {"liteinst": 582, "e9patch": 643, "sabre": 623, "ptrace": 14018, "dbi": 2896},
+  "dbi_cost_is_compute_not_syscall": "cpu-heavy 5.428x ~= syscall-mix 5.674x (flat across 16x more syscalls) => DynamoRIO branch-translation tax, not interception",
+  "measures": "plain-tool interception-mechanism cost, NOT --strict Detcore (which adds ~14us/syscall coordinator RPC)",
+  "results_pending": false
 }

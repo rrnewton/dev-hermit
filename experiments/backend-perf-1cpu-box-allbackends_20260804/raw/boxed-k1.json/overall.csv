@@ -1,0 +1,6 @@
+backend,workloads,geomean_slowdown
+ptrace,2,1.568664
+liteinst,2,1.027266
+dbi,2,5.54932
+sabre,2,1.049353
+e9patch,2,1.043726

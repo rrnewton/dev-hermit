@@ -1,0 +1,6 @@
+backend,geomean_slowdown,marginal_ns_per_syscall,cpu_heavy_slowdown,syscall_mix_slowdown,mechanism
+liteinst,1.027,582,1.003,1.052,in-guest-patch
+e9patch,1.044,643,1.017,1.071,aot-static-rewrite-inprocess
+sabre,1.049,623,1.023,1.076,in-guest-rewrite
+ptrace,1.569,14018,1.086,2.266,host-roundtrip
+dbi,5.549,2896,5.428,5.674,dynamorio-translation
