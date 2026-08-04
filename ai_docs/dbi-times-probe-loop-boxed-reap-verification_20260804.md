@@ -54,6 +54,25 @@ systemd-run --user --unit="$unit" \
 #   "Determinism verified" present => completed (exit 0); absent => killed-on-breach (exit 124)
 ```
 
+### Bounding the loop (point 2)
+
+Boxing each *run* is necessary but not sufficient — the original leak was an **unbounded**
+ad-hoc loop, so a durable driver must also make the *loop* itself unable to stall. The
+bounded driver (`scratch/times-probe/bounded-loop.sh`, body embedded here since scratch is
+transient) runs a **fixed iteration count** and delegates every iteration to `boxed-probe.sh`.
+Because each boxed iteration is guaranteed to return within `maxsec + TimeoutStopSec` (systemd
+enforces `RuntimeMaxSec` irrespective of launcher liveness), **a hung run cannot outlive its
+iteration and the loop cannot run forever**:
+
+```bash
+for i in $(seq 1 "$iters"); do
+  log="$logdir/loop_${backend}_${i}.log"
+  if HB="$HB" PROBE="$PROBE" ./boxed-probe.sh "$backend" "$maxsec" "$log" "$i"; then
+    completed=$(( completed + 1 )); else killed=$(( killed + 1 )); fi
+done
+echo "LOOP DONE backend=$backend iters=$iters completed=$completed killed=$killed"
+```
+
 ## Verification (this session, HB = worktrees/dbi/hermit/target/debug/hermit @ 03:31 build)
 
 Environment: `/dev/kvm` present; `systemd --user` running (degraded but functional),
@@ -83,6 +102,25 @@ Guarded behavior bracketed from **both** sides:
 
 **Global clean check after all tests:** no leftover `times-probe-*` `--user` units; zero
 ppid=1 hermit survivors for this HB; zero processes still running this HB.
+
+### Re-verification 2026-08-04 ~11:40 UTC (respawn, coordinator re-issue)
+
+Re-run fresh through the **bounded loop driver** on the same HB (03:31 debug build), producing
+current evidence rather than relying on the earlier logs:
+
+- **Pre-scan:** zero ppid=1 `times-probe/probe` survivors; zero `times-probe-*` `--user` units
+  (no acute leak outstanding to reap — the KVM-strict-verify core-burner class was already
+  clear; other ppid=1 orphans present were the *separate* e2e/parity-fixture class in other
+  worktrees, left untouched).
+- **Positive:** `bounded-loop.sh ptrace 3 60` → `completed=3 killed=0`; all three
+  `OUTCOME=completed` (waited 10–13 s each). **N=3, unharmed.**
+- **Negative:** `bounded-loop.sh kvm 1 8` → `completed=0 killed=1`;
+  `OUTCOME=killed-on-breach(cap=8s)`. Hang confirmed (log stuck at `:: Run1...`, no
+  "Determinism verified"). Immediately after: **zero ppid=1 survivors** (the hung hermit was
+  still *inside* the cgroup in `deactivating final-sigterm`, i.e. being SIGKILLed, not orphaned
+  to init). Within ~3 s of teardown the **scope DISAPPEARED** (no `times-probe-*` unit remained
+  — did not linger empty); zero processes running the probe. Confirms the coordinator's three
+  criteria: zero ppid=1 survivors · N=3 normal iterations unharmed · scope disappears.
 
 ## Process-kill safety
 
