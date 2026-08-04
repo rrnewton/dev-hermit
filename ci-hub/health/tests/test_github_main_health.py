@@ -45,6 +45,57 @@ class MainHealthTests(unittest.TestCase):
         )
         self.assertEqual(github_main_health.classify_current_runs(runs), "pending")
 
+    def test_cancelled_is_not_red(self) -> None:
+        # Regression: a cancelled run is a HOLE, not a failure. It must never make
+        # main "red" (task cancelled-run-classified-as-red) — a cancelled run
+        # misread as red nearly reverted a healthy main.
+        runs = (
+            github_main_health.MainRun("ci", "a" * 40, "completed", "cancelled", "u", "1"),
+        )
+        self.assertEqual(github_main_health.classify_current_runs(runs), "pending")
+
+    def test_no_result_conclusions_are_never_red(self) -> None:
+        for conclusion in ("cancelled", "action_required", "stale", "skipped", ""):
+            runs = (
+                github_main_health.MainRun(
+                    "ci", "a" * 40, "completed", conclusion, "u", "1"
+                ),
+            )
+            self.assertNotEqual(
+                github_main_health.classify_current_runs(runs),
+                "red",
+                f"{conclusion!r} must not classify main as red",
+            )
+
+    def test_unknown_conclusion_is_not_red(self) -> None:
+        # A conclusion GitHub adds later must not manufacture a false red (the
+        # hardcoded-list-of-a-growing-set trap).
+        runs = (
+            github_main_health.MainRun(
+                "ci", "a" * 40, "completed", "brand_new_state", "u", "1"
+            ),
+        )
+        self.assertNotEqual(
+            github_main_health.classify_current_runs(runs), "red"
+        )
+
+    def test_render_marks_cancelled_as_no_result_not_red(self) -> None:
+        health = (
+            github_main_health.RepoMainHealth(
+                repo="rrnewton/hermit",
+                main_sha="a" * 40,
+                state="pending",
+                runs=(
+                    github_main_health.MainRun(
+                        "ci", "a" * 40, "completed", "cancelled", "u", "1"
+                    ),
+                ),
+            ),
+        )
+        report = github_main_health.render_report(health)
+        self.assertIn("NO-RESULT", report)
+        self.assertNotIn("HARD WARNING: GITHUB MAIN IS RED", report)
+
     @mock.patch("github_main_health.subprocess.run")
     def test_evaluate_uses_proxy_and_latest_attempt(
         self, run_command: mock.Mock

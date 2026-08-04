@@ -221,12 +221,29 @@ def github_main_sha(repo: str) -> str:
     return sha
 
 
+# Bucketing of a GitHub run conclusion into a verification state. TOTAL over
+# GitHub's conclusion enum and any value it adds later. A conclusion is not a
+# truth value: only success/neutral are a passing answer, only failure/timed_out/
+# startup_failure are a failing answer, and everything else — cancelled, skipped,
+# stale, action_required, empty, or an UNKNOWN future value — is the ABSENCE of a
+# result. Absence is neither pass nor fail; it is a hole to RE-DISPATCH, never a
+# red to alarm on. A cancelled run misread as red once nearly reverted a healthy
+# main (task cancelled-run-classified-as-red), which is exactly what the
+# no_result bucket and the "unknown defaults to no_result" rule prevent.
+_GREEN_CONCLUSIONS = frozenset({"success", "neutral"})
+_RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+
+
 def _github_state(run: Mapping[str, Any]) -> str:
     status = str(run.get("status") or "").lower()
     conclusion = str(run.get("conclusion") or "").lower()
     if status != "completed":
         return "running"
-    return "green" if conclusion in {"success", "neutral"} else "red"
+    if conclusion in _GREEN_CONCLUSIONS:
+        return "green"
+    if conclusion in _RED_CONCLUSIONS:
+        return "red"
+    return "no_result"
 
 
 def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
@@ -262,9 +279,17 @@ def ensure_github_verification(
     dispatched = False
     while True:
         runs = github_runs(repo, sha)
-        if runs:
-            updated = obligations.transition(
-                obligation_id, "github-observed", _github_patch(runs[0]), store_path
+        # A cancelled/skipped/stale run is a HOLE, not an answer. Terminate only on
+        # the newest run that actually resolved (green or red); otherwise keep
+        # polling and re-dispatch to fill the hole rather than recording a false
+        # red for a run that was merely superseded (task
+        # cancelled-run-classified-as-red).
+        usable = next(
+            (run for run in runs if _github_state(run) in {"green", "red"}), None
+        )
+        if usable is not None:
+            obligations.transition(
+                obligation_id, "github-observed", _github_patch(usable), store_path
             )
             return evaluate_obligation(obligation_id, store_path=store_path)
         if time.monotonic() >= deadline:
@@ -293,14 +318,21 @@ def ensure_github_verification(
                 dispatched = True
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
 
-    summary = f"no {DEFAULT_WORKFLOW!r} run appeared for exact SHA {sha} within {wait_seconds}s"
+    summary = (
+        f"no resolved {DEFAULT_WORKFLOW!r} run appeared for exact SHA {sha} within "
+        f"{wait_seconds}s (only cancelled/superseded/no-result runs, if any)"
+    )
+    # A missing or unresolved GitHub result is NOT a failure: it leaves the leg in
+    # no_result so a locally-green land is never reverted purely because its hosted
+    # run was throttled/cancelled. A later poll or the re-dispatched run completes
+    # verification; a genuine local red still alarms via the local leg.
     obligations.transition(
         obligation_id,
-        "github-arm-failed",
+        "github-no-result",
         {
             "github": {
-                "state": "error",
-                "finished_at": obligations.utc_now(),
+                "state": "no_result",
+                "finished_at": None,
                 "last_poll_error": summary,
             }
         },

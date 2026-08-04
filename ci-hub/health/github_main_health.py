@@ -25,18 +25,37 @@ DEFAULT_RUN_LIMIT = 100
 # an interactive health command. CI deliberately overrides these lower.
 DEFAULT_CALL_TIMEOUT = float(os.environ.get("CI_HUB_MAIN_HEALTH_TIMEOUT", "15"))
 DEFAULT_OVERALL_DEADLINE = float(os.environ.get("CI_HUB_MAIN_HEALTH_DEADLINE", "60"))
+# A run conclusion is not a truth value. Only these three buckets exist, and they
+# are TOTAL over GitHub's conclusion enum plus any value GitHub adds later:
+#   RED        - a genuine BAD answer that warrants alarm/remediation.
+#   SUCCESS    - a genuine PASSING answer.
+#   NO_RESULT  - the ABSENCE of an answer (the run was cancelled, superseded,
+#                skipped, or is awaiting manual action). Neither pass nor fail:
+#                the correct response is to RE-DISPATCH and fill the hole, never
+#                to raise a red. A `cancelled` run misclassified as red once
+#                nearly reverted a healthy main (task cancelled-run-classified-as-red),
+#                which is why `cancelled`/`action_required`/`stale` are NO_RESULT,
+#                not RED. Anything not explicitly enumerated below is treated as
+#                NO_RESULT so a newly added GitHub conclusion can never manufacture
+#                a false failure (the hardcoded-list-of-a-growing-set trap).
 RED_CONCLUSIONS = frozenset(
     (
         "failure",
         "timed_out",
-        "cancelled",
         "error",
-        "action_required",
         "startup_failure",
-        "stale",
     )
 )
-SUCCESS_CONCLUSIONS = frozenset(("success", "neutral", "skipped"))
+SUCCESS_CONCLUSIONS = frozenset(("success", "neutral"))
+NO_RESULT_CONCLUSIONS = frozenset(
+    (
+        "cancelled",
+        "action_required",
+        "stale",
+        "skipped",
+        "",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -302,7 +321,13 @@ def render_report(health: Sequence[RepoMainHealth]) -> str:
             lines.append("    no push workflow runs found at the current main SHA")
             continue
         for run in repo.runs:
-            marker = "RED" if run.conclusion in RED_CONCLUSIONS else run.status.upper()
+            if run.conclusion in RED_CONCLUSIONS:
+                marker = "RED"
+            elif run.status == "completed" and run.conclusion in NO_RESULT_CONCLUSIONS:
+                # A hole in the record, not a failure: re-dispatch, do not alarm.
+                marker = "NO-RESULT"
+            else:
+                marker = run.status.upper()
             conclusion = run.conclusion or "none"
             lines.append(
                 f"    {marker:<9} {run.workflow}: {run.status}/{conclusion} {run.url}"

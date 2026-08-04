@@ -346,5 +346,68 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(record["local"]["cost"]["record_path"], str(cost_path))
 
 
+class GithubStateClassificationTest(unittest.TestCase):
+    """A run conclusion is not a truth value: cancelled/absent != red."""
+
+    def _state(self, status: str, conclusion: str) -> str:
+        return protocol._github_state({"status": status, "conclusion": conclusion})
+
+    def test_success_and_neutral_are_green(self) -> None:
+        self.assertEqual(self._state("completed", "success"), "green")
+        self.assertEqual(self._state("completed", "neutral"), "green")
+
+    def test_genuine_failures_are_red(self) -> None:
+        for conclusion in ("failure", "timed_out", "startup_failure"):
+            self.assertEqual(self._state("completed", conclusion), "red", conclusion)
+
+    def test_cancelled_is_no_result_not_red(self) -> None:
+        # Regression (task cancelled-run-classified-as-red): a cancelled run misread
+        # as red nearly reverted a healthy main. no_result never triggers
+        # remediation (only red/error do), so a locally-green land survives.
+        self.assertEqual(self._state("completed", "cancelled"), "no_result")
+
+    def test_absence_and_unknown_are_no_result(self) -> None:
+        for conclusion in ("skipped", "stale", "action_required", "", "brand_new"):
+            self.assertEqual(
+                self._state("completed", conclusion), "no_result", conclusion
+            )
+
+    def test_incomplete_run_is_running(self) -> None:
+        self.assertEqual(self._state("in_progress", ""), "running")
+        self.assertEqual(self._state("queued", ""), "running")
+
+    def test_no_result_github_leg_does_not_remediate_a_green_local(self) -> None:
+        # (local=green, github=no_result) must be neither satisfied nor a
+        # remediation trigger — it stays armed, awaiting a resolved GitHub run,
+        # instead of reverting a locally-green tip whose hosted run was throttled.
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "store.jsonl"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="admin",
+                actor="tester",
+                obligation_id="ob-green-local-noresult",
+                path=store,
+            )
+            obligations.transition(
+                "ob-green-local-noresult",
+                "legs",
+                {
+                    "local": {"state": "green", "exit_code": 0},
+                    "github": {"state": "no_result"},
+                },
+                store,
+            )
+            with mock.patch.object(
+                protocol, "github_main_sha", return_value=SHA
+            ):
+                record = protocol.evaluate_obligation(
+                    "ob-green-local-noresult", store_path=store
+                )
+            self.assertNotEqual(record.get("overall_state"), "remediation_required")
+            self.assertNotEqual(record.get("overall_state"), "satisfied")
+
+
 if __name__ == "__main__":
     unittest.main()

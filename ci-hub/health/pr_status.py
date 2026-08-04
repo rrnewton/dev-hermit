@@ -86,15 +86,18 @@ GH_FIELDS = (
 )
 MECHANISM_GH_FIELDS = ("number", "title", "isDraft", "labels")
 
-# GitHub check/status vocabularies.
+# GitHub check/status vocabularies. A conclusion is not a truth value: only a
+# genuine BAD answer is a fail. CANCELLED/ACTION_REQUIRED are the ABSENCE of a
+# result (a hole to re-run), NOT a failure — a cancelled run misread as red once
+# nearly reverted a healthy main (task cancelled-run-classified-as-red), so they
+# live in _NO_RESULT_STATES and reduce to "pending", never "red".
 _FAIL_STATES = {
     "FAILURE",
     "ERROR",
     "TIMED_OUT",
-    "CANCELLED",
-    "ACTION_REQUIRED",
     "STARTUP_FAILURE",
 }
+_NO_RESULT_STATES = {"CANCELLED", "ACTION_REQUIRED", "STALE"}
 _OK_STATES = {"SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"}
 # Transient network/GH errors worth a bounded retry.
 _RETRYABLE_MARKERS = (
@@ -273,6 +276,9 @@ def _rollup_ci_state(rollup: object) -> str:
             any_fail = True
         elif outcome in _OK_STATES:
             any_ok = True
+        elif outcome in _NO_RESULT_STATES:
+            # A hole in the record (cancelled/superseded), not a failure: pending.
+            any_pending = True
         elif outcome:  # PENDING / EXPECTED / REQUESTED / unknown => not yet done
             any_pending = True
     if any_fail:
