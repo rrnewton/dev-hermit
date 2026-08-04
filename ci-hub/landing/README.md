@@ -230,6 +230,56 @@ armed (REBASE), the PR merges the instant merge-gate goes green, and
 and `mergeCommit`, not the merge-state. Also note the merged SHA is the
 **rebased** commit (a fresh 40-hex), not your pre-merge branch head.
 
+---
+
+# Rebase wrapper + soft-green query (`rebase_wrapper.py`)
+
+`ci-hub/landing/rebase_wrapper.py` is ci-hub's **own** rebase wrapper. It records
+`revision X rebased on main Y -> Z` and derives a **soft-green confidence level**,
+so a lander can decide whether to land on the prior or wait for a tip validate.
+
+**Soft-green is a level, not a boolean.** Zero textual conflicts is a
+high-confidence *prior*, not a proof (git conflict detection is line-based;
+semantic dependency is not — a caller X added while Y changed the callee's
+contract has no conflict and still breaks). So:
+
+- `soft-green(zero-conflict)` — earned mechanically; land on the prior, **verify
+  the tip post-facto, fix forward**. The two halves are one system.
+- `soft-green(resolver-judged)` — a conflict was resolved and the resolving agent
+  judged it low-risk enough to keep the soft green. The **risk judgement is a
+  required field**: a conflicted rebase with no `--risk-judgement` + `--rationale`
+  is **REFUSED (exit 2)**, never defaulted to green.
+
+**Landability carries the base Y.** A clean rebase onto a base **below a gate
+floor** yields an unlandable Z even with zero conflicts. `landable` = soft-green
+AND the base clears every floor in `validate/rebase-base-floors.json` (delegated
+to `gate_floors.py`, re-checked live at query time so a newly-added floor demotes
+a stale record).
+
+## Consumer contract (the lander QUERIES; it does not read notes)
+
+```
+ci-hub/landing/rebase_wrapper.py eligible                 # list landable heads
+ci-hub/landing/rebase_wrapper.py eligible --result <Z>    # exit 0 eligible / 2 not
+```
+
+A query has no mailbox to miss — this closes the producer-posted-to-the-wrong-task
+gap. Records live beside the validate ledger at `ignored/rebase-records.jsonl`
+(append-only, latest-per-Z wins). Producer paths:
+
+```
+# mechanical: ci-hub owns the rebase, auto-soft-greens the zero-conflict case
+rebase_wrapper.py rebase --source <X> --onto newest-green [--push]
+
+# resolver: after resolving conflicts, record with the mandatory judgement
+rebase_wrapper.py record --source <X> --base <Y> --result <Z> \
+    --conflicts <files> --resolver <agent> \
+    --risk-judgement retained-soft-green|needs-full-validate --rationale "..."
+```
+
+See memory `ci-hub-ledger-cannot-record-soft-vs-hard-green` (the validate ledger
+cannot record soft-vs-hard green — this store carries the provenance it can't).
+
 ## Notes
 
 - `run` is preferred over bare `acquire`/`release`: it releases on every observed
