@@ -1,0 +1,8 @@
+{
+  "date": "2026-08-03",
+  "host": "devbig014 (2x AMD EPYC 9D85 158-Core = 316 cores)",
+  "runner": "agent-utils v0.12.0 @7d4ed14 (parent checkout), python engine via common/bin resolver",
+  "hermit_recorded_agent_utils_pin": "ec4ddf07 (v0.12.0) — same cpu_timeout enforcement path",
+  "boxing": "fail-closed default (no --allow-cgroup-failure); systemd transient scope safe-ci-*.scope; two-level cgroup-v2; controllers delegated: cpuset cpu io memory hugetlb pids",
+  "command": "SAFE_CI_DAG_RUNNER_ENGINE=python agent-utils/common/bin/safe-ci-dag-runner run --dag probe.json -j 3 -k --perf-dir perf -v"
+}

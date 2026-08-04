@@ -1,0 +1,35 @@
+{
+  "description": "cpu_timeout enforcement probe: one CPU breach (must be KILLED), two compliant nodes (must SURVIVE).",
+  "steps": [
+    {
+      "group": "probe",
+      "job": "cpu_breach",
+      "desc": "busy-loop burns 1 core; cpu_timeout=2 must reap it well before wall=60",
+      "cmd": "echo BREACH-START; while :; do :; done",
+      "deps": [],
+      "timeout": 60,
+      "cpu_timeout": 2,
+      "hint": {"est_duration_s": 2, "classification": "cpu-bound"}
+    },
+    {
+      "group": "probe",
+      "job": "compliant_idle",
+      "desc": "sleeps 4s (~0 CPU); cpu_timeout=2 must NOT fire on idle wall time",
+      "cmd": "echo IDLE-START; sleep 4; echo IDLE-DONE",
+      "deps": [],
+      "timeout": 60,
+      "cpu_timeout": 2,
+      "hint": {"est_duration_s": 4, "classification": "light"}
+    },
+    {
+      "group": "probe",
+      "job": "compliant_cpu",
+      "desc": "burns ~1 CPU-s then exits; cpu_timeout=5 must NOT fire (work < budget)",
+      "cmd": "echo CPU-START; end=$((SECONDS+1)); while [ $SECONDS -lt $end ]; do :; done; echo CPU-DONE",
+      "deps": [],
+      "timeout": 60,
+      "cpu_timeout": 5,
+      "hint": {"est_duration_s": 1, "classification": "cpu-bound"}
+    }
+  ]
+}

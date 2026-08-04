@@ -128,3 +128,6 @@ ACTIVE.md
 /.landing-lock.guard.*
 /.landing-lock.queue
 /.landing-lock.queue.*
+
+# safe-ci-dag-runner runtime scratch (per-node profiles). Machine-local, never committed.
+/.safe-ci-dag-runner/
