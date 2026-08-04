@@ -7,9 +7,12 @@
 //!
 //! MODEL (single-writer, mirrors ai_docs/transient/2026-07-27-worktree-management-map.md):
 //!   * The MEMORY file is the source of truth.
-//!   * Every active file under `.claude/skills/` has one memory whose
+//!   * Every active flat file under `.claude/skills/` has one memory whose
 //!     frontmatter declares `core_memory: true` and `core_skill: <path>`.
 //!   * Every mapping is a flat `.claude/skills/<memory-slug>.md` file.
+//!   * A directory symlink may bridge directly to a versioned canonical skill
+//!     under `agent-utils/skills/<same-name>/`; the external skill is its own
+//!     source of truth and deliberately has no duplicate memory body.
 //!
 //! NOTE ON "sqlite": the task brief assumed memories live in a sqlite DB. This
 //! project's memory store is FILE-BASED markdown; this linter reads that store.
@@ -131,18 +134,19 @@ fn main() {
         }
     }
 
-    // 4. The active skill directory is deliberately flat.
+    // 4. The active skill directory is flat except for explicit symlinks to
+    // versioned canonical agent-utils skills (Claude's native discovery shape).
     if let Ok(entries) = std::fs::read_dir(&skill_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if path.is_dir() && !is_external_skill_bridge_dir(&root, &path) {
                 let rel = path
                     .strip_prefix(&root)
                     .unwrap_or(&path)
                     .display()
                     .to_string();
                 problems.push(format!(
-                    "NEST  {rel}: nested skill directories are forbidden; flatten to .claude/skills/*.md"
+                    "NEST  {rel}: nested skill directories must be an agent-utils canonical bridge"
                 ));
             }
         }
@@ -155,6 +159,12 @@ fn main() {
             .unwrap_or(skill_path)
             .to_string_lossy()
             .to_string();
+        if is_external_skill_bridge_file(&root, skill_path) {
+            if !quiet {
+                println!("EXT   {rel} -> canonical agent-utils skill");
+            }
+            continue;
+        }
         let count = mapped_skills
             .iter()
             .filter(|mapped| *mapped == &rel)
@@ -369,6 +379,32 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+fn is_external_skill_bridge_dir(root: &Path, bridge: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(bridge) else {
+        return false;
+    };
+    if !meta.file_type().is_symlink() {
+        return false;
+    }
+    let Some(name) = bridge.file_name() else {
+        return false;
+    };
+    let Ok(target) = std::fs::canonicalize(bridge) else {
+        return false;
+    };
+    let Ok(canonical_root) = std::fs::canonicalize(root.join("agent-utils/skills")) else {
+        return false;
+    };
+    target == canonical_root.join(name) && target.join("SKILL.md").is_file()
+}
+
+fn is_external_skill_bridge_file(root: &Path, skill: &Path) -> bool {
+    skill.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        && skill
+            .parent()
+            .is_some_and(|parent| is_external_skill_bridge_dir(root, parent))
 }
 fn stem(p: &Path) -> String {
     p.file_stem()

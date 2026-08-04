@@ -147,8 +147,12 @@ fn main() {
 
     // ---- load active skills ----
     let mut skills: Vec<(String, String)> = Vec::new(); // (slug, content)
+    let mut external_skill_slugs: Vec<String> = Vec::new();
     for path in read_skill_files(&skill_dir) {
-        let slug = stem(&path);
+        let slug = skill_slug(&path);
+        if is_external_skill_bridge_file(&root, &path) {
+            external_skill_slugs.push(slug.clone());
+        }
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         skills.push((slug, content));
     }
@@ -247,6 +251,9 @@ fn main() {
         }
     }
     for (slug, _content) in &skills {
+        if external_skill_slugs.iter().any(|external| external == slug) {
+            continue;
+        }
         if !mapped_skill_slugs.iter().any(|s| s == slug) {
             findings.push(Finding {
                 kind: "SKILL_WITHOUT_MEMORY",
@@ -575,6 +582,44 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+fn skill_slug(path: &Path) -> String {
+    if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("SKILL")
+            .to_string();
+    }
+    stem(path)
+}
+
+fn is_external_skill_bridge_dir(root: &Path, bridge: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(bridge) else {
+        return false;
+    };
+    if !meta.file_type().is_symlink() {
+        return false;
+    }
+    let Some(name) = bridge.file_name() else {
+        return false;
+    };
+    let Ok(target) = std::fs::canonicalize(bridge) else {
+        return false;
+    };
+    let Ok(canonical_root) = std::fs::canonicalize(root.join("agent-utils/skills")) else {
+        return false;
+    };
+    target == canonical_root.join(name) && target.join("SKILL.md").is_file()
+}
+
+fn is_external_skill_bridge_file(root: &Path, skill: &Path) -> bool {
+    skill.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        && skill
+            .parent()
+            .is_some_and(|parent| is_external_skill_bridge_dir(root, parent))
 }
 
 fn stem(p: &Path) -> String {
