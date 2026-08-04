@@ -29,10 +29,17 @@ OOM-killed (rc137). The mechanism is not permissive and each cap value actually 
 ## POSITIVE leg — genuine workload at cap, confirm NO KILL  (verify-positive.csv)
 Each genuine node cmd re-run boxed at its NEW cap against the warm shared target
 (/tmp/mc-target-j4hi; DAG-representative — every node depends on build.workspace which
-warms the target). ALL 10 completed Result=success, NO OOM-kill, incl. the flagship
-build.dbi_release at 8.5 GiB. Positive-leg peaks are warm/incremental lower bounds; the
+warms the target). Positive-leg peaks are warm/incremental lower bounds; the
 cold-headroom argument rests on the sweep's uncapped cgroup-RECORDED peaks < cap (every
 node: cap > measured peak, min +25% on dbi_release).
+
+POSITIVE-CONTROL DENOMINATOR (counted, not claimed): **10 of 10** nodes ran their genuine
+workload clean under the derived cap — 10/10 rc0 PASS-NO-KILL, 10/10 systemd Result=success,
+**0 OOM-kills**, incl. the flagship build.dbi_release at 8.5 GiB. The caps do NOT kill
+everything; a uniformly-too-low cap set would have failed some of these 10 loudly. This
+count matters specifically for caps: a too-low cap fails LOUDLY and gets misattributed to
+the workload (someone bumps the workload's memory instead of fixing the cap, and the bad
+constant survives) — the 10/10 control rules that out. Pairs with the negative leg's 10/10.
 
 ## Caps changed (peak -> cap, from results.csv sweep)
 | node | peak@j8 | old cap | new cap | why |
