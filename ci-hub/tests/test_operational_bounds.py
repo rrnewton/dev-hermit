@@ -514,6 +514,11 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn('NO_RESULT)', script)
         self.assertIn("gh workflow run merge-gate.yml", script)
         self.assertIn("exit 75", script)
+        self.assertIn("local-validation-eligibility.sh", script)
+        self.assertIn("apply-local-label --pr", script)
+        self.assertNotIn(
+            'gh pr edit "$PR" -R "$R" --add-label locally-validated', script
+        )
 
         plugin = (ROOT / ".orc/plugins/hermit-dev/index.ts").read_text()
         heartbeat = plugin[plugin.index("speculativeLandRemediationHeartbeat") :]
@@ -521,6 +526,19 @@ class OperationalBoundsTest(unittest.TestCase):
         record = heartbeat.index("hermitSpeculativeLandWakeSent", wake)
         self.assertLess(wake, record)
         self.assertIn("sent but not yet acknowledged", plugin)
+
+    def test_lander_ignores_unbacked_label_cache(self) -> None:
+        result = subprocess.run(
+            [str(ROOT / "ci-hub/landing/test-local-validation-eligibility.sh")],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=WALL_SECONDS,
+        )
+        self.assertIn("unbacked label rejected 2/2", result.stdout)
+        self.assertIn("validated head admitted 2/2", result.stdout)
 
     def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
         """Plant the run shape PR statusCheckRollup omitted for PR #1219."""

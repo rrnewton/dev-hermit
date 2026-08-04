@@ -138,7 +138,7 @@ The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, rebases (plain or additive-union) onto fresh main, re-stamps `locally-validated`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires exact-head ledger evidence before and after rebase, derives `locally-validated` only through `apply-local-label`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
@@ -155,8 +155,9 @@ never wedges a land:
 2. **The merge command is the mergeability arbiter** — do not gate on
    `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
    a bounded retry loop, which forces GitHub to recompute mergeability.
-3. **Self-heal the lagging label strip** — on a `COMPLETED/FAILURE` gate run with
-   `locally-validated` now absent, re-add it; the `labeled` event refires green.
+3. **Treat the label only as a cache** — exact-head ledger evidence is required
+   before and after rebase. Only `apply-local-label` may materialize the label;
+   a genuine gate failure is never overwritten by re-stamping metadata.
 
 Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
 PR comment — so an abandoned PR never silently languishes (the #244 pattern).
