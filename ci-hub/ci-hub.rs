@@ -50,11 +50,7 @@ const DEFAULT_WARN_THRESHOLD: usize = 10;
 const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
 const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
-// Owner-established 2026-08-04 floor: this commit made the merge-gate-v2
-// transition fail closed. A green base before it creates heads that current
-// branch protection refuses, so it is not a usable rebase base.
-const CURRENT_GATE_SCHEMA: &str = "merge-gate-v2";
-const CURRENT_GATE_SCHEMA_FLOOR: &str = "c369be3ff8e2c751a313b27979fa8f470dafecf0";
+const GATE_FLOOR_POLICY: &str = "registry-effective-floor";
 const ROOT_HELP: &str = r#"Typed front door for dev-hermit CI state and operations
 
 Usage: ci-hub <COMMAND>
@@ -3333,6 +3329,81 @@ fn branch_history(repo: &Path, branch_ref: &str) -> Result<Vec<String>, CiHubErr
     Ok(commits)
 }
 
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct EffectiveGateFloor {
+    sha: String,
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GateFloorQueryOutput {
+    ok: bool,
+    effective_floor: Option<String>,
+    effective_kind: Option<String>,
+}
+
+fn parse_effective_gate_floor(raw: &[u8]) -> Result<EffectiveGateFloor, CiHubError> {
+    let output: GateFloorQueryOutput = serde_json::from_slice(raw).map_err(|error| {
+        CiHubError::HistoryQuery(format!("gate_floors.py returned invalid JSON: {error}"))
+    })?;
+    if !output.ok {
+        return Err(CiHubError::HistoryQuery(
+            "gate_floors.py refused to derive an effective floor; refusing to guess a rebase base"
+                .into(),
+        ));
+    }
+    let sha = output.effective_floor.ok_or_else(|| {
+        CiHubError::HistoryQuery(
+            "gate_floors.py reported ok without effective_floor; refusing to guess".into(),
+        )
+    })?;
+    if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CiHubError::HistoryQuery(format!(
+            "gate_floors.py returned invalid effective_floor {sha:?}; refusing to guess"
+        )));
+    }
+    Ok(EffectiveGateFloor {
+        sha: sha.to_ascii_lowercase(),
+        kind: output.effective_kind.unwrap_or_else(|| "unknown".into()),
+    })
+}
+
+fn query_effective_gate_floor(
+    root: &Path,
+    repo: &Path,
+    branch: &str,
+) -> Result<EffectiveGateFloor, CiHubError> {
+    let script = root.join("ci-hub/validate/gate_floors.py");
+    let registry = root.join("ci-hub/validate/rebase-base-floors.json");
+    let output = Command::new("python3")
+        .arg(&script)
+        .args(["--branch", branch, "--repo-checkout"])
+        .arg(repo)
+        .arg("--registry")
+        .arg(&registry)
+        // run_newest_green already fetched the branch unless the caller chose
+        // --no-fetch. Derive against that exact snapshot rather than fetching
+        // a second, potentially different tip inside the registry helper.
+        .args(["--no-fetch", "--json"])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: script.display().to_string(),
+            source,
+        })?;
+    if !output.status.success() {
+        let detail = if output.stdout.is_empty() {
+            String::from_utf8_lossy(&output.stderr).trim().to_string()
+        } else {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        return Err(CiHubError::HistoryQuery(format!(
+            "gate_floors.py exited {}: {detail}",
+            exit_status_code(output.status)
+        )));
+    }
+    parse_effective_gate_floor(&output.stdout)
+}
+
 fn history_at_or_after_gate_floor(
     mut commits: Vec<String>,
     branch_ref: &str,
@@ -3340,7 +3411,7 @@ fn history_at_or_after_gate_floor(
 ) -> Result<Vec<String>, CiHubError> {
     let Some(floor_index) = commits.iter().position(|commit| commit == gate_floor) else {
         return Err(CiHubError::HistoryQuery(format!(
-            "{branch_ref} does not contain required {CURRENT_GATE_SCHEMA} first-parent floor \
+            "{branch_ref} does not contain required registry-derived first-parent floor \
              {gate_floor}; refusing to guess a usable rebase base"
         )));
     };
@@ -3530,10 +3601,12 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     if !args.query.no_fetch {
         fetch_history_branch(&repo, &args.query.branch)?;
     }
+    let effective_floor = query_effective_gate_floor(root, &repo, &args.query.branch)?;
+    let floor_policy = format!("{GATE_FLOOR_POLICY}:{}", effective_floor.kind);
     let commits = history_at_or_after_gate_floor(
         branch_history(&repo, &branch_ref)?,
         &branch_ref,
-        CURRENT_GATE_SCHEMA_FLOOR,
+        &effective_floor.sha,
     )?;
     let branch_tip = commits.first().expect("nonempty history");
     let ledger = ledger_path(root, &args.query.ledger);
@@ -3546,7 +3619,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
                 &args.query.branch,
                 &branch_ref,
                 branch_tip,
-                CURRENT_GATE_SCHEMA_FLOOR,
+                &effective_floor.sha,
                 &ledger,
                 ledger_len,
                 ledger_modified_ns,
@@ -3562,8 +3635,8 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     match HistoryQueryEngine::new(commits, rows).newest_green(
         &args.query.branch,
         &branch_ref,
-        CURRENT_GATE_SCHEMA,
-        CURRENT_GATE_SCHEMA_FLOOR,
+        &floor_policy,
+        &effective_floor.sha,
     ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
@@ -3589,10 +3662,10 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
             if args.query.json {
                 println!(
                     "{}",
-                    serde_json::json!({"schema_version": 2, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": CURRENT_GATE_SCHEMA, "gate_schema_floor": CURRENT_GATE_SCHEMA_FLOOR, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
+                    serde_json::json!({"schema_version": 2, "verdict": "FAILED", "exit_code": 3, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": floor_policy, "gate_schema_floor": effective_floor.sha, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
                 );
             } else {
-                println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} gate={CURRENT_GATE_SCHEMA} floor={CURRENT_GATE_SCHEMA_FLOOR} window-commits={commits_in_range} full-green=0 -- {recorded} eligible branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch);
+                println!("NEWEST-GREEN FAILED branch={} tip={branch_tip} floor-policy={floor_policy} effective-floor={} window-commits={commits_in_range} full-green=0 -- {recorded} eligible branch commit(s) have clean anchored records, but none has a latest PASS", args.query.branch, effective_floor.sha);
             }
             Ok(3)
         }
@@ -3604,10 +3677,10 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
             if args.query.json {
                 println!(
                     "{}",
-                    serde_json::json!({"schema_version": 2, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": CURRENT_GATE_SCHEMA, "gate_schema_floor": CURRENT_GATE_SCHEMA_FLOOR, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
+                    serde_json::json!({"schema_version": 2, "verdict": "NOT-VALIDATED", "exit_code": 4, "branch": args.query.branch, "branch_tip": branch_tip, "gate_schema": floor_policy, "gate_schema_floor": effective_floor.sha, "branch_commits_in_range": commits_in_range, "trustworthy_recorded_commits": recorded, "full_green_commits_in_range": 0})
                 );
             } else {
-                println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} gate={CURRENT_GATE_SCHEMA} floor={CURRENT_GATE_SCHEMA_FLOOR} window-commits={commits_in_range} trustworthy-recorded={recorded} full-green=0 -- no qualifying at-or-after-floor clean commit-anchored branch validation record exists", args.query.branch);
+                println!("NEWEST-GREEN NOT-VALIDATED branch={} tip={branch_tip} floor-policy={floor_policy} effective-floor={} window-commits={commits_in_range} trustworthy-recorded={recorded} full-green=0 -- no qualifying at-or-after-floor clean commit-anchored branch validation record exists", args.query.branch, effective_floor.sha);
             }
             Ok(4)
         }
@@ -4390,6 +4463,33 @@ mod tests {
             history_at_or_after_gate_floor(commits, "origin/main", "floor").unwrap(),
             vec!["tip", "floor"]
         );
+    }
+
+    #[test]
+    fn effective_floor_follows_registry_output_without_a_rust_constant() {
+        let old = parse_effective_gate_floor(
+            br#"{"ok":true,"effective_floor":"1111111111111111111111111111111111111111","effective_kind":"merge-gate"}"#,
+        )
+        .unwrap();
+        let added = parse_effective_gate_floor(
+            br#"{"ok":true,"effective_floor":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","effective_kind":"producer-anchor"}"#,
+        )
+        .unwrap();
+
+        assert_ne!(old.sha, added.sha);
+        assert_eq!(added.sha, "a".repeat(40));
+        assert_eq!(added.kind, "producer-anchor");
+    }
+
+    #[test]
+    fn refused_registry_result_cannot_become_a_green_base() {
+        let error = parse_effective_gate_floor(
+            br#"{"ok":false,"effective_floor":null,"effective_kind":null}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("refused"));
+        assert!(error.contains("refusing to guess"));
     }
 
     #[test]

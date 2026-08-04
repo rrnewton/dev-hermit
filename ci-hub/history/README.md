@@ -101,14 +101,16 @@ ci-hub/ci-hub first-bad liteinst_detcore_strict_verify_micro_suite
 ```
 
 `newest-green` defaults to `--branch main` and returns only a clean, anchored
-`full`-profile/`full`-selection pass at or after the current merge-gate schema
-floor. The current floor is the fail-closed `merge-gate-v2` transition at
-`c369be3ff8e2c751a313b27979fa8f470dafecf0` (2026-08-04). A green commit before
-that floor is not a usable rebase base: a derived PR head cannot satisfy current
-branch protection. The command refuses if the fetched branch does not contain
-the floor rather than falling back to older green evidence.
+`full`-profile/`full`-selection pass at or after the effective rebase-base floor.
+It derives that floor at query time from
+`ci-hub/validate/gate_floors.py --json` and the versioned
+`rebase-base-floors.json` registry; no floor SHA is embedded in the Rust query.
+A green commit before the effective floor is not a usable rebase base. The
+command refuses if the registry cannot prove every floor is on the fetched
+branch rather than falling back to older green evidence.
 
-The report prints the exact profile, selection mode, gate schema and floor, plus
+The report prints the exact profile, selection mode, floor policy and effective
+floor, plus
 the count of distinct qualifying full-green commits in the floor-to-tip
 first-parent window. It states the oldest commit, tip, total commit denominator,
 and trustworthy-record count; duplicate receipts for one SHA count once. The
