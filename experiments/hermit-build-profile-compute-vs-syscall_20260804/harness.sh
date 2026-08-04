@@ -25,7 +25,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PROFILE="${1:?profile label}"
 HERMIT="${2:?hermit bin or -}"
 N="${3:-7}"
-OUT="$HERE/results.csv"
+# OUT is env-overridable: the experiment dir is SHARED and harness.sh can be run
+# concurrently by another agent (twin pinning/samecore run). A hardcoded results.csv
+# means two producers corrupt one file. Callers set OUT to a private file.
+OUT="${OUT:-$HERE/results.csv}"
 GUESTS="${GUESTS:-compute_bound syscall_bound}"
 GBIN="$HERE/guests/bin"
 CPUSET_RUN="${CPUSET_RUN:-}"
@@ -54,7 +57,11 @@ measure() {
       --setenv=HOME="$HOME" --setenv=PATH="$PATH" \
       /usr/bin/time -f '%e %U %S' -o "$tf" -- "$@" >/dev/null 2>&1
   fi
-  awk -v c="$cores" '{printf "%s %.3f %s", $1, $2+$3, c}' "$tf"
+  # Emit ONLY a valid numeric timing line ('%e %U %S'). A FAILED guest run makes
+  # /usr/bin/time write 'Command exited with non-zero status'/'terminated by
+  # signal' into $tf — that must NOT become a poison row (wall=Command cpu=0).
+  # No numeric line => print nothing => caller's `|| continue` skips the emit.
+  awk -v c="$cores" 'NF>=3 && $1 ~ /^[0-9.]+$/ {printf "%s %.3f %s\n", $1, $2+$3, c; found=1} END{exit !found}' "$tf"
   rm -f "$tf"
 }
 

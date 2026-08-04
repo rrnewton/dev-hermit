@@ -10,7 +10,12 @@ REL=$HERE/target-release/release/hermit
 RO0=$HERE/target-release-o0/release/hermit
 DBG=$HERE/target-debug/debug/hermit
 for b in "$REL" "$RO0" "$DBG"; do [ -x "$b" ] || { echo "MISSING BIN $b"; exit 5; }; done
-rm -f "$HERE/results.csv"                 # fresh; harness re-creates header
+# ISOLATE: the experiment dir is SHARED; another agent may run harness.sh here
+# concurrently against the plain results.csv. Use a PRIVATE output so we never
+# collide, and NEVER rm the shared results.csv (that would delete their data).
+export OUT="$HERE/results.mine.csv"
+export RESULTS_CSV="results.mine.csv"     # analyze.py honors this
+rm -f "$OUT"                              # fresh; harness re-creates header (private file only)
 echo "=== runtime harness (N=$N), non-nested, $(date -u +%FT%TZ) ==="
 bash "$HERE/harness.sh" native     "-"    "$N"
 bash "$HERE/harness.sh" release    "$REL" "$N"

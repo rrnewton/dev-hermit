@@ -24,11 +24,23 @@ def load(name):
     p = os.path.join(HERE, name)
     return list(csv.DictReader(open(p))) if os.path.exists(p) else []
 
-rows = load("results.csv")
+rows = load(os.environ.get("RESULTS_CSV", "results.csv"))
 agg = collections.defaultdict(lambda: {"wall": [], "cpu": []})
+dropped = 0
 for r in rows:
+    # Guard against poison rows from FAILED guest runs (wall='Command', cpu=0):
+    # an old harness emitted /usr/bin/time's error line as data. Drop non-numeric
+    # or non-positive timings so a failed run never distorts a median.
+    try:
+        wall, cpu = float(r["wall_s"]), float(r["cpu_s"])
+    except (ValueError, TypeError):
+        dropped += 1; continue
+    if wall <= 0 or cpu <= 0:
+        dropped += 1; continue
     k = (r["profile"], r["guest"], r["mode"])
-    agg[k]["wall"].append(float(r["wall_s"])); agg[k]["cpu"].append(float(r["cpu_s"]))
+    agg[k]["wall"].append(wall); agg[k]["cpu"].append(cpu)
+if dropped:
+    print(f"NOTE: dropped {dropped} poison/failed-run row(s) before aggregation")
 
 med = {}
 with open(os.path.join(HERE, "medians.csv"), "w", newline="") as f:
