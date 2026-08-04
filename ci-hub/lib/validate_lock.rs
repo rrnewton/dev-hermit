@@ -1366,13 +1366,13 @@ mod tests {
             agent: "hermit-247".into(),
             kind: "validate".into(),
             target: "0123456789abcdef0123456789abcdef01234567".into(),
-            host: "devbig014".into(),
+            host: "testhost".into(),
             acquired_at: 100,
             acquired_human: "1970-01-01T00:01:40+0000".into(),
             expires_at: 1_000,
             reclaimed_from: Some("hermit-opt".into()),
         };
-        let rendered = "agent=hermit-247\nkind=validate\ntarget=0123456789abcdef0123456789abcdef01234567\nhost=devbig014\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-opt\n";
+        let rendered = "agent=hermit-247\nkind=validate\ntarget=0123456789abcdef0123456789abcdef01234567\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-opt\n";
         assert_eq!(holder.render(), rendered);
         assert_eq!(ValidateLockState::parse(rendered).unwrap(), holder);
 
