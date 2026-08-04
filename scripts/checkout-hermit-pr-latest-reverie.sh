@@ -207,11 +207,16 @@ for pr in "${prs[@]}"; do
 
   mapfile -t pin_paths < <(git -C "$repo" diff --name-only "$pin_base" -- \
     | rg '(^|/)Cargo\.(toml|lock)$')
-  ((${#pin_paths[@]} > 0)) || die "PR #$pr: target pin produced no change"
-  git -C "$repo" add -- "${pin_paths[@]}"
-  git -C "$repo" diff --cached --quiet && die "PR #$pr: target pin produced no change"
-  git -C "$repo" commit -m "build: bump Reverie pin to $short_target"
-  candidate=$(git -C "$repo" rev-parse HEAD)
+  if ((${#pin_paths[@]} > 0)); then
+    git -C "$repo" add -- "${pin_paths[@]}"
+    git -C "$repo" diff --cached --quiet && \
+      die "PR #$pr: pin paths changed but produced no staged update"
+    git -C "$repo" commit -m "build: bump Reverie pin to $short_target"
+    candidate=$(git -C "$repo" rev-parse HEAD)
+  else
+    note "PR #$pr: Reverie pin already current at $target; no bump commit needed"
+    candidate=$pin_base
+  fi
   git -C "$repo" merge-base --is-ancestor "$old_head" "$candidate" || \
     die "PR #$pr candidate rewrites original head"
 
