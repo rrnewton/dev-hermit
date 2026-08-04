@@ -55,6 +55,13 @@ are:
 
 Networked commands use `with-proxy` internally.
 
+Landing verification is PR-aware. `ci-hub verify-landed-pr PR --repo
+OWNER/REPO --source CHECKOUT` reads GitHub's `mergeCommit.oid` (the commit
+replayed by a rebase merge), fetches current `origin/main`, and requires that
+replay SHA to remain ancestral. Do not test the pre-merge PR head: rebase merge
+rewrites it by design. The API's `MERGED` state is not sufficient on its own;
+the replay-SHA ancestry check still detects a later force-push orphan.
+
 ## Object map and ownership
 
 | Object | Owns | Does not own |
