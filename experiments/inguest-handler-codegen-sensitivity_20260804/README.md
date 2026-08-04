@@ -69,6 +69,33 @@ to handler code. However, the release profile already captures the dominant leve
 further codegen tuning (cu1, LTO) buys ~0–5%, not a step change. If handler ns/syscall
 becomes the bottleneck, LTO-fat is worth ~5%; codegen-units=1 is not worth it.
 
+## Supplement: confound-free `getcpu` cut (2026-08-04, same session)
+
+The getpid result carries a constant ~74 ns kernel-injection floor: getpid is classified
+**PassThrough** (`detcore/src/syscall_classification.rs`), so the handler injects a *real*
+kernel `getpid`. That 74 ns is identical across A–D so it cancels in the opt0→opt3 ratio,
+but it dilutes the raw ratio and leaves ~8% of the cost outside the handler. To measure the
+**100%-handler** codegen effect with the kernel floor removed, re-ran with a `getcpu` guest:
+`getcpu` is **Determinized locally** (`detcore/src/syscalls/misc.rs:690` — writes cpu=0/node=0,
+returns `Ok(0)`; **no kernel injection, no coordinator RPC**). Reused the **persisted A.so
+(opt3, ships) and D.so (opt0, control)** builds — no rebuild. Same box: `taskset -c 300` +
+`systemd-run --user`, 5-rep median, N=1e5→2e6 CPU-time slope, vacuity-guarded
+(`direct_hook=N+1`, `ptrace_installation=0`) every run. `getcpu_loop.c`, `run-getcpu.sh`,
+`rebuild_getcpu_csv.py`, `results-getcpu.csv` committed here.
+
+| variant | codegen                            | ns/`getcpu` | vs A |
+|---------|------------------------------------|------------:|------|
+| A       | opt3 / cu16 / lto=off (**SHIPS**)  |       784.2 | —    |
+| D       | **opt0** / cu16 (CONTROL)          |      2942.1 | **+275%** (**3.75×**) |
+| native  | raw getcpu, no hermit              |        73.7 | —    |
+
+**Confirms and strengthens the getpid result.** The pure-handler codegen swing is **3.75×**
+— *higher* than getpid's raw 3.5× precisely because the kernel floor is gone. Cross-check:
+subtracting getpid's constant 74 ns floor gives a handler-only ratio of **3.73×**, agreeing
+with getcpu's directly-measured **3.75×** to 0.5% (two independent methods). Absolute cost is
+also 174 ns lower (784 vs 958 ns) — the removed kernel-injection floor. **Actionable answer
+unchanged:** the dominant lever is opt-level=3 and release already ships it.
+
 ## Reproduction
 
 ```
@@ -78,4 +105,8 @@ cd experiments/inguest-handler-codegen-sensitivity_20260804
 bash run-matrix.sh A:<A.so> B:<B.so> C:<C.so> D:<D.so>
 python3 rebuild_csv.py   # authoritative parser (run-matrix.sh's inline awk had a tab bug)
 python3 analyze.py results.csv
+
+# confound-free getcpu cut (reuses persisted A.so opt3 / D.so opt0):
+bash run-getcpu.sh
+python3 rebuild_getcpu_csv.py   # authoritative parser; live run.sh awk \s bug zeroed cpu col
 ```
