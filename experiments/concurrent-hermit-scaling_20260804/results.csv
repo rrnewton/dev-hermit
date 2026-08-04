@@ -1,0 +1,18 @@
+measurement,N,placement,guest_iters,makespan_s,agg_giter_per_s,per_instance_cpu_s,failures,box_state,note
+per_instance_timing,1,free_no_taskset,30000000,0.20,,0.20,0,contended,solo free: cpu 0.20s (user 0.05 sys 0.15) 99pct
+per_instance_timing,1,taskset_1core,30000000,2.76,,2.77,0,contended,solo confined: cpu 2.77s (user 0.06 sys 2.71) 99pct = 14x SLOWER than free
+per_instance_timing,1,pin_threads_no_taskset,30000000,0.19,,0.19,0,contended,--pin-threads free: same as default-free (pinning is not the variable)
+per_instance_timing,1,pin_threads_taskset_1core,30000000,2.74,,2.73,0,contended,--pin-threads confined: 2.74s = same slow as default-confined
+confined_artifact_sweep,1,taskset_own_core,30000000,2.84,0.011,,0,contended,ARTIFACT: 1-core-per-instance cripples each 14x; flat throughput is confinement not real serialization
+confined_artifact_sweep,2,taskset_own_core,30000000,5.49,0.011,,0,contended,ARTIFACT
+confined_artifact_sweep,4,taskset_own_core,30000000,10.49,0.011,,0,contended,ARTIFACT
+confined_artifact_sweep,8,taskset_own_core,30000000,21.86,0.011,,0,contended,ARTIFACT: all 8 guests observed on host core 0 (psr=0)
+confined_artifact_sweep,16,taskset_own_core,30000000,51.44,0.009,,0,contended,ARTIFACT
+corrected_free_sweep,1,free_no_taskset,300000000,2.629,0.114,,0,contended,baseline free
+corrected_free_sweep,2,free_no_taskset,300000000,2.749,0.218,,0,contended,
+corrected_free_sweep,4,free_no_taskset,300000000,4.224,0.284,,0,contended,box contention visible (makespan up)
+corrected_free_sweep,8,free_no_taskset,300000000,3.136,0.765,,0,contended,
+corrected_free_sweep,16,free_no_taskset,300000000,3.633,1.321,,0,contended,
+corrected_free_sweep,32,free_no_taskset,300000000,4.468,2.148,,1,contended,~19x throughput vs N=1; first crash appears
+corrected_free_sweep,64,free_no_taskset,300000000,10.502,1.828,,7,contended,throughput REGRESSES + 7 crashes (lower bound on knee; box contended)
+stability_probe,96,free_no_taskset,300000000,,,,3,contended,3/96 (~3pct) crashed: reverie_process::clone::clone_with_stack non-unwinding panic -> SIGSEGV

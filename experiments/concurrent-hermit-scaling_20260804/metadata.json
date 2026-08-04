@@ -1,0 +1,29 @@
+{
+  "experiment": "concurrent-hermit-scaling",
+  "date": "2026-08-04",
+  "question": "Does concurrent `hermit run --strict` scale past 150 cores? If it scales, the validate strategy inverts from serialize-to-avoid-contention to run-the-corpus-wide.",
+  "owner_task": "headline-inner-step-scaling-curves-cargo-and-strict-compat (CURVE 3)",
+  "agent": "hermit-ghdag (opus-4.8)",
+  "host": "devbig014.atn7.facebook.com",
+  "cpu": "AMD EPYC 9D85 class, 158 physical cores x 2 SMT = 316 hardware threads",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "hermit_sha": "a6201fc65d29c3a1a88cc7af4b117b68e9950284",
+  "reverie_sha": "591154213a98f35cdd6b14274c42113ccd204266",
+  "hermit_version": "hermit 0.2.0 (2026-08-04, g0f891e432a75-dirty)",
+  "hermit_binary": "hermit/target/release/hermit",
+  "guest_compiler": "gcc 11.5.0 (Red Hat 11.5.0-15), cc -O2",
+  "guest_source": "scratch/curve3-concurrent-hermit/spin_guest.c",
+  "guest_variants": {
+    "spin_guest_30m": "ITERS=30000000, solo-free wall ~0.20s",
+    "spin_guest_300m": "ITERS=300000000, solo-free wall ~2.0s (used for the scaling sweep so makespan reflects compute not launch)"
+  },
+  "guest_determinism_check": "spin_guest_30m emits acc=6007282469255529699 on every strict run; verified identical across all concurrent instances",
+  "harness": "scratch/curve3-concurrent-hermit/sweep.sh (pinned variant) and inline free-instance loops",
+  "box_state": "NOT quiet during measurement: hermit-231b curves 1+2 (cargo build / strict_compat) plus codex/rustc live. All rows labeled contended. High-N (>=128) knee NOT measured; requires a quiet box.",
+  "metrics": {
+    "makespan_s": "first launch to last exit, wall clock",
+    "agg_giter_per_s": "N * guest_iters / makespan / 1e9 (absolute aggregate throughput, per owner: anchors not ratios)",
+    "per_instance_cpu_s": "user+sys from /usr/bin/time for a single instance"
+  },
+  "reproduction": "cc -O2 -DITERS=300000000ULL -o spin_guest_300m spin_guest.c; then for N in 1 2 4 8 16 32 64: launch N background `hermit run --strict -- spin_guest_300m` with NO taskset, measure first-launch-to-last-exit makespan and count nonzero exits. For the confinement contrast: compare `hermit run --strict` free vs under `taskset -c <core>`."
+}

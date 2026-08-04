@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${REAL_CARGO:?REAL_CARGO must name the real cargo binary}"
+: "${LOCK_TRACE_DIR:?LOCK_TRACE_DIR must name the trace directory}"
+: "${LOCK_PROBE_TAG:?LOCK_PROBE_TAG must name the DAG node}"
+
+mkdir -p "$LOCK_TRACE_DIR"
+safe_tag=${LOCK_PROBE_TAG//[^A-Za-z0-9_.-]/_}
+exec strace -f -qq -ttt -T -y -e trace=flock,fcntl \
+    -o "$LOCK_TRACE_DIR/${safe_tag}.$$.strace" \
+    "$REAL_CARGO" "$@"
