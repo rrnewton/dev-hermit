@@ -1,0 +1,26 @@
+{
+  "question": "Which of harness / backend / strip_lines-default blocks the cheapest liteinst cell (getpid) from becoming the first BITWISE-parity cell (full INFO-log match with identical virtual-time timestamps)?",
+  "answer": "The backend. liteinst's in-guest instrumentation issues guest-observable syscalls (libreverie_liteinst.so load, 72x /proc/self/maps scans, fd fstats) that detcore commits to the deterministic timeline; virtual time diverges at COMMIT turn 2 and liteinst runs 32 turns vs ptrace's 6, so the DETLOG cannot be byte-identical. strip_lines is shallow (bypassed via --log-file/--verify-verbose); harness is modest (cross-backend unstripped diff reproduced by hand from existing primitives).",
+  "cell": "system-utils/record-getpid",
+  "guest": "hermit/tests/c/getpid.c -> hermit/target/tmp/hermit-wave1-workloads/getpid",
+  "hermit_primary_head": "d74e0412c3374d34d3921882526540db708abd10",
+  "reverie_head": "04a46b43930b918f6ff0f6b53644df732f908c46",
+  "parent_head": "e029ea02ba7e8af7956b78c1441cfd2b30dc15ea",
+  "binary": "hermit/target/debug/hermit (prebuilt debug artifact, mtime 2026-08-03T21:42:43-0700; predates current primary HEAD; measurement is about backend architecture which is stable across these SHAs)",
+  "command": "hermit --log=info --log-file=<b>.log run --backend <ptrace|liteinst> --strict -- <getpid>",
+  "host": "devbig014.atn7.facebook.com",
+  "toolchain": "cargo/rustc as built into target/debug/hermit; cc/gcc/clang available",
+  "seed": "detcore scheduler/user/chaos PRNG all seed 0 (both backends)",
+  "measurements": {
+    "stdout_equal": true,
+    "stdout": "My pid: 3",
+    "info_log_lines": {"ptrace": 129, "liteinst": 981},
+    "detlog_lines": {"ptrace": 81, "liteinst": 819},
+    "commit_turns": {"ptrace": 6, "liteinst": 32},
+    "proc_self_maps_reads": {"ptrace": 0, "liteinst": 72},
+    "injected_fstat": {"ptrace": 2, "liteinst": 36},
+    "libc_open_syscall_index": {"ptrace": 10, "liteinst": 19},
+    "virtual_time_first_divergence_turn": 2
+  },
+  "scope": "measurement+enumeration only; no compat expansion; single run per backend (within-backend repeatability of the 72x maps-scan is an open follow-up)"
+}
