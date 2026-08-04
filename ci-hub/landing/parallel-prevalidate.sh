@@ -164,6 +164,14 @@ run_one(){
         && ./validate.sh ) >"$ROOT/ignored/ci-hub/prevalidate-pr${pr}.log" 2>&1
   fi
 
+  # Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
+  # ledger: validate.sh writes a count-less schema-3 receipt when it can't reach
+  # the parent count helper, and with the uncounted-receipt grandfather removed
+  # that would read NotValidated. The scan (append-safe, idempotent) upgrades the
+  # just-validated head's row from its own log. Best-effort; validate-status below
+  # stays the authoritative fail-closed gate. The slot worktree holds the head.
+  "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$wt" || true
+
   # Landing verdict comes from the ledger, not the exit code: validate-status is
   # the same predicate land-pr.sh gates on -- never looser, never fabricated.
   local vs; vs=$($VALIDATE_STATUS_CMD --pr "$pr" 2>&1)

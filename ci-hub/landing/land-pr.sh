@@ -213,6 +213,15 @@ say "pushed head=$HEAD"
 # 4. The pushed exact head needs its own ledger receipt. A rebase that changed
 # the SHA cannot inherit the old authorization. Only the ledger-guarded applier
 # may materialize the cache label; the lander never types it directly.
+#
+# 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
+# ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
+# reach the parent count helper; with the uncounted-receipt grandfather removed,
+# such a genuine green would be NotValidated. The scan (append-safe, idempotent)
+# upgrades HEAD's row from its own log so a real green is not stranded by a
+# producer that failed to inline its counts. Best-effort: never aborts landing —
+# eligibility below remains the authoritative fail-closed gate.
+"$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" || true
 PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
 VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
 say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"

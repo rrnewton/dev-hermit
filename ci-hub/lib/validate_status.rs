@@ -40,13 +40,20 @@
 //!     writer DEFECT, refused.
 //!   * ELSE IF it carries both counts under an old schema (`aggregate.py`) it
 //!     predates per-node coverage but is held to `executed_tests == Some(n>0)`.
-//!   * ELSE it is a genuinely pre-count receipt and is GRANDFATHERED: the
-//!     universal guard plus clean/full/full/pass suffice (the pre-tightening
-//!     rule). This strands nobody and un-breaks the drain; new receipts pick up
-//!     the full per-node contract automatically as coverage-emitting writers roll out.
+//!   * ELSE it carries NEITHER count — a genuinely pre-count receipt, or a
+//!     producer that failed to emit counts. It proves neither nonzero execution
+//!     nor bounded filtering, so it is NotValidated (an uncounted receipt is
+//!     UNVERIFIED, not green). The former transition grandfather (accept an
+//!     uncounted clean/full/full/pass) is REMOVED.
 //!
-//! The grandfather branch is schema/presence-keyed, NOT time-keyed, so it never
-//! expires-and-strands: it self-liquidates as pre-count receipts age out. See
+//! Why the grandfather is gone: it was a bounded transition allowance that
+//! un-broke the drain while no count-backed greens existed. That precondition is
+//! now met — the backlog is backfilled to schema-5 by `finalize_receipt.py
+//! --scan` and every landing consume-path re-mints count-backed rows from each
+//! green's durable log before reading the ledger (see `ci-hub/validate/scan-finalize.sh`,
+//! wired into `ci-hub/landing/{land-pr,parallel-prevalidate}.sh`). Measured on the
+//! live ledger: post-backfill the removal strands 0 legitimate greens; the sole
+//! refusal (ee303899) is a genuine per-node coverage fail it SHOULD refuse. See
 //! `ai_docs/transition-design-executed-filtered-count-schema-tightening_20260804.md`.
 //! Keying strictness on field PRESENCE (not the `schema_version` integer alone) is
 //! deliberate: the live writers disagree about the version — `aggregate.py` emits
@@ -185,17 +192,18 @@ fn coverage_satisfied(cov: &CoverageRow) -> bool {
 ///     (`aggregate.py`, schema 1), it predates per-node coverage but can still
 ///     prove nonzero execution: held to `executed_tests == Some(n>0)`. (It cannot
 ///     be required to carry `coverage` it never emitted.)
-///   * ELSE the receipt is a genuinely PRE-COUNT receipt (writer predates count
-///     emission, carried neither count): it is GRANDFATHERED under the
-///     pre-tightening rule (the universal guard + clean/full/full/pass). This is
-///     the transition allowance that un-breaks the drain without stranding the
-///     backlog; it strands nobody and self-liquidates as pre-count receipts age.
+///   * ELSE the receipt carries NEITHER count (a genuinely pre-count receipt, or
+///     a producer that failed to emit them): it proves neither nonzero execution
+///     nor bounded filtering and is NotValidated. The former transition
+///     grandfather (accept-on-absence) is REMOVED now that the backlog is
+///     backfilled to schema-5 and every landing consume-path re-mints count-backed
+///     rows before reading the ledger, so no legitimate green rides this branch.
 ///
 /// Everything short of the applicable rule is NotValidated (exit 4 = re-dispatch),
 /// never FailedOnRecord — an uncounted or under-covered run is UNVERIFIED, not
 /// known-bad. This AGREES with the AGENTS.md Proxy Binding truth table (parent
-/// da98bdd) for count-capable receipts; for grandfathered receipts it applies the
-/// documented pre-transition contract those writers were built against.
+/// da98bdd): an evidence value must carry the condition it claims, so a receipt
+/// that carries no count cannot certify execution and is refused.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
     if !(is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")) {
         return false;
@@ -219,9 +227,15 @@ pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
         // execution. Filtered no longer gates.
         matches!(row.executed_tests, Some(n) if n > 0)
     } else {
-        // GRANDFATHER: a genuinely pre-count receipt that cleared the universal
-        // guard — accept under the pre-tightening clean/full/full/pass rule.
-        true
+        // STRICT (post-transition): a receipt carrying NEITHER count proves
+        // neither nonzero execution nor bounded filtering — an uncounted receipt
+        // is UNVERIFIED, not green. The transition grandfather (`else { true }`)
+        // is REMOVED now that the backlog is backfilled to schema-5
+        // (finalize_receipt.py --scan) and every landing consume-path re-mints
+        // count-backed rows before reading the ledger, so no legitimate green
+        // rides this branch. NotValidated (exit 4 = re-dispatch to mint counts),
+        // never FailedOnRecord.
+        false
     }
 }
 
@@ -469,19 +483,23 @@ mod tests {
     }
 
     #[test]
-    fn grandfathered_pre_count_pass_validates() {
-        // TRANSITION POSITIVE (the 35/35 un-break case): a PRE-COUNT receipt —
-        // old-schema (3 < COUNTS_SCHEMA) writer that carried NEITHER count — is a
-        // clean full/full pass that clears both universal guards, so it is
-        // grandfathered VALIDATED. This is exactly what un-breaks the live drain:
-        // without it, every raw validate.sh receipt on main flips NotValidated.
+    fn uncounted_pre_count_pass_is_not_validated() {
+        // STRICT (post-transition, the grandfather-removal case): a receipt that
+        // carries NEITHER count — old-schema (3 < COUNTS_SCHEMA) writer that
+        // emitted no executed/filtered — is clean/full/full/pass yet proves
+        // nothing about execution. With the grandfather REMOVED it is NotValidated
+        // (exit 4 = re-dispatch to mint counts), not a landing-eligible green.
+        // This is the "uncounted receipt REFUSED" direction; the backlog no longer
+        // strands because it is backfilled to schema-5 and the landing consume-path
+        // re-mints count-backed rows before reading the ledger.
         let mut r = clean_full_pass(PASS_SHA);
         r.schema_version = Some(3);
         r.executed_tests = None;
         r.filtered_tests = None;
         let a = assess(&[r], PASS_SHA);
-        assert_eq!(a.verdict, Verdict::Validated);
-        assert_eq!(a.verdict.exit_code(), 0);
+        assert_eq!(a.verdict, Verdict::NotValidated);
+        assert_eq!(a.verdict.exit_code(), 4);
+        assert_eq!(a.qualifying.len(), 0);
     }
 
     #[test]
@@ -502,15 +520,13 @@ mod tests {
         // aggregate filtered count is legitimate on a real full run (each shard
         // filters out other shards' tests; ~693 measured). The old blunt
         // `filtered_tests == 0` predicate rejected every such green and recreated
-        // the stall "with better vocabulary". It is DELETED: a pre-count receipt
-        // carrying only a filtered count is grandfathered, and an old-schema
-        // counted receipt with filtered>0 + nonzero executed still validates.
-        let mut grand = clean_full_pass(PASS_SHA);
-        grand.schema_version = Some(3);
-        grand.executed_tests = None;
-        grand.filtered_tests = Some(154);
-        assert_eq!(assess(&[grand], PASS_SHA).verdict, Verdict::Validated);
-
+        // the stall "with better vocabulary". It is DELETED: an old-schema counted
+        // receipt with filtered>0 + nonzero executed still validates.
+        //
+        // (A receipt carrying ONLY a filtered count and no executed count no longer
+        // validates — that is the grandfather branch, now removed; see
+        // `uncounted_pre_count_pass_is_not_validated`. `filtered` alone was never
+        // execution evidence.)
         let mut counted = clean_full_pass(PASS_SHA);
         counted.schema_version = Some(1); // aggregate.py, counts present
         counted.executed_tests = Some(749);
@@ -646,17 +662,17 @@ mod tests {
 
     #[test]
     fn positive_control_legitimate_passes_validate_across_all_branches() {
-        // POSITIVE CONTROL, N=6 across all three ACCEPT branches: the version-aware
-        // consumer must not reject everything (a consumer that did would pass every
-        // negative test and be disabled within a day). Each is a legitimate green:
-        //   - GRANDFATHER: pre-count writer, no counts (schema 2 and 3).
+        // POSITIVE CONTROL, N=4 across the two surviving ACCEPT branches: the
+        // version-aware consumer must not reject everything (a consumer that did
+        // would pass every negative test and be disabled within a day). Each is a
+        // legitimate green:
         //   - OLD-WITH-COUNTS: aggregate.py carries counts under schema 1.
         //   - COUNT-CAPABLE: new writer, schema >= COUNTS_SCHEMA, counts present.
         // A count-capable green must carry a SATISFIED coverage obligation; the
-        // older branches never emitted one. (schema_version, executed, filtered, coverage)
-        let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 6] = [
-            (2, None, None, None),        // grandfather
-            (3, None, None, None),        // grandfather (the 35/35 raw-validate.sh case)
+        // older branch never emitted one. The former grandfather branch (no counts)
+        // is removed and covered by `uncounted_pre_count_pass_is_not_validated`.
+        // (schema_version, executed, filtered, coverage)
+        let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 4] = [
             (1, Some(1), Some(0), None),  // old schema carrying counts
             (1, Some(47), Some(693), None), // old schema carrying counts, legit filters
             (COUNTS_SCHEMA, Some(36), Some(0), Some(sat_coverage(13))), // count-capable green
