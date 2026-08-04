@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from attribute_reds import (  # noqa: E402
     attribute_row,
     persist_attributions,
+    refill_attributions,
 )
 
 
@@ -120,6 +121,72 @@ def test_persist_never_fabricates_when_log_is_missing(tmp_path):
     )
     assert (appended, skipped) == (0, 0)
     assert not out.exists()
+
+
+def _null_record(commit: str, finished_at: str, node: str, log_file: str) -> str:
+    """A record as an OLDER extractor would have persisted it: no first_error_line."""
+    return json.dumps(
+        {
+            "commit": commit,
+            "finished_at": finished_at,
+            "log_file": log_file,
+            "node": node,
+            "sub_step_class": None,
+            "fault_class": None,
+            "infra_signature": None,
+            "first_error_line": None,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def test_refill_backfills_null_line_when_the_log_survives(tmp_path):
+    log = _log(tmp_path, "r.log", "e2e.metadata", "some noise")
+    out = tmp_path / "attr.jsonl"
+    out.write_text(
+        _null_record("f00d", "2026-08-04T21:00:00Z", "e2e.metadata", str(log)) + "\n",
+        encoding="utf-8",
+    )
+    refilled, still_null, evicted = refill_attributions(out)
+    assert (refilled, still_null, evicted) == (1, 0, 0)
+    [rec] = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+    # The harness terminal verdict the hardened extractor now surfaces.
+    assert rec["first_error_line"] == "✗ FAIL   e2e.metadata (exit 101)"
+    assert rec["node"] == "e2e.metadata"
+
+
+def test_refill_leaves_evicted_log_records_untouched(tmp_path):
+    out = tmp_path / "attr.jsonl"
+    original = _null_record(
+        "dead", "2026-08-04T21:00:00Z", "e2e.metadata", str(tmp_path / "gone.log")
+    )
+    out.write_text(original + "\n", encoding="utf-8")
+    refilled, still_null, evicted = refill_attributions(out)
+    assert (refilled, still_null, evicted) == (0, 0, 1)
+    # Never fabricated; the record is byte-identical.
+    assert out.read_text() == original + "\n"
+
+
+def test_refill_does_not_touch_records_that_already_have_a_line(tmp_path):
+    log = _log(tmp_path, "s.log", "build.runtime_release", "error: boom")
+    out = tmp_path / "attr.jsonl"
+    _persist([_red_row("cafe", "2026-08-04T20:00:00Z", str(log))], out)
+    before = out.read_text()
+    refilled, still_null, evicted = refill_attributions(out)
+    assert (refilled, still_null, evicted) == (0, 0, 0)
+    assert out.read_text() == before  # byte-identical, no rewrite churn
+
+
+def test_refill_is_idempotent(tmp_path):
+    log = _log(tmp_path, "t.log", "e2e.metadata", "noise")
+    out = tmp_path / "attr.jsonl"
+    out.write_text(
+        _null_record("beef", "2026-08-04T21:00:00Z", "e2e.metadata", str(log)) + "\n",
+        encoding="utf-8",
+    )
+    assert refill_attributions(out)[0] == 1
+    assert refill_attributions(out) == (0, 0, 0)  # second pass finds nothing null
 
 
 if __name__ == "__main__":

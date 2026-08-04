@@ -214,6 +214,102 @@ def persist_attributions(
     return len(pending), skipped
 
 
+def refill_attributions(
+    path: Path, *, registry: set[str] | None = None
+) -> tuple[int, int, int]:
+    """Backfill ``first_error_line`` for records an OLDER extractor persisted null.
+
+    The idempotency key (``commit``, ``finished_at``, ``node``) deliberately
+    EXCLUDES ``first_error_line``, so a later extractor improvement never re-fires
+    through :func:`persist_attributions` — a red run+node already present is
+    skipped, and its stale null line is stranded. This maintenance pass closes that
+    gap: for every persisted record whose ``first_error_line`` is null/absent, if
+    its log still survives it re-classifies that node with the CURRENT extractor and
+    updates the record IN PLACE (all fields), leaving every other line
+    byte-identical. A record whose log is gone is left untouched — never fabricated.
+    Returns ``(refilled, still_null_log_present, log_evicted)``.
+
+    Unlike :func:`persist_attributions` (append-only, race-free) this REWRITES the
+    file via an atomic temp+rename, so it is a manual maintenance op and MUST NOT be
+    run concurrently with a ``--persist`` appender.
+    """
+    if not path.is_file():
+        return (0, 0, 0)
+
+    cache: dict[str, dict[object, Mapping[str, object]]] = {}
+
+    def classes_for(log_file: str) -> dict[object, Mapping[str, object]] | None:
+        """Node->class map for a surviving log, or None if the log is gone."""
+        if log_file in cache:
+            return cache[log_file]
+        p = Path(log_file)
+        if not p.is_file():
+            cache[log_file] = None  # type: ignore[assignment]
+            return None
+        try:
+            text = p.read_text(errors="replace")
+        except OSError:
+            cache[log_file] = None  # type: ignore[assignment]
+            return None
+        by_node = {
+            cls.get("node"): cls
+            for cls in classify_failed_substeps(text, flaky_registry=registry or set())
+        }
+        cache[log_file] = by_node
+        return by_node
+
+    out: list[str] = []
+    refilled = 0
+    still_null = 0
+    evicted = 0
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError:
+            out.append(raw)
+            continue
+        if rec.get("first_error_line"):
+            out.append(raw)  # already attributed — leave byte-identical
+            continue
+        log_file = rec.get("log_file")
+        by_node = classes_for(log_file) if isinstance(log_file, str) and log_file else None
+        if by_node is None:
+            evicted += 1
+            out.append(raw)
+            continue
+        cls = by_node.get(rec.get("node"))
+        if cls is not None and cls.get("first_error_line"):
+            out.append(
+                json.dumps(
+                    {
+                        "commit": rec.get("commit"),
+                        "finished_at": rec.get("finished_at"),
+                        "log_file": log_file,
+                        "node": rec.get("node"),
+                        "sub_step_class": cls.get("sub_step_class"),
+                        "fault_class": cls.get("fault_class"),
+                        "infra_signature": cls.get("infra_signature"),
+                        "first_error_line": cls.get("first_error_line"),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            refilled += 1
+        else:
+            still_null += 1
+            out.append(raw)
+
+    if refilled:
+        tmp = path.with_name(path.name + ".refill.tmp")
+        tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    return (refilled, still_null, evicted)
+
+
 def _render(record: Mapping[str, object]) -> str:
     commit = str(record.get("commit") or "")[:12]
     finished = record.get("finished_at") or "-"
@@ -265,12 +361,37 @@ def main(argv: list[str] | None = None) -> int:
             "so it can run on every landing to beat /tmp log eviction"
         ),
     )
+    parser.add_argument(
+        "--refill",
+        nargs="?",
+        type=Path,
+        const=DEFAULT_ATTRIBUTION,
+        default=None,
+        metavar="PATH",
+        help=(
+            "maintenance: rewrite PATH in place, backfilling first_error_line for "
+            "records an older extractor persisted null whose log still survives "
+            "(the idempotency key excludes first_error_line, so --persist alone "
+            "never re-fires). Atomic rewrite — do NOT run concurrently with --persist"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
         registry = flaky_cells(args.registry)
     except (OSError, ValueError, json.JSONDecodeError):
         registry = set()
+
+    if args.refill is not None:
+        refilled, still_null, evicted = refill_attributions(
+            args.refill, registry=registry
+        )
+        print(
+            f"— refilled {refilled} record(s) in {args.refill} "
+            f"({still_null} still null with log present, {evicted} log evicted); "
+            f"maintenance rewrite — do not run concurrently with --persist"
+        )
+        return 0
 
     rows = ledger_rows(args.ledger)
     reds = [r for r in rows if _is_red(r)]
