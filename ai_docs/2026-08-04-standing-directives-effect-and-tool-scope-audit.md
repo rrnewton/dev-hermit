@@ -9,31 +9,31 @@ This report separates two questions that had previously been conflated:
 1. Did an implementation reach the named main branch?
 2. Does the resulting mechanism cover what it claims to verify or enforce?
 
-Publication state, denominator 8:
+Publication state, denominator 9:
 
 | State | Count |
 | --- | ---: |
-| LANDED | 5/8 |
-| IN-FLIGHT | 2/8 |
-| STRANDED | 0/8 |
-| NOT-STARTED | 1/8 |
-| UNVERIFIABLE (`rc=2`, outside the four states) | 0/8 |
+| LANDED | 6/9 |
+| IN-FLIGHT | 2/9 |
+| STRANDED | 0/9 |
+| NOT-STARTED | 1/9 |
+| UNVERIFIABLE (`rc=2`, outside the four states) | 0/9 |
 
 Effective mechanism coverage:
 
 | Coverage | Count |
 | --- | ---: |
-| MECHANISM-COMPLETE | 3/8 |
-| MECHANISM-PARTIAL | 4/8 |
-| No mechanism yet | 1/8 |
+| MECHANISM-COMPLETE | 3/9 |
+| MECHANISM-PARTIAL | 5/9 |
+| No mechanism yet | 1/9 |
 
-Therefore 5/8 directives are not fully in effect. Their actionable
+Therefore 6/9 directives are not fully in effect. Their actionable
 dispositions are:
 
 | Disposition | Count | Directives |
 | --- | ---: | --- |
 | IN-FLIGHT | 2 | Stateful IRQ-aware core allocator; load-immune timeout management |
-| NOT-STARTED remainder | 2 | Automatic green-time log production; Hermit consumption of the `--cgroups` removal |
+| NOT-STARTED remainder | 3 | Automatic green-time log production; Hermit consumption of the `--cgroups` removal; mechanical agent-utils PR serialization |
 | CORRECTLY GATED | 1 | DBI-to-DBT rename/install factoring |
 | STRANDED | 0 | None |
 
@@ -43,10 +43,10 @@ Freshly fetched branches used for the final snapshot:
 
 | Repository | Named target | SHA |
 | --- | --- | --- |
-| `rrnewton/dev-hermit` | `origin/main` | `08ac29cfa00e58f5e6ec4132b15002e4699fc7fc` |
+| `rrnewton/dev-hermit` | `origin/main` | `db122dfe465280557c3d356a5162d1c5fa2b8a8b` |
 | `rrnewton/hermit` | `origin/main` | `397fc8463b208e51445e52089de35a8c0efd22d8` |
 | `rrnewton/reverie` | `origin/main` | `6adcc98d75657af4c8b6b6e3b592f26d05e34003` |
-| `rrnewton/agent-utils` | `origin/main` | `a5dac3b9c8fa736c98f9561e0a757e74207d4cc6` |
+| `rrnewton/agent-utils` | `origin/main` | `60403dddb145a88784c14004220c721930fd87c5` |
 
 Landing verification rules:
 
@@ -76,6 +76,7 @@ Tool-scope verification rules:
 | Green-time percentage metric and log | LANDED | Parent `469f439`, `a5abff7`, both on `origin/main` | PARTIAL | Automatic recurring log producer is NOT-STARTED |
 | Newest green main | LANDED | Parent `0c166eec`, on `origin/main` | COMPLETE | None |
 | Remove deprecated `--cgroups` | LANDED artifact | Agent-utils `dfefbdb8`, on `origin/main`; parent pins it | PARTIAL | Hermit consumer pin/docs remainder is NOT-STARTED |
+| Agent-utils changes go directly to main | LANDED | Agent-utils `60403dd`, direct push, zero associated PRs, exact-SHA CI green | PARTIAL | Direct path works; mechanical at-most-one-PR enforcement is NOT-STARTED |
 | Rebase-aware landing verifier | LANDED | Dev-hermit PR #31 `mergeCommit.oid=b8d8d647`; follow-up `4f018407`, both on `origin/main` | COMPLETE | None |
 | Reverie pin checker covers tracked lockfiles | LANDED | Hermit PR #1581 `mergeCommit.oid=397fc846`, verified `rc=0` on `origin/main` | COMPLETE for tracked Cargo metadata | None |
 | Stateful IRQ-aware core allocator | IN-FLIGHT | Branch `22a401fe` and agent-utils PR #15 head `1c7c8556`, neither on main | PARTIAL candidates | Finish composed implementation; do not leave in PR backlog |
@@ -127,13 +128,47 @@ also retains stale instructions at:
 - `ci/dag/README.md:170`
 
 The remaining Hermit pin and documentation update has no implementation
-artifact, so that remainder is NOT-STARTED. Agent-utils PR #9 remains open, but
-it is not landing evidence and must not obscure the direct-main commit.
+artifact, so that remainder is NOT-STARTED. Agent-utils PR #9 was closed as
+superseded by the direct-main commit and is not landing evidence.
 
 This is the canonical quoted-but-not-tracked failure: the requested removal was
 repeated accurately as a fact, but repetition created neither an owner nor a
 wakeup. The later direct-main commit fixed agent-utils; it did not make the
 cross-repository directive complete.
+
+### Agent-Utils Direct-To-Main Policy
+
+The path is now observed, not merely documented. Repository-local
+`agent-utils/AGENTS.md` landed directly on agent-utils main at
+`60403dddb145a88784c14004220c721930fd87c5`. A fresh fetch returned ancestry
+`rc=0`, and the GitHub commit-to-PR query returned an empty list: the change
+landed without a PR.
+
+The exact-SHA main workflow, run `30904083970`, completed green in 2m10s. It ran
+the embedded-doc check, rustfmt, both builds, repository checks, Python and Rust
+tests, differential mypy, and the Python/Rust behavioral differential. The
+local pre-push contract also passed: 266 Python tests, 68 Rust tests including
+boxing and CPU-time smokes, and 378 differential checks across 41 fixtures.
+
+The repository-local policy is visible before an agent publishes work. It
+requires serialized writers, a fresh fetch, the full test contract, an explicit
+fast-forward `HEAD:refs/heads/main` refspec, and post-push ancestry. It limits
+PR exceptions to genuinely high-risk pre-main review or atomic coordination
+with an in-flight consumer.
+
+The Hermit boundary is explicit and independently enforced. Agent-utils
+ruleset `20313492` permits direct fast-forward pushes while forbidding deletion,
+non-fast-forward updates, and nonlinear history. Hermit ruleset `20244443`
+requires a pull request plus `merge-gate`; ruleset `20307165` forbids history
+rewrites. Direct-to-main applies to agent-utils and parent-only dev-hermit
+tooling, never to Hermit product changes.
+
+Coverage is still PARTIAL because publication serialization remains discipline,
+not mechanism. GitHub permits agent-utils PRs, and after closing stale,
+superseded PR #9, three distinct draft PRs remain: #3, #8, and #15. They contain
+live functionality and were not discarded. No check currently enforces the
+policy's at-most-one exceptional PR rule or requires a reason for the exception.
+That enforcement remainder is NOT-STARTED.
 
 ### Rebase-Aware Landing Verifier
 
@@ -220,6 +255,11 @@ Owner tooling changes are expected to land directly on the appropriate main
 after their repository tests pass. A tool sitting in a routine PR queue is not
 in effect and has the same operational result as an unimplemented request.
 
+Agent-utils `60403dd` is the positive control: one validated commit, pushed
+straight to main, ancestry-confirmed, with exact-SHA main CI green and no PR.
+It proves the route is available. The three remaining draft PRs prove the
+single-thread/exception policy is not yet mechanically enforced.
+
 Some changes in this audit predate that explicit rule and landed through PRs.
 They are classified by the resulting merge commit, not retroactively called
 violations. Current agent-utils work must follow the direct-main,
@@ -227,13 +267,13 @@ single-threaded policy rather than growing a parallel PR backlog.
 
 ## Final Answer
 
-The original question, "did it land?", is insufficient. Five of eight
-directives have landed implementation artifacts, but only three of eight have
-complete effective mechanisms. The remaining five are actionable without
+The original question, "did it land?", is insufficient. Six of nine
+directives have landed implementation artifacts, but only three of nine have
+complete effective mechanisms. The remaining six are actionable without
 guessing:
 
 - two actively IN-FLIGHT;
-- two missing-scope remainders NOT-STARTED;
+- three missing-scope remainders NOT-STARTED;
 - one CORRECTLY GATED;
 - zero STRANDED;
 - zero UNVERIFIABLE landing claims.
