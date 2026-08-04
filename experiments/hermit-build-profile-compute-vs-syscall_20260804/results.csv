@@ -1,1 +1,5 @@
 profile,guest,mode,placement,cores,run,wall_s,cpu_s
+release,compute_bound,hermit,unpinned,-,5,153.49,99.370
+release,syscall_bound,hermit,unpinned,-,1,977.20,510.650
+release,syscall_bound,hermit,unpinned,-,2,888.73,443.910
+release,syscall_bound,hermit,unpinned,-,3,1172.12,499.610
