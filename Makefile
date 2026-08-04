@@ -137,19 +137,22 @@ check-rust-error-string-proxies: ## Reject Rust control flow that classifies typ
 check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
 	@scripts/check-agent-utils-pin.rs
 
-# The 40000-char figure is a COSMETIC token-cost warning (the file loads in full;
-# it is NOT truncated). This gate is a REGRESSION guard at the measured all-policy
-# floor (all coordinator policy in one canonical file), catching bloat like
-# re-adding cut anecdotes. It also requires the load-verification TAIL CANARY, so a
-# truncated tail fails loudly. If genuinely-required new policy pushes past LIMIT,
-# raise LIMIT deliberately here rather than dropping a rule to fit a number.
+# The harness spawn-cost warning fires at 40000 chars (the file loads in full at
+# every agent spawn; it is NOT truncated). Policy is now SPLIT: executable predicates
+# live in AGENTS.md, rationale/examples/glossary in ai_docs/agents-md-policy-rationale.md
+# (read on demand). This gate is a REGRESSION guard set just above the trimmed size to
+# catch bloat (e.g. re-inlining rationale that belongs in the companion doc). It also
+# requires the load-verification TAIL CANARY, so a truncated tail fails loudly. If
+# genuinely-required new policy pushes past LIMIT, move background to the companion doc
+# first; raise LIMIT deliberately here only for irreducible new predicates, never by
+# dropping a rule to fit a number.
 check-claude-md-size: ## Guard AGENTS.md against size regression + require the tail canary
-	@limit=57000; f=AGENTS.md; \
+	@limit=42000; f=AGENTS.md; \
 	test -f $$f || { echo "ERROR: $$f missing" >&2; exit 1; }; \
 	size=$$(wc -c < $$f); \
 	if [ $$size -gt $$limit ]; then \
-	  echo "ERROR: $$f is $$size chars, over the $$limit-char all-policy-floor guard." >&2; \
-	  echo "  Raise LIMIT in the Makefile only for genuinely-required policy; never drop a rule to fit." >&2; \
+	  echo "ERROR: $$f is $$size bytes, over the $$limit-byte regression guard (harness warns at 40000 chars)." >&2; \
+	  echo "  Move background to ai_docs/agents-md-policy-rationale.md; raise LIMIT only for irreducible predicates, never drop a rule to fit." >&2; \
 	  exit 1; \
 	fi; \
 	grep -q 'TAIL-CANARY-KESTREL-7731' $$f || { echo "ERROR: $$f missing the load-verification TAIL CANARY (tail may be truncated)." >&2; exit 1; }; \
