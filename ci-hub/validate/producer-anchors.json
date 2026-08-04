@@ -1,0 +1,43 @@
+{
+  "_README": [
+    "PRODUCER ANCHORS -- data-driven input to ci-hub/validate/preflight_anchor.py.",
+    "",
+    "THE PRODUCER TRAVELS WITH THE BRANCH. A hermit/reverie checkout runs ITS OWN",
+    "validate.sh; that producer emits exactly the receipt fields the producer's",
+    "commit knew how to emit. Any consumer-side receipt requirement added AFTER a",
+    "PR was branched (e.g. is_clean_full_pass in ci-hub/lib/validate_status.rs)",
+    "is UNSATISFIABLE by that PR until it rebases onto the commit that taught the",
+    "producer to emit the field. A head that predates such a commit will run a",
+    "full, green, exit-0 validate whose ledger record is nonetheless rejected",
+    "(the required field is NULL) -- a doomed ~17-minute run.",
+    "",
+    "Each object below is ONE such tightening: `sha` is the commit that makes the",
+    "producer emit `field`; a head that does NOT contain `sha` cannot self-certify",
+    "and preflight_anchor.py REFUSES it before validate starts (2s, not 17min).",
+    "",
+    "ADD A NEW ENTRY HERE whenever a receipt-schema requirement is tightened. Its",
+    "`sha` is the commit on rrnewton/hermit:main that makes the producer",
+    "(validate.sh / its aggregate helpers) emit the newly-required field. Until",
+    "that commit lands, leave the entry out (or commented in `_pending`) -- an",
+    "anchor with a placeholder SHA would refuse every head.",
+    "",
+    "See memory: validate-producer-version-coupled-rebase-before-greening."
+  ],
+  "_pending": [
+    {
+      "_comment": "EXAMPLE / TBD -- the absent-counts + filtered_tests==0 tightening (hermit-243). is_clean_full_pass now also requires executed_tests>0 AND filtered_tests==0; a producer predating the commit that makes validate.sh's append_validation_ledger emit those counts (via nonzero_result.py --ledger-fields) writes them NULL and is rejected. MOVE this into `anchors` with the real 40-hex `sha` and `landed_utc` ONCE that commit lands on rrnewton/hermit:main.",
+      "sha": "TBD-hermit-243-counts-filtered-anchor",
+      "landed_utc": "TBD",
+      "field": "executed_tests/filtered_tests",
+      "reason": "producer predating this commit emits executed_tests/filtered_tests NULL; is_clean_full_pass requires executed_tests>0 AND filtered_tests==0, so no qualifying receipt is possible"
+    }
+  ],
+  "anchors": [
+    {
+      "sha": "bfb0a9ef1c303d1977f5f02903b70cc93e514cb5",
+      "landed_utc": "2026-08-03T18:43:14Z",
+      "field": "commit_anchored",
+      "reason": "producer predating this commit emits commit_anchored/selection_mode/tree_dirty NULL; is_clean_full_pass is fail-closed and rejects every record from it no matter how green the run"
+    }
+  ]
+}
