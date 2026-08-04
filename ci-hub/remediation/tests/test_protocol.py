@@ -278,14 +278,18 @@ class ProtocolTest(unittest.TestCase):
             )
         self.assertNotEqual(record["overall_state"], "remediation_required")
 
-    def test_reproduced_local_red_reverts_only_after_github_leg_reports(self) -> None:
-        # Once the local red survives the whole re-dispatch budget it is confirmed,
-        # not a flake, and a still-at-tip failing land must revert -- but ONLY once
-        # the authoritative GitHub leg has itself reported. Here the hosted leg gave
-        # no answer at all (no_result: throttled/cancelled), so the confirmed local
-        # red is the only signal and reverts. (The github=running case, where the
-        # hosted verdict is still in flight, must WAIT: see
-        # test_spent_local_red_waits_while_github_still_running.)
+    def test_budget_spent_local_red_with_no_hosted_answer_investigates_not_reverts(
+        self,
+    ) -> None:
+        # NEGATIVE bracket (task obligation_revert_path_lone): a local red whose
+        # authoritative GitHub leg NEVER reported (no_result: never admitted /
+        # cancelled below the concurrency cap / superseded -- the COMMON case under
+        # admission-limited hosted CI) must NOT auto-revert a HEALTHY tip, EVEN
+        # after the whole re-dispatch budget is spent. A load/environment flake
+        # reproduces across cold re-dispatches, so budget-spent is not corroboration
+        # -- only an authoritative github=="red" is. Three such lone-red revert
+        # recommendations fired 2026-08-04 (e8a0d8d3, 0f891e43 x2), all caught by
+        # humans. The tip here (main_sha == SHA == landed_sha) is HEALTHY.
         self.create()
         self.transition(
             {
@@ -304,13 +308,14 @@ class ProtocolTest(unittest.TestCase):
             record = protocol.evaluate_obligation(
                 "test-obligation", store_path=self.store, main_sha=SHA
             )
-        self.assertEqual(record["overall_state"], "remediation_required")
-        self.assertEqual(record["recommendation"]["action"], "revert")
-        self.assertEqual(record["remediation"]["state"], "triggered")
-        self.assertEqual(record["remediation"]["dispatch"]["target"], "hermit-lander")
-        self.assertEqual(record["alert"]["state"], "pending")
-        self.assertIn("HARD WARNING", stderr.getvalue())
-        self.assertIn("REMEDIATION TRIGGERED", stderr.getvalue())
+        # No revert of the healthy tip: no remediation, no recommendation, no
+        # triggered dispatch. Surfaced for a human instead.
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+        self.assertEqual(record["overall_state"], "investigation_required")
+        self.assertIsNone(record.get("recommendation"))
+        self.assertEqual(record["remediation"]["state"], "not_required")
+        self.assertIn("UNCORROBORATED local", stderr.getvalue())
+        self.assertNotIn("REMEDIATION TRIGGERED", stderr.getvalue())
 
     def test_spent_local_red_waits_while_github_still_running(self) -> None:
         # SEQUENCING regression (task cancellation_taxonomy_distinguish_self,
@@ -384,6 +389,124 @@ class ProtocolTest(unittest.TestCase):
         self.assertIsNone(record.get("recommendation"))
         self.assertEqual(record["remediation"]["state"], "not_required")
         self.assertIn("DISAGREE", stderr.getvalue())
+
+    def test_authoritative_github_red_still_reverts_after_lone_local_guard(
+        self,
+    ) -> None:
+        # POSITIVE, COUNTED bracket (task obligation_revert_path_lone): the guard
+        # against a lone local red must NOT make the actuator inert. Every
+        # AUTHORITATIVE hosted red -- N == 3 distinct red-producing conclusions
+        # (failure, timed_out, startup_failure), which _github_state maps to the
+        # taxonomy "red" -- STILL arms an immediate revert of a still-at-tip land.
+        # A path that never recommends is disabled, not fixed.
+        red_conclusions = ("failure", "timed_out", "startup_failure")
+        self.assertEqual(len(red_conclusions), 3)  # N stated: N == 3
+        self.assertEqual(set(red_conclusions), set(protocol._RED_CONCLUSIONS))
+        reverted = 0
+        for index, conclusion in enumerate(red_conclusions):
+            store = self.root / f"positive-{index}.jsonl"
+            obligation_id = f"positive-{index}"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
+            )
+            # The hosted leg reports a genuine red via the real classifier, so this
+            # is not a hand-forced "red" string but the taxonomy value _github_state
+            # derives from an authoritative failing conclusion.
+            self.assertEqual(
+                protocol._github_state(
+                    {"status": "completed", "conclusion": conclusion}
+                ),
+                "red",
+            )
+            obligations.transition(
+                obligation_id,
+                "github-red",
+                {
+                    "local": {"state": "no_result"},
+                    "github": {
+                        "state": "red",
+                        "finished_at": "2026-08-04T03:00:00Z",
+                        "workflow_name": protocol.DEFAULT_WORKFLOW,
+                        "urls": ["https://example/run"],
+                    },
+                },
+                store,
+            )
+            with redirect_stderr(io.StringIO()):
+                record = protocol.evaluate_obligation(
+                    obligation_id, store_path=store, main_sha=SHA
+                )
+            self.assertEqual(record["overall_state"], "remediation_required", conclusion)
+            self.assertEqual(record["recommendation"]["action"], "revert", conclusion)
+            self.assertEqual(record["remediation"]["state"], "triggered", conclusion)
+            reverted += 1
+        # All N genuine hosted failures still revert.
+        self.assertEqual(reverted, 3)
+
+    def test_no_result_is_distinct_from_both_pass_and_fail_for_a_local_red(
+        self,
+    ) -> None:
+        # DISTINCTNESS bracket (task obligation_revert_path_lone): for the SAME
+        # budget-spent local red, the hosted leg's terminal value selects THREE
+        # different outcomes -- no_result must never be folded into either pass or
+        # fail. This is the rc=2 UNVERIFIABLE vs rc=1 NOT-LANDED discipline applied
+        # to verification legs.
+        #   github green      -> investigation_required (DISAGREEMENT, no revert)
+        #   github no_result  -> investigation_required (UNCORROBORATED, no revert)
+        #   github red        -> remediation_required   (authoritative revert)
+        cases = {
+            "green": ("investigation_required", None),
+            "no_result": ("investigation_required", None),
+            "red": ("remediation_required", "revert"),
+        }
+        outcomes = {}
+        for github_state, (expected_overall, expected_action) in cases.items():
+            store = self.root / f"distinct-{github_state}.jsonl"
+            obligation_id = f"distinct-{github_state}"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
+            )
+            github_leg = {"state": github_state}
+            if github_state in ("green", "red"):
+                github_leg["finished_at"] = "2026-08-04T03:00:00Z"
+            obligations.transition(
+                obligation_id,
+                "legs-report",
+                {
+                    "local": {
+                        "state": "red",
+                        "finished_at": "2026-08-04T03:04:59Z",
+                        "exit_code": 1,
+                        "log_path": "/tmp/local.log",
+                        "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                    },
+                    "github": github_leg,
+                },
+                store,
+            )
+            with redirect_stderr(io.StringIO()):
+                record = protocol.evaluate_obligation(
+                    obligation_id, store_path=store, main_sha=SHA
+                )
+            self.assertEqual(record["overall_state"], expected_overall, github_state)
+            action = (record.get("recommendation") or {}).get("action")
+            self.assertEqual(action, expected_action, github_state)
+            outcomes[github_state] = (record["overall_state"], action)
+        # no_result is the same as neither the pass-side (green) recommendation nor
+        # the fail-side (red) recommendation: it never reverts (like green) yet is
+        # reached by its OWN path (uncorroborated), distinct from the disagreement.
+        self.assertIsNone(outcomes["no_result"][1])
+        self.assertNotEqual(outcomes["no_result"][1], outcomes["red"][1])
 
     def test_failure_recommends_fix_forward_after_main_advances(self) -> None:
         self.create()
@@ -970,10 +1093,12 @@ class LocalRedispatchTest(unittest.TestCase):
         self.assertNotEqual(record["overall_state"], "remediation_required")
 
     def test_spent_budget_red_does_not_re_dispatch(self) -> None:
-        # A budget-spent local red no longer re-dispatches; with the hosted leg
-        # having given no answer (no_result) it is now the only signal and reverts.
-        # (github="no_result" not "running": a running hosted leg must be WAITED
-        # for -- see test_spent_budget_red_with_github_running_waits.)
+        # A budget-spent local red no longer re-dispatches (spawn not called). With
+        # the hosted leg having given no answer (no_result) it is UNCORROBORATED, so
+        # it is surfaced for investigation -- NOT an auto-revert of the tip (task
+        # obligation_revert_path_lone). (github="no_result" not "running": a running
+        # hosted leg must be WAITED for -- see
+        # test_spent_budget_red_with_github_running_waits.)
         self._seed(
             {
                 "local": {
@@ -992,7 +1117,8 @@ class LocalRedispatchTest(unittest.TestCase):
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 record = protocol.poll_obligation("ob", self.store)
         spawn.assert_not_called()
-        self.assertEqual(record["overall_state"], "remediation_required")
+        self.assertEqual(record["overall_state"], "investigation_required")
+        self.assertNotEqual(record["overall_state"], "remediation_required")
 
     def test_spent_budget_red_with_github_running_waits(self) -> None:
         # SEQUENCING guard end-to-end through poll: budget-spent local red while the

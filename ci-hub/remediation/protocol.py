@@ -895,6 +895,32 @@ def _legs_disagree(record: Mapping[str, Any]) -> bool:
     return record["local"]["state"] == "red" and record["github"]["state"] == "green"
 
 
+def _local_red_uncorroborated(record: Mapping[str, Any]) -> bool:
+    """A local red whose authoritative GitHub leg NEVER reported (no_result).
+
+    Under admission-limited hosted CI, github == "no_result" (never admitted,
+    cancelled below the concurrency cap, or superseded) is the COMMON case, not a
+    rare hole. A local red beside it — even after the whole re-dispatch budget is
+    spent, since a load/environment-dependent flake reproduces on the same
+    loaded/cold box — has NO authoritative corroboration. It is therefore surfaced
+    for a human to investigate (a genuine local-only regression, or an
+    environmental/load artifact the hosted leg would have avoided), NEVER an
+    auto-revert of a landed tip. This is the actuator-side residual of the
+    no_result taxonomy: the classifier already keeps no_result distinct from red,
+    and here the revert PATH refuses to act on a lone local signal.
+
+    Gated on the spent re-dispatch budget so a still-re-dispatching local red
+    (redispatch_count < limit) keeps re-validating rather than immediately
+    raising an investigation alert.
+    """
+    return (
+        record["local"]["state"] == "red"
+        and record["github"]["state"] == "no_result"
+        and int(record["local"].get("redispatch_count") or 0)
+        >= DEFAULT_LOCAL_REDISPATCH_LIMIT
+    )
+
+
 def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """Whether a failing answer is CONFIRMED enough to revert a landed tip.
 
@@ -906,15 +932,25 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
     yet dispatched — does not block the authoritative GitHub-red path below, which
     is the intended safe revert; only an in-flight ``running`` answer is waited on.)
 
-    Once both legs have reported: a GitHub red is authoritative and independent —
+    Once both legs have reported, ONLY an authoritative GitHub red arms a revert —
     hosted CI does not flake the way a loaded local box does, and cancelled/absent
     is already no_result — so it remediates at once. A local red is only
-    PROVISIONAL: a single local validate that failed (loaded/cold box) is a
-    candidate flake. It reverts alone ONLY when the hosted leg gave no answer
-    (no_result) AND it survived the whole re-dispatch budget; beside a GREEN hosted
-    leg it is a DISAGREEMENT to investigate (see ``_legs_disagree``), never a
-    revert. This is the post-mortem's own remedy — wait for every leg and
-    re-validate before acting — made mechanical.
+    PROVISIONAL and NEVER reverts alone: a single (or even re-dispatch-reproduced)
+    local validate that failed on a loaded/cold box is a candidate flake, not an
+    authoritative regression. Beside a GREEN hosted leg it is a DISAGREEMENT
+    (see ``_legs_disagree``); beside a NO_RESULT hosted leg — the COMMON case
+    under admission-limited hosted CI, where the authoritative run was never
+    admitted / cancelled below the concurrency cap / superseded — it is an
+    UNCORROBORATED local signal (see ``_local_red_uncorroborated``). Either way it
+    is surfaced for a human to investigate, never an auto-revert of a landed tip.
+
+    History: reverting a healthy tip on a lone local red is the exact hazard this
+    guard forecloses — three such recommendations fired 2026-08-04 (e8a0d8d3,
+    0f891e43 x2), all caught by humans reading evidence, not by the actuator. The
+    classifiers (_classify_local, _github_state) were already conservative; this is
+    the ACTUATOR refusing to act on a lone local signal at all. This is the
+    post-mortem's own remedy — a local box cannot overrule the authoritative
+    verifier — made mechanical.
     """
     local = record["local"]["state"]
     github = record["github"]["state"]
@@ -922,11 +958,10 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
         return False
     if github == "red":
         return True
-    if local == "red":
-        if github == "green":
-            return False
-        spent = int(record["local"].get("redispatch_count") or 0)
-        return spent >= DEFAULT_LOCAL_REDISPATCH_LIMIT
+    # A local red is never sufficient to revert on its own. github == "green" is
+    # a disagreement (_legs_disagree); github == "no_result" is uncorroborated
+    # (_local_red_uncorroborated). Both route to investigation_required in
+    # evaluate_obligation; neither arms an automated revert.
     return False
 
 
@@ -1022,6 +1057,37 @@ def evaluate_obligation(
             )
             print(
                 f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return record
+
+    if _local_red_uncorroborated(record):
+        summary = (
+            "local validate red but the authoritative GitHub leg never reported "
+            f"(no_result) for SHA {record['landed_sha']} after the re-dispatch "
+            "budget was spent; NOT reverting on a lone local signal — investigate "
+            "(genuine local-only regression, or a load/environment artifact the "
+            "hosted leg was never admitted to corroborate under admission-limited CI)"
+        )
+        if record.get("overall_state") != "investigation_required":
+            record = obligations.transition(
+                obligation_id,
+                "verification-uncorroborated-local-red",
+                {
+                    "overall_state": "investigation_required",
+                    "first_terminal_at": first_terminal_at,
+                    "failure_source": "local",
+                    "failure_summary": summary,
+                    "recommendation": None,
+                    "alert": {"state": "raised", "raised_at": now},
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+            print(
+                f"HARD WARNING: obligation {obligation_id} UNCORROBORATED local "
+                f"red: {summary}",
                 file=sys.stderr,
                 flush=True,
             )
