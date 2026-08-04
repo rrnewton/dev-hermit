@@ -815,6 +815,97 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
     return buckets, total
 
 
+# ---------------------------------------------------------------------------
+# LEDGER-CORROBORATED GREEN. A GitHub `success/neutral` conclusion and a local
+# full-pass validate receipt are TWO DIFFERENT claims; conflating them is what
+# produced a misleading green figure. So the green wall-clock is split into two
+# sub-buckets, reported SEPARATELY and never silently summed:
+#   green_ledger           green-by-conclusion AND a validate-run-ledger receipt
+#                          at that exact commit SHA satisfies the full-pass
+#                          predicate below (mirrors ci-hub/lib/validate_status.rs
+#                          is_clean_full_pass, PLUS the filtered_tests==0 clause
+#                          that fixes the false-green (c) case).
+#   green_conclusion_only  green-by-conclusion but NO corroborating receipt.
+# A row missing any of the schema-3 count fields (executed_tests/filtered_tests)
+# does NOT corroborate — it falls to conclusion-only. That asymmetry is
+# intentional and honest: an uncounted green cannot back a stronger claim.
+LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
+
+
+def load_ledger_index(parent: str) -> dict[str, list[dict]]:
+    """commit SHA -> [ledger rows] from ignored/validate-run-ledger.jsonl.
+
+    Absent file -> empty index -> every green falls to conclusion-only. One
+    malformed JSONL line is skipped, not fatal (the ledger has many writers).
+    """
+    path = os.path.join(parent, LEDGER_REL)
+    idx: dict[str, list[dict]] = {}
+    if not os.path.isfile(path):
+        return idx
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            sha = row.get("commit")
+            if sha:
+                idx.setdefault(sha, []).append(row)
+    return idx
+
+
+def _row_full_pass(row: dict) -> bool:
+    """The full-pass corroboration predicate (the commit match is handled by the
+    index lookup). ALL clauses must hold; a row missing executed_tests or
+    filtered_tests fails and so cannot corroborate."""
+    return (row.get("commit_anchored") is True
+            and row.get("tree_dirty") is False
+            and row.get("selection_mode") == "full"
+            and row.get("profile") == "full"
+            and row.get("result") == "pass"
+            and row.get("executed_tests") not in (None, 0)
+            and row.get("filtered_tests") == 0)
+
+
+def _ledger_corroborates(idx: dict[str, list[dict]], sha: str) -> bool:
+    """True iff ANY ledger row for `sha` satisfies the full-pass predicate.
+
+    Prefers an exact 40-hex commit match; defensively also accepts a ledger row
+    whose (shorter) stored commit is a prefix of `sha`.
+    """
+    if not sha:
+        return False
+    candidates = list(idx.get(sha, []))
+    if not candidates:  # defensive short-SHA prefix match only when no exact row
+        for c, rows in idx.items():
+            if c and len(c) < len(sha) and sha.startswith(c):
+                candidates.extend(rows)
+    return any(_row_full_pass(r) for r in candidates)
+
+
+def _split_green_by_ledger(intervals: list[dict],
+                           ledger_idx: dict[str, list[dict]]
+                           ) -> tuple[float, float]:
+    """Seconds of GREEN wall-clock split into (ledger-corroborated, conclusion-
+    only). Reuses the existing timeline intervals — does not recompute states."""
+    led = 0.0
+    concl = 0.0
+    for iv in intervals:
+        if iv["state"] != "green":
+            continue
+        span = iv["end"] - iv["start"]
+        if span <= 0:
+            continue
+        if _ledger_corroborates(ledger_idx, iv.get("sha") or ""):
+            led += span
+        else:
+            concl += span
+    return led, concl
+
+
 def green_time(parent: str, repo: str, since: str | None,
                workflows: list[str] | None) -> dict:
     tl = state_timeline(parent, repo, since, workflows)
@@ -829,6 +920,16 @@ def green_time(parent: str, repo: str, since: str | None,
     hrs = {k: round(v / 3600.0, 2) for k, v in sec.items()}
     pct = {k: (round(100.0 * v / total, 2) if total > 0 else None)
            for k, v in sec.items()}
+    # Split the GREEN bucket into ledger-corroborated vs conclusion-only. These
+    # are reported SEPARATELY; green_pct stays the combined figure for back-compat.
+    ledger_idx = load_ledger_index(parent)
+    g_led_sec, g_concl_sec = _split_green_by_ledger(intervals, ledger_idx)
+    green_ledger_hours = round(g_led_sec / 3600.0, 2)
+    green_conclusion_only_hours = round(g_concl_sec / 3600.0, 2)
+    green_ledger_pct = (round(100.0 * g_led_sec / total, 2)
+                        if total > 0 else None)
+    green_conclusion_only_pct = (round(100.0 * g_concl_sec / total, 2)
+                                 if total > 0 else None)
     return {
         "repo": repo,
         "workflows": wanted,
@@ -839,10 +940,14 @@ def green_time(parent: str, repo: str, since: str | None,
         "window_start": tl["window_start"],
         "window_end_utc": tl["window_end_utc"],
         "green_pct": pct["green"],
+        "green_ledger_pct": green_ledger_pct,
+        "green_conclusion_only_pct": green_conclusion_only_pct,
         "red_pct": pct["red"],
         "no_result_pct": pct["no_result"],
         "gap_pct": pct["gap"],
         "green_hours": hrs["green"],
+        "green_ledger_hours": green_ledger_hours,
+        "green_conclusion_only_hours": green_conclusion_only_hours,
         "red_hours": hrs["red"],
         "no_result_hours": hrs["no_result"],
         "gap_hours": hrs["gap"],
@@ -903,6 +1008,8 @@ def append_green_time_log(parent: str, snapshot: dict, path: str | None) -> str:
         "definition_date": snapshot.get("definition_date"),
         "since": snapshot.get("window_start"),
         "green_pct": snapshot.get("green_pct"),
+        "green_ledger_pct": snapshot.get("green_ledger_pct"),
+        "green_conclusion_only_pct": snapshot.get("green_conclusion_only_pct"),
         "red_pct": snapshot.get("red_pct"),
         "no_result_pct": snapshot.get("no_result_pct"),
         "gap_pct": snapshot.get("gap_pct"),
@@ -1269,6 +1376,13 @@ def main() -> int:
                 print(f"{res['repo']} main green-time (authoritative "
                       f"{res['workflows']}; definition {res['definition_date']}): "
                       f"{res['green_pct']}% GREEN")
+                # Split GREEN into ledger-corroborated vs conclusion-only. These
+                # are DIFFERENT claims and are never silently summed.
+                print(f"    ledger-corroborated: {res['green_ledger_pct']}% "
+                      f"({res['green_ledger_hours']}h)")
+                print(f"    conclusion-only    : "
+                      f"{res['green_conclusion_only_pct']}% "
+                      f"({res['green_conclusion_only_hours']}h)")
                 print(f"  = {res['green_hours']}h green + {res['red_hours']}h red "
                       f"+ {res['no_result_hours']}h no_result + "
                       f"{res['gap_hours']}h gap  (of {res['total_hours']}h)")

@@ -266,6 +266,66 @@ class TempParentTest(unittest.TestCase):
                 "head_sha": sha, "status": status, "conclusion": concl,
                 "created_at": created, "updated_at": updated}
 
+    def _write_ledger(self, rows):
+        path = self.parent / "ignored" / "validate-run-ledger.jsonl"
+        with open(path, "w") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+
+    def _full_pass_row(self, sha, **over):
+        row = {"commit": sha, "commit_anchored": True, "tree_dirty": False,
+               "selection_mode": "full", "profile": "full", "result": "pass",
+               "executed_tests": 42, "filtered_tests": 0}
+        row.update(over)
+        return row
+
+    def test_green_split_conclusion_only_when_no_ledger(self):
+        # A green-by-conclusion commit with NO ledger receipt: all green time is
+        # conclusion-only, ledger-corroborated is 0 (the reverie case).
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertGreater(res["green_pct"], 0.0)
+        self.assertEqual(res["green_ledger_pct"], 0.0)
+        self.assertEqual(res["green_ledger_hours"], 0.0)
+        self.assertAlmostEqual(res["green_conclusion_only_pct"],
+                               res["green_pct"], places=2)
+
+    def test_green_split_ledger_corroborated_when_full_pass_row_exists(self):
+        # POSITIVE: a full-pass ledger row at the exact green commit SHA moves
+        # that slice into green_ledger. Bracket the mechanism firing.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        self._write_ledger([self._full_pass_row("a" * 40)])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertGreater(res["green_ledger_hours"], 0.0)
+        # combined green is never silently summed away: sub-buckets add to green.
+        self.assertAlmostEqual(
+            res["green_ledger_hours"] + res["green_conclusion_only_hours"],
+            res["green_hours"], places=2)
+
+    def test_green_split_filtered_tests_nonzero_does_not_corroborate(self):
+        # NEGATIVE: filtered_tests>0 (the false-green case) fails the predicate,
+        # so the slice stays conclusion-only. Also covers a red commit whose
+        # ledger row must never leak into green_ledger.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        self._write_ledger([self._full_pass_row("a" * 40, filtered_tests=3)])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["green_ledger_hours"], 0.0)
+
     def test_green_time_red_reign_is_fixed_hour(self):
         # Commit A: run created+terminal-failure at 00:00; commit B: created
         # 01:00 (bounds A's reign to exactly 1h), success. A completes instantly
