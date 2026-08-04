@@ -200,9 +200,14 @@ class ProtocolTest(unittest.TestCase):
             )
         self.assertNotEqual(record["overall_state"], "remediation_required")
 
-    def test_reproduced_local_red_requires_revert_at_tip(self) -> None:
+    def test_reproduced_local_red_reverts_only_after_github_leg_reports(self) -> None:
         # Once the local red survives the whole re-dispatch budget it is confirmed,
-        # not a flake, and a still-at-tip failing land must revert.
+        # not a flake, and a still-at-tip failing land must revert -- but ONLY once
+        # the authoritative GitHub leg has itself reported. Here the hosted leg gave
+        # no answer at all (no_result: throttled/cancelled), so the confirmed local
+        # red is the only signal and reverts. (The github=running case, where the
+        # hosted verdict is still in flight, must WAIT: see
+        # test_spent_local_red_waits_while_github_still_running.)
         self.create()
         self.transition(
             {
@@ -213,7 +218,7 @@ class ProtocolTest(unittest.TestCase):
                     "log_path": "/tmp/local.log",
                     "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
                 },
-                "github": {"state": "running"},
+                "github": {"state": "no_result"},
             }
         )
         stderr = io.StringIO()
@@ -228,6 +233,79 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(record["alert"]["state"], "pending")
         self.assertIn("HARD WARNING", stderr.getvalue())
         self.assertIn("REMEDIATION TRIGGERED", stderr.getvalue())
+
+    def test_spent_local_red_waits_while_github_still_running(self) -> None:
+        # SEQUENCING regression (task cancellation_taxonomy_distinguish_self,
+        # obligation 20260804-025419-0f891e43): a local red that had spent its whole
+        # re-dispatch budget armed action=revert while the GitHub verify run was
+        # STILL RUNNING -- the tool's own exoneration path in flight, acted on
+        # before it was read. A running leg must be waited for: NOTHING arms until
+        # both legs report.
+        self.create()
+        self.transition(
+            {
+                "local": {
+                    "state": "red",
+                    "finished_at": "2026-08-04T03:04:59Z",
+                    "exit_code": 1,
+                    "log_path": "/tmp/local.log",
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        with redirect_stderr(io.StringIO()):
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+        self.assertIsNone(record.get("recommendation"))
+
+    def test_github_red_waits_while_local_leg_still_running(self) -> None:
+        # The sequencing guard is symmetric: an authoritative GitHub red must not
+        # arm while the local leg is still in flight -- wait for the second leg to
+        # report ("one leg red, one leg still running -> nothing arms").
+        self.create()
+        self.transition(
+            {
+                "local": {"state": "running"},
+                "github": {"state": "red", "finished_at": "2026-08-04T03:00:00Z"},
+            }
+        )
+        with redirect_stderr(io.StringIO()):
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+
+    def test_local_red_and_github_green_is_a_disagreement_not_a_revert(self) -> None:
+        # THIRD outcome (obligation 20260804-025419-0f891e43): local red beside a
+        # GREEN authoritative GitHub leg for the same SHA is a DISAGREEMENT to
+        # investigate, never an auto-revert. Even a budget-spent local red cannot
+        # overrule a green hosted leg.
+        self.create()
+        self.transition(
+            {
+                "local": {
+                    "state": "red",
+                    "finished_at": "2026-08-04T03:04:59Z",
+                    "exit_code": 1,
+                    "log_path": "/tmp/local.log",
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                },
+                "github": {"state": "green", "finished_at": "2026-08-04T03:20:00Z"},
+            }
+        )
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        self.assertEqual(record["overall_state"], "investigation_required")
+        self.assertNotEqual(record["overall_state"], "remediation_required")
+        self.assertIsNone(record.get("recommendation"))
+        self.assertEqual(record["remediation"]["state"], "not_required")
+        self.assertIn("DISAGREE", stderr.getvalue())
 
     def test_failure_recommends_fix_forward_after_main_advances(self) -> None:
         self.create()
@@ -579,6 +657,46 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
         self.assertEqual(state, "no_result")
         self.assertEqual(reason, "non-test-failure:cold-build-flake")
 
+    def test_build_script_panic_dag_summary_is_no_result_not_red(self) -> None:
+        # REAL incident log (obligation 20260804-025419-0f891e43), planted verbatim:
+        # a reverie-dbi/build.rs:339 cold-build panic that the DAG runner rendered
+        # with "N failed" + "panicked at". Both the "panicked at" marker and the
+        # "\bN failed\b" count regex fire, so the OLD classifier called it a red and
+        # armed a revert of a healthy tip. A build.rs panic is a BUILD-phase flake,
+        # never a test verdict -> no_result, re-dispatch.
+        output = (
+            "❌ portable CI DAG manifest (0 passed, 1 failed, exit 1: "
+            "[build.dbi_release] thread 'main' (3550207) panicked at "
+            "/home/newton/.cargo/git/checkouts/reverie-2fc770f7a9c80803/d973a85/"
+            "reverie-dbi/build.rs:339:5:; full log: /tmp/hermit-validate.4bKorf.log)\n"
+            "❌ Validation summary [full] (3 passed, 2 failed; full log: "
+            "/tmp/hermit-validate.4bKorf.log)\n"
+        )
+        state, reason = protocol._classify_local(1, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:build-script")
+
+    def test_cargo_custom_build_command_failure_is_no_result(self) -> None:
+        output = (
+            "error: failed to run custom build command for `reverie-dbi v0.1.0`\n"
+            "  process didn't exit successfully (exit status: 101)\n"
+            "test summary: 0 passed, 1 failed\n"
+        )
+        state, reason = protocol._classify_local(101, output)
+        self.assertEqual(state, "no_result")
+        self.assertEqual(reason, "non-test-failure:build-script")
+
+    def test_genuine_test_panic_outside_build_rs_stays_red(self) -> None:
+        # Guard against over-broadening: a panic in PRODUCT source (not build.rs)
+        # with a failing test verdict is a real red and MUST still revert.
+        output = (
+            "thread 'tests::determinism' panicked at src/detcore/sched.rs:88:5:\n"
+            "test result: FAILED. 40 passed; 1 failed; 0 ignored\n"
+        )
+        state, reason = protocol._classify_local(101, output)
+        self.assertEqual(state, "red")
+        self.assertEqual(reason, "test-failure")
+
     def test_network_proxy_drop_is_no_result(self) -> None:
         output = "error: failed to get `serde`\nCaused by: could not resolve host: github.com\n"
         state, _ = protocol._classify_local(101, output)
@@ -729,6 +847,34 @@ class LocalRedispatchTest(unittest.TestCase):
         self.assertNotEqual(record["overall_state"], "remediation_required")
 
     def test_spent_budget_red_does_not_re_dispatch(self) -> None:
+        # A budget-spent local red no longer re-dispatches; with the hosted leg
+        # having given no answer (no_result) it is now the only signal and reverts.
+        # (github="no_result" not "running": a running hosted leg must be WAITED
+        # for -- see test_spent_budget_red_with_github_running_waits.)
+        self._seed(
+            {
+                "local": {
+                    "state": "red",
+                    "exit_code": 1,
+                    "source": str(self.source),
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                    "pid": None,
+                },
+                "github": {"state": "no_result"},
+            }
+        )
+        with mock.patch.object(
+            protocol, "_spawn_detached", return_value=4321
+        ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                record = protocol.poll_obligation("ob", self.store)
+        spawn.assert_not_called()
+        self.assertEqual(record["overall_state"], "remediation_required")
+
+    def test_spent_budget_red_with_github_running_waits(self) -> None:
+        # SEQUENCING guard end-to-end through poll: budget-spent local red while the
+        # GitHub leg is still running neither re-dispatches nor arms -- it waits for
+        # the in-flight hosted verdict (obligation 20260804-025419-0f891e43).
         self._seed(
             {
                 "local": {
@@ -747,7 +893,7 @@ class LocalRedispatchTest(unittest.TestCase):
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 record = protocol.poll_obligation("ob", self.store)
         spawn.assert_not_called()
-        self.assertEqual(record["overall_state"], "remediation_required")
+        self.assertNotEqual(record["overall_state"], "remediation_required")
 
 
 if __name__ == "__main__":

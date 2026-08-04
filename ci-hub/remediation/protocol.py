@@ -90,6 +90,22 @@ _TEST_FAILURE_MARKERS = (
     "panicked at",  # a rust test panic
 )
 _TEST_FAILURE_COUNT_RE = re.compile(r"\b([1-9]\d*)\s+failed\b")  # pytest "3 failed"
+# A BUILD-PHASE failure — a cargo build-script panic or a "failed to run custom
+# build command" — is NOT a product test verdict, even though the DAG runner
+# renders it with the very same "N failed" / "panicked at" vocabulary a failing
+# test uses. It is a hole to re-dispatch (a cold-toolchain build-script flake
+# reproduces every cold run), never a tip to revert. It is recognised FIRST, ahead
+# of the test-verdict markers below, so that shared vocabulary can never
+# manufacture a false red. Incident: a reverie-dbi/build.rs:339 cold-build panic,
+# rendered "0 passed, 1 failed ... panicked at .../build.rs", was read as a
+# test-failure and armed a revert of a healthy tip (obligation
+# 20260804-025419-0f891e43). A build.rs panic means the crate never built, so no
+# product test in that node could have run; a genuine regression the build did not
+# cause still reverts via the authoritative GitHub leg, which compiles cleanly.
+_BUILD_SCRIPT_FAILURE_MARKERS = (
+    "failed to run custom build command for",  # cargo build-script failure line
+)
+_BUILD_SCRIPT_PANIC_RE = re.compile(r"panicked at [^\n]*build\.rs")
 # Diagnostic-only labels for a no_result. Grouped by CAUSE, but NON-load-bearing:
 # they name which box to fix in the log, they do NOT gate red vs no_result, so
 # this set can be incomplete without ever producing a false red.
@@ -164,6 +180,20 @@ def _infra_signature(output: str) -> str | None:
     return None
 
 
+def _is_build_phase_failure(output: str) -> bool:
+    """Whether the failure originates in the BUILD phase, not a product test.
+
+    A cargo build-script panic (``panicked at .../build.rs``) or a cargo
+    "failed to run custom build command" is a build-layer flake, not a test
+    verdict — the DAG runner just renders it with the same vocabulary. Recognising
+    it here keeps that shared vocabulary from ever manufacturing a false red.
+    """
+    lowered = output.lower()
+    if any(marker in lowered for marker in _BUILD_SCRIPT_FAILURE_MARKERS):
+        return True
+    return _BUILD_SCRIPT_PANIC_RE.search(lowered) is not None
+
+
 def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
     """Map a local validate (exit_code, output) to (state, human reason).
 
@@ -176,6 +206,11 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
         return "green", "clean exit"
     if exit_code < 0 or exit_code in _LOCAL_INFRA_EXITS:
         return "no_result", f"environment-killed (exit={exit_code})"
+    if _is_build_phase_failure(output):
+        # A build-script panic / "failed to run custom build command" surfaced
+        # through the DAG runner's "N failed" / "panicked at" summary is a
+        # build-layer flake, NOT a failing test verdict: re-dispatch, never revert.
+        return "no_result", "non-test-failure:build-script"
     if _has_test_failures(output):
         return "red", "test-failure"
     # Nonzero, but no product test rendered a failing verdict: the failure came
@@ -662,22 +697,48 @@ def remediation_recommendation(
     }
 
 
+def _legs_disagree(record: Mapping[str, Any]) -> bool:
+    """A local red beside a GREEN GitHub leg for the same SHA.
+
+    This is a THIRD outcome, neither a confirmed regression nor a clean pass: the
+    authoritative hosted verifier PASSED the exact SHA the local verifier failed.
+    It is never an auto-revert (the local leg alone cannot overrule a green
+    authoritative leg); it is surfaced for a human to investigate — a genuine
+    local-only regression, or a local-environment artifact the hosted leg avoided.
+    """
+    return record["local"]["state"] == "red" and record["github"]["state"] == "green"
+
+
 def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """Whether a failing answer is CONFIRMED enough to revert a landed tip.
 
-    A GitHub red is authoritative and independent — hosted CI does not flake the
-    way a loaded local box does, and cancelled/absent is already no_result — so it
-    remediates at once. A local red is only PROVISIONAL: a single local validate
-    that failed while the corroborating GitHub leg has not itself gone red is a
-    candidate flake or environmental blip (the incident that fired against
-    e8a0d8d3: a cold-cache portable DAG cell and an OOM sub-profile, both of which
-    a re-run passed). We re-dispatch such a red to reproduce it, and only treat it
-    as confirmed once it survives the whole re-dispatch budget. This is the
-    post-mortem's own remedy — re-validate before acting — made mechanical.
+    Sequencing comes first: never arm a revert while EITHER verifier is still
+    ``running``. A leg in flight may be the tool's OWN exoneration arriving — the
+    incident that armed ``action=revert`` on a local red while the GitHub verify
+    run (30873193855) was still executing (obligation 20260804-025419-0f891e43).
+    A revert decision is never made on a partial picture. (``pending`` — a leg not
+    yet dispatched — does not block the authoritative GitHub-red path below, which
+    is the intended safe revert; only an in-flight ``running`` answer is waited on.)
+
+    Once both legs have reported: a GitHub red is authoritative and independent —
+    hosted CI does not flake the way a loaded local box does, and cancelled/absent
+    is already no_result — so it remediates at once. A local red is only
+    PROVISIONAL: a single local validate that failed (loaded/cold box) is a
+    candidate flake. It reverts alone ONLY when the hosted leg gave no answer
+    (no_result) AND it survived the whole re-dispatch budget; beside a GREEN hosted
+    leg it is a DISAGREEMENT to investigate (see ``_legs_disagree``), never a
+    revert. This is the post-mortem's own remedy — wait for every leg and
+    re-validate before acting — made mechanical.
     """
-    if record["github"]["state"] == "red":
+    local = record["local"]["state"]
+    github = record["github"]["state"]
+    if "running" in (local, github):
+        return False
+    if github == "red":
         return True
-    if record["local"]["state"] == "red":
+    if local == "red":
+        if github == "green":
+            return False
         spent = int(record["local"].get("redispatch_count") or 0)
         return spent >= DEFAULT_LOCAL_REDISPATCH_LIMIT
     return False
@@ -749,6 +810,34 @@ def evaluate_obligation(
                     "remediation": {"state": "not_required"},
                 },
                 store_path,
+            )
+        return record
+
+    if _legs_disagree(record):
+        summary = (
+            "local validate red but authoritative GitHub leg green for the same "
+            f"SHA {record['landed_sha']}; NOT reverting — investigate before any "
+            "manual revert (genuine local-only regression, or a local-env artifact)"
+        )
+        if record.get("overall_state") != "investigation_required":
+            record = obligations.transition(
+                obligation_id,
+                "verification-disagreement",
+                {
+                    "overall_state": "investigation_required",
+                    "first_terminal_at": first_terminal_at,
+                    "failure_source": "local",
+                    "failure_summary": summary,
+                    "recommendation": None,
+                    "alert": {"state": "raised", "raised_at": now},
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+            print(
+                f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
+                file=sys.stderr,
+                flush=True,
             )
         return record
 
