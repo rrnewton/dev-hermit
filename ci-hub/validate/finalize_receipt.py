@@ -175,18 +175,164 @@ def upgrade_ledger(ledger_path: str, sha: str, fields: dict) -> int:
     return upgraded
 
 
+# --- race-safe scan/append minting (the auto-wired path) --------------------
+#
+# `upgrade_ledger` (above) does a full-file read-then-`"w"`-rewrite: correct for
+# a one-shot single-SHA CLI against a private copy, but it RACES a concurrent
+# `validate.sh` (which appends with O_APPEND) -- an append landing between the
+# read and the rewrite is silently lost. The consumer-wired minting path below
+# NEVER rewrites: it derives the schema-5 fields for each count-less green from
+# that row's own recorded `log_file` and APPENDS a schema-5 clone. `assess()`
+# validates a commit if ANY row qualifies, so an appended satisfied row mints the
+# count-backed green without touching -- or losing -- any concurrent write.
+
+
+def _clone_upgraded(base_row: dict, fields: dict) -> dict:
+    """A schema-5 clone of `base_row` with the derived count/coverage `fields`
+    merged in. Every base field (commit, anchoring, cleanliness, profile,
+    selection, result, log_file, ...) is preserved so the appended row still
+    satisfies `is_clean_full_coverage` on the consumer side."""
+    row = dict(base_row)
+    row.update(fields)
+    return row
+
+
+def _is_countless_clean_full_pass(rec: dict) -> bool:
+    """A row that TODAY rides the grandfather: clean/full/full/pass carrying no
+    executed count. These are exactly the rows a scan can mint from their log."""
+    return (
+        rec.get("commit_anchored") is True
+        and rec.get("tree_dirty") is False
+        and rec.get("selection_mode") == "full"
+        and rec.get("profile") == "full"
+        and rec.get("result") == "pass"
+        and rec.get("executed_tests") is None
+    )
+
+
+def _has_satisfied_schema5(rec: dict) -> bool:
+    """Idempotency guard: a sha already carrying a satisfied schema-5 row needs
+    no re-mint (re-running scan must not append duplicates)."""
+    if (rec.get("schema_version") or 0) < SCHEMA_VERSION:
+        return False
+    cov = rec.get("coverage") or {}
+    return (
+        isinstance(rec.get("executed_tests"), int)
+        and rec["executed_tests"] > 0
+        and cov.get("planned_test_nodes", 0) > 0
+        and not cov.get("zero_executed_nodes")
+        and not cov.get("absent_nodes")
+    )
+
+
+def scan_and_finalize(ledger_path: str, hermit_checkout: str,
+                      dry_run: bool = False) -> list[dict]:
+    """Mint count-backed schema-5 rows for every count-less clean/full/pass row
+    whose recorded `log_file` still exists and whose planned set is derivable at
+    its sha. APPEND-ONLY (race-safe). Idempotent: a sha already carrying a
+    satisfied schema-5 row, or a sha already handled this pass, is skipped.
+
+    Returns one result dict per handled sha:
+      {sha, satisfied, reason, executed_tests, planned_test_nodes}
+    reason in {"minted", "no-log", "no-manifest"}. Only "minted" rows are
+    appended; "no-manifest" (planned set empty -> cannot judge from this
+    checkout) and "no-log" are reported but NEVER fabricated.
+    """
+    with open(ledger_path, errors="replace") as fh:
+        recs = [json.loads(l) for l in fh if l.strip()]
+
+    already = {r.get("commit") for r in recs if _has_satisfied_schema5(r)}
+    handled: set[str] = set()
+    results: list[dict] = []
+    to_append: list[dict] = []
+
+    for rec in recs:
+        sha = rec.get("commit")
+        if not sha or not _is_countless_clean_full_pass(rec):
+            continue
+        if sha in already or sha in handled:
+            continue
+        handled.add(sha)
+
+        log = rec.get("log_file")
+        if not log or not os.path.isfile(log):
+            results.append({"sha": sha, "satisfied": False, "reason": "no-log"})
+            continue
+
+        with open(log, errors="replace") as lf:
+            log_text = lf.read()
+        planned = planned_test_nodes(hermit_checkout, sha)
+        if not planned:
+            # Manifests not derivable at this sha from this checkout -> we cannot
+            # honestly judge coverage. Do NOT fabricate a planned set of 0.
+            results.append({"sha": sha, "satisfied": False, "reason": "no-manifest"})
+            continue
+
+        fields = build_coverage(log_text, planned)
+        cov = fields["coverage"]
+        satisfied = (cov["planned_test_nodes"] > 0
+                     and not cov["zero_executed_nodes"]
+                     and not cov["absent_nodes"])
+        results.append({
+            "sha": sha,
+            "satisfied": satisfied,
+            "reason": "minted",
+            "executed_tests": fields["executed_tests"],
+            "planned_test_nodes": cov["planned_test_nodes"],
+        })
+        to_append.append(_clone_upgraded(rec, fields))
+
+    if to_append and not dry_run:
+        with open(ledger_path, "a") as fh:
+            for row in to_append:
+                fh.write(json.dumps(row) + "\n")
+    return results
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--log", required=True, help="full safe-ci-dag-runner log ([node]-prefixed)")
-    ap.add_argument("--sha", required=True, help="the exact 40-hex Hermit commit validated")
+    ap.add_argument("--log", help="full safe-ci-dag-runner log ([node]-prefixed)")
+    ap.add_argument("--sha", help="the exact 40-hex Hermit commit validated")
     ap.add_argument("--hermit-checkout", required=True,
                     help="hermit checkout to read ci/dag/*.json at --sha via git show")
     ap.add_argument("--ledger", help="ledger JSONL to upgrade the row for --sha in place")
     ap.add_argument("--emit-only", action="store_true",
                     help="print the schema-5 fields to stdout; do NOT touch a ledger")
+    ap.add_argument("--scan", action="store_true",
+                    help="APPEND-safe mint: upgrade every count-less clean/full/pass "
+                         "row in --ledger from its own recorded log_file")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --scan: report what would be minted; do NOT write")
     args = ap.parse_args(argv)
+
+    if args.scan:
+        if not args.ledger:
+            print("finalize_receipt: --scan requires --ledger", file=sys.stderr)
+            return 2
+        if not os.path.isfile(args.ledger):
+            print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
+            return 2
+        results = scan_and_finalize(args.ledger, args.hermit_checkout, dry_run=args.dry_run)
+        minted = [r for r in results if r["reason"] == "minted" and r["satisfied"]]
+        unsat = [r for r in results if r["reason"] == "minted" and not r["satisfied"]]
+        no_log = [r for r in results if r["reason"] == "no-log"]
+        no_man = [r for r in results if r["reason"] == "no-manifest"]
+        verb = "would mint" if args.dry_run else "minted"
+        print(f"finalize_receipt: scan {verb} {len(minted)} satisfied schema-{SCHEMA_VERSION} "
+              f"row(s); {len(unsat)} unsatisfied-coverage; "
+              f"{len(no_log)} no-log; {len(no_man)} no-manifest "
+              f"(candidates={len(results)})")
+        for r in minted:
+            print(f"  + {r['sha'][:12]} executed={r['executed_tests']} "
+                  f"planned={r['planned_test_nodes']}")
+        return 0
+
+    if not (args.log and args.sha):
+        print("finalize_receipt: --log and --sha are required (or use --scan)",
+              file=sys.stderr)
+        return 2
 
     try:
         with open(args.log, errors="replace") as fh:

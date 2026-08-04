@@ -138,7 +138,7 @@ The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires exact-head ledger evidence before and after rebase, derives `locally-validated` only through `apply-local-label`, bounded merge-gate poll, `gh pr merge --rebase`, ancestry-verify |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires exact-head ledger evidence before and after rebase, derives `locally-validated` only through `apply-local-label`, polls merge-gate, dereferences the final head's immutable validation receipt, performs a head-matched rebase merge, then verifies ancestry |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
@@ -161,6 +161,12 @@ never wedges a land:
    publishes the selected ledger row as an immutable receipt on
    `rrnewton/dev-hermit:validation-receipts` before commenting or labeling. A
    genuine gate failure is never overwritten by re-stamping metadata.
+4. **Dereference the final authorization** — immediately before merge, fetch the
+   current PR comments and pass the final pushed head to the parent-pinned
+   `ci-hub/validation/verify_receipt.sh`. Missing, forged, stale, tampered,
+   zero-executed, or incomplete receipts refuse the landing before any merge
+   call. The merge itself uses `--match-head-commit` so a concurrent push cannot
+   inherit that authorization.
 
 Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
 PR comment — so an abandoned PR never silently languishes (the #244 pattern).

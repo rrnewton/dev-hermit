@@ -74,7 +74,10 @@ def _classify(text: str) -> str:
     normalized = " ".join(text.replace("\\\n", " ").split())
     if normalized.startswith("cd "):
         return "setup"
-    if re.match(r"^(?:\./)?ci-hub/landing/land-pr\.sh\s", normalized):
+    if re.match(
+        r"^(?:CI_HUB_DOCS_PARSE_ONLY=1\s+)?(?:\./)?ci-hub/landing/land-pr\.sh\s",
+        normalized,
+    ):
         return "parse"
     match = re.match(r"^(?:\./)?ci-hub/ci-hub\s+(\S+)", normalized)
     if match:

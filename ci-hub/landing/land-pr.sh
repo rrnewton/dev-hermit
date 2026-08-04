@@ -284,13 +284,38 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
+# 5b. The exact pushed head must carry a dereferenceable validation receipt at
+# the final authorization boundary. A label or well-shaped comment is only a
+# pointer; the parent-pinned verifier resolves the immutable receipt and checks
+# its digest, repository, head, counted ledger row, and coverage obligations.
+live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
+  || abandon "could not resolve the live PR head before receipt authorization" 5
+[ "$live_head" = "$HEAD" ] \
+  || abandon "PR head moved before receipt authorization (expected $HEAD, observed ${live_head:-missing})" 5
+receipt_comments=$(mktemp) \
+  || abandon "could not allocate the receipt-comment observation file" 5
+if ! with-proxy gh api --paginate --slurp \
+    "repos/$R/issues/$PR/comments?per_page=100" >"$receipt_comments"; then
+  rm -f -- "$receipt_comments"
+  abandon "could not fetch comments for exact-head receipt authorization" 5
+fi
+receipt_detail=$("$ROOT/ci-hub/validation/verify_receipt.sh" \
+  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
+receipt_rc=$?
+rm -f -- "$receipt_comments"
+if [ "$receipt_rc" -ne 0 ]; then
+  abandon "exact-head validation receipt REFUSED for $HEAD: ${receipt_detail:-no receipt}" 5
+fi
+say "exact-head validation receipt authorized: $receipt_detail"
+
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to
 # recompute mergeability, resolving a stuck UNKNOWN here. Treat "already merged"
 # as success; a genuine block surfaces as a persistent error after the budget.
 merged=""; out=""
 for mtries in $(seq 12); do
-  out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase 2>&1) && { merged=ok; break; }
+  out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
+    --match-head-commit "$HEAD" 2>&1) && { merged=ok; break; }
   grep -qi 'already merged' <<<"$out" && { say "already merged"; merged=ok; break; }
   say "merge attempt $mtries not-ready: $(tr '\n' ' ' <<<"$out" | tail -c 160)"
   sleep 15

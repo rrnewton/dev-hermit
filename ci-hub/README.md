@@ -27,13 +27,11 @@ are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
-# Run an admin/speculative land with write-ahead crash recovery, then arm both
-# exact-SHA verifiers. GitHub merge plus local arm is not atomic.
-./ci-hub/ci-hub land-lock run --agent hermit-lander --pr 123 \
-  --wait 900 --hold 1500 -- \
-  ./ci-hub/remediation/land_and_arm.py run --repo rrnewton/hermit --pr 123 \
-    --land-mode admin --command-timeout 1200 -- \
-    with-proxy gh pr merge 123 -R rrnewton/hermit --rebase --admin
+# Parse the canonical landing command without mutating a PR. Real lands use the
+# same entrypoint without CI_HUB_DOCS_PARSE_ONLY; it verifies the final pushed
+# head's immutable validation receipt before a head-matched rebase merge.
+CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
+  123 example/feature-branch --foreground
 
 # Inspect or recover polling for obligations that are still open.
 ./ci-hub/ci-hub obligations
@@ -155,11 +153,13 @@ startup scan recover from a lost wake.
 
 ## Speculative-land obligation contract
 
-Admin/speculative lands must use `remediation/land_and_arm.py run`; raw
-`gh pr merge` is not the protocol. The wrapper writes a durable intent before
-executing the bounded land command. Once GitHub exposes the merged SHA it calls
-`arm-land` in-process. If the wrapper dies in that interval, the restartable ORC
-workflow recovers the intent and arms it. Arming appends an OPEN event to
+The canonical `landing/land-pr.sh` entrypoint prepares the speculative-land
+obligation before its bounded child can merge; raw `gh pr merge` is not the
+protocol. It also dereferences the final pushed head's immutable validation
+receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
+the merged SHA it completes the prepared intent and calls `arm-land`. If the
+wrapper dies in that interval, the restartable ORC workflow recovers the intent
+and arms it. Arming appends an OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
 1. clones Hermit into `ignored/ci-hub/obligations/<id>/hermit`, checks out the

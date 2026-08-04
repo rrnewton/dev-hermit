@@ -103,6 +103,9 @@ if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
 fi
 
 # Count-capable receipts additionally bind the per-node coverage obligation.
+# Use a second exact head so the two positive controls represent two distinct
+# legitimate landing authorizations rather than repeated parsing of one row.
+sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 make_receipt 12 "$tmp/schema5-base.json"
 jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing.json"
 verify_file "$tmp/schema5-missing.json" fail "schema5 missing coverage"
@@ -122,4 +125,12 @@ jq '.ledger_record.coverage = {
     }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid.json"
 verify_file "$tmp/schema5-valid.json" pass "schema5 complete coverage"
 
-echo "PASS: 2/2 legitimate counted receipts accepted; forged, tampered, zero-executed, and three incomplete schema5 controls refused"
+plant_root=$tmp
+rm -rf -- "$plant_root"
+if [[ -e $plant_root ]]; then
+    echo "FAIL: receipt fixture plant was not deleted cleanly: $plant_root" >&2
+    exit 1
+fi
+trap - EXIT
+
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; forged, tampered, zero-executed, and three incomplete schema5 controls refused; fixture plant deleted cleanly"

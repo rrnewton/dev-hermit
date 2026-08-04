@@ -214,6 +214,101 @@ def test_cli_emit_only(tmp_path):
     assert obj["coverage"]["planned_test_nodes"] == 0
 
 
+# --- race-safe scan/append minting ------------------------------------------
+
+def _countless_green_row(sha: str, log_path: str) -> dict:
+    return {
+        "schema_version": 3, "commit": sha, "result": "pass",
+        "commit_anchored": True, "tree_dirty": False,
+        "selection_mode": "full", "profile": "full",
+        "executed_tests": None, "filtered_tests": None,
+        "log_file": log_path, "real_seconds": 900,
+    }
+
+
+def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
+    """Scan appends a satisfied schema-5 clone WITHOUT rewriting existing rows
+    (race-safe), and leaves the original count-less row byte-for-byte intact."""
+    sha = "a" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 6))
+    ledger = tmp_path / "validate-run-ledger.jsonl"
+    other = {"schema_version": 3, "commit": "b" * 40, "result": "fail"}
+    green = _countless_green_row(sha, str(log))
+    original_lines = [json.dumps(other), json.dumps(green)]
+    ledger.write_text("\n".join(original_lines) + "\n")
+
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+
+    assert len(results) == 1 and results[0]["satisfied"] and results[0]["sha"] == sha
+    out_lines = [l for l in ledger.read_text().splitlines() if l.strip()]
+    # The two original lines are untouched (append-only); one new line added.
+    assert out_lines[0] == original_lines[0]
+    assert out_lines[1] == original_lines[1]
+    assert len(out_lines) == 3
+    minted = json.loads(out_lines[2])
+    assert minted["schema_version"] == 5
+    assert minted["commit"] == sha
+    assert minted["executed_tests"] == 6
+    assert minted["coverage"]["planned_test_nodes"] == 1
+    assert minted["coverage"]["zero_executed_nodes"] == []
+    assert minted["coverage"]["absent_nodes"] == []
+    # Base fields carried so is_clean_full_coverage still holds.
+    assert minted["commit_anchored"] is True and minted["profile"] == "full"
+
+
+def test_scan_is_idempotent(tmp_path, monkeypatch):
+    """A second scan appends nothing: the sha now carries a satisfied schema-5."""
+    sha = "c" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 4))
+    ledger = tmp_path / "l.jsonl"
+    ledger.write_text(json.dumps(_countless_green_row(sha, str(log))) + "\n")
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+
+    first = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    assert len([r for r in first if r["reason"] == "minted"]) == 1
+    n_after_first = len([l for l in ledger.read_text().splitlines() if l.strip()])
+
+    second = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    assert second == []  # already satisfied -> not a candidate
+    n_after_second = len([l for l in ledger.read_text().splitlines() if l.strip()])
+    assert n_after_second == n_after_first  # nothing appended
+
+
+def test_scan_dry_run_writes_nothing(tmp_path, monkeypatch):
+    sha = "d" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 8))
+    ledger = tmp_path / "l.jsonl"
+    before = json.dumps(_countless_green_row(sha, str(log))) + "\n"
+    ledger.write_text(before)
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+
+    results = fr.scan_and_finalize(str(ledger), str(tmp_path), dry_run=True)
+    assert results[0]["satisfied"]
+    assert ledger.read_text() == before  # untouched
+
+
+def test_scan_skips_missing_log_and_absent_manifest(tmp_path, monkeypatch):
+    gone = _countless_green_row("e" * 40, str(tmp_path / "nope.log"))
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    no_manifest = _countless_green_row("f" * 40, str(log))
+    ledger = tmp_path / "l.jsonl"
+    ledger.write_text("\n".join(json.dumps(r) for r in (gone, no_manifest)) + "\n")
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: set())  # empty planned
+
+    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    reasons = {r["sha"][:1]: r["reason"] for r in results}
+    assert reasons["e"] == "no-log"
+    assert reasons["f"] == "no-manifest"
+    # Neither fabricated: no schema-5 line appended.
+    assert all(json.loads(l).get("schema_version") == 3
+               for l in ledger.read_text().splitlines() if l.strip())
+
+
 # --- planned_test_nodes reads real manifests at a real SHA ------------------
 
 def test_planned_from_real_hermit_manifest_at_head():

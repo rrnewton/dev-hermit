@@ -488,12 +488,15 @@ class OperationalBoundsTest(unittest.TestCase):
         inherit = script.index('"$ROOT/ci-hub/ci-hub" inherit-obligations')
         prepare = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" prepare')
         acquire = script.index('"$ROOT/ci-hub/ci-hub" land-lock run')
+        receipt = script.index('"$ROOT/ci-hub/validation/verify_receipt.sh"')
         merge = script.index('gh pr merge "$PR"')
         ancestry = script.index("merge-base --is-ancestor")
         complete = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" complete')
         self.assertLess(detached, inherit)
         self.assertLess(inherit, prepare)
         self.assertLess(prepare, acquire)
+        self.assertLess(acquire, receipt)
+        self.assertLess(receipt, merge)
         self.assertLess(acquire, merge)
         self.assertLess(merge, ancestry)
         self.assertLess(ancestry, complete)
@@ -516,6 +519,9 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("exit 75", script)
         self.assertIn("local-validation-eligibility.sh", script)
         self.assertIn("apply-local-label --pr", script)
+        self.assertIn('--repo "$R" --sha "$HEAD" --comments "$receipt_comments"', script)
+        self.assertIn('rm -f -- "$receipt_comments"', script)
+        self.assertIn('--match-head-commit "$HEAD"', script)
         self.assertNotIn(
             'gh pr edit "$PR" -R "$R" --add-label locally-validated', script
         )
@@ -539,6 +545,22 @@ class OperationalBoundsTest(unittest.TestCase):
         )
         self.assertIn("unbacked label rejected 2/2", result.stdout)
         self.assertIn("validated head admitted 2/2", result.stdout)
+
+    def test_lander_receipt_authorization_has_both_controls_and_cleans_plant(
+        self,
+    ) -> None:
+        result = subprocess.run(
+            [str(ROOT / "ci-hub/validation/test_verify_receipt.sh")],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=WALL_SECONDS,
+        )
+        self.assertIn("2/2 legitimate exact-head landing receipts accepted", result.stdout)
+        self.assertIn("forged", result.stdout)
+        self.assertIn("fixture plant deleted cleanly", result.stdout)
 
     def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
         """Plant the run shape PR statusCheckRollup omitted for PR #1219."""
