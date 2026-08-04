@@ -1,0 +1,4 @@
+test_id	source_sha256	host_memtotal_kb	exit_code	stdout_bytes	stderr
+c-programs/meminfo-available-deterministic	6d5c8dbe395fb430bf3c6e8d0da84574ac36cf4de3946a99bc8f3ec80549b4ff	791458316	1	0	MemTotal=791458316 MemAvailable=485559624, expected 976562/976562
+c-programs/meminfo-cached-deterministic	e3ba6e9016544c379aa0d60b616a7d7f777a671c9b329e4e67d76852464615b4	791458316	1	0	MemTotal=791458316 Cached=443243040, expected 976562/0
+c-programs/meminfo-free-deterministic	1632498bb1ef22d76a939941b81e1fd0ef3f8b742ee24ea6bb2f3923d4f4488e	791458316	1	0	MemTotal=791458316 MemFree=13929076, expected 976562/976562
