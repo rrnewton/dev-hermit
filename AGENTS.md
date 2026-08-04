@@ -267,6 +267,13 @@ value and a qualified value often read identically as facts, so inspection canno
 qualification is missing. Reviewers must ask what conditions made the value true, whether those conditions
 travel with it, and whether they are still current at the decision point.
 
+For test and validation results, **a green must carry what it verified** in one result record: exact SHA,
+profile, discovered count, selected count, executed count, filtered/skipped count, and failure count. A full
+green requires the full profile, a nonzero executed count, zero unexpected filtering, and zero failures. A
+partial-profile `PASS` row is not a full green, and `test result: ok` with zero executed tests is a no-result,
+not success. Keep these qualifications together at the ledger-write point so no downstream reader can pair a
+bare `PASS` with inferred coverage.
+
 Verification must bracket guarded behavior from both sides. **Negative:** plant the violating case and
 confirm **refusal** (proves the mechanism is not permissive). **Positive:** plant the genuine qualifying
 case and confirm it **fires** (proves the mechanism is not inert). Neither alone is verification: a guard
@@ -275,13 +282,14 @@ that refuses everything passes every negative test.
 A check fails when it keys on a correlated proxy without an observable identity, causal, coverage, or
 provenance link to the claimed condition. Reviewers name the claimed fact, the observed evidence, the
 conditions under which it was measured, and the binding between them; passing tests do not supply a missing
-binding. The eleven recurring rule entries are: a marker substring instead of a causally bound skid result;
+binding. Recurring worked examples include: a marker substring instead of a causally bound skid result;
 a typed error compared via `.to_string()`; pin consistency that omits a tracked lockfile or behavioral
 currency; a backend lint that covers only part of the backend registry; a status rollup that omits required
 gates; PR-head ancestry used as landed identity; a merge gate running stale branch-owned workflow YAML;
-green without exact-SHA execution evidence (including a label without a run or success with zero tests); a
-parity percentage hashing piped stdout only; retryability inferred by grepping a rendered SIGPIPE message;
-and a bare `hard_mem_max_bytes` measured at an unstated parallelism.
+green without exact-SHA execution evidence; success with zero executed tests; a partial-profile pass presented
+as a full green or a pass with unexpectedly filtered tests; a parity percentage hashing piped stdout only;
+retryability inferred by grepping a rendered SIGPIPE message; and a bare `hard_mem_max_bytes` measured at an
+unstated parallelism.
 
 Mechanical enforcement is deliberately split by layer:
 
@@ -290,14 +298,17 @@ Mechanical enforcement is deliberately split by layer:
   reject a bare memory cap in favor of `{ jobs, bytes }`; a boundary-specific lint can forbid log-text retry
   classification or PR-head landing identity. These checks prove only that the qualification is present,
   not that it is truthful or sufficient.
-- **Runtime/result checks:** require a run ID, exact SHA, durable log, and nonzero executed-test count behind
-  green; require `mergeCommit.oid` ancestry after a fresh fetch behind landed; and compare observed workflow
-  provenance and gate IDs with an authoritative required set. These are evidence validators, not source
-  lint.
+- **Runtime/result checks:** require one ledger record carrying run ID, exact SHA, durable log, profile,
+  discovered/selected/executed/filtered counts, and failures; mechanically reject a full green unless the
+  profile is full, execution is nonzero, unexpected filtering is zero, and failures are zero. Also require
+  `mergeCommit.oid` ancestry after a fresh fetch behind landed, and compare observed workflow provenance and
+  gate IDs with an authoritative required set. These are evidence validators, not source lint.
 - **Semantic review:** determine whether a marker is causally bound, a file/backend/gate registry is
   complete, pin state is behaviorally current, a parity artifact covers the full claimed trace, and a
-  memory anchor plus scaling model matches the concurrency actually used. No general lint can infer these
-  facts. Do not stretch a syntactic lint to claim coverage of them.
+  memory anchor plus scaling model matches the concurrency actually used. Review must also establish that the
+  discovered test universe and declared profile are the suite the result claims to cover; perfect counts over
+  an incomplete discovery set remain a proxy. No general lint can infer these facts. Do not stretch a
+  syntactic lint to claim coverage of them.
 
 ### Post-Facto Human Review
 
