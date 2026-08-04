@@ -319,8 +319,32 @@ def _is_kill_sample(row: dict) -> bool:
     return (row.get("ok") or "").strip() == "False"
 
 
+# Headroom over the worst VALID (non-kill) CPU-second observation. Named, not a
+# bare literal, so the one judgement lives in one place (the -j default diverged
+# across two call sites precisely because the number was duplicated).
+CPU_BUDGET_HEADROOM = 1.5
+
+# Canonical per-platform multiplier for an UNDERPOWERED HOSTED runner. A CPU
+# SECOND is load-immune (wall = cpu_busy + wait; contention inflates only wait),
+# but it is NOT clock-immune: a slower hosted core retires the same instruction
+# stream over MORE seconds of CPU occupancy, so the same work legitimately burns
+# more CPU-seconds there. Hence a per-platform multiplier on the CPU budget.
+#
+# This is a CANONICAL CONSTANT, NOT a measured ratio, and it is labelled that way
+# on purpose: hosted step_profiles carry WALL ONLY (user_s/sys_s empty — the
+# GitHub producer emits no CPU-seconds), so there is no hosted CPU-second
+# distribution to derive a per-node multiplier from. Deriving one from
+# hosted-wall / local-cpu would pair two different quantities — the exact
+# proxy-binding error this store exists to avoid. When hosted CPU-second emission
+# lands, replace this constant with a measured per-node ratio. Owner's guidance
+# was x1.5-x2 on underpowered hosted runners; default to the safer x2 (an
+# unmeasured factor should err toward NOT killing a healthy-but-slow hosted run).
+HOSTED_CPU_MULTIPLIER = 2.0
+
+
 def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
-                     min_samples: int) -> list[dict]:
+                     min_samples: int,
+                     hosted_multiplier: float = HOSTED_CPU_MULTIPLIER) -> list[dict]:
     profiles = discover_step_profiles(parent, repo)
 
     since_sha = since if since and SHA_RE.match(since) else None
@@ -360,7 +384,12 @@ def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
         n = len(cpu)
         max_cpu = cpu[-1] if cpu else None
         thin = n < min_samples
-        suggested = None if (thin or max_cpu is None) else int(round(max_cpu * 1.5))
+        base = None if (thin or max_cpu is None) else max_cpu * CPU_BUDGET_HEADROOM
+        suggested = None if base is None else int(round(base))
+        # Hosted budget = canonical local budget x the (unmeasured) platform
+        # multiplier; None whenever the base is UNSET so a defect/thin node never
+        # emits a hosted number either.
+        suggested_hosted = None if base is None else int(round(base * hosted_multiplier))
         out.append({
             "node": node,
             "n_samples": n,
@@ -371,6 +400,8 @@ def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
             "p50_cpu_s": round(percentile(cpu, 50), 2) if cpu else None,
             "max_wall_s": round(wall[-1], 2) if wall else None,
             "suggested_cpu_timeout": suggested,
+            "suggested_cpu_timeout_hosted": suggested_hosted,
+            "hosted_multiplier": hosted_multiplier,
             "thin": thin,
         })
     return out
@@ -383,7 +414,8 @@ def render_node_budgets(rows: list[dict], fmt: str) -> str:
         import io
         buf = io.StringIO()
         cols = ["node", "n_samples", "n_excluded_kill", "max_cpu_s", "p95_cpu_s",
-                "p50_cpu_s", "max_wall_s", "suggested_cpu_timeout", "thin"]
+                "p50_cpu_s", "max_wall_s", "suggested_cpu_timeout",
+                "suggested_cpu_timeout_hosted", "thin"]
         w = csvmod.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         for r in rows:
@@ -392,11 +424,12 @@ def render_node_budgets(rows: list[dict], fmt: str) -> str:
     # text table. CPU/WALL columns are seconds; the header says so, so a bare
     # number is never unit-less (matches the JSON/CSV `_s` field names).
     hdr = ("NODE", "N", "EXCL_KILL", "MAX_CPU(s)", "P95_CPU(s)", "P50_CPU(s)",
-           "MAX_WALL(s)", "SUGGEST_TIMEOUT(s)", "THIN")
+           "MAX_WALL(s)", "CPU_TIMEOUT(s)", "HOSTED_TIMEOUT(s)", "THIN")
     body = [(r["node"], str(r["n_samples"]), str(r.get("n_excluded_kill", 0)),
              _s(r["max_cpu_s"]), _s(r["p95_cpu_s"]), _s(r["p50_cpu_s"]),
              _s(r["max_wall_s"]),
              "-" if r["suggested_cpu_timeout"] is None else str(r["suggested_cpu_timeout"]),
+             "-" if r.get("suggested_cpu_timeout_hosted") is None else str(r["suggested_cpu_timeout_hosted"]),
              "thin" if r["thin"] else "") for r in rows]
     return _table(hdr, body)
 
@@ -1328,6 +1361,11 @@ def main() -> int:
     p_nb.add_argument("--repo")
     p_nb.add_argument("--since", help="git SHA prefix or YYYY-MM-DD")
     p_nb.add_argument("--min-samples", type=int, default=5)
+    p_nb.add_argument("--hosted-multiplier", type=float,
+                      default=HOSTED_CPU_MULTIPLIER,
+                      help="canonical CPU-budget multiplier for underpowered "
+                           "hosted runners (default %(default)s; unmeasured — "
+                           "hosted profiles carry wall only)")
     p_nb.add_argument("--format", choices=["text", "csv", "json"], default="text")
 
     p_gt = sub.add_parser("green-time",
@@ -1366,7 +1404,8 @@ def main() -> int:
     parent = parent_root()
 
     if args.cmd == "node-cpu-budgets":
-        rows = node_cpu_budgets(parent, args.repo, args.since, args.min_samples)
+        rows = node_cpu_budgets(parent, args.repo, args.since, args.min_samples,
+                                args.hosted_multiplier)
         print(render_node_budgets(rows, args.format))
         return 0
     if args.cmd == "kill-taxonomy":

@@ -175,6 +175,39 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(n["suggested_cpu_timeout"], 24)   # round(16*1.5), NOT 912
         self.assertFalse(n["thin"])
 
+    def test_node_cpu_budgets_hosted_multiplier(self):
+        # The canonical hosted budget = local tight budget x multiplier, and it
+        # is UNSET exactly when the local budget is (a defect/thin node never
+        # emits a hosted number either).
+        rows = []
+        cpus = [(10, 2), (12, 3), (11, 2), (13, 4), (20, 5), (9, 1)]  # max cpu=25
+        for i, (u, s) in enumerate(cpus):
+            rows.append({"timestamp": f"2026-08-03T0{i}:00:00Z", "git_sha": "a" * 40,
+                         "step": "build.x", "elapsed_s": 30 + i,
+                         "user_s": u, "sys_s": s})
+        # thin node -> both budgets UNSET.
+        rows.append({"timestamp": "2026-08-03T00:00:00Z", "git_sha": "b" * 40,
+                     "step": "build.y", "elapsed_s": 5, "user_s": 1, "sys_s": 1})
+        self._write_step_profiles(rows)
+
+        out = {r["node"]: r for r in
+               query.node_cpu_budgets(str(self.parent), None, None, 5,
+                                      hosted_multiplier=2.0)}
+        # local tight = round(25*1.5)=38; hosted = round(38*2)=... derived from
+        # the same base (25*1.5*2=75), NOT from the rounded local value.
+        self.assertEqual(out["build.x"]["suggested_cpu_timeout"], 38)
+        self.assertEqual(out["build.x"]["suggested_cpu_timeout_hosted"], 75)
+        self.assertEqual(out["build.x"]["hosted_multiplier"], 2.0)
+        # thin -> both UNSET, hosted never fabricated from a defect/thin node.
+        self.assertIsNone(out["build.y"]["suggested_cpu_timeout"])
+        self.assertIsNone(out["build.y"]["suggested_cpu_timeout_hosted"])
+
+        # a tighter multiplier flows through.
+        out15 = {r["node"]: r for r in
+                 query.node_cpu_budgets(str(self.parent), None, None, 5,
+                                        hosted_multiplier=1.5)}
+        self.assertEqual(out15["build.x"]["suggested_cpu_timeout_hosted"], 56)  # round(25*1.5*1.5)
+
     def test_node_cpu_budgets_all_kill_node_unset(self):
         # A node whose ONLY samples are kills yields no budget at all — never a
         # number derived from the defect. n_samples falls to 0 -> thin -> UNSET.
