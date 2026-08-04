@@ -293,7 +293,80 @@ def _run(
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
 
 
-def resolve_landed_sha(source: Path, requested: str) -> str:
+def _is_main_ancestor(source: Path, sha: str) -> bool:
+    ancestry = _run(
+        (
+            "git",
+            "-C",
+            str(source),
+            "merge-base",
+            "--is-ancestor",
+            sha,
+            "origin/main",
+        ),
+        check=False,
+    )
+    if ancestry.returncode not in (0, 1):
+        detail = (ancestry.stderr or ancestry.stdout or "").strip()
+        raise ProtocolError(f"cannot compare {sha} with fetched origin/main: {detail}")
+    return ancestry.returncode == 0
+
+
+def _resolve_pr_replay_sha(source: Path, repo: str, pr: int) -> tuple[str, str]:
+    result = _run(
+        (
+            "with-proxy",
+            "gh",
+            "pr",
+            "view",
+            str(pr),
+            "-R",
+            repo,
+            "--json",
+            "state,headRefOid,mergeCommit",
+        ),
+        check=True,
+        timeout=DEFAULT_NETWORK_TIMEOUT,
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ProtocolError("gh pr view returned invalid JSON") from error
+    if not isinstance(payload, Mapping):
+        raise ProtocolError("gh pr view returned a non-object")
+    state = str(payload.get("state") or "").upper()
+    head = str(payload.get("headRefOid") or "").lower()
+    merge_commit = payload.get("mergeCommit")
+    replay = (
+        str(merge_commit.get("oid") or "").lower()
+        if isinstance(merge_commit, Mapping)
+        else ""
+    )
+    if state != "MERGED" or not obligations.SHA_RE.fullmatch(replay):
+        raise ProtocolError(
+            f"{repo}#{pr} has no merged replay SHA (state={state or 'unknown'})"
+        )
+    if not _is_main_ancestor(source, replay):
+        raise ProtocolError(
+            f"{repo}#{pr} reports replay SHA {replay}, but it is not reachable "
+            "from fetched origin/main (the landing may have been orphaned)"
+        )
+    return head, replay
+
+
+def resolve_landed_sha(
+    source: Path,
+    requested: str,
+    *,
+    repo: str | None = None,
+    pr: int | None = None,
+) -> str:
+    """Resolve the commit that actually landed, not a pre-rebase PR head.
+
+    In PR-aware mode the PR identity and GitHub's replay SHA are canonical. The
+    requested head may have been rewritten by rebase merge and need not exist in
+    the local object database.
+    """
     if not source.is_dir():
         raise ProtocolError(f"Hermit source checkout is missing: {source}")
     _run(
@@ -301,6 +374,11 @@ def resolve_landed_sha(source: Path, requested: str) -> str:
         check=True,
         timeout=DEFAULT_NETWORK_TIMEOUT,
     )
+    if pr is not None:
+        if not repo:
+            raise ProtocolError("a repository is required with a PR number")
+        _, replay = _resolve_pr_replay_sha(source, repo, pr)
+        return replay
     resolved = (
         _run(
             (
@@ -318,21 +396,45 @@ def resolve_landed_sha(source: Path, requested: str) -> str:
     )
     if not obligations.SHA_RE.fullmatch(resolved):
         raise ProtocolError(f"cannot resolve a full commit SHA from {requested!r}")
-    ancestry = _run(
-        (
-            "git",
-            "-C",
-            str(source),
-            "merge-base",
-            "--is-ancestor",
-            resolved,
-            "origin/main",
-        ),
-        check=False,
-    )
-    if ancestry.returncode != 0:
-        raise ProtocolError(f"{resolved} is not reachable from fetched origin/main")
+    if not _is_main_ancestor(source, resolved):
+        raise ProtocolError(
+            f"{resolved} is not reachable from fetched origin/main. A PR head is "
+            "normally rewritten by rebase-merge; pass --pr so the verifier can "
+            "resolve and check GitHub's replay SHA instead"
+        )
     return resolved
+
+
+def verify_landed_pr(args: argparse.Namespace) -> int:
+    source = args.source.expanduser().resolve()
+    if not source.is_dir():
+        raise ProtocolError(f"source checkout is missing: {source}")
+    _run(
+        ("with-proxy", "git", "-C", str(source), "fetch", "origin", "main"),
+        check=True,
+        timeout=DEFAULT_NETWORK_TIMEOUT,
+    )
+    head, replay = _resolve_pr_replay_sha(source, args.repo, args.pr)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "state": "landed",
+                    "repo": args.repo,
+                    "pr": args.pr,
+                    "pr_head_sha": head,
+                    "landed_sha": replay,
+                    "verification": "mergeCommit-ancestor-of-origin/main",
+                },
+                sort_keys=True,
+            )
+        )
+    else:
+        print(
+            f"LANDED {args.repo}#{args.pr} landed_sha={replay} "
+            f"pr_head_sha={head or 'unknown'}"
+        )
+    return 0
 
 
 def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
@@ -1310,7 +1412,7 @@ def print_status(
 def arm(args: argparse.Namespace) -> int:
     store_path = args.store.expanduser().resolve()
     source = args.source.expanduser().resolve()
-    sha = resolve_landed_sha(source, args.sha)
+    sha = resolve_landed_sha(source, args.sha, repo=args.repo, pr=args.pr)
     try:
         record = obligations.create_obligation(
             repo=args.repo,
@@ -1476,6 +1578,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     arm_parser.add_argument("sha")
     arm_parser.add_argument("--repo", default=DEFAULT_REPO)
+    arm_parser.add_argument(
+        "--pr",
+        type=int,
+        help="resolve a rebase-merged PR head to GitHub's replay SHA",
+    )
     arm_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
     arm_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), default="speculative"
@@ -1491,6 +1598,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     arm_parser.add_argument(
         "--store", type=Path, default=obligations.default_store_path()
     )
+
+    verify_landed_parser = subparsers.add_parser(
+        "verify-landed-pr",
+        help="resolve a PR's rebase replay SHA and prove it remains on main",
+    )
+    verify_landed_parser.add_argument("pr", type=int)
+    verify_landed_parser.add_argument("--repo", default=DEFAULT_REPO)
+    verify_landed_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    verify_landed_parser.add_argument("--json", action="store_true")
 
     watch_parser = subparsers.add_parser(
         "watch", help="poll open obligations and record transitions"
@@ -1563,6 +1679,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "wait must be non-negative and poll interval must be positive"
                 )
             return arm(args)
+        if args.command == "verify-landed-pr":
+            return verify_landed_pr(args)
         if args.command == "watch":
             if args.poll_seconds <= 0:
                 raise ProtocolError("--poll-seconds must be positive")

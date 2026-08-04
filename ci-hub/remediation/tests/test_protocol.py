@@ -41,6 +41,83 @@ class ProtocolTest(unittest.TestCase):
             path=self.store,
         )
 
+    def test_rebase_merged_pr_resolves_to_replayed_main_sha(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        head = "c" * 40
+        replay = "d" * 40
+
+        def run(command, **_kwargs):
+            command = tuple(command)
+            if command[:2] == ("with-proxy", "git"):
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:3] == ("with-proxy", "gh", "pr"):
+                payload = {
+                    "state": "MERGED",
+                    "headRefOid": head,
+                    "mergeCommit": {"oid": replay},
+                }
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+            if "--is-ancestor" in command:
+                self.assertEqual(command[-2:], (replay, "origin/main"))
+                return subprocess.CompletedProcess(command, 0, "", "")
+            self.fail(f"unexpected command: {command}")
+
+        with mock.patch.object(protocol, "_run", side_effect=run):
+            landed = protocol.resolve_landed_sha(
+                source,
+                "pre-rebase-head-not-fetched",
+                repo="rrnewton/hermit",
+                pr=1219,
+            )
+        self.assertEqual(landed, replay)
+
+    def test_raw_rebase_head_failure_explains_pr_aware_check(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        head = "c" * 40
+
+        def run(command, **_kwargs):
+            command = tuple(command)
+            if command[:2] == ("with-proxy", "git"):
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(command, 0, head + "\n", "")
+            if "--is-ancestor" in command:
+                return subprocess.CompletedProcess(command, 1, "", "")
+            self.fail(f"unexpected command: {command}")
+
+        with mock.patch.object(protocol, "_run", side_effect=run):
+            with self.assertRaisesRegex(protocol.ProtocolError, "pass --pr"):
+                protocol.resolve_landed_sha(source, head)
+
+    def test_rebase_replay_sha_must_still_be_on_main(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        head = "c" * 40
+        replay = "d" * 40
+
+        def run(command, **_kwargs):
+            command = tuple(command)
+            if command[:2] == ("with-proxy", "git"):
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:3] == ("with-proxy", "gh", "pr"):
+                payload = {
+                    "state": "MERGED",
+                    "headRefOid": head,
+                    "mergeCommit": {"oid": replay},
+                }
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+            if "--is-ancestor" in command:
+                return subprocess.CompletedProcess(command, 1, "", "")
+            self.fail(f"unexpected command: {command}")
+
+        with mock.patch.object(protocol, "_run", side_effect=run):
+            with self.assertRaisesRegex(protocol.ProtocolError, "orphaned"):
+                protocol.resolve_landed_sha(
+                    source, head, repo="rrnewton/hermit", pr=1219
+                )
+
     def transition(self, patch: dict) -> dict:
         return obligations.transition(
             "test-obligation", "test-transition", patch, self.store
