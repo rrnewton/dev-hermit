@@ -1,0 +1,25 @@
+{
+  "question": "Is reverie #359's e9patch vendored-Makefile -jN link failure a real build-graph race, and does an added e9tool->contrib-archives prerequisite edge fix it while keeping parallelism?",
+  "date": "2026-08-04",
+  "repo": "rrnewton/reverie",
+  "pr": 359,
+  "base_sha": "d3c60dc5d6b16fd1a5925aaa1ff9383dadd69302",
+  "fix_sha": "31417312da49b92d452b507b35d15d3d15efd71b",
+  "fix_branch": "fix/e9patch-parallel-link-race",
+  "changed_file": "reverie-e9patch/vendor/e9patch/Makefile",
+  "vendored_e9patch_revision": "6c2c03c1da74b14daf1788a9f8dccfa354ce04a6",
+  "build_command": "make -C <fresh copy of reverie-e9patch/vendor/e9patch> --jobs=N release",
+  "jobs_clamp": "NUM_JOBS clamped 1..16 by build.rs",
+  "host": "devbig014.atn7.facebook.com",
+  "cores": 316,
+  "toolchain": {"make": "GNU make", "compiler": "gcc/g++ 11 (x86-64-v2)", "ar": "present", "xxd": "/usr/bin/xxd"},
+  "runs": {
+    "unpatched_realistic": {"j16": {"n": 24, "pass": 24}, "j48": {"n": 24, "pass": 24}, "j96": {"n": 20, "pass": 19, "nonpass_cause": "BpfJailer FILE_OPEN sandbox block, not link race"}},
+    "forced_window_negative_unpatched": {"j16": {"n": 1, "pass": 0, "signature": "ld: cannot find contrib/zydis/libZydis.a; Makefile:58: e9tool Error 1"}},
+    "forced_window_positive_patched": {"j16": {"n": 1, "pass": 1, "wall_s": 4.68, "note": "waited for 4s archive delay; archives ordered before e9tool link; 0 link errors"}},
+    "patched_realistic": {"j16": {"n": 40, "pass": 40}, "j48": {"n": 20, "pass": 19, "nonpass_cause": "BpfJailer block on cc1 dwarf_linesrc.c, not link race"}}
+  },
+  "premise_correction": "'deterministic on clean high-j' refuted; race is real but data-dependent and did not fire in 68 unpatched clean builds. Mechanism proved by forcing the window.",
+  "rejected_variant": ".SECONDEXPANSION + 'e9tool: $$(E9TOOL_LIBS)' did not resolve dev's target-specific E9TOOL_LIBS during prereq second expansion; did not fix the race.",
+  "seed": "n/a (timing-dependent race; forced-window control makes the mechanism deterministic)"
+}
