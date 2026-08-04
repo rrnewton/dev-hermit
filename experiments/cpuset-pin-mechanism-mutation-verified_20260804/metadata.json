@@ -1,0 +1,15 @@
+{
+  "question": "Which core-pin mechanism enforces a hard, inescapable, tree-wide bound in the 3pai sandbox, proven by mutation (running child cannot reach a K+1th core)?",
+  "date_utc": "2026-08-04T13:43:41Z",
+  "host": "devserver, nproc=316 (cores 0-315)",
+  "agent_scope_controllers": "io memory pids (no cpuset; not delegated at 3pai_sandbox.slice)",
+  "systemd_user_scope_slice": "app.slice (controllers: cpuset cpu io memory hugetlb pids)",
+  "agent_utils_origin_main": "60403dd",
+  "mechanisms": {
+    "sched_setaffinity_taskset": {"inherited": true, "escape_to_excluded_core": "succeeded", "verdict": "soft/escapable"},
+    "systemd_AllowedCPUs": {"inherited": true, "escape_to_excluded_core": "masked", "verdict": "hard/inescapable", "writes": "cpuset.cpus"}
+  },
+  "k2_readback": {"cpuset.cpus": "100-101", "cpuset.cpus.effective": "100-101", "contained_proc_Cpus_allowed": "100-101", "positive_spinners_cores": [100, 101, 101]},
+  "condition_carried": {"cores": [100, 101], "count": 2},
+  "repro": "systemd-run --user --scope --collect -p AllowedCPUs=100-101 bash -c 'sleep 9 & CH=$!; taskset -pc 102 $CH; grep Cpus_allowed_list /proc/$CH/status'"
+}
