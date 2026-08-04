@@ -1,0 +1,45 @@
+{
+  "experiment": "cpu-timeout-positive-control",
+  "date": "2026-08-04",
+  "question": "Does any declared cpu_timeout sit at or below the real CPU-seconds a healthy run of that node consumes (i.e. is any node at risk of a false kill)?",
+  "verdict": "No. 42/42 portable passing nodes with a declared budget, and 7/7 privileged, ran strictly below budget. Zero false-kills.",
+  "declarations": {
+    "source_repo": "rrnewton/hermit",
+    "branch": "ci/cpu-timeout-declarations-231b",
+    "sha": "fe86e4a6c9c050badf2d923c29e82556602ed13d",
+    "pr": "https://github.com/rrnewton/hermit/pull/1555",
+    "files": ["ci/dag/portable.json", "ci/dag/privileged.json"],
+    "field": "cpu_timeout (step-level, sibling of timeout)"
+  },
+  "measurement": {
+    "kind": "positive-control (n=1 in-lane full validate run)",
+    "hermit_sha": "85626e18d4e289d93128b034b29d1a8ab5c964f9",
+    "host": "devbig014",
+    "source": "safe-ci-dag-runner step-profile CSV",
+    "cpu_s_definition": "runner cgroup cpu.stat user_s + sys_s (additive work, sibling-independent, contamination-proof under co-tenant load)",
+    "wall_s_definition": "runner elapsed_s",
+    "boxing": "default (no --allow-cgroup-failure); systemd --user CPUQuota per-step, cgroup cpu.stat populated"
+  },
+  "join": {
+    "formula": "headroom_ratio = cpu_timeout / cpu_s",
+    "false_kill_risk_criterion": "cpu_s >= cpu_timeout for a passing node",
+    "artifact": "results.csv"
+  },
+  "results": {
+    "portable_passing_with_budget": 42,
+    "portable_below_budget": 42,
+    "portable_over_budget": 0,
+    "privileged_passing_with_budget": 7,
+    "privileged_below_budget": 7,
+    "tightest_headroom": {"node": "doc.doctests", "cpu_s": 14.42, "cpu_timeout": 21, "ratio": 1.46},
+    "one_bare_node": "build.dbi_release (intentional, no budget)",
+    "one_non_pass_node": "test.detcore_misc (livelock 599.99 cpu_s, wall-caught at 600s; cpu_timeout=810 never fires by design)"
+  },
+  "related": {
+    "negative_control": "experiments/cpu-timeout-enforcement-verified_20260803",
+    "derivation_pipeline": "experiments/cpu-timeout-derivation-pipeline_20260803",
+    "breach_table": "experiments/breach-table-portable-dag_20260803",
+    "affinity_memory": "safe-ci-dag-runner-boxing-cpuquota-not-cpuset",
+    "task": "enable-cgroups-and-cpu-timeouts-across-dag-nodes"
+  }
+}
