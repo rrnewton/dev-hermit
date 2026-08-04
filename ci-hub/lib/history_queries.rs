@@ -707,6 +707,43 @@ mod tests {
     }
 
     #[test]
+    fn newest_green_refuses_three_clean_failures() {
+        let commits = vec!["tip".into(), "middle".into(), "oldest".into()];
+        let rows = vec![
+            row("tip", "2026-08-03T03:00:00Z", "full", "full", "fail"),
+            row("middle", "2026-08-03T02:00:00Z", "full", "full", "fail"),
+            row("oldest", "2026-08-03T01:00:00Z", "full", "full", "fail"),
+        ];
+
+        assert!(matches!(
+            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main"),
+            NewestGreenOutcome::FailedOnly {
+                branch_tip,
+                recorded: 3
+            } if branch_tip == "tip"
+        ));
+    }
+
+    #[test]
+    fn newest_green_selects_newest_of_three_clean_full_passes() {
+        let commits = vec!["tip".into(), "middle".into(), "oldest".into()];
+        let rows = vec![
+            row("tip", "2026-08-03T03:00:00Z", "full", "full", "pass"),
+            row("middle", "2026-08-03T02:00:00Z", "full", "full", "pass"),
+            row("oldest", "2026-08-03T01:00:00Z", "full", "full", "pass"),
+        ];
+        let NewestGreenOutcome::Found(report) =
+            HistoryQueryEngine::new(commits, rows).newest_green("main", "origin/main")
+        else {
+            panic!("expected newest green")
+        };
+
+        assert_eq!(report.green.sha, "tip");
+        assert_eq!(report.green.coverage, CoverageStrength::Full);
+        assert_eq!(report.commits_after_green, 0);
+    }
+
+    #[test]
     fn first_bad_finds_newest_transition_without_treating_gap_as_pass() {
         let commits = vec!["bad2".into(), "bad1".into(), "gap".into(), "good".into()];
         let rows = vec![
