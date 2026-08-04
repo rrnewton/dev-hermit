@@ -635,6 +635,41 @@ never participates in commits or merges.
 
 ## Task Lifecycle And Closure
 
+### Cross-Agent Routing
+
+Ordinary agents do not have a reliable fleet-wide peer-message channel. The
+agent-side `SendMessage` name registry is scoped to agents spawned in the same
+tool session; it cannot resolve fixed or numeric ORC fleet names such as
+`hermit-lander` or `hermit-247`. Do not claim that another fleet agent was
+notified merely because a message was attempted.
+
+Use TaskGraph as the durable handoff channel:
+
+```bash
+tg note <consumer-task-id> \
+  "FROM <producer-task-id>: <deliverable, exact SHA/path, evidence, next action>"
+```
+
+Put the note on the task whose owner must act, so a replacement agent discovers
+it by reading its assigned task. Task notes are pull-based: they preserve a
+plan, measurement, verdict, or handoff across recycling, but they do not wake a
+recipient and are not delivery acknowledgement.
+
+For a time-sensitive handoff, first write the durable task note, then ask the
+coordinator to relay it immediately:
+
+```bash
+scripts/orc-hermit-msg.py \
+  "URGENT RELAY: <consumer-task-id> needs <agent>; durable details are in the task note"
+```
+
+The coordinator owns global fleet routing and must record relay confirmation on
+the consumer task. An urgent handoff is incomplete until the coordinator
+confirms the relay or the recipient acknowledges the task note. A direct
+message to a same-session subagent may be used as an optimization, but its
+result still belongs in a task note because the subagent and its ID disappear
+on recycling.
+
 Phantom closures — a task marked done while its work never landed on `main` — are
 a recurring failure mode. To prevent them, task completion splits into an
 implementation step the working agent performs and a closure step only the

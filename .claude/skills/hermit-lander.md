@@ -9,6 +9,11 @@ This role has no independent landing protocol.
 
 1. Load [pr-landing-planner](pr-landing-planner.md) and follow its canonical agent-utils skill before
    choosing, ordering, or assigning a landing batch.
+   Publish each PR-to-agent assignment on the assigned work's TaskGraph task.
+   Task notes are durable but pull-based; for a time-sensitive ready-to-land
+   handoff, ask the coordinator to relay after writing the note. Do not use
+   agent-side `SendMessage` with an ORC fleet name or report an attempted send
+   as delivery.
 2. Execute an approved Hermit landing with `ci-hub/landing/land-pr.sh`; that tracked program owns the
    land lock, exact-head validation predicate, fresh-base handling, merge mode, and ancestry check.
 3. Follow `AGENTS.md` for review, publication, and task-closure policy.

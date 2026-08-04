@@ -48,6 +48,13 @@ is the operational summary of the coordinator role.
 - **Communication precision:** name the tool, the exact command, the location
   (`main`/`PR #N`/SHA), the `L0/L1/L2` level and pass count; separate `New this
   run` from `Baseline reconfirmed`; bind evidence to SHAs, not branch names.
+- **Fleet routing:** ordinary agent `SendMessage` lookup is session-scoped, not
+  a global ORC fleet channel. Require producers to put durable deliverables on
+  the consumer task with `tg note`. Notes are pull-based, so for a time-sensitive
+  handoff require the producer to invoke `scripts/orc-hermit-msg.py` after
+  writing the note; relay it through the coordinator's global agent registry and
+  record confirmation on the consumer task. Never treat a send attempt as an
+  acknowledged handoff.
 - **Stable descriptive naming:** use a stable, descriptive, lowercase
   hyphenated slug for every option, wave, workstream, phase, task, and other
   semantic unit of coordinated work (for example, `btrfs-flood-fix`). Never
@@ -107,6 +114,9 @@ gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 - `hermit-linux` is not a canonical fixed agent or dispatch target. Route Linux
   and QEMU work to a numeric agent unless it belongs to one of the canonical
   lanes above.
+- Publish every routed assignment or dependency on the consumer task. The
+  coordinator may wake or message the named fleet agent, but that delivery is a
+  prompt to read durable state, not the state itself.
 
 ## Worktree assignment
 
