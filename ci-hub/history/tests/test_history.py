@@ -132,6 +132,66 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(out["test.a"]["max_wall_s"], 1.0)
         self.assertTrue(out["test.a"]["thin"])
 
+    def test_node_cpu_budgets_excludes_kill_samples(self):
+        # THE load/defect-immunity property. A livelocked node hits the wall gate
+        # burning ~one core, so its killed samples record cpu ~= wall ~= the gate.
+        # Fed raw into round(max_cpu*1.5) those cap artifacts derive a budget so
+        # generous the livelock they came from could never trip it (the measured
+        # detcore_misc case: 912s from two ~600s kills, when legit runs are ~16s).
+        # The budget must come from the VALID samples only.
+        rows = []
+        # 6 legitimate runs: max legit cpu = 16 (14+2).
+        legit = [(10, 2), (12, 3), (11, 2), (13, 1), (14, 2), (9, 1)]
+        for i, (u, s) in enumerate(legit):
+            rows.append({"timestamp": f"2026-08-03T0{i}:00:00Z", "git_sha": "a" * 40,
+                         "step": "test.detcore_misc", "elapsed_s": 30 + i,
+                         "user_s": u, "sys_s": s, "ok": "True",
+                         "timed_out": "False", "cpu_timed_out": "False",
+                         "oom_kills": 0})
+        # Two livelock kills at the 600s wall gate — cpu ~= wall, ratio ~1.0.
+        rows.append({"timestamp": "2026-08-03T09:00:00Z", "git_sha": "a" * 40,
+                     "step": "test.detcore_misc", "elapsed_s": 600.0,
+                     "user_s": 590.0, "sys_s": 10.0, "ok": "False",
+                     "timed_out": "True", "cpu_timed_out": "False", "oom_kills": 0})
+        # A cpu-timeout kill AND an oom kill — both excluded regardless of ratio.
+        rows.append({"timestamp": "2026-08-03T10:00:00Z", "git_sha": "a" * 40,
+                     "step": "test.detcore_misc", "elapsed_s": 300.0,
+                     "user_s": 800.0, "sys_s": 20.0, "ok": "False",
+                     "timed_out": "False", "cpu_timed_out": "True", "oom_kills": 0})
+        rows.append({"timestamp": "2026-08-03T11:00:00Z", "git_sha": "a" * 40,
+                     "step": "test.detcore_misc", "elapsed_s": 45.0,
+                     "user_s": 40.0, "sys_s": 5.0, "ok": "False",
+                     "timed_out": "False", "cpu_timed_out": "False", "oom_kills": 1})
+        self._write_step_profiles(rows)
+
+        out = {r["node"]: r for r in
+               query.node_cpu_budgets(str(self.parent), None, None, 5)}
+        n = out["test.detcore_misc"]
+        # POSITIVE: budget derived from valid samples only (max legit cpu = 16).
+        self.assertEqual(n["n_samples"], 6)
+        self.assertEqual(n["n_rows"], 9)
+        self.assertEqual(n["n_excluded_kill"], 3)
+        self.assertEqual(n["max_cpu_s"], 16.0)
+        self.assertEqual(n["suggested_cpu_timeout"], 24)   # round(16*1.5), NOT 912
+        self.assertFalse(n["thin"])
+
+    def test_node_cpu_budgets_all_kill_node_unset(self):
+        # A node whose ONLY samples are kills yields no budget at all — never a
+        # number derived from the defect. n_samples falls to 0 -> thin -> UNSET.
+        rows = [{"timestamp": f"2026-08-03T0{i}:00:00Z", "git_sha": "a" * 40,
+                 "step": "test.always_livelocks", "elapsed_s": 600.0,
+                 "user_s": 595.0, "sys_s": 5.0, "ok": "False",
+                 "timed_out": "True", "cpu_timed_out": "False", "oom_kills": 0}
+                for i in range(6)]
+        self._write_step_profiles(rows)
+        out = {r["node"]: r for r in
+               query.node_cpu_budgets(str(self.parent), None, None, 5)}
+        n = out["test.always_livelocks"]
+        self.assertEqual(n["n_samples"], 0)
+        self.assertEqual(n["n_excluded_kill"], 6)
+        self.assertIsNone(n["suggested_cpu_timeout"])
+        self.assertTrue(n["thin"])
+
     def _write_github_step_profiles(self, node_rows):
         # ci-perf artifacts downloaded from GitHub land under
         # store_dir/gha-profiles -> discover_step_profiles tags these origin=github

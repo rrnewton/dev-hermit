@@ -292,6 +292,33 @@ def _read_step_csv(path: str, rows: list[dict], origin: str) -> None:
         pass
 
 
+def _is_kill_sample(row: dict) -> bool:
+    """A step_profiles row whose resource numbers are CAP-TRUNCATED by a kill —
+    a wall/cpu-timeout reap or an OOM — rather than a measurement of the work.
+
+    Such a row must NEVER anchor a CPU budget, because its max is the DEFECT, not
+    the worst LEGITIMATE run. Concretely: a livelocked ``test.detcore_misc`` hits
+    the 600s wall gate burning ~one core, so it records ``cpu ~= wall ~= 600s``;
+    fed into ``round(max_cpu * 1.5)`` that derives a ~912s budget — generous
+    enough that the very livelock it was calibrated on could never trip it. A raw
+    cpu/wall RATIO cannot separate these: a HEALTHY multi-threaded detcore_misc
+    run has ratio ~2.3 (cpu across threads > wall) while the livelock sits at
+    ~1.0, so ratio alone would keep the poison and could drop the healthy sample.
+    The robust discriminator is simply *the sample was a kill* — the exact
+    ``valid_sample`` rule the breach-table derivation already uses
+    (``experiments/breach-table-portable-dag_20260803``): ``ok == True`` AND not
+    wall/cpu-timed-out AND ``oom_kills == 0``.
+
+    Fields absent (older rows without kill columns) => not classifiable as a kill
+    => kept: fail-safe toward retaining data, never toward fabricating a budget
+    from a defect (a node whose only samples ARE kills falls to n=0 -> thin ->
+    UNSET, never a poisoned number).
+    """
+    if _kill_kind(row) is not None:
+        return True
+    return (row.get("ok") or "").strip() == "False"
+
+
 def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
                      min_samples: int) -> list[dict]:
     profiles = discover_step_profiles(parent, repo)
@@ -308,11 +335,19 @@ def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
             continue
         if since_date and (r.get("timestamp") or "") < since_date:
             continue
+        agg = by_node.setdefault(
+            node, {"cpu": [], "wall": [], "rows": 0, "excluded_kill": 0})
+        agg["rows"] += 1
+        # A killed run's cpu/wall are cap artifacts, not a measurement of the
+        # work; excluding them is what makes the derived budget load-immune AND
+        # defect-immune (see _is_kill_sample). Count the exclusions so the drop
+        # is visible in every render, never silent.
+        if _is_kill_sample(r):
+            agg["excluded_kill"] += 1
+            continue
         user = _float(r.get("user_s"))
         sys_ = _float(r.get("sys_s"))
         wall = _float(r.get("elapsed_s"))
-        agg = by_node.setdefault(node, {"cpu": [], "wall": [], "rows": 0})
-        agg["rows"] += 1
         if user is not None and sys_ is not None:
             agg["cpu"].append(user + sys_)
         if wall is not None:
@@ -330,6 +365,7 @@ def node_cpu_budgets(parent: str, repo: str | None, since: str | None,
             "node": node,
             "n_samples": n,
             "n_rows": agg["rows"],
+            "n_excluded_kill": agg["excluded_kill"],
             "max_cpu_s": round(max_cpu, 2) if max_cpu is not None else None,
             "p95_cpu_s": round(percentile(cpu, 95), 2) if cpu else None,
             "p50_cpu_s": round(percentile(cpu, 50), 2) if cpu else None,
@@ -346,8 +382,8 @@ def render_node_budgets(rows: list[dict], fmt: str) -> str:
     if fmt == "csv":
         import io
         buf = io.StringIO()
-        cols = ["node", "n_samples", "max_cpu_s", "p95_cpu_s", "p50_cpu_s",
-                "max_wall_s", "suggested_cpu_timeout", "thin"]
+        cols = ["node", "n_samples", "n_excluded_kill", "max_cpu_s", "p95_cpu_s",
+                "p50_cpu_s", "max_wall_s", "suggested_cpu_timeout", "thin"]
         w = csvmod.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         for r in rows:
@@ -355,9 +391,9 @@ def render_node_budgets(rows: list[dict], fmt: str) -> str:
         return buf.getvalue().rstrip("\n")
     # text table. CPU/WALL columns are seconds; the header says so, so a bare
     # number is never unit-less (matches the JSON/CSV `_s` field names).
-    hdr = ("NODE", "N", "MAX_CPU(s)", "P95_CPU(s)", "P50_CPU(s)", "MAX_WALL(s)",
-           "SUGGEST_TIMEOUT(s)", "THIN")
-    body = [(r["node"], str(r["n_samples"]),
+    hdr = ("NODE", "N", "EXCL_KILL", "MAX_CPU(s)", "P95_CPU(s)", "P50_CPU(s)",
+           "MAX_WALL(s)", "SUGGEST_TIMEOUT(s)", "THIN")
+    body = [(r["node"], str(r["n_samples"]), str(r.get("n_excluded_kill", 0)),
              _s(r["max_cpu_s"]), _s(r["p95_cpu_s"]), _s(r["p50_cpu_s"]),
              _s(r["max_wall_s"]),
              "-" if r["suggested_cpu_timeout"] is None else str(r["suggested_cpu_timeout"]),
