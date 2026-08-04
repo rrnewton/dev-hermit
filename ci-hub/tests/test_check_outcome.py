@@ -137,6 +137,28 @@ class CheckOutcomeContractTests(unittest.TestCase):
             CheckOutcome.NO_RESULT,
         )
 
+    def test_equal_nonzero_identity_contrary_duplicate_is_order_independent(self) -> None:
+        failure = {
+            "name": "merge-gate",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "startedAt": "2026-08-04T15:24:36Z",
+            "detailsUrl": "https://github.com/o/r/actions/runs/11/job/100",
+        }
+        success = {
+            **failure,
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/o/r/actions/runs/11/job/101",
+        }
+        for rollup in ([failure, success], [success, failure]):
+            selected = select_latest_checks(rollup)
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(selected[0]["status"], "AMBIGUOUS")
+            self.assertIs(
+                classify_check(selected[0]["status"], selected[0]["conclusion"]),
+                CheckOutcome.NO_RESULT,
+            )
+
     def test_latest_workflow_run_filters_head_event_and_ties_by_id(self) -> None:
         sha = "a" * 40
         payload = {

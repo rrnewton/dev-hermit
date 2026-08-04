@@ -100,7 +100,7 @@ def select_latest_checks(value: object, *, head_sha: str = "") -> list[dict[str,
     first restricted to ``head_sha``. Newness is then determined by Actions run
     ID (monotonic and present even while queued), timestamp, and only finally by
     input position for byte-identical duplicates. If two contrary duplicates
-    contain neither ordering field, the result is an explicit NO_RESULT-shaped
+    have the same ordering identity, the result is an explicit NO_RESULT-shaped
     ambiguity instead of a list-order coin flip.
 
     GitHub's PR ``statusCheckRollup`` is scoped to the queried current PR head,
@@ -140,7 +140,7 @@ def select_latest_checks(value: object, *, head_sha: str = "") -> list[dict[str,
                 and _text(previous.get("conclusion") or previous.get("state"))
                 == _text(check.get("conclusion") or check.get("state"))
             )
-            if candidate_key == (0, "") and not same_verdict:
+            if not same_verdict:
                 latest[key] = (
                     candidate_key,
                     max(previous_index, index),
