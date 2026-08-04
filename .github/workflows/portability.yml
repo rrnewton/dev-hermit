@@ -5,6 +5,21 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  # Event-aware cancellation (mirrors hermit #1575 / dev-hermit-ci.yml).
+  # QUEUE-DEPTH-1 on main: all main pushes share one group (github.ref) and
+  # cancel-in-progress:false lets the RUNNING job finish while a newer main push
+  # supersedes only the older PENDING run. Committing faster only makes the
+  # green/red marks SPARSER; it does NOT reduce how many runs COMPLETE (the
+  # owner's invariant: completion count is independent of commit rate). On a
+  # pull_request a new push supersedes the older head (it re-runs when it lands).
+  # Added because this hosted (ubuntu-latest) policy check previously had NO
+  # concurrency block and fired on EVERY main push AND every PR (~252 runs/day
+  # measured 2026-08-04), so each trivial job still consumed a slot in the
+  # throttled shared hosted-runner admission pool.
+  group: portability-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
