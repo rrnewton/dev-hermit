@@ -62,8 +62,10 @@ before dispatching.
 ## 4. Landing path A — LOCAL-VALIDATE (PREFERRED; bypasses hosted queue)
 
 Per `hermit/docs/MERGE_QUEUE.md`: a fully green `./validate.sh` on the exact PR head
-auto-creates and applies `locally-validated`; `merge-gate` passes on that label
-without any ci-portable run. Label is stripped on head change.
+produces a counted receipt, and `ci-hub apply-local-label` may then apply
+`locally-validated` as a cache hint. The merge gate dereferences that immutable
+exact-head receipt; bare label presence never authorizes landing. The label is
+stripped on head change.
 
 Per chosen PR, in a lander-owned slot (never a primary checkout):
 
