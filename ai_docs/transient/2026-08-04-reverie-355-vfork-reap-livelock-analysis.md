@@ -290,20 +290,53 @@ real on-core spinning; box load inflates *wall*, it cannot manufacture accumulat
 a contention artifact). Both survivors occurred at elevated load (122, 240) while UNFIXED fires down to
 load 54; with n=2 I do **not** claim a clean load-gate.
 
-**UNVERIFIED — what the residual IS.** #355 fixes the **async** notifier ESRCH-consume path only. A residual
-burned-core event could be (a) a rare tail of the same mechanism not fully covered under extreme scheduling
-pressure, or (b) a **distinct** detcore-side spin the reverie-side fix does not touch — plausibly related to
-`detcore-wait4-nondelivery-sigkilled-child` ("Face B"). I did not capture a fixed-side survivor's live
-signature (0.1 % is impractical to catch in a settle window this session). **Recommended follow-up:** a
-targeted capture (`capture-twoproc.sh` against the FIXED binary at high load, longer settle) to determine
-whether the 2/1936 survivor is the reap spin's tail or Face B — this directly informs whether lifting the
-`detcore_misc` KNOWN-FAILURE marking should be unconditional or carry a "<0.1 % load-tail residual" caveat.
+**RESOLVED — what the residual IS (live-capture discrimination, determinism-debugger, follow-up).** Owner
+funded the discrimination instead of a caveat lift. I captured live thread-by-thread signatures on BOTH
+binaries at BOTH timings (early ≈2 CPU-s and late ≈8 CPU-s), ~17 firings total, via
+`scratch/assiduous-vfork-logs/capture-fixed-residual.sh` (`SPIN_CPU`/`POLL` tunable; Invariant-15 safe).
+
+*ESTABLISHED* (invariant across all ~17 captures — UNFIXED d973a85 **and** FIXED 79517704, 2 s **and** 8 s):
+- The burned-core thread is **always the guest's own `comm=vfork::vfork_pa` thread**, state `R`, in an epoll
+  loop (`syscall 232`/running, `wchan do_epoll_wait` or `0`).
+- The reverie `guest-*` **supervisor threads are always state `S`, blocked in `do_wait`/`waitid(247)`** —
+  never spinning.
+- Main thread state `S`, `__futex_wait(202)`.
+- **Zero descendants — no ptrace-stopped `t` child, ever**, at 2 s or 8 s, fixed or unfixed.
+- The shape is **identical fixed vs unfixed**; only the **rate** differs (19 % vs 0.10 %, 190×).
+
+*The harness does not reproduce the full-validate `t`-child signature.* The "child stopped in ptrace" shape
+exists only in the original full-validate `ps` capture; this in-process detcore `vfork::` harness reproduces
+the **child-departed downstream spin**, not the child-alive-ptrace-stopped moment. That difference is itself
+a finding: the harness is not reproducing the full-validate conditions.
+
+*Which mechanism the evidence supports.* The residual is the **guest-side `waitid`-starvation spin =
+Face B** (`detcore-wait4-nondelivery-sigkilled-child`): the guest `vfork` parent epoll-spins while the
+reverie supervisor is starved in `waitid` for a departed child. The **reverie async ptrace notifier that
+#355 fixed is provably NOT the spinner here** — it is blocked in `waitid`, quiescent. So the residual is
+**not** "the async-notifier ESRCH spin still running." #355 cutting the rate 190× with shape unchanged is
+consistent with the async-notifier race being an **upstream trigger**: closing it removed ~99.5 % of the
+downstream guest-side spins, leaving a ~0.10 % residual reap/delivery race. Confidence: thread identity is
+ESTABLISHED; "residual == Face B, #355 == upstream trigger" is a **well-supported hypothesis** (the reap
+path is not directly observable, and the shape is shared with the unfixed binary so no fully isolated
+signature) — positively favored over async-tail because the notifier is provably quiescent.
+
+**Implication for the marking:** the residual is a **named tracked bug (Face B)**, not an anonymous
+caveat. #355 did its job (killed the async-notifier spin, 190× rate cut). Lift the #355-attributed
+`detcore_misc` KNOWN-FAILURE and reassign the ~0.10 % residual to `detcore-wait4-nondelivery-sigkilled-child`;
+whether to accept the 0.10 % flake meanwhile or fix Face B first is the owner's call.
 
 ### Verdict for the marking
 The classifier is now **falsifiable, not plausible**: proven to fire on the real bug (62/320) and proven not
 inert (contention=0 across 320). #355 eliminates the dominant load-independent reap livelock (19 % → ~0 in
-the low/moderate-load band). A ~0.1 % burned-core residual persists on the fixed binary at high load, cause
-UNVERIFIED. This is the airtight A/B the marking-lift was waiting on, delivered **with** its residual stated
-rather than rounded to zero.
+the low/moderate-load band). A ~0.1 % burned-core residual persists on the fixed binary at high load; live
+capture (above) identifies it as the **guest-side `waitid`-starvation spin (Face B,
+`detcore-wait4-nondelivery-sigkilled-child`)** — the async notifier #355 fixed is quiescent, not the
+spinner — so the marking can be lifted with the residual reassigned to Face B rather than carried as a
+disappearing caveat. This is the airtight A/B the marking-lift was waiting on, delivered **with** its
+residual identified rather than rounded to zero.
 
 Logs (this run): `scratch/assiduous-vfork-logs/{ab-driver.sh,ab-samehost-092710.log,fixed-confirm-093833.log,harness16-cpuwall.sh,capture-twoproc.sh,twoproc-capture-UNFIXED.log,build-UNFIXED-d973a85b.log}`.
+
+Discrimination capture (follow-up): `scratch/assiduous-vfork-logs/capture-fixed-residual.sh` and logs
+`{capture-UNFIXED-sig2-100143.log,capture-EARLY2-unfixed-101307.log,capture-EARLY3-fixed-101847.log,capture-fixed-big-095051.log,capture-fixed-residual-094911.log}`.
+Binaries: FIXED `tests_misc-FIXED-79517704` (embeds `7951770`); UNFIXED `worktrees/247/hermit/target/debug/deps/tests_misc-ffb88577c4582b93` (embeds `d973a85`; verify with `strings -a BIN | grep -oE 'reverie-[0-9a-f]+/[0-9a-f]{7}'`).
