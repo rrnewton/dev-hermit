@@ -1,0 +1,47 @@
+commit 31417312da49b92d452b507b35d15d3d15efd71b
+Author: Ryan Newton <rrnewton@gmail.com>
+Date:   Tue Aug 4 06:16:49 2026 -0700
+
+    reverie-e9patch: order e9tool link after contrib archives (fix -jN race)
+    
+    The vendored e9patch top-level Makefile builds libZydis.a/libdw.a and the
+    e9tool binary as sibling prerequisites of `dev` with no dependency edge
+    between them, even though the e9tool link consumes both archives via
+    E9TOOL_LIBS. Under the parallel `make --jobs=N release` that
+    reverie-e9patch/build.rs now invokes (N up to 16 from NUM_JOBS), the e9tool
+    link can start before `ar` has created the archives, failing with either
+    "cannot find contrib/zydis/libZydis.a" or undefined Zydis*/dwarf_* symbols
+    (Makefile:58: e9tool Error 1). Serial make hid this by building the archives
+    first.
+    
+    Add the two archives as order-only prerequisites of e9tool so make always
+    builds them before the link, without forcing a spurious relink and without
+    serializing the rest of the build (e9patch objects, e9tool objects, and the
+    archives still compile concurrently). The conventional `all` target links the
+    system -ldw/-lZydis and does not use the contrib archives; it is on a separate
+    path from dev/release.
+    
+    Determinism: order-only prerequisites only constrain build scheduling, not
+    any runtime behavior of the produced e9tool/e9patch binaries or of Reverie;
+    the emitted artifacts are byte-identical to a serial build. This removes a
+    build-time race, i.e. it makes the *build* deterministic.
+
+diff --git a/reverie-e9patch/vendor/e9patch/Makefile b/reverie-e9patch/vendor/e9patch/Makefile
+index b7205c7..dad7e8b 100644
+--- a/reverie-e9patch/vendor/e9patch/Makefile
++++ b/reverie-e9patch/vendor/e9patch/Makefile
+@@ -57,6 +57,14 @@ e9tool: LDLIBS += $(E9TOOL_LIBS) $(E9TOOL_LDLIBS)
+ e9tool: $(E9TOOL_OBJS)
+ 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+ 
++# Parallel-safe link ordering (make -jN): the e9tool link consumes the
++# contrib static archives (E9TOOL_LIBS in the dev/release build), but make
++# has no edge from e9tool to them, so under --jobs=N the link can race ahead
++# of `ar` creating libZydis.a/libdw.a (undefined Zydis*/dwarf_* symbols or a
++# missing-archive link error). Declare them as order-only prerequisites so
++# they are built first without forcing a spurious relink.
++e9tool: | contrib/zydis/libZydis.a contrib/libdw/libdw.a
++
+ e9patch: $(E9PATCH_OBJS)
+ 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+ 

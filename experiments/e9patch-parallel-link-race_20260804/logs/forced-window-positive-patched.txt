@@ -1,0 +1,7 @@
+### forced-window POSITIVE (patched order-only edge, same 4s delay, -j16) — link waits for archives ###
+136:make[1]: Leaving directory '/home/newton/work/dev-hermit/scratch/e9patch-verify/slowArun/contrib/zydis'
+199:make[1]: Leaving directory '/home/newton/work/dev-hermit/scratch/e9patch-verify/slowArun/contrib/libdw'
+200:g++ -std=c++11 -Wall -Wno-reorder -fPIC -pie -DVERSION=1.0.1 -Wl,-rpath=/usr/share/e9tool/lib/ -O2 -DNDEBUG -Isrc/e9tool -Wno-unused-function -Icontrib/libdw -Icontrib/zydis/include -Icontrib/zydis/dependencies/zycore/include src/e9tool/e9action.o src/e9tool/e9cfg.o src/e9tool/e9codegen.o src/e9tool/e9csv.o src/e9tool/e9dwarf.o src/e9tool/e9frontend.o src/e9tool/e9metadata.o src/e9tool/e9misc.o src/e9tool/e9parser.o src/e9tool/e9tool.o src/e9tool/e9types.o src/e9tool/e9x86_64.o -o e9tool -Wl,--dynamic-list=src/e9tool/e9tool.syms contrib/zydis/libZydis.a contrib/libdw/libdw.a -ldl -lz
+201:strip e9patch e9tool
+
+(0 link errors; total wall 4.68s == it blocked on the 4s archive sleep)
