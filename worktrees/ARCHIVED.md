@@ -731,3 +731,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/liteinst-drain-6` | liteinst-drain-6 / drain-liteinst2-6-stack | Detached clean Hermit `72e973f5a615092dba747aff3a054dc2e72b19c7`; detached clean Reverie `9470712afa9b421c72850ab7955fb335692e43a0`; LiteInst2 feature `4a305c6ef27bd2a7a9aa69fa76da894ccf548f88` | LiteInst2 branch `codex/drain-6-trampoline-stack`, live remote, and draft replacement PR [#21](https://github.com/rrnewton/liteinst2/pull/21) carry the checkpoint. CET-IBT NOTRACK positive/negative byte tests, formatting, and Clippy pass; the full gate rerun and PR metadata refresh remain pending. Original #6 stays open. | Infrastructure P0 preempts this resumable drain. All children are clean and no process CWD owns the slot; coordinator releases only the cache/ownership with `scripts/release-worktree.rs --slot liteinst-drain-6 --clean`, without closing either PR or using force, reset, stash, or clean. |
+
+### Debug30 phantom registry recovery (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/debug30` | debug30 / fix-30-2-debug (`d30work` claim) | No physical slot, product child, Git worktree registration, branch, or product SHA exists. | A read-only coordinator audit reconciled every Git worktree registry and searched the scoped workspace for `d30work`; the only references were the machine-local registry and `ACTIVE.md`. No process, collaboration worker, branch, commit, or artifact could be attributed to this row. There is therefore no recoverable implementation handoff to preserve. | The row is a phantom ownership record, not a parked or dirty worktree. The coordinator removes it only through `scripts/release-worktree.rs --slot debug30 --clean`; no filesystem deletion, force, reset, stash, prune, or broad cleanup is involved. |
