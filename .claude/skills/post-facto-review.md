@@ -1,6 +1,6 @@
 ---
 name: post-facto-review
-description: "Land CI-green changes before human review while enforcing dual Claude+Codex adversarial review for post-facto-human-review and core determinism, virtual-time, or scheduling changes."
+description: "Land exact-head validated changes before human review while enforcing dual Claude+Codex adversarial review for post-facto-human-review changes."
 ---
 
 # Post-Facto-Review Mode
@@ -16,8 +16,9 @@ the applicable role tag:
 - `[Human]` for the human owner
 
 This is the **canonical and currently active** landing discipline. Changes land
-as soon as required adversarial review is resolved and the authoritative CI
-gate is green. Human review happens *after* landing, and corrections fix
+as soon as required adversarial review is resolved and the repository's
+authoritative exact-head validation verifier is green. Human review happens
+*after* landing, and corrections fix
 forward. The old pre-land protocol is retained only as an
 [archived historical document](../archived_skills/human-review-first/SKILL.md);
 never activate it or apply a pre-land label in the current mode.
@@ -34,9 +35,8 @@ review gate:
    block.
 2. **A Reverie API or core-abstraction change**, including the `Tool`, `Guest`,
    `Backend`, or syscall-interception model.
-3. **A new or changed core determinization strategy**, rather than a routine
-   implementation of an already established strategy. This includes changes
-   to guest-visible virtual-time or clock semantics.
+3. **A new determinization strategy**, rather than a routine implementation of
+   an already established strategy.
 4. **A core DetCore scheduling change**: anything that affects how programs are
    scheduled, preempted, blocked, awakened, or explored during race search.
    This trigger is always labeled.
@@ -50,42 +50,31 @@ LiteInst, or another non-ptrace backend. Apply the label only when that work als
 meets one of the four triggers above; "backend parity change" is not a valid
 review rationale by itself.
 
-Any change to core determinism, virtual time, clocks, timers, or scheduling is
-an elevated core change even if its diff is small or described as a bug fix.
-It automatically triggers `post-facto-human-review` and the dual-review gate
-below. Backend-parity work becomes elevated when it changes one of those core
-contracts.
-
 This technical review is a pre-land quality gate. Human-owner review is not:
 the owner still reviews the already-landed change after the fact.
 
-## 2. Dual adversarial-review gate and labels
+## 2. Dual adversarial-review gate and evidence
 
 Every PR carrying `post-facto-human-review` requires two independent
 adversarial reviews before landing: one by a Claude-family reviewer and one by
 a Codex-family reviewer. Neither reviewer may be the author; when the author
-uses one of those model families, use a separate reviewer instance from that
-family. Reviewers try to refute the change and cover correctness,
-determinism, Linux semantics, the Reverie/Detcore boundary, security, and the
-validation claims at the exact PR head.
+uses one of those families, use a separate reviewer instance from that family.
+Reviewers try to refute correctness, determinism, Linux semantics, the
+Reverie/Detcore boundary, security, and the validation claims at the exact PR
+head.
 
-Record the review audit trail with these labels:
+Bind both reviews to the exact head SHA in role-tagged comments. Review labels
+are caches for routing and activity, not the approval authority:
 
-- `adversarial-review-codexN` and `adversarial-review-claudeN` mean review
-  round `N` happened. Start with `N=1` and add the next numbered label after
-  each author-fix/reviewer-recheck round. These labels record activity; they do
-  not mean approval.
-- `passed-review-codex` and `passed-review-claude` mean the corresponding
-  reviewer approved the current head after all findings were resolved.
+- `adversarial-review-codexN` and `adversarial-review-claudeN` record review
+  round `N`; they do not mean approval.
+- `passed-review-codex` and `passed-review-claude` may cache the corresponding
+  exact-head approvals. The role-tagged comments and SHA remain authoritative.
 
-Do not land unless all four conditions are visible: at least one numbered
-Codex review label, at least one numbered Claude review label,
-`passed-review-codex`, and `passed-review-claude`. Bind both approvals to the
-exact head SHA in role-tagged review comments. A head change invalidates both
-passed labels: remove them, run both reviewers again, add the next numbered
-round labels, and restore passed labels only after fresh exact-head approval.
-Changes-requested findings likewise remove the affected passed label until the
-reviewer approves a corrected head.
+Do not land until both model-family reviewers have approved the exact current
+head and every finding is resolved. A head change invalidates both approvals:
+run both reviewers again and refresh cache labels only after fresh exact-head
+approval. Changes-requested findings likewise invalidate the affected approval.
 
 ## 3. Mandatory PR description sections
 
@@ -123,7 +112,7 @@ landing red flag. Virtual time must remain a coherent process-tree clock whose
 evolution follows deterministic guest progress and preserves the promised
 Linux clock, timer, timeout, and ordering semantics.
 
-Stop the landing and require both adversarial reviewers to resolve the design
+Stop the landing and require the adversarial reviewers to resolve the design
 if an implementation:
 
 - special-cases or fabricates only the first clock read;
@@ -145,18 +134,19 @@ guest work and events, not artificial movement on every read.
 - `post-facto-human-review` is the **single** routing label for a PR awaiting
   the human's after-the-fact review. Apply it automatically for the four
   triggers above. It never waits for pre-land human approval, but it does
-  activate the mandatory dual adversarial-review gate in section 2.
-- The numbered `adversarial-review-{codex,claude}N` labels are an append-only
-  review-round audit trail. The `passed-review-{codex,claude}` labels are
-  exact-head approvals and must both be current before landing.
+  activate the elevated adversarial-review gate in section 2.
+- Numbered `adversarial-review-{codex,claude}N` labels are activity caches.
+  `passed-review-{codex,claude}` labels are also caches; exact-head role-tagged
+  review comments from both required model families are the authority.
 - `pre-land-human-review` remains defined only as a notional opposite. **Never
   apply it** while the canonical post-facto protocol is active.
 - **Never apply, remove, or otherwise alter `human-approved`.** It records an
   actual human approval and is owner-only.
 - The obsolete `human-review` and `post-facto-review` labels must not be
   recreated or applied.
-- `locally-validated` is permitted only when local evidence proves that a
-  residual CI failure is baseline or environmental.
+- `locally-validated` may be derived only by the semantic verifier from a
+  clean, counted, full-profile receipt for the exact current head. It is a
+  cache hint, never landing authority by itself.
 
 ## 6. New-syscall code markers
 
@@ -170,20 +160,20 @@ Verify both markers before labeling or landing trigger 1. They are not blanket
 markers for bot-authored code, backend changes, or routine parity fixes. Use
 them only at the smallest new-syscall regions, not across untouched code.
 
-## 7. Land when review and CI are green
+## 7. Land when review and exact-head validation are green
 
 Once required adversarial review is resolved and the authoritative gate is
 green, land the authorized change without waiting for a human.
 
-- Hermit requires the authoritative GitHub-hosted `Regular tests` gate. Treat
-  known-environmental self-hosted failures according to current repository
-  policy; never bypass a genuine product failure.
-- Reverie requires its repository-defined authoritative gates.
+- Hermit requires `ci-hub validate-status` to accept the exact current head's
+  clean, counted, full-profile local receipt. GitHub checks are supplemental;
+  do not wait for them, but never ignore a genuine product failure they expose.
+- Reverie requires its repository-defined exact-head validation authority.
 - When one of the four triggers applies, add `post-facto-human-review`, verify
-  every required PR section, verify both numbered review trails and both
-  exact-head passed labels, post role-tagged evidence, squash-merge, record the
-  exact merge SHA, and rebase dependents in dependency order. Do not add the
-  label to a routine non-triggering PR.
+  every required PR section, verify both exact-head reviews, post role-tagged
+  evidence, land through `ci-hub/landing/land-pr.sh` using the repository's
+  current merge mode, record the exact landed SHA, and rebase dependents in
+  dependency order. Do not add the label to a routine non-triggering PR.
 
 ## 8. Human reviews after landing
 

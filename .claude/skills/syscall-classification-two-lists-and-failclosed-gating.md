@@ -35,8 +35,9 @@ abort; grep the DEBUG log for `ERROR detcore: [detcore, dtid N] inbound syscall:
 <name>` to name the offending syscall. Fixing = reclassify (Determinized/
 PassThrough) + add the dispatch arm; untyped ones (Syscall::Other, e.g.
 close_range/epoll_pwait2) use guarded `Determinized if call.number()==Sysno::X`
-arms like process_madvise. NOTE: the classify-count guard is now [201,92,80]
-after batch18 (flock->PassThrough; close_range,epoll_pwait2->Determinized; PR #777).
+arms like process_madvise. Never copy a dated classification count: derive all
+guard values from the exact current source and run its structural tests.
 
-Corrects/extends [[syscall-classification-issue-batches]]. See also
-[[strict-mode-unusable-rseq-cascade]].
+This is a Hermit product fact. Confirm it against current Hermit main and move
+its maintained successor into Hermit's own skill tree rather than expanding the
+parent copy.

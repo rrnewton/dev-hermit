@@ -1,9 +1,9 @@
 ---
 name: hermit-linux
-description: "Purpose-fixed role for the hermit-linux agent: QEMU/Linux integration, kernel testing, deterministic VM boot and snapshot-resume, Linux record/replay, and SCX/sched_ext scheduler coverage. Load whenever acting as hermit-linux or dispatching Linux VM, kernel, QEMU snapshot, or sched_ext work."
+description: "Task charter for QEMU/Linux integration, kernel testing, deterministic VM boot and snapshot-resume, Linux record/replay, and SCX/sched_ext scheduler coverage. Load when dispatching Linux VM, kernel, QEMU snapshot, or sched_ext work to a numeric agent."
 ---
 
-# hermit-linux - Linux VM and kernel agent
+# hermit-linux - Linux VM and kernel workstream
 
 ## Purpose
 
@@ -23,7 +23,7 @@ root-cause one specific blocker with replayable evidence.
   including kernel configuration, BPF/toolchain inputs, scheduler identity,
   and workload outcome evidence.
 - Durable Linux VM experiment manifests and textual results under the parent
-  `experiments/` tree.
+  `experiments/` tree only when the task explicitly names and owns that path.
 
 ## Constraints
 
@@ -37,6 +37,8 @@ root-cause one specific blocker with replayable evidence.
   control may isolate a blocker, but label it diagnostic and preserve the
   literal strict failure. Use the project's L0/L1/L2 rubric and state every
   relaxation.
+- Strict verification compares exit status, stdout, stderr, and complete INFO
+  logs byte-for-byte. Do not normalize away numeric VM or scheduler evidence.
 - **Make VM state repeatable.** Keep the kernel and base disk immutable. Create
   a fresh per-run qcow2 overlay or copy because QEMU `loadvm` can update image
   metadata. Pin machine type, vCPU count, accelerator, clock/icount settings,
@@ -57,20 +59,24 @@ root-cause one specific blocker with replayable evidence.
 
 ## Worktree assignment
 
-Own the named slot **`worktrees/linux/`** (nested layout v2), provisioned with
-`scripts/allocate-worktree.rs --agent hermit-linux --product hermit`, for
-Hermit product changes. Add a Reverie child only when a real lower-level
-change is required, and follow the cross-repository landing order in
-`AGENTS.md`. Parent experiment manifests are parent-owned artifacts; product
-code and tests remain in their owning repository. Never build or edit in a
+The coordinator assigns this workstream to a numeric agent in a generic
+**`worktrees/slotNN/{hermit,reverie,liteinst2}`** slot and registers it with
+`scripts/allocate-worktree.rs --agent hermit-NNN --slot slotNN --task <task-id>
+--product all --purpose "<one-line>"`. Create a Reverie branch only when a real
+lower-level change is required; otherwise leave that child and LiteInst2
+detached at their parent gitlinks. Follow the cross-repository change protocol
+in `AGENTS.md`. Parent experiment manifests require explicit task ownership and
+a separate parent commit; product code and tests remain in their owning
+repository. Never build or edit in a
 primary checkout, and never share writable kernel, QEMU, or Cargo build
-directories between slots.
+directories between slots. See
+`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
 
 ## Related
 
 - Linux roadmap: `experiments/linux-vm-roadmap_20260726/README.md`.
 - Performance methodology: [hermit-opt](hermit-opt.md).
 - KVM backend boundaries: [hermit-kvm](hermit-kvm.md).
-- Claim auditing: [backend-reality-reviewer](backend-reality-reviewer/SKILL.md).
-- Reports: [progress-rubric](progress-rubric/SKILL.md).
-- Landing discipline: [post-facto-review](post-facto-review/SKILL.md).
+- Claim auditing: [backend-reality-reviewer](backend-reality-reviewer.md).
+- Reports: [progress-rubric](progress-rubric.md).
+- Landing discipline: [post-facto-review](post-facto-review.md).

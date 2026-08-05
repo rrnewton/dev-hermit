@@ -19,4 +19,5 @@ swallowed. Now gitignored. Convention: experiments record source URLs + commit
 SHAs, never embed vendor clones; heavy artifacts go under `ignored/` /
 `experiments/ignored/` (both gitignored). `.gitignore` now guards
 `/experiments/**` against *.img/qcow2/raw/iso/bin/a/o/so/tar*/tgz/gz/zip/zst/
-core/bzImage/vmlinux/initramfs*.cpio*. See [[worktree-cleanup-is-unsafe-for-agents]].
+core/bzImage/vmlinux/initramfs*.cpio*. See
+[worktree cleanup safety](worktree-cleanup-is-unsafe-for-agents.md).

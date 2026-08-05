@@ -25,4 +25,5 @@
 
 skill | main+unprotected | main IS protected since 2026-08-03: two rulesets (history=non_fast_forward+deletion, ZERO bypass; check-gating=admin-bypass). `--admin` bypasses FAILING CHECKS only, never rewinds history. "main unprotected" as a landing rationale is now false. Current truth: memory [[main-forcepush-lockdown-dual-layer]].
 
-slug | validate-sh-cannot-be-green-on-devserver | STALE PREMISE: a green full `validate.sh` ran on the devserver 2026-08-03 (owner run a034f39c, real 499s, PASS). The "cannot be green on devserver" claim is false. Demote/rewrite this skill. Current truth: experiments/validate_parallelism_audit_20260803/ + memory [[validate-full-profile-already-dag-orchestrated]].
+# The compatibility slug `validate-sh-cannot-be-green-on-devserver` now contains
+# an explicit retraction. Do not denylist a filename as a proxy for its content.

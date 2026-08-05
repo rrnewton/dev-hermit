@@ -164,10 +164,12 @@ confirm the branch is based on the intended current `origin/main` with no unrela
 feature diff and validation evidence; run the focused tests + repo validation the task requires; confirm the
 tested SHA is the branch tip; write the mandatory PR sections (below); re-read concurrent remote state before
 pushing. Use `with-proxy` for networked `git`/`gh`; never `gh auth switch` (auth is shared machine state).
-Require authoritative gates green at the exact PR head: Hermit `Regular tests (GitHub-hosted)` (handle a
-known-environmental self-hosted failure per current documented policy; never bypass a genuine product failure);
-Reverie both `Regular tests` and `Host-dependent tests`. A skipped/missing/queued/stale/cancelled authoritative
-check is NOT green. Do not merge with unresolved adversarial-review findings or merely because local tests pass.
+The author owns and shepherds the PR until it lands; a dedicated lander is for backlog recovery, not the
+steady-state handoff. Hermit's landing authority is a clean, counted, full-profile local-validation receipt for
+the exact current head, accepted by `ci-hub validate-status`; a raw command exit, label, comment, or copied field
+is not authority. GitHub checks are delayed supplemental signals and must not be awaited, though any genuine
+product failure they reveal still blocks. Reverie uses its repository-defined exact-head validation authority
+until it has an equivalent receipt verifier. Do not merge with unresolved adversarial-review findings.
 
 ### Proxy Binding Review Axis (predicate; full rationale, registry, 12 examples, 3-layer taxonomy in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
@@ -184,8 +186,8 @@ claimed condition. Enforce as predicates (examples in the companion doc):
 
 ### Post-Facto Human Review
 
-Canonical protocol is post-facto: once required adversarial review is resolved and the authoritative CI gate is
-green, land the authorized change without waiting for human-owner review (the human reviews after landing; fix
+Canonical protocol is post-facto: once required adversarial review is resolved and the authoritative exact-head
+validation receipt is green, land the authorized change without waiting for human-owner review (the human reviews after landing; fix
 forward). Apply the single `post-facto-human-review` label iff a PR has at least one trigger:
 
 1. **New syscall support.** Verify in-code audit tags: `AUTONOMOUS-BOT-IMPLEMENTED` at the new dispatch/classification entry and `TODO-HUMAN-REVIEW(PR-id)` at the implementation/determinization block.
@@ -207,7 +209,8 @@ never recreate obsolete `human-review`/`post-facto-review` labels. Only a human 
 On startup or replacement, `hermit-lander` must run `ci-hub/ci-hub inherit-obligations` to discover durable
 inherited remediation before taking new queue work (wake messages are advisory, lost during recycling; startup
 mechanics + obligation lifecycle: companion doc). Merge only when the task explicitly authorizes landing,
-adversarial review is resolved, and authoritative checks are green at the current head SHA. Human-owner review
+adversarial review is resolved, and the repository's semantic verifier accepts authoritative validation evidence
+for the current head SHA. Human-owner review
 is post-facto and does not block landing. Never push directly to Hermit `main`, force-push shared branches, or
 use a local primary to bypass PR controls. Parent-only policy/gitlink changes go to shared `main` only when a
 task explicitly authorizes them; `worktrees/ACTIVE.md` never participates in commits or merges.
@@ -336,9 +339,9 @@ name — always report: **Hermit SHA** (40-hex), **Reverie SHA** (40-hex or expl
 **Command**, **Result** (pass/fail/skipped with material output summarized), **Environment** (host/toolchain/
 hardware constraints when relevant). Hardware-dependent Hermit tests may be impossible on some hosts — report
 that fact and the observed failure; do not weaken, delete, or falsely bless a test to make the local
-environment green. The coordinator verifies both required CI jobs at the exact Hermit PR head and the resulting
-target commit when landing is authorized. Local feature-branch validation does not prove hosted and self-hosted
-CI are green.
+environment green. For Hermit landing, the coordinator verifies the counted exact-head receipt through
+`ci-hub validate-status` and verifies the resulting target commit's ancestry. A bare `locally-validated` label
+is only a cache and never substitutes for dereferencing that receipt. GitHub results are supplemental evidence.
 
 ### Running validate — `systemd-run --user` Is The Producer Path
 

@@ -11,6 +11,11 @@ hermit record/replay is FUNDAMENTALLY coupled to `sequentialize_threads=true`, n
 
 Recording a schedule WITHOUT sequentialization is NOT a shortcut:
 - REPLAY infeasible for racy programs (QEMU): sub-syscall memory interleaving (data races, lock-free atomics, untrapped futex fast paths) is invisible to hermit; RCB counts unstable across CPU migration. Would desync immediately (`die_on_desync`). Only "works" for race-free programs that already record fine.
-- Empirical: `run --no-sequentialize-threads --record-preemptions-to X` → PANIC/SIGSEGV at tool_global.rs:1590. `hermit record start -- qemu…` (forces seq, no --no-seq flag) → HANGS, 0 serial output (QEMU can't boot sequentialized, see [[qemu-linux-boots-under-hermit-config]] which needs --no-sequentialize-threads).
+- Empirical in the dated experiment: non-sequential schedule tracing panicked,
+  while `hermit record start -- qemu…` hung with no serial output because that
+  QEMU setup required non-sequentialized execution.
 
-BOTTOM LINE: QEMU can't be recorded today because record REQUIRES sequentialization AND QEMU can't boot under it. The unlock is the SCHEDULER FIX (make hermit sequentialize QEMU without the TCG vCPU starving support threads); once QEMU boots under --sequentialize-threads, record/replay works unchanged. Recording is downstream of, not an alternative to, the scheduler fix. Related: [[strict-mode-frontier-regresses-real-workloads]].
+BOTTOM LINE for that revision: QEMU recording was blocked by the combination of
+record's sequentialization requirement and QEMU's scheduler hang. Reconfirm on
+current Hermit main before presenting it as current; this product-specific fact
+belongs in Hermit's skill tree.

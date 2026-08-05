@@ -1,26 +1,17 @@
 ---
 name: base-feature-branches-on-frontier
-description: "dev-hermit is now MAIN-ONLY — frontier branch deleted 2026-07-22; base all work on origin/main"
+description: "Hermit and Reverie are main-only; coordinators allocate registered slots and branch task work from freshly fetched origin/main."
 ---
 
-**SUPERSEDED 2026-07-22:** The `frontier` branch has been DELETED on both
-`rrnewton/hermit` and `rrnewton/reverie` (remote), by user directive to move to a
-main-only workflow. Do NOT base work on `origin/frontier` — it no longer exists.
-Base all feature branches on `origin/main` and open PRs with `--base main`.
+# Main-only feature branches
 
-Main has since absorbed the work that used to live only on frontier (rr_suite,
-`third-party/rr` submodule, strict-syscall handlers via #207/#208, statfs/fstatfs
-#209, etc.). The primary checkouts `hermit/` and `reverie/` now track `main`; the
-old `./main/` rebase-base directory was removed. AGENTS.md updated: worktree base
-is `main`, layout no longer lists `./main/`.
+The obsolete `frontier` branches were removed in July 2026. New product work is
+based on freshly fetched `origin/main` and targets `main`.
 
-Recovery (if frontier is ever needed): the pre-deletion tips were
-hermit `bedac4d7ea7f82c0d96190b9904375950763a250`, reverie
-`70f83e7ce2104e1b986e095c476bbc81be163d2e` — re-pushable via
-`git push origin <sha>:refs/heads/frontier`.
-
-**Why:** Basing on a deleted branch fails immediately; the whole backlog of open
-PRs was closed and the workflow flipped to direct-to-main.
-**How to apply:** `git -C worktrees/slotNN switch -c <branch> origin/main`;
-`gh pr create --base main --draft`. See [[frontier-already-complete-dont-force-push]]
-and [[frontier-diverges-on-reverie-fork]] — both now obsolete.
+Do not create or switch a branch in a primary or an arbitrary parked worktree.
+The coordinator first allocates the agent's canonical slot with
+`scripts/allocate-worktree.rs`, registers task/branch/path ownership, verifies
+the nested products are clean, fetches without changing checked-out files, and
+then creates the task's descriptive feature branch in each product that changes.
+Historical frontier tips are archival facts, not instructions to recreate or
+push the branch.

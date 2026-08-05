@@ -1,125 +1,61 @@
 ---
 name: progress-rubric
-description: "Create evidence-based Hermit progress reports from live measurements. Use when gathering, validating, or writing a project progress report."
+description: "Create evidence-based Hermit progress reports from exact-SHA live measurements, strict unstripped determinism comparisons, and durable validation receipts."
 ---
 
-# Progress Report Rubric
+# Progress report rubric
 
-Use this procedure for dated reports in `ai_docs/progress-reports/YYYY-MM-DD.md`.
-The primary question is not how many tests exist; it is **which real programs
-work in each execution mode, and where support drops as users move from the
-leading mode to trailing modes**.
+Write the report to the durable task-owned path selected by the task. Product
+measurements run only in the agent's registered slot at one clean current-main
+SHA; never switch a primary or invent a worktree. If relevant product code moves,
+rerun affected cells at the new SHA.
 
-## Non-negotiable evidence rules
+## Evidence contract
 
-1. Measure one exact `origin/main` SHA in a clean checkout. If main moves and
-   product code changed, update and rerun affected measurements.
-2. Run the same app probes through `--strict --verify`, record/replay, DBI, and
-   KVM. Do not substitute old task notes for live results.
-3. Use only code and artifacts available from main. Unlanded work belongs in a
-   final footnote, never in the coverage totals.
-4. Mark unavailable or interrupted measurements honestly. `BLOCKED`, `NOT RUN`,
-   and `INCOMPLETE` are not failures, but none count as passes.
-5. State backend, log level, relaxations, command, exit status, and material
-   output for every Hermit measurement.
+For every cell record repository, full SHA, UTC time, host/kernel/toolchain,
+backend, exact command, exit status, stdout, stderr, INFO log, timeout, and every
+relaxation. `BLOCKED`, `NOT RUN`, and `INCOMPLETE` are honest outcomes but never
+passes. Unlanded work is a linked footnote and cannot alter main-branch totals.
+
+Strict verification/parity means equality of all observable channels: exit
+code, stdout bytes, stderr bytes, and complete INFO-log bytes. Do not delete,
+mask, normalize, or regex-strip numbers, addresses, branch counts, virtual-time
+values, or durations to obtain equality. A canonicalization is admissible only
+when the repository specification explicitly defines the values as equivalent,
+the transform is identity/provenance bound and applied uniformly, and planted
+positive/negative tests prove that distinguishable executions remain
+distinguishable. Otherwise report the mismatch.
 
 ## Required report shape
 
-1. **Snapshot**: full SHA, UTC time, host/kernel, PMU policy, toolchain, and
-   guest binaries used.
-2. **Coverage slope**: one compact row per mode showing `passed / probes`, the
-   first unsupported workload class, and the current blocking layer.
-3. **App matrix**: one row per identical program/workload, columns for strict
-   verify, R/R, DBI, and KVM. Include at least a trivial ELF, a file-processing
-   tool, an interpreter, a concurrent pipeline, and a toolchain frontend.
-4. **Repository health**: `cargo test`, `validate.sh`, the working-envelope
-   vector, focused R/R suite, and live main CI. Preserve incomplete-run status.
-5. **Gaps and next actions**: order by the first mode where support drops.
-6. **Unlanded footnote**: at most three bullets with links; no unlanded result
-   may alter a main-branch cell.
+1. Snapshot: full SHAs and environment.
+2. Coverage slope: `passed / attempted` per mode and the first lost workload.
+3. Same-app matrix: ptrace strict verify, record/replay, DBI, KVM, SaBRe,
+   LiteInst, and e9patch as available. Use identical inputs.
+4. Repository health: focused tests plus the authoritative full validation
+   receipt; report supplemental GitHub signals separately.
+5. Gaps and next actions ordered by the first mode that loses parity.
+6. Unlanded footnote, at most three linked items.
 
-## Measurement procedure
+Use at least a trivial ELF, file-processing tool, interpreter, concurrent
+pipeline, and toolchain frontend when those workloads are available from main.
+For a backend-wide preflight failure, run one representative probe, quote the
+failure, and mark the rest `BLOCKED` with the shared cause. For record/replay,
+distinguish record timeout, replay divergence, channel mismatch, and a complete
+round trip.
 
-### Freeze main and context
+## Validation and accounting
 
-```bash
-with-proxy git fetch origin main
-git switch -c report-YYYY-MM-DD origin/main   # in a clean assigned worktree
-git rev-parse HEAD
-date -u +%Y-%m-%dT%H:%M:%SZ
-uname -r
-grep -m1 'model name' /proc/cpuinfo
-cat /proc/sys/kernel/perf_event_paranoid
-rustc --version; cargo --version; cargo nextest --version
-cargo build -p hermit
-```
+Run focused probes directly from the assigned product slot with explicit bounds.
+Launch the full validation profile only through ci-hub's admitted
+`systemd-run --user` producer from `AGENTS.md`. A green claim requires the
+durable log and `ci-hub validate-status --sha <40-hex>` acceptance for the exact
+clean head, including nonzero counted coverage. A raw exit, label, interrupted
+run, or remembered outcome is no result. GitHub is supplemental and is not a
+landing dependency.
 
-Re-fetch before writing. If only docs moved, record that fact; if product code
-moved, rerun the affected cells at the new SHA.
-
-### Cross-mode app matrix
-
-Choose a small, stable probe list and keep it identical across modes. A useful
-minimum is:
-
-```text
-/bin/echo hello
-/usr/bin/sha256sum /etc/hostname
-/usr/bin/python3 -c 'print(sum(range(100)))'
-/bin/bash -c '/bin/echo hello | /usr/bin/wc -c'
-/usr/bin/gcc --version
-```
-
-For each probe, run:
-
-```bash
-./target/debug/hermit run --strict --verify -- PROGRAM ARGS...
-./target/debug/hermit record start --verify --record-timeout 90 \
-  --data-dir "$(mktemp -d /tmp/hermit-report-rr.XXXXXX)" -- PROGRAM ARGS...
-./target/debug/hermit run --backend dbi -- PROGRAM ARGS...
-./target/debug/hermit run --backend kvm -- PROGRAM ARGS...
-```
-
-If DBI or KVM has a backend-wide preflight failure, run one representative
-probe, quote the error, and mark the remaining cells `BLOCKED*` with one shared
-footnote. Do not use a client, SDK, pin, or proof branch that is not supplied by
-main. For R/R, distinguish record timeout, replay divergence, output mismatch,
-and successful round trip.
-
-### Repository health
-
-```bash
-cargo test 2>&1 | tee /tmp/progress-cargo-test.log
-cargo test -p hermit --test record_replay -- --test-threads=1
-./validate.sh 2>&1 | tee /tmp/progress-validate.log
-ENVELOPE_JSON=/tmp/progress-envelope.json ./validate.sh --envelope-only
-with-proxy gh run list -R rrnewton/hermit --branch main --limit 6
-```
-
-Bound commands that can hang and report the bound. Aggregate only completed
-`test result:` lines. If a process is killed or interrupted, name the last
-completed step and state that no final summary was produced. The `rr_suite`
-target may exist but have ignored PMU/mount-namespace cases; report executed and
-ignored counts separately.
-
-## Cell vocabulary
-
-- `PASS L2`: strict verify completed and reported deterministic output.
-- `PASS R/R`: record completed, replay completed, and outputs/logs matched.
-- `FAIL`: the mode ran the guest and produced a mismatch, divergence, crash, or
-  nonzero result attributable to that workload.
-- `BLOCKED`: a backend-wide dependency or implementation gate prevented guest
-  execution; quote it once.
-- `NOT RUN`: no command was attempted. State why.
-
-## Accounting and writing rules
-
-- Use one denominator for the same-app matrix. Broader historical matrices may
-  be linked as context but must not be added to fresh probe counts.
-- Present the support slope explicitly, for example `5/5 -> 4/5 -> blocked ->
-  blocked`, then explain the first lost workload.
-- Separate product gaps from changing host state, missing privileges, and test
-  harness interruption. Say `unknown` when attribution is not established.
-- Never call main green unless the exact-SHA gate completed successfully.
-- Do not stage generated logs, recordings, `envelope.json`, `target/`, or
-  unrelated concurrent changes.
+Use one denominator for every row in a comparison. Preserve executed, selected,
+filtered, ignored, failed, timeout, and skipped counts separately. Recompute
+summaries from tracked textual results, keep binaries/log volumes under ignored
+storage, inspect explicit staged paths, and never stage recordings, build trees,
+or another agent's changes.

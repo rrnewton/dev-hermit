@@ -32,12 +32,15 @@ per-syscall cost/behavior comparison current.
   programs, the mode (`--strict`, `--strict --verify`, record/replay), and the
   Hermit **and** Reverie SHAs. `10/10 pass` is not a headline — name the
   program category and why the batch was selected.
-- **Cross-repo ordering:** land the lower-level Reverie change first, validate
-  Hermit against that exact Reverie SHA, then let the coordinator pin.
+- **Cross-repo ordering:** make the lower-level Reverie commit available first
+  when possible, validate Hermit against that exact Reverie SHA, and report the
+  dependency before the coordinator pins either commit.
 - The KVM hypercall return register is 32-bit — read results from the frame,
   not the truncated return reg.
 - Do not weaken hardware-sensitive assertions to make a development host green; report
   the limitation.
+- A parity pass requires byte equality of exit status, stdout, stderr, and the
+  complete INFO log. Numeric values remain part of the evidence.
 
 ## Post-facto human-review criteria
 
@@ -48,24 +51,24 @@ support (leave `AUTONOMOUS-BOT-IMPLEMENTED` + `TODO-HUMAN-REVIEW(PR-id)` tags),
 labeled; canonical example is Hermit PR #1151). Routine backend parity is not a
 trigger by itself. Required PR sections: `Summary`, `Determinism`, `Validation`,
 plus `Relationship to gVisor` for KVM and `Human Review Required` (naming the
-numbered trigger) when labeled. Full trigger definitions and the dual-review
+numbered trigger) when labeled. Full trigger definitions and the adversarial-review
 gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Worktree assignment
 
-Own the named slot **`worktrees/kvm/`** (nested layout v2:
-`worktrees/kvm/hermit` and `worktrees/kvm/reverie`), one slot per agent.
-Provision it with `scripts/allocate-worktree.rs --agent hermit-kvm --product
-both`; coordinated Hermit/Reverie feature branches live in the same slot when a
-change spans both repos. Never do feature work in a primary checkout. Leave an
-unused child detached at its pinned gitlink. See
-`ai_docs/transient/worktree-management-map.md` for the full protocol.
+Own the canonical slot **`worktrees/kvm/{hermit,reverie,liteinst2}`**, one slot
+per agent. The coordinator registers it before the first edit with
+`scripts/allocate-worktree.rs --agent hermit-kvm --task <task-id> --product all
+--purpose "<one-line>"`; coordinated Hermit/Reverie feature branches live in
+the same slot when a change spans both repos. Never do feature work in a primary
+checkout. Leave each unchanged child detached at its parent gitlink. See
+`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
 
 ## Related
 
-- Landing discipline: [post-facto-review](post-facto-review/SKILL.md).
-- Claim auditing: [backend-reality-reviewer](backend-reality-reviewer/SKILL.md).
-- Debugging: [hermit-debugging](hermit-debugging/SKILL.md),
-  [deadlock-debugging](deadlock-debugging.md).
-- Reports: [progress-rubric](progress-rubric/SKILL.md).
-- Hygiene: [repo-cleanliness](repo-cleanliness.md).
+- Landing discipline: [post-facto-review](post-facto-review.md).
+- Claim auditing: [backend-reality-reviewer](backend-reality-reviewer.md).
+- Debugging: [Hermit debugging](../../hermit/.claude/skills/hermit-debugging/SKILL.md)
+  and [deadlock debugging](../../hermit/.claude/skills/deadlock-debugging.md).
+- Reports: [progress-rubric](progress-rubric.md).
+- Hygiene: [Hermit cleanliness](../../hermit/.claude/skills/repo-cleanliness.md).

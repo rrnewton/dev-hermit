@@ -13,8 +13,9 @@ Ratchet coverage upward with evidence; keep callback isolation correct.
 
 ## What this agent owns
 
-- The LiteInst Guest/Tool integration in `reverie` (and `liteinst2/` tooling in
-  the parent when an experiment needs it).
+- The LiteInst Guest/Tool integration in `reverie` and LiteInst2 product tooling
+  in `liteinst2/`, with its own feature branch, commit, and validation when it
+  changes.
 - LiteInst-specific handling in `hermit`.
 - LiteInst example-tool / real-program exercises.
 
@@ -29,6 +30,8 @@ Ratchet coverage upward with evidence; keep callback isolation correct.
   exact programs named.
 - Preserve callback isolation; do not let instrumentation state leak across
   fork/exec.
+- A parity pass requires byte equality of exit status, stdout, stderr, and the
+  complete INFO log. Do not strip addresses, counts, or times.
 
 ## Post-facto human-review criteria
 
@@ -39,22 +42,25 @@ support (leave `AUTONOMOUS-BOT-IMPLEMENTED` + `TODO-HUMAN-REVIEW(PR-id)` tags),
 labeled; canonical example is Hermit PR #1151). Routine backend parity is not a
 trigger by itself. Required PR sections: `Summary`, `Determinism`, `Validation`,
 plus `Relationship to gVisor` for KVM and `Human Review Required` (naming the
-numbered trigger) when labeled. Full trigger definitions and the dual-review
+numbered trigger) when labeled. Full trigger definitions and the adversarial-review
 gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Worktree assignment
 
-Own the named slot **`worktrees/liteinst/`** (nested layout v2:
-`worktrees/liteinst/{hermit,reverie}`), one slot per agent. Provision it with
-`scripts/allocate-worktree.rs --agent hermit-liteinst`. Preserve any dirty
-LiteInst handoff in a `HANDOFF.md` before parking. Never feature-build in a
-primary checkout. See `ai_docs/transient/worktree-management-map.md` for the
-full protocol.
+Own the canonical slot **`worktrees/liteinst/{hermit,reverie,liteinst2}`**, one
+slot per agent. The coordinator registers it before the first edit with
+`scripts/allocate-worktree.rs --agent hermit-liteinst --task <task-id> --product
+all --purpose "<one-line>"`; create feature branches only in the products that
+will change and leave unchanged children detached at their parent gitlinks. A
+dirty or blocked slot stays active until its committed recovery SHA is recorded;
+do not park it on the strength of an uncommitted handoff file. Never
+feature-build in a primary checkout. See
+`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
 
 ## Related
 
-- [post-facto-review](post-facto-review/SKILL.md),
-  [backend-reality-reviewer](backend-reality-reviewer/SKILL.md),
-  [hermit-debugging](hermit-debugging/SKILL.md),
-  [progress-rubric](progress-rubric/SKILL.md),
-  [repo-cleanliness](repo-cleanliness.md).
+- [post-facto-review](post-facto-review.md),
+  [backend-reality-reviewer](backend-reality-reviewer.md),
+  [Hermit debugging](../../hermit/.claude/skills/hermit-debugging/SKILL.md),
+  [progress-rubric](progress-rubric.md), and
+  [Hermit cleanliness](../../hermit/.claude/skills/repo-cleanliness.md).

@@ -5,8 +5,10 @@ description: "Protocol for reproducible scientific benchmark artifacts: provenan
 
 # Benchmarking
 
-Use this protocol for every durable performance experiment under `benchmarks/`
-or `experiments/`. A result is not publishable until another engineer can tell
+Use this protocol for every durable performance experiment at its task-owned
+location. Parent experiments use `experiments/<name>_YYYYMMDD/` as defined by
+`AGENTS.md`; product experiments stay in their product repository. A result is
+not publishable until another engineer can tell
 what ran, reproduce it, and distinguish measured facts from interpretation.
 
 ## Required writeup

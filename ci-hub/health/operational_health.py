@@ -817,12 +817,11 @@ def _scan_fields(stdout: str) -> dict[str, str]:
 
 
 def memory_skill_sync_gate() -> int:
-    """Schedule the memory<->skill sync checks so being in-sync is enforced, not luck.
+    """Check authoritative repository skills; local memories are advisory mirrors.
 
-    Runs the authoritative structural linter (lint-memory-skill-sync.rs) AND the
-    report-only contradiction scanner (memory-skill-contradiction-scan.rs), and
-    emits combined tick-hub fields. Fires (non-zero) on any structural problem or
-    contradiction. Report-only: neither tool edits memories or skills.
+    The structural linter validates versioned skills. The scanner gates only
+    contradictions in those skills; local-memory absence or drift never makes
+    machine-local state authoritative. Both tools are report-only.
     """
     lint_rc, lint_out, lint_err = _run_tool([str(MEMORY_SKILL_LINTER), "--quiet"])
     scan_rc, scan_out, scan_err = _run_tool([str(MEMORY_SKILL_SCANNER), "--gate"])
@@ -851,7 +850,6 @@ def memory_skill_sync_gate() -> int:
 
     scan = _scan_fields(scan_out)
     contradictions = int(scan.get("contradictions", "0") or "0")
-    scan_drift = int(scan.get("drift", "0") or "0")
 
     healthy = lint_rc == 0 and scan_rc == 0 and problems == 0 and contradictions == 0
     if healthy:
@@ -864,11 +862,9 @@ def memory_skill_sync_gate() -> int:
         state = "drift"
 
     summary = (
-        f"structural problems={problems}, contradictions={contradictions}, "
-        f"scanner-drift={scan_drift}; "
-        "run ./scripts/memory-skill-contradiction-scan.rs for the per-file proposal "
-        "(REPORT-ONLY: coordinator applies; sessionForget is 1-based positional, "
-        "delete DESCENDING)"
+        f"repository structural problems={problems}, "
+        f"repository contradictions={contradictions}; "
+        "versioned skills are authoritative and optional local-memory drift is advisory"
     )
 
     # Build a single-line `detail` proposal from the tools' human output. It must

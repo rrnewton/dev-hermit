@@ -1,9 +1,9 @@
 #!/usr/bin/env rust-script
-//! REPORT-ONLY scanner for memory<->skill CONTRADICTIONS + bidirectional drift.
+//! REPORT-ONLY scanner for repository-skill contradictions and optional local-memory drift.
 //!
-//! WHY: the sync tooling ([[core-memory-skill-sync-tooling]]) keeps mapped skills
-//! BYTE-EQUAL to their source memory, and lint-memory-skill-sync.rs enforces that
-//! mapping is complete. Neither catches the harder failure: a skill and a memory
+//! Versioned repository skills are authoritative; local memories are optional
+//! mirrors and never import into the repository. This scanner catches the harder
+//! failure: a skill and a memory
 //! that are each internally well-formed but assert CONTRADICTORY facts (e.g. an
 //! old skill says "main is unprotected" while a newer memory records that main
 //! was locked down). This scanner surfaces those, plus which side of the mapping
@@ -35,9 +35,8 @@
 //!
 //! Usage:
 //!   scripts/memory-skill-contradiction-scan.rs           # human report
-//!   scripts/memory-skill-contradiction-scan.rs --gate    # tick-hub gate:
-//!                                                         #   prints state=/summary=/...
-//!                                                         #   exits non-zero on any finding
+//!   scripts/memory-skill-contradiction-scan.rs --gate    # gate active repository
+//!                                                         # skill contradictions only
 use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
@@ -57,6 +56,7 @@ struct DenyEntry {
     raw_needles: String,
 }
 
+#[derive(Clone)]
 struct Finding {
     kind: &'static str, // "CONTRADICTION" | "MEMORY_WITHOUT_SKILL" | "SKILL_WITHOUT_MEMORY"
     subject: String,    // file or slug the finding is about
@@ -68,7 +68,7 @@ memory-skill-contradiction-scan.rs — report memory<->skill contradictions and 
 
 USAGE:
   scripts/memory-skill-contradiction-scan.rs           human report
-  scripts/memory-skill-contradiction-scan.rs --gate    tick-hub gate: state=/summary=, nonzero on any finding
+  scripts/memory-skill-contradiction-scan.rs --gate    gate active repository-skill contradictions only
   scripts/memory-skill-contradiction-scan.rs --list    one line per memory (name<TAB>slug<TAB>core)
   scripts/memory-skill-contradiction-scan.rs -h|--help show this help and exit (no side effects)
   scripts/memory-skill-contradiction-scan.rs --version print version and exit (no side effects)
@@ -241,11 +241,11 @@ fn main() {
                 subject: format!("memory/{slug}.md"),
                 detail: if !declared_ok {
                     format!(
-                        "core_memory:true but core_skill != '{expected_rel}' (got {:?}); run sync-memory-skill.rs",
+                        "optional local mapping differs from authoritative repository path '{expected_rel}' (got {:?})",
                         meta.core_skill
                     )
                 } else {
-                    format!("mapped skill {expected_rel} is missing; run sync-memory-skill.rs")
+                    format!("optional local memory names an absent repository skill {expected_rel}")
                 },
             });
         }
@@ -258,7 +258,7 @@ fn main() {
             findings.push(Finding {
                 kind: "SKILL_WITHOUT_MEMORY",
                 subject: format!("{SKILL_DIR}/{slug}.md"),
-                detail: "active skill has no core_memory source; adopt via sync-memory-skill.rs --adopt-skill or delete".to_string(),
+                detail: "repository skill has no optional local-memory mirror".to_string(),
             });
         }
     }
@@ -271,37 +271,34 @@ fn main() {
     let drift = findings.len() - contradictions;
 
     if gate {
-        let state = match (contradictions, drift) {
-            (0, 0) => "ok",
-            (_, 0) => "contradiction",
-            (0, _) => "drift",
-            _ => "both",
-        };
-        let summary = if findings.is_empty() {
+        let gate_findings: Vec<Finding> = findings
+            .iter()
+            .filter(|finding| {
+                finding.kind == "CONTRADICTION"
+                    && finding.subject.starts_with(SKILL_DIR)
+            })
+            .cloned()
+            .collect();
+        let gate_contradictions = gate_findings.len();
+        let state = if gate_findings.is_empty() { "ok" } else { "contradiction" };
+        let summary = if gate_findings.is_empty() {
             format!(
-                "in-sync: {} skills / {} memories, denylist {} entries clean",
-                skills.len(),
-                memories.len(),
-                denylist.len()
+                "{} authoritative repository skills clean; {} optional local finding(s)",
+                skills.len(), findings.len()
             )
         } else {
-            let mut parts: Vec<String> = Vec::new();
-            if contradictions > 0 {
-                parts.push(format!("{contradictions} contradiction(s)"));
-            }
-            if drift > 0 {
-                parts.push(format!("{drift} drift"));
-            }
-            // name the first few subjects so the wakeup title is actionable.
-            let named: Vec<String> = findings.iter().take(3).map(|f| f.subject.clone()).collect();
-            format!("{} — {}", parts.join(" + "), named.join(", "))
+            let named: Vec<String> = gate_findings
+                .iter()
+                .take(3)
+                .map(|finding| finding.subject.clone())
+                .collect();
+            format!("{gate_contradictions} repository-skill contradiction(s) — {}", named.join(", "))
         };
-        emit(state, &summary, contradictions, drift);
-        // Full detail on stdout too, so the plugin's wakeup body carries it.
-        if !findings.is_empty() {
-            print_report(&findings, &denylist_note, true);
+        emit(state, &summary, gate_contradictions, 0);
+        if !gate_findings.is_empty() {
+            print_report(&gate_findings, &denylist_note, true);
         }
-        std::process::exit(if findings.is_empty() { 0 } else { 1 });
+        std::process::exit(if gate_findings.is_empty() { 0 } else { 1 });
     }
 
     // human report

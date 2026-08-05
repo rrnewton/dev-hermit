@@ -671,3 +671,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/detwait4` | detwait4 / detcore-wait4-nondelivery-sigkilled-child | Hermit `14332cb783aecd7b9682366fa6402353dbfe9902`; no Reverie or LiteInst2 child | The closed task left one clean Hermit commit unreachable from any remote. The existing feature ref had diverged, so the commit was preserved without rewriting history at `origin/recovery/detwait4-14332cb7`; the recovery is also recorded on the task. | Original Reverie fix landed separately as Reverie #355. The stale slot had no live process and was reclaimed only after the Hermit recovery ref existed. |
+
+### Coordinator slot reuse for cross-client skills (2026-08-04)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/coord` | hermit-coord / compat-examples-strict-kvm | Hermit feature head `9ca6be54289127af8625853b470d1883b55ebbe1`; no Reverie or LiteInst2 child | Hermit PR [#1037](https://github.com/rrnewton/hermit/pull/1037) merged as `b989db08a32c3636b56e10dfeee17dcee4619311`, freshly verified reachable from local `origin/main`; the feature branch is retained. | The physical slot and all three exact-path worktree registrations were already absent, and no matching process was live. The existing registry row was reassigned in place to `cross-client-skill-discovery`; no worktree or branch was deleted. |

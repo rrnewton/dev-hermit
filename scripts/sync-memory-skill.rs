@@ -1,38 +1,31 @@
 #!/usr/bin/env rust-script
-//! Keep every active coordinator skill synchronized with one source memory.
+#![allow(dead_code)]
+//! Export repository-owned coordinator skills to optional local memories.
 //!
-//! Companion to scripts/lint-memory-skill-sync.rs. A mapped memory declares
-//! `core_memory: true` and `core_skill: <active skill path>`. Every mapping
-//! uses the canonical flat path `.claude/skills/<slug>.md`. Running the tool
-//! migrates older nested mappings and removes their old skill files after
-//! writing the flat replacement.
+//! Versioned `.claude/skills/` files are authoritative. This tool never imports
+//! local memory into the repository and never removes a repository skill.
 //!
 //! Memory storage is file-based Markdown; override it with HERMIT_MEMORY_DIR.
 //!
 //! Usage:
-//!   scripts/sync-memory-skill.rs                         # regenerate all mapped skills
 //!   scripts/sync-memory-skill.rs --adopt-skill <path>.. # create memories from active skills
-//!   scripts/sync-memory-skill.rs --promote <slug>..     # promote memories to flat skills
-//!   scripts/sync-memory-skill.rs --demote <slug>..      # unmap memories and remove skills
-//!   scripts/sync-memory-skill.rs --check                # dry-run
+//!   scripts/sync-memory-skill.rs --check                # explain authority; no writes
 use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
 
 const USAGE: &str = "\
-sync-memory-skill.rs — keep every mapped coordinator skill in sync with its source memory
+sync-memory-skill.rs — export authoritative repository skills to optional local memory
 
 USAGE:
-  scripts/sync-memory-skill.rs                          regenerate all mapped skills (WRITES files)
-  scripts/sync-memory-skill.rs --check                  dry-run; report what would change, write nothing
+  scripts/sync-memory-skill.rs --check                  report authority and exit without writing
   scripts/sync-memory-skill.rs --adopt-skill <path>..   create source memories from active skills
-  scripts/sync-memory-skill.rs --promote <slug>..       promote memories to flat mapped skills
-  scripts/sync-memory-skill.rs --demote <slug>..        unmap memories and remove their skills
   scripts/sync-memory-skill.rs -h | --help              show this help and exit (no side effects)
   scripts/sync-memory-skill.rs --version                print version and exit (no side effects)
 
-Memory store is file-based Markdown; override its location with HERMIT_MEMORY_DIR.
-Companion linter: scripts/lint-memory-skill-sync.rs.";
+Repository skills are authoritative. Local memory is optional and never writes
+or deletes repository files. Override its file-based location with
+HERMIT_MEMORY_DIR. Companion linter: scripts/lint-memory-skill-sync.rs.";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -45,14 +38,14 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--version") {
-        println!("sync-memory-skill.rs 1.0");
+        println!("sync-memory-skill.rs 2.0");
         return;
     }
 
     let root = find_root();
     let memory_dir = memory_dir(&root);
 
-    if !memory_dir.is_dir() {
+    if !memory_dir.is_dir() && args.first().map(String::as_str) == Some("--adopt-skill") {
         eprintln!(
             "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
             memory_dir.display()
@@ -78,56 +71,22 @@ fn main() {
                 adopt_skill(&root, &memory_dir, skill, check);
             }
         }
-        Some("--promote") => {
-            let slugs: Vec<String> = args[1..]
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .cloned()
-                .collect();
-            if slugs.is_empty() {
-                eprintln!("--promote needs at least one memory slug");
-                std::process::exit(2);
-            }
-            for slug in &slugs {
-                promote(&root, &memory_dir, slug, check);
-            }
-        }
-        Some("--demote") => {
-            let slugs: Vec<String> = args[1..]
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .cloned()
-                .collect();
-            if slugs.is_empty() {
-                eprintln!("--demote needs at least one memory slug");
-                std::process::exit(2);
-            }
-            for slug in &slugs {
-                demote(&root, &memory_dir, slug, check);
-            }
-        }
-        _ => {
-            let mut n = 0;
-            for entry in read_md_files(&memory_dir) {
-                let slug = stem(&entry);
-                if slug == "MEMORY" {
-                    continue;
-                }
-                let content = std::fs::read_to_string(&entry).unwrap_or_default();
-                if parse_meta(&content).core_memory {
-                    let (content, old_skill) = flatten_mapping(&entry, &slug, &content, check);
-                    write_mapped_skill(&root, &slug, &content, check);
-                    if !check {
-                        remove_old_mapping(&root, old_skill.as_deref(), &flat_skill_rel(&slug));
-                    }
-                    n += 1;
-                }
-            }
-            println!(
-                "{} {} mapped skill(s)",
-                if check { "would refresh" } else { "refreshed" },
-                n
+        Some("--check") => println!(
+            "repository skills are authoritative; local memory is optional and cannot import into the repository"
+        ),
+        Some("--promote") | Some("--demote") => {
+            eprintln!(
+                "memory-to-repository sync is disabled; review the local memory and apply an explicit repository patch instead"
             );
+            std::process::exit(2);
+        }
+        None => {
+            eprintln!("no implicit sync: use --check or explicit --adopt-skill paths");
+            std::process::exit(2);
+        }
+        Some(other) => {
+            eprintln!("unknown mode {other:?}; use --help");
+            std::process::exit(2);
         }
     }
 }

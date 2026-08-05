@@ -1,6 +1,6 @@
 ---
 name: hermit-ci
-description: "Purpose-fixed role for the hermit-ci agent: monitor, analyze, and improve CI health for the hermit and reverie forks. Diagnoses and fixes CI; does NOT land product PRs. Load when acting as hermit-ci or working on CI health/config."
+description: "Purpose-fixed role for the hermit-ci agent: monitor, analyze, and improve CI health, and shepherd its own CI-fix PRs through exact-head validation and landing."
 ---
 
 > **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
@@ -26,33 +26,34 @@ infrastructure flakes, and improve the CI configuration and validation harness.
 
 ## Constraints
 
-- **This agent does NOT land product PRs.** Landing is the coordinator's /
-  [hermit-lander](hermit-lander.md)'s job. hermit-ci may land its **own** CI-fix
-  PRs under the normal review-and-CI-green gate, but does not adjudicate or merge
-  other agents' feature PRs.
-- **Know the real gates.** After the CI split, the authoritative hermit gate is
-  `Regular tests (GitHub-hosted)`; `PMU and CPUID tests (self-hosted)` is
-  non-blocking (main is unprotected — self-hosted red does not block merges);
-  `merge-gate` is a re-fire placeholder that is red until CI completes. Reverie's
-  gates are `Regular tests (GitHub-hosted)` + `Host-dependent tests
-  (self-hosted)`. Use the ci-hub quickstart above for the current consolidated
-  health workflow; its PR classifier is the pinned `agent-utils/pr-landing-planner`.
-- There is a single PMU self-hosted runner; serialized PMU is a known bottleneck
-  — report queue effects, do not mistake a queued check for a failure.
+- **Own each CI-fix PR until it lands.** Shepherd the agent's own change through
+  review, exact-head validation, serialized landing, and ancestry verification.
+  Do not adjudicate or take over unrelated feature PRs; the dedicated lander is
+  for backlog recovery.
+- **Know the real gate.** Hermit landing requires `ci-hub validate-status` to
+  accept the exact current head's clean, counted, full-profile local receipt.
+  GitHub results are supplemental and must not be awaited, but a genuine
+  product failure they expose still blocks. Reverie uses its repository-defined
+  exact-head validation authority. Use the ci-hub quickstart for the current
+  consolidated workflow; do not infer authority from a label or copied status.
+- Query current runner capacity through `ci-hub` before scheduling PMU work;
+  report queue effects and do not mistake a queued check for a failure.
 - Report infrastructure failures explicitly; never weaken a hardware-sensitive
   test to make a development host green.
 
 ## Worktree assignment
 
 Read CI state from anywhere (read-only inspection is always fine). For CI-config
-changes, own the named slot **`worktrees/ci/`** (nested layout v2), provisioned
-with `scripts/allocate-worktree.rs --agent hermit-ci --product hermit`, and open
-a PR — never edit a primary checkout. See
-`ai_docs/transient/worktree-management-map.md` for the full protocol.
+changes, own the canonical slot
+**`worktrees/ci/{hermit,reverie,liteinst2}`**. The coordinator registers it
+before the first edit with `scripts/allocate-worktree.rs --agent hermit-ci
+--task <task-id> --product all --purpose "<one-line>"`. Create a feature branch
+only in each product that will change, leave unchanged children detached at
+their parent gitlinks, and open a draft PR. Never edit a primary checkout. See
+`ai_docs/transient/2026-07-27-worktree-management-map.md` for the full protocol.
 
 ## Related
 
-- [post-facto-review](post-facto-review/SKILL.md) (landing discipline for own
-  CI fixes), [hermit-lander](hermit-lander.md) (who lands feature PRs),
-  [hermit-coord](hermit-coord.md), [progress-rubric](progress-rubric/SKILL.md),
-  [repo-cleanliness](repo-cleanliness.md).
+- [post-facto-review](post-facto-review.md) (landing discipline for CI fixes),
+  [hermit-lander](hermit-lander.md) (who lands feature PRs),
+  [hermit-coord](hermit-coord.md), and [progress-rubric](progress-rubric.md).

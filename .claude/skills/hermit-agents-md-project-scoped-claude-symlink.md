@@ -1,10 +1,14 @@
 ---
 name: hermit-agents-md-project-scoped-claude-symlink
-description: "hermit/AGENTS.md is now a single-project guide (no workspace discipline); hermit/CLAUDE.md is a symlink to it; safe way to push doc-only to hermit main"
+description: "Keep product and coordinator policy scopes separate. Use when editing Hermit guidance: hermit/AGENTS.md is product-local and hermit/CLAUDE.md aliases it; dev-hermit/AGENTS.md owns fleet and worktree policy."
 ---
 
-hermit/AGENTS.md was refocused as a clean single-project developer guide (commit 9a492fe on rrnewton/hermit main, 2026-07-23). ALL multi-agent workspace/worktree discipline (slots, ACTIVE.md/ARCHIVED.md, parking, coordinator ops, slot-init.sh, handoff/completion-report formats) was REMOVED — that content belongs at the dev-hermit coordinator level, not the hermit project repo. Kept: overview, environment, build/test, lint/format, Cargo workspace map, architecture (Reverie/Detcore + ptrace/DBI/KVM backends), L0-L4 assurance ladder, debugging, change guidelines, contributing/PR. If you need the old worktree/slot rules, look in dev-hermit/AGENTS.md, not here.
+`hermit/AGENTS.md` is the product developer guide; `hermit/CLAUDE.md` is its
+compatibility symlink and must not be edited separately. Parent coordination,
+slot ownership, publication, and closure policy belong in
+`dev-hermit/AGENTS.md`.
 
-`hermit/CLAUDE.md` is a **symlink → AGENTS.md** — never edit CLAUDE.md separately; editing AGENTS.md updates both.
-
-SAFE doc-only push to hermit main when the shared `hermit/` primary is on a feature branch with other agents' dirt: do NOT switch its branch or stash. From the parent root, use `git -C hermit worktree add --detach $HOME/tmp-wt origin/main`, edit+commit there, `with-proxy git push origin HEAD:main` (ff), then `git worktree remove --force`. hermit main is unprotected; direct doc push is fine when the task authorizes it. Related: [[never-git-stash-shared-worktrees]], [[base-feature-branches-on-frontier]] (main-only now).
+Product documentation changes follow the same registered-slot, feature-branch,
+validation, and PR workflow as product code. Never switch or develop in the
+Hermit primary, never create an unregistered raw worktree, and never push
+directly to Hermit `main` to work around a dirty shared checkout.

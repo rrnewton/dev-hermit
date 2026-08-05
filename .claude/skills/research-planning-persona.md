@@ -391,9 +391,12 @@ either still shows committed_time outrunning guest icount in the trace.
   `ai_docs/dbi-branch-count-preemption-design_20260730.md`,
   `ai_docs/resource-model-review.md`, `ai_docs/schedule-search-guide.md`,
   `ai_docs/reference/gvisor-systrap-comparison.md`.
-- Sibling skills: [continuous-virtual-time-is-sacred](continuous-virtual-time-is-sacred.md)
-  (hard time invariant), [hermit-debugging](hermit-debugging/SKILL.md)
-  (logs/log-diff FIRST — your Step 0), [fabler](fabler/SKILL.md)
+- Sibling skills:
+  [continuous-virtual-time-is-sacred](../../hermit/.claude/skills/continuous-virtual-time-is-sacred/SKILL.md)
+  (hard time invariant),
+  [hermit-debugging](../../hermit/.claude/skills/hermit-debugging/SKILL.md)
+  (logs/log-diff FIRST — your Step 0),
+  [fabler](../../hermit/.claude/skills/fabler/SKILL.md)
   (read→plan→execute→adversarially-verify), [backend-reality-reviewer](backend-reality-reviewer.md)
   (is a backend claim real), [progress-rubric](progress-rubric.md) (evidence
   discipline), [post-facto-review](post-facto-review.md) (the 4 triggers).

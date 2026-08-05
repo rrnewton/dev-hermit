@@ -1,18 +1,15 @@
 ---
 name: undraft-does-not-trigger-ci
-description: "gh pr ready does NOT enqueue CI on rrnewton/hermit; ci.yml lacks ready_for_review trigger"
+description: "Historical workflow-trigger observation: do not assume ready-for-review starts or avoids CI; inspect the exact current workflow and use ci-hub for landing state."
 ---
 
-> **CI-HUB** — Current CI code, live query entrypoints, history, runner operations, and health truth are centralized at `ci-hub/README.md`. This memory records role/policy or historical context; do not treat dated paths or state below as the live tool location.
+# Undrafting is not a validation event
 
-`.github/workflows/ci.yml` triggers on `pull_request: branches: [main]` with the
-**default activity types only** (opened/synchronize/reopened) plus push to
-main/frontier. `ready_for_review` is NOT listed, so `gh pr ready <N>` (undraft)
-does **not** enqueue any CI run — including the saturated self-hosted lane.
+An older Hermit workflow omitted `ready_for_review`, so undrafting did not start
+CI. Workflow triggers can change. Inspect the workflow at current main before
+making a queue claim, and never use draft status or a trigger assumption as
+validation evidence.
 
-Consequence: undrafting validated draft PRs is safe and does not add queue load.
-This removes the queue-flooding objection when converting drafts to
-ready-for-review. Also: only base=`main` PRs get PR-CI at all; frontier-based
-PRs (common here, see [[base-feature-branches-on-frontier]]) get no pull_request
-CI, only push-to-frontier CI. Separately, the self-hosted lane is main-wide red
-(see [[self-hosted-ci-sigsegv-blocks-all-prs]]).
+Hermit landing uses the exact-head local receipt accepted by
+`ci-hub validate-status`; GitHub runs are supplemental. Undrafting neither
+creates nor invalidates that receipt, while any head change does.

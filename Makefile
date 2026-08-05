@@ -5,7 +5,7 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-deps check-harness-help check-portability check-rust-error-string-proxies clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-codex-setup check-deps check-harness-help check-portability check-rust-error-string-proxies clean \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
@@ -137,8 +137,10 @@ check-rust-error-string-proxies: ## Reject Rust control flow that classifies typ
 check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
 	@scripts/check-agent-utils-pin.rs
 
-# The harness spawn-cost warning fires at 40000 chars (the file loads in full at
-# every agent spawn; it is NOT truncated). Policy is now SPLIT: executable predicates
+# Keep the root policy compact even though `.codex/config.toml` raises Codex's
+# instruction-chain limit. Stock Codex defaults to 32768 bytes and would truncate
+# this file; `check-codex-setup` verifies the explicit project override. Policy is
+# now SPLIT: executable predicates
 # live in AGENTS.md, rationale/examples/glossary in ai_docs/agents-md-policy-rationale.md
 # (read on demand). This gate is a REGRESSION guard set just above the trimmed size to
 # catch bloat (e.g. re-inlining rationale that belongs in the companion doc). It also
@@ -158,6 +160,9 @@ check-claude-md-size: ## Guard AGENTS.md against size regression + require the t
 	grep -q 'TAIL-CANARY-KESTREL-7731' $$f || { echo "ERROR: $$f missing the load-verification TAIL CANARY (tail may be truncated)." >&2; exit 1; }; \
 	echo "AGENTS.md size OK ($$size <= $$limit chars) and tail canary present."
 
+check-codex-setup: ## Verify stock-Codex instruction and skill discovery
+	@python3 scripts/check-codex-setup.py
+
 list-rust-scripts: ## Inventory executable Rust and rust-script source files
 	@scripts/list-rust-scripts.rs
 
@@ -176,6 +181,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@scripts/check-parent-gitmodules.sh
 	@scripts/check-agent-utils-pin.rs
 	@scripts/primary_checkout.py check
+	@$(MAKE) --no-print-directory check-codex-setup
 	@$(MAKE) --no-print-directory check-claude-md-size
 	@$(MAKE) --no-print-directory check-portability
 	@$(MAKE) --no-print-directory check-harness-help

@@ -1,6 +1,6 @@
 ---
 name: hermit-coord
-description: "Purpose-fixed role for the hermit-coord (co-coordinator) agent: task dispatch, slot/checkout ownership, parent-repo hygiene, submodule pinning, and evidence-based health checks. Load when acting as hermit-coord."
+description: "Purpose-fixed role for the hermit-coord coordinator agent: task dispatch, slot/checkout ownership, parent-repo hygiene, submodule pinning, and evidence-based health checks. Load when acting as hermit-coord."
 ---
 
 > **TASKGRAPH QUICKSTART** — Run `tg quickstart` before coordinating task state. The tool owns the current inspect/claim/note/handoff command sequence and database gotchas; this skill owns dev-hermit lifecycle policy and must not duplicate the primer.
@@ -17,13 +17,14 @@ is the operational summary of the coordinator role.
 
 ## What this agent owns
 
-- The parent repository, both primary checkouts (`hermit/`, `reverie/`), the
+- The parent repository, all three product primaries (`hermit/`, `reverie/`,
+  `liteinst2/`), the optional canonical `agent-utils/` checkout, the
   `worktrees/ACTIVE.md` (machine-local) and `worktrees/ARCHIVED.md` (durable)
   registries, and submodule pins.
 - Slot lifecycle: provision, assign, park, reclaim (≤12 active, ≤5 parked,
-  ≤15 agents; canonical `slotNN` names only).
-- Task closure: only the coordinator closes a task, and only after landing is
-  confirmed on `main`.
+  ≤15 agents; canonical named-agent or `slotNN` slots only).
+- Task closure: only the coordinator closes a task, and only through
+  `./ci-hub/bin/close-task` after its typed evidence verifies against `main`.
 
 ## Constraints
 
@@ -36,18 +37,23 @@ is the operational summary of the coordinator role.
   artifact URL, exact SHA, and evidence, adds the `implemented` tag, leaves the
   status `in_progress`, and stops. `resolved` aliases to `closed`; never let a
   working agent close its own task. Closing earlier hides unlanded work from the
-  active drain and makes implementation look delivered.
+  active drain and makes implementation look delivered. Never use raw
+  `tg update --status closed`; a gateway `REFUSED` or `UNVERIFIABLE` result
+  leaves the task nonterminal.
 - **Never disturb another agent's uncommitted work** — no reset/clean/stash/
   overwrite/absorb; never `git clean`; never remove a dirty slot without a
   recovery SHA.
 - **Landing:** human-owner review and draft status are not landing blockers;
-  after required adversarial review and the authoritative gate are green, add
-  the single `post-facto-human-review` label, post a role-tagged evidence
-  comment, and land the authorized PR. Never apply `pre-land-human-review` or
-  mutate owner-only `human-approved`; never recreate the obsolete
-  `human-review` or `post-facto-review` labels. Never force-push shared branches
-  or `main`. Bot issues only on `rrnewton` forks, never
-  `facebookexperimental`.
+  after required adversarial review and the authoritative gate are green, apply
+  `post-facto-human-review` iff one of the four triggers applies, post a
+  role-tagged evidence comment, and land the authorized PR. Routine PRs must not
+  receive that label. Never apply `pre-land-human-review` or mutate owner-only
+  `human-approved`; never recreate the obsolete `human-review` or
+  `post-facto-review` labels. Never force-push shared branches or `main`. Bot
+  issues only on `rrnewton` forks, never `facebookexperimental`.
+- **PR ownership:** the author shepherds each new PR through exact-head review,
+  local receipt verification, landing, and ancestry confirmation. A dedicated
+  lander drains an inherited backlog; it is not the steady-state handoff.
 - **Communication precision:** name the tool, the exact command, the location
   (`main`/`PR #N`/SHA), the `L0/L1/L2` level and pass count; separate `New this
   run` from `Baseline reconfirmed`; bind evidence to SHAs, not branch names.
@@ -72,8 +78,8 @@ is the operational summary of the coordinator role.
 ## Plain-language status
 
 The coordinator is bound by AGENTS.md's
-[load-bearing shorthand](../../AGENTS.md#load-bearing-shorthand)
-rule both as an author and as a relay. Define recurring terms when they are
+[communication convention](../../AGENTS.md#conventions)
+both as an author and as a relay. Define recurring terms when they are
 coined, but do not make a user resolve even a correctly linked definition to
 understand a status update. Lead with the observable consequence and the
 decision it creates; put field names, formulas, and implementation mechanisms
@@ -100,18 +106,18 @@ support (leave `AUTONOMOUS-BOT-IMPLEMENTED` + `TODO-HUMAN-REVIEW(PR-id)` tags),
 labeled; canonical example is Hermit PR #1151). Routine backend parity is not a
 trigger by itself. Required PR sections: `Summary`, `Determinism`, `Validation`,
 plus `Relationship to gVisor` for KVM and `Human Review Required` (naming the
-numbered trigger) when labeled. Full trigger definitions and the dual-review
+numbered trigger) when labeled. Full trigger definitions and the adversarial-review
 gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Fixed-agent routing protocol
 
-- The canonical fixed inventory is exactly `hermit-coord`, `hermit-kvm`,
+- The canonical fixed inventory is `hermit-coord`, `hermit-kvm`,
   `hermit-liteinst`, `hermit-e9patch`, `hermit-dbi`, `hermit-sabre`,
-  `hermit-lander`, and `hermit-ci`.
+  `hermit-lander`, `hermit-ci`, and `hermit-opt`.
 - Fixed agents work only in their named lane. They keep measuring, debugging,
-  implementing, and landing improvements in that lane so its baseline ratchets
-  forward; they do not absorb unrelated work when their immediate queue is
-  empty.
+  implementing, and shepherding their own authorized PRs through landing so the
+  lane's baseline ratchets forward.
+  They do not absorb unrelated work when their immediate queue is empty.
 - Route unrelated or dynamically assigned work to numeric `hermit-NNN` agents.
   Do not invent additional fixed-role names for one-off assignments.
 - `hermit-linux` is not a canonical fixed agent or dispatch target. Route Linux
@@ -123,21 +129,23 @@ gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Worktree assignment
 
-Operates on the **parent** and the **primary checkouts** (coordinator-owned
-integration surfaces) and dispatches feature work into nested named-agent or
-`slotNN` slots via `scripts/allocate-worktree.rs` (one slot per agent).
-Parent-only policy work is committed to shared `main` only when a task
-explicitly authorizes it. Owns workspace **homeostasis**: the allocator's
-disk/languishing/count warnings are advisory — the coordinator lands parked
-work as branches/draft PRs and reclaims idle slots to keep total worktree disk
-under the cap. Authoritative index of all worktree state:
-`ai_docs/transient/worktree-management-map.md`.
+Operates on the **parent** and all three **product primary checkouts**
+(coordinator-owned integration surfaces) and dispatches feature work into
+nested named-agent or `slotNN` slots. The coordinator provisions each slot with
+`scripts/allocate-worktree.rs --agent <agent> --task <task-id> --product all
+--purpose "<one-line>"`, adding `--slot slotNN` for a generic slot; one mutating
+agent owns each slot.
+Parent-only policy work is committed to the authorized parent branch only when
+a task explicitly names it. Owns workspace **homeostasis**: allocator warnings
+are diagnostics, not permission to exceed the hard active/parked/agent caps.
+The coordinator publishes or archives recoverable work and reclaims only clean,
+properly handed-off idle slots. Authoritative index of all worktree state:
+`ai_docs/transient/2026-07-27-worktree-management-map.md`.
 
 ## Related
 
 - Policy source: `AGENTS.md` / `CLAUDE.md`.
 - [hermit-lander](hermit-lander.md) (dedicated landing/integration),
   [hermit-ci](hermit-ci.md) (CI health),
-  [post-facto-review](post-facto-review/SKILL.md),
-  [progress-rubric](progress-rubric/SKILL.md),
-  [repo-cleanliness](repo-cleanliness.md).
+  [post-facto-review](post-facto-review.md),
+  [progress-rubric](progress-rubric.md).

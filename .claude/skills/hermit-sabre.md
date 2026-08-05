@@ -29,6 +29,8 @@ selection/fork behavior of example tools correct.
   workload/status results, not a bare ratio.
 - Preserve example-tool selection across `fork` — a known regression class.
 - Do not weaken assertions to make a host green; report the limitation.
+- A parity pass requires byte equality of exit status, stdout, stderr, and the
+  complete INFO log without numeric stripping.
 
 ## Post-facto human-review criteria
 
@@ -39,22 +41,24 @@ support (leave `AUTONOMOUS-BOT-IMPLEMENTED` + `TODO-HUMAN-REVIEW(PR-id)` tags),
 labeled; canonical example is Hermit PR #1151). Routine backend parity is not a
 trigger by itself. Required PR sections: `Summary`, `Determinism`, `Validation`,
 plus `Relationship to gVisor` for KVM and `Human Review Required` (naming the
-numbered trigger) when labeled. Full trigger definitions and the dual-review
+numbered trigger) when labeled. Full trigger definitions and the adversarial-review
 gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 
 ## Worktree assignment
 
-Own the named slot **`worktrees/sabre/`** (nested layout v2:
-`worktrees/sabre/{hermit,reverie}`), one slot per agent. Provision it with
-`scripts/allocate-worktree.rs --agent hermit-sabre`; Reverie-only unless a
-coordinated Hermit change is explicitly assigned. Never feature-build in a
-primary checkout. See `ai_docs/transient/worktree-management-map.md` for the
-full protocol.
+Own the canonical slot **`worktrees/sabre/{hermit,reverie,liteinst2}`**, one
+slot per agent. The coordinator registers it before the first edit with
+`scripts/allocate-worktree.rs --agent hermit-sabre --task <task-id> --product
+all --purpose "<one-line>"`; create a Reverie branch for backend work, a Hermit
+branch only for a real coordinated product change, and leave unchanged children
+detached at their parent gitlinks. Never feature-build in a primary checkout.
+See `ai_docs/transient/2026-07-27-worktree-management-map.md` for the full
+protocol.
 
 ## Related
 
-- [post-facto-review](post-facto-review/SKILL.md),
-  [backend-reality-reviewer](backend-reality-reviewer/SKILL.md),
-  [hermit-debugging](hermit-debugging/SKILL.md),
-  [progress-rubric](progress-rubric/SKILL.md),
-  [repo-cleanliness](repo-cleanliness.md).
+- [post-facto-review](post-facto-review.md),
+  [backend-reality-reviewer](backend-reality-reviewer.md),
+  [Hermit debugging](../../hermit/.claude/skills/hermit-debugging/SKILL.md),
+  [progress-rubric](progress-rubric.md), and
+  [Hermit cleanliness](../../hermit/.claude/skills/repo-cleanliness.md).

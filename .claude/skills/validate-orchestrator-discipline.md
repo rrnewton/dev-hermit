@@ -1,6 +1,6 @@
 ---
 name: validate-orchestrator-discipline
-description: "Coordinator behavior around validate: never claim green without a completed durable log; run detached (agents recycle); when RED don't stall on protocol, tight-loop the failing cell; interrogate surprising ratios; never present a fabricated number as a measurement; verify repeatedly-stated architectural directives are actually in effect"
+description: "Coordinator discipline for Hermit validation: require an exact-SHA durable log, launch full runs through systemd-run --user, tight-loop focused failures without bypassing review or landing gates, and verify measurements and running mechanisms."
 ---
 
 Coordinator/orchestrator discipline for running `validate` and reporting its
@@ -31,19 +31,20 @@ inheritance; read both.
    remembered outcome is NOT green. State the log path and the SHA, or do not say
    green.
 
-2. **Run validate detached, because agents recycle.** A full validate outlives an
-   agent's context window; if it runs inline, recycling loses it and its result.
-   Launch it detached (`nohup … > /tmp/…-<sha>.log 2>&1 &` or a background task)
-   writing a durable timestamped log, and hand off the log path + SHA so the next
-   agent can read the outcome. Never gate a turn on a foreground full run.
+2. **Run validate through the durable producer path, because agents recycle.**
+   A full validate outlives an agent's context window. Use the `systemd-run
+   --user` form in `AGENTS.md`, with an explicit worktree, exact SHA, unit name,
+   and durable log. Direct sandbox execution and ad-hoc `nohup` jobs do not
+   establish the required cgroup/producer binding. Hand off the unit, log path,
+   and SHA so a replacement can verify completion.
 
-3. **When main is already RED, do not stall on protocol — tight-loop the failing
-   cell.** State-dependent gating: when GREEN, protect it with full gates; when
-   ALREADY RED, a fix cannot make it worse, so ship the fix immediately and
-   iterate on the specific failing node (`validate.sh --only <node>` /
-   `ci/run-node.sh`), NOT the whole 40-50 min DAG. Slow validate is post-hoc
-   CONFIRMATION, never the inner loop. Do not block a red-clearing fix on
-   land-lock ceremony, adversarial-review latency, or a full re-run first.
+3. **When main is already RED, tight-loop the failing cell without weakening
+   publication gates.** Iterate on the specific failing node (`validate.sh
+   --only <node>` / `ci/run-node.sh`) rather than rerunning the whole DAG after
+   every edit. Before publication or landing, still satisfy the task's review,
+   exact-head receipt verification and landing-lock requirements. A
+   red baseline changes debugging order; it does not authorize an unreviewed or
+   unverifiable merge.
 
 4. **Interrogate a surprising ratio; never just route it.** An unexpected
    pass/fail ratio, a suspiciously round number, or a result that contradicts a
@@ -65,7 +66,7 @@ inheritance; read both.
    reality (e.g. `--cgroups` is a no-op today; ALL DAG nodes lack `cpu_timeout`).
    Report the delta between the stated directive and the verified state.
 
-See [[validate-sh-rr-compat-counter-conflict]] and
-[[pr-landing-mechanics-merge-gate-uptodate-chase]] for adjacent mechanics, and
-[[safe-ci-dag-runner-cgroup-default-and-cpu-timeout-branches]] for the current
-runner boxing/timeout state.
+See [compatibility-counter rebases](validate-sh-rr-compat-counter-conflict.md)
+and the [historical landing alias](pr-landing-mechanics-merge-gate-uptodate-chase.md)
+for adjacent context. Query ci-hub and the running cgroup for current runner
+boxing and timeout state; do not trust a dated skill claim.

@@ -16,19 +16,19 @@ branches show main's advance as thousands of phantom "deletions" (e.g. validate.
 -884, whole dirs deleted). Check merge-base staleness (`rev-list --count mb..origin/main`).
 
 **Finding (the premise is usually FALSE):** nearly all "un-PR'd" survivors are
-one of: (a) SUPERSEDED by a merged PR (same crate/files already on main — verify
-with `git ls-tree origin/main` + `gh pr list --search "<title> in:title"`), (b)
-OWNED in-progress work in an active slot (see [[parked-slot-reuse-is-racy]],
-[[detached-clean-merged-slot-can-be-busy]]) — do not poach, (c) stale rebase/CI
-helper variants, or (d) stale-frontier (frontier is deleted, see
-[[base-feature-branches-on-frontier]]). Real orphaned completed work is rare.
+one of: (a) superseded by a merged PR (verify content on freshly fetched main
+and merge ancestry), (b) owned in-progress work in an active or uncertain slot
+(see [parked-slot races](parked-slot-reuse-is-racy.md) and
+[busy clean slots](detached-clean-merged-slot-can-be-busy.md)) — do not poach,
+(c) stale rebase/CI helper variants, or (d) obsolete frontier work (see
+[main-only branches](base-feature-branches-on-frontier.md)). Real orphaned
+completed work is rare.
 
 The one genuine case this sweep found: coordinated pair
 `fix-dbi-pid-virtualization-slot113` (reverie DBI PID/TID virtualization
 `native/client.c` + hermit procfs virtual-PID normalization + L2 regression) —
 net-new, pushed to origin on both repos, no PR, no active owner. Published as
-DRAFT reverie#106 + hermit#723 (cross-linked). Deliberately NOT labeled
-`locally-validated`: base was 39/11 commits stale (predates #712 validate.sh
-restructure), so a head-gate would false-bless. Land reverie dep first, repin,
-then validate consumer — see cross-repo rule. Don't apply the gate label to a
-stale-based draft.
+DRAFT reverie#106 + hermit#723 (cross-linked). It was deliberately not treated
+as validated because its base was stale. Land the lower-level dependency first,
+repin, rebase, and obtain a new exact-head receipt for the final consumer. Never
+type a validation label by hand; it is a cache derived by the semantic verifier.

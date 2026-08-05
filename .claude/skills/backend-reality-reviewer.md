@@ -30,8 +30,10 @@ gate: [post-facto-review](post-facto-review.md); policy in `AGENTS.md`.
 - Never close a backend milestone task for work on an unlanded branch.
 - At implementation handoff, post the PR and exact SHA, add the `implemented`
   tag, leave status `in_progress`, and stop. The coordinator closes only after
-  proving the commit is on `main`; closing sooner hides the unlanded backend
-  from the active drain and makes implementation look delivered.
+  proving the commit is on `main` through `./ci-hub/bin/close-task <task>
+  --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>`; never use a
+  raw terminal-status update. Closing sooner hides the unlanded backend from the
+  active drain and makes implementation look delivered.
 
 ## Deep Code-Path Audit
 
@@ -40,7 +42,9 @@ Before assigning a backend score, trace and record the literal implementation pa
 1. Trace `--backend X` from CLI parsing and dispatch to `Detcore<XxxGuest>`; identify any path that bypasses Detcore.
 2. Inspect `run_kvm()` and `run_dbi()`. Each must instantiate `detcore::Config` and construct a real Detcore tool (or the exact shared Detcore construction used by ptrace).
 3. Trace representative syscalls from backend interception into Detcore handlers and back to the guest; determine whether they are determinized or merely passed through to the host.
-4. Capture INFO logs for the same program under ptrace and backend X, then compare whether both paths show equivalent syscall interception and Detcore handling.
+4. Capture exit code, stdout, stderr, and complete INFO logs for the same program
+   under ptrace and backend X. Compare bytes without stripping numbers,
+   addresses, branch counts, virtual-time values, or durations.
 5. **If backend X bypasses Detcore, its score is B0 regardless of test passes, program output, or Guest implementation completeness.**
 6. **A backend milestone is not done until this code is on `main`; a feature branch is in progress and an open PR is in review.** Confirm the command on `main` before closing the milestone.
 
@@ -50,7 +54,7 @@ Record exact `file:line -> symbol -> symbol` paths, commands, and literal output
 
 A backend is REAL if and only if:
 
-1. **`hermit run --backend X --strict --verify -- echo hello` exits 0 on main branch**
+1. **`hermit run --backend X --strict --verify -- echo hello` exits 0 on an exact current-main SHA and its verifier compares every required channel**
    - If --backend flag doesn't exist on main: NOT a real backend yet
    - If it exists but ignores the program (canned output): FAKE
 
@@ -64,7 +68,8 @@ A backend is REAL if and only if:
 
 4. **Arbitrary programs run**: test at least 3 real programs (echo, true, cat)
    - All must produce correct output
-   - All must pass --verify (determinism check)
+   - All must pass strict verification of exit code, stdout, stderr, and full
+     INFO logs without value stripping
 
 5. **hermit-cli links the backend**: check Cargo.toml dependencies
    - If hermit-cli doesn't depend on reverie-xxx: not wired in

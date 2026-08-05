@@ -1,5 +1,6 @@
 # Agent and local runtime state
-/.agents/
+/.agents/*
+!/.agents/skills/
 /.agent-locked
 /.agent-continuations/
 /.orc/
