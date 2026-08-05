@@ -56,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
 
 from check_outcome import CheckOutcome, classify_check, select_latest_checks
+from validate.flake_class import executed_plausibility
 
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
 CI_HUB_BIN = Path(os.environ.get("CI_HUB_BIN", ROOT / "ci-hub/ci-hub"))
@@ -207,6 +208,20 @@ class RepoStatus:
     # kept out of the red buckets; this is what reconciles a GitHub ``green=0``
     # with banked local greens (they measure different authorities).
     green_local: int = 0
+    # Open-PR heads whose EXACT SHA carries only a NON-durable failure in the LOCAL
+    # validate ledger — a red the ledger-side executed_tests gate already demotes
+    # (validate_status::failure_disposition / flake_class.executed_plausibility).
+    # ``ledger_no_result`` = the local run executed <= 1 test (a NO-RESULT wearing a
+    # red badge); ``ledger_needs_rerun`` = a partial suite below the plausible-full
+    # floor. Both are demoted OUT of real_reds: the GitHub product red is not
+    # corroborated by any complete local run, so it must not mark the fleet
+    # unhealthy or block landing as a genuine break. This is the SYMMETRIC peer of
+    # green_local — green_local rescues a GitHub red the ledger proved GREEN;
+    # these demote a GitHub product red the ledger proved was a no-result/partial.
+    # A ledger row that ran the full suite and genuinely failed (tier "ok") is NOT
+    # counted here — it stays a real product red.
+    ledger_no_result: int = 0
+    ledger_needs_rerun: int = 0
     available: bool = True
     reason: str = ""
 
@@ -526,15 +541,84 @@ def banked_green_commits(
     return frozenset(commits)
 
 
+# Strength order for a per-SHA failure tier: a genuine full-suite failure ("ok",
+# i.e. a durable red) dominates a partial run ("needs-rerun"), which dominates a
+# ran-nothing no-result. When a head has several fail rows, the STRONGEST wins —
+# one complete failing run at a SHA makes it a real red even if other runs there
+# ran nothing (e.g. 71bc3856: exec=515 needs-rerun AND exec=765 full failure => ok).
+_FAILURE_TIER_STRENGTH = {"no-result": 0, "needs-rerun": 1, "ok": 2}
+
+
+def banked_failure_tier_commits(
+    repo: str, *, ledger_rel: str = "ignored/validate-run-ledger.jsonl"
+) -> dict[str, str]:
+    """Map each ``repo`` head SHA that FAILED locally to its strongest failure tier.
+
+    The symmetric peer of :func:`banked_green_commits`. That function dereferences
+    the ledger's canonical GREEN verifier (``qualified-rows``); there is no
+    equivalent binary command for reds, so we read the same machine-local ledger
+    directly and apply the ONE shared executed-count predicate,
+    :func:`executed_plausibility` (mirrored in the Rust ``failure_disposition``),
+    to each fail/timeout row. The returned tier is ``"no-result"`` (the local run
+    executed <= 1 test), ``"needs-rerun"`` (a partial suite below the plausible-full
+    floor), or ``"ok"`` (a full-suite run that genuinely failed). Binding is by
+    EXACT full commit SHA — an identity link, not a proxy.
+
+    Degrades to an empty map when the ledger is absent/unreadable (a 3pai host, a
+    fresh clone), exactly like :func:`banked_green_commits`: pr-status must ALWAYS
+    report, never fail, so a missing ledger reverts to the prior GitHub-only view.
+
+    LIMITATION (stated by design): the ledger is machine-local — most PR heads have
+    NO local row here, so this can only demote a red where a fail/timeout row
+    exists at the EXACT head SHA. A head red only on hosted CI keeps its GitHub
+    verdict untouched.
+    """
+    name = repo.rsplit("/", 1)[-1]
+    path = ROOT / ledger_rel
+    try:
+        text = path.read_text()
+    except OSError:
+        return {}
+    tiers: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or row.get("result") not in ("fail", "timeout"):
+            continue
+        cwd = str(row.get("cwd") or "")
+        row_repo = row.get("repo") or ("reverie" if "/reverie" in cwd else "hermit")
+        if row_repo != name:
+            continue
+        sha = row.get("commit")
+        if not isinstance(sha, str) or not sha:
+            continue
+        tier = executed_plausibility(row)
+        prev = tiers.get(sha)
+        if prev is None or _FAILURE_TIER_STRENGTH[tier] > _FAILURE_TIER_STRENGTH[prev]:
+            tiers[sha] = tier
+    return tiers
+
+
 def _classify_gh_prs(
-    repo: str, raw: list, banked_green: frozenset[str] = frozenset()
+    repo: str,
+    raw: list,
+    banked_green: frozenset[str] = frozenset(),
+    banked_failure: dict[str, str] | None = None,
 ) -> RepoStatus:
+    if banked_failure is None:
+        banked_failure = {}
     prs: list[dict[str, object]] = []
     review_protocol: list[ReviewProtocolStatus] = []
     mechanism_overlaps = _mechanism_overlaps(raw)
     green = red = pending = real_reds = undetermined_reds = 0
     product_reds = gate_reds = 0
     green_local = 0
+    ledger_no_result = ledger_needs_rerun = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -566,6 +650,9 @@ def _classify_gh_prs(
         # GitHub check (e.g. the blanket self-hosted red) — the head IS validated,
         # so it is not a real red, and green=0 is a GitHub-display artifact.
         ledger_green = bool(head_sha) and head_sha in banked_green
+        # Third authority (symmetric with ledger_green): the strongest LOCAL failure
+        # tier at this exact head. "" when no local fail row exists.
+        failure_tier = banked_failure.get(head_sha, "") if head_sha else ""
         red_class = ""
         real_red_kind = ""
         if ci == "red" and ledger_green:
@@ -585,8 +672,6 @@ def _classify_gh_prs(
                 red_class = "undetermined"
                 undetermined_reds += 1
             else:
-                red_class = "real-red"
-                real_reds += 1
                 # Refine the real-red: gate-only (lacks receipt/review) vs a
                 # genuine product break. An unnamed/empty failing set falls to
                 # "product" so a red is never hidden by the split.
@@ -594,9 +679,31 @@ def _classify_gh_prs(
                     entry.get("statusCheckRollup"), head_sha=head_sha
                 )
                 if fails and all(_is_gate_meta_check(name) for name in fails):
+                    # A landing-gate/review meta-check red is a genuine blocker
+                    # regardless of the test count (review is missing, receipt is
+                    # missing) — a DIFFERENT authority than the validate ledger, so
+                    # the executed_tests carve-out does NOT apply. Keep it a real red.
+                    red_class = "real-red"
+                    real_reds += 1
                     real_red_kind = "gate"
                     gate_reds += 1
+                elif failure_tier == "no-result":
+                    # A product-looking GitHub red whose EXACT head ran <= 1 test
+                    # locally: a NO-RESULT wearing a red badge, not a corroborated
+                    # break. Demote OUT of real_reds (merge-gate WAIT, not FAIL).
+                    red_class = "ledger-no-result"
+                    ledger_no_result += 1
+                elif failure_tier == "needs-rerun":
+                    # Product red whose only local run was a partial suite below the
+                    # plausible-full floor — not durable evidence of a break; re-run
+                    # before condemning. Demoted out of real_reds.
+                    red_class = "ledger-needs-rerun"
+                    ledger_needs_rerun += 1
                 else:
+                    # No local row, or a full-suite local run that genuinely failed
+                    # (tier "ok") — a real product break.
+                    red_class = "real-red"
+                    real_reds += 1
                     real_red_kind = "product"
                     product_reds += 1
         elif ci == "green":
@@ -616,6 +723,7 @@ def _classify_gh_prs(
                 "red_class": red_class,
                 "real_red_kind": real_red_kind,
                 "ledger_green": ledger_green,
+                "ledger_failure_tier": failure_tier,
                 "mergeable": mergeable or "UNKNOWN",
                 "merge_state": merge_state or "UNKNOWN",
                 "title": entry.get("title", ""),
@@ -637,6 +745,8 @@ def _classify_gh_prs(
         product_reds=product_reds,
         gate_reds=gate_reds,
         green_local=green_local,
+        ledger_no_result=ledger_no_result,
+        ledger_needs_rerun=ledger_needs_rerun,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -686,6 +796,7 @@ def fetch_repo_status_gh(
             timeout=timeout,
         ),
         banked_green_commits(repo),
+        banked_failure_tier_commits(repo),
     )
 
 
@@ -1125,11 +1236,25 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         local = (
             f" green_local={status.green_local}" if status.green_local else ""
         )
+        demoted = ""
+        if status.ledger_no_result or status.ledger_needs_rerun:
+            demoted = (
+                f" ledger_no_result={status.ledger_no_result}"
+                f" ledger_needs_rerun={status.ledger_needs_rerun}"
+            )
         lines.append(
             f"  {status.repo}: open={status.open} green={status.green}{local} "
             f"red={status.red} pending={status.pending} real_reds={status.real_reds}"
-            f"{split}{undet} outage={'yes' if status.outage_suspected else 'no'}"
+            f"{split}{demoted}{undet} outage={'yes' if status.outage_suspected else 'no'}"
         )
+        if status.ledger_no_result or status.ledger_needs_rerun:
+            lines.append(
+                f"    ledger: {status.ledger_no_result} red PR head(s) ran <= 1 test "
+                f"locally (NO-RESULT) and {status.ledger_needs_rerun} ran a partial "
+                "suite (NEEDS-RERUN) at the exact head — demoted OUT of real_reds; the "
+                "GitHub product red is uncorroborated by any complete local run "
+                "(executed_tests carve-out, see ledger_failure_tier flag)"
+            )
         if status.green_local:
             lines.append(
                 f"    ledger: {status.green_local} open head(s) carry an "
