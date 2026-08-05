@@ -88,12 +88,57 @@ Cooldown proven: rerunning case C immediately → `suppressed-by-cooldown`, 0 es
 once/hour). Threshold is DERIVED, stated with the number in script and message: **15 min = 3 × the
 measured 5-min interval** (N=3 tolerates 2 consecutive missed ticks; the 3rd trips it).
 
+**Negative side over N real observed cycles (not just a fixture).** The positive control (`ALARM:
+TIMER DEAD` firing on a dead timer) is the half people skip — proving it fires matters as much as
+proving it stays quiet. Both directions are proven. The live `hermit-health-staleness.log` shows
+`grep -c 'ALARM: TIMER DEAD' == 0`: across ~9 consecutive real staleness-timer cycles (00:35→01:51Z)
+with the heartbeat advancing every 5 min, the TIMER-DEAD branch fired **zero** times — it does NOT
+fire under normal operation. An alarm that never fires and one that always fires are equally useless;
+this one is silent when healthy and loud when dead.
+
+### UNKNOWN ≠ HEALTHY (fire text says what it could NOT verify)
+
+The original design's defect was that a silent monitor read as healthy. The alarm text now makes the
+distinction explicit so UNKNOWN and HEALTHY can never render the same:
+- dead timer → `no tick observed in Nmin … tick-hub state is UNKNOWN, NOT healthy — this alarm
+  verifies liveness only and just lost it; a stale heartbeat is not a clean bill of health.`
+- missing log → `No tick has EVER been observed: tick-hub state is UNKNOWN, NOT healthy (absence of a
+  tick is not proof of health — UNKNOWN and HEALTHY are different).`
+
+### What this alarm CANNOT see (stated plainly, not left implied)
+
+The alarm verifies two things by file mtime: the timer FIRED (heartbeat freshness = liveness) and a
+tick did PRODUCTIVE work (fired-state freshness). It does **not** verify that a firing tick's internal
+health checks actually ran and meant anything. **A tick that fires on schedule and returns rc=0 while
+its checks silently no-op — accepted, running, verifying nothing (the `--cgroups` shape) — would
+advance both signals and read here as HEALTHY.** Closing that gap requires the tick to emit a
+positive, counted receipt ("polled main @SHA, N checks executed") and the alarm to assert on that
+count, not merely on freshness. Until then this alarm proves the monitor is ALIVE, not that its work
+is CORRECT. This blind spot is now documented in the script header, not left implied.
+
 ## Residuals (tracked elsewhere, not this audit)
 
 - agent-utils pin drift freezes the *productive* fired-state (health-tick self-gates rc=1). Benign
   while the heartbeat advances; correctly classified WORK-GATED, not paged as dead. Owned by the
   dirty-checkout agent.
-- Escalation push via `scripts/orc-hermit-msg.py` (coordinator-pane detection) is unreliable; the
-  alarm still logs durably to `staleness.log`. Tracked on sibling `tickhub-auto-invoke-ci-hub-health`.
+- Escalation push via `scripts/orc-hermit-msg.py` is CONFIRMED broken machine-wide (every relay —
+  staleness alarm, perf-relay, alignment reminders — fails identically: "coordinator pane did not
+  show the expected empty Orc input box" / "found 0 coordinators"). This is shared tmux-relay infra,
+  not a tick-hub defect. The alarm's `page()` no longer paints over it: it now logs
+  `alerted-coordinator (push OK)` ONLY on a successful push and `escalation-PUSH-FAILED …
+  coordinator was NOT reached … read this log directly` otherwise — "pushed" and "tried-but-failed"
+  no longer render the same. The **durable `staleness.log` is the reliable sink** (survives agent
+  recycling); the push transport repair is a separate cross-cutting concern.
 
-No source changes in this audit; all fixture testing was non-destructive.
+## Deliverables added on owner review (2026-08-04, co-coord opus-4.8)
+
+Live script `~/.local/bin/hermit-health-staleness.sh` (backup `…​.bak-preunknown-1785895329`),
+re-proven both ways after each change (`bash -n` clean; negative→silent, positive→fires; live
+artifacts untouched, fired-state `1785772443`):
+1. Negative side proven over N real cycles (0 TIMER-DEAD in 9 healthy cycles), not only a fixture.
+2. Fire text now says what it could NOT verify — UNKNOWN ≠ HEALTHY (both TIMER-DEAD branches).
+3. The blind spot (fires-but-silently-no-ops, the `--cgroups` shape) stated plainly in the header.
+4. `page()` distinguishes push-succeeded from push-failed so the durable log is honest.
+
+No product source changes; the alarm is machine-local runtime under `~/.local/bin` (its relocation
+into version control is the separate `relocate-tick-hub-config` work). All testing non-destructive.
