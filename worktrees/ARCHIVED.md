@@ -683,3 +683,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | old owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/drainer-5` | drainer-5 / fix_debug_hermit_liteinst | Hermit `39a98a4efa6f64699d5f6df184d96bc60520a063`; no Reverie or LiteInst2 child | The clean `fix/debug-liteinst-attach` branch has zero commits beyond its remote-reachable base. Task evidence records a fresh build and LiteInst 4/4 pass with no product defect or source change. The prior #1200 head remains durable at `8f676313d44e5a57ca27c2f863116c2b668a3b4e`. | The no-change debug task was closed. The 49 GB cache and physical Hermit worktree were preserved; ownership was transferred in place for #1200 recovery without invoking the unsafe global-pruning release path. |
+
+### Legacy slot 275 keyctl recovery (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/275` | hermit-275 / fix-848-keyctl-boundary | Hermit original `4453f8e9c25810803f4106edf7b4e5f488754ce6`; rebased head `f95343aebd532b0959bd5299bec5fbc1e88a812f`; squash-landed main `d79480cf9bc83dcb47b385740fcd1a39c3190456`; no Reverie or LiteInst2 child | The original local-only commit is now preserved exactly at `origin/recovery/20260805-slot275-keyctl-boundary`. It and the rebased head have identical stable patch-id `00772bbdcd736af6c709117f0b7bcadf64afd880`; PR [#976](https://github.com/rrnewton/hermit/pull/976) carries the landed result. | Task `fix-848-keyctl-boundary` is closed. All three physical child paths and Git worktree registrations were already absent, no matching process CWD was live, and the stale released registry row may be removed through the target-scoped release tool without deleting filesystem data. |
