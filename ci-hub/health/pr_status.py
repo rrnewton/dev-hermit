@@ -58,6 +58,7 @@ sys.path.insert(0, str(ROOT / "ci-hub"))
 from check_outcome import CheckOutcome, classify_check, select_latest_checks
 
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
+CI_HUB_BIN = Path(os.environ.get("CI_HUB_BIN", ROOT / "ci-hub/ci-hub"))
 DEFAULT_REPOS = ("rrnewton/hermit", "rrnewton/reverie")
 DEFAULT_WARN_THRESHOLD = 10
 MAX_FETCH_ATTEMPTS = 3
@@ -200,6 +201,12 @@ class RepoStatus:
     # which does not enumerate per-check names).
     product_reds: int = 0
     gate_reds: int = 0
+    # Open-PR heads whose EXACT SHA carries a full-green receipt in the LOCAL
+    # validate ledger — the second authority the GitHub ``green`` count is blind
+    # to. A ledger-green head that GitHub shows red/pending is counted here and
+    # kept out of the red buckets; this is what reconciles a GitHub ``green=0``
+    # with banked local greens (they measure different authorities).
+    green_local: int = 0
     available: bool = True
     reason: str = ""
 
@@ -462,12 +469,72 @@ def _mechanism_overlaps(raw: Sequence[object]) -> tuple[MechanismOverlap, ...]:
     return tuple(overlaps)
 
 
-def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
+def banked_green_commits(
+    repo: str, *, ci_hub_bin: Path = CI_HUB_BIN, timeout: float = 30.0
+) -> frozenset[str]:
+    """Full-green commit SHAs for ``repo`` from the LOCAL validate ledger.
+
+    This is the second authority the every-tick GitHub view is blind to. GitHub
+    ``statusCheckRollup`` is the ONLY thing that feeds ``green``/``gate``; a PR
+    head can be red or pending on GitHub (e.g. the blanket self-hosted red) while
+    LOCAL ``validate.sh`` proved a complete, nonempty PASS at that exact SHA and
+    banked a receipt the merge gate honors. Without this cross-reference the tool
+    reports ``green=0`` even when banked greens exist — the local evidence and the
+    GitHub display never meet, which reads as "no validated work" when the truth is
+    "validated, just not reflected in a GitHub check".
+
+    Binding is by EXACT full commit SHA (an identity link, not a proxy). We do NOT
+    re-derive the green predicate here: we dereference the ONE canonical verifier,
+    ``ci-hub ledger qualified-rows`` (complete, nonempty PASS rows), and bucket by
+    repo. If the ledger/binary is unavailable (e.g. a 3pai host without the parent
+    ledger) we return the empty set — pr-status must ALWAYS report, never fail, so
+    a missing ledger degrades to the prior GitHub-only view, never to an error.
+    """
+    name = repo.rsplit("/", 1)[-1]
+    if not Path(ci_hub_bin).exists():
+        return frozenset()
+    try:
+        result = subprocess.run(
+            [str(ci_hub_bin), "ledger", "qualified-rows"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return frozenset()
+    if result.returncode != 0:
+        return frozenset()
+    commits: set[str] = set()
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or row.get("result") != "pass":
+            continue
+        cwd = str(row.get("cwd") or "")
+        row_repo = row.get("repo") or ("reverie" if "/reverie" in cwd else "hermit")
+        if row_repo != name:
+            continue
+        sha = row.get("commit")
+        if isinstance(sha, str) and sha:
+            commits.add(sha)
+    return frozenset(commits)
+
+
+def _classify_gh_prs(
+    repo: str, raw: list, banked_green: frozenset[str] = frozenset()
+) -> RepoStatus:
     prs: list[dict[str, object]] = []
     review_protocol: list[ReviewProtocolStatus] = []
     mechanism_overlaps = _mechanism_overlaps(raw)
     green = red = pending = real_reds = undetermined_reds = 0
     product_reds = gate_reds = 0
+    green_local = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -493,9 +560,24 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
             "UNKNOWN",
         )
         stale_base = mergeable == "CONFLICTING" or merge_state == "DIRTY"
+        # Second authority: does the LOCAL validate ledger hold a full-green
+        # receipt at THIS exact head SHA? A full-SHA match is an identity bind,
+        # not a proxy. An authoritative local green overrides a stale/absent
+        # GitHub check (e.g. the blanket self-hosted red) — the head IS validated,
+        # so it is not a real red, and green=0 is a GitHub-display artifact.
+        ledger_green = bool(head_sha) and head_sha in banked_green
         red_class = ""
         real_red_kind = ""
-        if ci == "red":
+        if ci == "red" and ledger_green:
+            # GitHub says red, but LOCAL validate proved full green at this SHA.
+            # The local receipt is authoritative and the merge gate honors it, so
+            # this is NOT a real/gate/product red — it is a green whose GitHub
+            # check is stale/self-hosted-blanket. Count it as green_local, keep it
+            # OUT of every red bucket so real_reds (and thus unhealthy) stay honest.
+            red += 1
+            red_class = "ledger-green"
+            green_local += 1
+        elif ci == "red":
             red += 1
             if stale_base:
                 red_class = "stale-base"
@@ -519,14 +601,21 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
                     product_reds += 1
         elif ci == "green":
             green += 1
+            if ledger_green:
+                green_local += 1
         else:
             pending += 1
+            if ledger_green:
+                # Never dispatched on GitHub, but LOCAL validate banked a green at
+                # this SHA — landable via the merge gate; not a no-result.
+                green_local += 1
         prs.append(
             {
                 "pr": number,
                 "ci": ci,
                 "red_class": red_class,
                 "real_red_kind": real_red_kind,
+                "ledger_green": ledger_green,
                 "mergeable": mergeable or "UNKNOWN",
                 "merge_state": merge_state or "UNKNOWN",
                 "title": entry.get("title", ""),
@@ -547,6 +636,7 @@ def _classify_gh_prs(repo: str, raw: list) -> RepoStatus:
         undetermined_reds=undetermined_reds,
         product_reds=product_reds,
         gate_reds=gate_reds,
+        green_local=green_local,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -595,6 +685,7 @@ def fetch_repo_status_gh(
             gh_cmd=gh_cmd,
             timeout=timeout,
         ),
+        banked_green_commits(repo),
     )
 
 
@@ -931,6 +1022,7 @@ def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
                 "available": status.available,
                 "ready_prs": status.open,
                 "green": status.green,
+                "green_local": status.green_local,
                 "real_reds": status.real_reds,
                 "product_reds": status.product_reds,
                 "gate_reds": status.gate_reds,
@@ -981,6 +1073,7 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         assert isinstance(item, dict)
         lines.append(
             "  {repo}: available={available} ready={ready_prs} green={green} "
+            "green_local={green_local} "
             "real_reds={real_reds} (product={product_reds} gate={gate_reds}) "
             "stale_base_reds={stale_base_reds} "
             "undetermined_reds={undetermined_reds} no_result={no_result} "
@@ -1029,11 +1122,21 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         split = ""
         if status.real_reds and status.product_reds + status.gate_reds == status.real_reds:
             split = f" (product={status.product_reds} gate={status.gate_reds})"
+        local = (
+            f" green_local={status.green_local}" if status.green_local else ""
+        )
         lines.append(
-            f"  {status.repo}: open={status.open} green={status.green} "
+            f"  {status.repo}: open={status.open} green={status.green}{local} "
             f"red={status.red} pending={status.pending} real_reds={status.real_reds}"
             f"{split}{undet} outage={'yes' if status.outage_suspected else 'no'}"
         )
+        if status.green_local:
+            lines.append(
+                f"    ledger: {status.green_local} open head(s) carry an "
+                "authoritative LOCAL full-green receipt (landable via merge gate) "
+                "though GitHub shows red/pending — GitHub green=0 is a check-state "
+                "artifact, not absence of validated work (see ledger_green flag)"
+            )
         if status.undetermined_reds:
             lines.append(
                 f"    CAUTION: {status.undetermined_reds} red PR(s) have mergeability "
