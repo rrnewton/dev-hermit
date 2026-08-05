@@ -4,14 +4,47 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_status
+
+
+class ImportPathTests(unittest.TestCase):
+    def test_repo_validate_package_wins_over_installed_namesake(self) -> None:
+        """Match hosted Python, where an unrelated ``validate`` package exists."""
+        repo = Path(__file__).resolve().parents[3]
+        health = repo / "ci-hub" / "health"
+        with tempfile.TemporaryDirectory() as tmp:
+            namesake = Path(tmp) / "validate"
+            namesake.mkdir()
+            (namesake / "__init__.py").write_text("# unrelated package\n")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = tmp
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys; "
+                        f"sys.path.insert(0, {str(health)!r}); "
+                        "import pr_status; "
+                        "assert callable(pr_status.executed_plausibility)"
+                    ),
+                ],
+                cwd=repo,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 def _rollup(*states: tuple[str, str]) -> list[dict]:
