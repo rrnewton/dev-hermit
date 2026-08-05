@@ -124,10 +124,15 @@ ACTIVE.md
 
 # Landing mutex runtime state (see ci-hub/landing/). Machine-local, never committed.
 /.landing-lock
+/.landing-lock.owner
 /.landing-lock.guard
 /.landing-lock.guard.*
 /.landing-lock.queue
 /.landing-lock.queue.*
+
+# PR-sweep command-output capture (stdout/stderr). Transient, never committed.
+/pr_sweep.out
+/pr_sweep.err
 
 # validate-lock box-exclusive admission runtime state (see ci-hub/, validate-lock
 # gate). Same shape as the landing mutex above. Machine-local, never committed.
