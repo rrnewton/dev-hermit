@@ -5,6 +5,13 @@
 **Live-verified HEADs:** reverie primary `8688189a` (main), hermit primary `fc0b76ad` (main). Every
 anchor below Read at these SHAs, NOT inherited from the audit (`f80b1c09`/`04a46b43`) — line numbers moved.
 
+> **INDEPENDENT RE-VERIFICATION (successor, hermit-e9patch opus-4.8, 2026-08-05):** all three links re-Read
+> at the same live SHAs and CONFIRMED — L1 `install()`→`Unsupported` (lifecycle.rs:102-108) + test
+> `hybrid_is_not_yet_installable`; L2 forward (runtime.rs:259); L3 `runtime_backend()` E9patch→Ptrace
+> (run.rs:1714-1719, exact line). Shared-driver #373 substance CONFIRMED present (`drive_tool_syscall`
+> tool_host.rs:222); the earlier "#373 OPEN" note is refuted. This artifact is accurate and current;
+> the sole remaining e9patch blocker is L1. Memory: [[e9patch-reachability-wall-named]].
+
 The owner's ask: the predecessor cited a "reachability wall" as the sole remaining e9patch blocker but
 never described it. This names it. **It is not one wall — it is a three-link chain, and the load-bearing
 link is in reverie, not hermit.** (Distinct from, and NOT to be confused with, the liteinst *rdpmc
