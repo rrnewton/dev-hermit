@@ -251,6 +251,13 @@ class ProtocolTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.store = self.root / "obligations.jsonl"
+        current_local_receipt_patch = mock.patch.object(
+            protocol,
+            "_dereference_current_local_receipt",
+            side_effect=lambda _repo, sha: (True, verified_local_receipt(sha)),
+        )
+        self.current_local_receipt = current_local_receipt_patch.start()
+        self.addCleanup(current_local_receipt_patch.stop)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -1264,6 +1271,78 @@ class ProtocolTest(unittest.TestCase):
         self.assertFalse(protocol._local_launch_durable(record))
         self.assertFalse(protocol.obligation_launch_durable(record))
 
+    def test_persisted_receipt_matches_fresh_canonical_selection(self) -> None:
+        evidence = verified_local_receipt()
+        self.assertTrue(
+            protocol._persisted_local_receipt_valid(
+                evidence, repo="rrnewton/hermit", sha=SHA
+            )
+        )
+        self.current_local_receipt.assert_called_once_with("rrnewton/hermit", SHA)
+        self.current_local_receipt.reset_mock()
+        record = {
+            "repo": "rrnewton/hermit",
+            "landed_sha": SHA,
+            "local": local_green(),
+        }
+        self.assertTrue(protocol._local_launch_durable(record))
+        self.current_local_receipt.assert_called_once_with("rrnewton/hermit", SHA)
+
+    def test_recomputed_outer_hash_cannot_authorize_tampered_receipt(self) -> None:
+        tampered = verified_local_receipt()
+        selected = tampered["report"]["newest_qualifying"]
+        selected["receipt_identity"]["digest"] = "0" * 64
+        canonical = json.dumps(
+            tampered["report"], sort_keys=True, separators=(",", ":")
+        ).encode()
+        # This is the old exploit: the unkeyed outer hash can be recomputed
+        # after changing the alleged selected receipt.
+        tampered["report_sha256"] = hashlib.sha256(canonical).hexdigest()
+
+        self.assertFalse(
+            protocol._persisted_local_receipt_valid(
+                tampered, repo="rrnewton/hermit", sha=SHA
+            )
+        )
+        tampered_fields = verified_local_receipt()
+        selected_fields = tampered_fields["report"]["newest_qualifying"]
+        selected_fields["host"] = "attacker-host"
+        selected_fields["receipt_identity"]["tuple"]["host"] = "attacker-host"
+        canonical_fields = json.dumps(
+            tampered_fields["report"], sort_keys=True, separators=(",", ":")
+        ).encode()
+        tampered_fields["report_sha256"] = hashlib.sha256(
+            canonical_fields
+        ).hexdigest()
+        self.assertFalse(
+            protocol._persisted_local_receipt_valid(
+                tampered_fields, repo="rrnewton/hermit", sha=SHA
+            )
+        )
+        record = {
+            "repo": "rrnewton/hermit",
+            "landed_sha": SHA,
+            "local": {**local_green(), "receipt_verification": tampered},
+        }
+        self.assertFalse(protocol._local_launch_durable(record))
+
+        self.create()
+        obligations.transition(
+            "test-obligation",
+            "tampered-persisted-green",
+            {
+                "local": record["local"],
+                "github": {"state": "no_result"},
+            },
+            self.store,
+        )
+        rebound = protocol.bind_local_receipt_authority("test-obligation", self.store)
+        self.assertEqual(rebound["local"]["state"], "no_result")
+        self.assertIn(
+            "persisted selected receipt does not exactly match",
+            rebound["local"]["classification_reason"],
+        )
+
     def test_executed_terminal_requires_registered_producer_or_policy_skip(
         self,
     ) -> None:
@@ -2260,12 +2339,9 @@ class ProtocolTest(unittest.TestCase):
             "repo": "rrnewton/hermit",
             "reason": "canonical verifier reported no qualifying counted receipt",
         }
-        with mock.patch.object(
-            protocol, "verify_local_receipt", return_value=(False, refused)
-        ):
-            record = protocol.evaluate_obligation(
-                "test-obligation", store_path=self.store
-            )
+        self.current_local_receipt.side_effect = None
+        self.current_local_receipt.return_value = (False, refused)
+        record = protocol.evaluate_obligation("test-obligation", store_path=self.store)
         self.assertEqual(record["local"]["state"], "no_result")
         self.assertEqual(record["overall_state"], "open")
 
@@ -2403,8 +2479,13 @@ class GithubStateClassificationTest(unittest.TestCase):
                 },
                 store,
             )
-            with mock.patch.object(
-                protocol, "github_main_sha", return_value=SHA
+            with (
+                mock.patch.object(protocol, "github_main_sha", return_value=SHA),
+                mock.patch.object(
+                    protocol,
+                    "_dereference_current_local_receipt",
+                    return_value=(True, verified_local_receipt()),
+                ),
             ):
                 record = protocol.evaluate_obligation(
                     "ob-green-local-noresult", store_path=store

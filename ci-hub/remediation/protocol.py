@@ -521,9 +521,11 @@ def _local_receipt_problem(
     return None
 
 
-def _persisted_local_receipt_valid(evidence: object, *, repo: str, sha: str) -> bool:
+def _persisted_local_receipt_problem(
+    evidence: object, *, repo: str, sha: str
+) -> str | None:
     if not isinstance(evidence, Mapping) or evidence.get("state") != "verified":
-        return False
+        return "persisted local receipt is not verified evidence"
     command = evidence.get("command")
     expected_command = [
         str(LOCAL_RECEIPT_AUTHORITY),
@@ -535,20 +537,95 @@ def _persisted_local_receipt_valid(evidence: object, *, repo: str, sha: str) -> 
         "--json",
     ]
     if command != expected_command or evidence.get("repo") != repo:
-        return False
+        return "persisted local receipt is not bound to the requested repo and SHA"
     report = evidence.get("report")
     returncode = evidence.get("returncode")
     if type(returncode) is not int:
-        return False
-    if (
-        _local_receipt_problem(report, repo=repo, sha=sha, returncode=returncode)
-        is not None
-    ):
-        return False
+        return "persisted local receipt has no integer verifier return code"
+    report_problem = _local_receipt_problem(
+        report, repo=repo, sha=sha, returncode=returncode
+    )
+    if report_problem is not None:
+        return report_problem
     if not isinstance(report, Mapping):
-        return False
+        return "persisted local receipt has no canonical verifier report"
     canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
-    return evidence.get("report_sha256") == hashlib.sha256(canonical).hexdigest()
+    if evidence.get("report_sha256") != hashlib.sha256(canonical).hexdigest():
+        return "persisted local receipt report hash does not match its cached report"
+    return None
+
+
+def _dereference_current_local_receipt(
+    repo: str, sha: str
+) -> tuple[bool, dict[str, Any]]:
+    """Call the one canonical exact-SHA local receipt verifier."""
+    return verify_local_receipt(repo, sha)
+
+
+def _compare_persisted_local_receipt(
+    evidence: object, *, repo: str, sha: str
+) -> tuple[bool, dict[str, Any], str | None]:
+    """Compare cached evidence with a fresh canonical selected receipt.
+
+    ``report_sha256`` only detects corruption of the cached outer report.  It is
+    not keyed authority: a writer can change that report and recompute the hash.
+    Every green/durability consumer therefore dereferences ``validate-status``
+    again and requires the exact selected receipt object (including its
+    canonical digest and bound fields) to match the persisted selection.
+    """
+    persisted_problem = _persisted_local_receipt_problem(evidence, repo=repo, sha=sha)
+    current_verified, current = _dereference_current_local_receipt(repo, sha)
+    if persisted_problem is not None:
+        return False, current, persisted_problem
+    if not current_verified:
+        return (
+            False,
+            current,
+            "fresh canonical local receipt refused: "
+            f"{current.get('reason') or 'unknown reason'}",
+        )
+    current_problem = _persisted_local_receipt_problem(current, repo=repo, sha=sha)
+    if current_problem is not None:
+        return (
+            False,
+            current,
+            f"fresh canonical local receipt is invalid: {current_problem}",
+        )
+
+    assert isinstance(evidence, Mapping)
+    persisted_report = evidence["report"]
+    current_report = current["report"]
+    assert isinstance(persisted_report, Mapping)
+    assert isinstance(current_report, Mapping)
+    persisted_selected = persisted_report.get("newest_qualifying")
+    current_selected = current_report.get("newest_qualifying")
+    if persisted_selected != current_selected:
+        return (
+            False,
+            current,
+            "persisted selected receipt does not exactly match the fresh "
+            "canonical selected receipt",
+        )
+    if not isinstance(persisted_selected, Mapping) or not isinstance(
+        current_selected, Mapping
+    ):
+        return False, current, "selected receipt comparison has no receipt object"
+    persisted_identity = persisted_selected.get("receipt_identity")
+    current_identity = current_selected.get("receipt_identity")
+    if not isinstance(persisted_identity, Mapping) or not isinstance(
+        current_identity, Mapping
+    ):
+        return False, current, "selected receipt comparison has no canonical digest"
+    if persisted_identity.get("digest") != current_identity.get("digest"):
+        return False, current, "selected receipt canonical digest changed"
+    return True, current, None
+
+
+def _persisted_local_receipt_valid(evidence: object, *, repo: str, sha: str) -> bool:
+    matches, _current, _problem = _compare_persisted_local_receipt(
+        evidence, repo=repo, sha=sha
+    )
+    return matches
 
 
 def verify_local_receipt(
@@ -683,25 +760,22 @@ def bind_local_receipt_authority(
     local = record.get("local")
     if not isinstance(local, Mapping) or local.get("state") != "green":
         return record
-    if _persisted_local_receipt_valid(
+    matches, current, comparison_problem = _compare_persisted_local_receipt(
         local.get("receipt_verification"), repo=repo, sha=sha
-    ):
+    )
+    if matches:
         return record
-    verified, evidence = verify_local_receipt(repo, sha)
-    patch: dict[str, Any] = {"receipt_verification": evidence}
-    event_type = "local-receipt-bound"
-    if not verified:
-        patch.update(
-            state="no_result",
-            classification_reason=(
-                "canonical-receipt-refused:"
-                f"{evidence.get('reason') or 'unknown reason'}"
-            ),
-        )
-        event_type = "local-bare-green-refused"
+    patch: dict[str, Any] = {
+        "receipt_verification": current,
+        "state": "no_result",
+        "classification_reason": (
+            "persisted-receipt-refused:"
+            f"{comparison_problem or 'unknown persisted/live mismatch'}"
+        ),
+    }
     return obligations.transition(
         obligation_id,
-        event_type,
+        "local-persisted-receipt-refused",
         {"local": patch},
         store_path,
     )

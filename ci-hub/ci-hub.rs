@@ -3347,10 +3347,14 @@ fn gh_open_prs(root: &Path, repo: &str) -> Result<Vec<u64>, CiHubError> {
 }
 
 const LOCALLY_VALIDATED_LABEL: &str = "locally-validated";
+const VALIDATION_RECEIPT_REPO: &str = "rrnewton/dev-hermit";
+const VALIDATION_RECEIPT_BRANCH: &str = "validation-receipts";
+const RECEIPT_CANONICALIZATION: &str = "serde_json::to_vec(HistoryRow)-v1";
 
 #[derive(Clone, Debug)]
 struct QualifyingReceipt {
     row: HistoryRow,
+    canonical_row_json: String,
     selected_tests: i64,
     discovered_tests: i64,
     count_derivation: &'static str,
@@ -3374,12 +3378,13 @@ fn extra_str<'a>(row: &'a HistoryRow, key: &str) -> Option<&'a str> {
     row.extra.get(key).and_then(|value| value.as_str())
 }
 
-fn canonical_row_sha256(row: &HistoryRow) -> Option<String> {
+fn canonical_row_json_and_sha256(row: &HistoryRow) -> Option<(String, String)> {
     // Canonicalization contract v1: serde's struct field order, BTreeMap order
     // for flattened extras, and original Vec order. Any parsed receipt field,
     // gate, count, or unknown extension therefore changes this digest.
-    let bytes = serde_json::to_vec(row).ok()?;
-    Some(format!("{:x}", Sha256::digest(bytes)))
+    let canonical_row_json = serde_json::to_string(row).ok()?;
+    let digest = format!("{:x}", Sha256::digest(canonical_row_json.as_bytes()));
+    Some((canonical_row_json, digest))
 }
 
 fn declared_coverage_satisfied(row: &HistoryRow) -> bool {
@@ -3472,14 +3477,16 @@ fn qualify_canonical_receipt(row: &HistoryRow, sha: &str) -> Option<QualifyingRe
             return None;
         }
     }
+    let (canonical_row_json, canonical_sha256) = canonical_row_json_and_sha256(row)?;
     Some(QualifyingReceipt {
         row: row.clone(),
+        canonical_row_json,
         selected_tests,
         discovered_tests,
         count_derivation:
             "selected_tests=executed_tests;discovered_tests=executed_tests+filtered_tests",
         coverage_basis,
-        canonical_sha256: canonical_row_sha256(row)?,
+        canonical_sha256,
     })
 }
 
@@ -3586,7 +3593,7 @@ fn describe_receipt(receipt: &QualifyingReceipt) -> serde_json::Value {
         "log_file": row.log_file,
         "receipt_identity": {
             "digest_algorithm": "sha256",
-            "canonicalization": "serde_json::to_vec(HistoryRow)-v1",
+            "canonicalization": RECEIPT_CANONICALIZATION,
             "digest": receipt.canonical_sha256,
             "tuple": {
                 "repo": CANONICAL_VALIDATE_REPO,
@@ -4382,6 +4389,330 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
     Ok(assessment.verdict.exit_code())
 }
 
+#[derive(Debug)]
+struct VerifiedPublishedReceipt {
+    receipt_commit: Option<String>,
+    path: String,
+    artifact_sha256: String,
+    selected_digest: String,
+    run_id: String,
+    executed_tests: i64,
+    log_sha256: String,
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// Verify the mechanical publisher returned the exact artifact bytes for the
+/// one row Rust selected. No publisher field can substitute for row equality.
+fn verify_publisher_report(
+    output: &[u8],
+    repo: &str,
+    sha: &str,
+    selected: &QualifyingReceipt,
+    dry_run: bool,
+) -> Result<VerifiedPublishedReceipt, String> {
+    let report: serde_json::Value = serde_json::from_slice(output)
+        .map_err(|error| format!("publisher output is not JSON: {error}"))?;
+    if report
+        .get("schema_version")
+        .and_then(|value| value.as_u64())
+        != Some(1)
+    {
+        return Err("publisher output has unsupported schema".into());
+    }
+    let expected_action = if dry_run {
+        "would-publish"
+    } else {
+        "published"
+    };
+    if report.get("action").and_then(|value| value.as_str()) != Some(expected_action) {
+        return Err(format!("publisher action is not {expected_action}"));
+    }
+    if report
+        .get("receipt_repository")
+        .and_then(|value| value.as_str())
+        != Some(VALIDATION_RECEIPT_REPO)
+        || report
+            .get("receipt_branch")
+            .and_then(|value| value.as_str())
+            != Some(VALIDATION_RECEIPT_BRANCH)
+    {
+        return Err("publisher output is not bound to the canonical receipt repository".into());
+    }
+    let selected_digest = report
+        .get("receipt_identity_sha256")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted selected receipt digest".to_string())?;
+    if selected_digest != selected.canonical_sha256 {
+        return Err("publisher selected receipt digest does not match Rust selection".into());
+    }
+    let path = report
+        .get("path")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted artifact path".to_string())?;
+    let artifact_sha256 = report
+        .get("artifact_sha256")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted artifact digest".to_string())?;
+    let artifact_body = report
+        .get("artifact_body")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted exact artifact body".to_string())?;
+    let actual_artifact_sha256 = format!("{:x}", Sha256::digest(artifact_body.as_bytes()));
+    if !is_sha256(artifact_sha256) || artifact_sha256 != actual_artifact_sha256 {
+        return Err("publisher artifact bytes do not match artifact digest".into());
+    }
+    let expected_path = format!("validation-receipts/{repo}/{sha}/{artifact_sha256}.json");
+    if path != expected_path {
+        return Err("publisher artifact path is not artifact-digest-addressed".into());
+    }
+    let receipt: serde_json::Value = serde_json::from_str(artifact_body)
+        .map_err(|error| format!("publisher artifact body is not JSON: {error}"))?;
+    if receipt.get("repository").and_then(|value| value.as_str()) != Some(repo)
+        || receipt.get("commit").and_then(|value| value.as_str()) != Some(sha)
+    {
+        return Err("publisher artifact is not bound to repository and SHA".into());
+    }
+    let identity = receipt
+        .get("selected_receipt_identity")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "publisher artifact omitted selected receipt identity".to_string())?;
+    if identity
+        .get("digest_algorithm")
+        .and_then(|value| value.as_str())
+        != Some("sha256")
+        || identity
+            .get("canonicalization")
+            .and_then(|value| value.as_str())
+            != Some(RECEIPT_CANONICALIZATION)
+        || identity.get("digest").and_then(|value| value.as_str())
+            != Some(selected.canonical_sha256.as_str())
+    {
+        return Err("publisher artifact receipt identity does not match Rust selection".into());
+    }
+    let expected_row = serde_json::to_value(&selected.row)
+        .map_err(|error| format!("cannot serialize selected row: {error}"))?;
+    if receipt.get("ledger_record") != Some(&expected_row) {
+        return Err("publisher artifact ledger row differs from Rust-selected row".into());
+    }
+    let expected_run_id = format!(
+        "{sha}@{}",
+        selected
+            .row
+            .started_at
+            .as_deref()
+            .ok_or_else(|| "selected row omitted started_at".to_string())?
+    );
+    if receipt.get("run_id").and_then(|value| value.as_str()) != Some(&expected_run_id) {
+        return Err("publisher artifact run identity differs from selected row".into());
+    }
+    let executed_tests = receipt
+        .get("ledger_record")
+        .and_then(|value| value.get("executed_tests"))
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| "publisher artifact omitted selected execution count".to_string())?;
+    let log_sha256 = receipt
+        .get("log_sha256")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher artifact omitted log digest".to_string())?;
+    if !is_sha256(log_sha256) {
+        return Err("publisher artifact log digest is malformed".into());
+    }
+    let receipt_commit = match report.get("receipt_commit") {
+        Some(serde_json::Value::String(value))
+            if !dry_run
+                && is_oid(value)
+                && value.bytes().all(|byte| !byte.is_ascii_uppercase()) =>
+        {
+            Some(value.clone())
+        }
+        Some(serde_json::Value::Null) if dry_run => None,
+        _ => return Err("publisher receipt commit does not match execution mode".into()),
+    };
+    Ok(VerifiedPublishedReceipt {
+        receipt_commit,
+        path: path.to_string(),
+        artifact_sha256: artifact_sha256.to_string(),
+        selected_digest: selected_digest.to_string(),
+        run_id: expected_run_id,
+        executed_tests,
+        log_sha256: log_sha256.to_string(),
+    })
+}
+
+fn publish_selected_receipt(
+    root: &Path,
+    publisher: &Path,
+    ledger: &Path,
+    repo: &str,
+    sha: &str,
+    selected: &QualifyingReceipt,
+    dry_run: bool,
+) -> Result<VerifiedPublishedReceipt, CiHubError> {
+    let ledger_arg = ledger.display().to_string();
+    let mut command = Command::new("python3");
+    command
+        .arg(publisher)
+        .args([
+            "--repo",
+            repo,
+            "--sha",
+            sha,
+            "--ledger",
+            &ledger_arg,
+            "--selected-receipt-sha256",
+            &selected.canonical_sha256,
+            "--canonicalization",
+            RECEIPT_CANONICALIZATION,
+            "--receipt-repo",
+            VALIDATION_RECEIPT_REPO,
+            "--receipt-branch",
+            VALIDATION_RECEIPT_BRANCH,
+        ])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    if let Some(config_dir) = gh_config_dir() {
+        command.env("GH_CONFIG_DIR", config_dir);
+    }
+    let mut child = command.spawn().map_err(|source| CiHubError::Launch {
+        tool: publisher.display().to_string(),
+        source,
+    })?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| CiHubError::ValidateStatus("publisher stdin is unavailable".into()))?
+        .write_all(selected.canonical_row_json.as_bytes())
+        .map_err(|source| CiHubError::Launch {
+            tool: "write publisher selected row".into(),
+            source,
+        })?;
+    let output = child
+        .wait_with_output()
+        .map_err(|source| CiHubError::Launch {
+            tool: publisher.display().to_string(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(CiHubError::ValidateStatus(format!(
+            "mechanical receipt publisher exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    verify_publisher_report(&output.stdout, repo, sha, selected, dry_run)
+        .map_err(CiHubError::ValidateStatus)
+}
+
+fn comment_pages_contain_marker(value: &serde_json::Value, marker: &str) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| comment_pages_contain_marker(value, marker)),
+        serde_json::Value::Object(fields) => fields
+            .get("body")
+            .and_then(|value| value.as_str())
+            .is_some_and(|body| body.contains(marker)),
+        _ => false,
+    }
+}
+
+fn bind_verified_receipt_to_pr(
+    root: &Path,
+    repo: &str,
+    pr: u64,
+    sha: &str,
+    artifact: &VerifiedPublishedReceipt,
+) -> Result<(), CiHubError> {
+    let receipt_commit = artifact
+        .receipt_commit
+        .as_deref()
+        .ok_or_else(|| CiHubError::ValidateStatus("published receipt has no commit".into()))?;
+    let marker = format!(
+        "<!-- locally-validated-receipt commit={receipt_commit} path={} sha256={} -->",
+        artifact.path, artifact.artifact_sha256
+    );
+    let endpoint = format!("repos/{repo}/issues/{pr}/comments?per_page=100");
+    let comments = gh_command(root, &["api", "--paginate", "--slurp", &endpoint])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "gh issue comments".into(),
+            source,
+        })?;
+    if !comments.status.success() {
+        return Err(CiHubError::Gh {
+            context: format!("issue comments #{pr}"),
+            message: String::from_utf8_lossy(&comments.stderr).trim().to_string(),
+        });
+    }
+    let comments_json: serde_json::Value =
+        serde_json::from_slice(&comments.stdout).map_err(|error| {
+            CiHubError::ValidateStatus(format!("invalid issue comments JSON: {error}"))
+        })?;
+    if !comment_pages_contain_marker(&comments_json, &marker) {
+        let pr_arg = pr.to_string();
+        let body = format!(
+            "[coordinator, gpt-5.6-sol]\n\nLocal validation receipt published before applying `{LOCALLY_VALIDATED_LABEL}`.\n\n- SHA: `{sha}`\n- Run ID: `{}`\n- Executed tests: `{}`\n- Receipt identity SHA-256: `{}`\n- Immutable artifact: `{VALIDATION_RECEIPT_REPO}@{receipt_commit}:{}`\n- Artifact SHA-256: `{}`\n- Log SHA-256: `{}`\n\n{marker}",
+            artifact.run_id,
+            artifact.executed_tests,
+            artifact.selected_digest,
+            artifact.path,
+            artifact.artifact_sha256,
+            artifact.log_sha256,
+        );
+        let comment = gh_command(
+            root,
+            &["pr", "comment", &pr_arg, "--repo", repo, "--body", &body],
+        )
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "gh pr comment".into(),
+            source,
+        })?;
+        if !comment.status.success() {
+            return Err(CiHubError::Gh {
+                context: format!("pr comment #{pr}"),
+                message: String::from_utf8_lossy(&comment.stderr).trim().to_string(),
+            });
+        }
+    }
+    let pr_arg = pr.to_string();
+    let label = gh_command(
+        root,
+        &[
+            "pr",
+            "edit",
+            &pr_arg,
+            "--repo",
+            repo,
+            "--add-label",
+            LOCALLY_VALIDATED_LABEL,
+        ],
+    )
+    .output()
+    .map_err(|source| CiHubError::Launch {
+        tool: "gh pr edit locally-validated".into(),
+        source,
+    })?;
+    if !label.status.success() {
+        return Err(CiHubError::Gh {
+            context: format!("pr edit #{pr}"),
+            message: String::from_utf8_lossy(&label.stderr).trim().to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// `ci-hub apply-local-label --pr <N> | --all-open` — close the retroactive gap:
 /// when a commit was validated BEFORE its PR existed, validate.sh could not stamp
 /// `locally-validated`. This applies it to any PR whose head has a clean
@@ -4415,59 +4746,60 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 continue;
             }
         };
-        let verdict = assess_canonical_receipts(&rows, &head, &args.repo)
-            .map_err(CiHubError::ValidateStatus)?
-            .verdict;
-        if verdict != validate_status::Verdict::Validated {
+        let assessment = assess_canonical_receipts(&rows, &head, &args.repo)
+            .map_err(CiHubError::ValidateStatus)?;
+        if assessment.verdict != validate_status::Verdict::Validated {
             println!(
                 "PR #{pr}: skip -- head {} is {}",
                 &head[..12.min(head.len())],
-                verdict.as_str()
+                assessment.verdict.as_str()
             );
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": verdict.as_str()}));
+            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": assessment.verdict.as_str()}));
             continue;
         }
-        // The label is a cache, not evidence. The publisher re-reads the ledger,
-        // requires a counted exact-head row, publishes an immutable receipt, and
-        // only then writes the evidence comment and label. Existing labels also
-        // pass through this path so an unbacked cache entry gets bound or fails.
+        let selected = newest_canonical_receipt(&assessment.qualifying)
+            .expect("validated implies one selected canonical receipt");
+        // Rust selected and hashed this exact strong row. The Python child is a
+        // mechanical artifact publisher: it receives these canonical bytes on
+        // stdin and has no PR-label/comment capability or second row predicate.
         let publisher = root.join("ci-hub/validation/publish_receipt.py");
-        let pr_arg = pr.to_string();
-        let ledger_arg = path.display().to_string();
-        let mut command = Command::new("python3");
-        command
-            .arg(&publisher)
-            .args([
-                "--pr",
-                &pr_arg,
-                "--repo",
-                &args.repo,
-                "--sha",
-                &head,
-                "--ledger",
-                &ledger_arg,
-            ])
-            .current_dir(root);
-        if let Some(config_dir) = gh_config_dir() {
-            command.env("GH_CONFIG_DIR", config_dir);
+        let artifact = match publish_selected_receipt(
+            root,
+            &publisher,
+            &path,
+            &args.repo,
+            &head,
+            selected,
+            args.dry_run,
+        ) {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
+                actions.push(serde_json::json!({"pr": pr, "head": head, "action": "receipt-failed", "detail": error.to_string()}));
+                failed += 1;
+                continue;
+            }
+        };
+        if !args.dry_run {
+            if let Err(error) = bind_verified_receipt_to_pr(root, &args.repo, pr, &head, &artifact)
+            {
+                eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
+                actions.push(serde_json::json!({"pr": pr, "head": head, "action": "bind-failed", "detail": error.to_string()}));
+                failed += 1;
+                continue;
+            }
         }
-        if args.dry_run {
-            command.arg("--dry-run");
-        }
-        let status = command.status().map_err(|source| CiHubError::Launch {
-            tool: publisher.display().to_string(),
-            source,
-        })?;
-        if status.success() {
-            let action = if args.dry_run { "would-bind" } else { "bound" };
-            println!("PR #{pr}: {action} {LOCALLY_VALIDATED_LABEL} to counted exact-head receipt");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": action}));
-            applied += 1;
-        } else {
-            eprintln!("ci-hub: apply-local-label: PR #{pr}: receipt publisher exited nonzero");
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "receipt-failed"}));
-            failed += 1;
-        }
+        let action = if args.dry_run { "would-bind" } else { "bound" };
+        println!("PR #{pr}: {action} {LOCALLY_VALIDATED_LABEL} to counted exact-head receipt");
+        actions.push(serde_json::json!({
+            "pr": pr,
+            "head": head,
+            "action": action,
+            "receipt_identity_sha256": artifact.selected_digest,
+            "artifact_sha256": artifact.artifact_sha256,
+            "path": artifact.path,
+        }));
+        applied += 1;
     }
 
     if args.json {
@@ -4860,10 +5192,7 @@ mod tests {
             "zero_executed_nodes": [],
             "absent_nodes": []
         });
-        schema5_missing_repo
-            .as_object_mut()
-            .unwrap()
-            .remove("repo");
+        schema5_missing_repo.as_object_mut().unwrap().remove("repo");
         assert!(
             qualify_canonical_receipt(&history_row(schema5_missing_repo), RECEIPT_SHA).is_none()
         );
@@ -4886,6 +5215,151 @@ mod tests {
         let first = qualify_canonical_receipt(&first, RECEIPT_SHA).unwrap();
         let second = qualify_canonical_receipt(&second, RECEIPT_SHA).unwrap();
         assert_ne!(first.canonical_sha256, second.canonical_sha256);
+    }
+
+    fn publisher_report_value(selected: &QualifyingReceipt, dry_run: bool) -> serde_json::Value {
+        let receipt = serde_json::json!({
+            "schema_version": 1,
+            "repository": CANONICAL_VALIDATE_REPO,
+            "commit": RECEIPT_SHA,
+            "run_id": format!(
+                "{RECEIPT_SHA}@{}",
+                selected.row.started_at.as_deref().unwrap()
+            ),
+            "source_log_file": selected.row.log_file,
+            "durable_log_file": "/tmp/durable-validate.log",
+            "log_sha256": "e".repeat(64),
+            "selected_receipt_identity": {
+                "digest_algorithm": "sha256",
+                "canonicalization": RECEIPT_CANONICALIZATION,
+                "digest": selected.canonical_sha256,
+            },
+            "ledger_record": selected.row,
+        });
+        let artifact_body = serde_json::to_string(&receipt).unwrap();
+        let artifact_sha256 = format!("{:x}", Sha256::digest(artifact_body.as_bytes()));
+        serde_json::json!({
+            "schema_version": 1,
+            "action": if dry_run { "would-publish" } else { "published" },
+            "receipt_commit": if dry_run { serde_json::Value::Null } else { serde_json::json!("e".repeat(40)) },
+            "receipt_repository": VALIDATION_RECEIPT_REPO,
+            "receipt_branch": VALIDATION_RECEIPT_BRANCH,
+            "path": format!(
+                "validation-receipts/{CANONICAL_VALIDATE_REPO}/{RECEIPT_SHA}/{}.json",
+                artifact_sha256
+            ),
+            "receipt_identity_sha256": selected.canonical_sha256,
+            "artifact_sha256": artifact_sha256,
+            "artifact_body": artifact_body,
+        })
+    }
+
+    #[test]
+    fn mixed_strong_and_newer_weak_selects_one_strong_publisher_input() {
+        let strong = history_row(schema4_receipt_value());
+        let mut weak_value = schema4_receipt_value();
+        weak_value["finished_at"] = serde_json::json!("2026-08-01T12:02:00Z");
+        weak_value["checks"] = serde_json::json!(0);
+        weak_value["gates_run"] = serde_json::json!(0);
+        weak_value["gates_expected"] = serde_json::json!(6);
+        weak_value["gates"] = serde_json::json!([]);
+        let weak = history_row(weak_value);
+        let assessment = assess_canonical_receipts(
+            &[strong.clone(), weak.clone()],
+            RECEIPT_SHA,
+            CANONICAL_VALIDATE_REPO,
+        )
+        .unwrap();
+        assert_eq!(assessment.verdict, validate_status::Verdict::Validated);
+        assert_eq!(assessment.qualifying.len(), 1);
+        let selected = newest_canonical_receipt(&assessment.qualifying).unwrap();
+        assert_eq!(selected.row.checks, strong.checks);
+        assert_ne!(selected.row.finished_at, weak.finished_at);
+        assert_eq!(
+            selected.canonical_row_json.as_bytes(),
+            serde_json::to_vec(&selected.row).unwrap()
+        );
+        let parsed: HistoryRow = serde_json::from_str(&selected.canonical_row_json).unwrap();
+        assert_eq!(parsed.checks, Some(2));
+        assert_eq!(parsed.gates.len(), 2);
+    }
+
+    #[test]
+    fn publisher_report_must_match_selected_digest_and_exact_artifact_bytes() {
+        let selected =
+            qualify_canonical_receipt(&history_row(schema4_receipt_value()), RECEIPT_SHA).unwrap();
+        let positive = publisher_report_value(&selected, true);
+        let verified = verify_publisher_report(
+            serde_json::to_string(&positive).unwrap().as_bytes(),
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap();
+        assert_eq!(verified.selected_digest, selected.canonical_sha256);
+        assert_eq!(verified.receipt_commit, None);
+
+        let mut wrong_receipt_repository = positive.clone();
+        wrong_receipt_repository["receipt_repository"] = serde_json::json!("attacker/fork");
+        let error = verify_publisher_report(
+            serde_json::to_string(&wrong_receipt_repository)
+                .unwrap()
+                .as_bytes(),
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("canonical receipt repository"));
+
+        let mut wrong_selected_digest = positive.clone();
+        wrong_selected_digest["receipt_identity_sha256"] = serde_json::json!("0".repeat(64));
+        let error = verify_publisher_report(
+            serde_json::to_string(&wrong_selected_digest)
+                .unwrap()
+                .as_bytes(),
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("does not match Rust selection"));
+
+        let mut tampered_body = positive.clone();
+        tampered_body["artifact_body"] = serde_json::json!("{}");
+        let error = verify_publisher_report(
+            serde_json::to_string(&tampered_body).unwrap().as_bytes(),
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("artifact bytes"));
+
+        let mut wrong_row = positive;
+        let mut artifact: serde_json::Value =
+            serde_json::from_str(wrong_row["artifact_body"].as_str().unwrap()).unwrap();
+        artifact["ledger_record"]["checks"] = serde_json::json!(0);
+        let artifact_body = serde_json::to_string(&artifact).unwrap();
+        let artifact_sha256 = format!("{:x}", Sha256::digest(artifact_body.as_bytes()));
+        wrong_row["path"] = serde_json::json!(format!(
+            "validation-receipts/{CANONICAL_VALIDATE_REPO}/{RECEIPT_SHA}/{artifact_sha256}.json"
+        ));
+        wrong_row["artifact_sha256"] = serde_json::json!(artifact_sha256);
+        wrong_row["artifact_body"] = serde_json::json!(artifact_body);
+        let error = verify_publisher_report(
+            serde_json::to_string(&wrong_row).unwrap().as_bytes(),
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("differs from Rust-selected row"));
     }
 
     #[test]
