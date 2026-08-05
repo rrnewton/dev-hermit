@@ -300,7 +300,7 @@ def test_eligible_live_receipt_flips_head_landable(tmp_path, monkeypatch) -> Non
     # Validate at Z now completes; the live re-check dereferences the authority.
     # The live path is `receipt_status` (tri-state), NOT the record-time snapshot
     # helper `receipt_at` -- stub the authority the re-check actually calls.
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
+    monkeypatch.setattr(M, "receipt_status", lambda z, *_: {
         "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
     q1 = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
@@ -391,7 +391,7 @@ def test_receipt_status_unknown_on_authority_failure(monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 # CLOSURE BAR: a planted eligible head SURVIVES a validate-status failure       #
 # --------------------------------------------------------------------------- #
-def _unknown_receipt(_z):
+def _unknown_receipt(_z, *_):
     return {"status": M.RECEIPT_UNKNOWN, "identity": None,
             "detail": "validate-status unreachable"}
 
@@ -476,7 +476,7 @@ def test_reconcile_recorded_landable_is_eligible_not_inert(
     monkeypatch.setattr(M, "open_pushed_prs",
                         lambda repo: [{"number": 3, "headRefOid": Z,
                                        "headRefName": "feat", "url": "u"}])
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
+    monkeypatch.setattr(M, "receipt_status", lambda z, *_: {
         "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
     q = M.build_parser().parse_args(
         ["eligible", "--store", store, "--no-recheck-floor", "--json"])
@@ -595,7 +595,7 @@ def test_durable_provenance_recovers_unaccounted_cross_host(
     monkeypatch.setattr(M.gate_floors, "load_floors", lambda p: [])
     monkeypatch.setattr(M.gate_floors, "clears_all",
                         lambda floors, co, base: {"ok": True, "unmet": []})
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
+    monkeypatch.setattr(M, "receipt_status", lambda z, *_: {
         "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
     q = M.build_parser().parse_args(
         ["eligible", "--store", store, "--durable-provenance", "--json"])

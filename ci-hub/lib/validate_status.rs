@@ -10,21 +10,18 @@
 //! (`append_validation_ledger`), this module READS it. There is deliberately no
 //! second table.
 //!
-//! ## The predicate (VALIDATED) — version-aware over a schema transition
+//! ## The predicate (VALIDATED)
 //!
 //! The full rule is "a green must carry what it verified" (AGENTS.md Proxy
 //! Binding, parent da98bdd): a clean, commit-anchored, FULL-profile,
-//! FULL-selection PASS with a nonzero executed-test count AND zero filtered-out.
-//! But the PRODUCER TRAVELS WITH THE BRANCH: a receipt's writer is whatever
-//! `validate.sh` shipped on that PR's branch, and older writers do not emit the
-//! count fields at all. Enforcing the count clauses on EVERY receipt therefore
-//! strands every pre-count receipt (measured 2026-08-04: 35/35 clean full passes
-//! in the ledger flip to NOT-VALIDATED), identically to the bfb0a9ef anchor
-//! transition. So this consumer is VERSION-AWARE: it applies the rule that
-//! matches each receipt's declared capability.
+//! FULL-selection PASS with nonzero execution, satisfied per-node coverage, and
+//! an exact schema-6 `reverie_binding`. The binding must equal both (a) the
+//! revision derived from every tracked Cargo manifest/lockfile at the exact
+//! Hermit commit and (b) one freshly resolved `rrnewton/reverie:main` tip.
 //!
-//! A record satisfies the predicate for a commit iff it is clean,
-//! commit-anchored, FULL-profile, FULL-selection, `result == "pass"`, AND:
+//! A Hermit record satisfies the predicate iff all of these hold:
+//!
+//!   * exact Hermit commit, clean tree, commit anchored, full/full, pass;
 //!   * it passes ONE UNIVERSAL guard that holds at every schema — `executed_tests
 //!     != Some(0)` (a demonstrated zero-test run is a no-result, never green).
 //!     There is NO `filtered_tests` guard: a real full run legitimately filters
@@ -32,35 +29,17 @@
 //!     full green — it is DELETED and superseded by the per-node `coverage`
 //!     obligation, which distinguishes legitimate full-run filtering from a
 //!     narrowed-subset masquerade; AND
-//!   * IF the receipt is count-capable (`schema_version >= COUNTS_SCHEMA`, i.e.
-//!     written by a coverage-emitting writer) it is held to the FULL per-node
-//!     contract: `executed_tests == Some(n>0)` AND a `coverage` object that
-//!     satisfies its obligation (a planned test node set, none inert, none
-//!     absent). Absent counts OR absent coverage from a count-capable writer is a
-//!     writer DEFECT, refused.
-//!   * ELSE IF it carries both counts under an old schema (`aggregate.py`) it
-//!     predates per-node coverage but is held to `executed_tests == Some(n>0)`.
-//!   * ELSE it carries NEITHER count — a genuinely pre-count receipt, or a
-//!     producer that failed to emit counts. It proves neither nonzero execution
-//!     nor bounded filtering, so it is NotValidated (an uncounted receipt is
-//!     UNVERIFIED, not green). The former transition grandfather (accept an
-//!     uncounted clean/full/full/pass) is REMOVED.
+//!   * `executed_tests > 0` and a satisfied coverage object (nonempty planned
+//!     nodes, none inert, none absent); and
+//!   * schema >= 6 with a well-formed binding equal to the fresh exact-head
+//!     cross-repository predicate.
 //!
-//! Why the grandfather is gone: it was a bounded transition allowance that
-//! un-broke the drain while no count-backed greens existed. That precondition is
-//! now met — the backlog is backfilled to schema-5 by `finalize_receipt.py
-//! --scan` and every landing consume-path re-mints count-backed rows from each
-//! green's durable log before reading the ledger (see `ci-hub/validate/scan-finalize.sh`,
-//! wired into `ci-hub/landing/{land-pr,parallel-prevalidate}.sh`). Measured on the
-//! live ledger: post-backfill the removal strands 0 legitimate greens; the sole
-//! refusal (ee303899) is a genuine per-node coverage fail it SHOULD refuse. See
-//! `ai_docs/transition-design-executed-filtered-count-schema-tightening_20260804.md`.
-//! Keying strictness on field PRESENCE (not the `schema_version` integer alone) is
-//! deliberate: the live writers disagree about the version — `aggregate.py` emits
-//! counts under schema 1 while schema 3 and 4 exist WITHOUT counts — so the
-//! condition ("this receipt measured coverage") must travel with the value as the
-//! fields themselves; the schema escalator exists only to catch a count-capable
-//! writer that emits nothing.
+//! Old rows, including schema-4 `reverie_pin_current: true`, fail closed: a
+//! boolean cannot identify which live tip was observed. `finalize_receipt.py
+//! --scan` append-safely derives coverage and mints a schema-6 clone only after
+//! the Rust exact-head predicate succeeds. Reverie validating itself has no
+//! Hermit dependency pin and retains the count/coverage predicate without this
+//! cross-repository clause.
 //!
 //! This is intentionally NEVER LOOSER than `hermit/validate.sh`'s own
 //! `locally-validated` stamp guard, which fires only when
@@ -74,6 +53,7 @@
 //! describes the actual commit, not a dirty tree (the tree is not the commit).
 
 use crate::records::HistoryRow;
+use crate::reverie_pin::ReverieBinding;
 use std::collections::BTreeSet;
 
 /// Canonical ledger path relative to the workspace root. This is the exact file
@@ -180,6 +160,8 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// binary would be dead code (the `-D warnings` clippy gate would reject it).
 #[cfg(test)]
 pub const COUNTS_SCHEMA: u32 = 5;
+#[cfg(test)]
+const BINDING_SCHEMA: u32 = 6;
 
 /// A schema-3+ full-profile run's known gate contract is five gates. When the
 /// producer has not yet written `gates_expected` (it predates that field), a
@@ -215,8 +197,7 @@ pub const EXECUTED_TESTS_NO_RESULT_MAX: i64 = 1;
 /// an expected-suite-size; until then this single floor is the safe temporary.
 pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
 
-/// The landing / cache predicate — version-aware over the count-schema
-/// transition (see the module docs and the transition design note). Over and
+/// The landing / cache predicate. Over and
 /// above clean full coverage (`is_clean_full_coverage`) and `result == "pass"`:
 ///
 ///   * ONE UNIVERSAL GUARD, applied at EVERY schema (grandfather or strict):
@@ -231,28 +212,26 @@ pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
 ///     precisely by the PER-NODE `coverage` obligation below (a subset run leaves
 ///     required nodes absent or inert), and by the profile/selection full-coverage
 ///     gates upstream. `filtered_tests` is retained only as a diagnostic.
-///   * THEN, if the receipt is COUNT-CAPABLE (`schema_version >= COUNTS_SCHEMA`),
+///   * If the receipt is COUNT-CAPABLE (`schema_version >= COUNTS_SCHEMA`),
 ///     it is held to the FULL per-node contract: `executed_tests == Some(n>0)`
 ///     AND a `coverage` object that SATISFIES its obligation. A count-capable
 ///     receipt that omits `coverage` (or the counts) is a writer DEFECT and is
 ///     rejected fail-closed — it was contractually required to emit them.
-///   * ELSE if the receipt CARRIES both counts under an old schema
-///     (`aggregate.py`, schema 1), it predates per-node coverage but can still
-///     prove nonzero execution: held to `executed_tests == Some(n>0)`. (It cannot
-///     be required to carry `coverage` it never emitted.)
-///   * ELSE the receipt carries NEITHER count (a genuinely pre-count receipt, or
-///     a producer that failed to emit them): it proves neither nonzero execution
-///     nor bounded filtering and is NotValidated. The former transition
-///     grandfather (accept-on-absence) is REMOVED now that the backlog is
-///     backfilled to schema-5 and every landing consume-path re-mints count-backed
-///     rows before reading the ledger, so no legitimate green rides this branch.
+///   * A Hermit receipt additionally requires schema >= 6 and an exact
+///     `reverie_binding` equal to the fresh cross-repository authority. Therefore
+///     old count-carrying schemas are still refused for Hermit even though their
+///     count subclause alone can be evaluated.
 ///
 /// Everything short of the applicable rule is NotValidated (exit 4 = re-dispatch),
 /// never FailedOnRecord — an uncounted or under-covered run is UNVERIFIED, not
 /// known-bad. This AGREES with the AGENTS.md Proxy Binding truth table (parent
 /// da98bdd): an evidence value must carry the condition it claims, so a receipt
 /// that carries no count cannot certify execution and is refused.
-pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
+pub fn is_clean_full_pass(
+    row: &HistoryRow,
+    sha: &str,
+    expected_reverie: Option<&ReverieBinding>,
+) -> bool {
     // The predicate itself is NOT restated here — it is the ONE shared
     // qualifying-receipt predicate loaded from `ci-hub/validate/qualifying-receipt.json`
     // (module `qualifying_receipt`), which every consumer across Rust/Python/jq
@@ -260,7 +239,12 @@ pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
     // removes (task
     // `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
     // The doc block above records the SEMANTICS the shared predicate implements.
-    crate::qualifying_receipt::row_qualifies(row, sha, crate::qualifying_receipt::active())
+    crate::qualifying_receipt::row_qualifies(
+        row,
+        sha,
+        crate::qualifying_receipt::active(),
+        expected_reverie,
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -458,7 +442,11 @@ pub struct Assessment {
 
 /// Assess a single commit against all ledger rows. `sha` must be a full 40-hex
 /// commit (resolve prefixes with [`resolve_sha`] first).
-pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
+pub fn assess_with_reverie(
+    rows: &[HistoryRow],
+    sha: &str,
+    expected_reverie: Option<&ReverieBinding>,
+) -> Assessment {
     let mut qualifying = Vec::new();
     let mut disqualified = Vec::new();
     let mut saw_failed = false;
@@ -469,7 +457,7 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
         if row.commit.as_deref() != Some(sha) {
             continue;
         }
-        if is_clean_full_pass(row, sha) {
+        if is_clean_full_pass(row, sha, expected_reverie) {
             qualifying.push(row.clone());
         } else {
             match failure_disposition(row, sha) {
@@ -501,6 +489,15 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
         qualifying,
         disqualified,
     }
+}
+
+/// Unit tests exercise the failure taxonomy without a live network. Their
+/// canonical green fixture carries this exact binding; production has no
+/// two-argument assessment entrypoint and must supply freshly verified state.
+#[cfg(test)]
+pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
+    let expected = ReverieBinding::expected(tests::TEST_REVERIE_SHA);
+    assess_with_reverie(rows, sha, Some(&expected))
 }
 
 /// Pick the most recent qualifying record (by `finished_at` string order, which
@@ -574,6 +571,7 @@ mod tests {
 
     const PASS_SHA: &str = "cde3c1195eee4e2691bac64a4aec10a45aba853e";
     const OTHER_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    pub(super) const TEST_REVERIE_SHA: &str = "dddddddddddddddddddddddddddddddddddddddd";
 
     fn row(json: &str) -> HistoryRow {
         serde_json::from_str(json).expect("valid HistoryRow json")
@@ -585,11 +583,15 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"test-host",
+            r#"{{"schema_version":6,"finished_at":"2026-08-03T19:08:57Z","host":"test-host",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
-                "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90}}"#
+                "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90,
+                "coverage":{{"planned_test_nodes":1,"executed_test_nodes":1,
+                    "zero_executed_nodes":[],"absent_nodes":[]}},
+                "reverie_binding":{{"repository":"rrnewton/reverie","ref":"refs/heads/main",
+                    "pinned_sha":"{TEST_REVERIE_SHA}","resolved_sha":"{TEST_REVERIE_SHA}"}}}}"#
         ))
     }
 
@@ -646,6 +648,21 @@ mod tests {
         assert_eq!(a.verdict, Verdict::Validated);
         assert_eq!(a.verdict.exit_code(), 0);
         assert_eq!(a.qualifying.len(), 1);
+    }
+
+    #[test]
+    fn missing_or_tampered_reverie_binding_is_not_validated() {
+        let mut missing = clean_full_pass(PASS_SHA);
+        missing.reverie_binding = None;
+        assert_eq!(assess(&[missing], PASS_SHA).verdict, Verdict::NotValidated);
+
+        let mut tampered = clean_full_pass(PASS_SHA);
+        tampered
+            .reverie_binding
+            .as_mut()
+            .expect("fixture binding")
+            .resolved_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into();
+        assert_eq!(assess(&[tampered], PASS_SHA).verdict, Verdict::NotValidated);
     }
 
     #[test]
@@ -1082,14 +1099,14 @@ mod tests {
         // `uncounted_pre_count_pass_is_not_validated`. `filtered` alone was never
         // execution evidence.)
         let mut counted = clean_full_pass(PASS_SHA);
-        counted.schema_version = Some(1); // aggregate.py, counts present
+        counted.schema_version = Some(BINDING_SCHEMA);
         counted.executed_tests = Some(749);
         counted.filtered_tests = Some(693);
         assert_eq!(assess(&[counted], PASS_SHA).verdict, Verdict::Validated);
     }
 
     #[test]
-    fn old_schema_carrying_counts_validates_on_nonzero_execution() {
+    fn old_schema_carrying_counts_is_refused_without_dependency_binding_schema() {
         // aggregate.py stamps schema_version 1 but DOES emit both counts. It
         // predates per-node coverage, so it is held to the strongest thing it can
         // prove: NONZERO execution. `filtered` no longer gates (a positive count
@@ -1100,7 +1117,7 @@ mod tests {
         ok.schema_version = Some(1);
         ok.executed_tests = Some(47);
         ok.filtered_tests = Some(0);
-        assert_eq!(assess(&[ok], PASS_SHA).verdict, Verdict::Validated);
+        assert_eq!(assess(&[ok], PASS_SHA).verdict, Verdict::NotValidated);
 
         let mut zero = clean_full_pass(PASS_SHA);
         zero.schema_version = Some(1);
@@ -1117,7 +1134,7 @@ mod tests {
         // Held strict; absent counts => NotValidated. This is the one case pure
         // presence-keying cannot catch and the schema escalator exists for.
         let mut r = clean_full_pass(PASS_SHA);
-        r.schema_version = Some(COUNTS_SCHEMA);
+        r.schema_version = Some(BINDING_SCHEMA);
         r.executed_tests = None;
         r.filtered_tests = None;
         let a = assess(&[r], PASS_SHA);
@@ -1138,7 +1155,7 @@ mod tests {
         let cases: [(i64, i64); 2] = [(36, 0), (749, 693)];
         for (executed, filtered) in cases {
             let mut r = clean_full_pass(PASS_SHA);
-            r.schema_version = Some(COUNTS_SCHEMA);
+            r.schema_version = Some(BINDING_SCHEMA);
             r.executed_tests = Some(executed);
             r.filtered_tests = Some(filtered);
             r.coverage = Some(sat_coverage(13));
@@ -1161,7 +1178,7 @@ mod tests {
         // (ran but executed 0 countable tests) violates its obligation.
         // ABSENT: a required node produced no terminal result at all.
         let mut absent = clean_full_pass(PASS_SHA);
-        absent.schema_version = Some(COUNTS_SCHEMA);
+        absent.schema_version = Some(BINDING_SCHEMA);
         absent.executed_tests = Some(749);
         absent.filtered_tests = Some(693);
         absent.coverage = Some(CoverageRow {
@@ -1177,7 +1194,7 @@ mod tests {
         // INERT: a required node ran but every crate filtered-to-empty / compiled
         // out (passed-sum 0) — the true `1 passed; 154 filtered out`-style subset.
         let mut inert = clean_full_pass(PASS_SHA);
-        inert.schema_version = Some(COUNTS_SCHEMA);
+        inert.schema_version = Some(BINDING_SCHEMA);
         inert.executed_tests = Some(749);
         inert.filtered_tests = Some(693);
         inert.coverage = Some(CoverageRow {
@@ -1190,7 +1207,7 @@ mod tests {
 
         // NO planned test node at all is not a satisfied obligation either.
         let mut empty = clean_full_pass(PASS_SHA);
-        empty.schema_version = Some(COUNTS_SCHEMA);
+        empty.schema_version = Some(BINDING_SCHEMA);
         empty.executed_tests = Some(749);
         empty.filtered_tests = Some(693);
         empty.coverage = Some(sat_coverage(0));
@@ -1204,7 +1221,7 @@ mod tests {
         // executed + positive filtered is NOT enough on schema >= COUNTS_SCHEMA;
         // without coverage the run cannot prove no required node was inert/absent.
         let mut r = clean_full_pass(PASS_SHA);
-        r.schema_version = Some(COUNTS_SCHEMA);
+        r.schema_version = Some(BINDING_SCHEMA);
         r.executed_tests = Some(749);
         r.filtered_tests = Some(693);
         r.coverage = None;
@@ -1226,11 +1243,9 @@ mod tests {
         // older branch never emitted one. The former grandfather branch (no counts)
         // is removed and covered by `uncounted_pre_count_pass_is_not_validated`.
         // (schema_version, executed, filtered, coverage)
-        let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 4] = [
-            (1, Some(1), Some(0), None),    // old schema carrying counts
-            (1, Some(47), Some(693), None), // old schema carrying counts, legit filters
-            (COUNTS_SCHEMA, Some(36), Some(0), Some(sat_coverage(13))), // count-capable green
-            (COUNTS_SCHEMA, Some(332), Some(693), Some(sat_coverage(13))), // count-capable, legit filters
+        let legit: [(u32, Option<i64>, Option<i64>, Option<CoverageRow>); 2] = [
+            (BINDING_SCHEMA, Some(36), Some(0), Some(sat_coverage(13))),
+            (BINDING_SCHEMA, Some(332), Some(693), Some(sat_coverage(13))),
         ];
         for (sv, executed, filtered, coverage) in legit {
             let mut r = clean_full_pass(PASS_SHA);
@@ -1265,6 +1280,7 @@ mod tests {
         assert!(!pred.gate_filtered_tests);
         assert!(pred.coverage.per_node);
         assert_eq!(pred.coverage.applies_at_schema_min, COUNTS_SCHEMA);
+        assert_eq!(pred.reverie_binding.applies_at_schema_min, BINDING_SCHEMA);
     }
 
     #[test]

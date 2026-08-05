@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for finalize_receipt: schema-5 coverage{} + counts finalizer.
+"""Tests for schema-5 coverage plus schema-6 dependency-bound finalization.
 
 Each test states N (the number of synthetic test nodes) and asserts the emitted
 coverage{} would SATISFY or REFUSE per the consumer rule:
@@ -12,10 +12,26 @@ import subprocess
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
 import finalize_receipt as fr
 
-HERE = Path(__file__).resolve().parent
 MODULE = HERE / "finalize_receipt.py"
+
+
+def _binding() -> dict:
+    sha = "9" * 40
+    return {
+        "repository": "rrnewton/reverie",
+        "ref": "refs/heads/main",
+        "pinned_sha": sha,
+        "resolved_sha": sha,
+    }
+
+
+def _binding_resolver(_checkout: str, shas: list[str]):
+    return ({sha: _binding() for sha in shas}, {})
 
 
 def _satisfied(cov: dict) -> bool:
@@ -227,7 +243,7 @@ def _countless_green_row(sha: str, log_path: str) -> dict:
 
 
 def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
-    """Scan appends a satisfied schema-5 clone WITHOUT rewriting existing rows
+    """Scan appends a satisfied schema-6 clone WITHOUT rewriting existing rows
     (race-safe), and leaves the original count-less row byte-for-byte intact."""
     sha = "a" * 40
     log = tmp_path / "run.log"
@@ -239,7 +255,9 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
     ledger.write_text("\n".join(original_lines) + "\n")
 
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
 
     assert len(results) == 1 and results[0]["satisfied"] and results[0]["sha"] == sha
     out_lines = [l for l in ledger.read_text().splitlines() if l.strip()]
@@ -248,7 +266,8 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
     assert out_lines[1] == original_lines[1]
     assert len(out_lines) == 3
     minted = json.loads(out_lines[2])
-    assert minted["schema_version"] == 5
+    assert minted["schema_version"] == 6
+    assert minted["reverie_binding"] == _binding()
     assert minted["commit"] == sha
     assert minted["executed_tests"] == 6
     assert minted["coverage"]["planned_test_nodes"] == 1
@@ -259,7 +278,7 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
 
 
 def test_scan_is_idempotent(tmp_path, monkeypatch):
-    """A second scan appends nothing: the sha now carries a satisfied schema-5."""
+    """A second scan appends nothing: the sha carries the same bound schema-6."""
     sha = "c" * 40
     log = tmp_path / "run.log"
     log.write_text(_passing_node("test.only", 4))
@@ -267,11 +286,15 @@ def test_scan_is_idempotent(tmp_path, monkeypatch):
     ledger.write_text(json.dumps(_countless_green_row(sha, str(log))) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
 
-    first = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    first = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
     assert len([r for r in first if r["reason"] == "minted"]) == 1
     n_after_first = len([l for l in ledger.read_text().splitlines() if l.strip()])
 
-    second = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    second = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
     assert second == []  # already satisfied -> not a candidate
     n_after_second = len([l for l in ledger.read_text().splitlines() if l.strip()])
     assert n_after_second == n_after_first  # nothing appended
@@ -286,7 +309,9 @@ def test_scan_dry_run_writes_nothing(tmp_path, monkeypatch):
     ledger.write_text(before)
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path), dry_run=True)
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), dry_run=True, binding_resolver=_binding_resolver
+    )
     assert results[0]["satisfied"]
     assert ledger.read_text() == before  # untouched
 
@@ -300,13 +325,38 @@ def test_scan_skips_missing_log_and_absent_manifest(tmp_path, monkeypatch):
     ledger.write_text("\n".join(json.dumps(r) for r in (gone, no_manifest)) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: set())  # empty planned
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
     reasons = {r["sha"][:1]: r["reason"] for r in results}
     assert reasons["e"] == "no-log"
     assert reasons["f"] == "no-manifest"
-    # Neither fabricated: no schema-5 line appended.
+    # Neither fabricated: no schema-6 line appended.
     assert all(json.loads(l).get("schema_version") == 3
                for l in ledger.read_text().splitlines() if l.strip())
+
+
+def test_scan_refuses_to_mint_without_fresh_reverie_binding(tmp_path):
+    sha = "7" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    ledger = tmp_path / "l.jsonl"
+    original = json.dumps(_countless_green_row(sha, str(log))) + "\n"
+    ledger.write_text(original)
+
+    def refused(_checkout: str, _shas: list[str]):
+        return {}, {sha: "live Reverie main moved"}
+
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=refused
+    )
+    assert results == [{
+        "sha": sha,
+        "satisfied": False,
+        "reason": "reverie-pin",
+        "detail": "live Reverie main moved",
+    }]
+    assert ledger.read_text() == original
 
 
 # --- planned_test_nodes reads real manifests at a real SHA ------------------

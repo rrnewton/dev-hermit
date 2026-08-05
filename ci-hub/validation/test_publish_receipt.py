@@ -19,7 +19,7 @@ class ReceiptTests(unittest.TestCase):
         log = root / "validate.log"
         log.write_text("running 12 tests\ntest result: ok. 12 passed; 0 failed\n")
         return {
-            "schema_version": 1,
+            "schema_version": 6,
             "started_at": "2026-08-04T12:00:00Z",
             "finished_at": "2026-08-04T12:01:00Z",
             "commit": "a" * 40,
@@ -32,19 +32,40 @@ class ReceiptTests(unittest.TestCase):
             "failures": 0,
             "executed_tests": executed,
             "filtered_tests": 0,
+            "coverage": {
+                "planned_test_nodes": 1,
+                "executed_test_nodes": 1,
+                "zero_executed_nodes": [],
+                "absent_nodes": [],
+            },
+            "reverie_binding": {
+                "repository": "rrnewton/reverie",
+                "ref": "refs/heads/main",
+                "pinned_sha": "d" * 40,
+                "resolved_sha": "d" * 40,
+            },
             "host": "test-host",
             "log_file": str(log),
+        }
+
+    def report(self, row, *, verdict="VALIDATED", sha="a" * 40):
+        return {
+            "sha": sha,
+            "verdict": verdict,
+            "qualifying_count": 1 if verdict == "VALIDATED" else 0,
+            "newest_qualifying_record": row if verdict == "VALIDATED" else None,
         }
 
     def test_counted_exact_head_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             row = self.row(Path(directory))
-            selected = MODULE.qualifying_row([row], "a" * 40)
+            selected = MODULE.qualifying_row(self.report(row), "a" * 40)
             durable = MODULE.preserve_log(Path(directory) / "ledger.jsonl", "a" * 40, selected)
             receipt, body, digest = MODULE.build_receipt(
                 "rrnewton/hermit", "a" * 40, selected, durable
             )
             self.assertEqual(receipt["ledger_record"]["executed_tests"], 12)
+            self.assertEqual(receipt["ledger_record"]["reverie_binding"]["resolved_sha"], "d" * 40)
             self.assertEqual(receipt["commit"], "a" * 40)
             self.assertEqual(len(receipt["log_sha256"]), 64)
             self.assertTrue(Path(receipt["durable_log_file"]).is_file())
@@ -76,31 +97,29 @@ class ReceiptTests(unittest.TestCase):
             row = self.row(Path(directory))
             del row["host"]
             with self.assertRaises(SystemExit):
-                MODULE.qualifying_row([row], "a" * 40)
+                MODULE.qualifying_row(self.report(row), "a" * 40)
 
     def test_zero_executed_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(SystemExit):
-                MODULE.qualifying_row([self.row(Path(directory), executed=0)], "a" * 40)
+                MODULE.qualifying_row(
+                    self.report(self.row(Path(directory), executed=0), verdict="NOT-VALIDATED"),
+                    "a" * 40,
+                )
 
     def test_wrong_head_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(SystemExit):
-                MODULE.qualifying_row([self.row(Path(directory))], "b" * 40)
+                MODULE.qualifying_row(self.report(self.row(Path(directory))), "b" * 40)
 
-    def test_count_capable_row_requires_coverage(self):
+    def test_missing_binding_is_not_extractable_when_verifier_refuses(self):
         with tempfile.TemporaryDirectory() as directory:
             row = self.row(Path(directory))
-            row["schema_version"] = MODULE.COUNTS_SCHEMA
+            del row["reverie_binding"]
             with self.assertRaises(SystemExit):
-                MODULE.qualifying_row([row], "a" * 40)
-            row["coverage"] = {
-                "planned_test_nodes": 3,
-                "executed_test_nodes": 3,
-                "zero_executed_nodes": [],
-                "absent_nodes": [],
-            }
-            self.assertEqual(MODULE.qualifying_row([row], "a" * 40), row)
+                MODULE.qualifying_row(
+                    self.report(row, verdict="NOT-VALIDATED"), "a" * 40
+                )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
 //! thiserror = "2"
+//! toml = "0.8"
 //! ```
 
 #[path = "lib/history_queries.rs"]
@@ -25,6 +26,8 @@ mod landing_lock;
 mod qualifying_receipt;
 #[path = "lib/records.rs"]
 mod records;
+#[path = "lib/reverie_pin.rs"]
+mod reverie_pin;
 #[path = "lib/validate_lock.rs"]
 mod validate_lock;
 #[path = "lib/validate_status.rs"]
@@ -38,7 +41,7 @@ use history_queries::{
 };
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -70,6 +73,8 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  reverie-pin-status      Verify exact Hermit pin(s) against fresh Reverie main
+  green-source-decision   Combine already-verified local/hosted green outcomes
   validate-stop           Stop detached validate-* user units and verify termination
   ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
@@ -213,6 +218,10 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Verify exact Hermit head pin(s) against one freshly resolved Reverie main tip.
+    ReveriePinStatus(ReveriePinStatusArgs),
+    /// Purely combine canonical local/hosted outcomes; does not dereference them.
+    GreenSourceDecision(GreenSourceDecisionArgs),
     /// Stop detached validate-* user units and verify they terminated.
     ValidateStop(PassthroughArgs),
     /// Read canonical qualified views of the validate ledger.
@@ -516,7 +525,65 @@ struct ValidateStatusArgs {
     /// ledger_path); the literal lives only in that const, never restated here.
     #[arg(long)]
     ledger: Option<PathBuf>,
+    /// Hermit repository containing the exact commit object whose tracked
+    /// Reverie pins are dereferenced. Landing callers should pass their slot.
+    #[arg(long, default_value = "hermit")]
+    hermit_repo: PathBuf,
     /// Emit the machine-readable verdict report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ReveriePinStatusArgs {
+    /// Exact Hermit commit(s) to verify. Repeating the option still resolves the
+    /// live Reverie tip only once for the whole command.
+    #[arg(long = "sha", required = true)]
+    shas: Vec<String>,
+    /// Hermit repository containing every exact commit object.
+    #[arg(long, default_value = "hermit")]
+    hermit_repo: PathBuf,
+    /// Emit a stable machine-readable report for finalizers/future landers.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum GreenSignal {
+    Passed,
+    Failed,
+    NoResult,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING-KEBAB-CASE")]
+enum GreenDecision {
+    Local,
+    Hosted,
+    Both,
+    Refused,
+    NoResult,
+}
+
+impl GreenDecision {
+    fn exit_code(self) -> i32 {
+        match self {
+            Self::Local | Self::Hosted | Self::Both => 0,
+            Self::Refused => 3,
+            Self::NoResult => 4,
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug)]
+struct GreenSourceDecisionArgs {
+    /// Result from the canonical local exact-head receipt verifier.
+    #[arg(long, value_enum)]
+    local: GreenSignal,
+    /// Result from the canonical exact-head hosted-run verifier.
+    #[arg(long, value_enum)]
+    hosted: GreenSignal,
+    /// Emit the typed decision as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -540,6 +607,9 @@ struct QualifiedRowsArgs {
     /// Override ignored/validate-run-ledger.jsonl.
     #[arg(long)]
     ledger: Option<PathBuf>,
+    /// Hermit repository used to dereference exact commit pins.
+    #[arg(long, default_value = "hermit")]
+    hermit_repo: PathBuf,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -582,7 +652,9 @@ struct HistoryQueryArgs {
     /// Override the canonical local validate ledger.
     #[arg(long)]
     ledger: Option<PathBuf>,
-    /// Do not refresh origin/<branch> before querying (offline/reproducible use).
+    /// Perform no network I/O. Since live Reverie currency cannot be proven
+    /// offline, newest-green fails closed as UNVERIFIABLE rather than emitting
+    /// a landing-capable green.
     #[arg(long)]
     no_fetch: bool,
     /// Emit a versioned machine-readable report.
@@ -626,6 +698,9 @@ struct ApplyLocalLabelArgs {
     /// ledger_path); the literal lives only in that const, never restated here.
     #[arg(long)]
     ledger: Option<PathBuf>,
+    /// Hermit repository containing the exact PR head commit objects.
+    #[arg(long, default_value = "hermit")]
+    hermit_repo: PathBuf,
     /// Report intended label actions without editing any label.
     #[arg(long)]
     dry_run: bool,
@@ -1073,9 +1148,13 @@ impl HubCommand {
                 tool: "ci-hub/local-history",
                 basis: "not measured: ledger/store scan cost history is not retained".into(),
             },
-            Self::NewestGreen(_) => CostSpec {
+            Self::NewestGreen(args) => CostSpec {
                 tool: "ci-hub/newest-green",
-                basis: "not measured: one bounded branch fetch plus local first-parent/ledger query; cache may avoid the query but not freshness check".into(),
+                basis: if args.query.no_fetch {
+                    "not measured: local ledger preflight only; dependency freshness fails closed without network I/O".into()
+                } else {
+                    "not measured: one bounded branch fetch plus local first-parent/ledger query; cache may avoid the query but not freshness check".into()
+                },
             },
             Self::FirstBad(_) => CostSpec {
                 tool: "ci-hub/first-bad",
@@ -1116,6 +1195,8 @@ impl HubCommand {
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
+            | Self::ReveriePinStatus(_)
+            | Self::GreenSourceDecision(_)
             | Self::ValidateStop(_)
             | Self::ApplyLocalLabel(_)
             | Self::LandLock(_)
@@ -1636,16 +1717,14 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::ReveriePinStatus(args) => run_reverie_pin_status(root, args),
+        HubCommand::GreenSourceDecision(args) => run_green_source_decision(args),
         HubCommand::ValidateStop(args) => {
             run_python(root, "ci-hub/validate/stop_units.py", args.args)
         }
         HubCommand::Ledger(args) => match args.command {
             LedgerCommand::QualifiedRows(qualified_args) => {
-                let mut forwarded = Vec::new();
-                if let Some(ledger) = qualified_args.ledger {
-                    push_option(&mut forwarded, "--ledger", ledger);
-                }
-                run_python(root, "ci-hub/validate/qualified_rows.py", forwarded)
+                run_qualified_rows(root, qualified_args)
             }
             LedgerCommand::AttributeReds(red_args) => {
                 let mut forwarded = Vec::new();
@@ -3385,6 +3464,7 @@ fn describe_record(row: &HistoryRow) -> serde_json::Value {
         "user_seconds": row.user_seconds,
         "sys_seconds": row.sys_seconds,
         "slot": row.slot,
+        "reverie_binding": row.reverie_binding,
     })
 }
 
@@ -3784,6 +3864,57 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     if !args.query.no_fetch {
         fetch_history_branch(&repo, &args.query.branch)?;
     }
+    // Missing/empty evidence is a local NO-EVIDENCE result. Discover it before
+    // any remote dependency lookup so an empty query cannot consume the
+    // 30-second network bound.
+    let ledger = ledger_path(root, &args.query.ledger);
+    let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
+    if ledger_len == 0 {
+        if args.query.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "schema_version": 2,
+                    "verdict": "NO-EVIDENCE",
+                    "exit_code": 4,
+                    "branch": args.query.branch,
+                    "ledger": ledger.display().to_string(),
+                    "reason": "validation ledger is missing or empty",
+                })
+            );
+        } else {
+            println!(
+                "NEWEST-GREEN NO-EVIDENCE branch={} ledger={} -- validation ledger is missing or empty",
+                args.query.branch,
+                ledger.display()
+            );
+        }
+        return Ok(4);
+    }
+    if args.query.no_fetch {
+        if args.query.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "schema_version": 2,
+                    "verdict": "UNVERIFIABLE-DEPENDENCY-FRONTIER",
+                    "exit_code": 2,
+                    "branch": args.query.branch,
+                    "ledger": ledger.display().to_string(),
+                    "reason": "--no-fetch forbids resolving live Reverie main",
+                })
+            );
+        } else {
+            println!(
+                "NEWEST-GREEN UNVERIFIABLE-DEPENDENCY-FRONTIER branch={} -- --no-fetch forbids resolving live Reverie main",
+                args.query.branch
+            );
+        }
+        return Ok(2);
+    }
+    // Cache validity depends on the dependency frontier, not only Hermit and
+    // ledger bytes. Resolve once before consulting the cache.
+    let resolved_reverie = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
     let effective_floor = match query_effective_gate_floor(root, &repo, &args.query.branch)? {
         GateFloorResolution::Effective(floor) => floor,
         GateFloorResolution::UnverifiableShallow {
@@ -3820,8 +3951,6 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
         &effective_floor.sha,
     )?;
     let branch_tip = commits.first().expect("nonempty history");
-    let ledger = ledger_path(root, &args.query.ledger);
-    let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
     let cache_path = history_queries::cache_path(root, &args.cache);
     if !args.no_cache {
         if let Some(cache) = read_newest_green_cache(&cache_path) {
@@ -3834,6 +3963,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
                 &ledger,
                 ledger_len,
                 ledger_modified_ns,
+                &resolved_reverie,
             ) {
                 print_newest_green(&cache.report, true, args.query.json);
                 return Ok(0);
@@ -3843,7 +3973,23 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
 
     let mut rows = load_ledger_rows(&ledger)?;
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows).newest_green(
+    let commits_with_rows: BTreeSet<String> =
+        rows.iter().filter_map(|row| row.commit.clone()).collect();
+    let mut bindings = BTreeMap::new();
+    for sha in commits
+        .iter()
+        .filter(|sha| commits_with_rows.contains(*sha))
+    {
+        match reverie_pin::verify_exact_head(&repo, sha, &resolved_reverie) {
+            Ok(binding) => {
+                bindings.insert(sha.clone(), binding);
+            }
+            Err(problem) => {
+                eprintln!("ci-hub: newest-green: {sha} cannot qualify: {problem}");
+            }
+        }
+    }
+    match HistoryQueryEngine::new_with_bindings(commits, rows, bindings).newest_green(
         &args.query.branch,
         &branch_ref,
         &floor_policy,
@@ -3851,7 +3997,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 4,
+                schema_version: 5,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
@@ -3859,6 +4005,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
                 ledger_path: ledger.display().to_string(),
                 ledger_len,
                 ledger_modified_ns,
+                reverie_main_sha: resolved_reverie,
                 report: (*report).clone(),
             };
             write_newest_green_cache(&cache_path, &cache)?;
@@ -4018,7 +4165,7 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             .unwrap_or(false)
     });
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new(commits, rows).first_bad(
+    match HistoryQueryEngine::new_with_bindings(commits, rows, BTreeMap::new()).first_bad(
         &args.cell_or_gate,
         &args.query.branch,
         &branch_ref,
@@ -4080,6 +4227,159 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
     }
 }
 
+/// `ci-hub reverie-pin-status --sha <SHA>...` — the reusable cross-repository
+/// predicate for both local-receipt and hosted-green landing authorities. The
+/// live tip is resolved ONCE and passed through every exact-head scan.
+fn run_reverie_pin_status(root: &Path, args: ReveriePinStatusArgs) -> Result<i32, CiHubError> {
+    let repo = history_repo_path(root, &args.hermit_repo);
+    let resolved = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
+    let mut seen = BTreeSet::new();
+    let mut results = Vec::new();
+    let mut refused = 0usize;
+    for sha in args.shas {
+        if !seen.insert(sha.clone()) {
+            continue;
+        }
+        match reverie_pin::verify_exact_head(&repo, &sha, &resolved) {
+            Ok(binding) => results.push(serde_json::json!({
+                "hermit_sha": sha,
+                "status": "CURRENT",
+                "binding": binding,
+            })),
+            Err(reason) => {
+                refused += 1;
+                results.push(serde_json::json!({
+                    "hermit_sha": sha,
+                    "status": "REFUSED",
+                    "reason": reason,
+                }));
+            }
+        }
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "authority": "exact-hermit-pin-vs-live-reverie-main",
+                "reverie_repository": reverie_pin::REVERIE_REPOSITORY,
+                "reverie_ref": reverie_pin::REVERIE_MAIN_REF,
+                "resolved_reverie_sha": resolved,
+                "hermit_repo": repo.display().to_string(),
+                "results": results,
+            }))
+            .expect("serialize Reverie pin report")
+        );
+    } else {
+        for result in &results {
+            let sha = result["hermit_sha"].as_str().unwrap_or("?");
+            if result["status"] == "CURRENT" {
+                println!("REVERIE-PIN CURRENT hermit={sha} reverie={resolved}");
+            } else {
+                println!(
+                    "REVERIE-PIN REFUSED hermit={sha} -- {}",
+                    result["reason"].as_str().unwrap_or("unverifiable")
+                );
+            }
+        }
+    }
+    Ok(if refused == 0 { 0 } else { 4 })
+}
+
+/// Pure OR policy over outcomes already dereferenced by their distinct
+/// canonical authorities. This command deliberately does not accept labels,
+/// comments, run IDs, or ledger rows: a future safe lander must call each
+/// verifier first, then combine only its typed PASSED/FAILED/NO_RESULT result.
+fn green_source_decision(local: GreenSignal, hosted: GreenSignal) -> GreenDecision {
+    if local == GreenSignal::Failed || hosted == GreenSignal::Failed {
+        return GreenDecision::Refused;
+    }
+    match (local, hosted) {
+        (GreenSignal::Passed, GreenSignal::Passed) => GreenDecision::Both,
+        (GreenSignal::Passed, GreenSignal::NoResult) => GreenDecision::Local,
+        (GreenSignal::NoResult, GreenSignal::Passed) => GreenDecision::Hosted,
+        (GreenSignal::NoResult, GreenSignal::NoResult) => GreenDecision::NoResult,
+        _ => unreachable!("failures returned above"),
+    }
+}
+
+fn run_green_source_decision(args: GreenSourceDecisionArgs) -> Result<i32, CiHubError> {
+    let decision = green_source_decision(args.local, args.hosted);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "authority": "pure-green-source-or",
+                "local": format!("{:?}", args.local).to_ascii_uppercase(),
+                "hosted": format!("{:?}", args.hosted).to_ascii_uppercase(),
+                "decision": decision,
+                "exit_code": decision.exit_code(),
+                "warning": "inputs must come from their canonical dereferencing verifiers",
+            }))
+            .expect("serialize green-source decision")
+        );
+    } else {
+        println!(
+            "GREEN-SOURCE {:?} local={:?} hosted={:?} -- inputs must be canonical verifier outcomes",
+            decision, args.local, args.hosted
+        );
+    }
+    Ok(decision.exit_code())
+}
+
+/// Canonical bulk green view. Unlike the removed Python bypass, this invokes
+/// the exact same row predicate as `validate-status` and binds every Hermit row
+/// to an authoritative exact-head scan against one fresh Reverie tip.
+fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHubError> {
+    let path = ledger_path(root, &args.ledger);
+    let rows = load_ledger_rows(&path)?;
+    let hermit_repo = history_repo_path(root, &args.hermit_repo);
+    let resolved = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
+    let mut bindings: BTreeMap<String, Result<reverie_pin::ReverieBinding, String>> =
+        BTreeMap::new();
+    let mut selected = Vec::new();
+    for row in &rows {
+        let expected = if row.repo.as_deref() == Some("reverie") {
+            None
+        } else {
+            let Some(sha) = row.commit.as_deref() else {
+                continue;
+            };
+            bindings
+                .entry(sha.to_string())
+                .or_insert_with(|| reverie_pin::verify_exact_head(&hermit_repo, sha, &resolved))
+                .as_ref()
+                .ok()
+        };
+        let Some(sha) = row.commit.as_deref() else {
+            continue;
+        };
+        if qualifying_receipt::row_qualifies(row, sha, qualifying_receipt::active(), expected) {
+            selected.push(row.clone());
+        }
+    }
+    selected.sort_by(|left, right| {
+        left.finished_at
+            .cmp(&right.finished_at)
+            .then_with(|| left.commit.cmp(&right.commit))
+            .then_with(|| left.slot.cmp(&right.slot))
+            .then_with(|| left.log_file.cmp(&right.log_file))
+    });
+    for row in &selected {
+        println!(
+            "{}",
+            serde_json::to_string(row).expect("serialize qualifying ledger row")
+        );
+    }
+    eprintln!(
+        "qualified-rows: {}/{} canonical exact-dependency greens; reverie-main={resolved}",
+        selected.len(),
+        rows.len()
+    );
+    Ok(0)
+}
+
 /// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
 /// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 for every
 /// re-measurement state (TRUNCATED, NEEDS-RERUN, NO-RESULT, or NOT-VALIDATED).
@@ -4100,7 +4400,18 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             ))
         }
     };
-    let assessment = validate_status::assess(&rows, &sha);
+    let hermit_repo = history_repo_path(root, &args.hermit_repo);
+    let (reverie_binding, reverie_problem, resolved_reverie_sha) =
+        if args.repo.rsplit('/').next() == Some("reverie") {
+            (None, None, None)
+        } else {
+            let resolved = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
+            match reverie_pin::verify_exact_head(&hermit_repo, &sha, &resolved) {
+                Ok(binding) => (Some(binding), None, Some(resolved)),
+                Err(problem) => (None, Some(problem), Some(resolved)),
+            }
+        };
+    let assessment = validate_status::assess_with_reverie(&rows, &sha, reverie_binding.as_ref());
     let newest = validate_status::newest(&assessment.qualifying);
 
     if args.json {
@@ -4112,7 +4423,13 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "qualifying_count": assessment.qualifying.len(),
             "disqualified_count": assessment.disqualified.len(),
             "newest_qualifying": newest.map(describe_record),
+            "newest_qualifying_record": newest,
             "ledger": path.display().to_string(),
+            "reverie_authority": {
+                "resolved_sha": resolved_reverie_sha,
+                "binding": reverie_binding,
+                "problem": reverie_problem,
+            },
         });
         println!(
             "{}",
@@ -4161,6 +4478,9 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                     assessment.sha,
                     assessment.disqualified.len(),
                 );
+                if let Some(problem) = &reverie_problem {
+                    println!("# reverie-pin REFUSED -- {problem}");
+                }
             }
         }
     }
@@ -4175,6 +4495,13 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
 fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
+    let hermit_repo = history_repo_path(root, &args.hermit_repo);
+    let hermit_repo_arg = hermit_repo.display().to_string();
+    let resolved_reverie = if args.repo.rsplit('/').next() == Some("reverie") {
+        None
+    } else {
+        Some(reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?)
+    };
     let prs = match (args.pr, args.all_open) {
         (Some(pr), false) => vec![pr],
         (None, true) => gh_open_prs(root, &args.repo)?,
@@ -4200,7 +4527,18 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 continue;
             }
         };
-        let verdict = validate_status::assess(&rows, &head).verdict;
+        let binding = match resolved_reverie.as_deref() {
+            Some(resolved) => match reverie_pin::verify_exact_head(&hermit_repo, &head, resolved) {
+                Ok(binding) => Some(binding),
+                Err(problem) => {
+                    println!("PR #{pr}: skip -- exact-head Reverie authority refused: {problem}");
+                    actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": "NOT-VALIDATED", "reverie_problem": problem}));
+                    continue;
+                }
+            },
+            None => None,
+        };
+        let verdict = validate_status::assess_with_reverie(&rows, &head, binding.as_ref()).verdict;
         if verdict != validate_status::Verdict::Validated {
             println!(
                 "PR #{pr}: skip -- head {} is {}",
@@ -4229,6 +4567,8 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 &head,
                 "--ledger",
                 &ledger_arg,
+                "--hermit-repo",
+                &hermit_repo_arg,
             ])
             .current_dir(root);
         if let Some(config_dir) = gh_config_dir() {
@@ -5036,5 +5376,39 @@ mod tests {
             .unwrap()
             .command;
         assert!(command.cost_spec().is_some());
+    }
+
+    #[test]
+    fn green_source_or_is_bracketed_without_authorization_artifacts() {
+        assert_eq!(
+            green_source_decision(GreenSignal::Passed, GreenSignal::NoResult),
+            GreenDecision::Local
+        );
+        assert_eq!(
+            green_source_decision(GreenSignal::NoResult, GreenSignal::Passed),
+            GreenDecision::Hosted
+        );
+        assert_eq!(
+            green_source_decision(GreenSignal::Passed, GreenSignal::Passed),
+            GreenDecision::Both
+        );
+        assert_eq!(
+            green_source_decision(GreenSignal::NoResult, GreenSignal::NoResult),
+            GreenDecision::NoResult
+        );
+        for other in [
+            GreenSignal::Passed,
+            GreenSignal::Failed,
+            GreenSignal::NoResult,
+        ] {
+            assert_eq!(
+                green_source_decision(GreenSignal::Failed, other),
+                GreenDecision::Refused
+            );
+            assert_eq!(
+                green_source_decision(other, GreenSignal::Failed),
+                GreenDecision::Refused
+            );
+        }
     }
 }

@@ -6,6 +6,10 @@
 # bound to THIS bounded child's lifetime -- no hand-rolled `renewer.sh` loop that
 # can outlive a dead agent and wedge the FIFO (the 2040-minute starvation bug).
 #
+# MUTATING PATH DISABLED: GitHub's server-side rebase API cannot atomically bind
+# the observed target base. Help/docs parsing remains for archaeology, but the
+# executable path refuses before mutation and points to safe-exact-head-land.
+#
 # Sequence (while holding the land-lock):
 #   fetch fresh main -> GitHub-free eligibility gate (clean full-validate record
 #   for the exact pre-rebase head; the label is non-authoritative) -> rebase
@@ -82,6 +86,15 @@ if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
     "$PR" "$BR" "$UNION" "$AGENT"
   exit 0
 fi
+
+# This legacy path asks GitHub to replay commits server-side. GitHub accepts an
+# expected head but offers no atomic expected-base precondition, so main can
+# move between our observation and the replay. It therefore cannot bind source
+# X, observed base Y, and replay result Z strongly enough to authorize landing.
+# Keep help/docs parsing available, but fail closed before any mutation until
+# the minimal current-main safe lander extraction supplies that transaction.
+echo "land-pr: REFUSED: legacy server-side replay cannot bind the actual base; use safe-exact-head-land after its current-main extraction lands" >&2
+exit 4
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)

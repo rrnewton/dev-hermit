@@ -20,6 +20,15 @@ LOW BASE-RATE-OF-BREAKAGE bet, and post-facto validation of the tip covers the
 residual risk the rebase does not eliminate: land on the prior, verify the tip,
 fix forward fast. The two halves are one system.
 
+AUTHORIZATION RETRACTION (2026-08-05): this store is advisory planning
+provenance, not landing authority. Its legacy `landable` field binds a receipt
+only at result Z and a gate-floor check at recorded base Y; it does NOT carry
+fresh Reverie identities for source X and base Y, prove that a server-side
+replay actually used Y, or refresh the dependency ref atomically at mutation.
+The disabled legacy `land-pr.sh` must not consume it. The minimal
+`safe-exact-head-land` extraction must independently bind X/Y/Z before any
+mutation; no field in this store waives that requirement.
+
 FOUR THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
 
   1. SOFT-GREEN IS A CONFIDENCE LEVEL, NOT A BOOLEAN. `soft-green(zero-conflict)`
@@ -54,7 +63,7 @@ FOUR THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
      ONE receipt authority (`ci-hub validate-status --sha Z`). A push with no
      subsequent receipt is REFUSED as landable, never silently queued.
 
-CONSUMER: the lander QUERIES for eligible heads (`eligible`) rather than reading
+PLANNING CONSUMER: coordinators QUERY candidate heads (`eligible`) rather than reading
 posted notes -- a query has no mailbox to miss, closing the producer-posted-to-
 the-wrong-task gap (12 verified heads were invisible that day because a producer
 posted to its own task). See memory: ci-hub-ledger-cannot-record-soft-vs-hard-green
@@ -84,9 +93,9 @@ SUBCOMMANDS
             optionally push, then bind the receipt at the PUSHED head Z. Conflicts
             -> abort cleanly, report the conflicted files, and REFUSE to soft-green
             (the resolver resolves, then calls `record --risk-judgement ...`).
-  eligible  Consumer query for the lander: list (or test) heads that are eligible
-            to land NOW -- soft-green AND the base clears every live floor AND a
-            clean full-validation receipt is bound live to the pushed head Z.
+  eligible  Advisory planning query: list (or test) heads satisfying the legacy
+            soft-green + floor + Z-receipt conjunction. This is not landing
+            authorization; safe-exact-head-land must bind X/Y/Z independently.
 
 EXIT CODES (shared with the sibling floor tools)
   0  OK       recorded / listed / the queried head IS eligible
@@ -353,10 +362,11 @@ def receipt_identity(report: dict | None, result: str) -> dict | None:
         "finished_at": nq.get("finished_at"),
         "slot": nq.get("slot"),
         "host": nq.get("host"),
+        "reverie_binding": nq.get("reverie_binding"),
     }
 
 
-def receipt_status(result: str) -> dict:
+def receipt_status(result: str, repo_checkout: str = DEFAULT_CHECKOUT) -> dict:
     """Dereference the ONE receipt authority at the PUSHED head Z and return a
     TRI-STATE: {status: validated|absent|unknown, identity: {...}|None, detail}.
 
@@ -374,7 +384,8 @@ def receipt_status(result: str) -> dict:
         return {"status": RECEIPT_UNKNOWN, "identity": None,
                 "detail": f"result {result!r} is not a 7-40 hex sha"}
     try:
-        cp = _run([_CI_HUB, "validate-status", "--sha", result, "--json"],
+        cp = _run([_CI_HUB, "validate-status", "--sha", result,
+                   "--hermit-repo", repo_checkout, "--json"],
                   timeout=NETWORK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as err:
         return {"status": RECEIPT_UNKNOWN, "identity": None,
@@ -394,12 +405,12 @@ def receipt_status(result: str) -> dict:
                        f"{report.get('qualifying_count')}: no receipt at Z yet")}
 
 
-def receipt_at(result: str) -> dict | None:
+def receipt_at(result: str, repo_checkout: str = DEFAULT_CHECKOUT) -> dict | None:
     """Record-time snapshot convenience: the receipt IDENTITY at Z, or None.
     Delegates to `receipt_status`; None here folds absent+unknown together, which
     is acceptable ONLY for the frozen snapshot (null is re-checked live by
     `eligible`, which uses the full tri-state and never lets UNKNOWN vanish)."""
-    return receipt_status(result)["identity"]
+    return receipt_status(result, repo_checkout)["identity"]
 
 
 # --------------------------------------------------------------------------- #
@@ -491,7 +502,8 @@ def fetch(checkout: str) -> None:
 def newest_green_sha(checkout: str, branch: str, no_fetch: bool) -> str:
     """Resolve --onto newest-green via the ledger query (trust the ledger)."""
     ci_hub = os.path.join(_PARENT_ROOT, "ci-hub", "ci-hub")
-    cmd = [ci_hub, "newest-green", "--branch", branch, "--json"]
+    cmd = [ci_hub, "newest-green", "--branch", branch,
+           "--repo-dir", checkout, "--json"]
     if no_fetch:
         cmd.append("--no-fetch")
     cp = _run(cmd, timeout=NETWORK_TIMEOUT)
@@ -722,7 +734,9 @@ def do_record(args) -> int:
     # Bind the receipt at the pushed head Z (best-effort snapshot; `eligible`
     # re-checks it live, so a receipt that lands after recording still flips Z
     # eligible, and one revoked demotes it). --no-receipt-check records null.
-    receipt = None if args.no_receipt_check else receipt_at(args.result)
+    receipt = None if args.no_receipt_check else receipt_at(
+        args.result, args.repo_checkout
+    )
     verdict = derive_verdict(conflicts, args.risk_judgement, args.rationale,
                              fstatus["ok"], fstatus["unmet"],
                              receipt_present=receipt is not None,
@@ -847,7 +861,7 @@ def do_rebase(args) -> int:
     # Z has not run yet): the record is written with receipt_at_Z=null and
     # NOT-LANDABLE, and `eligible` re-derives the receipt live so Z flips landable
     # once validate at Z completes -- no re-record, no handoff to drop.
-    receipt = None if args.no_receipt_check else receipt_at(result)
+    receipt = None if args.no_receipt_check else receipt_at(result, checkout)
     verdict = derive_verdict([], None, None, fstatus["ok"], fstatus["unmet"],
                              receipt_present=receipt is not None, result=result)
     rec = build_record(source, base, result, [], args.resolver, verdict,
@@ -887,7 +901,7 @@ def _classify_row(z: str, rec: dict, floors, args) -> dict:
         unmet = [{"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
                  for f in live["unmet"]]
     if args.recheck_receipt and z:
-        rs = receipt_status(z)
+        rs = receipt_status(z, args.repo_checkout)
     else:
         snap = rec.get("receipt_at_Z")
         rs = {"status": RECEIPT_VALIDATED if snap else RECEIPT_ABSENT,

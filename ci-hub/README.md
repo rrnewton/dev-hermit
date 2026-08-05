@@ -88,6 +88,14 @@ always WITH A DENOMINATOR ("valid 1 of 59"):
 - `ORPHANED` — no current open-PR head equals this commit; the head moved or the
   PR landed. `orphaned/total` is the measured cost of push-rewrites-the-head.
 
+Hermit receipt reuse additionally requires schema-6 exact Reverie identity.
+Inspect it directly with `./ci-hub/ci-hub reverie-pin-status --sha SHA --json`;
+combine canonical local/hosted verifier outcomes with the non-dereferencing
+`./ci-hub/ci-hub green-source-decision`. The legacy `land-pr.sh` mutating path
+is fail-closed until `safe-exact-head-land` is minimally extracted on current
+main with an atomic source/base/replay transaction.
+See [the authority and safe-lander integration contract](../ai_docs/reverie-receipt-authority_20260805.md).
+
 **COORDINATOR post-wave step (standing, once per rebase wave).** There is no
 per-wave code hook — a rebase wave is a coordinator-level batch, not a single
 script's loop, and the natural home (`rebase_wrapper.py`) owns an overlapping

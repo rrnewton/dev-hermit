@@ -18,41 +18,70 @@ import subprocess
 import sys
 from typing import Any
 
-# The shared qualifying-receipt predicate lives at the ci-hub root (beside
-# check_outcome.py), one directory above this validation/ package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import qualifying_receipt  # noqa: E402
-
 
 RECEIPT_REPO = "rrnewton/dev-hermit"
 RECEIPT_BRANCH = "validation-receipts"
 LABEL = "locally-validated"
-# The count-schema boundary is NOT redefined here -- it lives once in
-# qualifying-receipt.json (`counts_schema`) and is read via qualifying_receipt.
+CI_HUB_BIN = Path(__file__).resolve().parents[1] / "ci-hub"
 
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"publish-receipt: {message}")
 
 
-def qualifying_row(rows: list[dict[str, Any]], sha: str) -> dict[str, Any]:
-    # The green predicate is the ONE shared qualifying-receipt predicate
-    # (`ci-hub/validate/qualifying-receipt.json`) that every consumer reads --
-    # restating the clauses inline is the drift this delegation removes (task
-    # `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
-    # Publishing additionally requires the receipt to be preservable, so it keeps
-    # the started_at + log_file checks the predicate deliberately does not carry.
-    pred = qualifying_receipt.active()
-    matches: list[dict[str, Any]] = []
-    for row in rows:
-        if not qualifying_receipt.row_qualifies(row, sha, pred):
-            continue
-        if not row.get("started_at") or not row.get("log_file") or not row.get("host"):
-            continue
-        matches.append(row)
-    if not matches:
-        fail(f"no counted clean full PASS ledger row for exact head {sha}")
-    return max(matches, key=lambda row: row.get("finished_at") or "")
+def verifier_report(ledger: Path, sha: str, hermit_repo: Path) -> dict[str, Any]:
+    """Dereference the one semantic verifier; never reimplement its clauses."""
+    proc = subprocess.run(
+        [
+            str(CI_HUB_BIN),
+            "validate-status",
+            "--repo",
+            "rrnewton/hermit",
+            "--sha",
+            sha,
+            "--ledger",
+            str(ledger),
+            "--hermit-repo",
+            str(hermit_repo),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        fail(
+            "canonical verifier returned no JSON: "
+            + ((proc.stderr or proc.stdout).strip() or f"exit {proc.returncode}")
+        )
+    if proc.returncode != 0:
+        fail(
+            f"canonical verifier refused {sha}: "
+            f"{report.get('verdict', 'UNVERIFIABLE')}"
+        )
+    return report
+
+
+def qualifying_row(report: dict[str, Any], sha: str) -> dict[str, Any]:
+    """Extract the exact row already admitted by `ci-hub validate-status`.
+
+    Only preservation-envelope fields remain local to this publisher. Receipt
+    semantics, including the fresh Reverie binding, belong solely to Rust.
+    """
+    if (
+        report.get("sha") != sha
+        or report.get("verdict") != "VALIDATED"
+        or not isinstance(report.get("qualifying_count"), int)
+        or report["qualifying_count"] < 1
+        or not isinstance(report.get("newest_qualifying_record"), dict)
+    ):
+        fail(f"canonical verifier did not admit exact head {sha}")
+    row = report["newest_qualifying_record"]
+    if not row.get("started_at") or not row.get("log_file") or not row.get("host"):
+        fail("canonical row lacks started_at/log_file/host needed for preservation")
+    return row
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -227,6 +256,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument(
+        "--hermit-repo",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "hermit",
+    )
     parser.add_argument("--receipt-repo", default=RECEIPT_REPO)
     parser.add_argument("--receipt-branch", default=RECEIPT_BRANCH)
     parser.add_argument("--dry-run", action="store_true")
@@ -237,7 +271,7 @@ def main() -> int:
     args = parse_args()
     if len(args.sha) != 40 or any(ch not in "0123456789abcdef" for ch in args.sha):
         fail("--sha must be exactly 40 lowercase hex characters")
-    row = qualifying_row(read_rows(args.ledger), args.sha)
+    row = qualifying_row(verifier_report(args.ledger, args.sha, args.hermit_repo), args.sha)
     durable_log = preserve_log(args.ledger, args.sha, row)
     receipt, body, digest = build_receipt(args.repo, args.sha, row, durable_log)
     path = f"validation-receipts/{args.repo}/{args.sha}/{digest}.json"
