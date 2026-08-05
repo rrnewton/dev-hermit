@@ -307,7 +307,14 @@ def find_coordinator_pane(
 
 
 def verify_empty_orc_composer(socket: Path, pane_id: str) -> None:
-    required_text = ("orc (hermit)", "Input (Enter", "Type / for commands")
+    # The composer is empty and ready when it shows the orc header and the
+    # empty-input placeholder. Older Orc builds also rendered an
+    # "Input (Enter, ...)" border title, but the current build shows
+    # "Paste not available here" there instead (it does not enable terminal
+    # bracketed paste); delivery is by typed keys, not paste, so that title is
+    # no longer a readiness signal. The "Type / for commands" placeholder only
+    # appears while the input box is empty, which is the invariant we need.
+    required_text = ("orc (hermit)", "Type / for commands")
     missing: list[str] = []
     for attempt in range(COMPOSER_ATTEMPTS):
         screen = run_tmux(socket, "capture-pane", "-p", "-t", pane_id)
@@ -419,29 +426,43 @@ def log_delivery(
 
 
 def send_message(socket: Path, pane_id: str, message: str) -> None:
-    buffer_name = f"orc-hermit-msg-{os.getpid()}-{secrets.token_hex(4)}"
-    run_tmux(socket, "load-buffer", "-b", buffer_name, "-", input_text=message)
-    try:
-        # Keep paste and Enter ordered inside one tmux server request.
-        run_tmux(
-            socket,
-            "paste-buffer",
-            "-d",
-            "-p",
-            "-b",
-            buffer_name,
-            "-t",
-            pane_id,
-            ";",
-            "send-keys",
-            "-t",
-            pane_id,
-            "Enter",
-        )
-    except OrcMessageError:
-        with contextlib.suppress(OrcMessageError):
-            run_tmux(socket, "delete-buffer", "-b", buffer_name)
-        raise
+    """Type the message into the Orc composer and submit it.
+
+    The Orc TUI composer does not enable terminal bracketed-paste mode (its
+    border reads "Paste not available here"), so ``tmux paste-buffer -p`` is
+    silently dropped and never reaches the input box — the send appears to
+    succeed while nothing arrives. Deliver by injecting the text as typed input
+    instead: paste each line UNBRACKETED via a tmux buffer (safe for arbitrary
+    content, including lines that start with '-', which ``send-keys -l``
+    misparses as flags), separate lines with Ctrl+J which the composer inserts
+    as a newline (Enter submits), and submit once at the end with Enter.
+    """
+    token = secrets.token_hex(4)
+    for index, line in enumerate(message.split("\n")):
+        if index > 0:
+            # Ctrl+J inserts a newline in the composer without submitting.
+            run_tmux(socket, "send-keys", "-t", pane_id, "C-j")
+        if not line:
+            continue
+        buffer_name = f"orc-hermit-msg-{os.getpid()}-{token}-{index}"
+        run_tmux(socket, "load-buffer", "-b", buffer_name, "-", input_text=line)
+        try:
+            # No -p: an unbracketed paste is injected as if typed. -d removes
+            # the buffer afterwards.
+            run_tmux(
+                socket,
+                "paste-buffer",
+                "-d",
+                "-b",
+                buffer_name,
+                "-t",
+                pane_id,
+            )
+        except OrcMessageError:
+            with contextlib.suppress(OrcMessageError):
+                run_tmux(socket, "delete-buffer", "-b", buffer_name)
+            raise
+    run_tmux(socket, "send-keys", "-t", pane_id, "Enter")
 
 
 def locked(lock_path: Path) -> TextIO:
