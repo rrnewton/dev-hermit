@@ -53,6 +53,14 @@ CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
 
 Networked commands use `with-proxy` internally.
 
+Detached validations outlive their launching agents. Stop the unit, not the
+watcher: `./ci-hub/ci-hub validate-stop --unit validate-NAME.service` targets one
+run, while `./ci-hub/ci-hub validate-stop --all` enumerates every active
+`validate-*` user service or scope. The command refuses unrelated unit names,
+uses `systemctl --user stop` on each exact unit, and fails if any unit remains
+active. A signal-aware `validate.sh` records that operator stop as `no_result`,
+never as a product failure.
+
 ## Standing receipt reconciliation
 
 A validate receipt is keyed to an exact commit SHA, so every rebase/push/mark-ready

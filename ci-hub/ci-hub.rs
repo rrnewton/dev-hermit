@@ -67,6 +67,7 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  validate-stop           Stop detached validate-* user units and verify termination
   ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
   history                 Query the retained GitHub Actions timeline
@@ -209,6 +210,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Stop detached validate-* user units and verify they terminated.
+    ValidateStop(PassthroughArgs),
     /// Read canonical qualified views of the validate ledger.
     Ledger(LedgerArgs),
     /// Find the newest branch commit whose latest local validation passed.
@@ -1110,6 +1113,7 @@ impl HubCommand {
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
+            | Self::ValidateStop(_)
             | Self::ApplyLocalLabel(_)
             | Self::LandLock(_)
             | Self::ValidateLock(_) => return None,
@@ -1629,6 +1633,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::ValidateStop(args) => {
+            run_python(root, "ci-hub/validate/stop_units.py", args.args)
+        }
         HubCommand::Ledger(args) => match args.command {
             LedgerCommand::QualifiedRows(qualified_args) => {
                 let mut forwarded = Vec::new();
@@ -4673,6 +4680,18 @@ mod tests {
         assert_eq!(args.top, 3);
         assert!(args.json);
         assert!(HubCommand::LoadProbe(args).cost_spec().is_some());
+    }
+
+    #[test]
+    fn parses_validate_stop_passthrough() {
+        let command = Cli::try_parse_from(["ci-hub", "validate-stop", "--all"])
+            .unwrap()
+            .command;
+        let HubCommand::ValidateStop(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert_eq!(args.args, vec![OsString::from("--all")]);
+        assert!(HubCommand::ValidateStop(args).cost_spec().is_none());
     }
 
     #[test]
