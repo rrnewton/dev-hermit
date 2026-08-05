@@ -715,3 +715,9 @@ was deliberately excluded because its lost untracked `d30work` has no recovery S
 | `worktrees/sabre` | hermit-sabre / compat-linux-qemu-boot | Hermit #1107 landed as `8827c8302e52a75ba5621743a9b6703d59d30a2f`; Reverie #228 landed. | Landed results; stale absent registry row retired. |
 | `worktrees/slot01` | hermit-ci-examples / impl-ci-integration-green | Unlanded work preserved at `origin/codex/ci-integration-green-v3` exact SHA `77b3b6efa744cba08b47c15f5e6d11c2237f6568`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
 | `worktrees/slot02` | codex-1120 / fix-kvm-detpid-mismatch | Hermit #1120 landed as `c3381cae183d9d73b7698a96e8df8eeb4799269b`. | Closed through `ci-hub/bin/close-task` after fresh PR replay-SHA verification. |
+
+### Drainer-3 reassignment for parent lint repair (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-3` | drainer-3 / drain-hermit-1468-fix | Hermit detached `c243497c605571ec4dfeab3c67131e2cd0f35f6b`; no Reverie or LiteInst2 child | The assigned #1468 work landed as `5d5bb2e3850beb0fccac71e6c3a1e3ae1824ee41`; the residual checkout corresponds to closed #1443, whose active recovery moved to `drainer-1`. The detached SHA is remote-reachable. | The registry task ID is absent from the authoritative Hermit TaskGraph. The checkout was clean and consistent with its exact primary worktree registration, and no process referenced the slot. It was reclaimed through the target-scoped release tool without deleting refs so the canonical slot could host the Reverie typed-error fix required by parent PR #38. |
