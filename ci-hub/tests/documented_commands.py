@@ -211,6 +211,8 @@ def _parse_probe(command: str) -> str:
         return "systemctl --help"
     if normalized.startswith("./ci-hub/bin/close-task "):
         return "./ci-hub/bin/close-task --help"
+    if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
+        return "./ci-hub/bin/reconcile-receipts --help"
     return command
 
 
@@ -278,6 +280,8 @@ def _run_one(
             executed = _parse_probe(rendered)
         elif rendered.startswith("with-proxy gh "):
             executed = _external_help(rendered)
+        else:
+            executed = _parse_probe(rendered)
     elif command.mode == "live-read":
         allowed = {0, 1, 2} if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered) else {0}
 

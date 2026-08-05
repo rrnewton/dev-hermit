@@ -59,6 +59,26 @@ class DocumentedCommandsTest(unittest.TestCase):
                 "./ci-hub/bin/reconcile-receipts-untrusted # human table"
             )
 
+    def test_reconcile_receipts_non_live_mode_executes_only_help(self) -> None:
+        command = documented_commands.DocumentedCommand(
+            documented_commands.ROOT / "ci-hub/README.md",
+            73,
+            "./ci-hub/bin/reconcile-receipts --json",
+            "live-read",
+        )
+        self.assertEqual(
+            documented_commands._parse_probe(command.text),
+            "./ci-hub/bin/reconcile-receipts --help",
+        )
+        reports = documented_commands._run_one(
+            command,
+            root=documented_commands.ROOT,
+            environment=os.environ.copy(),
+            live=False,
+            verify_purity=False,
+        )
+        self.assertIn("PASS live-read", reports[0])
+
     def test_unclassified_command_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "README.md"
