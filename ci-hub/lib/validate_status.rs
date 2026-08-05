@@ -188,33 +188,6 @@ pub const COUNTS_SCHEMA: u32 = 5;
 /// completeness rule (the canonical guard for validate_ledger_qualified_rows).
 pub const FULL_GATES_EXPECTED: u64 = 5;
 
-/// A red that EXECUTED at most this many tests exercised essentially nothing —
-/// a NO-RESULT wearing a red badge, never a durable FAILED. `executed_tests`
-/// MISSING entirely is treated the same: an unmeasured red cannot certify a
-/// defect (symmetric with the pass side, where an uncounted receipt is
-/// UNVERIFIED, not green — see `is_clean_full_pass`). Measured on the live
-/// ledger (2026-08-05): of 197 rows whose effective result was fail/timeout, 168
-/// executed <= 1 test or none — ~45% of every recorded red was a no-result. A
-/// recorded red is NEVER re-run, so each false row permanently condemns a PR
-/// nobody re-examines; demoting it to NO-RESULT (exit 4 = re-dispatch) is the
-/// structural fix.
-pub const EXECUTED_TESTS_NO_RESULT_MAX: i64 = 1;
-
-/// The plausible-full floor. A red carrying a POSITIVE count below this ran only
-/// a fraction of the suite: NEEDS-RERUN, never a durable FAILED. TEMPORARY, and
-/// justified by the MEASURED distribution, not the gate count — all of tonight's
-/// false reds reported six checks, so check count alone is no evidence. Measured
-/// full-run PASS population (2026-08-05, this host): the dominant hermit cluster
-/// executes 740-792 tests (reverie 942-961); 700 sits safely below that cluster
-/// yet far above every partial red (measured partial fails at 415/430/434/515).
-/// A small 427-count hermit-pass outlier cluster exists below the floor, but the
-/// floor gates only the FAILURE-durability path (a low-count PASS still validates
-/// via `is_clean_full_pass`, which keys on `executed_tests > 0`, not this floor),
-/// so a conservative demotion of a low-count red to NEEDS-RERUN only re-runs it —
-/// it never strands a green. Refine per-repo/per-version when the producer emits
-/// an expected-suite-size; until then this single floor is the safe temporary.
-pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
-
 /// The landing / cache predicate — version-aware over the count-schema
 /// transition (see the module docs and the transition design note). Over and
 /// above clean full coverage (`is_clean_full_coverage`) and `result == "pass"`:
@@ -382,28 +355,18 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
         return FailureDisposition::Truncated;
     }
 
-    // Executed-test plausibility. A red that ran the full gate set can STILL be a
-    // no-result if it exercised essentially no tests: the build died, a setup
-    // step aborted, or contention killed the suite before it ran. `checks == 6`
-    // is not evidence — every one of tonight's false reds reported six checks.
-    // Bind the verdict to the observed executed-test count instead (Proxy
-    // Binding: carry the condition with the value). This is checked AFTER the
-    // env-fault and truncation readings (each a more specific "why nothing ran")
-    // and BEFORE the completeness/condition/flake logic, so a low/absent count
-    // demotes a would-be durable FAILED regardless of how complete its gates or
-    // conditions look. NO-RESULT and NEEDS-RERUN are both exit 4 (re-dispatch),
-    // never the permanent FAILED that condemns a PR nobody re-runs.
-    match row.executed_tests {
-        // Missing OR <= 1: an unmeasured red, or one that ran one test at most,
-        // certifies no defect. NO-RESULT.
-        None => return FailureDisposition::NoResult,
-        Some(n) if n <= EXECUTED_TESTS_NO_RESULT_MAX => return FailureDisposition::NoResult,
-        // A positive count below the plausible-full floor ran only a fraction of
-        // the suite — re-run before trusting it. NEEDS-RERUN.
-        Some(n) if n < EXECUTED_TESTS_PLAUSIBLE_FLOOR => return FailureDisposition::NeedsRerun,
-        // >= floor: a full-suite run whose failure can be durable if the other
-        // full-profile conditions below hold.
-        Some(_) => {}
+    // No named failing gate means no observable defect to condemn. `executed_tests`
+    // was refuted as a proxy in BOTH directions — a build/clippy red exercises zero
+    // tests yet is a genuine defect, and a high-count run can still be a no-result —
+    // so the verdict binds to the NAMED GATE authority (gates[] + exit_code), not a
+    // count. This is checked AFTER the env-fault and truncation readings (each a
+    // more specific "why nothing ran") and BEFORE the completeness/condition/flake
+    // logic. When neither a named failing gate nor a failure count is present, the
+    // red carries no durable evidence: NO-RESULT (exit 4, re-dispatch), never the
+    // permanent FAILED that condemns a PR nobody re-runs. `executed_tests` remains
+    // in the record for diagnostics only; it is no longer a classification key.
+    if !has_real_failure {
+        return FailureDisposition::NoResult;
     }
 
     // Missing completeness or execution conditions cannot prove a defect. Old
@@ -825,64 +788,45 @@ mod tests {
     }
 
     #[test]
-    fn low_or_absent_executed_count_red_is_no_result_not_failed() {
-        // PLANT BOTH WAYS #1 — the false-red direction. A complete, condition-
-        // bound, non-flaky red that would otherwise be a durable FAILED is demoted
-        // to NO-RESULT when its own executed-test count proves it exercised nothing
-        // (one test at most, or no count at all). checks==5 and full conditions are
-        // present and STILL insufficient — the count is the binding evidence. Live
-        // shapes: 92db28e0 / e0c96c58 (exec=1), 1288671f / 97eb2c75 (exec=null).
-        let mut one = complete_failure(PASS_SHA);
-        one.executed_tests = Some(1);
-        let a = assess(&[one], PASS_SHA);
+    fn executed_count_does_not_move_a_named_gate_red_off_failed() {
+        // UNWIRE bracket — the genuine-failure direction. `executed_tests` was
+        // refuted as a proxy in BOTH directions, so it no longer keys the verdict:
+        // a red carrying a NAMED failing gate (portable CI DAG lane, bound origin)
+        // stays a durable FailedOnRecord across every executed-count value, absent
+        // included. A build/clippy red that exercises zero tests is still a real
+        // defect. Live shape: 71bc3856 (exec 765) — a REAL failure.
+        for count in [None, Some(0), Some(1), Some(430), Some(765)] {
+            let mut r = complete_failure(PASS_SHA);
+            r.executed_tests = count;
+            let a = assess(&[r], PASS_SHA);
+            assert_eq!(
+                a.verdict,
+                Verdict::FailedOnRecord,
+                "executed_tests={count:?} with a named failing gate must stay FAILED",
+            );
+            assert_eq!(a.verdict.exit_code(), 3);
+        }
+    }
+
+    #[test]
+    fn red_without_a_named_gate_or_failure_count_is_no_result() {
+        // UNWIRE bracket — the no-evidence direction. When no named failing gate
+        // and no failure count are present, the red carries no observable defect,
+        // so it is NO-RESULT regardless of a high executed-test count: the count is
+        // diagnostic only and cannot conjure a durable FAILED. `failures` is absent
+        // (not 0, which the truncation reading above already claims), the gate list
+        // is empty, and executed_tests=765 must still re-dispatch, never FAILED.
+        let r = row(&format!(
+            r#"{{"schema_version":6,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":5,"gates_run":5,
+                "gates_expected":5,"executed_tests":765,"dag_jobs":4,
+                "concurrent_validates":0,"known_flaky_failure":false,
+                "solo_rerun_confirmation":false,"gates":[]}}"#
+        ));
+        let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::NoResult);
         assert_eq!(a.verdict.exit_code(), 4);
-
-        let mut zero = complete_failure(PASS_SHA);
-        zero.executed_tests = Some(0);
-        assert_eq!(assess(&[zero], PASS_SHA).verdict, Verdict::NoResult);
-
-        let mut absent = complete_failure(PASS_SHA);
-        absent.executed_tests = None;
-        assert_eq!(assess(&[absent], PASS_SHA).verdict, Verdict::NoResult);
-    }
-
-    #[test]
-    fn partial_executed_count_red_needs_rerun_not_failed() {
-        // A red carrying a POSITIVE count below the plausible-full floor ran only a
-        // fraction of the suite: NEEDS-RERUN, never a durable FAILED. Live shape:
-        // 54b4d4e5 (exec=430) — codex-rev already made this call.
-        let mut r = complete_failure(PASS_SHA);
-        r.executed_tests = Some(430);
-        let a = assess(&[r], PASS_SHA);
-        assert_eq!(a.verdict, Verdict::NeedsRerun);
-        assert_eq!(a.verdict.exit_code(), 4);
-
-        // Just below the floor still needs a re-run (not inert: the boundary bites).
-        let mut edge = complete_failure(PASS_SHA);
-        edge.executed_tests = Some(EXECUTED_TESTS_PLAUSIBLE_FLOOR - 1);
-        assert_eq!(assess(&[edge], PASS_SHA).verdict, Verdict::NeedsRerun);
-    }
-
-    #[test]
-    fn full_suite_executed_count_red_stays_failed() {
-        // PLANT BOTH WAYS #2 — the genuine-failure direction. A red that ran the
-        // full suite (>= floor) with complete gates and bound conditions is a
-        // durable FAILED: the executed-count gate must not launder a REAL failure
-        // into a no-result. A classifier that called everything a no-result would be
-        // as broken as one that called everything red. Live shape: 71bc3856 (exec
-        // 765, six checks, 403s) — a REAL failure.
-        let mut r = complete_failure(PASS_SHA);
-        r.executed_tests = Some(765);
-        let a = assess(&[r], PASS_SHA);
-        assert_eq!(a.verdict, Verdict::FailedOnRecord);
-        assert_eq!(a.verdict.exit_code(), 3);
-
-        // Exactly at the floor is plausible-full and stays FAILED (boundary is
-        // inclusive on the FAILED side).
-        let mut edge = complete_failure(PASS_SHA);
-        edge.executed_tests = Some(EXECUTED_TESTS_PLAUSIBLE_FLOOR);
-        assert_eq!(assess(&[edge], PASS_SHA).verdict, Verdict::FailedOnRecord);
     }
 
     #[test]
