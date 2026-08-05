@@ -7,11 +7,10 @@
 # can outlive a dead agent and wedge the FIFO (the 2040-minute starvation bug).
 #
 # Sequence (while holding the land-lock):
-#   fetch fresh main -> GitHub-free eligibility gate (clean full-validate record
-#   for the exact pre-rebase head; the label is non-authoritative) -> rebase
-#   (union|plain) + push -> require a clean record for the exact pushed head ->
-#   derive locally-validated through apply-local-label -> bounded merge-gate poll
-#   -> gh pr merge --rebase (NEVER --admin) -> ancestry-verify.
+#   fetch fresh main + immutable PR head -> exact-head hard-green authority
+#   (counted local full OR hosted portable+privileged) -> bounded merge-gate poll
+#   -> head-matched GitHub rebase merge WITHOUT rewriting the PR branch ->
+#   ancestry-verify -> arm exact replay-SHA post-facto validation.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
 #   1. Trinary gate poll: PASSED lands, FAILED stops, and NO_RESULT blocks while
@@ -30,8 +29,8 @@
 #   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union] [--agent NAME]
 #                             [--gate-deadline SECS] [--child-deadline SECS]
 #                             [--foreground]
-#   --union          use the additive manifest union-rebase (union-rebase.sh);
-#                    default is a plain `git rebase origin/main`.
+#   --union          rejected: automatic union conflict resolution cannot retain
+#                    soft green without a typed resolver judgement.
 #   --agent NAME     lock holder + PR-comment role tag (default: hermit-lander).
 #   --gate-deadline  bound on the merge-gate poll (default 1080).
 #   --child-deadline hard ceiling for the whole land subtree (default: twice the
@@ -81,6 +80,10 @@ if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
   printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s agent=%s\n' \
     "$PR" "$BR" "$UNION" "$AGENT"
   exit 0
+fi
+if [ "$UNION" -eq 1 ]; then
+  echo "land-pr: --union is refused: automatic conflict resolution cannot mint soft green without a typed resolver judgement" >&2
+  exit 3
 fi
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -137,7 +140,7 @@ if [ "$INNER" -eq 0 ]; then
   # child can merge. If this process dies after the merge, the ORC recovery
   # watcher observes the merged SHA and arms both verifiers.
   if ! "$ROOT/ci-hub/remediation/land_and_arm.py" prepare \
-      --repo "$R" --pr "$PR" --source "$ROOT/hermit" \
+      --repo "$R" --pr "$PR" --source "$WT" \
       --land-mode speculative --actor "$AGENT"; then
     say "ABANDON: could not prepare the post-land verification obligation"
     comment_abandon "could not prepare the mandatory post-land verification obligation"
@@ -164,87 +167,51 @@ abandon(){
   exit "$code"
 }
 
-# 1. fresh main
+# 1. Freeze the exact PR head and current base. Do NOT rewrite the branch: its
+# hard-green and adversarial-review evidence remain applicable to X, while
+# GitHub's head-matched rebase merge produces the probabilistic replay Z.
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
-with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
+with-proxy git -C "$WT" fetch -q origin "$BR" || abandon "fetch origin/$BR failed" 2
+BASE=$(git -C "$WT" rev-parse origin/main) || abandon "cannot resolve fresh origin/main" 2
+PR_META=$(with-proxy gh pr view "$PR" -R "$R" \
+  --json state,headRefName,headRefOid,baseRefName,isDraft 2>/dev/null) \
+  || abandon "cannot read exact PR identity" 2
+HEAD=$(jq -r .headRefOid <<<"$PR_META")
+LIVE_BRANCH=$(jq -r .headRefName <<<"$PR_META")
+LIVE_BASE=$(jq -r .baseRefName <<<"$PR_META")
+LIVE_STATE=$(jq -r .state <<<"$PR_META")
+[ "$LIVE_STATE" = OPEN ] || abandon "PR state is $LIVE_STATE, not OPEN" 2
+[ "$LIVE_BRANCH" = "$BR" ] || abandon "branch mismatch: argument=$BR GitHub=$LIVE_BRANCH" 2
+[ "$LIVE_BASE" = main ] || abandon "PR targets $LIVE_BASE, not main" 2
+REMOTE_HEAD=$(git -C "$WT" rev-parse "origin/$BR") \
+  || abandon "cannot resolve origin/$BR" 2
+[ "$REMOTE_HEAD" = "$HEAD" ] \
+  || abandon "GitHub/git head mismatch: GitHub=$HEAD origin/$BR=$REMOTE_HEAD" 2
+[[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || abandon "PR head is not a full commit id: $HEAD" 2
+say "frozen source=$HEAD current-main-base=$BASE (branch left unchanged)"
 
-# 1b. GITHUB-FREE LANDING GATE (owner P0 lander-lands-on-local-validate-only).
-# The label is only a cache. It never authorizes landing independently of the
-# source ledger, including when shared credentials applied it. The exact PR head
-# must have a clean full-coverage PASS record. The same predicate is checked
-# again after rebase because a SHA-changing rebase invalidates the old receipt.
-ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
-PRELABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$ORIG" "$PRELABELS" 2>&1); VRC=$?
-say "local-validation eligibility(head=$ORIG) rc=$VRC: $VS"
-case "$VRC" in
-  0) say "landing eligibility: clean full-validate record for $ORIG" ;;
-  3) abandon "GitHub-free landing gate: PR head $ORIG has a clean full-validate record that FAILED (known-failing); refusing to land" 4 ;;
-  4) abandon "GitHub-free landing gate: PR head $ORIG has no clean full-validate PASS record; observed labels are non-authoritative" 4 ;;
-  *) abandon "GitHub-free landing gate: could not evaluate exact-head validation evidence (rc=$VRC)" 4 ;;
+# 2. One hard-green authority, two interchangeable execution sources. A label is
+# only a cache. The JSON record carries the exact SHA and source identities.
+HARD_JSON=$(python3 "$SCRIPT_DIR/hard_green.py" --sha "$HEAD" --repo "$R" --json 2>&1)
+HARD_RC=$?
+say "source hard-green rc=$HARD_RC: $(jq -r '.verdict // "unparseable"' <<<"$HARD_JSON" 2>/dev/null)"
+case "$HARD_RC" in
+  0) : ;;
+  3) abandon "exact source $HEAD is hard-red or has contradictory authorities: $HARD_JSON" 4 ;;
+  4) abandon "exact source $HEAD has no hard-green result from local full or hosted portable+privileged" 4 ;;
+  *) abandon "could not evaluate exact-source hard-green authority: $HARD_JSON" 4 ;;
 esac
+HARD_AUTHORITIES=$(jq -r '.passing_authorities | join(",")' <<<"$HARD_JSON")
 
-# 2. rebase onto latest main + push
-if [ "$UNION" -eq 1 ]; then
-  ulog="/tmp/land-$PR-union.log"
-  "$SCRIPT_DIR/union-rebase.sh" "$WT" "$BR" --push >"$ulog" 2>&1
-  RES=$(grep -E '^RESULT' "$ulog" | tail -1)
-  say "union: ${RES:-<none> (see $ulog)}"
-  case "$RES" in
-    *" CLEAN"|*" UNIONED") : ;;
-    *) abandon "union-rebase did not converge: ${RES:-see $ulog}" 3 ;;
-  esac
-else
-  git -C "$WT" checkout -q -B "_land_$PR" "origin/$BR" || abandon "checkout origin/$BR failed" 3
-  if ! GIT_EDITOR=true git -C "$WT" rebase origin/main >/dev/null 2>&1; then
-    git -C "$WT" rebase --abort >/dev/null 2>&1
-    git -C "$WT" checkout -q --detach origin/main 2>/dev/null || true
-    abandon "plain rebase onto origin/main conflicted (needs owner/--union)" 3
-  fi
-  with-proxy git -C "$WT" push -q --force-with-lease origin "HEAD:$BR" || abandon "force-with-lease push failed" 3
-  git -C "$WT" checkout -q --detach origin/main 2>/dev/null || true
+# Preserve the local label as a derived cache when local evidence was the passing
+# source; never require it for the hosted hard-green path.
+if grep -q 'local-full-validate' <<<"$HARD_AUTHORITIES"; then
+  "$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
+    || abandon "ledger-guarded local evidence publication failed" 4
 fi
 
-# 3. record pushed head
-with-proxy git -C "$WT" fetch -q origin "$BR"
-HEAD=$(git -C "$WT" rev-parse "origin/$BR")
-say "pushed head=$HEAD"
-
-# 4. The pushed exact head needs its own ledger receipt. A rebase that changed
-# the SHA cannot inherit the old authorization. Only the ledger-guarded applier
-# may materialize the cache label; the lander never types it directly.
-#
-# 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
-# ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
-# reach the parent count helper; with the uncounted-receipt grandfather removed,
-# such a genuine green would be NotValidated. The scan (append-safe, idempotent)
-# upgrades HEAD's row from its own log so a real green is not stranded by a
-# producer that failed to inline its counts. Best-effort: never aborts landing —
-# eligibility below remains the authoritative fail-closed gate.
-"$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" || true
-# Capture the VERBATIM first_error_line of every surviving red log into the
-# durable append-only sidecar (ignored/validate-red-attribution.jsonl) BEFORE the
-# /tmp log is evicted. Append-only + idempotent, so it races no appender and never
-# duplicates; best-effort (never a fatal error) and never affects the landing
-# verdict below -- it only preserves attribution that would otherwise die with the
-# log. Until hermit validate.sh inlines first_error_line into the red row it
-# writes, this is what makes a red attributable to which BUG (not just which gate)
-# after the log is gone.
-python3 "$ROOT/ci-hub/validate/attribute_reds.py" --last 0 --persist >/dev/null 2>&1 || true
-PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
-say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"
-[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no clean exact-head full-validate PASS record; validate it before stamping" 4
-"$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
-  || abandon "ledger-guarded apply-local-label failed" 4
-sleep 4
-LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
-grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
-say "ledger-derived label present; labels=$LB"
-
-# 4b. a draft PR cannot be merged; marking ready fires a fresh (label-present)
-# merge-gate run, which the poll below waits on.
-if [ "$(with-proxy gh pr view "$PR" -R "$R" --json isDraft -q .isDraft)" = "true" ]; then
+# A draft PR cannot be merged; marking ready fires a fresh exact-head gate.
+if [ "$(jq -r .isDraft <<<"$PR_META")" = "true" ]; then
   with-proxy gh pr ready "$PR" -R "$R" >/dev/null && say "marked ready (was draft)"
   sleep 4
 fi
@@ -305,34 +272,27 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. The exact pushed head must carry a dereferenceable validation receipt at
-# the final authorization boundary. A label or well-shaped comment is only a
-# pointer; the parent-pinned verifier resolves the immutable receipt and checks
-# its digest, repository, head, counted ledger row, and coverage obligations.
+# Re-check identity at the final authorization boundary. The hard-green record
+# was for X; a moved PR head cannot inherit it.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
-  || abandon "could not resolve the live PR head before receipt authorization" 5
+  || abandon "could not resolve the live PR head before merge authorization" 5
 [ "$live_head" = "$HEAD" ] \
-  || abandon "PR head moved before receipt authorization (expected $HEAD, observed ${live_head:-missing})" 5
-receipt_comments=$(mktemp) \
-  || abandon "could not allocate the receipt-comment observation file" 5
-if ! with-proxy gh api --paginate --slurp \
-    "repos/$R/issues/$PR/comments?per_page=100" >"$receipt_comments"; then
-  rm -f -- "$receipt_comments"
-  abandon "could not fetch comments for exact-head receipt authorization" 5
-fi
-receipt_detail=$("$ROOT/ci-hub/validation/verify_receipt.sh" \
-  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
-receipt_rc=$?
-rm -f -- "$receipt_comments"
-if [ "$receipt_rc" -ne 0 ]; then
-  abandon "exact-head validation receipt REFUSED for $HEAD: ${receipt_detail:-no receipt}" 5
-fi
-say "exact-head validation receipt authorized: $receipt_detail"
+  || abandon "PR head moved after hard-green authorization (expected $HEAD, observed ${live_head:-missing})" 5
 
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to
 # recompute mergeability, resolving a stuck UNKNOWN here. Treat "already merged"
 # as success; a genuine block surfaces as a persistent error after the budget.
+with-proxy git -C "$WT" fetch -q origin main \
+  || abandon "could not refresh main immediately before merge" 6
+BASE_BEFORE_MERGE=$(git -C "$WT" rev-parse origin/main)
+say "speculative replay requested: hard source=$HEAD onto observed main=$BASE_BEFORE_MERGE"
+case "$AGENT" in
+  hermit-coord|codex-coord|*codex*)
+    with-proxy gh pr edit "$PR" -R "$R" --add-label codex-coord >/dev/null 2>&1 \
+      || say "WARN: could not apply codex-coord label"
+    ;;
+esac
 merged=""; out=""
 for mtries in $(seq 12); do
   out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
@@ -343,15 +303,21 @@ for mtries in $(seq 12); do
 done
 [ "$merged" = ok ] || abandon "gh pr merge --rebase did not succeed after 12 tries (last: $(tr '\n' ' ' <<<"$out" | tail -c 160))" 6
 
-# 7. ancestry-verify: a PR-head hash is NOT a landing. Confirm the merge commit is
+# 7. ancestry-verify: a PR-head hash is NOT a landing. Confirm the replay commit is
 # reachable from origin/main before declaring success.
-with-proxy git -C "$ROOT/hermit" fetch -q origin main 2>/dev/null \
-  || with-proxy git -C "$WT" fetch -q origin main
+with-proxy git -C "$WT" fetch -q origin main \
+  || abandon "could not fetch landed main for ancestry verification" 7
 MC=$(with-proxy gh pr view "$PR" -R "$R" --json mergeCommit -q .mergeCommit.oid)
-GITDIR="$ROOT/hermit"; git -C "$GITDIR" cat-file -e "$MC" 2>/dev/null || GITDIR="$WT"
-if git -C "$GITDIR" merge-base --is-ancestor "$MC" origin/main 2>/dev/null; then
-  if "$ROOT/ci-hub/remediation/land_and_arm.py" complete --repo "$R" --pr "$PR"; then
-    say "LANDED:$MC"; exit 0
+if git -C "$WT" merge-base --is-ancestor "$MC" origin/main 2>/dev/null; then
+  ARM_OUT=$("$ROOT/ci-hub/remediation/land_and_arm.py" complete \
+    --repo "$R" --pr "$PR" 2>&1)
+  ARM_RC=$?
+  if [ "$ARM_RC" -eq 0 ]; then
+    with-proxy gh pr comment "$PR" -R "$R" --body \
+      "[coordinator, $MODEL] codex-coord/hermit-coord coordinating with orc-coord: LANDED source $HEAD after exact-SHA hard green from ${HARD_AUTHORITIES:-unknown}; GitHub rebased it onto the then-current main (observed pre-merge base $BASE_BEFORE_MERGE) as replay $MC. Replay $MC is soft green until the durable post-facto local/GitHub obligation completes. ${ARM_OUT}" \
+      >/dev/null 2>&1 || say "WARN: could not post landing evidence comment"
+    say "LANDED:$MC source-hard=$HARD_AUTHORITIES replay-soft post-facto-armed"
+    exit 0
   fi
   say "POST-LAND ARM PENDING: $MC is landed; durable recovery will retry"
   with-proxy gh pr comment "$PR" -R "$R" --body \

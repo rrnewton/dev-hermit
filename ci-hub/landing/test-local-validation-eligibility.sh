@@ -39,11 +39,17 @@ valid_with=$(run_case 0 "$valid" "locally-validated")
 [ "$valid_without" = "ELIGIBILITY=VALIDATED" ]
 [ "$valid_with" = "$valid_without" ]
 
-# The production consumer must use the helper and must not type the label via gh.
-grep -Fq 'local-validation-eligibility.sh' "$lander"
+# The production consumer must dereference the combined exact-SHA hard-green
+# authority and must not type the cache label via gh.  This legacy helper stays
+# covered here because hard_green.py reaches the same validate-status verifier.
+grep -Fq 'hard_green.py' "$lander"
+if grep -Fq 'local-validation-eligibility.sh' "$lander"; then
+  echo "land-pr.sh still bypasses the combined hard-green authority" >&2
+  exit 1
+fi
 if grep -Eq 'gh pr edit .*--add-label locally-validated' "$lander"; then
   echo "land-pr.sh still directly types locally-validated" >&2
   exit 1
 fi
 
-printf 'PASS: unbacked label rejected 2/2; validated head admitted 2/2; lander uses ledger authority\n'
+printf 'PASS: unbacked label rejected 2/2; validated head admitted 2/2; lander uses combined exact-SHA authority\n'

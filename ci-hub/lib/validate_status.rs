@@ -115,7 +115,10 @@ impl Verdict {
         match self {
             Verdict::Validated => 0,
             Verdict::FailedOnRecord => 3,
-            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NoResult | Verdict::NotValidated => 4,
+            Verdict::Truncated
+            | Verdict::NeedsRerun
+            | Verdict::NoResult
+            | Verdict::NotValidated => 4,
         }
     }
 
@@ -301,8 +304,7 @@ fn is_env_fault_red(row: &HistoryRow, failed_gates: &[&crate::records::GateHisto
     // (A) A gate that genuinely exercised the product and failed disqualifies the
     // env-fault reading: it ran for real time at a non-command-not-found exit.
     let any_genuine_red = failed_gates.iter().any(|gate| {
-        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND)
-            && gate.real_seconds.is_some_and(|s| s > 0.0)
+        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND) && gate.real_seconds.is_some_and(|s| s > 0.0)
     });
     let any_command_not_found = failed_gates
         .iter()
@@ -375,8 +377,7 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
         .zip(gates_run)
         .is_some_and(|(expected, ran)| expected > 0 && ran < expected)
         || (!has_real_failure
-            && (row.exit_code == Some(130)
-                || (row.failures == Some(0) && failed_gates.is_empty())))
+            && (row.exit_code == Some(130) || (row.failures == Some(0) && failed_gates.is_empty())))
     {
         return FailureDisposition::Truncated;
     }
