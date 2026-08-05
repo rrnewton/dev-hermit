@@ -220,7 +220,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
     }
     // Fast path: if HEAD is already an ancestor of origin/main, every commit is
     // on origin (nothing unique to this branch) -> durable, no network needed.
-    let (on_main, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, "origin/main"]);
+    let (on_main, _, _) = git(
+        path,
+        &["merge-base", "--is-ancestor", &local_head, "origin/main"],
+    );
     if on_main {
         return None;
     }
@@ -237,7 +240,11 @@ fn missing_on_origin(path: &Path) -> Option<String> {
             .next()
             .unwrap_or("")
             .to_string(),
-        Ok(_) => return Some(format!("branch '{branch}' ls-remote failed (treat as unpushed)")),
+        Ok(_) => {
+            return Some(format!(
+                "branch '{branch}' ls-remote failed (treat as unpushed)"
+            ))
+        }
         Err(e) => return Some(format!("branch '{branch}' ls-remote could not run ({e})")),
     };
     if remote_sha.is_empty() {
@@ -249,7 +256,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
     // Remote differs. Safe ONLY if HEAD is an ancestor of the remote tip (origin
     // is strictly ahead and carries all our commits). This requires the remote
     // object locally; if it is not present we cannot prove safety -> at risk.
-    let (ok_anc, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, &remote_sha]);
+    let (ok_anc, _, _) = git(
+        path,
+        &["merge-base", "--is-ancestor", &local_head, &remote_sha],
+    );
     if ok_anc {
         None
     } else {
@@ -265,7 +275,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
 fn push_branch(path: &Path) -> bool {
     let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     if !ok_b || branch.is_empty() {
-        eprintln!("  cannot push {}: detached HEAD / no branch", path.display());
+        eprintln!(
+            "  cannot push {}: detached HEAD / no branch",
+            path.display()
+        );
         return false;
     }
     let refspec = format!("HEAD:refs/heads/{branch}");
@@ -289,7 +302,10 @@ fn push_branch(path: &Path) -> bool {
             false
         }
         Err(e) => {
-            eprintln!("  could not spawn with-proxy git push for {}: {e}", path.display());
+            eprintln!(
+                "  could not spawn with-proxy git push for {}: {e}",
+                path.display()
+            );
             false
         }
     }
@@ -403,7 +419,9 @@ fn main() {
             ("liteinst2", &lpath),
         ];
         let mut at_risk: Vec<&str> = Vec::new();
-        eprintln!("pre-recycle guardrail: verifying committed work is on origin (git ls-remote)...");
+        eprintln!(
+            "pre-recycle guardrail: verifying committed work is on origin (git ls-remote)..."
+        );
         for (label, p) in children {
             if let Some(reason) = missing_on_origin(p) {
                 at_risk.push(label);
@@ -442,7 +460,10 @@ fn main() {
                     at_risk.join(", ")
                 ));
             } else {
-                eprintln!("⚠  --force: releasing {slot} despite work not on origin ({}).", at_risk.join(", "));
+                eprintln!(
+                    "⚠  --force: releasing {slot} despite work not on origin ({}).",
+                    at_risk.join(", ")
+                );
             }
         } else {
             eprintln!("✓ all committed work verified on origin");
@@ -458,10 +479,14 @@ fn main() {
         ] {
             if p.exists() {
                 let ps = p.to_string_lossy().to_string();
-                let mut args = vec!["worktree", "remove", &ps];
-                if force {
-                    args.insert(2, "--force");
-                }
+                // Git requires its own --force to remove any worktree that has
+                // an initialized submodule, even when both repositories are
+                // clean. This is an internal transport requirement, not the
+                // user-facing policy override: the dirty and origin-durability
+                // guardrails above remain the authority for reaching removal.
+                // The CLI --force flag still controls only whether those
+                // guardrails may be explicitly bypassed.
+                let args = vec!["worktree", "remove", "--force", &ps];
                 let (ok, _, err) = git(&primary, &args);
                 if ok {
                     println!("  removed {label} worktree {}", p.display());
