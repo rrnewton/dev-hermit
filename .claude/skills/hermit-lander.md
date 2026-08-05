@@ -7,7 +7,7 @@ description: "Compatibility role pointer for the Hermit landing agent. Load when
 
 This role has no independent landing protocol.
 
-1. Load [pr-landing-planner](pr-landing-planner/SKILL.md) and follow its canonical agent-utils skill before
+1. Load [pr-landing-planner](pr-landing-planner.md) and follow its canonical agent-utils skill before
    choosing, ordering, or assigning a landing batch.
    Publish each PR-to-agent assignment on the assigned work's TaskGraph task.
    Task notes are durable but pull-based; for a time-sensitive ready-to-land
