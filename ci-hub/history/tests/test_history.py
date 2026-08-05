@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HISTORY = Path(__file__).resolve().parents[1]
@@ -368,7 +369,14 @@ class TempParentTest(unittest.TestCase):
     def _full_pass_row(self, sha, **over):
         row = {"commit": sha, "commit_anchored": True, "tree_dirty": False,
                "selection_mode": "full", "profile": "full", "result": "pass",
-               "executed_tests": 42, "filtered_tests": 0}
+               "executed_tests": 42, "filtered_tests": 0,
+               "schema_version": 6,
+               "reverie_binding": {
+                   "repository": "rrnewton/reverie",
+                   "ref": "refs/heads/main",
+                   "pinned_sha": "9" * 40,
+                   "resolved_sha": "9" * 40,
+               }}
         row.update(over)
         return row
 
@@ -388,6 +396,12 @@ class TempParentTest(unittest.TestCase):
         self.assertAlmostEqual(res["green_conclusion_only_pct"],
                                res["green_pct"], places=2)
 
+    def test_ledger_corroboration_requires_full_exact_sha(self):
+        full = "a" * 40
+        self.assertTrue(query._ledger_corroborates({full: [{}]}, full))
+        self.assertFalse(query._ledger_corroborates({full[:12]: [{}]}, full))
+        self.assertFalse(query._ledger_corroborates({full: [{}]}, full[:12]))
+
     def test_green_split_ledger_corroborated_when_full_pass_row_exists(self):
         # POSITIVE: a full-pass ledger row at the exact green commit SHA moves
         # that slice into green_ledger. Bracket the mechanism firing.
@@ -397,8 +411,9 @@ class TempParentTest(unittest.TestCase):
             self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
                          "2026-08-03T01:00:00Z"),
         ])
-        self._write_ledger([self._full_pass_row("a" * 40)])
-        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        canonical = {"a" * 40: [self._full_pass_row("a" * 40)]}
+        with mock.patch.object(query, "load_ledger_index", return_value=canonical):
+            res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertGreater(res["green_ledger_hours"], 0.0)
         # combined green is never silently summed away: sub-buckets add to green.
         self.assertAlmostEqual(
@@ -415,14 +430,15 @@ class TempParentTest(unittest.TestCase):
             self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
                          "2026-08-03T01:00:00Z"),
         ])
-        self._write_ledger([self._full_pass_row(
+        canonical = {"a" * 40: [self._full_pass_row(
             "a" * 40,
-            schema_version=5,
             filtered_tests=3,
             coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
                       "absent_nodes": []},
-        )])
-        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        )]}
+        with mock.patch.object(query, "load_ledger_index",
+                               return_value=canonical):
+            res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertGreater(res["green_ledger_hours"], 0.0)
 
     def test_green_split_incomplete_coverage_does_not_corroborate(self):
@@ -435,14 +451,9 @@ class TempParentTest(unittest.TestCase):
             self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
                          "2026-08-03T01:00:00Z"),
         ])
-        self._write_ledger([self._full_pass_row(
-            "a" * 40,
-            schema_version=5,
-            filtered_tests=3,
-            coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
-                      "absent_nodes": ["test.missing"]},
-        )])
-        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        # The canonical verifier omits the incomplete row entirely.
+        with mock.patch.object(query, "load_ledger_index", return_value={}):
+            res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertEqual(res["green_ledger_hours"], 0.0)
 
     def test_green_time_red_reign_is_fixed_hour(self):

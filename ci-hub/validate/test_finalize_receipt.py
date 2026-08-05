@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for finalize_receipt: schema-5 coverage{} + counts finalizer.
+"""Tests for schema-5 coverage plus schema-6 dependency-bound finalization.
 
 Each test states N (the number of synthetic test nodes) and asserts the emitted
 coverage{} would SATISFY or REFUSE per the consumer rule:
@@ -12,16 +12,34 @@ import subprocess
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
 import finalize_receipt as fr
 
-HERE = Path(__file__).resolve().parent
 MODULE = HERE / "finalize_receipt.py"
+
+
+def _binding() -> dict:
+    sha = "9" * 40
+    return {
+        "repository": "rrnewton/reverie",
+        "ref": "refs/heads/main",
+        "pinned_sha": sha,
+        "resolved_sha": sha,
+    }
+
+
+def _binding_resolver(_checkout: str, shas: list[str]):
+    return ({sha: _binding() for sha in shas}, {})
 
 
 def _satisfied(cov: dict) -> bool:
     return (cov["planned_test_nodes"] > 0
+            and cov["executed_test_nodes"] == cov["planned_test_nodes"]
             and cov["zero_executed_nodes"] == []
-            and cov["absent_nodes"] == [])
+            and cov["absent_nodes"] == []
+            and cov["failed_nodes"] == [])
 
 
 def _passing_node(tag: str, n: int) -> str:
@@ -154,49 +172,24 @@ def test_realistic_run_executed_positive():
     assert _satisfied(row["coverage"])
 
 
-# --- ledger upgrade path ----------------------------------------------------
+# --- arbitrary-log ledger rewriting is disabled -----------------------------
 
-def test_ledger_upgrade_in_place(tmp_path):
-    sha = "a" * 40
-    ledger = tmp_path / "validate-run-ledger.jsonl"
-    rows = [
-        {"schema_version": 3, "commit": "b" * 40, "result": "pass", "keep": 1},
-        {"schema_version": 3, "commit": sha, "result": "pass", "keep": 2, "profile": "full"},
-    ]
-    ledger.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-
-    log = _passing_node("test.only", 5)
-    fields = fr.build_coverage(log, {"test.only"})
-    upgraded = fr.upgrade_ledger(str(ledger), sha, fields)
-    assert upgraded == 1
-
-    out = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
-    # Untouched row preserved verbatim.
-    assert out[0] == rows[0]
-    # Target row upgraded, other fields preserved.
-    assert out[1]["schema_version"] == 5
-    assert out[1]["keep"] == 2
-    assert out[1]["profile"] == "full"
-    assert out[1]["coverage"]["planned_test_nodes"] == 1
-    assert out[1]["executed_tests"] == 5
-
-
-def test_ledger_upgrade_missing_row_errors(tmp_path):
+def test_log_cannot_rewrite_a_ledger(tmp_path):
     ledger = tmp_path / "l.jsonl"
     ledger.write_text(json.dumps({"schema_version": 3, "commit": "c" * 40}) + "\n")
     proc = subprocess.run(
         [sys.executable, str(MODULE), "--log", "/dev/null",
          "--sha", "d" * 40, "--hermit-checkout", str(tmp_path),
-         "--ledger", str(ledger)],
+         "--repo", "rrnewton/hermit", "--ledger", str(ledger)],
         capture_output=True, text=True,
     )
     assert proc.returncode == 2
-    assert "no ledger row" in proc.stderr
+    assert "cannot be combined with --ledger" in proc.stderr
 
 
 # --- CLI emit-only ----------------------------------------------------------
 
-def test_cli_emit_only(tmp_path):
+def test_cli_emit_only_refuses_missing_required_manifests(tmp_path):
     log = tmp_path / "dag.log"
     log.write_text(_passing_node("test.a", 3))
     proc = subprocess.run(
@@ -204,14 +197,24 @@ def test_cli_emit_only(tmp_path):
          "--sha", "e" * 40, "--hermit-checkout", str(tmp_path), "--emit-only"],
         capture_output=True, text=True,
     )
-    assert proc.returncode == 0
-    obj = json.loads(proc.stdout)
-    assert obj["commit"] == "e" * 40
-    assert obj["schema_version"] == 5
-    assert "coverage" in obj
-    # tmp_path is not a git repo -> planned set empty -> planned_test_nodes 0
-    # (an empty planned set NEVER satisfies; the finalizer never fabricates one).
-    assert obj["coverage"]["planned_test_nodes"] == 0
+    assert proc.returncode == 4
+    assert "cannot read required manifest" in proc.stderr
+
+
+def test_failed_terminal_and_unplanned_banners_cannot_launder_coverage():
+    failed = "test.failed"
+    unplanned = "test.decoy"
+    log = (
+        _passing_node(unplanned, 999)
+        + f"[{failed}] running 3 tests\n"
+        + f"[{failed}] test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        + f"[{failed}] ✗ FAIL deliberate\n"
+    )
+    row = fr.build_coverage(log, {failed})
+    assert row["executed_tests"] == 3
+    assert row["coverage"]["executed_test_nodes"] == 0
+    assert row["coverage"]["failed_nodes"] == [failed]
+    assert not _satisfied(row["coverage"])
 
 
 # --- race-safe scan/append minting ------------------------------------------
@@ -221,13 +224,16 @@ def _countless_green_row(sha: str, log_path: str) -> dict:
         "schema_version": 3, "commit": sha, "result": "pass",
         "commit_anchored": True, "tree_dirty": False,
         "selection_mode": "full", "profile": "full",
+        "failures": 0,
+        "started_at": "2026-08-05T01:00:00Z",
+        "finished_at": "2026-08-05T01:10:00Z",
         "executed_tests": None, "filtered_tests": None,
         "log_file": log_path, "real_seconds": 900,
     }
 
 
 def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
-    """Scan appends a satisfied schema-5 clone WITHOUT rewriting existing rows
+    """Scan appends a satisfied schema-6 clone WITHOUT rewriting existing rows
     (race-safe), and leaves the original count-less row byte-for-byte intact."""
     sha = "a" * 40
     log = tmp_path / "run.log"
@@ -239,7 +245,9 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
     ledger.write_text("\n".join(original_lines) + "\n")
 
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
 
     assert len(results) == 1 and results[0]["satisfied"] and results[0]["sha"] == sha
     out_lines = [l for l in ledger.read_text().splitlines() if l.strip()]
@@ -248,18 +256,21 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
     assert out_lines[1] == original_lines[1]
     assert len(out_lines) == 3
     minted = json.loads(out_lines[2])
-    assert minted["schema_version"] == 5
+    assert minted["schema_version"] == 6
+    assert minted["reverie_binding"] == _binding()
     assert minted["commit"] == sha
     assert minted["executed_tests"] == 6
     assert minted["coverage"]["planned_test_nodes"] == 1
     assert minted["coverage"]["zero_executed_nodes"] == []
     assert minted["coverage"]["absent_nodes"] == []
+    assert minted["source_log_sha256"] == fr.hashlib.sha256(log.read_bytes()).hexdigest()
+    assert minted["receipt_finalizer"]["id"] == fr.FINALIZER_ID
     # Base fields carried so is_clean_full_coverage still holds.
     assert minted["commit_anchored"] is True and minted["profile"] == "full"
 
 
 def test_scan_is_idempotent(tmp_path, monkeypatch):
-    """A second scan appends nothing: the sha now carries a satisfied schema-5."""
+    """A second scan appends nothing: the sha carries the same bound schema-6."""
     sha = "c" * 40
     log = tmp_path / "run.log"
     log.write_text(_passing_node("test.only", 4))
@@ -267,12 +278,16 @@ def test_scan_is_idempotent(tmp_path, monkeypatch):
     ledger.write_text(json.dumps(_countless_green_row(sha, str(log))) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
 
-    first = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    first = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
     assert len([r for r in first if r["reason"] == "minted"]) == 1
     n_after_first = len([l for l in ledger.read_text().splitlines() if l.strip()])
 
-    second = fr.scan_and_finalize(str(ledger), str(tmp_path))
-    assert second == []  # already satisfied -> not a candidate
+    second = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
+    assert len(second) == 1 and second[0]["reason"] == "already-finalized"
     n_after_second = len([l for l in ledger.read_text().splitlines() if l.strip()])
     assert n_after_second == n_after_first  # nothing appended
 
@@ -286,9 +301,41 @@ def test_scan_dry_run_writes_nothing(tmp_path, monkeypatch):
     ledger.write_text(before)
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path), dry_run=True)
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), dry_run=True, binding_resolver=_binding_resolver
+    )
     assert results[0]["satisfied"]
     assert ledger.read_text() == before  # untouched
+
+
+def test_source_change_during_derivation_refuses_stale_append(tmp_path, monkeypatch):
+    """Simulate a concurrent validate append while the network authority runs.
+    The finalizer reselects under the short append lock and refuses its stale
+    proposal instead of binding the older run's log to the newer run."""
+    sha = "8" * 40
+    old_log = tmp_path / "old.log"
+    new_log = tmp_path / "new.log"
+    old_log.write_text(_passing_node("test.only", 3))
+    new_log.write_text(_passing_node("test.only", 7))
+    old = _countless_green_row(sha, str(old_log))
+    ledger = tmp_path / "l.jsonl"
+    ledger.write_text(json.dumps(old) + "\n")
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+
+    def append_during_resolution(_checkout: str, shas: list[str]):
+        newer = _countless_green_row(sha, str(new_log))
+        newer["started_at"] = "2026-08-05T02:00:00Z"
+        newer["finished_at"] = "2026-08-05T02:10:00Z"
+        with ledger.open("a") as output:
+            output.write(json.dumps(newer) + "\n")
+        return ({item: _binding() for item in shas}, {})
+
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=append_during_resolution
+    )
+    assert results[-1]["reason"] == "source-changed"
+    assert not results[-1]["satisfied"]
+    assert len(ledger.read_text().splitlines()) == 2
 
 
 def test_scan_skips_missing_log_and_absent_manifest(tmp_path, monkeypatch):
@@ -300,13 +347,73 @@ def test_scan_skips_missing_log_and_absent_manifest(tmp_path, monkeypatch):
     ledger.write_text("\n".join(json.dumps(r) for r in (gone, no_manifest)) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: set())  # empty planned
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
     reasons = {r["sha"][:1]: r["reason"] for r in results}
     assert reasons["e"] == "no-log"
     assert reasons["f"] == "no-manifest"
-    # Neither fabricated: no schema-5 line appended.
+    # Neither fabricated: no schema-6 line appended.
     assert all(json.loads(l).get("schema_version") == 3
                for l in ledger.read_text().splitlines() if l.strip())
+
+
+def test_scan_refuses_to_mint_without_fresh_reverie_binding(tmp_path):
+    sha = "7" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    ledger = tmp_path / "l.jsonl"
+    original = json.dumps(_countless_green_row(sha, str(log))) + "\n"
+    ledger.write_text(original)
+
+    def refused(_checkout: str, _shas: list[str]):
+        return {}, {sha: "live Reverie main moved"}
+
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=refused
+    )
+    assert results == [{
+        "sha": sha,
+        "satisfied": False,
+        "reason": "reverie-pin",
+        "detail": "live Reverie main moved",
+    }]
+    assert ledger.read_text() == original
+
+
+def test_superficial_schema6_row_cannot_skip_log_recomputation(tmp_path, monkeypatch):
+    """A forged satisfied-looking row is not an idempotency token. The finalizer
+    rereads the original row's exact log and appends only the derived clone."""
+    sha = "6" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 9))
+    source = _countless_green_row(sha, str(log))
+    forged = dict(source)
+    forged.update({
+        "schema_version": 6,
+        "executed_tests": 999,
+        "filtered_tests": 0,
+        "coverage": {
+            "planned_test_nodes": 100,
+            "executed_test_nodes": 1,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        },
+        "reverie_binding": _binding(),
+        "receipt_finalizer": {"id": "attacker", "source_row_sha256": "0" * 64},
+    })
+    ledger = tmp_path / "l.jsonl"
+    ledger.write_text(json.dumps(source) + "\n" + json.dumps(forged) + "\n")
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+
+    results = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), binding_resolver=_binding_resolver
+    )
+    assert results[0]["reason"] == "minted"
+    minted = json.loads(ledger.read_text().splitlines()[-1])
+    assert minted["executed_tests"] == 9
+    assert minted["coverage"]["planned_test_nodes"] == 1
+    assert minted["coverage"]["executed_test_nodes"] == 1
 
 
 # --- planned_test_nodes reads real manifests at a real SHA ------------------

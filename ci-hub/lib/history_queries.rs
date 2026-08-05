@@ -5,8 +5,10 @@
 //! recorded observations for the newest PASS -> FAIL transition. Keeping the
 //! commit ordering and evidence rules here prevents the two answers drifting.
 
+use crate::qualifying_receipt::ReceiptTarget;
 use crate::records::{GateHistoryRow, HistoryRow};
-use crate::validate_status::{assess, newest, Verdict};
+use crate::reverie_pin::ReverieBinding;
+use crate::validate_status::{assess_with_reverie, newest, Verdict};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -90,6 +92,9 @@ pub struct NewestGreenCache {
     pub ledger_path: String,
     pub ledger_len: u64,
     pub ledger_modified_ns: u128,
+    /// Fresh Reverie main identity under which `report.green` qualified. A main
+    /// move invalidates this cache even when Hermit/ledger bytes are unchanged.
+    pub reverie_main_sha: String,
     pub report: NewestGreenReport,
 }
 
@@ -146,11 +151,16 @@ pub enum FirstBadOutcome {
 pub struct HistoryQueryEngine {
     commits: Vec<String>,
     rows_by_commit: BTreeMap<String, Vec<HistoryRow>>,
+    reverie_bindings: BTreeMap<String, ReverieBinding>,
 }
 
 impl HistoryQueryEngine {
     /// `commits` are first-parent branch commits in newest-to-oldest order.
-    pub fn new(commits: Vec<String>, rows: Vec<HistoryRow>) -> Self {
+    pub fn new_with_bindings(
+        commits: Vec<String>,
+        rows: Vec<HistoryRow>,
+        reverie_bindings: BTreeMap<String, ReverieBinding>,
+    ) -> Self {
         let main: BTreeSet<&str> = commits.iter().map(String::as_str).collect();
         let mut rows_by_commit: BTreeMap<String, Vec<HistoryRow>> = BTreeMap::new();
         for row in rows {
@@ -167,7 +177,20 @@ impl HistoryQueryEngine {
         Self {
             commits,
             rows_by_commit,
+            reverie_bindings,
         }
+    }
+
+    /// Tests use receipts' own expected binding as an inert fixture. Production
+    /// has no such constructor: it supplies exact-head scans against one freshly
+    /// resolved live tip through [`new_with_bindings`].
+    #[cfg(test)]
+    pub fn new(commits: Vec<String>, rows: Vec<HistoryRow>) -> Self {
+        let bindings = rows
+            .iter()
+            .filter_map(|row| Some((row.commit.clone()?, row.reverie_binding.clone()?)))
+            .collect();
+        Self::new_with_bindings(commits, rows, bindings)
     }
 
     pub fn newest_green(
@@ -187,7 +210,12 @@ impl HistoryQueryEngine {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
             };
-            let assessment = assess(rows, sha);
+            let assessment = assess_with_reverie(
+                rows,
+                sha,
+                ReceiptTarget::Hermit,
+                self.reverie_bindings.get(sha),
+            );
             match assessment.verdict {
                 Verdict::Validated => {
                     trustworthy_recorded += 1;
@@ -700,8 +728,9 @@ pub fn cache_matches(
     ledger_path: &Path,
     ledger_len: u64,
     ledger_modified_ns: u128,
+    reverie_main_sha: &str,
 ) -> bool {
-    cache.schema_version == 4
+    cache.schema_version == 5
         && cache.branch == branch
         && cache.branch_ref == branch_ref
         && cache.branch_tip == branch_tip
@@ -709,6 +738,7 @@ pub fn cache_matches(
         && cache.ledger_path == ledger_path.display().to_string()
         && cache.ledger_len == ledger_len
         && cache.ledger_modified_ns == ledger_modified_ns
+        && cache.reverie_main_sha == reverie_main_sha
 }
 
 pub fn cache_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
@@ -727,7 +757,7 @@ mod tests {
 
     fn row(sha: &str, at: &str, profile: &str, selection: &str, result: &str) -> HistoryRow {
         let mut value = serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 6,
             "finished_at": at,
             "profile": profile,
             "selection_mode": selection,
@@ -735,9 +765,24 @@ mod tests {
             "commit_anchored": true,
             "tree_dirty": false,
             "result": result,
+            "failures": 0,
             "executed_tests": 36,
             "filtered_tests": 0,
-            "gates": []
+            "log_file": "/tmp/ci-hub-test.log",
+            "source_log_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "gates": [],
+            "coverage": {
+                "planned_test_nodes": 1,
+                "executed_test_nodes": 1,
+                "zero_executed_nodes": [],
+                "absent_nodes": []
+            },
+            "reverie_binding": {
+                "repository": "rrnewton/reverie",
+                "ref": "refs/heads/main",
+                "pinned_sha": "dddddddddddddddddddddddddddddddddddddddd",
+                "resolved_sha": "dddddddddddddddddddddddddddddddddddddddd"
+            }
         });
         if matches!(result, "fail" | "failed" | "timeout") {
             value["exit_code"] = serde_json::json!(1);
@@ -1041,7 +1086,7 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 4,
+            schema_version: 5,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
@@ -1049,6 +1094,7 @@ mod tests {
             ledger_path: "/tmp/ledger".into(),
             ledger_len: 100,
             ledger_modified_ns: 200,
+            reverie_main_sha: "d".repeat(40),
             report,
         };
         let path = Path::new("/tmp/ledger");
@@ -1060,7 +1106,8 @@ mod tests {
             "floor",
             path,
             100,
-            200
+            200,
+            &"d".repeat(40)
         ));
         assert!(!cache_matches(
             &cache,
@@ -1070,7 +1117,8 @@ mod tests {
             "floor",
             path,
             100,
-            200
+            200,
+            &"d".repeat(40)
         ));
         assert!(!cache_matches(
             &cache,
@@ -1080,7 +1128,8 @@ mod tests {
             "floor",
             path,
             101,
-            201
+            201,
+            &"d".repeat(40)
         ));
         assert!(!cache_matches(
             &cache,
@@ -1090,7 +1139,19 @@ mod tests {
             "new-floor",
             path,
             100,
-            200
+            200,
+            &"d".repeat(40)
+        ));
+        assert!(!cache_matches(
+            &cache,
+            "main",
+            "origin/main",
+            "tip-a",
+            "floor",
+            path,
+            100,
+            200,
+            &"e".repeat(40)
         ));
     }
 

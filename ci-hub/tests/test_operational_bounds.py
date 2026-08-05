@@ -558,6 +558,7 @@ class OperationalBoundsTest(unittest.TestCase):
             front_door.startswith("#!/usr/bin/env -S rust-script --force\n")
         )
         script = (ROOT / "ci-hub/landing/land-pr.sh").read_text()
+        refusal = script.index("legacy server-side replay cannot bind the actual base")
         detached = script.index('nohup setsid "$0"')
         inherit = script.index('"$ROOT/ci-hub/ci-hub" inherit-obligations')
         prepare = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" prepare')
@@ -566,6 +567,8 @@ class OperationalBoundsTest(unittest.TestCase):
         merge = script.index('gh pr merge "$PR"')
         ancestry = script.index("merge-base --is-ancestor")
         complete = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" complete')
+        self.assertLess(refusal, detached)
+        self.assertIn("use safe-exact-head-land", script)
         self.assertLess(detached, inherit)
         self.assertLess(inherit, prepare)
         self.assertLess(prepare, acquire)
@@ -620,6 +623,9 @@ class OperationalBoundsTest(unittest.TestCase):
         )
         self.assertIn("unbacked label rejected 2/2", result.stdout)
         self.assertIn("validated head admitted 2/2", result.stdout)
+        self.assertIn("local/hosted OR positive 2/2", result.stdout)
+        self.assertIn("hosted-green stale-pin refused 1/1", result.stdout)
+        self.assertIn("legacy lander fail-closed", result.stdout)
 
     def test_lander_receipt_authorization_has_both_controls_and_cleans_plant(
         self,

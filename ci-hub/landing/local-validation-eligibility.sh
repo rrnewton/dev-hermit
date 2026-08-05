@@ -3,8 +3,8 @@
 # cache of this result, never an independent authorization signal.
 set -uo pipefail
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: local-validation-eligibility.sh <40-hex-sha> [observed-labels]" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
+  echo "usage: local-validation-eligibility.sh <40-hex-sha> [observed-labels] [hermit-checkout]" >&2
   exit 2
 fi
 
@@ -23,8 +23,10 @@ fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$script_dir/../.." && pwd)
+hermit_repo=${3:-$root/hermit}
 status_bin=${CI_HUB_VALIDATE_STATUS_BIN:-$root/ci-hub/ci-hub}
 status_args=(validate-status --sha "$sha")
+status_args+=(--hermit-repo "$hermit_repo")
 if [ -n "${CI_HUB_VALIDATE_LEDGER:-}" ]; then
   status_args+=(--ledger "$CI_HUB_VALIDATE_LEDGER")
 fi

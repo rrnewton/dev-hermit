@@ -6,8 +6,9 @@ for local-validate + land should supplement that."
 
 **Principle:** stop broadcasting CI at every PR and hoping the queue sorts itself
 out. A lander-chosen batch gets targeted CI; everything else waits. Fewer runs,
-each one wanted. **The default landing path in this mode does NOT touch the hosted
-queue at all — it lands on local-validate-green via the merge-gate either/or leg.**
+each one wanted. A local run may mint exact-head evidence, but this skill does
+not itself authorize or execute a merge. Until the coordinated Hermit merge-gate
+bundle is deployed, the current `AGENTS.md` hosted-gate rule remains binding.
 
 The lander owns this mode. It is a runbook to execute under pressure, not a design
 doc. Use `with-proxy` for all networked `git`/`gh`.
@@ -59,13 +60,15 @@ Order the batch: near-green first, then oldest-mergeable. `mergeStateStatus` mus
 `MERGEABLE` (not divergence-`DIRTY`). Announce the chosen batch in a task note
 before dispatching.
 
-## 4. Landing path A — LOCAL-VALIDATE (PREFERRED; bypasses hosted queue)
+## 4. Evidence path A — LOCAL-VALIDATE (preferred measurement path)
 
 Per `hermit/docs/MERGE_QUEUE.md`: a fully green `./validate.sh` on the exact PR head
-produces a counted receipt, and `ci-hub apply-local-label` may then apply
-`locally-validated` as a cache hint. The merge gate dereferences that immutable
-exact-head receipt; bare label presence never authorizes landing. The label is
-stripped on head change.
+produces a counted receipt. After every completed run, invoke
+`ci-hub apply-local-label`: PASS publishes a content-addressed receipt/log and
+outcome snapshot; every non-PASS publishes a typed deny/no-result outcome.
+The merge gate resolves the canonical outcome branch tip, unions every
+exact-head snapshot (so any genuine failure wins monotonically), and recomputes
+the selected pass from its log. `locally-validated` is only a cache hint.
 
 Per chosen PR, in a lander-owned slot (never a primary checkout):
 
@@ -77,11 +80,12 @@ with-proxy git -C <slot>/hermit fetch origin pull/<n>/head
 git -C <slot>/hermit switch --detach FETCH_HEAD    # exact PR head
 # 3. Full portable validate (default profile — NOT --quick). Auto-labels on green:
 ( cd <slot>/hermit && PR_NUMBER=<n> ./validate.sh )
-# 4. On green (label applied), land via merge queue:
-with-proxy gh pr merge <n> --repo rrnewton/hermit --auto --merge
+# 4. Publish the typed outcome even on red/finalizer refusal; publication failure
+#    is NO_RESULT. On green, hand the exact outcome receipt to the gate.
+#    Do not invoke a raw merge command from this runbook.
 ```
 
-If validate is RED it is a real failure — do not label, do not land; report it.
+If validate is RED, publish the typed outcome, do not label or land, and report it.
 `./validate.sh --no-label-pr` when a green run must not touch GitHub.
 
 ## 5. Landing path B — TARGETED hosted CI (only when a hosted-only signal is needed)
@@ -118,7 +122,10 @@ in the task note so concurrent landers see the count.
 
 ## 7. Landing discipline (unchanged, always)
 
-`--rebase`/merge-queue, **NEVER `--admin`** for autonomous work. Fetch fresh before
-every land. **Ancestry-verify** after merge — an API `MERGED` can be orphaned;
-confirm the merge commit is reachable from `origin/main`. Merge only when the task
-authorizes landing and required adversarial review is resolved.
+This skill stops at evidence production. The legacy
+`ci-hub/landing/land-pr.sh` path is fail-closed and is not a fallback; a raw
+`gh pr merge` is not a replacement authority. Load `hermit-lander` for the
+current execution disposition. Merge only when the task authorizes landing,
+required adversarial review is resolved, and the live repository gate has
+dereferenced its canonical exact-head authorities. Fetch and ancestry-verify
+after any authorized merge.

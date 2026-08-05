@@ -510,7 +510,7 @@ def banked_green_commits(
         return frozenset()
     try:
         result = subprocess.run(
-            [str(ci_hub_bin), "ledger", "qualified-rows"],
+            [str(ci_hub_bin), "ledger", "qualified-rows", "--repo", repo],
             capture_output=True,
             text=True,
             check=False,

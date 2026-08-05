@@ -27,9 +27,11 @@ are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
-# Parse the canonical landing command without mutating a PR. Real lands use the
-# same entrypoint without CI_HUB_DOCS_PARSE_ONLY; it verifies the final pushed
-# head's immutable validation receipt before a head-matched rebase merge.
+# Parse the disabled legacy landing command for documentation only. Its real
+# mutating path is fail-closed because server-side rebase cannot atomically bind
+# the observed target base. Do not invoke it without CI_HUB_DOCS_PARSE_ONLY;
+# real landing resumes only through the current-main safe-exact-head-land
+# extraction described below.
 CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
   123 example/feature-branch --foreground
 
@@ -80,13 +82,22 @@ always WITH A DENOMINATOR ("valid 1 of 59"):
 
 - `VALID` — head matches, authoritatively `is_clean_full_pass` (via
   `validate-status`, NOT the looser `local-history` prefilter), and clears every
-  rebase-base floor. Landable NOW: `apply-local-label` + merge, no new validate.
+  rebase-base floor. This is a reusable evidence candidate, not standalone
+  landing authority; the safe exact-head lander must still bind source/base/result.
 - `FLOOR-BLOCKED` — matched + certified but the head predates a merge-gate or
   producer floor; it validates green yet landing is refused. Lever is REBASE.
 - `NOT-CERTIFIED` — matched an open head but the authoritative certifier refuses
   (a `local-history checks==5` match is not landability proof).
 - `ORPHANED` — no current open-PR head equals this commit; the head moved or the
   PR landed. `orphaned/total` is the measured cost of push-rewrites-the-head.
+
+Hermit receipt reuse additionally requires schema-6 exact Reverie identity.
+Inspect it directly with `./ci-hub/ci-hub reverie-pin-status --sha SHA --json`;
+combine canonical local/hosted verifier outcomes with the non-dereferencing
+`./ci-hub/ci-hub green-source-decision`. The legacy `land-pr.sh` mutating path
+is fail-closed until `safe-exact-head-land` is minimally extracted on current
+main with an atomic source/base/replay transaction.
+See [the authority and safe-lander integration contract](../ai_docs/reverie-receipt-authority_20260805.md).
 
 **COORDINATOR post-wave step (standing, once per rebase wave).** There is no
 per-wave code hook — a rebase wave is a coordinator-level batch, not a single
@@ -96,8 +107,8 @@ step after every rebase wave, BEFORE queueing any new ~500s validate:
 
 ```bash
 ./ci-hub/bin/reconcile-receipts            # 1. sweep the moved frontier
-# 2. for each VALID row: apply-local-label from the receipt, then land it
-#    (ci-hub apply-local-label --pr <N> ; ci-hub/landing/land-pr.sh ...).
+# 2. Treat VALID rows as planning candidates only. Do not feed them to the
+#    disabled legacy lander; safe-exact-head-land must re-authorize X/Y/Z.
 # 3. for each FLOOR-BLOCKED row: it needs REBASE, not a new validate.
 ```
 
@@ -219,14 +230,15 @@ recorded as `sent_unacknowledged`; only a reader's `inherit-obligations` scan
 changes it to `acknowledged`. The five-minute tick and every fresh lander's
 startup scan recover from a lost wake.
 
-## Speculative-land obligation contract
+## Speculative-land obligation contract (required by the safe lander)
 
-The canonical `landing/land-pr.sh` entrypoint prepares the speculative-land
-obligation before its bounded child can merge; raw `gh pr merge` is not the
-protocol. It also dereferences the final pushed head's immutable validation
-receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
-the merged SHA it completes the prepared intent and calls `arm-land`. If the
-wrapper dies in that interval, the restartable ORC workflow recovers the intent
+The old `landing/land-pr.sh` contains the historical prepare/complete sequence,
+but its mutating path is disabled and is not landing authority. The minimal
+`safe-exact-head-land` extraction must preserve the current-main landing lock
+and prepare the speculative-land obligation before its bounded atomic X/Y/Z
+transaction; raw `gh pr merge` is not the protocol. Once the safe lander
+observes the landed SHA it completes the prepared intent and calls `arm-land`.
+If it dies in that interval, the restartable ORC workflow recovers the intent
 and arms it. Arming appends an OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
