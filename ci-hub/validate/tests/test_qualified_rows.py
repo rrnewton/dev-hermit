@@ -53,6 +53,16 @@ def test_current_full_schema_derives_five_gate_contract() -> None:
     assert qr.qualified_rows([current]) == [current]
 
 
+def test_over_run_pass_still_qualifies() -> None:
+    # OVER-RUN bracket: the live plan can run more gates than the hardcoded
+    # FULL_GATES_EXPECTED fallback (six live gates against a stale expectation of
+    # five). A 6/5 PASS is a COMPLETE green, not a short run, and must not be
+    # discarded by an equality test — the exact green the old `ran == expected`
+    # bug excluded from the qualified population.
+    over = _row("over-run", "2026-08-04T10:00:00Z", gates_run=6, gates_expected=5)
+    assert qr.qualified_rows([over]) == [over]
+
+
 def test_n_equals_three_legitimate_passes_remain_qualified() -> None:
     rows = [
         _row("a", "2026-08-04T10:00:00Z"),

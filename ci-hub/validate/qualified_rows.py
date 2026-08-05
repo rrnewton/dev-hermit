@@ -7,8 +7,9 @@ This is the guard for ad-hoc derived views. Two invariants are non-negotiable:
 2. Drop incomplete, aborted, and zero-executed rows before bucketing or timing.
 
 A row qualifies only when it records ``result == "pass"``, a positive executed
-test count, a parseable completion time, and matching positive
-``gates_run == gates_expected``. Missing evidence fails closed. Callers needing
+test count, a parseable completion time, and a satisfied positive gate contract
+``gates_run >= gates_expected`` (an over-run against the possibly-stale hardcoded
+expectation is still complete). Missing evidence fails closed. Callers needing
 failure taxonomy must use ``flake_class.effective_result``; this accessor is the
 canonical population for green timing/concurrency analysis only.
 """
@@ -56,7 +57,7 @@ def is_qualified(row: Mapping[str, object]) -> bool:
         and isinstance(ran, int)
         and isinstance(expected, int)
         and expected > 0
-        and ran == expected
+        and ran >= expected
         and event_time(row) is not None
     )
 
