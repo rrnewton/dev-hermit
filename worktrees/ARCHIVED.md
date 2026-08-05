@@ -684,6 +684,12 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | --- | --- | --- | --- | --- |
 | `worktrees/drainer-5` | drainer-5 / fix_debug_hermit_liteinst | Hermit `39a98a4efa6f64699d5f6df184d96bc60520a063`; no Reverie or LiteInst2 child | The clean `fix/debug-liteinst-attach` branch has zero commits beyond its remote-reachable base. Task evidence records a fresh build and LiteInst 4/4 pass with no product defect or source change. The prior #1200 head remains durable at `8f676313d44e5a57ca27c2f863116c2b668a3b4e`. | The no-change debug task was closed. The 49 GB cache and physical Hermit worktree were preserved; ownership was transferred in place for #1200 recovery without invoking the unsafe global-pruning release path. |
 
+### Drainer-2 PR #1468 re-review release (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-2` | drainer-2 / reland-1468-rereview | Hermit `39a98a4efa6f64699d5f6df184d96bc60520a063`; no Reverie or LiteInst2 child | Hermit is detached and clean, has zero commits beyond freshly fetched `origin/main`, and its exact HEAD is reachable from current main. PR [#1468](https://github.com/rrnewton/hermit/pull/1468) merged at 3:33:08 AM EDT on 2026-08-05 as `5d5bb2e3850beb0fccac71e6c3a1e3ae1824ee41`; no process, open file, collaboration worker, or tmux pane owns the slot. | Independent rereview completed and the task landed. Coordinator releases the exact slot through `scripts/release-worktree.rs --slot drainer-2 --clean`; no force, stash, reset, or broad process action is used. |
+
 ### Legacy slot 275 keyctl recovery (2026-08-05)
 
 | Slot | owner/task | product SHAs | recovery | disposition |
