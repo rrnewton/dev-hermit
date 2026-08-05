@@ -239,10 +239,29 @@ hand-roll a bare `rdpmc()`:
 - **Reachability blocker (unchanged at `55f6876a`, re-verified):** `mod perf` is **private**
   (`reverie-ptrace/src/lib.rs:45`; only `pub use perf::is_perf_supported` at `:59`), and
   `git grep -E "reverie_ptrace|PerfCounter|rdpmc|ctr_value" origin/main -- reverie-preload/` returns
-  **zero** hits. So `ctr_value_rdpmc` is **unreachable from the shared host today.** An **additive**
-  visibility change (a `pub(crate)`/re-export of `PerfCounter::ctr_value_rdpmc`) is the first commit of
-  any RCB-wiring PR — it changes HOW a counter is read, not the Tool/Guest/Backend time-or-ordering
-  contract, so it stays within additive Reverie API policy (RCB design doc §5/C2).
+  **zero** hits. So `ctr_value_rdpmc` is **unreachable from the shared host today — and the fix is NOT a
+  visibility flip.**
+  > **A2 CORRECTION (verified at `55f6876a`, 2026-08-04 — supersedes the "pub(crate)/re-export" phrasing
+  > used here and in the build-spec):** `reverie-preload` **does not depend on `reverie-ptrace`** — its
+  > only reverie dep is `reverie-core` (full deps: `libc, serde, bincode, reverie-core`; no `nix`, no
+  > `perf_event_open_sys`, no `tokio`). Therefore a `pub(crate)` **cannot cross the crate boundary** and
+  > there is **no dependency edge to re-export across.** Adding `reverie-ptrace` as a preload dependency
+  > is **REJECTED**: it would drag the ptrace tracer (tokio, the Tool host) into the in-guest LD_PRELOAD,
+  > violating the ptrace-free-preload invariant this whole lane exists to protect.
+  >
+  > The correct A2 is a **ptrace-free extraction of the offset-correct read primitive** into a minimal
+  > leaf crate (`reverie-pmu`, deps `perf_event_open_sys` + `libc` + `reverie-core` only) that **both**
+  > `reverie-ptrace` and `reverie-preload` depend on. The extraction is clean: `ctr_value_rdpmc_loop`
+  > (`reverie-ptrace/src/perf.rs:504`) operates **entirely over `NonNull<perf_event_mmap_page>`** plus the
+  > free helpers `rdpmc`/`read_once`/`smp_rmb` and a fallback over `self.fd` — it touches **neither
+  > `validation` nor `timer`** (the perf↔validation↔timer coupling lives in `do_branches`/PMU-config, not
+  > the read path). `reverie-ptrace::PerfCounter::ctr_value_rdpmc` then **delegates** to the extracted
+  > primitive, preserving the single vetted implementation (the §4 TRAP: never hand-roll a second reader)
+  > and every existing caller.
+
+  This remains **additive** — it changes HOW a counter is read, not the Tool/Guest/Backend
+  time-or-ordering contract, so it stays within additive Reverie API policy (RCB design doc §5/C2) — but
+  it is a **crate extraction, not a one-line `pub` change.**
 
 ---
 
@@ -296,7 +315,7 @@ wired on) landed via reverie #373 and is present at `55f6876a` (`tool_host.rs` `
 | # | Work | Where | Task / status |
 |---|---|---|---|
 | A1 | **Land reverie #377** — e9patch A-class `TracerBuilder<()>` lifecycle owner + shared `install_in_process_trap` factored so both controllers install the identical guest-half trap. Removes e9patch's 100%-ptrace fail-closed. | `[#377 branch]` `reverie-preload/src/lifecycle.rs`, `reverie-e9patch/src/{backend.rs,runtime.rs}` | `e9patch_hybridptrace_inguest_converge` — OPEN draft PR #377 |
-| A2 | **rdpmc visibility change** — additive `pub(crate)`/re-export of `PerfCounter::ctr_value_rdpmc` so the shared host can call the offset-correct read (§4). Additive API, no contract change. | `reverie-ptrace/src/lib.rs:45,59` → reachable from `reverie-preload` | first commit of the RCB-wiring PR; unblocked now (C2 open half) |
+| A2 | **rdpmc primitive extraction** (NOT a visibility flip — see §4 A2 CORRECTION) — extract the offset-correct read (`ctr_value_rdpmc_loop` over `NonNull<perf_event_mmap_page>` + `rdpmc`/`read_once`/`smp_rmb`) into a ptrace-free leaf crate `reverie-pmu` (deps `perf_event_open_sys`+`libc`+`reverie-core`); `PerfCounter::ctr_value_rdpmc` delegates; `reverie-preload` depends on `reverie-pmu`. `reverie-preload` has NO edge to `reverie-ptrace`, so `pub(crate)`/re-export is impossible and pulling in `reverie-ptrace` would drag tokio/ptrace into the guest. | new crate `reverie-pmu`; `reverie-ptrace/src/perf.rs:504`; `reverie-preload/Cargo.toml` | first commit of the RCB-wiring PR; unblocked now (C2 open half) |
 | A3 | **Wire the RCB bracketing dance** (two offset-correct rdpmc reads + `tool_debt` deduction) into the SHARED driver only, per RCB design §3, so every Family-A backend inherits one copy. | `reverie-preload/src/tool_host.rs` (around the `drive_tool_syscall` entry `:222`) | unblocked (C1 satisfied); gated only on A2 for the read primitive |
 | A4 | **hermit CLI flip for e9patch (L3)** — remove the `E9patch→Ptrace` downgrade and select the in-guest runtime, exercising #377's conforming path end-to-end. | `[hermit]` `hermit-cli/src/bin/hermit/run.rs` | follows A1 |
 | A5 | **hermit CLI flip for liteinst (li-1→li-2)** — dispatch liteinst via the in-guest `run_with_preload::<Detcore>` instead of `run_host_with_preload::<Detcore>`; retires the `PtraceInstallation` route. | `[hermit]` `hermit-cli/src/lib.rs` | `liteinst_flip_cli_to` — REMOVABLE-NOW (in-guest host exists+tested) |
