@@ -13,8 +13,11 @@
 //! fs2 = "0.4"
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
+//! sha2 = "0.10"
 //! thiserror = "2"
 //! ```
+
+#![recursion_limit = "256"]
 
 #[path = "lib/history_queries.rs"]
 mod history_queries;
@@ -24,6 +27,9 @@ mod landing_lock;
 mod records;
 #[path = "lib/validate_lock.rs"]
 mod validate_lock;
+// The legacy assessment type remains exercised by its compatibility tests;
+// production consumers below use the stricter canonical receipt assessment.
+#[allow(dead_code)]
 #[path = "lib/validate_status.rs"]
 mod validate_status;
 
@@ -35,6 +41,7 @@ use history_queries::{
 };
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -51,6 +58,7 @@ const DEFAULT_GITHUB_WAIT_SECONDS: u64 = 120;
 const DEFAULT_POLL_SECONDS: u64 = 15;
 const DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECONDS: u64 = 10 * 60;
 const GATE_FLOOR_POLICY: &str = "registry-effective-floor";
+const CANONICAL_VALIDATE_REPO: &str = "rrnewton/hermit";
 const ROOT_HELP: &str = r#"Typed front door for dev-hermit CI state and operations
 
 Usage: ci-hub <COMMAND>
@@ -3340,18 +3348,256 @@ fn gh_open_prs(root: &Path, repo: &str) -> Result<Vec<u64>, CiHubError> {
 
 const LOCALLY_VALIDATED_LABEL: &str = "locally-validated";
 
-/// One qualifying record rendered for human/JSON output.
-fn describe_record(row: &HistoryRow) -> serde_json::Value {
+#[derive(Clone, Debug)]
+struct QualifyingReceipt {
+    row: HistoryRow,
+    selected_tests: i64,
+    discovered_tests: i64,
+    count_derivation: &'static str,
+    coverage_basis: &'static str,
+    canonical_sha256: String,
+}
+
+#[derive(Debug)]
+struct CanonicalReceiptAssessment {
+    sha: String,
+    verdict: validate_status::Verdict,
+    qualifying: Vec<QualifyingReceipt>,
+    disqualified: Vec<HistoryRow>,
+}
+
+fn is_oid(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn extra_str<'a>(row: &'a HistoryRow, key: &str) -> Option<&'a str> {
+    row.extra.get(key).and_then(|value| value.as_str())
+}
+
+fn canonical_row_sha256(row: &HistoryRow) -> Option<String> {
+    // Canonicalization contract v1: serde's struct field order, BTreeMap order
+    // for flattened extras, and original Vec order. Any parsed receipt field,
+    // gate, count, or unknown extension therefore changes this digest.
+    let bytes = serde_json::to_vec(row).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn declared_coverage_satisfied(row: &HistoryRow) -> bool {
+    row.coverage.as_ref().is_some_and(|coverage| {
+        coverage.planned_test_nodes > 0
+            && coverage.zero_executed_nodes.is_empty()
+            && coverage.absent_nodes.is_empty()
+    })
+}
+
+/// Return the complete evidence bundle iff this row alone proves a canonical
+/// Hermit full-validation receipt. This is the sole positive receipt predicate
+/// consumed by validate-status and label application.
+fn qualify_canonical_receipt(row: &HistoryRow, sha: &str) -> Option<QualifyingReceipt> {
+    let schema_version = row.schema_version?;
+    let repo_bound = matches!(
+        row.repo.as_deref(),
+        Some("hermit") | Some(CANONICAL_VALIDATE_REPO)
+    ) || (schema_version == 4 && row.repo.is_none());
+    if schema_version < 4
+        || row.commit.as_deref() != Some(sha)
+        || !is_oid(sha)
+        || !repo_bound
+        || row.commit_anchored != Some(true)
+        || row.tree_dirty != Some(false)
+        || row.profile.as_deref() != Some("full")
+        || row.selection_mode.as_deref() != Some("full")
+        || row.result.as_deref() != Some("pass")
+        || extra_str(row, "raw_result") != Some("pass")
+        || row.exit_code != Some(0)
+        || row.failures != Some(0)
+    {
+        return None;
+    }
+
+    let tree = extra_str(row, "tree")?;
+    if !is_oid(tree) {
+        return None;
+    }
+    let checks = row.checks?;
+    let gates_run = row.gates_run?;
+    let gates_expected = row.gates_expected?;
+    if gates_expected == 0
+        || gates_run < gates_expected
+        || checks != gates_run
+        || usize::try_from(gates_run).ok()? != row.gates.len()
+        || row.gates.iter().any(|gate| {
+            gate.name.trim().is_empty()
+                || gate.result.as_deref() != Some("pass")
+                || gate.exit_code != Some(0)
+        })
+    {
+        return None;
+    }
+
+    let executed_tests = row.executed_tests?;
+    let filtered_tests = row.filtered_tests?;
+    if executed_tests <= 0 || filtered_tests < 0 {
+        return None;
+    }
+    // Schema-4 has only libtest executed+filtered aggregates. Preserve the
+    // genuine 630f receipt without pretending these are producer-native fields:
+    // expose the arithmetic and its source explicitly in the report.
+    let selected_tests = executed_tests;
+    let discovered_tests = executed_tests.checked_add(filtered_tests)?;
+    if selected_tests <= 0 || discovered_tests <= 0 {
+        return None;
+    }
+
+    let coverage_basis = if row.coverage.is_some() {
+        if !declared_coverage_satisfied(row) {
+            return None;
+        }
+        "declared-per-node"
+    } else if schema_version == 4 {
+        "legacy-schema4-full-gates-and-aggregate-counts"
+    } else {
+        // Schema-5+ declares per-node coverage capability. Missing coverage is
+        // a malformed receipt, not permission to fall back to the legacy rule.
+        return None;
+    };
+
+    for required in [
+        row.finished_at.as_deref(),
+        row.host.as_deref(),
+        row.slot.as_deref(),
+        row.log_file.as_deref(),
+    ] {
+        if required.is_none_or(|value| value.trim().is_empty()) {
+            return None;
+        }
+    }
+    Some(QualifyingReceipt {
+        row: row.clone(),
+        selected_tests,
+        discovered_tests,
+        count_derivation:
+            "selected_tests=executed_tests;discovered_tests=executed_tests+filtered_tests",
+        coverage_basis,
+        canonical_sha256: canonical_row_sha256(row)?,
+    })
+}
+
+fn assess_canonical_receipts(
+    rows: &[HistoryRow],
+    sha: &str,
+    repo: &str,
+) -> Result<CanonicalReceiptAssessment, String> {
+    if repo != CANONICAL_VALIDATE_REPO {
+        return Err(format!(
+            "canonical local receipt ledger is bound to {CANONICAL_VALIDATE_REPO}, not {repo}"
+        ));
+    }
+    let mut qualifying = Vec::new();
+    let mut disqualified = Vec::new();
+    let mut saw_failed = false;
+    let mut saw_needs_rerun = false;
+    let mut saw_truncated = false;
+    let mut saw_no_result = false;
+    for row in rows {
+        if row.commit.as_deref() != Some(sha) {
+            continue;
+        }
+        if let Some(receipt) = qualify_canonical_receipt(row, sha) {
+            qualifying.push(receipt);
+        } else {
+            match validate_status::failure_disposition(row, sha) {
+                validate_status::FailureDisposition::Failed => saw_failed = true,
+                validate_status::FailureDisposition::NeedsRerun => saw_needs_rerun = true,
+                validate_status::FailureDisposition::Truncated => saw_truncated = true,
+                validate_status::FailureDisposition::NoResult => saw_no_result = true,
+                validate_status::FailureDisposition::NotFailure => {}
+            }
+            disqualified.push(row.clone());
+        }
+    }
+    let verdict = if !qualifying.is_empty() {
+        validate_status::Verdict::Validated
+    } else if saw_failed {
+        validate_status::Verdict::FailedOnRecord
+    } else if saw_needs_rerun {
+        validate_status::Verdict::NeedsRerun
+    } else if saw_truncated {
+        validate_status::Verdict::Truncated
+    } else if saw_no_result {
+        validate_status::Verdict::NoResult
+    } else {
+        validate_status::Verdict::NotValidated
+    };
+    Ok(CanonicalReceiptAssessment {
+        sha: sha.to_string(),
+        verdict,
+        qualifying,
+        disqualified,
+    })
+}
+
+fn newest_canonical_receipt(rows: &[QualifyingReceipt]) -> Option<&QualifyingReceipt> {
+    rows.iter().max_by(|a, b| {
+        a.row
+            .finished_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.row.finished_at.as_deref().unwrap_or(""))
+    })
+}
+
+/// One qualifying authority record rendered with every condition it verified.
+fn describe_receipt(receipt: &QualifyingReceipt) -> serde_json::Value {
+    let row = &receipt.row;
+    let tree = extra_str(row, "tree").expect("qualified receipt has tree");
     serde_json::json!({
+        "schema_version": row.schema_version,
+        "repo": CANONICAL_VALIDATE_REPO,
+        "sha": row.commit,
+        "commit": row.commit,
+        "tree": tree,
+        "commit_anchored": row.commit_anchored,
+        "tree_dirty": row.tree_dirty,
         "finished_at": row.finished_at,
         "host": row.host,
         "profile": row.profile,
         "selection_mode": row.selection_mode,
         "result": row.result,
+        "raw_result": extra_str(row, "raw_result"),
+        "exit_code": row.exit_code,
+        "checks": row.checks,
+        "failures": row.failures,
+        "gates_run": row.gates_run,
+        "gates_expected": row.gates_expected,
+        "gates": row.gates,
+        "executed_tests": row.executed_tests,
+        "filtered_tests": row.filtered_tests,
+        "selected_tests": receipt.selected_tests,
+        "discovered_tests": receipt.discovered_tests,
+        "count_derivation": receipt.count_derivation,
+        "coverage": row.coverage,
+        "coverage_satisfied": true,
+        "coverage_basis": receipt.coverage_basis,
         "real_seconds": row.real_seconds,
         "user_seconds": row.user_seconds,
         "sys_seconds": row.sys_seconds,
         "slot": row.slot,
+        "log_file": row.log_file,
+        "receipt_identity": {
+            "digest_algorithm": "sha256",
+            "canonicalization": "serde_json::to_vec(HistoryRow)-v1",
+            "digest": receipt.canonical_sha256,
+            "tuple": {
+                "repo": CANONICAL_VALIDATE_REPO,
+                "sha": row.commit,
+                "tree": tree,
+                "finished_at": row.finished_at,
+                "host": row.host,
+                "slot": row.slot,
+                "log_file": row.log_file,
+            },
+        },
     })
 }
 
@@ -4067,18 +4313,20 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             ))
         }
     };
-    let assessment = validate_status::assess(&rows, &sha);
-    let newest = validate_status::newest(&assessment.qualifying);
+    let assessment =
+        assess_canonical_receipts(&rows, &sha, &args.repo).map_err(CiHubError::ValidateStatus)?;
+    let newest = newest_canonical_receipt(&assessment.qualifying);
 
     if args.json {
         let report = serde_json::json!({
             "schema_version": 1,
+            "repo": args.repo,
             "sha": assessment.sha,
             "verdict": assessment.verdict.as_str(),
             "exit_code": assessment.verdict.exit_code(),
             "qualifying_count": assessment.qualifying.len(),
             "disqualified_count": assessment.disqualified.len(),
-            "newest_qualifying": newest.map(describe_record),
+            "newest_qualifying": newest.map(describe_receipt),
             "ledger": path.display().to_string(),
         });
         println!(
@@ -4092,9 +4340,9 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                 println!(
                     "# validate VALIDATED {} (passed {}, wall {}s, host {}, profile full/full) -- clean-tree commit-anchored full run",
                     assessment.sha,
-                    row.finished_at.as_deref().unwrap_or("?"),
-                    row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
-                    row.host.as_deref().unwrap_or("?"),
+                    row.row.finished_at.as_deref().unwrap_or("?"),
+                    row.row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
+                    row.row.host.as_deref().unwrap_or("?"),
                 );
             }
             validate_status::Verdict::FailedOnRecord => {
@@ -4167,7 +4415,9 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 continue;
             }
         };
-        let verdict = validate_status::assess(&rows, &head).verdict;
+        let verdict = assess_canonical_receipts(&rows, &head, &args.repo)
+            .map_err(CiHubError::ValidateStatus)?
+            .verdict;
         if verdict != validate_status::Verdict::Validated {
             println!(
                 "PR #{pr}: skip -- head {} is {}",
@@ -4450,6 +4700,193 @@ fn to_exit_code(code: i32) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RECEIPT_SHA: &str = "630f44aab7fdf4ee52e572c38ae09818e92271b2";
+
+    fn schema4_receipt_value() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": 4,
+            "started_at": "2026-08-01T12:00:00Z",
+            "finished_at": "2026-08-01T12:01:00Z",
+            "host": "validation-host",
+            "slot": "lander",
+            "profile": "full",
+            "selection_mode": "full",
+            "commit": RECEIPT_SHA,
+            "tree": "f9294df9294df9294df9294df9294df9294df929",
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": "pass",
+            "raw_result": "pass",
+            "exit_code": 0,
+            "executed_tests": 786,
+            "filtered_tests": 693,
+            "checks": 2,
+            "gates_run": 2,
+            "gates_expected": 2,
+            "failures": 0,
+            "real_seconds": 60.0,
+            "log_file": "/tmp/validate-630f.log",
+            "gates": [
+                {"name": "fmt", "result": "pass", "exit_code": 0},
+                {"name": "test", "result": "pass", "exit_code": 0}
+            ]
+        })
+    }
+
+    fn history_row(value: serde_json::Value) -> HistoryRow {
+        serde_json::from_value(value).expect("valid history fixture")
+    }
+
+    #[test]
+    fn canonical_receipt_accepts_genuine_schema4_and_carries_its_conditions() {
+        let row = history_row(schema4_receipt_value());
+        let assessment =
+            assess_canonical_receipts(&[row], RECEIPT_SHA, CANONICAL_VALIDATE_REPO).unwrap();
+        assert_eq!(assessment.verdict, validate_status::Verdict::Validated);
+        let receipt = newest_canonical_receipt(&assessment.qualifying).unwrap();
+        assert_eq!(receipt.selected_tests, 786);
+        assert_eq!(receipt.discovered_tests, 1479);
+        assert_eq!(receipt.canonical_sha256.len(), 64);
+
+        let report = describe_receipt(receipt);
+        assert_eq!(report["repo"], CANONICAL_VALIDATE_REPO);
+        assert_eq!(report["sha"], RECEIPT_SHA);
+        assert_eq!(report["tree_dirty"], false);
+        assert_eq!(report["checks"], 2);
+        assert_eq!(report["gates_run"], 2);
+        assert_eq!(report["gates_expected"], 2);
+        assert_eq!(report["failures"], 0);
+        assert_eq!(report["executed_tests"], 786);
+        assert_eq!(report["selected_tests"], 786);
+        assert_eq!(report["discovered_tests"], 1479);
+        assert_eq!(
+            report["count_derivation"],
+            "selected_tests=executed_tests;discovered_tests=executed_tests+filtered_tests"
+        );
+        assert_eq!(
+            report["coverage_basis"],
+            "legacy-schema4-full-gates-and-aggregate-counts"
+        );
+        assert_eq!(report["receipt_identity"]["digest_algorithm"], "sha256");
+        assert_eq!(report["receipt_identity"]["tuple"]["sha"], RECEIPT_SHA);
+    }
+
+    #[test]
+    fn canonical_receipt_rejects_planted_pass_with_failures_and_no_gates() {
+        let mut planted = schema4_receipt_value();
+        planted["schema_version"] = serde_json::json!(5);
+        planted["repo"] = serde_json::json!("hermit");
+        planted["coverage"] = serde_json::json!({
+            "planned_test_nodes": 1,
+            "executed_test_nodes": 1,
+            "zero_executed_nodes": [],
+            "absent_nodes": []
+        });
+        planted["executed_tests"] = serde_json::json!(1);
+        planted["filtered_tests"] = serde_json::json!(0);
+        planted["failures"] = serde_json::json!(7);
+        planted["checks"] = serde_json::json!(0);
+        planted["gates_run"] = serde_json::json!(0);
+        planted["gates_expected"] = serde_json::json!(5);
+        planted["gates"] = serde_json::json!([]);
+
+        let assessment = assess_canonical_receipts(
+            &[history_row(planted)],
+            RECEIPT_SHA,
+            CANONICAL_VALIDATE_REPO,
+        )
+        .unwrap();
+        assert_ne!(assessment.verdict, validate_status::Verdict::Validated);
+        assert!(assessment.qualifying.is_empty());
+    }
+
+    #[test]
+    fn canonical_receipt_brackets_gate_coverage_and_repo_predicates() {
+        for (name, mutate) in [
+            ("nonzero failures", ("failures", serde_json::json!(1))),
+            ("missing checks", ("checks", serde_json::Value::Null)),
+            ("gate count mismatch", ("checks", serde_json::json!(1))),
+            ("dirty tree", ("tree_dirty", serde_json::json!(true))),
+            (
+                "unanchored commit",
+                ("commit_anchored", serde_json::json!(false)),
+            ),
+            (
+                "wrong raw result",
+                ("raw_result", serde_json::json!("fail")),
+            ),
+            ("missing tree", ("tree", serde_json::Value::Null)),
+        ] {
+            let mut value = schema4_receipt_value();
+            value[mutate.0] = mutate.1;
+            assert!(
+                qualify_canonical_receipt(&history_row(value), RECEIPT_SHA).is_none(),
+                "planted {name} row qualified"
+            );
+        }
+
+        let mut red_gate = schema4_receipt_value();
+        red_gate["gates"][0]["result"] = serde_json::json!("fail");
+        red_gate["gates"][0]["exit_code"] = serde_json::json!(1);
+        assert!(qualify_canonical_receipt(&history_row(red_gate), RECEIPT_SHA).is_none());
+
+        let mut schema5_missing_coverage = schema4_receipt_value();
+        schema5_missing_coverage["schema_version"] = serde_json::json!(5);
+        schema5_missing_coverage["repo"] = serde_json::json!("hermit");
+        assert!(
+            qualify_canonical_receipt(&history_row(schema5_missing_coverage), RECEIPT_SHA)
+                .is_none()
+        );
+
+        let mut schema5_zero_coverage = schema4_receipt_value();
+        schema5_zero_coverage["schema_version"] = serde_json::json!(5);
+        schema5_zero_coverage["repo"] = serde_json::json!("hermit");
+        schema5_zero_coverage["coverage"] = serde_json::json!({
+            "planned_test_nodes": 1,
+            "executed_test_nodes": 0,
+            "zero_executed_nodes": ["test.unit"],
+            "absent_nodes": []
+        });
+        assert!(
+            qualify_canonical_receipt(&history_row(schema5_zero_coverage), RECEIPT_SHA).is_none()
+        );
+
+        let mut schema5_missing_repo = schema4_receipt_value();
+        schema5_missing_repo["schema_version"] = serde_json::json!(5);
+        schema5_missing_repo["coverage"] = serde_json::json!({
+            "planned_test_nodes": 1,
+            "executed_test_nodes": 1,
+            "zero_executed_nodes": [],
+            "absent_nodes": []
+        });
+        schema5_missing_repo
+            .as_object_mut()
+            .unwrap()
+            .remove("repo");
+        assert!(
+            qualify_canonical_receipt(&history_row(schema5_missing_repo), RECEIPT_SHA).is_none()
+        );
+
+        let error = assess_canonical_receipts(
+            &[history_row(schema4_receipt_value())],
+            RECEIPT_SHA,
+            "rrnewton/reverie",
+        )
+        .unwrap_err();
+        assert!(error.contains("bound to rrnewton/hermit"));
+    }
+
+    #[test]
+    fn canonical_receipt_digest_changes_with_receipt_content() {
+        let first = history_row(schema4_receipt_value());
+        let mut changed = schema4_receipt_value();
+        changed["executed_tests"] = serde_json::json!(787);
+        let second = history_row(changed);
+        let first = qualify_canonical_receipt(&first, RECEIPT_SHA).unwrap();
+        let second = qualify_canonical_receipt(&second, RECEIPT_SHA).unwrap();
+        assert_ne!(first.canonical_sha256, second.canonical_sha256);
+    }
 
     #[test]
     fn parses_typed_arm_command() {

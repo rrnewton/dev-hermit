@@ -102,16 +102,13 @@ LAUNCH_REGISTRATION_TIMEOUT = float(
     os.environ.get("CI_HUB_LAUNCH_REGISTRATION_TIMEOUT", "10")
 )
 LOCAL_RECEIPT_AUTHORITY = ROOT / "ci-hub/ci-hub"
-LOCAL_RECEIPT_CONTRACT = {
-    "profile": "full",
-    "selection_mode": "full",
-    "executed_tests": ">0",
-    "required_gate_count": 5,
-    "coverage": "satisfied",
-    "failures": 0,
-    "commit_anchored": True,
-    "tree_dirty": False,
-}
+LOCAL_RECEIPT_CANONICALIZATION = "serde_json::to_vec(HistoryRow)-v1"
+LOCAL_RECEIPT_COUNT_DERIVATION = (
+    "selected_tests=executed_tests;discovered_tests=executed_tests+filtered_tests"
+)
+LOCAL_SCHEMA4_COVERAGE_BASIS = "legacy-schema4-full-gates-and-aggregate-counts"
+LOCAL_DECLARED_COVERAGE_BASIS = "declared-per-node"
+LOCAL_POLICY_SKIP_AUTHORITY = "ci-hub-local-receipt-policy-v1"
 
 # A clean nonzero exit is NOT automatically a failing answer. Tonight three
 # separate ENVIRONMENTAL failures — a sandbox EPERM on a re-validate, a
@@ -376,21 +373,23 @@ def _local_receipt_problem(
     """
     if returncode != 0:
         return f"canonical verifier exited {returncode}"
-    # validate-status currently accepts --repo for the command envelope but its
-    # direct-SHA ledger lookup is Hermit-only/legacy and does not expose a
-    # repository identity in the report.  Never let a same-SHA Hermit receipt
-    # certify Reverie: until the canonical authority emits a repo-bound report,
-    # Reverie's local leg is conservatively no_result and its exact 2/2 hosted
-    # jobs remain sufficient under the OR policy.
     if repo != DEFAULT_REPO:
-        return f"canonical direct-SHA receipt is not repository-bound for {repo}"
+        return (
+            f"canonical local receipt authority is bound to {DEFAULT_REPO}, not {repo}"
+        )
     if not isinstance(report, Mapping):
         return "canonical verifier report is not an object"
-    if report.get("schema_version") != 1:
+    if type(report.get("schema_version")) is not int or report["schema_version"] != 1:
         return "canonical verifier report schema is unsupported"
+    if report.get("repo") != repo:
+        return "canonical verifier report is not bound to the repository"
     if report.get("sha") != sha:
         return "canonical verifier report is not bound to the landed SHA"
-    if report.get("verdict") != "VALIDATED" or report.get("exit_code") != 0:
+    if (
+        report.get("verdict") != "VALIDATED"
+        or type(report.get("exit_code")) is not int
+        or report["exit_code"] != 0
+    ):
         return "canonical verifier did not return VALIDATED/0"
     qualifying_count = report.get("qualifying_count")
     if type(qualifying_count) is not int or qualifying_count <= 0:
@@ -401,14 +400,122 @@ def _local_receipt_problem(
     newest = report.get("newest_qualifying")
     if not isinstance(newest, Mapping) or not newest:
         return "canonical verifier did not dereference a qualifying receipt"
-    if newest.get("profile") != "full":
-        return "qualifying receipt is not full profile"
-    if newest.get("selection_mode") != "full":
-        return "qualifying receipt is not full selection"
-    if newest.get("result") != "pass":
-        return "qualifying receipt is not a pass"
-    if not isinstance(newest.get("finished_at"), str) or not newest["finished_at"]:
-        return "qualifying receipt has no durable completion timestamp"
+    if newest.get("repo") != repo:
+        return "qualifying receipt is not repository-bound"
+    if newest.get("sha") != sha or newest.get("commit") != sha:
+        return "qualifying receipt is not exact-SHA-bound"
+    schema_version = newest.get("schema_version")
+    if type(schema_version) is not int or schema_version < 4:
+        return "qualifying receipt schema is unsupported"
+    tree = newest.get("tree")
+    if not isinstance(tree, str) or not obligations.SHA_RE.fullmatch(tree):
+        return "qualifying receipt has no exact tree identity"
+    if (
+        newest.get("commit_anchored") is not True
+        or newest.get("tree_dirty") is not False
+    ):
+        return "qualifying receipt is not clean and commit-anchored"
+    if newest.get("profile") != "full" or newest.get("selection_mode") != "full":
+        return "qualifying receipt is not full/full"
+    if (
+        newest.get("result") != "pass"
+        or newest.get("raw_result") != "pass"
+        or type(newest.get("exit_code")) is not int
+        or newest["exit_code"] != 0
+        or type(newest.get("failures")) is not int
+        or newest["failures"] != 0
+    ):
+        return "qualifying receipt does not carry a zero-failure pass"
+
+    checks = newest.get("checks")
+    gates_run = newest.get("gates_run")
+    gates_expected = newest.get("gates_expected")
+    gates = newest.get("gates")
+    if (
+        type(checks) is not int
+        or type(gates_run) is not int
+        or type(gates_expected) is not int
+        or gates_expected <= 0
+        or gates_run < gates_expected
+        or checks != gates_run
+        or not isinstance(gates, list)
+        or gates_run != len(gates)
+    ):
+        return "qualifying receipt has inconsistent gate coverage"
+    for gate in gates:
+        if (
+            not isinstance(gate, Mapping)
+            or not isinstance(gate.get("name"), str)
+            or not gate["name"].strip()
+            or gate.get("result") != "pass"
+            or type(gate.get("exit_code")) is not int
+            or gate["exit_code"] != 0
+        ):
+            return "qualifying receipt has a non-passing or unidentified gate"
+
+    executed = newest.get("executed_tests")
+    filtered = newest.get("filtered_tests")
+    selected = newest.get("selected_tests")
+    discovered = newest.get("discovered_tests")
+    if (
+        type(executed) is not int
+        or type(filtered) is not int
+        or type(selected) is not int
+        or type(discovered) is not int
+        or executed <= 0
+        or filtered < 0
+        or selected != executed
+        or discovered != executed + filtered
+        or newest.get("count_derivation") != LOCAL_RECEIPT_COUNT_DERIVATION
+    ):
+        return "qualifying receipt has invalid or unbound test counts"
+
+    if newest.get("coverage_satisfied") is not True:
+        return "qualifying receipt has unsatisfied coverage"
+    coverage = newest.get("coverage")
+    coverage_basis = newest.get("coverage_basis")
+    if coverage_basis == LOCAL_SCHEMA4_COVERAGE_BASIS:
+        if schema_version != 4 or coverage is not None:
+            return "legacy coverage basis is not bound to a schema-4 receipt"
+    elif coverage_basis == LOCAL_DECLARED_COVERAGE_BASIS:
+        if not isinstance(coverage, Mapping):
+            return "declared coverage basis has no coverage record"
+        if (
+            type(coverage.get("planned_test_nodes")) is not int
+            or coverage["planned_test_nodes"] <= 0
+            or coverage.get("zero_executed_nodes") != []
+            or coverage.get("absent_nodes") != []
+        ):
+            return "declared per-node coverage is incomplete"
+    else:
+        return "qualifying receipt has an unsupported coverage basis"
+
+    for field in ("finished_at", "host", "slot", "log_file"):
+        if not isinstance(newest.get(field), str) or not newest[field].strip():
+            return f"qualifying receipt has no durable {field}"
+    identity = newest.get("receipt_identity")
+    if not isinstance(identity, Mapping):
+        return "qualifying receipt has no receipt identity"
+    digest = identity.get("digest")
+    if (
+        identity.get("digest_algorithm") != "sha256"
+        or identity.get("canonicalization") != LOCAL_RECEIPT_CANONICALIZATION
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        return "qualifying receipt has an invalid canonical digest"
+    identity_tuple = identity.get("tuple")
+    expected_tuple = {
+        "repo": repo,
+        "sha": sha,
+        "tree": tree,
+        "finished_at": newest["finished_at"],
+        "host": newest["host"],
+        "slot": newest["slot"],
+        "log_file": newest["log_file"],
+    }
+    if identity_tuple != expected_tuple:
+        return "qualifying receipt identity tuple does not match its evidence"
     if not isinstance(report.get("ledger"), str) or not report["ledger"]:
         return "canonical verifier report has no ledger provenance"
     return None
@@ -444,11 +551,14 @@ def _persisted_local_receipt_valid(evidence: object, *, repo: str, sha: str) -> 
     return evidence.get("report_sha256") == hashlib.sha256(canonical).hexdigest()
 
 
-def verify_local_receipt(repo: str, sha: str) -> tuple[bool, dict[str, Any]]:
+def verify_local_receipt(
+    repo: str,
+    sha: str,
+) -> tuple[bool, dict[str, Any]]:
     """Dereference and persist the canonical counted exact-SHA receipt verdict."""
     if not obligations.SHA_RE.fullmatch(sha):
         raise ProtocolError(f"invalid local receipt SHA {sha!r}")
-    command = (
+    command = [
         str(LOCAL_RECEIPT_AUTHORITY),
         "validate-status",
         "--sha",
@@ -456,18 +566,17 @@ def verify_local_receipt(repo: str, sha: str) -> tuple[bool, dict[str, Any]]:
         "--repo",
         repo,
         "--json",
-    )
+    ]
     checked_at = obligations.utc_now()
     try:
-        result = _run(command, check=False, timeout=DEFAULT_NETWORK_TIMEOUT)
+        result = _run(tuple(command), check=False, timeout=DEFAULT_NETWORK_TIMEOUT)
     except ProtocolError as error:
         return False, {
             "state": "error",
             "authority": "ci-hub-validate-status",
             "repo": repo,
-            "command": list(command),
+            "command": command,
             "checked_at": checked_at,
-            "semantic_contract": dict(LOCAL_RECEIPT_CONTRACT),
             "returncode": None,
             "report": None,
             "report_sha256": None,
@@ -489,9 +598,8 @@ def verify_local_receipt(repo: str, sha: str) -> tuple[bool, dict[str, Any]]:
         "state": "verified" if problem is None else "refused",
         "authority": "ci-hub-validate-status",
         "repo": repo,
-        "command": list(command),
+        "command": command,
         "checked_at": checked_at,
-        "semantic_contract": dict(LOCAL_RECEIPT_CONTRACT),
         "returncode": result.returncode,
         "report": dict(parsed) if isinstance(parsed, Mapping) else None,
         "report_sha256": hashlib.sha256(canonical).hexdigest() if canonical else None,
@@ -500,15 +608,81 @@ def verify_local_receipt(repo: str, sha: str) -> tuple[bool, dict[str, Any]]:
     return problem is None, evidence
 
 
+def _local_policy_skip_patch(repo: str) -> dict[str, Any]:
+    """Persist the explicit no-local-authority policy for non-Hermit repos."""
+    if repo != REVERIE_REPO:
+        raise ProtocolError(f"no local receipt skip policy exists for {repo}")
+    recorded_at = obligations.utc_now()
+    return {
+        "state": "no_result",
+        "started_at": None,
+        "finished_at": None,
+        "pid": None,
+        "launch_token": None,
+        "registered_at": None,
+        "receipt_verification": None,
+        "classification_reason": "local-receipt-policy-skipped",
+        "policy_skip": {
+            "schema_version": 1,
+            "authority": LOCAL_POLICY_SKIP_AUTHORITY,
+            "repo": repo,
+            "canonical_repo": DEFAULT_REPO,
+            "outcome": "skipped",
+            "reason": "canonical-local-receipt-authority-unsupported-repository",
+            "recorded_at": recorded_at,
+        },
+    }
+
+
+def _local_policy_skip_valid(record: Mapping[str, Any]) -> bool:
+    local = record.get("local")
+    if (
+        record.get("repo") != REVERIE_REPO
+        or not isinstance(local, Mapping)
+        or local.get("state") != "no_result"
+        or local.get("classification_reason") != "local-receipt-policy-skipped"
+    ):
+        return False
+    policy_skip = local.get("policy_skip")
+    return (
+        isinstance(policy_skip, Mapping)
+        and type(policy_skip.get("schema_version")) is int
+        and policy_skip["schema_version"] == 1
+        and policy_skip.get("authority") == LOCAL_POLICY_SKIP_AUTHORITY
+        and policy_skip.get("repo") == REVERIE_REPO
+        and policy_skip.get("canonical_repo") == DEFAULT_REPO
+        and policy_skip.get("outcome") == "skipped"
+        and policy_skip.get("reason")
+        == "canonical-local-receipt-authority-unsupported-repository"
+        and isinstance(policy_skip.get("recorded_at"), str)
+        and bool(policy_skip["recorded_at"].strip())
+        and local.get("pid") is None
+        and local.get("launch_token") is None
+        and local.get("registered_at") is None
+        and local.get("started_at") is None
+        and local.get("finished_at") is None
+        and local.get("receipt_verification") is None
+    )
+
+
 def bind_local_receipt_authority(
     obligation_id: str, store_path: Path
 ) -> dict[str, Any]:
-    """Migrate any bare local green through the canonical receipt authority."""
+    """Bind the local leg to its repository's canonical receipt authority."""
     record = obligations.get_record(obligation_id, store_path)
+    repo, sha = str(record["repo"]), str(record["landed_sha"])
+    if repo != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return record
+        return obligations.transition(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(repo)},
+            store_path,
+        )
     local = record.get("local")
     if not isinstance(local, Mapping) or local.get("state") != "green":
         return record
-    repo, sha = str(record["repo"]), str(record["landed_sha"])
     if _persisted_local_receipt_valid(
         local.get("receipt_verification"), repo=repo, sha=sha
     ):
@@ -1334,20 +1508,19 @@ def _parse_github_jobs(
             raise ProtocolError(
                 f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
             )
-        try:
-            observed_run_id = int(raw["run_id"])
-            job_id = int(raw["id"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise ProtocolError("GitHub job has no integer job/run identity") from error
-        if observed_run_id != run_id:
+        observed_run_id = raw.get("run_id")
+        if type(observed_run_id) is not int or observed_run_id != run_id:
             raise ProtocolError(
-                f"GitHub job belongs to run {observed_run_id}, expected {run_id}"
+                f"GitHub job belongs to run {observed_run_id!r}, expected {run_id}"
             )
-        if job_id in seen_job_ids:
-            raise ProtocolError(
-                f"GitHub jobs response repeats job identity ({run_id}, {job_id})"
-            )
-        seen_job_ids.add(job_id)
+        raw_job_id = raw.get("id")
+        job_id = raw_job_id if type(raw_job_id) is int and raw_job_id > 0 else None
+        if job_id is not None:
+            if job_id in seen_job_ids:
+                raise ProtocolError(
+                    f"GitHub jobs response repeats job identity ({run_id}, {job_id})"
+                )
+            seen_job_ids.add(job_id)
         jobs.append(
             {
                 "id": job_id,
@@ -1467,10 +1640,9 @@ def _github_patch(
         )
         if identity not in _required_workflows(policy):
             raise ProtocolError(f"unexpected GitHub workflow identity {identity!r}")
-        try:
-            run_id = int(run["databaseId"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise ProtocolError("GitHub workflow evidence has no integer run id") from error
+        run_id = run.get("databaseId")
+        if type(run_id) is not int or run_id <= 0:
+            raise ProtocolError("GitHub workflow evidence has no positive run id")
         previous_identity = run_workflows.get(run_id)
         if previous_identity is not None and previous_identity != identity:
             raise ProtocolError(
@@ -1525,13 +1697,13 @@ def _github_patch(
             )
         if not matches:
             run_state = _github_state(run)
-            state = run_state if run_state in {"pending", "running"} else "no_result"
             reason = f"required job missing from {run_state} workflow run"
             observed_jobs.append(
                 {
                     **expected,
                     "run_id": run_id,
-                    "state": state,
+                    "state": "no_result",
+                    "status": run.get("status"),
                     "reason": reason,
                 }
             )
@@ -1543,14 +1715,27 @@ def _github_patch(
             raise ProtocolError(
                 f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
             )
-        if int(job.get("run_id") or 0) != run_id:
+        job_run_id = job.get("run_id")
+        if type(job_run_id) is not int or job_run_id <= 0 or job_run_id != run_id:
             raise ProtocolError(
                 f"GitHub job {job.get('id')} is not bound to selected run {run_id}"
             )
-        try:
-            job_id = int(job["id"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise ProtocolError("required GitHub job has no integer identity") from error
+        job_id = job.get("id")
+        if type(job_id) is not int or job_id <= 0:
+            reason = "required job has no positive dereferenced job identity"
+            observed_jobs.append(
+                {
+                    **expected,
+                    "run_id": run_id,
+                    "state": "no_result",
+                    "status": job.get("status"),
+                    "conclusion": job.get("conclusion"),
+                    "url": str(job.get("html_url") or ""),
+                    "reason": reason,
+                }
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+            continue
         job_identity = (run_id, job_id)
         if job_identity in selected_job_identities:
             raise ProtocolError(
@@ -1639,11 +1824,9 @@ def ensure_github_verification(
     repo, sha = record["repo"], record["landed_sha"]
     deadline = time.monotonic() + wait_seconds
     dispatched = False
-    latest_runs: list[dict[str, Any]] = []
     latest_patch = _github_patch([], sha, policy)
     while True:
         runs = github_runs(repo, sha, policy=policy)
-        latest_runs = runs
         latest_patch = _github_patch(runs, sha, policy)
         record = obligations.get_record(obligation_id, store_path)
         if record.get("github") != latest_patch["github"]:
@@ -1682,7 +1865,7 @@ def ensure_github_verification(
                 dispatched = True
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
 
-    active = any(_github_state(run) in {"pending", "running"} for run in latest_runs)
+    active = _github_verification_in_flight(latest_patch["github"])
     if active:
         # A real queued/in-progress producer remains durable and watchable. It is
         # not collapsed into no_result just because the synchronous arm wait ended.
@@ -2539,6 +2722,8 @@ def _local_launch_durable(record: Mapping[str, Any]) -> bool:
     local = record.get("local")
     if not isinstance(local, Mapping):
         return False
+    if _local_policy_skip_valid(record):
+        return True
     state = local.get("state")
     if state == "running":
         registered = bool(local.get("registered_at"))
@@ -2546,10 +2731,19 @@ def _local_launch_durable(record: Mapping[str, Any]) -> bool:
             local.get("started_at")
         )
         return (registered or legacy_registered) and _pid_alive(local.get("pid"))
+    terminal_is_registered = (
+        all(
+            isinstance(local.get(field), str) and bool(local[field].strip())
+            for field in ("launch_token", "registered_at", "started_at", "finished_at")
+        )
+        and type(local.get("pid")) is int
+        and local["pid"] > 0
+    )
+    if not terminal_is_registered:
+        return False
     if state == "green":
         return (
-            bool(local.get("finished_at"))
-            and isinstance(record.get("repo"), str)
+            isinstance(record.get("repo"), str)
             and isinstance(record.get("landed_sha"), str)
             and _persisted_local_receipt_valid(
                 local.get("receipt_verification"),
@@ -2557,7 +2751,7 @@ def _local_launch_durable(record: Mapping[str, Any]) -> bool:
                 sha=str(record["landed_sha"]),
             )
         )
-    return state in {"red", "no_result", "error"} and bool(local.get("finished_at"))
+    return state in {"red", "no_result", "error"}
 
 
 def _watcher_launch_durable(record: Mapping[str, Any]) -> bool:
@@ -2687,6 +2881,19 @@ def _ensure_local_launched(
     obligation_id: str, source: Path, store_path: Path
 ) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
+    if record.get("repo") != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return record
+        skipped = obligations.transition_if_matches(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(str(record.get("repo")))},
+            {"event_id": record["event_id"]},
+            store_path,
+        )
+        if skipped is None:
+            return _ensure_local_launched(obligation_id, source, store_path)
+        return skipped
     if _local_launch_durable(record):
         return record
     workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
@@ -2853,6 +3060,41 @@ def resume_obligation_launch(
         raise
 
 
+def _github_verification_in_flight(github: object) -> bool:
+    if not isinstance(github, Mapping) or github.get("state") not in {
+        "pending",
+        "running",
+    }:
+        return False
+    run_ids = github.get("run_ids")
+    jobs = github.get("jobs")
+    dereferenced_run_ids = (
+        {run_id for run_id in run_ids if type(run_id) is int and run_id > 0}
+        if isinstance(run_ids, list)
+        else set()
+    )
+    if not dereferenced_run_ids or not isinstance(jobs, list):
+        return False
+    for job in jobs:
+        if not isinstance(job, Mapping):
+            continue
+        state = job.get("state")
+        status = str(job.get("status") or "").lower()
+        producer_status_matches = (
+            state == "pending"
+            and status in {"requested", "waiting", "queued", "pending"}
+        ) or (state == "running" and status == "in_progress")
+        if (
+            producer_status_matches
+            and type(job.get("run_id")) is int
+            and job["run_id"] in dereferenced_run_ids
+            and type(job.get("job_id")) is int
+            and job["job_id"] > 0
+        ):
+            return True
+    return False
+
+
 def _verification_in_flight(record: Mapping[str, Any]) -> bool:
     local = record.get("local")
     local_registered = isinstance(local, Mapping) and (
@@ -2867,28 +3109,7 @@ def _verification_in_flight(record: Mapping[str, Any]) -> bool:
         and local["pid"] > 0
         and _pid_alive(local["pid"])
     )
-    github = record.get("github")
-    github_in_flight = False
-    if isinstance(github, Mapping) and github.get("state") in {"pending", "running"}:
-        run_ids = github.get("run_ids")
-        jobs = github.get("jobs")
-        dereferenced_run_ids = (
-            {run_id for run_id in run_ids if isinstance(run_id, int) and run_id > 0}
-            if isinstance(run_ids, list)
-            else set()
-        )
-        github_in_flight = (
-            bool(dereferenced_run_ids)
-            and isinstance(jobs, list)
-            and any(
-                isinstance(job, Mapping)
-                and job.get("state") in {"pending", "running"}
-                and isinstance(job.get("run_id"), int)
-                and job["run_id"] in dereferenced_run_ids
-                for job in jobs
-            )
-        )
-    return local_in_flight or github_in_flight
+    return local_in_flight or _github_verification_in_flight(record.get("github"))
 
 
 def _verification_state_needs_reconcile(record: Mapping[str, Any]) -> bool:
@@ -3007,6 +3228,15 @@ def _maybe_redispatch_local(
     a revert).
     """
     local = record["local"]
+    if record.get("repo") != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return dict(record)
+        return obligations.transition(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(str(record.get("repo")))},
+            store_path,
+        )
     state = local.get("state")
     if state not in {"no_result", "red"}:
         return dict(record)
