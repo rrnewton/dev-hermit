@@ -677,3 +677,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/coord` | hermit-coord / compat-examples-strict-kvm | Hermit feature head `9ca6be54289127af8625853b470d1883b55ebbe1`; no Reverie or LiteInst2 child | Hermit PR [#1037](https://github.com/rrnewton/hermit/pull/1037) merged as `b989db08a32c3636b56e10dfeee17dcee4619311`, freshly verified reachable from local `origin/main`; the feature branch is retained. | The physical slot and all three exact-path worktree registrations were already absent, and no matching process was live. The existing registry row was reassigned in place to `cross-client-skill-discovery`; no worktree or branch was deleted. |
+
+### Drainer-5 no-change debug handoff (2026-08-05)
+
+| Slot | old owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-5` | drainer-5 / fix_debug_hermit_liteinst | Hermit `39a98a4efa6f64699d5f6df184d96bc60520a063`; no Reverie or LiteInst2 child | The clean `fix/debug-liteinst-attach` branch has zero commits beyond its remote-reachable base. Task evidence records a fresh build and LiteInst 4/4 pass with no product defect or source change. The prior #1200 head remains durable at `8f676313d44e5a57ca27c2f863116c2b668a3b4e`. | The no-change debug task was closed. The 49 GB cache and physical Hermit worktree were preserved; ownership was transferred in place for #1200 recovery without invoking the unsafe global-pruning release path. |
