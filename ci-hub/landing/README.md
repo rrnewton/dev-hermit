@@ -58,6 +58,11 @@ Runtime state (all machine-local, gitignored):
 | `~/work/dev-hermit/.landing-lock.owner`  | supervised owner identity; does not alter the legacy holder format |
 | `~/work/dev-hermit/.landing-lock.guard`  | `flock` target (impl detail) |
 | `~/work/dev-hermit/.landing-lock.queue`  | FIFO waiter list |
+| `~/work/dev-hermit/.landing-lock.cleanup-required` | fsynced armed/published/residual process-domain authority; blocks ordinary acquisition and reclaim |
+| `~/work/dev-hermit/.landing-lock.cleanup-required.tmp-*` | atomic-replacement scratch, machine-local and ignored |
+
+`validate-lock` uses the identical cleanup-authority suffixes beside
+`.validate-lock`; all four cleanup files are root-anchored in `.gitignore`.
 
 ## Usage
 
@@ -75,9 +80,10 @@ ci-hub/ci-hub land-lock acquire --agent hermit-ci --pr 1533   # blocks until you
 #   ... re-union -> push -> stamp -> merge --rebase -> ancestry-verify ...
 ci-hub/ci-hub land-lock release --agent hermit-ci
 
-# Crash-safe wrapper (RECOMMENDED): acquire, run, always release, with a
-# background heartbeat that renews the lease so a long land keeps the lock, and
-# a HARD --child-deadline that kills a wedged land subtree and releases the lock.
+# Crash-contained wrapper (RECOMMENDED): acquire, run, and release only after
+# proving the payload domain empty. A background heartbeat renews the lease so
+# a long land keeps the lock; a HARD --child-deadline kills a wedged subtree,
+# then releases on complete cleanup proof or retains a quarantine otherwise.
 ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
   --child-deadline 2160 -- ./my-land-sequence.sh
 ```
@@ -91,14 +97,16 @@ ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
 | `release --agent NAME` | free the lock (owner only); signals the next waiter |
 | `status` | print holder metadata, process liveness, seconds left, and the FIFO queue |
 | `reclaim-dead` | release only when the supervised owner process is proven gone |
-| `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → always release |
+| `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → release after complete cleanup proof, otherwise quarantine |
 
 Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
 15 min so a dead holder self-clears), `--child-deadline 2160` (kill a wedged
 land subtree after 36 min). Poll interval 3s.
 
 Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal ·
-`124` child-deadline breach (land subtree killed, lock released).
+`124` child-deadline breach with the land subtree proven gone and the lock
+released. An incomplete cleanup proof instead returns an error and retains a
+`QUARANTINED` lock.
 
 ### `--child-deadline`: no unbounded wait may hold the queue
 
@@ -106,11 +114,14 @@ Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal 
 script that hangs at a failing/UNKNOWN gate would renew forever and **wedge the
 FIFO permanently** (the observed ~2040-minute head-of-line starvation). The fix:
 `run` supervises the child against `--child-deadline`; on breach it SIGTERMs the
-whole child process group (then SIGKILL after a short grace), **releases the
-lock**, prints a loud `ABANDON PR #N` line, and exits `124`. The PR is left open
-for retry. A zero deadline is rejected: an unbounded wait is unboxed compute and
-every wait here is bounded. `land-pr.sh`'s surviving outer supervisor also posts
-a durable PR comment when the killed inner process cannot do so itself.
+whole child process group (then SIGKILL after a short grace), and performs a
+complete descendant census. Only a proven-empty payload domain **releases the
+lock**, prints a loud `ABANDON PR #N` line, and exits `124`; an incomplete or
+nonempty census retains a `QUARANTINED` lock and returns an error. The PR is left
+open for retry. A zero deadline is rejected: an unbounded wait is unboxed
+compute and every wait here is bounded. `land-pr.sh`'s surviving outer
+supervisor also posts a durable PR comment when the killed inner process cannot
+do so itself.
 
 **Never hand-roll a renewer.** A bare `acquire` plus an external `renewer.sh`
 loop that outlives a dead agent defeats the lease-lapse safety net and is exactly
@@ -119,14 +130,29 @@ or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
 
 ### Abnormal termination and evidence-based recovery
 
-`run` removes the lock on every path it can observe: child success, nonzero
-exit, launch failure, and hard deadline. SIGKILL and machine loss cannot run
-cleanup code, so supervised leases also persist an owner sidecar. `status`
-reports `owner_process=alive`, `dead:...`, or `unknown:...`; a proven-dead live
-lease is shown as `ORPHANED (reclaimable)`. The next FIFO acquire reclaims it
-automatically, or an operator can run `land-lock reclaim-dead`. Reclamation is
-refused while the process is alive or its identity cannot be verified. This
-preserves the rule that one lander never force-releases another lander's lock.
+Before spawn, `run` fsyncs an `armed` cleanup authority. The gated child cannot
+exec the payload until an atomic replacement publishes its exact PID/start-time
+identity and process group. Before any descendant census, `run` persists
+`census-pending`, disables heartbeat renewal, and joins the heartbeat; only then
+may it freeze descendants and publish a complete `residual` census. Normal exit,
+nonzero exit, and hard deadline clear the authority only after both the process
+group and residual census prove the domain empty.
+
+SIGKILL and machine loss cannot finish that census. `status` therefore reports
+the lease as `QUARANTINED`, not merely `ORPHANED`, and every ordinary acquire,
+renew, release, and dead-owner reclaim refuses. While recorded identities are
+live, even explicit recovery is refused. A complete residual record becomes
+recoverable only after every exact PID/start-ticks identity and its group are
+absent; `reclaim-dead` must additionally prove the supervisor owner dead. A
+same-boot `published`/`census-pending` record with no final census remains
+unrecoverable even after its leader disappears, because an escaped descendant
+may be unrecorded. A host reboot (different boot ID) is the stronger proof that
+such a process domain is gone. This preserves the rule that one lander never
+force-releases another lander's payload.
+
+The owner sidecar still reports `owner_process=alive`, `dead:...`, or
+`unknown:...`. A proven-dead supervised lease with **no** cleanup authority is
+shown as `ORPHANED (reclaimable)` for backward-compatible/manual cases.
 
 The holder file format is byte-compatible with pre-sidecar landers. A legacy
 bare `acquire` has no process evidence and therefore remains lease-only: it is
