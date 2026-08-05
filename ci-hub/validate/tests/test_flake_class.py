@@ -138,6 +138,31 @@ class CompletionTest(unittest.TestCase):
             ["n/a", "n/a"],
         )
 
+    def test_partial_profile_pass_downgrades_to_pass_partial(self):
+        # A 2-check portable-strict-compat-only pass must NOT read as a full
+        # green: effective_result types it `pass-partial` so a reader tells the
+        # narrowed scope apart without knowing the profile taxonomy. This is the
+        # live schema-4 validate.sh shape (bare result="pass", non-full profile).
+        compat_only = {
+            "schema_version": 4, "profile": "portable-strict-compat-only",
+            "result": "pass", "checks": 2, "failures": 0, "real_seconds": 56,
+        }
+        self.assertEqual(fc.effective_result(compat_only), "pass-partial")
+        self.assertFalse(fc.is_full_coverage(compat_only))
+        # Other narrowed profiles downgrade the same way.
+        for prof in ("only-portable", "portable-only", "quick"):
+            row = {"profile": prof, "result": "pass", "checks": 3, "failures": 0}
+            self.assertEqual(fc.effective_result(row), "pass-partial")
+        # A full-profile pass is unchanged, and an explicit full_coverage=True
+        # overrides a would-be-partial profile name.
+        full = {"schema_version": 4, "profile": "full", "result": "pass",
+                "checks": 5, "gates_run": 5, "gates_expected": 5, "failures": 0}
+        self.assertEqual(fc.effective_result(full), "pass")
+        self.assertTrue(fc.is_full_coverage(full))
+        explicit = {"profile": "only-portable", "full_coverage": True,
+                    "result": "pass", "checks": 3, "failures": 0}
+        self.assertEqual(fc.effective_result(explicit), "pass")
+
 
 if __name__ == "__main__":
     unittest.main()
