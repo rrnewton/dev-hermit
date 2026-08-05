@@ -49,9 +49,13 @@ rereading, and the ledger is never rewritten.
 All parent-tree local-evidence consumers route through the Rust semantic verifier:
 `validate-status`, `ledger qualified-rows` (and therefore `pr-status`),
 `newest-green`, label publication, immutable receipt verification, and hard/soft
-green reconciliation. This is a parent implementation claim, not proof that an
-older Hermit workflow has pinned the tree. The newest-green cache also records the resolved Reverie
-tip, so a ref move invalidates an otherwise byte-identical cache. Its
+green reconciliation. For Hermit, that verifier admits a schema-6 row only after
+the finalizer has re-derived its unique original source row, exact log digest,
+per-node counts, coverage, and exact-commit DAG manifests; carried fields and a
+finalizer marker alone are not authority. This is a parent implementation claim,
+not proof that an older Hermit workflow has pinned the tree. The newest-green
+cache also records the resolved Reverie tip, so a ref move invalidates an
+otherwise byte-identical cache. Its
 `--no-fetch` mode never performs a hidden ref lookup and therefore reports the
 dependency frontier UNVERIFIABLE rather than emitting an offline green.
 An identical-tree cache hit for another commit is soft evidence only: the
@@ -82,7 +86,8 @@ download URL is never followed.
 The deployable verifier is the full-tree
 `ci-hub/validation/verify_receipt_bundle.sh` entrypoint. Its manifest names the
 Rust modules, executable symlink, predicate, hosted classifier, finalizer, and publishers; it rejects
-a modified bundle, requires an exact pinned dev-hermit commit, disables Git
+a modified bundle, loads and validates the manifest from the expected dev-hermit
+commit before using its required-path perimeter, requires that exact pinned commit, disables Git
 replacement/object-locator state, clears the guarded mutation-only predicate
 override and sentinel,
 and proves the target SHA is a commit object

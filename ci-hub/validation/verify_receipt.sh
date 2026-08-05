@@ -147,11 +147,57 @@ for outcome_path in "${outcome_paths[@]}"; do
     index=$((index + 1))
 done
 
+# Materialize every pass candidate's content-addressed log before canonical
+# selection.  validate-status treats this map only as a byte locator: its one
+# finalized-row verifier still hashes the log and re-derives source, manifests,
+# counts, and coverage.  This keeps immutable verification independent of the
+# producer host's original absolute log path.
+finalized_log_map="$tmp/finalized-log-map.json"
+printf '{}\n' >"$finalized_log_map"
+pre_index=0
+for outcome_file in "${pass_outcomes[@]}"; do
+    receipt_path=$(jq -r '.receipt.path // ""' "$outcome_file")
+    receipt_digest=$(jq -r '.receipt.sha256 // ""' "$outcome_file")
+    expected_receipt_prefix="validation-receipts/${repo}/${sha}/"
+    if [[ ! $receipt_digest =~ ^[0-9a-f]{64}$ ]] || \
+       [[ $receipt_path != "$expected_receipt_prefix$receipt_digest.json" ]]; then
+        echo 'pass outcome has malformed receipt reference' >&2
+        exit 1
+    fi
+    pre_receipt="$tmp/pre-receipt-$pre_index.json"
+    if ! fetch_at_tip "$receipt_path" "$pre_receipt" || \
+       [[ $(sha256sum "$pre_receipt" | awk '{print $1}') != "$receipt_digest" ]]; then
+        echo 'pass outcome receipt is absent or digest-mismatched' >&2
+        exit 1
+    fi
+    durable_log_digest=$(jq -r '.log_sha256 // ""' "$pre_receipt")
+    durable_log_path=$(jq -r '.durable_log_path // ""' "$pre_receipt")
+    expected_log_path="validation-logs/${repo}/${sha}/${durable_log_digest}.log"
+    if [[ ! $durable_log_digest =~ ^[0-9a-f]{64}$ ]] || \
+       [[ $durable_log_path != "$expected_log_path" ]] || \
+       [[ $(jq -r '.ledger_record.source_log_sha256 // ""' "$pre_receipt") != "$durable_log_digest" ]]; then
+        echo 'pass outcome receipt has malformed durable-log binding' >&2
+        exit 1
+    fi
+    pre_log="$tmp/pre-log-$pre_index"
+    if ! fetch_at_tip "$durable_log_path" "$pre_log" || \
+       [[ $(sha256sum "$pre_log" | awk '{print $1}') != "$durable_log_digest" ]]; then
+        echo 'pass outcome durable log is absent or digest-mismatched' >&2
+        exit 1
+    fi
+    jq --arg digest "$durable_log_digest" --arg path "$pre_log" \
+        '. + {($digest): $path}' "$finalized_log_map" \
+        >"$finalized_log_map.next"
+    mv "$finalized_log_map.next" "$finalized_log_map"
+    pre_index=$((pre_index + 1))
+done
+
 # ONE semantic verifier sees the union of every immutable snapshot. A genuine
 # failure in any later or earlier outcome therefore wins monotonically forever.
 status_report="$tmp/status.json"
 if ! "$ci_hub" validate-status --repo "$repo" --sha "$sha" \
-      --ledger "$combined_ledger" --hermit-repo "$target_repo" --json \
+      --ledger "$combined_ledger" --hermit-repo "$target_repo" \
+      --finalized-log-map "$finalized_log_map" --json \
       >"$status_report" 2>/dev/null; then
     printf 'immutable outcome set is not green for exact head %s\n' "$sha" >&2
     exit 1

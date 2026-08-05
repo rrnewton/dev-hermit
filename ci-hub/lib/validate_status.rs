@@ -445,11 +445,19 @@ pub struct Assessment {
 
 /// Assess a single commit against all ledger rows. `sha` must be a full 40-hex
 /// commit (resolve prefixes with [`resolve_sha`] first).
-pub fn assess_with_reverie(
+fn same_row(left: &HistoryRow, right: &HistoryRow) -> bool {
+    match (serde_json::to_vec(left), serde_json::to_vec(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn assess_with_reverie_impl(
     rows: &[HistoryRow],
     sha: &str,
     target: ReceiptTarget,
     expected_reverie: Option<&ReverieBinding>,
+    finalized_rows: &[HistoryRow],
 ) -> Assessment {
     let mut qualifying = Vec::new();
     let mut disqualified = Vec::new();
@@ -465,7 +473,12 @@ pub fn assess_with_reverie(
             disqualified.push(row.clone());
             continue;
         }
-        if is_clean_full_pass(row, sha, target, expected_reverie) {
+        let structurally_qualifies = is_clean_full_pass(row, sha, target, expected_reverie);
+        let finalizer_qualifies = target == ReceiptTarget::Reverie
+            || finalized_rows
+                .iter()
+                .any(|candidate| same_row(row, candidate));
+        if structurally_qualifies && finalizer_qualifies {
             qualifying.push(row.clone());
         } else {
             match failure_disposition(row, sha) {
@@ -500,6 +513,32 @@ pub fn assess_with_reverie(
         qualifying,
         disqualified,
     }
+}
+
+/// Unit-test convenience: treat every synthetic row as finalized so the tests
+/// can exercise the structural failure taxonomy without invoking Git/Python.
+/// Production has no fail-open assessment entrypoint.
+#[cfg(test)]
+pub fn assess_with_reverie(
+    rows: &[HistoryRow],
+    sha: &str,
+    target: ReceiptTarget,
+    expected_reverie: Option<&ReverieBinding>,
+) -> Assessment {
+    assess_with_reverie_impl(rows, sha, target, expected_reverie, rows)
+}
+
+/// Authoritative Hermit assessment. A structurally qualifying row is accepted
+/// only when the single finalizer verifier re-derived the same typed row from
+/// its original ledger source, durable log bytes, and exact-tree manifests.
+pub fn assess_with_finalized_reverie(
+    rows: &[HistoryRow],
+    sha: &str,
+    target: ReceiptTarget,
+    expected_reverie: Option<&ReverieBinding>,
+    finalized_rows: &[HistoryRow],
+) -> Assessment {
+    assess_with_reverie_impl(rows, sha, target, expected_reverie, finalized_rows)
 }
 
 /// Unit tests exercise the failure taxonomy without a live network. Their

@@ -5,6 +5,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$script_dir/../.." && pwd)
 manifest="$script_dir/receipt-authority-bundle.json"
+manifest_rel=ci-hub/validation/receipt-authority-bundle.json
 repo=rrnewton/hermit
 sha=
 comments=
@@ -65,14 +66,36 @@ if ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 || \
     exit 2
 fi
 
+tmp=$(mktemp -d /tmp/ci-hub-receipt-bundle.XXXXXX)
+cleanup() {
+    if [[ -n $tmp && -d $tmp && $tmp == /tmp/ci-hub-receipt-bundle.* ]]; then
+        rm -rf -- "$tmp"
+    fi
+}
+trap cleanup EXIT
+
 bundle_sha=$(safe_git -C "$root" rev-parse HEAD)
 if [[ -n $expected_bundle_sha && $bundle_sha != "$expected_bundle_sha" ]]; then
     printf 'receipt authority bundle mismatch: expected %s, checked out %s\n' \
         "$expected_bundle_sha" "$bundle_sha" >&2
     exit 2
 fi
+committed_manifest="$tmp/receipt-authority-bundle.json"
+if ! safe_git -C "$root" show "$bundle_sha:$manifest_rel" >"$committed_manifest" || \
+   ! cmp -s -- "$manifest" "$committed_manifest"; then
+    echo 'receipt authority bundle manifest differs from the expected bundle commit' >&2
+    exit 2
+fi
 mapfile -t required_paths < <(jq -er \
-    'select(.schema_version == 1) | .required_paths[]' "$manifest")
+    --arg manifest "$manifest_rel" \
+    --arg entrypoint 'ci-hub/validation/verify_receipt_bundle.sh' '
+      select(.schema_version == 1)
+      | select(.entrypoint == $entrypoint)
+      | select(.required_paths | type == "array")
+      | select(.required_paths | index($manifest))
+      | select(.required_paths | index($entrypoint))
+      | .required_paths[]
+    ' "$committed_manifest")
 if [[ ${#required_paths[@]} -eq 0 ]]; then
     echo 'receipt authority bundle manifest has no required paths' >&2
     exit 2
@@ -88,16 +111,7 @@ for relative in "${required_paths[@]}"; do
     fi
 done
 
-tmp=
-cleanup() {
-    if [[ -n $tmp && -d $tmp && $tmp == /tmp/* ]]; then
-        rm -rf -- "$tmp"
-    fi
-}
-trap cleanup EXIT
-
 if [[ -z $target_repo ]]; then
-    tmp=$(mktemp -d /tmp/ci-hub-receipt-target.XXXXXX)
     target_repo="$tmp/target.git"
     safe_git init --bare -q "$target_repo"
     fetch=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \

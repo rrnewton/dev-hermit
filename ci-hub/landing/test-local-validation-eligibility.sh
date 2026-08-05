@@ -10,13 +10,17 @@ trap 'rm -rf -- "$tmp"' EXIT
 ledger=$tmp/ledger.jsonl
 pin=dddddddddddddddddddddddddddddddddddddddd
 repo=$tmp/hermit
-mkdir -p "$repo" "$tmp/bin"
+mkdir -p "$repo/ci/dag" "$tmp/bin"
 git -C "$repo" init -q
 git -C "$repo" config user.email ci-hub@example.invalid
 git -C "$repo" config user.name 'ci-hub test'
 printf '[package]\nname="eligibility-fixture"\nversion="0.1.0"\n[dependencies]\nreverie={git="https://github.com/rrnewton/reverie",rev="%s"}\n' \
   "$pin" >"$repo/Cargo.toml"
-git -C "$repo" add Cargo.toml
+printf '{"steps":[{"group":"test","job":"portable"}]}\n' \
+  >"$repo/ci/dag/portable.json"
+printf '{"steps":[{"group":"test","job":"privileged"}]}\n' \
+  >"$repo/ci/dag/privileged.json"
+git -C "$repo" add Cargo.toml ci/dag/portable.json ci/dag/privileged.json
 git -C "$repo" commit -q -m fixture
 valid=$(git -C "$repo" rev-parse HEAD)
 printf '%s\n' '#!/usr/bin/env bash' \
@@ -30,11 +34,20 @@ export PATH="$tmp/bin:$PATH"
 
 missing=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 log=$tmp/validate.log
-printf 'running 42 tests\ntest result: ok. 42 passed; 0 failed\n' >"$log"
-log_sha=$(sha256sum "$log" | awk '{print $1}')
-printf '%s\n' \
-  "{\"schema_version\":6,\"commit\":\"$valid\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"failures\":0,\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[],\"failed_nodes\":[]},\"reverie_binding\":{\"repository\":\"rrnewton/reverie\",\"ref\":\"refs/heads/main\",\"pinned_sha\":\"$pin\",\"resolved_sha\":\"$pin\"},\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"real_seconds\":1,\"source_log_sha256\":\"$log_sha\",\"log_file\":\"$log\"}" \
-  >"$ledger"
+for node in portable privileged; do
+  printf '[test.%s] running 21 tests\n' "$node"
+  printf '[test.%s] test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n' "$node"
+  printf '[test.%s] ✓ PASS %s\n' "$node" "$node"
+done >"$log"
+jq -cn --arg sha "$valid" --arg log "$log" '{
+  schema_version:4, commit:$sha, commit_anchored:true, tree_dirty:false,
+  profile:"full", selection_mode:"full", result:"pass", failures:0,
+  started_at:"2026-08-04T00:00:00Z", finished_at:"2026-08-04T00:01:00Z",
+  host:"fixture", real_seconds:1, log_file:$log
+}' >"$ledger"
+python3 "$script_dir/../validate/finalize_receipt.py" \
+  --repo rrnewton/hermit --sha "$valid" --ledger "$ledger" \
+  --hermit-checkout "$repo" >/dev/null
 
 run_case() {
   local expected_rc=$1 sha=$2 labels=$3 output rc

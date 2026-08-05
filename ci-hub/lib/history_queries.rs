@@ -8,7 +8,7 @@
 use crate::qualifying_receipt::ReceiptTarget;
 use crate::records::{GateHistoryRow, HistoryRow};
 use crate::reverie_pin::ReverieBinding;
-use crate::validate_status::{assess_with_reverie, newest, Verdict};
+use crate::validate_status::{newest, Verdict};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -151,6 +151,7 @@ pub enum FirstBadOutcome {
 pub struct HistoryQueryEngine {
     commits: Vec<String>,
     rows_by_commit: BTreeMap<String, Vec<HistoryRow>>,
+    finalized_rows_by_commit: BTreeMap<String, Vec<HistoryRow>>,
     reverie_bindings: BTreeMap<String, ReverieBinding>,
 }
 
@@ -159,6 +160,7 @@ impl HistoryQueryEngine {
     pub fn new_with_bindings(
         commits: Vec<String>,
         rows: Vec<HistoryRow>,
+        finalized_rows: Vec<HistoryRow>,
         reverie_bindings: BTreeMap<String, ReverieBinding>,
     ) -> Self {
         let main: BTreeSet<&str> = commits.iter().map(String::as_str).collect();
@@ -174,9 +176,22 @@ impl HistoryQueryEngine {
                     .push(row);
             }
         }
+        let mut finalized_rows_by_commit: BTreeMap<String, Vec<HistoryRow>> = BTreeMap::new();
+        for row in finalized_rows {
+            let Some(commit) = row.commit.as_deref() else {
+                continue;
+            };
+            if main.contains(commit) {
+                finalized_rows_by_commit
+                    .entry(commit.to_string())
+                    .or_default()
+                    .push(row);
+            }
+        }
         Self {
             commits,
             rows_by_commit,
+            finalized_rows_by_commit,
             reverie_bindings,
         }
     }
@@ -190,7 +205,7 @@ impl HistoryQueryEngine {
             .iter()
             .filter_map(|row| Some((row.commit.clone()?, row.reverie_binding.clone()?)))
             .collect();
-        Self::new_with_bindings(commits, rows, bindings)
+        Self::new_with_bindings(commits, rows.clone(), rows, bindings)
     }
 
     pub fn newest_green(
@@ -210,11 +225,15 @@ impl HistoryQueryEngine {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
             };
-            let assessment = assess_with_reverie(
+            let assessment = crate::validate_status::assess_with_finalized_reverie(
                 rows,
                 sha,
                 ReceiptTarget::Hermit,
                 self.reverie_bindings.get(sha),
+                self.finalized_rows_by_commit
+                    .get(sha)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
             );
             match assessment.verdict {
                 Verdict::Validated => {
@@ -730,7 +749,7 @@ pub fn cache_matches(
     ledger_modified_ns: u128,
     reverie_main_sha: &str,
 ) -> bool {
-    cache.schema_version == 5
+    cache.schema_version == 6
         && cache.branch == branch
         && cache.branch_ref == branch_ref
         && cache.branch_tip == branch_tip
@@ -1086,7 +1105,7 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 5,
+            schema_version: 6,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
@@ -1100,6 +1119,19 @@ mod tests {
         let path = Path::new("/tmp/ledger");
         assert!(cache_matches(
             &cache,
+            "main",
+            "origin/main",
+            "tip-a",
+            "floor",
+            path,
+            100,
+            200,
+            &"d".repeat(40)
+        ));
+        let mut pre_finalizer_cache = cache.clone();
+        pre_finalizer_cache.schema_version = 5;
+        assert!(!cache_matches(
+            &pre_finalizer_cache,
             "main",
             "origin/main",
             "tip-a",

@@ -236,8 +236,31 @@ def _schema6_fields(coverage_fields: dict, binding: dict) -> dict:
 FINALIZER_ID = "ci-hub-schema6-finalizer-v1"
 
 
+def _semantic(value):
+    """Canonical receipt semantics shared by minting and verification.
+
+    Rust's typed ledger reader materializes absent optional fields as JSON null
+    and absent vector fields as ``[]``.  Those representation-only differences
+    must not change the source-row identity when the Rust authority asks this
+    finalizer to re-verify a ledger snapshot.  Coverage lists are emitted by the
+    finalizer itself, so only producer-side default vectors are omitted here.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _semantic(item)
+            for key, item in value.items()
+            if item is not None
+            and not (key in {"gates", "failed_substeps"} and item == [])
+        }
+    if isinstance(value, list):
+        return [_semantic(item) for item in value]
+    return value
+
+
 def _canonical(value: dict) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return json.dumps(
+        _semantic(value), sort_keys=True, separators=(",", ":")
+    ).encode()
 
 
 def _full_sha(value: object) -> bool:
@@ -464,23 +487,14 @@ def scan_and_finalize(ledger_path: str, hermit_checkout: str,
     return results
 
 
-def verify_finalized_row(
-    row_path: str,
-    snapshot_path: str,
-    log_path: str,
+def verify_finalized_row_data(
+    row: dict,
+    snapshot: list,
+    log_bytes: bytes,
     hermit_checkout: str,
     sha: str,
 ) -> tuple[bool, str]:
     """Re-derive one schema-6 row from its source row, log, and exact tree."""
-    try:
-        with open(row_path, encoding="utf-8") as source:
-            row = json.load(source)
-        with open(snapshot_path, encoding="utf-8") as source:
-            snapshot = json.load(source)
-        with open(log_path, "rb") as source:
-            log_bytes = source.read()
-    except (OSError, json.JSONDecodeError) as error:
-        return False, f"cannot read verification input: {error}"
     if not isinstance(row, dict) or not isinstance(snapshot, list):
         return False, "row must be an object and snapshot must be an array"
     if row.get("commit") != sha or row.get("schema_version") != SCHEMA_VERSION:
@@ -529,22 +543,101 @@ def verify_finalized_row(
     }
     expected = _clone_upgraded(source_row, fields)
 
-    def semantic(value):
-        if isinstance(value, dict):
-            return {
-                key: semantic(item)
-                for key, item in value.items()
-                if item is not None and not (key == "gates" and item == [])
-            }
-        if isinstance(value, list):
-            return [semantic(item) for item in value]
-        return value
-
-    if semantic(expected) != semantic(row):
+    if _semantic(expected) != _semantic(row):
         return False, "selected row differs from recomputed finalizer output"
     if not _coverage_satisfied(expected):
         return False, "recomputed finalizer coverage is not satisfied"
     return True, "verified"
+
+
+def verify_finalized_row(
+    row_path: str,
+    snapshot_path: str,
+    log_path: str,
+    hermit_checkout: str,
+    sha: str,
+) -> tuple[bool, str]:
+    try:
+        with open(row_path, encoding="utf-8") as source:
+            row = json.load(source)
+        with open(snapshot_path, encoding="utf-8") as source:
+            snapshot = json.load(source)
+        with open(log_path, "rb") as source:
+            log_bytes = source.read()
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"cannot read verification input: {error}"
+    return verify_finalized_row_data(
+        row, snapshot, log_bytes, hermit_checkout, sha
+    )
+
+
+def verified_finalized_rows(
+    ledger_path: str,
+    hermit_checkout: str,
+    shas: set[str],
+    log_map_path: str | None = None,
+) -> list[dict]:
+    """Return only rows whose source, log, manifests, and clone recompute.
+
+    ``log_map_path`` is a non-authorizing locator override keyed by the row's
+    claimed log SHA-256.  The bytes at every override are still hashed and the
+    complete finalized row is still re-derived.  Immutable receipt consumers
+    use it after materializing content-addressed durable logs.
+    """
+    snapshot: list[dict] = []
+    try:
+        with open(ledger_path, encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    snapshot.append(value)
+    except OSError as error:
+        raise ValueError(f"cannot read ledger snapshot: {error}") from error
+    log_map: dict[str, str] = {}
+    if log_map_path:
+        try:
+            with open(log_map_path, encoding="utf-8") as source:
+                candidate_map = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"cannot read finalized log map: {error}") from error
+        if not isinstance(candidate_map, dict) or any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(ch not in "0123456789abcdef" for ch in digest)
+            or not isinstance(path, str)
+            or not os.path.isabs(path)
+            for digest, path in candidate_map.items()
+        ):
+            raise ValueError("finalized log map must be absolute paths keyed by SHA-256")
+        log_map = candidate_map
+
+    verified: list[dict] = []
+    for row in snapshot:
+        sha = row.get("commit")
+        if sha not in shas or not isinstance(row.get("receipt_finalizer"), dict):
+            continue
+        digest = row.get("source_log_sha256")
+        if not isinstance(digest, str):
+            continue
+        log_path = log_map.get(digest, row.get("log_file"))
+        if not isinstance(log_path, str) or not os.path.isabs(log_path):
+            continue
+        try:
+            with open(log_path, "rb") as source:
+                log_bytes = source.read()
+        except OSError:
+            continue
+        ok, _detail = verify_finalized_row_data(
+            row, snapshot, log_bytes, hermit_checkout, sha
+        )
+        if ok:
+            verified.append(row)
+    return verified
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -568,6 +661,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="verify one selected schema-6 row JSON against its source/log/tree")
     ap.add_argument("--ledger-snapshot",
                     help="JSON array carrying the selected row's original source row")
+    ap.add_argument("--verify-finalized-ledger", action="store_true",
+                    help="emit every finalized row whose source/log/tree recomputes")
+    ap.add_argument("--verify-sha", action="append", default=[],
+                    help="exact SHA to include in --verify-finalized-ledger; repeatable")
+    ap.add_argument("--finalized-log-map",
+                    help="optional SHA-256-to-absolute-path JSON locator map")
     args = ap.parse_args(argv)
 
     if args.log and args.ledger:
@@ -600,6 +699,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps({"verified": ok, "detail": detail}, sort_keys=True))
         return 0 if ok else 4
+
+    if args.verify_finalized_ledger:
+        shas = set(args.verify_sha)
+        if not (
+            args.repo == "rrnewton/hermit"
+            and args.ledger
+            and os.path.isfile(args.ledger)
+            and shas
+            and all(_full_sha(sha) for sha in shas)
+        ):
+            print(
+                "finalize_receipt: --verify-finalized-ledger requires --repo "
+                "rrnewton/hermit, --ledger, and one or more full --verify-sha",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            verified = verified_finalized_rows(
+                args.ledger,
+                args.hermit_checkout,
+                shas,
+                args.finalized_log_map,
+            )
+        except ValueError as error:
+            print(f"finalize_receipt: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(verified, sort_keys=True, separators=(",", ":")))
+        return 0
 
     if args.scan:
         if not args.ledger:

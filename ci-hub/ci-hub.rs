@@ -535,6 +535,11 @@ struct ValidateStatusArgs {
     /// Reverie pins are dereferenced. Landing callers should pass their slot.
     #[arg(long, default_value = "hermit")]
     hermit_repo: PathBuf,
+    /// Optional content-addressed log locator map used by the immutable bundle.
+    /// Keys are claimed SHA-256 values; the finalizer still hashes the bytes and
+    /// re-derives the complete row, so this cannot authorize by itself.
+    #[arg(long)]
+    finalized_log_map: Option<PathBuf>,
     /// Emit the machine-readable verdict report.
     #[arg(long)]
     json: bool,
@@ -3384,6 +3389,69 @@ fn load_ledger_rows(path: &Path) -> Result<Vec<HistoryRow>, CiHubError> {
     Ok(rows)
 }
 
+/// Invoke the one finalized-row verifier over a ledger snapshot. The returned
+/// rows have been re-derived from their unique original row, exact log bytes,
+/// and exact-tree DAG manifests. A log map only locates content-addressed bytes;
+/// it is never accepted without the same hash and semantic recomputation.
+fn verify_finalized_rows(
+    root: &Path,
+    ledger: &Path,
+    hermit_repo: &Path,
+    shas: &BTreeSet<String>,
+    finalized_log_map: Option<&Path>,
+) -> Result<Vec<HistoryRow>, CiHubError> {
+    if shas.is_empty() || !ledger.is_file() {
+        return Ok(Vec::new());
+    }
+    let verifier = root.join("ci-hub/validate/finalize_receipt.py");
+    let mut command = Command::new("python3");
+    command
+        .arg(&verifier)
+        .args([
+            "--repo",
+            "rrnewton/hermit",
+            "--ledger",
+            &ledger.display().to_string(),
+            "--hermit-checkout",
+            &hermit_repo.display().to_string(),
+            "--verify-finalized-ledger",
+        ])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for sha in shas {
+        command.args(["--verify-sha", sha]);
+    }
+    if let Some(path) = finalized_log_map {
+        command.args(["--finalized-log-map", &path.display().to_string()]);
+    }
+    let output = command.output().map_err(|source| CiHubError::Launch {
+        tool: verifier.display().to_string(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(CiHubError::ValidateStatus(format!(
+            "finalized-row verifier exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let rows: Vec<HistoryRow> = serde_json::from_slice(&output.stdout).map_err(|error| {
+        CiHubError::ValidateStatus(format!(
+            "finalized-row verifier returned invalid JSON: {error}"
+        ))
+    })?;
+    if rows
+        .iter()
+        .any(|row| row.commit.as_deref().is_none_or(|sha| !shas.contains(sha)))
+    {
+        return Err(CiHubError::ValidateStatus(
+            "finalized-row verifier returned an unrequested commit".into(),
+        ));
+    }
+    Ok(rows)
+}
+
 /// Read a PR's current head commit via gh (`with-proxy` when available).
 fn gh_pr_head(root: &Path, repo: &str, pr: u64) -> Result<String, CiHubError> {
     let pr_arg = pr.to_string();
@@ -4013,15 +4081,22 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
             }
         }
     }
-    match HistoryQueryEngine::new_with_bindings(commits, rows, bindings).newest_green(
-        &args.query.branch,
-        &branch_ref,
-        &floor_policy,
-        &effective_floor.sha,
-    ) {
+    let finalized_shas: BTreeSet<String> = commits
+        .iter()
+        .filter(|sha| commits_with_rows.contains(*sha))
+        .cloned()
+        .collect();
+    let finalized_rows = verify_finalized_rows(root, &ledger, &repo, &finalized_shas, None)?;
+    match HistoryQueryEngine::new_with_bindings(commits, rows, finalized_rows, bindings)
+        .newest_green(
+            &args.query.branch,
+            &branch_ref,
+            &floor_policy,
+            &effective_floor.sha,
+        ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 5,
+                schema_version: 6,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
@@ -4189,11 +4264,9 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
             .unwrap_or(false)
     });
     retain_cell_evidence(root, &mut rows)?;
-    match HistoryQueryEngine::new_with_bindings(commits, rows, BTreeMap::new()).first_bad(
-        &args.cell_or_gate,
-        &args.query.branch,
-        &branch_ref,
-    ) {
+    match HistoryQueryEngine::new_with_bindings(commits, rows, Vec::new(), BTreeMap::new())
+        .first_bad(&args.cell_or_gate, &args.query.branch, &branch_ref)
+    {
         FirstBadOutcome::Found(mut report) => {
             report.files_touched = files_touched(&repo, &report.first_bad.sha)?;
             report.plausibility =
@@ -4366,16 +4439,20 @@ fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHub
     } else {
         None
     };
+    let requested: BTreeSet<String> = rows
+        .iter()
+        .filter_map(|row| row.commit.clone())
+        .filter(|sha| reverie_pin::is_full_sha(sha))
+        .collect();
+    let finalized_rows = if target == qualifying_receipt::ReceiptTarget::Hermit {
+        verify_finalized_rows(root, &path, &hermit_repo, &requested, None)?
+    } else {
+        Vec::new()
+    };
     let mut bindings: BTreeMap<String, Result<reverie_pin::ReverieBinding, String>> =
         BTreeMap::new();
     let mut selected = Vec::new();
-    for row in &rows {
-        let Some(sha) = row.commit.as_deref() else {
-            continue;
-        };
-        if !reverie_pin::is_full_sha(sha) {
-            continue;
-        }
+    for sha in &requested {
         let expected = if target == qualifying_receipt::ReceiptTarget::Hermit {
             bindings
                 .entry(sha.to_string())
@@ -4391,15 +4468,14 @@ fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHub
         } else {
             None
         };
-        if qualifying_receipt::row_qualifies(
-            row,
+        let assessment = validate_status::assess_with_finalized_reverie(
+            &rows,
             sha,
-            qualifying_receipt::active(),
             target,
             expected,
-        ) {
-            selected.push(row.clone());
-        }
+            &finalized_rows,
+        );
+        selected.extend(assessment.qualifying);
     }
     selected.sort_by(|left, right| {
         left.finished_at
@@ -4457,8 +4533,29 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                 Err(problem) => (None, Some(problem), Some(resolved)),
             }
         };
-    let assessment =
-        validate_status::assess_with_reverie(&rows, &sha, target, reverie_binding.as_ref());
+    let requested = BTreeSet::from([sha.clone()]);
+    let finalized_log_map = args
+        .finalized_log_map
+        .as_deref()
+        .map(|path| history_repo_path(root, path));
+    let finalized_rows = if target == qualifying_receipt::ReceiptTarget::Hermit {
+        verify_finalized_rows(
+            root,
+            &path,
+            &hermit_repo,
+            &requested,
+            finalized_log_map.as_deref(),
+        )?
+    } else {
+        Vec::new()
+    };
+    let assessment = validate_status::assess_with_finalized_reverie(
+        &rows,
+        &sha,
+        target,
+        reverie_binding.as_ref(),
+        &finalized_rows,
+    );
     let newest = validate_status::newest(&assessment.qualifying);
     let newest_identity = newest.map(receipt_row_identity).transpose()?;
     let newest_canonical_hex = newest
@@ -4821,8 +4918,13 @@ fn verify_publisher_report(
     } else {
         None
     };
-    let snapshot_assessment =
-        validate_status::assess_with_reverie(&snapshot, sha, target, expected_reverie);
+    let snapshot_assessment = validate_status::assess_with_finalized_reverie(
+        &snapshot,
+        sha,
+        target,
+        expected_reverie,
+        std::slice::from_ref(selected),
+    );
     if snapshot_assessment.verdict != validate_status::Verdict::Validated {
         return Err(format!(
             "publisher snapshot is {}, not VALIDATED",
@@ -4955,6 +5057,7 @@ fn publish_nonpass_outcome(
     verdict: validate_status::Verdict,
     target: qualifying_receipt::ReceiptTarget,
     expected_reverie: Option<&reverie_pin::ReverieBinding>,
+    finalized_rows: &[HistoryRow],
     dry_run: bool,
 ) -> Result<PublishedOutcome, CiHubError> {
     if verdict == validate_status::Verdict::Validated {
@@ -5054,7 +5157,13 @@ fn publish_nonpass_outcome(
             .ok_or_else(|| CiHubError::ValidateStatus("outcome omitted ledger snapshot".into()))?,
     )
     .map_err(|error| CiHubError::ValidateStatus(format!("invalid outcome snapshot: {error}")))?;
-    let assessment = validate_status::assess_with_reverie(&snapshot, sha, target, expected_reverie);
+    let assessment = validate_status::assess_with_finalized_reverie(
+        &snapshot,
+        sha,
+        target,
+        expected_reverie,
+        finalized_rows,
+    );
     if assessment.verdict != verdict {
         return Err(CiHubError::ValidateStatus(format!(
             "outcome snapshot is {}, expected {}",
@@ -5292,8 +5401,24 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             },
             None => (None, None),
         };
-        let assessment =
-            validate_status::assess_with_reverie(&rows, &head, target, binding.as_ref());
+        let finalized_rows = if target == qualifying_receipt::ReceiptTarget::Hermit {
+            verify_finalized_rows(
+                root,
+                &path,
+                &hermit_repo,
+                &BTreeSet::from([head.clone()]),
+                None,
+            )?
+        } else {
+            Vec::new()
+        };
+        let assessment = validate_status::assess_with_finalized_reverie(
+            &rows,
+            &head,
+            target,
+            binding.as_ref(),
+            &finalized_rows,
+        );
         if assessment.verdict != validate_status::Verdict::Validated {
             if assessment.disqualified.is_empty() {
                 println!(
@@ -5317,6 +5442,7 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 assessment.verdict,
                 target,
                 binding.as_ref(),
+                &finalized_rows,
                 args.dry_run,
             ) {
                 Ok(outcome) => {

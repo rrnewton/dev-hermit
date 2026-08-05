@@ -247,6 +247,30 @@ fi
 printf '%s\n' "$pin" >"$tip_file"
 verify >/dev/null
 
+# The worktree manifest cannot define its own integrity perimeter. Bind and
+# parse the manifest from the expected commit before trusting required_paths.
+manifest_clone="$tmp/manifest-bundle"
+git clone -q --no-hardlinks "$root" "$manifest_clone"
+manifest_head=$(git -C "$manifest_clone" rev-parse HEAD)
+jq '{schema_version:1,entrypoint:.entrypoint,required_paths:["ci-hub/README.md"]}' \
+    "$manifest_clone/ci-hub/validation/receipt-authority-bundle.json" \
+    >"$tmp/pruned-manifest.json"
+cp "$tmp/pruned-manifest.json" \
+    "$manifest_clone/ci-hub/validation/receipt-authority-bundle.json"
+printf '#!/usr/bin/env bash\nexit 0\n' \
+    >"$manifest_clone/ci-hub/validation/verify_receipt.sh"
+chmod +x "$manifest_clone/ci-hub/validation/verify_receipt.sh"
+if "$manifest_clone/ci-hub/validation/verify_receipt_bundle.sh" \
+    --repo rrnewton/hermit --sha "$sha" --target-repo "$target_repo" \
+    --comments "$tmp/comments.json" --expected-bundle-sha "$manifest_head" \
+    --fixture-receipts "$tmp/receipts" --fixture-branch-tip "$branch_tip" \
+    >"$tmp/manifest-bundle.out" 2>&1; then
+    echo 'FAIL: mutable manifest pruned the receipt authority integrity perimeter' >&2
+    exit 1
+fi
+grep -q 'bundle manifest differs from the expected bundle commit' \
+    "$tmp/manifest-bundle.out"
+
 # Plant the exact replacement-ref attack against the bundle itself. Unsanitized
 # `git diff HEAD -- required-path` sees the replacement commit and falsely calls
 # the modified contract clean; the bundle's safe Git environment must refuse it.
@@ -298,4 +322,4 @@ fi
 grep -q 'bundle path is missing, untracked, or modified: ci-hub/ci-hub' \
     "$tmp/symlink-bundle.out"
 
-echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, zero-gate identical-tree cache refusal, head-race cache cleanup, fresh Reverie binding, and replacement-ref hardening bracketed'
+echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, zero-gate identical-tree cache refusal, head-race cache cleanup, fresh Reverie binding, bundle-owned manifest, and replacement-ref hardening bracketed'

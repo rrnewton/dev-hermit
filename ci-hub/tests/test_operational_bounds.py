@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CI_HUB = ROOT / "ci-hub/ci-hub"
 WALL_SECONDS = 15
 CPU_SECONDS = 5
+INTEGRATION_WALL_SECONDS = 60
 
 
 def _limit_cpu() -> None:
@@ -619,7 +620,7 @@ class OperationalBoundsTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=WALL_SECONDS,
+            timeout=INTEGRATION_WALL_SECONDS,
         )
         self.assertIn("unbacked label rejected 2/2", result.stdout)
         self.assertIn("validated head admitted 2/2", result.stdout)
@@ -637,11 +638,12 @@ class OperationalBoundsTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=WALL_SECONDS,
+            timeout=INTEGRATION_WALL_SECONDS,
         )
         self.assertIn("monotonic failure precedence", result.stdout)
         self.assertIn("zero-gate identical-tree cache refusal", result.stdout)
         self.assertIn("head-race cache cleanup", result.stdout)
+        self.assertIn("bundle-owned manifest", result.stdout)
         self.assertIn("replacement-ref hardening", result.stdout)
 
     def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
