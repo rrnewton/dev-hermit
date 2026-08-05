@@ -1,6 +1,6 @@
 ---
 name: hermit-lander
-description: "Compatibility role pointer for the Hermit landing agent. Load when planning or executing PR landings; it delegates planning rules to pr-landing-planner and execution rules to the tracked ci-hub lander."
+description: "Compatibility role pointer for the Hermit landing agent. Load whenever planning, assigning, recovering, or executing a Hermit PR landing; it delegates planning to pr-landing-planner and execution to the safe exact-head ci-hub lander."
 ---
 
 # Hermit lander
@@ -17,14 +17,21 @@ This role has no independent landing protocol.
    handoff, ask the coordinator to relay after writing the note. Do not use
    agent-side `SendMessage` with an ORC fleet name or report an attempted send
    as delivery.
-2. Execute a task-authorized Hermit landing with `ci-hub/landing/land-pr.sh`;
-   pass the
-   registered agent through `--agent` and set `LANDER_MODEL` to the actual model
-   identity, whether the lander is a Claude, Codex, or other client. Never rely
-   on a client-specific default. That tracked program owns the land lock,
-   exact-head validation predicate, fresh-base handling, merge mode, and
-   ancestry check.
-3. Follow `AGENTS.md` for review, publication, and task-closure policy.
+2. Execute a task-authorized Hermit landing only through
+   `ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr <PR>
+   --expected-head <40-hex-X> --actor <registered-agent> --json`. This is the
+   live no-rewrite executor: it owns the land lock, exact-head validation,
+   durable intent/recovery, fsynced exact-operation mutation barrier,
+   synchronous REST merge guarded by `sha=X`, replay-tree proof, and
+   exact-landed-SHA obligation handoff. The barrier clears only after the
+   handoff is durably armed. If it refuses or reports
+   pending, preserve and resume that attempt; never bypass it with a raw
+   `gh pr merge`, branch rewrite, or another landing script.
+3. Do not invoke `ci-hub/landing/land-pr.sh` as landing authority or fallback.
+   It remains an executable file, and `parallel-prevalidate.sh` still defaults
+   to it; removing that active caller is an unresolved fleet-wide migration
+   blocker. This normative prohibition does not imply mechanical disablement.
+4. Follow `AGENTS.md` for review, publication, and task-closure policy.
 
 Do not add substantive landing rules here. Update the canonical planner skill or the executable that
 enforces the rule, then keep this file as a thin role pointer.

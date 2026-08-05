@@ -11,6 +11,7 @@
 //! chrono = "0.4"
 //! clap = { version = "4", features = ["derive"] }
 //! fs2 = "0.4"
+//! libc = "0.2"
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
 //! sha2 = "0.10"
@@ -91,7 +92,7 @@ PR & RUNNER HEALTH
 
 LANDING & BATCH CONTROL
   Serialize landings and manage the explicit policy state that gates them.
-  land-lock               Acquire, renew, inspect, or release the fleet landing mutex
+  land-lock               Serialize fleet lands and verify supervised landing children
   validate-lock            Box-exclusive gate: one validate/bench at a time (GRANT/QUEUE/REFUSE)
   apply-local-label       Label PR heads backed by a clean full-validation receipt
   ci-mode                 Inspect or change constrained CI admission mode
@@ -150,7 +151,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
 
 5. Serialize fleet landings through the evidence-based mutex:
      ./ci-hub/ci-hub land-lock status
-     ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
+     ./ci-hub/ci-hub land-lock run --agent AGENT --repo REPO --pr PR --operation SHA -- COMMAND...
    Serialize box-exclusive compute (one validate OR bench, so load cannot forge FAILEDs):
      ./ci-hub/ci-hub validate-lock run --agent A --kind validate --target SHA -- ./validate.sh
    Never force-release another owner. Dead-owner reclamation requires process
@@ -228,7 +229,7 @@ enum HubCommand {
     FirstBad(FirstBadArgs),
     /// Apply `locally-validated` to PRs whose head has a clean full-validate record.
     ApplyLocalLabel(ApplyLocalLabelArgs),
-    /// Operate the shared-file landing mutex.
+    /// Serialize fleet lands and verify supervised landing children.
     LandLock(landing_lock::LandLockArgs),
     /// Operate the box-exclusive-compute admission gate (one validate/bench at a time).
     ValidateLock(validate_lock::ValidateLockArgs),
@@ -2962,7 +2963,8 @@ fn append_ci_timeout_audit(
         state: "no_result",
         reason: &reason,
     };
-    let line = serde_json::to_string(&record).map_err(|source| format!("serialize audit: {source}"))?;
+    let line =
+        serde_json::to_string(&record).map_err(|source| format!("serialize audit: {source}"))?;
     let path = root.join(CI_TIMEOUT_AUDIT_PATH);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -2987,7 +2989,11 @@ fn run_ci_timeout_reap(root: &Path, args: CiTimeoutReapArgs) -> Result<i32, CiHu
     };
     // --pr narrows to exactly that PR if it qualifies; otherwise all starved PRs.
     let targets: Vec<&StarvedPr> = match args.pr {
-        Some(number) => qual.starved.iter().filter(|entry| entry.pr == number).collect(),
+        Some(number) => qual
+            .starved
+            .iter()
+            .filter(|entry| entry.pr == number)
+            .collect(),
         None => qual.starved.iter().collect(),
     };
 
@@ -3030,14 +3036,28 @@ fn run_ci_timeout_reap(root: &Path, args: CiTimeoutReapArgs) -> Result<i32, CiHu
             );
             return Ok(0);
         }
-        println!("DRY RUN (pass --execute to mutate). {} PR(s) would be reaped:", targets.len());
+        println!(
+            "DRY RUN (pass --execute to mutate). {} PR(s) would be reaped:",
+            targets.len()
+        );
         for entry in &targets {
-            println!("pr #{} run {} (waited {}):", entry.pr, entry.run_id, format_wait_hm(entry.wait_seconds));
+            println!(
+                "pr #{} run {} (waited {}):",
+                entry.pr,
+                entry.run_id,
+                format_wait_hm(entry.wait_seconds)
+            );
             println!("  1. ensure repo label {CI_TIMEOUT_FALLBACK_LABEL} exists");
-            println!("  2. gh pr edit {} --repo {} --add-label {CI_TIMEOUT_FALLBACK_LABEL}", entry.pr, args.repo);
+            println!(
+                "  2. gh pr edit {} --repo {} --add-label {CI_TIMEOUT_FALLBACK_LABEL}",
+                entry.pr, args.repo
+            );
             println!("  3. gh run cancel {} --repo {}", entry.run_id, args.repo);
             println!("  4. append audit record to {CI_TIMEOUT_AUDIT_PATH} (state=no_result)");
-            println!("  5. enqueue: {}", ci_timeout_enqueue_command(&entry.head_sha, entry.pr));
+            println!(
+                "  5. enqueue: {}",
+                ci_timeout_enqueue_command(&entry.head_sha, entry.pr)
+            );
         }
         return Ok(0);
     }
@@ -3114,11 +3134,19 @@ fn run_ci_timeout_reap(root: &Path, args: CiTimeoutReapArgs) -> Result<i32, CiHu
         }
         result.cancelled = true;
         // d. append the audit record explaining WHY.
-        if let Err(message) =
-            append_ci_timeout_audit(root, &args.repo, entry, args.threshold_minutes, &now_rfc, &actor)
-        {
+        if let Err(message) = append_ci_timeout_audit(
+            root,
+            &args.repo,
+            entry,
+            args.threshold_minutes,
+            &now_rfc,
+            &actor,
+        ) {
             if !args.json {
-                eprintln!("pr #{}: cancelled but FAILED to write audit record: {message}", entry.pr);
+                eprintln!(
+                    "pr #{}: cancelled but FAILED to write audit record: {message}",
+                    entry.pr
+                );
             }
             result.error = Some(format!("audit record: {message}"));
             failures += 1;
@@ -3160,7 +3188,10 @@ fn run_ci_timeout_reap(root: &Path, args: CiTimeoutReapArgs) -> Result<i32, CiHu
     } else {
         println!(
             "REAPED: {} succeeded, {} failed of {} starved PR(s).",
-            results.iter().filter(|result| result.error.is_none()).count(),
+            results
+                .iter()
+                .filter(|result| result.error.is_none())
+                .count(),
             failures,
             targets.len()
         );
@@ -5502,9 +5533,7 @@ mod tests {
 
         // Positional + --pr conflict, and positional + --sha conflict.
         assert!(Cli::try_parse_from(["ci-hub", "validate-status", sha, "--pr", "1"]).is_err());
-        assert!(
-            Cli::try_parse_from(["ci-hub", "validate-status", sha, "--sha", sha]).is_err()
-        );
+        assert!(Cli::try_parse_from(["ci-hub", "validate-status", sha, "--sha", sha]).is_err());
     }
 
     #[test]
