@@ -1283,8 +1283,7 @@ impl LandingLock {
                             watchdog.trigger_cleanup();
                             Err(error)
                         } else {
-                            let group = format!("-{}", child.id());
-                            if !signal_group_succeeds("CONT", &group) {
+                            if !signal_group_succeeds(libc::SIGCONT, child.id()) {
                                 let emptied = terminate_child_group(&mut child, &args.pr);
                                 if !emptied {
                                     watchdog.trigger_cleanup();
@@ -3522,7 +3521,7 @@ fn terminate_child_group(child: &mut Child, pr: &str) -> bool {
 fn terminate_child_group_with_status(child: &mut Child, pr: &str) -> (bool, Option<ExitStatus>) {
     let group = format!("-{}", child.id());
     eprintln!("landing-lock: terminating PR #{pr}; SIGTERM process group {group}");
-    signal_group("TERM", &group);
+    signal_group(libc::SIGTERM, child.id());
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
         match process_group_has_live_members(child.id()) {
@@ -3534,7 +3533,7 @@ fn terminate_child_group_with_status(child: &mut Child, pr: &str) -> (bool, Opti
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
     eprintln!("landing-lock: grace expired for PR #{pr}; SIGKILL process group {group}");
-    signal_group("KILL", &group);
+    signal_group(libc::SIGKILL, child.id());
     let killed_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < killed_deadline {
         match process_group_has_live_members(child.id()) {
@@ -3552,17 +3551,22 @@ fn terminate_child_group_with_status(child: &mut Child, pr: &str) -> (bool, Opti
     }
 }
 
-/// Send `signal` to the process `group` (a negative pid string) via `/bin/kill`.
-pub(crate) fn signal_group(signal: &str, group: &str) {
-    let _ = signal_group_succeeds(signal, group);
+/// Send `signal` to the positive process-group ID without delegating negative
+/// PID parsing to a host-specific `kill(1)` implementation.
+pub(crate) fn signal_group(signal: libc::c_int, pgid: u32) {
+    let _ = signal_group_succeeds(signal, pgid);
 }
 
-fn signal_group_succeeds(signal: &str, group: &str) -> bool {
-    Command::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(group)
-        .status()
-        .is_ok_and(|status| status.success())
+fn signal_group_succeeds(signal: libc::c_int, pgid: u32) -> bool {
+    let Ok(pgid) = libc::pid_t::try_from(pgid) else {
+        return false;
+    };
+    if pgid <= 0 {
+        return false;
+    }
+    // SAFETY: a negative, nonzero pid targets exactly one process group. The
+    // signal values are libc constants at every call site.
+    unsafe { libc::kill(-pgid, signal) == 0 }
 }
 
 pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
@@ -3591,6 +3595,46 @@ mod tests {
             domain: suffix(&lock, ".domain"),
             lock,
         }
+    }
+
+    #[test]
+    fn process_group_signal_is_typed_and_target_scoped() {
+        let mut target = Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut control = Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+
+        let zero_refused = !signal_group_succeeds(libc::SIGTERM, 0);
+        let target_signaled = signal_group_succeeds(libc::SIGTERM, target.id());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let target_exited = loop {
+            if target.try_wait().unwrap().is_some() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let control_survived = control.try_wait().unwrap().is_none();
+
+        if !target_exited {
+            let _ = target.kill();
+            let _ = target.wait();
+        }
+        signal_group(libc::SIGKILL, control.id());
+        let _ = control.wait();
+
+        assert!(zero_refused, "pgid 0 must never target the caller's group");
+        assert!(target_signaled, "typed process-group signal was refused");
+        assert!(target_exited, "target group did not terminate within 2s");
+        assert!(control_survived, "unrelated process group was signalled");
     }
 
     #[test]

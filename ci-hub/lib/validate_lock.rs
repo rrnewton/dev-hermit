@@ -1354,7 +1354,7 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
 fn terminate_child_group(child: &mut Child, target: &str) {
     let group = format!("-{}", child.id());
     eprintln!("validate-lock: child-deadline reached for {target}; SIGTERM process group {group}");
-    signal_group("TERM", &group);
+    signal_group(libc::SIGTERM, child.id());
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
@@ -1363,7 +1363,7 @@ fn terminate_child_group(child: &mut Child, target: &str) {
         }
     }
     eprintln!("validate-lock: grace expired for {target}; SIGKILL process group {group}");
-    signal_group("KILL", &group);
+    signal_group(libc::SIGKILL, child.id());
     let _ = child.wait();
 }
 
