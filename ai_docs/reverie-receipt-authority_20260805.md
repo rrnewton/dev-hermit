@@ -54,6 +54,9 @@ older Hermit workflow has pinned the tree. The newest-green cache also records t
 tip, so a ref move invalidates an otherwise byte-identical cache. Its
 `--no-fetch` mode never performs a hidden ref lookup and therefore reports the
 dependency frontier UNVERIFIABLE rather than emitting an offline green.
+An identical-tree cache hit for another commit is soft evidence only: the
+exact-SHA consumer and producer both refuse hard green/receipt binding when the
+new SHA ran zero gates or tests.
 
 Receipt minting keeps that same authority. Each completed assessment publishes
 an append-only, content-addressed `validation-outcomes/<repo>/<sha>/<digest>.json`
@@ -66,18 +69,22 @@ failure. It then re-derives the selected schema-6 row from the original source
 row, exact-commit manifests, and durable log. Planned-manifest defects, unplanned
 banner inflation, failed terminals, missing finalizer provenance, and log/count
 drift refuse. Comments and labels are routing/cache hints, never discovery or
-authority.
+authority. The cache label is guarded by a fresh head read immediately before
+application and another after it; a detected concurrent push removes the label.
 
 Artifact publication retries bounded branch-head races without overwriting an
 existing content-addressed path. Existing and consumed logs above the Contents
 API's 1 MiB inline limit are dereferenced through their exact Git blob identity;
-the mutable download URL is never followed.
+new content is sent as a JSON stdin body rather than an argv field, so Linux's
+per-argument limit cannot truncate ordinary validation logs. The mutable
+download URL is never followed.
 
 The deployable verifier is the full-tree
 `ci-hub/validation/verify_receipt_bundle.sh` entrypoint. Its manifest names the
 Rust modules, executable symlink, predicate, hosted classifier, finalizer, and publishers; it rejects
 a modified bundle, requires an exact pinned dev-hermit commit, disables Git
-replacement/object-locator state, clears the mutation-only predicate override,
+replacement/object-locator state, clears the guarded mutation-only predicate
+override and sentinel,
 and proves the target SHA is a commit object
 before delegating. Downloading only `verify_receipt.sh`
 is not an authority bundle.

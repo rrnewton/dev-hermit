@@ -5172,6 +5172,12 @@ fn bind_verified_receipt_to_pr(
         }
     }
     let pr_arg = pr.to_string();
+    let current_head = gh_pr_head(root, repo, pr)?;
+    if current_head != sha {
+        return Err(CiHubError::ValidateStatus(format!(
+            "PR #{pr} head moved from receipt SHA {sha} to {current_head} before cache labeling"
+        )));
+    }
     let label = gh_command(
         root,
         &[
@@ -5195,7 +5201,44 @@ fn bind_verified_receipt_to_pr(
             message: String::from_utf8_lossy(&label.stderr).trim().to_string(),
         });
     }
-    Ok(())
+    match gh_pr_head(root, repo, pr) {
+        Ok(current_head) if current_head == sha => Ok(()),
+        observed => {
+            // The label is only a cache, but do not knowingly leave it attached
+            // after a concurrent push. The exact receipt/comment remain bound
+            // to `sha`; semantic consumers never authorize from this label.
+            let remove = gh_command(
+                root,
+                &[
+                    "pr",
+                    "edit",
+                    &pr_arg,
+                    "--repo",
+                    repo,
+                    "--remove-label",
+                    LOCALLY_VALIDATED_LABEL,
+                ],
+            )
+            .output()
+            .map_err(|source| CiHubError::Launch {
+                tool: "gh pr edit remove stale locally-validated".into(),
+                source,
+            })?;
+            if !remove.status.success() {
+                return Err(CiHubError::Gh {
+                    context: format!("remove stale locally-validated from PR #{pr}"),
+                    message: String::from_utf8_lossy(&remove.stderr).trim().to_string(),
+                });
+            }
+            let detail = match observed {
+                Ok(current_head) => format!("head moved to {current_head}"),
+                Err(error) => format!("final head could not be read: {error}"),
+            };
+            Err(CiHubError::ValidateStatus(format!(
+                "PR #{pr} {detail} after cache labeling; removed {LOCALLY_VALIDATED_LABEL}"
+            )))
+        }
+    }
 }
 
 /// `ci-hub apply-local-label --pr <N> | --all-open` — close the retroactive gap:

@@ -105,7 +105,17 @@ def _tightened_env(tmp_path: Path, env: dict[str, str]) -> dict[str, str]:
     tightened_path.write_text(json.dumps(tightened))
     moved = dict(env)
     moved["QUALIFYING_RECEIPT_PREDICATE"] = str(tightened_path)
+    moved["CI_HUB_TEST_PREDICATE_OVERRIDE"] = "1"
     return moved
+
+
+def test_unguarded_predicate_override_fails_closed(tmp_path: Path) -> None:
+    repo, sha, ledger, env = _fixture(tmp_path)
+    tightened = _tightened_env(tmp_path, env)
+    del tightened["CI_HUB_TEST_PREDICATE_OVERRIDE"]
+    refused = _validate(repo, sha, ledger, tightened)
+    assert refused.returncode != 0
+    assert "is test-only and requires CI_HUB_TEST_PREDICATE_OVERRIDE=1" in refused.stderr
 
 
 def _replace_binding(ledger: Path, binding: dict[str, str] | None) -> None:

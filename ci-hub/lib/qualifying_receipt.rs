@@ -27,8 +27,9 @@
 //!
 //! # Resolution order (single source at run time)
 //!
-//! 1. `$QUALIFYING_RECEIPT_PREDICATE` — an explicit override path (the mutation
-//!    test points this at a tightened copy; NEVER at the live file).
+//! 1. `$QUALIFYING_RECEIPT_PREDICATE` — an explicit override path only when
+//!    `$CI_HUB_TEST_PREDICATE_OVERRIDE=1`; mutation tests set both. An unguarded
+//!    inherited override fails closed and can never loosen a production query.
 //! 2. the on-disk `ci-hub/validate/qualifying-receipt.json` resolved against the
 //!    repo root — this is PRIMARY in production so an edit to the JSON takes
 //!    effect with no recompile (the "one edit" guarantee).
@@ -53,6 +54,7 @@ pub const PREDICATE_REL: &str = "ci-hub/validate/qualifying-receipt.json";
 /// Environment override consulted first, so the mutation test can point every
 /// consumer at a tightened copy without touching the live file.
 pub const PREDICATE_ENV: &str = "QUALIFYING_RECEIPT_PREDICATE";
+pub const PREDICATE_TEST_SENTINEL_ENV: &str = "CI_HUB_TEST_PREDICATE_OVERRIDE";
 
 /// Compile-time snapshot of the live file (fallback only; see module docs).
 pub const EMBEDDED: &str = include_str!("../validate/qualifying-receipt.json");
@@ -272,6 +274,11 @@ pub fn predicate_path(root: &Path) -> PathBuf {
 /// hard error (the caller decides whether to panic or fail closed).
 pub fn load(root: &Path) -> Result<QualifyingPredicate, String> {
     if let Some(path) = std::env::var_os(PREDICATE_ENV).filter(|v| !v.is_empty()) {
+        if std::env::var(PREDICATE_TEST_SENTINEL_ENV).ok().as_deref() != Some("1") {
+            return Err(format!(
+                "{PREDICATE_ENV} is test-only and requires {PREDICATE_TEST_SENTINEL_ENV}=1"
+            ));
+        }
         let path = PathBuf::from(path);
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("{}: cannot read {PREDICATE_ENV}: {e}", path.display()))?;

@@ -13,7 +13,18 @@ fi
 shift
 
 if [[ ${1:-} == pr && ${2:-} == view ]]; then
-    printf '%s\n' "$CI_HUB_TEST_PR_HEAD"
+    if [[ -n ${CI_HUB_TEST_PR_HEADS_FILE:-} ]]; then
+        count_file="${CI_HUB_TEST_PR_HEADS_FILE}.count"
+        count=0
+        [[ -f $count_file ]] && read -r count <"$count_file"
+        count=$((count + 1))
+        printf '%s\n' "$count" >"$count_file"
+        head=$(sed -n "${count}p" "$CI_HUB_TEST_PR_HEADS_FILE")
+        [[ -n $head ]]
+        printf '%s\n' "$head"
+    else
+        printf '%s\n' "$CI_HUB_TEST_PR_HEAD"
+    fi
     exit 0
 fi
 if [[ ${1:-} == pr && ${2:-} == comment ]]; then
@@ -32,6 +43,10 @@ if [[ ${1:-} == pr && ${2:-} == comment ]]; then
     exit 0
 fi
 if [[ ${1:-} == pr && ${2:-} == edit ]]; then
+    if [[ -n ${CI_HUB_TEST_EDIT_LOG:-} ]]; then
+        printf '%s ' "$@" >>"$CI_HUB_TEST_EDIT_LOG"
+        printf '\n' >>"$CI_HUB_TEST_EDIT_LOG"
+    fi
     exit 0
 fi
 

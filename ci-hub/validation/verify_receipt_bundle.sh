@@ -141,5 +141,5 @@ fi
 # The mutation-test override is useful to direct non-authoritative tests at a
 # tightened copy, but an authority invocation must be bound to the predicate in
 # this exact manifest-checked bundle. Do not inherit a caller-selected policy.
-exec env -u QUALIFYING_RECEIPT_PREDICATE \
+exec env -u QUALIFYING_RECEIPT_PREDICATE -u CI_HUB_TEST_PREDICATE_OVERRIDE \
     "$script_dir/verify_receipt.sh" "${args[@]}"

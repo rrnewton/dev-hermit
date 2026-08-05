@@ -29,8 +29,9 @@ FRESHLY-FETCHED remote and FULL 40-hex SHAs:
                      anchor). It validates GREEN yet landing is refused; the
                      lever is REBASE onto current origin/main, not a new validate.
   * VALID         -- matches an open head, authoritatively certified, AND clears
-                     every floor. Landable NOW with no new validate: apply the
-                     local label from the receipt and merge.
+                     every floor. This is a high-priority planning candidate,
+                     NOT landing authorization: the active exact-head lander
+                     must still bind source, observed base, and replay result.
 
 STANDING, not one-shot: run it after every drain rebase wave. Each wave rewrites
 heads -- some receipts survive, some die -- and only a re-run answers today.
@@ -132,8 +133,8 @@ def certify_validated(sha: str, repo_checkout: str) -> bool:
     cp = subprocess.run([CI_HUB_BIN, "validate-status", "--sha", sha,
                          "--hermit-repo", repo_checkout, "--json"],
                         capture_output=True, text=True, timeout=60)
-    # exit 0 is the ONLY landable verdict; 3/4 (FAILED/NEEDS-RERUN/NOT-VALIDATED)
-    # are not. Trust the exit code, not a parsed string.
+    # Exit 0 is the only locally validated candidate verdict; it is not, by
+    # itself, landing authorization. Trust the exit code, not a parsed string.
     return cp.returncode == 0
 
 
@@ -209,7 +210,7 @@ def render(report: dict) -> str:
         f"repo {report['repo']} | open PRs {report['open_prs']} | "
         f"distinct clean-full receipt commits {n}",
         "",
-        f"VALID (landable NOW, no new validate): {c['valid']} of {n}",
+        f"VALID-CANDIDATE (planning only; not landing authority): {c['valid']} of {n}",
         f"FLOOR-BLOCKED (green, rebase needed):  {c['floor_blocked']} of {n}",
         f"NOT-CERTIFIED (matched head, cert refuses): {c['not_certified']} of {n}",
         f"ORPHANED (head moved/landed, receipt dead): {c['orphaned']} of {n} "
@@ -217,7 +218,8 @@ def render(report: dict) -> str:
     ]
     b = report["buckets"]
     if b["valid"]:
-        out += ["", "--- VALID: apply-local-label from the receipt + merge ---"]
+        out += ["", "--- VALID-CANDIDATE: run the active exact-head landing "
+                "authority; do not merge from this report ---"]
         for e in b["valid"]:
             prs = ",".join("#" + str(p) for p in e["prs"])
             out.append(f"  {e['commit']}  {prs}")

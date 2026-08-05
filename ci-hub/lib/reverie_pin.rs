@@ -102,7 +102,24 @@ fn bounded_ls_remote(remote: &str) -> Result<Output, String> {
             isolation.display()
         )
     })?;
-    command.current_dir(&isolation);
+    let isolation = std::fs::canonicalize(&isolation).map_err(|error| {
+        format!(
+            "cannot canonicalize isolated Git lookup directory {}: {error}",
+            isolation.display()
+        )
+    })?;
+    let ceiling = isolation.parent().ok_or_else(|| {
+        format!(
+            "isolated Git lookup directory has no parent: {}",
+            isolation.display()
+        )
+    })?;
+    // TMPDIR is caller-controlled and may itself live inside a Git worktree.
+    // Stop discovery before its exact canonical parent, otherwise a local
+    // `url.*.insteadOf` can rewrite the supposedly canonical live remote.
+    command
+        .current_dir(&isolation)
+        .env("GIT_CEILING_DIRECTORIES", ceiling);
     let result = command
         .output()
         .map_err(|error| format!("could not launch bounded Reverie main resolution: {error}"));
@@ -824,6 +841,79 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         fs::remove_file(config).ok();
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn temp_dir_inside_repo_cannot_redirect_live_tip() {
+        const CHILD: &str = "CI_HUB_LOCAL_CONFIG_REDIRECT_CHILD";
+        const REMOTE: &str = "https://127.0.0.1:9/canonical-reverie.git";
+        if env::var_os(CHILD).is_some() {
+            let result = resolve_live_main_from(REMOTE);
+            assert!(
+                result.is_err(),
+                "repository-local url.insteadOf redirected authority"
+            );
+            return;
+        }
+
+        let pin = "a".repeat(40);
+        let (repo, head) = temp_repo("local-config-redirect", &manifest(&pin));
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["update-ref", "refs/heads/main", &head])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args([
+                "config",
+                &format!("url.file://{}.insteadOf", repo.display()),
+                REMOTE,
+            ])
+            .status()
+            .unwrap()
+            .success());
+        let caller_tmp = repo.join("caller-tmp");
+        fs::create_dir(&caller_tmp).unwrap();
+
+        // Negative control: the planted local config really does redirect an
+        // otherwise unreachable canonical URL when Git discovers the parent.
+        let unsafe_lookup = Command::new("git")
+            .current_dir(&caller_tmp)
+            .args(["ls-remote", "--exit-code", REMOTE, REVERIE_MAIN_REF])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(unsafe_lookup.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&unsafe_lookup.stdout)
+                .split_whitespace()
+                .next(),
+            Some(head.as_str())
+        );
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reverie_pin::tests::temp_dir_inside_repo_cannot_redirect_live_tip",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("TMPDIR", &caller_tmp)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "redirect child failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         fs::remove_dir_all(repo).ok();
     }
 

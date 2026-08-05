@@ -25,6 +25,9 @@ printf '{"steps":[{"group":"test","job":"privileged"}]}\n' \
 git -C "$target_repo" add Cargo.toml Cargo.lock ci/dag/portable.json ci/dag/privileged.json
 git -C "$target_repo" commit -q -m fixture
 sha=$(git -C "$target_repo" rev-parse HEAD)
+tree=$(git -C "$target_repo" rev-parse "$sha^{tree}")
+cache_sha=$(git -C "$target_repo" commit-tree "$tree" -p "$sha" \
+    -m 'identical-tree cache fixture')
 
 tip_file="$tmp/reverie-tip"
 printf '%s\n' "$pin" >"$tip_file"
@@ -102,6 +105,7 @@ verify >/dev/null
 # bundle forwarded it; passing proves the manifest-checked predicate is used.
 printf '{not valid json\n' >"$tmp/caller-predicate.json"
 if QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" \
+    CI_HUB_TEST_PREDICATE_OVERRIDE=1 \
     "$script_dir/verify_receipt.sh" --repo rrnewton/hermit --sha "$sha" \
         --hermit-repo "$target_repo" --comments "$tmp/comments.json" \
         --fixture-receipts "$tmp/receipts" --fixture-branch-tip "$branch_tip" \
@@ -109,7 +113,78 @@ if QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" \
     echo 'FAIL: planted predicate override did not affect the unbound verifier' >&2
     exit 1
 fi
-QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" verify >/dev/null
+QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" \
+    CI_HUB_TEST_PREDICATE_OVERRIDE=1 verify >/dev/null
+
+# A successful identical-tree cache return is useful soft-green evidence only.
+# It cannot mint an exact-SHA receipt when the new commit ran zero gates/tests.
+cache_ledger="$tmp/cache-ledger.jsonl"
+jq -cn --arg sha "$cache_sha" --arg pin "$pin" '{
+  schema_version:6,
+  started_at:"2026-08-05T12:02:00Z",
+  finished_at:"2026-08-05T12:02:01Z",
+  host:"test-host",
+  commit:$sha,
+  profile:"full",
+  selection_mode:"full",
+  commit_anchored:true,
+  tree_dirty:false,
+  result:"pass",
+  checks:0,
+  gates_run:0,
+  gates_expected:0,
+  failures:0,
+  executed_tests:0,
+  filtered_tests:0,
+  coverage:{planned_test_nodes:0,executed_test_nodes:0,zero_executed_nodes:[],absent_nodes:[],failed_nodes:[]},
+  reverie_binding:{repository:"rrnewton/reverie",ref:"refs/heads/main",pinned_sha:$pin,resolved_sha:$pin}
+}' >"$cache_ledger"
+if "$root/ci-hub/ci-hub" validate-status --repo rrnewton/hermit \
+    --sha "$cache_sha" --ledger "$cache_ledger" \
+    --hermit-repo "$target_repo" >/dev/null 2>&1; then
+    echo 'FAIL: identical-tree zero-gate cache hit became exact-SHA hard green' >&2
+    exit 1
+fi
+export CI_HUB_TEST_PR_HEAD="$cache_sha"
+cache_apply=$("$root/ci-hub/ci-hub" apply-local-label --pr 1 \
+    --repo rrnewton/hermit --ledger "$cache_ledger" \
+    --hermit-repo "$target_repo" --dry-run 2>&1)
+grep -q 'would-publish-outcome NOT-VALIDATED' <<<"$cache_apply"
+if grep -q 'would-bind' <<<"$cache_apply"; then
+    echo 'FAIL: identical-tree zero-gate cache hit reached receipt binding' >&2
+    exit 1
+fi
+
+# The human-facing label is only a cache, but apply-local-label must not leave
+# it on a head that moves during publication/binding. First bracket the stable
+# positive, then move the head after add-label and require compensating removal.
+export CI_HUB_TEST_PR_HEAD="$sha"
+export CI_HUB_TEST_RECEIPT_COMMIT="$branch_tip"
+export CI_HUB_TEST_RECEIPT_ROOT="$tmp/live-receipts"
+export CI_HUB_TEST_COMMENT_BODY="$tmp/comment-body"
+export CI_HUB_TEST_EDIT_LOG="$tmp/edit-log"
+: >"$CI_HUB_TEST_EDIT_LOG"
+"$root/ci-hub/ci-hub" apply-local-label --pr 1 --repo rrnewton/hermit \
+    --ledger "$ledger" --hermit-repo "$target_repo" >/dev/null
+grep -q -- '--add-label locally-validated' "$CI_HUB_TEST_EDIT_LOG"
+if grep -q -- '--remove-label locally-validated' "$CI_HUB_TEST_EDIT_LOG"; then
+    echo 'FAIL: stable PR head caused cache-label removal' >&2
+    exit 1
+fi
+
+heads="$tmp/pr-heads"
+moved_head=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+printf '%s\n%s\n%s\n' "$sha" "$sha" "$moved_head" >"$heads"
+export CI_HUB_TEST_PR_HEADS_FILE="$heads"
+: >"$CI_HUB_TEST_EDIT_LOG"
+if "$root/ci-hub/ci-hub" apply-local-label --pr 1 --repo rrnewton/hermit \
+    --ledger "$ledger" --hermit-repo "$target_repo" >/dev/null 2>&1; then
+    echo 'FAIL: cache label survived a concurrent PR head move' >&2
+    exit 1
+fi
+grep -q -- '--add-label locally-validated' "$CI_HUB_TEST_EDIT_LOG"
+grep -q -- '--remove-label locally-validated' "$CI_HUB_TEST_EDIT_LOG"
+unset CI_HUB_TEST_PR_HEADS_FILE
 
 # The old bypass: a one-line arbitrary log cannot carry claimed full coverage,
 # even when supplied beside the otherwise legitimate row and snapshot.
@@ -223,4 +298,4 @@ fi
 grep -q 'bundle path is missing, untracked, or modified: ci-hub/ci-hub' \
     "$tmp/symlink-bundle.out"
 
-echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, fresh Reverie binding, and replacement-ref hardening bracketed'
+echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, zero-gate identical-tree cache refusal, head-race cache cleanup, fresh Reverie binding, and replacement-ref hardening bracketed'

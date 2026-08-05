@@ -72,8 +72,8 @@ cd ~/work/dev-hermit
 # Inspect
 ci-hub/ci-hub land-lock status
 
-# Canonical land: detached by default; prints the durable log path and PID
-ci-hub/landing/land-pr.sh 1533 codex/my-branch
+# The legacy land-pr.sh entrypoint is disabled: it exits 4 before mutation
+# until the current-main exact-head lander is extracted.
 
 # Manual acquire / release around your land sequence
 ci-hub/ci-hub land-lock acquire --agent hermit-ci --pr 1533   # blocks until yours
@@ -119,14 +119,13 @@ complete descendant census. Only a proven-empty payload domain **releases the
 lock**, prints a loud `ABANDON PR #N` line, and exits `124`; an incomplete or
 nonempty census retains a `QUARANTINED` lock and returns an error. The PR is left
 open for retry. A zero deadline is rejected: an unbounded wait is unboxed
-compute and every wait here is bounded. `land-pr.sh`'s surviving outer
-supervisor also posts a durable PR comment when the killed inner process cannot
-do so itself.
+compute and every wait here is bounded. A replacement landing entrypoint must
+retain that bounded-supervisor property.
 
 **Never hand-roll a renewer.** A bare `acquire` plus an external `renewer.sh`
 loop that outlives a dead agent defeats the lease-lapse safety net and is exactly
-what produced the zombie-held lock. Always land under `land-lock run` (directly,
-or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
+what produced the zombie-held lock. A live lander must use `land-lock run` so
+the lease is bound to a bounded child; the legacy `land-pr.sh` is disabled.
 
 ### Abnormal termination and evidence-based recovery
 
@@ -158,58 +157,20 @@ The holder file format is byte-compatible with pre-sidecar landers. A legacy
 bare `acquire` has no process evidence and therefore remains lease-only: it is
 never declared dead merely because a PID was not recorded.
 
-## Shared landers (`land-pr.sh`, `union-rebase.sh`)
+## Landing helpers (`land-pr.sh`, `union-rebase.sh`)
 
-The land sequence itself lives here too, not only in `scratch/`:
+These helpers remain here rather than in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires exact-head ledger evidence before and after rebase, derives `locally-validated` only through `apply-local-label`, polls merge-gate, dereferences the final head's immutable validation receipt, performs a head-matched rebase merge, then verifies ancestry |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | **disabled compatibility entrypoint**: parses help, then exits 4 before mutation because server-side replay cannot atomically bind source X, observed base Y, and replay result Z |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
-`land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
-never wedges a land:
-
-1. **Race-tolerant exact-head gate poll** — query the Actions workflow runs for
-   the rebased head and evaluate the latest `pull_request` or
-   `workflow_dispatch` run. The dispatch event matters: the `workflow_run`
-   controller runs on `main`, and its dispatched PR-head success can be absent
-   from `statusCheckRollup`. Ride through transient
-   `FAILURE`/`IN_PROGRESS`/`QUEUED` states to `SUCCESS`; bounded by
-   `--gate-deadline` (default 1080s), then ABANDON with the last event, run ID,
-   URL, and state.
-2. **The merge command is the mergeability arbiter** — do not gate on
-   `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
-   a bounded retry loop, which forces GitHub to recompute mergeability.
-3. **Treat the label only as a cache** — exact-head ledger evidence is required
-   before and after rebase. Only `apply-local-label` may materialize the label;
-   it requires a nonzero executed-test count, hashes the referenced log, and
-   publishes the selected ledger row as an immutable receipt on
-   `rrnewton/dev-hermit:validation-receipts` before commenting or labeling. A
-   genuine gate failure is never overwritten by re-stamping metadata.
-4. **Dereference the final authorization** — immediately before merge, fetch the
-   current PR comments and pass the final pushed head to the parent-pinned
-   `ci-hub/validation/verify_receipt.sh`. Missing, forged, stale, tampered,
-   zero-executed, or incomplete receipts refuse the landing before any merge
-   call. The merge itself uses `--match-head-commit` so a concurrent push cannot
-   inherit that authorization.
-
-Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
-PR comment — so an abandoned PR never silently languishes (the #244 pattern).
-Before taking the lock, the shared lander persists a post-land intent. Only after
-the merged SHA is ancestry-confirmed does it arm concurrent exact-SHA local and
-GitHub verification; ORC recovery closes the merge-before-arm crash window.
-
-```bash
-cd ~/work/dev-hermit
-ci-hub/landing/land-pr.sh 1470 codex/backend-parity-contract --union
-# DETACHED LAND: pid=... log=.../land-pr1470-<UTC timestamp>-<pid>.log
-```
-
-The default launcher uses `nohup` plus a new session and returns immediately,
-before lock acquisition. The printed timestamped log is the durable observation
-surface across the agent shell's 120-second cap and agent recycling. Use
-`--foreground` only for short diagnostics; it does not change any deadline.
+The source below `land-pr.sh`'s refusal remains only as historical implementation
+context and is unreachable. It is not a landing guide or authority. Do not merge
+from `reconcile_receipts.py`, `apply-local-label`, a label, or this disabled
+script. Use the current-main `safe-exact-head-land` replacement only after that
+extraction lands and its semantic verifier accepts the exact transaction.
 
 ### Deadline basis and scope
 
@@ -227,7 +188,7 @@ Every wait in one landing attempt has an explicit scope:
 | lock acquisition | 1800s | FIFO wait before this landing owns the lock |
 | lock lease | 900s, renewed every 300s | dead-holder safety; not a land duration |
 | merge-gate | 1080s by default | exact-head Actions runs; caller may override |
-| whole child | 2160s by default | entire lock-held subtree; `land-pr.sh` derives twice an overridden gate deadline unless explicitly set |
+| whole child | 2160s by default | entire lock-held subtree under `land-lock run` |
 | merge retry | 12 attempts, 15s sleeps | at most 180s of explicit retry sleep |
 | gate poll | 15s interval | included in the gate deadline |
 | label / ready settling | 4s each | fixed sleeps before polling |

@@ -107,6 +107,7 @@ def test_render_states_denominators():
     rep = rr.reconcile(open_prs, [A, D], certify=lambda s: True,
                        floor=_floor(set()), repo="rrnewton/hermit")
     text = rr.render(rep)
-    assert "VALID (landable NOW, no new validate): 1 of 2" in text
+    assert "VALID-CANDIDATE (planning only; not landing authority): 1 of 2" in text
+    assert "do not merge from this report" in text
     assert "ORPHANED" in text and "1 of 2" in text
     assert "50%" in text  # orphan ratio carries a denominator-derived pct

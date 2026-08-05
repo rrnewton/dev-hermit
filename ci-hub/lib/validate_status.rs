@@ -1128,6 +1128,34 @@ mod tests {
     }
 
     #[test]
+    fn identical_tree_cache_hit_is_soft_only_not_exact_sha_green() {
+        const IDENTICAL_TREE_SHA: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let prior_exact_run = clean_full_pass(PASS_SHA);
+
+        // Tree equivalence is not commit identity: the older receipt cannot
+        // authorize a different exact head even when an external cache says the
+        // two trees are byte-identical.
+        assert_eq!(
+            assess(&[prior_exact_run.clone()], IDENTICAL_TREE_SHA).verdict,
+            Verdict::NotValidated
+        );
+
+        // A producer row for the new SHA that reports a successful cache return
+        // but ran zero gates/tests is also a no-result, never hard green.
+        let mut zero_gate_cache = prior_exact_run.clone();
+        zero_gate_cache.commit = Some(IDENTICAL_TREE_SHA.into());
+        zero_gate_cache.checks = Some(0);
+        zero_gate_cache.gates_run = Some(0);
+        zero_gate_cache.gates_expected = Some(0);
+        zero_gate_cache.executed_tests = Some(0);
+        zero_gate_cache.coverage = Some(sat_coverage(0));
+        assert_eq!(
+            assess(&[prior_exact_run, zero_gate_cache], IDENTICAL_TREE_SHA).verdict,
+            Verdict::NotValidated
+        );
+    }
+
+    #[test]
     fn uncounted_pre_count_pass_is_not_validated() {
         // STRICT (post-transition, the grandfather-removal case): a receipt that
         // carries NEITHER count — old-schema (3 < COUNTS_SCHEMA) writer that
