@@ -79,6 +79,23 @@ def gate_counts(record: dict) -> tuple[int | None, int | None]:
     )
 
 
+def is_full_coverage(record: dict) -> bool:
+    """Whether a run exercised the FULL validation contract, as opposed to a
+    narrowed ``*-only``/subset profile (``portable-strict-compat-only``,
+    ``only-portable``, ``portable-only``, ``quick``, ...).
+
+    ``validate.sh`` and ``aggregate.py`` both name a partial run with a non-
+    ``full`` profile, and ``aggregate.py`` additionally records an explicit
+    ``full_coverage`` boolean. Prefer that explicit field when present; otherwise
+    fall back to the profile taxonomy. This keys on the SAME ``profile == "full"``
+    signal as the Rust ``validate_status::is_clean_full_coverage`` landing
+    predicate, so a partial pass can never be read as a full green here either."""
+    fc = record.get("full_coverage")
+    if isinstance(fc, bool):
+        return fc
+    return record.get("profile") == "full"
+
+
 def has_real_failure(record: dict) -> bool:
     """True when a gate/test ACTUALLY failed — as opposed to an incomplete or
     interrupted run. A gate row marked fail/timeout, or a nonzero product
@@ -179,11 +196,24 @@ def effective_result(record: dict) -> object:
     ordering (env-fault BEFORE completeness) mirrors the Rust authority
     ``validate_status::failure_disposition`` so the two engines never disagree.
     An explicit first-class ``truncated`` result is not fail/timeout, so it falls
-    through to ``is_truncated`` and stays ``truncated``."""
+    through to ``is_truncated`` and stays ``truncated``.
+
+    A PASS over a NARROWED scope (a non-``full`` profile) is downgraded to
+    ``pass-partial`` so a reader tells it from a full-coverage green WITHOUT
+    knowing the profile taxonomy — a 2-check ``portable-strict-compat-only`` pass
+    must not read identically to a full green. This mirrors the ``aggregate.py``
+    producer verdict (which already types reconstructed schema-1 partial passes
+    ``pass-partial``) and the Rust ``history_queries`` reader (which already
+    matches both ``pass`` and ``pass-partial``); it closes the gap for the live
+    schema-4 ``validate.sh`` rows, whose ``result`` is a bare ``pass``. The
+    landing certifier already refuses a partial via its ``profile == full``
+    predicate; this makes the analytics result self-describing too."""
     if record.get("result") in ("fail", "timeout") and is_env_fault(record):
         return "no-result"
     if is_truncated(record):
         return "truncated"
+    if record.get("result") == "pass" and not is_full_coverage(record):
+        return "pass-partial"
     return record.get("result")
 
 
