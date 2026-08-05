@@ -689,3 +689,29 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/275` | hermit-275 / fix-848-keyctl-boundary | Hermit original `4453f8e9c25810803f4106edf7b4e5f488754ce6`; rebased head `f95343aebd532b0959bd5299bec5fbc1e88a812f`; squash-landed main `d79480cf9bc83dcb47b385740fcd1a39c3190456`; no Reverie or LiteInst2 child | The original local-only commit is now preserved exactly at `origin/recovery/20260805-slot275-keyctl-boundary`. It and the rebased head have identical stable patch-id `00772bbdcd736af6c709117f0b7bcadf64afd880`; PR [#976](https://github.com/rrnewton/hermit/pull/976) carries the landed result. | Task `fix-848-keyctl-boundary` is closed. All three physical child paths and Git worktree registrations were already absent, no matching process CWD was live, and the stale released registry row may be removed through the target-scoped release tool without deleting filesystem data. |
+
+### Missing-slot registry reconciliation (2026-08-05)
+
+Before retirement, every child path listed below was absent, no corresponding Git
+worktree registration existed in any product primary, and no process had a CWD under
+the slot. The stale registry rows recorded `-` for all three product branches, so
+registry-only release preserved all refs and removed no filesystem data. `debug30`
+was deliberately excluded because its lost untracked `d30work` has no recovery SHA.
+
+| Slot | owner/task | durable recovery or landed result | disposition |
+| --- | --- | --- | --- |
+| `worktrees/270` | hermit-270 / ci-ov2-cascade-landing | Hermit #1072 landed; heads for #1075 and #1078 remain pushed; Reverie #237 landed. | Task ID is absent from the local graph; evidence retained for later historical-task reconciliation. |
+| `worktrees/271` | hermit-271 / impl-debug-batch-266 | Unlanded work preserved at `origin/codex/impl-debug-batch-266` exact SHA `e5ab7ef325852d5db3a054d3688079f2a71000f8`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/272` | hermit-272 / report-hermit-chaos-controls | Source report corresponds to Hermit `c1019c4ae7f109ec9fdad7a31781300bbbb25946`; Reverie #245 landed. | Research result still needs export to a versioned parent artifact before verified closure can be reconstructed. |
+| `worktrees/273` | hermit-273 / investigate-ci-portability-gap | Hermit #1145 landed as `7c4a95ed8463d16fec324102ec9b32da00e94866`; parent guard is `d3d037cb374d0e8469e039f8244e47c196093ec7`. | Landed result; stale absent registry row retired. |
+| `worktrees/274` | hermit-274 / chaos-feature-deterministic-epochs | Hermit #1151 landed as `0c096177d71fba4cd35a37a454f223964148f432`; Reverie #204 landed. | Landed result; stale absent registry row retired. |
+| `worktrees/chaos` | hermit-chaos / chaos-feature-per-thread-slowdown | Hermit #1149 landed as `f06e576493596429a21489c406cb7398f56bb189`. | Landed result; stale absent registry row retired. |
+| `worktrees/ci` | hermit-ci / impl-ci-dag-mem-limits | Unlanded work preserved at `origin/ci/immediate-build-j64` exact SHA `53ad38a370a81c2b9585d34f77af528cdecd1702`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/dbi` | hermit-dbi / dbi-ci-timeout-investigation | Durable parent artifact `ai_docs/transient/dbi-pr1147-ci-hang-postexec-time-rewind_20260730.md` at content commit `714fc84e46959d85f3be3dc03da8b9906f075639`. | Closed through `ci-hub/bin/close-task` after typed artifact and current-main ancestry verification. |
+| `worktrees/e9patch` | hermit-e9patch / ratchet-e9patch-backend | Reverie #256 landed as `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; #308 landed as `8b76d65b8fdc401aa3a77fd0a11d45468059db25`. | Landed results; stale absent registry row retired. |
+| `worktrees/kvm` | hermit-kvm / fix-kvm-counter2-parity-regression | Reverie #266 landed as `0f17ef2a9ab4bd264f0b821a289c9e6acf88e6f9`. | Landed result; stale absent registry row retired. |
+| `worktrees/linux` | hermit-linux / fix-kvm-startup-latency | Hermit #1127 landed as `949ca39fdadf15b613fc8e160ff673226aef4e07`. | Landed result; stale absent registry row retired. |
+| `worktrees/liteinst` | hermit-liteinst / verify-tests-dir-used | Unlanded Hermit work preserved at `origin/codex/compat-liteinst-hermit-strict` exact SHA `8992bdfe1910ad81b16c8fcfa429cee919aad740`; Reverie #260 landed. | Existing task closure requires a fresh branch handoff/disposition audit; unrelated ASLR work remains durable. |
+| `worktrees/sabre` | hermit-sabre / compat-linux-qemu-boot | Hermit #1107 landed as `8827c8302e52a75ba5621743a9b6703d59d30a2f`; Reverie #228 landed. | Landed results; stale absent registry row retired. |
+| `worktrees/slot01` | hermit-ci-examples / impl-ci-integration-green | Unlanded work preserved at `origin/codex/ci-integration-green-v3` exact SHA `77b3b6efa744cba08b47c15f5e6d11c2237f6568`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/slot02` | codex-1120 / fix-kvm-detpid-mismatch | Hermit #1120 landed as `c3381cae183d9d73b7698a96e8df8eeb4799269b`. | Closed through `ci-hub/bin/close-task` after fresh PR replay-SHA verification. |
