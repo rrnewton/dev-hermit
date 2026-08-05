@@ -54,6 +54,10 @@ FLAKY_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "flaky-cells.json"
 CONTENTION_SAFE_JOBS = 4
 FULL_GATES_EXPECTED = 5
 
+# The shell's "command not found" exit code. A gate at this code never ran the
+# tool it wraps, so it exercised nothing about the product.
+EXIT_COMMAND_NOT_FOUND = 127
+
 
 def gate_counts(record: dict) -> tuple[int | None, int | None]:
     """Return (ran, expected), including the legacy full-profile fallback."""
@@ -75,19 +79,103 @@ def gate_counts(record: dict) -> tuple[int | None, int | None]:
     )
 
 
+def has_real_failure(record: dict) -> bool:
+    """True when a gate/test ACTUALLY failed — as opposed to an incomplete or
+    interrupted run. A gate row marked fail/timeout, or a nonzero product
+    ``failures`` count, is a real red signal. Used to keep ``ran < expected`` from
+    laundering a fail-fast red into a truncation."""
+    for g in record.get("gates", []):
+        if isinstance(g, dict) and g.get("result") in ("fail", "failed", "timeout"):
+            return True
+    f = record.get("failures")
+    return isinstance(f, int) and f >= 1
+
+
 def is_truncated(record: dict) -> bool:
-    """True when this row did not complete its declared validation gate set."""
+    """True when this row did not complete its declared validation gate set.
+
+    Completeness is structural: when both counts exist, only ``ran < expected``
+    is an incomplete result. An OVER-RUN (``ran > expected``) is NOT a truncation:
+    the hardcoded ``FULL_GATES_EXPECTED`` can lag the live plan (a full run today
+    executes six gates against a hardcoded expectation of five), so a 6/5 row is a
+    complete PASS, not a short run. A fail-fast row may contain a real failing
+    gate, but it still did not execute the full validation contract and cannot
+    become a durable FAILED verdict. A genuine red control is a complete row whose
+    gate counts are satisfied. For legacy rows without both counts, interruption
+    signals are used only when no real failure was recorded.
+    """
     if record.get("result") == "truncated":
         return True
-    if record.get("exit_code") == 130:
-        return True
     ran, expected = gate_counts(record)
-    return expected is not None and expected > 0 and ran is not None and ran < expected
+    if expected is not None and expected > 0 and ran is not None:
+        return ran < expected
+    if has_real_failure(record):
+        return False
+    return record.get("exit_code") == 130
+
+
+def _failing_gates(record: dict) -> list[dict]:
+    return [
+        g
+        for g in record.get("gates", [])
+        if isinstance(g, dict) and g.get("result") in ("fail", "failed", "timeout")
+    ]
+
+
+def is_env_fault(record: dict) -> bool:
+    """True when a red's gates could not run at all — an ENVIRONMENT fault, not a
+    product defect, so the red carries no information about the commit. Mirrors
+    the Rust authority (``validate_status::is_env_fault_red``) so the two engines
+    never disagree. Two each-sufficient tells, each bound to a value the row
+    carries (Proxy Binding — classify on the observed fault, not on the absence
+    of condition fields):
+
+      (A) COMMAND-NOT-FOUND STORM: at least one failing gate at exit 127 AND no
+          failing gate is a genuine product failure (a red gate that ran >0s at a
+          non-127 exit). A real test/assertion red is exit 1/101 after real
+          execution — never 127 — so a genuine defect is never laundered.
+          LIVE: a1493427 recorded fail at 1s with five gates at exit 127; the
+          SAME commit passed 6/6 at 58s.
+      (B) SUB-SECOND COLLAPSE: whole-run wall <= 1s AND every gate that produced
+          a result failed — the run died before doing any real work.
+    """
+    failed = _failing_gates(record)
+    if not failed:
+        return False
+
+    def _exit(g: dict) -> int | None:
+        c = g.get("exit_code")
+        return c if isinstance(c, int) else None
+
+    def _secs(g: dict) -> float:
+        s = g.get("real_seconds")
+        return float(s) if isinstance(s, (int, float)) else 0.0
+
+    any_cmd_not_found = any(_exit(g) == EXIT_COMMAND_NOT_FOUND for g in failed)
+    any_genuine_red = any(
+        _exit(g) != EXIT_COMMAND_NOT_FOUND and _secs(g) > 0 for g in failed
+    )
+    storm = any_cmd_not_found and not any_genuine_red
+
+    wall = record.get("real_seconds")
+    gates = [g for g in record.get("gates", []) if isinstance(g, dict)]
+    subsecond = (
+        isinstance(wall, (int, float))
+        and wall <= 1
+        and bool(gates)
+        and all(g.get("result") in ("fail", "failed", "timeout") for g in gates)
+    )
+    return storm or subsecond
 
 
 def effective_result(record: dict) -> object:
-    """Result for analytics: incomplete rows are never product failures."""
-    return "truncated" if is_truncated(record) else record.get("result")
+    """Result for analytics: incomplete rows are never product failures, and an
+    environment fault (gates could not run) is a no-result, not a failure."""
+    if is_truncated(record):
+        return "truncated"
+    if record.get("result") in ("fail", "timeout") and is_env_fault(record):
+        return "no-result"
+    return record.get("result")
 
 
 def load_registry(path: str = FLAKY_REGISTRY_PATH) -> dict[str, dict]:
@@ -176,7 +264,7 @@ def derive_concurrent_validates(record: dict, all_records: list[dict]) -> int:
 
 @dataclass
 class FlakeAnalysis:
-    verdict: str  # "defect" | "needs-rerun" | "truncated" | "n/a"
+    verdict: str  # "defect" | "needs-rerun" | "truncated" | "no-result" | "n/a"
     reasons: list[str] = field(default_factory=list)
     failing_cells: list[str] = field(default_factory=list)
     flaky_failing_cells: list[str] = field(default_factory=list)
@@ -219,6 +307,20 @@ def classify(
     result = record.get("result")
     if result not in ("fail", "timeout"):
         return FlakeAnalysis(verdict="n/a")
+
+    # An environment fault (command-not-found storm, sub-second collapse) is the
+    # most specific reading: its gates could not run, so the red carries no
+    # information about the commit. Checked before flake/contention so a 127-storm
+    # never reads "defect". Re-runnable, never a failure.
+    if is_env_fault(record):
+        return FlakeAnalysis(
+            verdict="no-result",
+            reasons=[
+                "env-fault: gate commands could not run (command-not-found storm "
+                "or sub-second collapse) — an environment fault, not a product "
+                "defect; re-dispatch"
+            ],
+        )
 
     jobs = record.get("jobs")  # schema-4 producer field; None until it lands
     failing = parse_failing_cells(record.get("log_file"))

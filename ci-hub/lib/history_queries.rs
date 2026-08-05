@@ -206,11 +206,14 @@ impl HistoryQueryEngine {
                     // A clean anchored partial PASS is trustworthy evidence of
                     // its narrower scope, even though it cannot be the branch's
                     // full green. Preserve that accounting while excluding
-                    // ambiguous red states below.
+                    // ambiguous red states below. The producer now types a
+                    // passing non-full run `pass-partial` (so a reader tells it
+                    // from a full green without the profile taxonomy); both a full
+                    // `pass` and a `pass-partial` are trustworthy recorded evidence.
                     if rows.iter().any(|row| {
                         row.commit_anchored == Some(true)
                             && row.tree_dirty == Some(false)
-                            && row.result.as_deref() == Some("pass")
+                            && matches!(row.result.as_deref(), Some("pass") | Some("pass-partial"))
                     }) {
                         trustworthy_recorded += 1;
                     }

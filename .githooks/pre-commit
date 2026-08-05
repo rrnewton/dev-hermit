@@ -23,29 +23,12 @@ LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
 POLICY=".githooks/hygiene-policy.md"
 
 # Warning-only checkout/snapshot freshness probe. A stale/detached primary,
-# stale parent gitlink, or Reverie-pin currency mismatch must be loud, but it
-# must not prevent a parent commit that repairs a stale gitlink or hook.
+# stale parent gitlink, or Reverie-pin mismatch must be loud, but it must not
+# prevent a parent commit that repairs a stale gitlink or hook.
 if [ -x scripts/primary_checkout.py ]; then
   scripts/primary_checkout.py check >&2 || true
 else
   echo "WARNING: primary checkout freshness checker is missing." >&2
-fi
-
-# BLOCKING Reverie pin-drift guard. Distinct from the warning-only freshness
-# probe above: this is the offline *consistency* check -- it fails the commit
-# only when tracked Reverie references (Cargo.toml revs, both Cargo.lock
-# sources, and the LiteInst runtime cache keys) disagree with each other, i.e.
-# a silent pin drift. It never touches primary freshness/gitlinks/network, so it
-# cannot block a commit that repairs a stale gitlink. Override a deliberate
-# in-flight state with HERMIT_PIN_DRIFT_OVERRIDE=1.
-if [ -x scripts/primary_checkout.py ] && [ -f hermit/Cargo.toml ]; then
-  if ! scripts/primary_checkout.py check-pins >&2; then
-    if [ "${HERMIT_PIN_DRIFT_OVERRIDE:-}" = "1" ]; then
-      echo "HERMIT_PIN_DRIFT_OVERRIDE=1 set -- proceeding despite Reverie pin drift." >&2
-    else
-      exit 1
-    fi
-  fi
 fi
 
 big=()

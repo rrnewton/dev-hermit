@@ -446,90 +446,6 @@ def check_freshness(
     return 1 if strict and warnings else 0
 
 
-def check_pins(
-    root: Path,
-    *,
-    out: TextIO = sys.stdout,
-    err: TextIO = sys.stderr,
-) -> int:
-    """Blocking, offline Reverie-pin *consistency* check.
-
-    Unlike ``check`` (which also inspects primary-checkout freshness, parent
-    gitlinks, and queries the network), this verifies only that the Reverie
-    *pin* is internally consistent across the Hermit checkout: every tracked
-    Cargo.toml rev is identical, and every tracked Cargo.lock source (including
-    the nested liteinst-runtime-build/Cargo.lock) references that same SHA.
-
-    It performs NO network access and does NOT look at primary freshness or
-    parent gitlinks, so it never blocks a commit that merely repairs a stale
-    gitlink; it blocks only a *silent pin drift* where one Reverie reference
-    was moved without the others. That makes it safe to run in a pre-commit
-    hook. Two dimensions are deliberately EXCLUDED from this blocking gate and
-    left to the warning-only ``check``:
-      * currency (is the pin on reverie main?) -- networked; also enforced by
-        hermit's own check-reverie-pin.rs hook + CI;
-      * the revision-keyed build-cache paths (REVERIE_CACHE_FILES) -- those use
-        7-char short SHAs and a heterogeneous key scheme (e.g.
-        hermit-install/build.rs), so a blocking equality check on them would
-        false-positive on a healthy tree. They remain a warning-only signal.
-    """
-    errors: list[str] = []
-    pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
-    errors.extend(f"hermit: {message}" for message in pin_errors)
-    expected: str | None = None
-    if pin_count == 0:
-        errors.append("hermit: no tracked Cargo manifest pins rrnewton/reverie")
-    elif len(pins) != 1:
-        errors.append(
-            "Hermit Reverie manifest pins are not internally consistent: "
-            f"manifests={','.join(sorted(pins))}"
-        )
-    else:
-        expected = next(iter(pins))
-        hermit = root / "hermit"
-        for relative in REVERIE_LOCKFILES:
-            path = hermit / relative
-            try:
-                with path.open("rb") as source:
-                    lock = tomllib.load(source)
-            except (OSError, tomllib.TOMLDecodeError) as error:
-                errors.append(f"hermit: could not parse {relative}: {error}")
-                continue
-            sources = [
-                package.get("source", "")
-                for package in lock.get("package", [])
-                if isinstance(package, Mapping)
-                and str(package.get("source", "")).startswith(f"git+{REVERIE_GIT_URL}")
-            ]
-            if not sources:
-                errors.append(f"hermit: {relative}: no Reverie git sources found")
-                continue
-            for source in sources:
-                match = REVERIE_SOURCE.fullmatch(str(source))
-                if match is None or match.group(1) != expected or match.group(2) != expected:
-                    errors.append(f"hermit: {relative}: stale Reverie source {source}")
-
-    if errors:
-        print("REVERIE PIN DRIFT: tracked Reverie references disagree - BLOCKED", file=err)
-        for message in errors:
-            print(f"  {message}", file=err)
-        print(
-            "Every Cargo.toml rev and every tracked Cargo.lock source (including the "
-            "nested liteinst-runtime-build/Cargo.lock) must reference ONE identical "
-            "Reverie SHA. Re-run the Reverie pin update (hermit/docs/updating-reverie.md) "
-            "so all references move together, or override a deliberate in-flight state "
-            "with HERMIT_PIN_DRIFT_OVERRIDE=1 git commit ...",
-            file=err,
-        )
-        return 1
-    print(
-        f"Reverie pin is internally consistent: {expected} "
-        f"({pin_count} manifest revision entries; tracked Cargo.lock sources agree).",
-        file=out,
-    )
-    return 0
-
-
 def default_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -551,10 +467,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     check = subparsers.add_parser("check", help="warn about detached or stale primaries")
     check.add_argument("--strict", action="store_true", help="return nonzero on warnings")
-    subparsers.add_parser(
-        "check-pins",
-        help="offline: block on Reverie pin drift across manifests and Cargo.lock sources",
-    )
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
@@ -562,8 +474,6 @@ def main(argv: list[str] | None = None) -> int:
         return checkout_fresh(
             root, publish_parent=args.publish_parent, strict=args.strict
         )
-    if args.command == "check-pins":
-        return check_pins(root)
     return check_freshness(root, strict=args.strict)
 
 

@@ -101,12 +101,24 @@ def attribute_row(
     """Attribute one ledger row: dereference ``log_file`` and classify.
 
     Returns ``{commit, finished_at, result, exit_code, failed_gates, log_file,
-    log_status, classes}`` where ``log_status`` is ``present``/``missing`` and
-    ``classes`` is the per-node classifier output (empty when the log is
-    unavailable or carried no ``✗ FAIL`` node — e.g. an outer-gate failure with no
-    nested substep)."""
+    log_status, classes_source, classes}`` where ``log_status`` is
+    ``present``/``missing`` (does the ephemeral log still survive), ``classes`` is
+    the per-node classifier output (empty when neither the row nor the log carries
+    a ``✗ FAIL`` node — e.g. an outer-gate failure with no nested substep), and
+    ``classes_source`` is ``row``/``log``/``none`` naming WHERE the attribution
+    came from.
+
+    DURABILITY (Proxy Binding: the condition travels with the value). The producer
+    (``hermit/validate.sh`` ``append_validation_ledger``) inlines
+    ``failed_substep_classes`` INTO every red row it writes, so the attribution is
+    a FACT carried by the row, not a promise made by a ``log_file`` PATH into
+    ephemeral /tmp state. This reader prefers that inlined evidence and falls back
+    to dereferencing the log only for OLDER rows a pre-producer writer left without
+    it. The log-based path works only while the log survives; the row-based path
+    survives eviction, which is the whole point of the producer leg."""
     commit = str(row.get("commit") or "")
     log_file = row.get("log_file")
+    log_present = isinstance(log_file, str) and bool(log_file) and Path(log_file).is_file()
     record: dict[str, object] = {
         "commit": commit,
         "finished_at": row.get("finished_at"),
@@ -114,21 +126,31 @@ def attribute_row(
         "exit_code": row.get("exit_code"),
         "failed_gates": _failed_gate_names(row),
         "log_file": log_file,
-        "log_status": "missing",
+        "log_status": "present" if log_present else "missing",
+        "classes_source": "none",
         "classes": [],
     }
-    if isinstance(log_file, str) and log_file:
-        path = Path(log_file)
-        if path.is_file():
-            try:
-                text = path.read_text(errors="replace")
-            except OSError:
-                text = None
-            if text is not None:
-                record["log_status"] = "present"
-                record["classes"] = classify_failed_substeps(
-                    text, flaky_registry=registry or set()
-                )
+    # DURABLE first: the row's own inlined classes are self-contained per-node
+    # records ({node, sub_step_class, fault_class, infra_signature,
+    # first_error_line, known_flaky}) — identical shape to the classifier output —
+    # so attribution survives even after the log_file is evicted.
+    row_classes = row.get("failed_substep_classes")
+    if isinstance(row_classes, list) and row_classes:
+        record["classes"] = row_classes
+        record["classes_source"] = "row"
+        return record
+    # FALLBACK: dereference the ephemeral log (works only while it survives).
+    if log_present:
+        try:
+            text = Path(log_file).read_text(errors="replace")
+        except OSError:
+            text = None
+        if text is not None:
+            record["classes"] = classify_failed_substeps(
+                text, flaky_registry=registry or set()
+            )
+            if record["classes"]:
+                record["classes_source"] = "log"
     return record
 
 
@@ -179,7 +201,13 @@ def persist_attributions(
     pending: list[str] = []
     skipped = 0
     for record in records:
-        if record.get("log_status") != "present":
+        # Persist real evidence only. Row-inlined classes (durable, survive
+        # eviction) and log-derived classes (captured while the log survived) both
+        # qualify; a row with neither (``none``) contributes nothing — never
+        # fabricated. This replaces the old ``log_status == "present"`` gate, which
+        # would have dropped a row whose durable classes outlived its log.
+        source = record.get("classes_source")
+        if source not in ("row", "log"):
             continue
         commit = str(record.get("commit") or "")
         finished_at = record.get("finished_at")
@@ -201,6 +229,7 @@ def persist_attributions(
                         "fault_class": cls.get("fault_class"),
                         "infra_signature": cls.get("infra_signature"),
                         "first_error_line": cls.get("first_error_line"),
+                        "source": source,
                     },
                     separators=(",", ":"),
                     sort_keys=True,
@@ -293,6 +322,7 @@ def refill_attributions(
                         "fault_class": cls.get("fault_class"),
                         "infra_signature": cls.get("infra_signature"),
                         "first_error_line": cls.get("first_error_line"),
+                        "source": "log",
                     },
                     separators=(",", ":"),
                     sort_keys=True,

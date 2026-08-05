@@ -698,7 +698,12 @@ def main() -> int:
             # Units: real_s/user_s/sys_s are seconds. failures = product
             # failures only; killed_by_bound (timeout/cgroup/contention) and
             # incomplete (run cut off) are separate columns, not folded in.
+            # `result` is the RAW recorded value (provenance); `effective_result`
+            # is the reclassified verdict (incomplete/interrupted reds read
+            # `truncated`) — read this column, not raw `result`, for analytics, or
+            # a fail-fast/interrupted red condemns a healthy commit.
             w.writerow(["time", "repo", "slot", "commit", "profile", "result",
+                        "effective_result",
                         "checks", "failures", "killed_by_bound", "incomplete",
                         "real_s", "user_s", "sys_s",
                         "source", "profiling_linked", "log_file"])
@@ -707,6 +712,7 @@ def main() -> int:
                     r.get("started_at") or r.get("finished_at"),
                     r.get("repo") or "hermit", r.get("slot"),
                     r.get("commit"), r.get("profile"), r.get("result"),
+                    r.get("effective_result") or flake_class.effective_result(r),
                     r.get("checks"), r.get("failures"),
                     r.get("killed_by_bound"), r.get("incomplete_gates"),
                     r.get("real_seconds"),
