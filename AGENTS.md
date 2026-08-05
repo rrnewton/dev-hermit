@@ -19,6 +19,11 @@ status rollups) — not a product manual. Implementation agents follow `hermit/A
 `.llms/skills/` holds task skills, not policy. When aggregating, preserve exact implementation evidence; never
 replace a product-specific requirement with a summary.
 
+For landing work, use [`pr-landing-planner`](agent-utils/skills/pr-landing-planner/SKILL.md) to produce the
+advisory conflict/evidence plan, then [`pr-landing-operations`](agent-utils/skills/pr-landing-operations/SKILL.md)
+to execute an authorized drain. This file remains the authority for authorization, review, repository policy,
+and closure; neither skill may weaken it.
+
 ## Conventions
 
 - **PR role tag:** ALL PR descriptions/comments MUST start with `[impl agent, MODEL]`, `[adversarial-reviewer agent, MODEL]`, `[coordinator, MODEL]`, or `[Human]` (e.g. `[impl agent, gpt-5.6-sol]`).
