@@ -27,6 +27,7 @@ def _pr(
     merge_state="CLEAN",
     draft=False,
     labels=(),
+    head="a" * 40,
 ):
     return {
         "number": number,
@@ -36,7 +37,7 @@ def _pr(
         "mergeStateStatus": merge_state,
         "labels": [{"name": label} for label in labels],
         "statusCheckRollup": rollup,
-        "headRefOid": "a" * 40,
+        "headRefOid": head,
     }
 
 
@@ -369,9 +370,16 @@ class GhEngineLoudFailureTests(unittest.TestCase):
             )
         run.assert_called_once()
 
+    @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
+    @mock.patch("pr_status.banked_green_commits", return_value=frozenset())
     @mock.patch("pr_status.time.sleep")
     @mock.patch("pr_status.subprocess.run")
-    def test_transient_stream_error_retries(self, run, sleep) -> None:
+    def test_transient_stream_error_retries(
+        self, run, sleep, _green, _failure
+    ) -> None:
+        # Isolate the gh-fetch retry path: stub the ledger cross-references so the
+        # mocked `subprocess.run` side_effect models ONLY the gh call (error then
+        # success), and the test does not read the machine-local ledger.
         run.side_effect = [
             subprocess.CompletedProcess(
                 args=[], returncode=1, stdout="",
@@ -643,6 +651,171 @@ class RenderTests(unittest.TestCase):
         self.assertIn("current_dual_approval=0", report)
         self.assertIn("approval=partial", report)
         self.assertIn("missing=current-approval-codex", report)
+
+
+class ExecutedTestsCarveOutTests(unittest.TestCase):
+    """The PR-facing peer of the ledger-side executed_tests gate (d05874e): a
+    GitHub product red whose EXACT head ran <= 1 test locally is a NO-RESULT, not a
+    real red. Bind the demotion to the observed executed-test count, never the
+    check count (Proxy Binding)."""
+
+    # The canonical same-check-count control pair (both rows report SIX checks;
+    # only executed_tests separates them). 40-hex heads padded from the real ledger
+    # commit prefixes so the ledger row and the PR head bind by exact SHA.
+    HEAD_GENUINE = "17b59fc6" + "1" * 32  # tests=760, full failure -> stays RED
+    HEAD_NO_RESULT = "98573d14" + "2" * 32  # tests=1 in 83s -> NO-RESULT, demoted
+    HEAD_NEEDS_RERUN = "54b4d4e5" + "3" * 32  # tests=430 -> NEEDS-RERUN, demoted
+
+    def _product_fail(self, number: int, head: str):
+        # A genuine PRODUCT-test failing check (not a gate meta-check), base known
+        # and clean, so classification reaches the real-product-red branch where
+        # the executed_tests carve-out applies.
+        return _pr(
+            number,
+            [
+                {
+                    "name": "Regular tests (GitHub-hosted)",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                }
+            ],
+            merge_state="CLEAN",
+            head=head,
+        )
+
+    def test_tier_derives_from_executed_tests_not_check_count(self) -> None:
+        # banked_failure_tier_commits reads the machine-local ledger and tiers each
+        # fail row by executed_tests via the SHARED predicate. Both control rows
+        # carry checks=6 (gates_run=6); only executed_tests separates them.
+        import tempfile
+
+        ledger = "\n".join(
+            json.dumps(row)
+            for row in [
+                {"result": "fail", "commit": self.HEAD_GENUINE,
+                 "executed_tests": 760, "gates_run": 6, "cwd": "/w/hermit"},
+                {"result": "fail", "commit": self.HEAD_NO_RESULT,
+                 "executed_tests": 1, "gates_run": 6, "cwd": "/w/hermit"},
+                {"result": "timeout", "commit": self.HEAD_NEEDS_RERUN,
+                 "executed_tests": 430, "gates_run": 6, "cwd": "/w/hermit"},
+                # strongest-wins: a second run at the genuine head that ran nothing
+                # must NOT downgrade the real full-suite failure.
+                {"result": "fail", "commit": self.HEAD_GENUINE,
+                 "executed_tests": 1, "gates_run": 6, "cwd": "/w/hermit"},
+                # repo isolation: a reverie fail must not appear for hermit.
+                {"result": "fail", "commit": "b" * 40,
+                 "executed_tests": 1, "cwd": "/w/reverie"},
+                # a PASS row is not a failure tier.
+                {"result": "pass", "commit": "c" * 40,
+                 "executed_tests": 900, "cwd": "/w/hermit"},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "ignored").mkdir()
+            (Path(d) / "ignored" / "validate-run-ledger.jsonl").write_text(ledger)
+            with mock.patch.object(pr_status, "ROOT", Path(d)):
+                tiers = pr_status.banked_failure_tier_commits("rrnewton/hermit")
+        self.assertEqual(tiers[self.HEAD_GENUINE], "ok")  # 760 >= floor, wins over the ran-nothing dup
+        self.assertEqual(tiers[self.HEAD_NO_RESULT], "no-result")
+        self.assertEqual(tiers[self.HEAD_NEEDS_RERUN], "needs-rerun")
+        self.assertNotIn("b" * 40, tiers)  # reverie isolated
+        self.assertNotIn("c" * 40, tiers)  # pass is not a failure
+
+    def test_no_result_red_demoted_but_genuine_red_stays(self) -> None:
+        # PLANT BOTH WAYS in one call: the tests=1 head demotes to NO-RESULT while
+        # the tests=760 full-failure head STILL classifies as a real product red.
+        raw = [
+            self._product_fail(1470, self.HEAD_GENUINE),
+            self._product_fail(1443, self.HEAD_NO_RESULT),
+            self._product_fail(9999, self.HEAD_NEEDS_RERUN),
+        ]
+        banked_failure = {
+            self.HEAD_GENUINE: "ok",
+            self.HEAD_NO_RESULT: "no-result",
+            self.HEAD_NEEDS_RERUN: "needs-rerun",
+        }
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit", raw, banked_failure=banked_failure
+        )
+        # Only the genuine full-suite failure is a real red; the other two demote.
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.ledger_no_result, 1)
+        self.assertEqual(status.ledger_needs_rerun, 1)
+        by_pr = {pr["pr"]: pr for pr in status.prs}
+        self.assertEqual(by_pr[1470]["red_class"], "real-red")
+        self.assertEqual(by_pr[1470]["real_red_kind"], "product")
+        self.assertEqual(by_pr[1443]["red_class"], "ledger-no-result")
+        self.assertEqual(by_pr[9999]["red_class"], "ledger-needs-rerun")
+
+    def test_no_local_row_keeps_github_verdict(self) -> None:
+        # A red head with NO local ledger row is untouched — a hosted-only red keeps
+        # the GitHub verdict (the ledger is machine-local; most heads have no row).
+        raw = [self._product_fail(1200, "d" * 40)]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit", raw, banked_failure={}
+        )
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.ledger_no_result, 0)
+
+    def test_gate_red_not_demoted_by_ledger_tier(self) -> None:
+        # A landing-gate/review meta-check red is a genuine blocker regardless of the
+        # local test count (a DIFFERENT authority) — it must NOT be demoted even if a
+        # no-result ledger row exists at the head.
+        raw = [
+            _pr(
+                1147,
+                [{"name": "merge-gate-v4", "status": "COMPLETED",
+                  "conclusion": "FAILURE"}],
+                merge_state="BLOCKED",
+                head=self.HEAD_NO_RESULT,
+            )
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            banked_failure={self.HEAD_NO_RESULT: "no-result"},
+        )
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.gate_reds, 1)
+        self.assertEqual(status.ledger_no_result, 0)
+
+    def test_demotion_is_observable_in_render_and_verdict(self) -> None:
+        # The demotion must not be silent: the health verdict and report both carry
+        # the counts, so a red missing from real_reds is explained, not vanished.
+        raw = [
+            self._product_fail(1443, self.HEAD_NO_RESULT),
+            self._product_fail(9999, self.HEAD_NEEDS_RERUN),
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            banked_failure={
+                self.HEAD_NO_RESULT: "no-result",
+                self.HEAD_NEEDS_RERUN: "needs-rerun",
+            },
+        )
+        verdict = pr_status.health_verdict([status])
+        self.assertEqual(verdict["state"], "healthy")  # both demoted -> not unhealthy
+        self.assertEqual(verdict["inputs"][0]["ledger_no_result"], 1)
+        self.assertEqual(verdict["inputs"][0]["ledger_needs_rerun"], 1)
+        report = pr_status.render_report([status], warn_threshold=10, engine="gh")
+        self.assertIn("ledger_no_result=1", report)
+        self.assertIn("ledger_needs_rerun=1", report)
+
+    def test_ledger_green_beats_failure_tier(self) -> None:
+        # If the exact head has BOTH a green receipt and a fail row, the green
+        # receipt (a complete PASS) wins: green_local, not a demoted no-result.
+        raw = [self._product_fail(1624, self.HEAD_NO_RESULT)]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            banked_green=frozenset({self.HEAD_NO_RESULT}),
+            banked_failure={self.HEAD_NO_RESULT: "no-result"},
+        )
+        self.assertEqual(status.green_local, 1)
+        self.assertEqual(status.ledger_no_result, 0)
+        self.assertEqual(status.real_reds, 0)
 
 
 if __name__ == "__main__":
