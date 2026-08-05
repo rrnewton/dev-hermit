@@ -530,19 +530,36 @@ fn git_lines(repo: &Path, args: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// True if `repo` is a checked-out work tree (not a bare / no-worktree repo).
+/// A no-worktree repo still has a reachable object DB, so committed history
+/// (anchor..HEAD) is available even when the uncommitted/untracked scan is not.
+fn is_work_tree(repo: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false)
+}
+
 /// Paths changed since the anchor: committed(anchor..HEAD) U staged/unstaged U
 /// untracked. This is exactly the set whose green status the anchor does NOT
-/// vouch for.
+/// vouch for. The committed delta comes from the object DB and is always
+/// available; the staged/unstaged/untracked scan requires a work tree, so it is
+/// skipped for a no-worktree repo (there is nothing uncommitted to find there).
 fn changed_since(repo: &Path, anchor: &str) -> Vec<String> {
     let mut set: BTreeSet<String> = BTreeSet::new();
     for f in git_lines(repo, &["diff", "--name-only", &format!("{anchor}..HEAD")]) {
         set.insert(f);
     }
-    for f in git_lines(repo, &["diff", "--name-only", "HEAD"]) {
-        set.insert(f);
-    }
-    for f in git_lines(repo, &["ls-files", "--others", "--exclude-standard"]) {
-        set.insert(f);
+    if is_work_tree(repo) {
+        for f in git_lines(repo, &["diff", "--name-only", "HEAD"]) {
+            set.insert(f);
+        }
+        for f in git_lines(repo, &["ls-files", "--others", "--exclude-standard"]) {
+            set.insert(f);
+        }
     }
     set.into_iter().collect()
 }
@@ -552,6 +569,95 @@ fn read_stdin_lines() -> Vec<String> {
     let mut s = String::new();
     std::io::stdin().read_to_string(&mut s).ok();
     s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+}
+
+/// The reverie git rev PINNED by a hermit commit, read from that commit's
+/// Cargo.lock (`source = "git+…/reverie.git?rev=<hex>#…"`). This is the reverie
+/// baseline the anchor's full green actually validated against. None if the pin
+/// cannot be derived (=> caller falls back to conservative FULL for reverie).
+fn reverie_pin_at(hermit: &Path, anchor: &str) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(hermit)
+        .args(["show", &format!("{anchor}:Cargo.lock")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_reverie_rev(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Pure parse: pull the reverie git rev out of a Cargo.lock body. Looks for the
+/// `reverie.git?rev=<hex>` marker Cargo writes into a `source = "git+…"` line and
+/// returns the leading hex run (>=7 chars). Kept separate from the git shell-out
+/// so it can be exercised directly by the self-test.
+fn parse_reverie_rev(text: &str) -> Option<String> {
+    let marker = "reverie.git?rev=";
+    for line in text.lines() {
+        if let Some(i) = line.find(marker) {
+            let rest = &line[i + marker.len()..];
+            let hex: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            if hex.len() >= 7 {
+                return Some(hex);
+            }
+        }
+    }
+    None
+}
+
+/// Changed paths across BOTH product repos, expressed PARENT-relative so they
+/// match the backend-crate rules. Hermit paths are used verbatim (the anchor is
+/// a hermit SHA); reverie paths are prefixed `reverie/`. The reverie baseline is
+/// the rev PINNED at the hermit anchor (its Cargo.lock) — the reverie tree the
+/// green was actually taken against. If that pin cannot be derived, or the
+/// commit is not present in the local reverie checkout, we inject a sentinel
+/// `reverie/…` path that classifies to FULL: a reverie change we cannot bound is
+/// never silently omitted. This is what lets a real reverie-kvm-only change be
+/// SEEN here at all — a hermit-only diff can never contain a `reverie/` path.
+fn changed_cross_repo(
+    hermit: &Path,
+    reverie: &Path,
+    anchor: &str,
+    notes: &mut Vec<String>,
+) -> Vec<String> {
+    let mut set: BTreeSet<String> = changed_since(hermit, anchor).into_iter().collect();
+    match reverie_pin_at(hermit, anchor) {
+        Some(rev) => {
+            let present = Command::new("git")
+                .arg("-C")
+                .arg(reverie)
+                .args(["cat-file", "-e", &format!("{rev}^{{commit}}")])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let short = &rev[..rev.len().min(12)];
+            if present {
+                let rfiles = changed_since(reverie, &rev);
+                for f in &rfiles {
+                    set.insert(format!("reverie/{f}"));
+                }
+                notes.push(format!(
+                    "reverie: {} path(s) changed vs pinned baseline {} (from hermit anchor Cargo.lock)",
+                    rfiles.len(),
+                    short
+                ));
+            } else {
+                set.insert("reverie/__UNRESOLVED_BASELINE__/marker".into());
+                notes.push(format!(
+                    "reverie: baseline {short} not present in local checkout -> conservative FULL for reverie"
+                ));
+            }
+        }
+        None => {
+            set.insert("reverie/__UNRESOLVED_BASELINE__/marker".into());
+            notes.push(
+                "reverie: could not derive pin from hermit anchor Cargo.lock -> conservative FULL for reverie"
+                    .into(),
+            );
+        }
+    }
+    set.into_iter().collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -743,6 +849,11 @@ fn main() {
     let mut no_fetch = false;
     let mut emit_dag_lane: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
+    let mut reverie = PathBuf::from("reverie");
+    let mut run = false;
+    let mut verb = "run".to_string();
+    let mut run_dag: Option<PathBuf> = None;
+    let mut passthrough: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -755,6 +866,11 @@ fn main() {
             "--format" => { format = need(&args, i); i += 2; }
             "--emit-dag" => { emit_dag_lane = Some(need(&args, i)); i += 2; }
             "--out" => { out_path = Some(PathBuf::from(need(&args, i))); i += 2; }
+            "--reverie" => { reverie = PathBuf::from(need(&args, i)); i += 2; }
+            "--run" => { run = true; i += 1; }
+            "--verb" => { verb = need(&args, i); i += 2; }
+            "--run-dag" => { run_dag = Some(PathBuf::from(need(&args, i))); i += 2; }
+            "--" => { passthrough = args[i + 1..].to_vec(); break; }
             "--files" => {
                 if args.get(i + 1).map(|s| s.as_str()) == Some("-") {
                     explicit_files = Some(read_stdin_lines());
@@ -782,14 +898,23 @@ fn main() {
         None => resolve_anchor(&ci_hub, &branch, no_fetch),
     };
 
-    // Changed paths: explicit list wins; else diff since the anchor.
-    let files = match (&explicit_files, &anchor) {
-        (Some(f), _) => f.clone(),
-        (None, Some(a)) => changed_since(&hermit, &a.sha),
+    // Changed paths: explicit list wins; else CROSS-REPO diff since the anchor
+    // (hermit paths verbatim + reverie paths prefixed `reverie/`, baselined at
+    // the reverie rev PINNED by the anchor's Cargo.lock). A hermit-only diff can
+    // never contain a `reverie/` path, so this cross-repo diff is what makes the
+    // owner's reverie-kvm-only case observable — and thus narrowable — at all.
+    let mut diff_notes: Vec<String> = Vec::new();
+    let (files, mut sel) = match (&explicit_files, &anchor) {
+        (Some(f), _) => (f.clone(), select(&dag, f)),
+        (None, Some(a)) => {
+            let f = changed_cross_repo(&hermit, &reverie, &a.sha, &mut diff_notes);
+            let s = select(&dag, &f);
+            (f, s)
+        }
         (None, None) => {
             // No anchor and no explicit files: cannot establish a delta.
             // Conservative FULL with an explicit reason.
-            let sel = Selection {
+            let s = Selection {
                 decision: Decision::Full,
                 selected: dag.all_ids(),
                 reasons: vec![
@@ -797,12 +922,10 @@ fn main() {
                      (one hop cannot be established)".into(),
                 ],
             };
-            finish(&dag, &hermit, &anchor, &[], &sel, &format, &emit_dag_lane, &out_path);
-            return;
+            (Vec::new(), s)
         }
     };
 
-    let mut sel = select(&dag, &files);
     if anchor.is_none() && sel.decision != Decision::Full {
         // Without a proven full-green anchor the delta is meaningless: nothing
         // vouches for the un-run steps. Fail safe to FULL.
@@ -815,7 +938,128 @@ fn main() {
         };
     }
 
+    for n in &diff_notes {
+        eprintln!("anchored-test-selection: {n}");
+    }
+
     finish(&dag, &hermit, &anchor, &files, &sel, &format, &emit_dag_lane, &out_path);
+
+    // --run: actually EXECUTE the selection through run-dag.sh so CI consumes the
+    // subset. This closes the loop anchor -> diff -> subset DAG -> run-dag runs
+    // ONLY that subset. Without --run the tool is report-only (back-compatible).
+    if run {
+        let run_dag = run_dag.unwrap_or_else(|| hermit.join("ci/run-dag.sh"));
+        if !run_dag.is_file() {
+            fail(&format!("--run: run-dag.sh not found at {}", run_dag.display()));
+        }
+        let rc = run_selection(&hermit, &run_dag, &verb, &sel, &passthrough);
+        std::process::exit(rc);
+    }
+}
+
+/// Execute the selection through run-dag.sh, one invocation per lane that has at
+/// least one selected node. This is the consumer wiring: for a Selective
+/// decision we emit a dependency-closed subset DAG per lane and hand it to
+/// run-dag.sh via RUN_DAG_FILE_OVERRIDE, so the runner executes ONLY that slice;
+/// a lane with zero selected nodes is NOT invoked at all (the whole lane is
+/// skipped — that is where the wall-time win comes from). Full runs both lanes
+/// with no override; Skip runs nothing. Every lane invocation is wall-timed and
+/// reported, so an under-run or a lane that was silently skipped is observable.
+fn run_selection(
+    hermit: &Path,
+    run_dag: &Path,
+    verb: &str,
+    sel: &Selection,
+    passthrough: &[String],
+) -> i32 {
+    const LANES: [&str; 2] = ["portable", "privileged"];
+    let mut overall_rc = 0;
+
+    match sel.decision {
+        Decision::Skip => {
+            eprintln!(
+                "anchored-test-selection: [SKIP] all changes inert -> 0 lanes invoked (nothing to run)"
+            );
+            return 0;
+        }
+        Decision::Full => {
+            eprintln!(
+                "anchored-test-selection: [FULL] running BOTH lanes with no override (conservative full suite)"
+            );
+            for lane in LANES {
+                let start = std::time::Instant::now();
+                let rc = exec_run_dag(run_dag, lane, verb, None, passthrough);
+                let secs = start.elapsed().as_secs_f64();
+                eprintln!(
+                    "anchored-test-selection: lane '{lane}' {verb} -> rc={rc} wall={secs:.1}s"
+                );
+                if rc != 0 {
+                    overall_rc = rc;
+                }
+            }
+        }
+        Decision::Selective => {
+            for lane in LANES {
+                let prefix = format!("{lane}:");
+                let n = sel.selected.iter().filter(|id| id.starts_with(&prefix)).count();
+                if n == 0 {
+                    eprintln!(
+                        "anchored-test-selection: [SELECTIVE] lane '{lane}': 0 selected nodes -> \
+                         WHOLE LANE SKIPPED (not invoked)"
+                    );
+                    continue;
+                }
+                let out = std::env::temp_dir().join(format!("anchored-subset-{lane}.json"));
+                let emitted = emit_dag(hermit, lane, sel, &out);
+                eprintln!(
+                    "anchored-test-selection: [SELECTIVE] lane '{lane}': {emitted} node(s) -> {}",
+                    out.display()
+                );
+                let start = std::time::Instant::now();
+                let rc = exec_run_dag(run_dag, lane, verb, Some(&out), passthrough);
+                let secs = start.elapsed().as_secs_f64();
+                eprintln!(
+                    "anchored-test-selection: lane '{lane}' {verb} -> rc={rc} wall={secs:.1}s"
+                );
+                if rc != 0 {
+                    overall_rc = rc;
+                }
+            }
+        }
+    }
+    overall_rc
+}
+
+/// One run-dag.sh invocation. `override_dag` (when set) is passed as
+/// RUN_DAG_FILE_OVERRIDE so the runner executes exactly that subset DAG while
+/// still labeling the lane. A non-`run` verb (list/ascii/dot/json) is forwarded
+/// as run-dag.sh's first positional so it can inspect without executing.
+fn exec_run_dag(
+    run_dag: &Path,
+    lane: &str,
+    verb: &str,
+    override_dag: Option<&Path>,
+    passthrough: &[String],
+) -> i32 {
+    let mut cmd = Command::new("bash");
+    cmd.arg(run_dag).arg(lane);
+    if verb != "run" {
+        cmd.arg(verb);
+    }
+    cmd.args(passthrough);
+    if let Some(o) = override_dag {
+        cmd.env("RUN_DAG_FILE_OVERRIDE", o);
+    }
+    match cmd.status() {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!(
+                "anchored-test-selection: cannot exec {}: {e}",
+                run_dag.display()
+            );
+            2
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -874,7 +1118,20 @@ steps SELECTED and SKIPPED. Conservative: any unmapped path -> full suite.
   --emit-dag <lane>  write a dependency-closed subset DAG for <lane>
                      (portable|privileged) so run-dag.sh can execute it
   --out <path>       output path for --emit-dag (default /tmp/anchored-<lane>.json)
+  --reverie <dir>    reverie checkout for cross-repo diff (default: reverie)
+  --run              EXECUTE the selection: run each lane with >=1 selected node
+                     through run-dag.sh with a subset-DAG override; a lane with 0
+                     selected nodes is not invoked. Report-only without this flag.
+  --verb <v>         run-dag verb: run (default) | list | ascii | dot | json
+  --run-dag <path>   run-dag.sh to invoke (default: <hermit>/ci/run-dag.sh)
+  --                 everything after is forwarded verbatim to run-dag.sh
+                     (e.g. -- -j 8 --max-mem 32G)
   --self-test        run built-in unit tests and exit non-zero on failure
+
+CROSS-REPO DIFF: with an anchor and no explicit --files, paths changed since the
+anchor are collected across BOTH hermit (verbatim) and reverie (prefixed
+`reverie/`, baselined at the reverie rev pinned in the anchor's Cargo.lock). A
+reverie baseline that cannot be derived or fetched => conservative FULL.
 
 ONE HOP: the anchor must be a FULL green (selection_mode==full); newest-green
 already guarantees this and we re-assert it. No full-green anchor => full run.
@@ -1000,6 +1257,24 @@ fn self_test() {
 
     // dependency closure is transitive (parity -> build.manifest_guests -> e2e.metadata).
     check("closure pulls e2e.metadata for kvm", kvm.selected.contains("privileged:e2e.metadata"));
+
+    // --- reverie pin parser (cross-repo baseline derivation) ---
+    let lock = "\
+name = \"reverie\"\n\
+version = \"0.1.0\"\n\
+source = \"git+https://github.com/rrnewton/reverie.git?rev=79517704abc1234def567890abcdef1234567890#79517704\"\n";
+    check(
+        "parse_reverie_rev finds the pinned rev",
+        parse_reverie_rev(lock).as_deref() == Some("79517704abc1234def567890abcdef1234567890"),
+    );
+    check(
+        "parse_reverie_rev None when no reverie git source",
+        parse_reverie_rev("name = \"serde\"\nsource = \"registry+https://crates.io\"\n").is_none(),
+    );
+    check(
+        "parse_reverie_rev stops at non-hex delimiter",
+        parse_reverie_rev("...reverie.git?rev=deadbeef#deadbeef").as_deref() == Some("deadbeef"),
+    );
 
     drop(check);
     println!("\n{total} check(s), {failures} failure(s)");
