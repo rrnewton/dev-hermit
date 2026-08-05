@@ -70,11 +70,32 @@ class ObligationStoreTest(unittest.TestCase):
             self.store,
         )
         self.assertEqual(updated["github"]["run_ids"], [123])
-        self.assertEqual(updated["local"]["state"], "pending")
+        self.assertEqual(updated["local"]["state"], "not_started")
         lines = [json.loads(line) for line in self.store.read_text().splitlines()]
         self.assertEqual(len(lines), 2)
         self.assertNotEqual(lines[0]["event_id"], lines[1]["event_id"])
         self.assertEqual(obligations.get_record("test-obligation", self.store), updated)
+
+    def test_compare_and_append_allows_only_one_launch_claim(self) -> None:
+        opened = self.create()
+        first = obligations.transition_if_matches(
+            "test-obligation",
+            "launch-claimed",
+            {"launch": {"state": "launching", "token": "winner"}},
+            {"event_id": opened["event_id"]},
+            self.store,
+        )
+        self.assertIsNotNone(first)
+        lost = obligations.transition_if_matches(
+            "test-obligation",
+            "launch-claimed",
+            {"launch": {"state": "launching", "token": "loser"}},
+            {"event_id": opened["event_id"]},
+            self.store,
+        )
+        self.assertIsNone(lost)
+        latest = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(latest["launch"]["token"], "winner")
 
     def test_duplicate_open_sha_is_rejected(self) -> None:
         record = self.create()

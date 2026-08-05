@@ -232,13 +232,13 @@ versioned repository/workflow/job policy; an unsupported repository or a
 `--source` checkout whose `origin` names another repository is refused before
 merge instead of creating an obligation no verifier can satisfy. Omitting
 `--source` selects the canonical `hermit/` or `reverie/` checkout from `--repo`;
-Reverie never inherits Hermit's default. Arming
-appends that OPEN event to
+Reverie never inherits Hermit's default. Arming appends that OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
 1. clones the obligation's registered source repository into
    `ignored/ci-hub/obligations/<id>/hermit`, checks out the exact landed commit
-   detached, and runs full `./validate.sh --no-label-pr`;
+   detached, runs full `./validate.sh --no-label-pr`, and dereferences the
+   canonical counted exact-SHA receipt with `ci-hub validate-status`;
 2. dereferences the policy-bound jobs from their exact workflow runs for the
    same SHA, dispatching the workflows only when GitHub `main` still equals
    that SHA; and
@@ -271,15 +271,33 @@ are `landed_sha → gha-runs.csv:head_sha`, `landed_sha → local-runs.csv:git_s
 and `github.run_ids → gha-runs.csv:run_id`.
 
 This is a write-ahead, crash-recoverable protocol, **not an atomic transaction
-with GitHub**. A merge can complete before arming; the machine-local intent lets
-ORC recover that window when the same workspace returns. Raw merges bypass the
-intent, and loss of the workspace/disk loses its machine-local recovery state.
+with GitHub**. An OPEN row is not proof that its producers were armed. The
+launcher claims an append-only token, each local runner and watcher registers
+its own PID against a component token, and the intent becomes `armed` only after
+both registrations are durable. Recovery audits that evidence even when the
+intent already says `armed`; abandoned `pending`/`starting` claims are
+idempotently resumed, while compare-and-append claims prevent concurrent
+recoverers from starting duplicate producers. A merge can complete before
+arming; the machine-local intent lets ORC recover that window when the same
+workspace returns. Raw merges bypass the intent, and loss of the workspace/disk
+loses its machine-local recovery state.
+
+A local `validate.sh` exit code is never green authority by itself. Local green
+requires the persisted canonical `validate-status --sha ... --repo ... --json`
+report and its digest: `VALIDATED`, a nonzero qualifying count, full profile and
+selection, a passing dereferenced receipt, and exact landed-SHA provenance.
+Legacy bare greens are rechecked and become `no_result` when that authority
+refuses them. The current direct-SHA report does not expose repository identity,
+so Reverie's local leg remains conservatively `no_result`; its exact hosted 2/2
+job set can still satisfy the OR policy.
 
 Either exact-SHA green satisfies the obligation immediately; a pending,
 running, absent, or cancelled/no-result peer is supplemental and never becomes
-an AND gate. Queued and in-progress producer states remain `pending` and
-`running` in the durable record. The global watcher includes satisfied records
-with either state, so a watcher restart cannot lose the peer's eventual result.
+an AND gate. `pending` and `running` are reserved for dereferenced queued or
+executing producers: a missing workflow/run/job has no producer and is recorded
+as `no_result`. The global watcher reconciles stale producer-looking states and
+includes satisfied records with a real in-flight producer, so a watcher restart
+cannot preserve a fake pending state or lose the peer's eventual result.
 A simultaneously known green/red pair is a symmetric, P0
 `investigation_required` disagreement and never reaches the remediation
 actuator. If an already-started peer later reports red, evaluation reopens the

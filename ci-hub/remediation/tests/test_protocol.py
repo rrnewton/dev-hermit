@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -87,6 +90,85 @@ def hosted_evidence(
             run["status"] = "queued"
             run["conclusion"] = None
     return list(runs.values())
+
+
+def counted_receipt_report(sha: str = SHA) -> dict:
+    return {
+        "schema_version": 1,
+        "sha": sha,
+        "verdict": "VALIDATED",
+        "exit_code": 0,
+        "qualifying_count": 1,
+        "disqualified_count": 0,
+        "newest_qualifying": {
+            "finished_at": "2026-08-05T00:10:00Z",
+            "host": "test-host",
+            "profile": "full",
+            "selection_mode": "full",
+            "result": "pass",
+            "real_seconds": 10.0,
+            "user_seconds": 8.0,
+            "sys_seconds": 2.0,
+            "slot": "test",
+        },
+        "ledger": "/durable/validate-run-ledger.jsonl",
+    }
+
+
+def verified_local_receipt(sha: str = SHA) -> dict:
+    report = counted_receipt_report(sha)
+    canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "state": "verified",
+        "authority": "ci-hub-validate-status",
+        "repo": "rrnewton/hermit",
+        "command": [
+            str(protocol.LOCAL_RECEIPT_AUTHORITY),
+            "validate-status",
+            "--sha",
+            sha,
+            "--repo",
+            "rrnewton/hermit",
+            "--json",
+        ],
+        "checked_at": "2026-08-05T00:11:00Z",
+        "semantic_contract": dict(protocol.LOCAL_RECEIPT_CONTRACT),
+        "returncode": 0,
+        "report": report,
+        "report_sha256": hashlib.sha256(canonical).hexdigest(),
+        "reason": None,
+    }
+
+
+def local_green(sha: str = SHA) -> dict:
+    return {
+        "state": "green",
+        "exit_code": 0,
+        "finished_at": "2026-08-05T00:11:00Z",
+        "receipt_verification": verified_local_receipt(sha),
+    }
+
+
+def durable_launch_patch() -> dict:
+    return {
+        "launch": {
+            "state": "armed",
+            "token": "test-launch-token",
+            "launcher_pid": None,
+            "armed_at": "2026-08-05T00:12:00Z",
+        },
+        "local": {
+            "state": "no_result",
+            "started_at": "2026-08-05T00:10:00Z",
+            "finished_at": "2026-08-05T00:11:00Z",
+        },
+        "watcher": {
+            "state": "running",
+            "pid": protocol.os.getpid(),
+            "started_at": "2026-08-05T00:10:00Z",
+            "finished_at": None,
+        },
+    }
 
 
 class ProtocolTest(unittest.TestCase):
@@ -356,6 +438,9 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(payload["merge_commit_oid"], replay)
 
     def transition(self, patch: dict) -> dict:
+        patch = json.loads(json.dumps(patch))
+        if (patch.get("local") or {}).get("state") == "green":
+            patch["local"] = {**local_green(), **patch["local"]}
         return obligations.transition(
             "test-obligation", "test-transition", patch, self.store
         )
@@ -565,6 +650,32 @@ class ProtocolTest(unittest.TestCase):
                 self.assertEqual(patch["github"]["state"], "green")
                 self.assertEqual(patch["github"]["positive_count"], 2)
 
+    def test_only_a_dereferenced_producer_can_be_pending_or_running(self) -> None:
+        policy = protocol.verification_policy_for_repo("rrnewton/reverie")
+        absent = protocol._github_patch([], SHA, policy)["github"]
+        self.assertEqual(absent["state"], "no_result")
+        self.assertTrue(all(job["state"] == "no_result" for job in absent["jobs"]))
+
+        queued = protocol._github_patch(
+            hosted_evidence("rrnewton/reverie", job_states=("pending", "green")),
+            SHA,
+            policy,
+        )["github"]
+        self.assertEqual(queued["state"], "pending")
+        self.assertIsInstance(queued["jobs"][0]["run_id"], int)
+        self.assertIsInstance(queued["jobs"][0]["job_id"], int)
+
+        mismatched = {
+            "local": {"state": "no_result"},
+            "github": {
+                "state": "pending",
+                "run_ids": [11],
+                "jobs": [{"state": "pending", "run_id": 12}],
+            },
+        }
+        self.assertFalse(protocol._verification_in_flight(mismatched))
+        self.assertTrue(protocol._verification_state_needs_reconcile(mismatched))
+
     def test_hosted_authority_rejects_missing_skipped_duplicate_and_vacuous_sets(
         self,
     ) -> None:
@@ -724,9 +835,21 @@ class ProtocolTest(unittest.TestCase):
             obligation_id="legacy-existing",
             path=self.store,
         )
-        with mock.patch.object(protocol, "main") as arm:
+
+        def resume(_arguments):
+            protocol.bind_verification_policy(
+                "legacy-existing",
+                self.store,
+                requested_policy=intent["verification_policy"],
+            )
+            obligations.transition(
+                "legacy-existing", "launch-armed", durable_launch_patch(), self.store
+            )
+            return 0
+
+        with mock.patch.object(protocol, "main", side_effect=resume) as arm:
             code, obligation_id = land_and_arm.arm_sha(intent, SHA)
-        arm.assert_not_called()
+        arm.assert_called_once()
         self.assertEqual(code, 0)
         self.assertEqual(obligation_id, "legacy-existing")
         record = obligations.get_record("legacy-existing", self.store)
@@ -756,7 +879,10 @@ class ProtocolTest(unittest.TestCase):
             path=self.store,
         )
         obligations.transition(
-            "older-closed", "satisfied", {"overall_state": "satisfied"}, self.store
+            "older-closed",
+            "satisfied",
+            {"overall_state": "satisfied", **durable_launch_patch()},
+            self.store,
         )
         obligations.create_obligation(
             repo=args.repo,
@@ -765,9 +891,21 @@ class ProtocolTest(unittest.TestCase):
             obligation_id="current-open",
             path=self.store,
         )
-        with mock.patch.object(protocol, "main") as arm:
+
+        def resume(_arguments):
+            protocol.bind_verification_policy(
+                "current-open",
+                self.store,
+                requested_policy=intent["verification_policy"],
+            )
+            obligations.transition(
+                "current-open", "launch-armed", durable_launch_patch(), self.store
+            )
+            return 0
+
+        with mock.patch.object(protocol, "main", side_effect=resume) as arm:
             code, obligation_id = land_and_arm.arm_sha(intent, SHA)
-        arm.assert_not_called()
+        arm.assert_called_once()
         self.assertEqual((code, obligation_id), (0, "current-open"))
         self.assertEqual(
             obligations.get_record("current-open", self.store)["verification_policy"],
@@ -798,7 +936,10 @@ class ProtocolTest(unittest.TestCase):
             path=self.store,
         )
         obligations.transition(
-            "older-closed", "satisfied", {"overall_state": "satisfied"}, self.store
+            "older-closed",
+            "satisfied",
+            {"overall_state": "satisfied", **durable_launch_patch()},
+            self.store,
         )
 
         def arm(_arguments):
@@ -813,7 +954,7 @@ class ProtocolTest(unittest.TestCase):
             obligations.transition(
                 "newly-satisfied",
                 "satisfied",
-                {"overall_state": "satisfied"},
+                {"overall_state": "satisfied", **durable_launch_patch()},
                 self.store,
             )
             return 0
@@ -843,6 +984,20 @@ class ProtocolTest(unittest.TestCase):
             "cpu_seconds": 0.0,
             "basis": "test",
         }
+
+        def register_spawn(arguments, _log_path):
+            arguments = list(arguments)
+            obligation_id = (
+                arguments[1] if arguments[0] == "_local-run" else arguments[2]
+            )
+            token = arguments[arguments.index("--launch-token") + 1]
+            store = Path(arguments[arguments.index("--store") + 1])
+            if arguments[0] == "_local-run":
+                protocol._register_local_runner(obligation_id, token, store, pid=101)
+                return 101
+            protocol._register_watcher(obligation_id, token, store, pid=102)
+            return 102
+
         with (
             mock.patch.object(
                 protocol, "resolve_landed_sha", return_value=REVERIE_LANDED_SHA
@@ -850,7 +1005,8 @@ class ProtocolTest(unittest.TestCase):
             mock.patch.object(
                 protocol, "estimate_local_validate_cost", return_value=estimate
             ),
-            mock.patch.object(protocol, "_spawn_detached", side_effect=(101, 102)),
+            mock.patch.object(protocol, "_spawn_detached", side_effect=register_spawn),
+            mock.patch.object(protocol, "_pid_alive", return_value=True),
             mock.patch.object(protocol, "ensure_github_verification"),
             redirect_stdout(io.StringIO()),
         ):
@@ -861,6 +1017,115 @@ class ProtocolTest(unittest.TestCase):
             opened["verification_policy"],
             protocol.verification_policy_for_repo("rrnewton/reverie"),
         )
+        armed = obligations.get_record(opened["obligation_id"], self.store)
+        self.assertTrue(protocol.obligation_launch_durable(armed))
+        self.assertEqual(armed["watcher"]["state"], "running")
+
+    def test_recovery_reuses_live_legacy_producers_without_duplicate_spawn(
+        self,
+    ) -> None:
+        self.create()
+        obligations.transition(
+            "test-obligation",
+            "legacy-live-producers",
+            {
+                "local": {
+                    "state": "running",
+                    "pid": protocol.os.getpid(),
+                    "started_at": "2026-08-05T00:10:00Z",
+                    "launch_token": None,
+                },
+                "watcher": {
+                    "state": None,
+                    "pid": protocol.os.getpid(),
+                    "started_at": "2026-08-05T00:10:00Z",
+                    "launch_token": None,
+                },
+            },
+            self.store,
+        )
+        with (
+            mock.patch.object(protocol, "_spawn_detached") as spawn,
+            mock.patch.object(protocol, "ensure_github_verification"),
+        ):
+            record, error = protocol.resume_obligation_launch(
+                "test-obligation",
+                source=self.root,
+                store_path=self.store,
+                github_wait_seconds=1,
+                poll_seconds=1,
+                allow_dispatch=False,
+            )
+        spawn.assert_not_called()
+        self.assertIsNone(error)
+        self.assertTrue(protocol.obligation_launch_durable(record))
+
+    def test_live_launch_owner_blocks_duplicate_resumer(self) -> None:
+        self.create()
+        obligations.transition(
+            "test-obligation",
+            "launch-claimed",
+            {
+                "launch": {
+                    "state": "launching",
+                    "token": "first-owner",
+                    "launcher_pid": 98765,
+                    "attempt": 1,
+                }
+            },
+            self.store,
+        )
+        with mock.patch.object(protocol, "_pid_alive", return_value=True):
+            with self.assertRaisesRegex(protocol.LaunchBusy, "live pid 98765"):
+                protocol._claim_obligation_launch("test-obligation", self.store)
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["launch"]["token"], "first-owner")
+        self.assertEqual(record["launch"]["attempt"], 1)
+
+    def test_concurrent_launch_claims_choose_one_owner_without_duplicates(self) -> None:
+        self.create()
+        ready = threading.Barrier(2)
+
+        def claim() -> str:
+            ready.wait()
+            try:
+                return protocol._claim_obligation_launch("test-obligation", self.store)[
+                    0
+                ]
+            except protocol.LaunchBusy:
+                return "busy"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(claim) for _ in range(2)]
+            outcomes = [future.result() for future in futures]
+        self.assertCountEqual(outcomes, ["owner", "busy"])
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["launch"]["state"], "launching")
+        self.assertEqual(record["launch"]["attempt"], 1)
+
+    def test_green_launch_requires_full_persisted_receipt_binding(self) -> None:
+        self.create()
+        obligations.transition(
+            "test-obligation",
+            "forged-receipt-state",
+            {
+                "launch": {"state": "armed"},
+                "local": {
+                    "state": "green",
+                    "finished_at": "2026-08-05T00:11:00Z",
+                    "receipt_verification": {"state": "verified"},
+                },
+                "watcher": {
+                    "state": "running",
+                    "pid": protocol.os.getpid(),
+                    "started_at": "2026-08-05T00:10:00Z",
+                },
+            },
+            self.store,
+        )
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertFalse(protocol._local_launch_durable(record))
+        self.assertFalse(protocol.obligation_launch_durable(record))
 
     def test_legacy_reverie_obligation_recovers_append_only_via_rust_workflow(
         self,
@@ -929,10 +1194,29 @@ class ProtocolTest(unittest.TestCase):
         responses = [
             subprocess.CompletedProcess([], 0, json.dumps(run_payload), ""),
             subprocess.CompletedProcess([], 0, json.dumps(jobs_payload), ""),
+            subprocess.CompletedProcess(
+                [],
+                4,
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "sha": REVERIE_LANDED_SHA,
+                        "verdict": "NOT-VALIDATED",
+                        "exit_code": 4,
+                        "qualifying_count": 0,
+                        "disqualified_count": 0,
+                        "newest_qualifying": None,
+                        "ledger": "/durable/validate-run-ledger.jsonl",
+                    }
+                ),
+                "",
+            ),
         ]
         with mock.patch.object(protocol, "_run", side_effect=responses) as run:
             record = protocol.poll_obligation(obligation_id, self.store)
         self.assertEqual(record["overall_state"], "satisfied")
+        self.assertEqual(record["local"]["state"], "no_result")
+        self.assertEqual(record["local"]["receipt_verification"]["state"], "refused")
         self.assertEqual(record["github"]["run_ids"], [30978954323])
         self.assertTrue(self.store.read_bytes().startswith(before))
         events = [json.loads(line) for line in self.store.read_text().splitlines()]
@@ -945,7 +1229,9 @@ class ProtocolTest(unittest.TestCase):
         )
         self.assertIn("/30978954323/jobs?", run.call_args_list[1].args[0][-1])
 
-    def test_green_local_stops_poll_errors_after_one_append(self) -> None:
+    def test_reverie_bare_local_green_is_not_preserved_without_hosted_result(
+        self,
+    ) -> None:
         obligation_id = "reverie-poll-error"
         obligations.create_obligation(
             repo="rrnewton/reverie",
@@ -964,19 +1250,31 @@ class ProtocolTest(unittest.TestCase):
             },
             self.store,
         )
-        with mock.patch.object(
-            protocol,
-            "github_runs",
-            side_effect=protocol.ProtocolError("simulated GitHub query failure"),
-        ) as runs:
+        refused = {
+            "state": "refused",
+            "authority": "ci-hub-validate-status",
+            "repo": "rrnewton/reverie",
+            "reason": "canonical direct-SHA receipt is not repository-bound",
+        }
+        with (
+            mock.patch.object(
+                protocol,
+                "github_runs",
+                side_effect=protocol.ProtocolError("simulated GitHub query failure"),
+            ) as runs,
+            mock.patch.object(
+                protocol, "verify_local_receipt", return_value=(False, refused)
+            ),
+        ):
             first = protocol.poll_obligation(obligation_id, self.store)
             second = protocol.poll_obligation(obligation_id, self.store)
-        self.assertEqual(first["overall_state"], "satisfied")
-        self.assertEqual(second["overall_state"], "satisfied")
-        self.assertEqual(runs.call_count, 1)
+        self.assertEqual(first["overall_state"], "open")
+        self.assertEqual(second["overall_state"], "open")
+        self.assertEqual(first["local"]["state"], "no_result")
+        self.assertEqual(runs.call_count, 2)
         events = [json.loads(line) for line in self.store.read_text().splitlines()]
         self.assertEqual(
-            sum(event["event_type"] == "github-poll-error" for event in events), 1
+            sum(event["event_type"] == "github-poll-error" for event in events), 2
         )
 
     def test_invalid_persisted_policy_cannot_be_or_satisfied(self) -> None:
@@ -1201,7 +1499,11 @@ class ProtocolTest(unittest.TestCase):
                 obligation_id,
                 "legs",
                 {
-                    "local": {"state": local_state},
+                    "local": (
+                        local_green()
+                        if local_state == "green"
+                        else {"state": local_state}
+                    ),
                     "github": {"state": github_state},
                 },
                 store,
@@ -1255,6 +1557,39 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(reopened["alert"]["severity"], "P0")
         self.assertEqual(reopened["alert"]["action"], "investigate")
         self.assertTrue(protocol._watch_complete(reopened))
+
+    def test_global_watch_clears_fake_pending_when_no_producer_exists(self) -> None:
+        self.create()
+        self.transition(
+            {
+                "local": local_green(),
+                "github": {
+                    "state": "pending",
+                    "run_ids": [],
+                    "jobs": [],
+                },
+            }
+        )
+        seeded = obligations.get_record("test-obligation", self.store)
+        self.assertFalse(protocol._verification_in_flight(seeded))
+        self.assertTrue(protocol._verification_state_needs_reconcile(seeded))
+        protocol.evaluate_obligation("test-obligation", store_path=self.store)
+        with mock.patch.object(protocol, "github_runs", return_value=[]):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    protocol.watch(
+                        store_path=self.store,
+                        obligation_id=None,
+                        once=True,
+                        poll_seconds=1,
+                    ),
+                    0,
+                )
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["overall_state"], "satisfied")
+        self.assertEqual(record["github"]["state"], "no_result")
+        self.assertFalse(protocol._verification_in_flight(record))
+        self.assertTrue(protocol._watch_complete(record))
 
     def test_authoritative_github_red_still_reverts_after_lone_local_guard(
         self,
@@ -1503,7 +1838,9 @@ class ProtocolTest(unittest.TestCase):
                 obligation_id,
                 "legs",
                 {
-                    "local": {"state": states[0]},
+                    "local": (
+                        local_green() if states[0] == "green" else {"state": states[0]}
+                    ),
                     "github": {"state": states[1]},
                 },
                 store,
@@ -1566,6 +1903,87 @@ class ProtocolTest(unittest.TestCase):
             "WATCH OBLIGATIONS: checked=0 unresolved=0 remediation_required=0",
         )
 
+    def test_canonical_local_receipt_positive_and_fail_closed_negatives(self) -> None:
+        valid = counted_receipt_report()
+        with mock.patch.object(
+            protocol,
+            "_run",
+            return_value=subprocess.CompletedProcess([], 0, json.dumps(valid), ""),
+        ):
+            accepted, evidence = protocol.verify_local_receipt("rrnewton/hermit", SHA)
+        self.assertTrue(accepted)
+        self.assertEqual(evidence["state"], "verified")
+        self.assertEqual(evidence["report"]["qualifying_count"], 1)
+        self.assertEqual(evidence["semantic_contract"]["executed_tests"], ">0")
+
+        negatives = {
+            "bare-rc0": "",
+            "malformed": "{not-json",
+            "vacuous": json.dumps(
+                {**valid, "qualifying_count": 0, "newest_qualifying": None}
+            ),
+            "wrong-sha": json.dumps({**valid, "sha": NEXT_SHA}),
+            "partial-profile": json.dumps(
+                {
+                    **valid,
+                    "newest_qualifying": {
+                        **valid["newest_qualifying"],
+                        "profile": "quick",
+                    },
+                }
+            ),
+        }
+        for name, output in negatives.items():
+            with (
+                self.subTest(name=name),
+                mock.patch.object(
+                    protocol,
+                    "_run",
+                    return_value=subprocess.CompletedProcess([], 0, output, ""),
+                ),
+            ):
+                accepted, evidence = protocol.verify_local_receipt(
+                    "rrnewton/hermit", SHA
+                )
+            self.assertFalse(accepted)
+            self.assertEqual(evidence["state"], "refused")
+
+        with mock.patch.object(
+            protocol,
+            "_run",
+            return_value=subprocess.CompletedProcess([], 0, json.dumps(valid), ""),
+        ):
+            accepted, evidence = protocol.verify_local_receipt("rrnewton/reverie", SHA)
+        self.assertFalse(accepted)
+        self.assertIn("not repository-bound", evidence["reason"])
+
+    def test_bare_local_green_is_downgraded_without_counted_receipt(self) -> None:
+        self.create()
+        self.transition(
+            {
+                "local": {
+                    "state": "green",
+                    "exit_code": 0,
+                    "receipt_verification": None,
+                },
+                "github": {"state": "no_result"},
+            }
+        )
+        refused = {
+            "state": "refused",
+            "authority": "ci-hub-validate-status",
+            "repo": "rrnewton/hermit",
+            "reason": "canonical verifier reported no qualifying counted receipt",
+        }
+        with mock.patch.object(
+            protocol, "verify_local_receipt", return_value=(False, refused)
+        ):
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store
+            )
+        self.assertEqual(record["local"]["state"], "no_result")
+        self.assertEqual(record["overall_state"], "open")
+
     def test_local_run_persists_tool_cost_payload(self) -> None:
         self.create()
         workspace = self.root / "ignored/ci-hub/obligations/test-obligation"
@@ -1616,6 +2034,13 @@ class ProtocolTest(unittest.TestCase):
                 }
                 cost_path.parent.mkdir(parents=True, exist_ok=True)
                 cost_path.write_text(json.dumps(payload))
+            if "validate-status" in command:
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(counted_receipt_report()),
+                    stderr="",
+                )
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         source = self.root / "source"
@@ -1628,6 +2053,7 @@ class ProtocolTest(unittest.TestCase):
         record = obligations.get_record("test-obligation", self.store)
         self.assertEqual(record["local"]["cost"]["actual"]["cpu_seconds"], 20.0)
         self.assertEqual(record["local"]["cost"]["record_path"], str(cost_path))
+        self.assertEqual(record["local"]["receipt_verification"]["state"], "verified")
 
 
 class GithubStateClassificationTest(unittest.TestCase):
@@ -1678,7 +2104,7 @@ class GithubStateClassificationTest(unittest.TestCase):
                 "ob-green-local-noresult",
                 "legs",
                 {
-                    "local": {"state": "green", "exit_code": 0},
+                    "local": local_green(),
                     "github": {"state": "no_result"},
                 },
                 store,
@@ -1958,6 +2384,12 @@ class LocalRedispatchTest(unittest.TestCase):
     def _seed(self, patch: dict) -> None:
         obligations.transition("ob", "seed", patch, self.store)
 
+    def _spawn_and_register(self, arguments, _log_path):
+        arguments = list(arguments)
+        token = arguments[arguments.index("--launch-token") + 1]
+        protocol._register_local_runner("ob", token, self.store, pid=4321)
+        return 4321
+
     def test_no_result_local_re_dispatches_and_never_remediates(self) -> None:
         self._seed(
             {
@@ -1972,7 +2404,7 @@ class LocalRedispatchTest(unittest.TestCase):
             }
         )
         with mock.patch.object(
-            protocol, "_spawn_detached", return_value=4321
+            protocol, "_spawn_detached", side_effect=self._spawn_and_register
         ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 record = protocol.poll_obligation("ob", self.store)
@@ -1995,7 +2427,7 @@ class LocalRedispatchTest(unittest.TestCase):
             }
         )
         with mock.patch.object(
-            protocol, "_spawn_detached", return_value=4321
+            protocol, "_spawn_detached", side_effect=self._spawn_and_register
         ) as spawn, mock.patch.object(protocol, "github_runs", return_value=[]):
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 record = protocol.poll_obligation("ob", self.store)

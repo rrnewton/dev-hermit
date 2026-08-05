@@ -113,23 +113,7 @@ def observe_merged_sha(
 
 
 def _existing_obligation(repo: str, sha: str, store: Path) -> dict[str, Any] | None:
-    matches = [
-        record
-        for record in obligations.latest_records(store).values()
-        if record.get("repo") == repo
-        and record.get("landed_sha") == sha
-        and record.get("overall_state") not in obligations.CLOSED_STATES
-    ]
-    if not matches:
-        return None
-    return max(
-        matches,
-        key=lambda record: (
-            str(record.get("updated_at") or ""),
-            str(record.get("opened_at") or ""),
-            str(record.get("obligation_id") or ""),
-        ),
-    )
+    return protocol.recoverable_obligation(repo, sha, store)
 
 
 def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
@@ -154,14 +138,8 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         Path(str(raw_source)) if raw_source is not None else None,
     )
     store = Path(str(intent["store"]))
-    existing = _existing_obligation(repo, sha, store)
-    if existing is not None:
-        protocol.bind_verification_policy(
-            str(existing["obligation_id"]), store, requested_policy=policy
-        )
-        return 0, str(existing["obligation_id"])
-    prior_ids = {
-        str(record["obligation_id"])
+    prior_records = {
+        str(record["obligation_id"]): str(record.get("event_id") or "")
         for record in obligations.latest_records(store).values()
         if record.get("repo") == repo and record.get("landed_sha") == sha
     }
@@ -186,13 +164,18 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         str(store),
     ]
     code = protocol.main(arguments)
-    matching = [
+    all_matching = [
         record
         for record in obligations.latest_records(store).values()
-        if record.get("repo") == repo
-        and record.get("landed_sha") == sha
-        and str(record.get("obligation_id")) not in prior_ids
+        if record.get("repo") == repo and record.get("landed_sha") == sha
     ]
+    matching = [
+        record
+        for record in all_matching
+        if str(record.get("obligation_id")) not in prior_records
+        or str(record.get("event_id") or "")
+        != prior_records[str(record.get("obligation_id"))]
+    ] or all_matching
     record = (
         max(
             matching,
@@ -203,9 +186,11 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
             ),
         )
         if matching
-        else _existing_obligation(repo, sha, store)
+        else None
     )
-    return code, str(record["obligation_id"]) if record is not None else None
+    if record is None or not protocol.obligation_launch_durable(record):
+        return code or 2, None
+    return code, str(record["obligation_id"])
 
 
 def _new_intent(args: argparse.Namespace, command: Sequence[str]) -> dict[str, Any]:
@@ -336,8 +321,26 @@ def recover_intent(path: Path, *, observe_timeout: int) -> int:
         raise LandError(f"cannot read recovery intent {path}: {error}") from error
     if not isinstance(intent, dict) or intent.get("schema_version") != 1:
         raise LandError(f"unsupported recovery intent: {path}")
-    if intent.get("state") in {"armed", "land-command-failed"}:
+    if intent.get("state") == "land-command-failed":
         return 0
+    if intent.get("state") == "armed":
+        obligation_id = intent.get("obligation_id")
+        if isinstance(obligation_id, str):
+            try:
+                record = obligations.get_record(
+                    obligation_id, Path(str(intent["store"]))
+                )
+            except obligations.StoreError:
+                record = None
+            if record is not None and protocol.obligation_launch_durable(record):
+                return 0
+        # "armed" is a cache, not authority.  A missing/incomplete obligation
+        # falls back into the same idempotent resume path as merged-unarmed.
+        intent.update(
+            state="merged-unarmed",
+            error="cached armed state lacked durable verifier/watcher evidence",
+        )
+        _atomic_json(path, intent)
     sha = intent.get("landed_sha")
     if not isinstance(sha, str) or not obligations.SHA_RE.fullmatch(sha):
         state, observed = _pr_state(str(intent["repo"]), int(intent["pr"]))
