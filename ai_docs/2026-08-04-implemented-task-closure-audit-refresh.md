@@ -195,6 +195,74 @@ not-landed result:
 - `tg_implemented_tag_landmine`
 - `tick-hub-usage-audit`
 
+### Why the 38 are unverifiable
+
+This is not one failure mode. The task-to-PR join already exists and landed at
+parent SHA `0411f7f36dd5d7ac0affec3c9fc3b9b59423d6f3`. The 38 divide into four
+different evidence repairs:
+
+**PR URL exists elsewhere, but not in an implementation-bound handoff (5).**
+The URL may be the deliverable, a prerequisite, or merely an evidence subject;
+the task must say which before ancestry can authorize closure.
+
+- `cgroups-opt-out-with-small-default-cap`
+- `dbi-ci-timeout-investigation`
+- `fix-execd-sibling-admission-quiescence`
+- `fix_reverie_359_e9patch`
+- `force-skid-witness-injection`
+
+**Non-PR artifact or research language, with no implementation PR binding
+(22).** These require task-specific artifact verification, not a fabricated PR
+join.
+
+- `benchmark-writeup-and-skill`
+- `cargo-lock-contention-serializes-the-dag-regardless-of-width`
+- `dbt-ratchet-round2-nongated`
+- `gvisor-systrap-benchmark-repro`
+- `is-portable-ci-usable-at-all-evidence`
+- `job_cpu_at_kill`
+- `kvm_only_pipe2_o`
+- `landing-skills-redundancy-and-discoverability`
+- `liteinst-lane-restaffed-ratchet-toward-ptrace-envelope`
+- `narrow-fix-for-vfork-reap-livelock-without-rollback-regression`
+- `nightly-demo-sweep-ci`
+- `pipelined-rebase-front-for-the-23-head-drain`
+- `prs-predating-commit-anchoring-can-never-produce-a-qualifying-receipt`
+- `rb-drb-modern-frontier-research`
+- `reverie-pin-is-one-fact-in-twenty-places`
+- `safe-ci-dag-runner-library-mode`
+- `scheduler-vtime-jump-unproductive-pollers`
+- `sprint-fbsource-mini-release-import`
+- `study-min-vtime-scheduler-alternatives`
+- `super-validate-audit`
+- `tg_implemented_tag_landmine`
+- `tick-hub-usage-audit`
+
+**A full SHA appears, but no repository-bound PR or durable artifact identifies
+what the SHA proves (7).** Repair by naming the repository and whether the SHA
+is a direct-main landing, branch handoff, or evidence input; then run the
+appropriate ancestry or artifact verifier.
+
+- `drain_1556_soft_landed`
+- `every-agentic-command-needs-quickstart`
+- `fix-pr1180-rustdoc-link`
+- `gvisor-writeup-overhaul-colleague-ready`
+- `pr_359_correct_vendored`
+- `relocate-tick-hub-config-into-version-control`
+- `retired_agents_leave_detached`
+
+**No PR URL, durable artifact marker, or full SHA exists (4).** These require a
+new evidence note before any landing or goal claim can be evaluated.
+
+- `a-pass-row-must-carry-its-profile-partial-profiles-read-as-green`
+- `add-dont-break-demos-principle`
+- `audit-every-merge-gate-requirement-has-a-signer`
+- `policy-demo-touching-commits-mandatory-adversarial-review`
+
+The four causes sum to 38 (5 + 22 + 7 + 4). A PR-only join can improve only the
+first group. The other 33 need typed direct-main, artifact, or missing-evidence
+handling.
+
 ## Closure rule
 
 Only the three goal-met tasks are supported closure candidates. The 27 residual
