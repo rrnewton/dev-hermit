@@ -1,0 +1,12 @@
+metric,backend,result,detail
+cold_build,,exit_0,"wall=167.34s (2:47.34); user=2208.46s; sys=323.49s; maxRSS=2461560KB; THIRD_PARTY_BUILD_JOBS=32; isolated CARGO_HOME"
+cold_source_fetch,,proven,"cargo 'Updating git submodule': rrnewton/dynamorio.git, DynamoRIO/elfutils.git, GJDuck/e9patch.git, rrnewton/SaBRe.git"
+dynamorio_compile,,compiled_from_scratch,"libdynamorio_static.a/.o + libdynamorio.so under target/debug/build/reverie-dbi-*/out/dynamorio-build/"
+submodule_autoinit,,asserted,"fresh clone uninitialized; make->checkout-all ran 'git submodule update --init --recursive' (agent-utils, third-party/rr)"
+backend_run,ptrace,PASS,exit 0 (core)
+backend_run,liteinst,PASS,exit 0 (core)
+backend_run,dbi,PASS,exit 0 (third-party/DynamoRIO)
+backend_run,sabre,PASS,exit 0 (third-party)
+backend_run,e9patch,PASS,exit 0 (third-party)
+backend_run,kvm,STALL,"SIGKILL@170s, zero output even at RUST_LOG=info; core backend; 3pai sandbox KVM-ioctl/nested-virt limitation (env, not build)"
+backend_wiring,all,PASS,"CLI enum [ptrace, dbi, liteinst, sabre, kvm, e9patch]; third-party trio present only when compiled in"

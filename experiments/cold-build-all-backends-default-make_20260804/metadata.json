@@ -1,0 +1,41 @@
+{
+  "experiment": "cold-build-all-backends-default-make",
+  "date": "2026-08-04",
+  "question": "Does a clean checkout + plain `make` cold-build and wire all six backends (incl. third-party native deps compiled from scratch) and auto-init its submodule deps?",
+  "repos": {
+    "hermit_main_sha": "fc0b76adc59d0d0b686d8a7d6b8babca7a0a11b1",
+    "hermit_pr_1433_merge_sha": "88d3d019f7de967071122fd0ebb18b1b16e9354d",
+    "reverie_git_dep_rev": "79517704b0d19eeb3c4c234d0bfbe9f0a17c1199"
+  },
+  "method": {
+    "clone": "fresh local clone of primary hermit at origin/main (submodules left uninitialized)",
+    "cargo_home": "fresh isolated CARGO_HOME (empty) to force cold fetch+build of reverie git dep and its DynamoRIO/e9patch/SaBRe submodules",
+    "third_party_build_jobs": 32,
+    "build_command": "/usr/bin/time -v make   (default goal: build -> prune-stale-release, install-deps -> cargo build -p hermit --features third-party-backends)",
+    "per_backend_command": "hermit run --backend <b> --sequentialize-threads --max-timeslice=disabled /bin/true"
+  },
+  "host": {
+    "hostname": "devbig014.atn7.facebook.com",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316,
+    "sandbox": "3pai agent sandbox"
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)",
+    "cmake": "3.31.8",
+    "cc": "gcc 11.5.0 (Red Hat 11.5.0-15)"
+  },
+  "cold_build": {
+    "make_exit": 0,
+    "wall_seconds": 167.34,
+    "wall_hms": "2:47.34",
+    "user_seconds": 2208.46,
+    "sys_seconds": 323.49,
+    "max_rss_kbytes": 2461560,
+    "cold_source_fetch_submodules": ["rrnewton/dynamorio.git", "DynamoRIO/elfutils.git", "GJDuck/e9patch.git", "rrnewton/SaBRe.git"],
+    "dynamorio_compiled_artifacts": ["libdynamorio_static.a", "libdynamorio_static.o", "libdynamorio.so"],
+    "resulting_binary": "target/debug/hermit @ gfc0b76adc59d"
+  },
+  "cli_backend_enum": ["ptrace", "dbi", "liteinst", "sabre", "kvm", "e9patch"]
+}
