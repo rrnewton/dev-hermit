@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -31,6 +32,9 @@ def _fixture(tmp_path: Path) -> tuple[Path, str, Path, dict[str, str]]:
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
+    log = tmp_path / "validate.log"
+    log.write_text("fixture validation log\n")
+    log_digest = hashlib.sha256(log.read_bytes()).hexdigest()
     row = {
         "schema_version": 6,
         "commit": sha,
@@ -43,6 +47,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, str, Path, dict[str, str]]:
         "executed_tests": 740,
         "filtered_tests": 3,
         "finished_at": "2026-08-05T00:10:00Z",
+        "log_file": str(log),
+        "source_log_sha256": log_digest,
         "coverage": {
             "planned_test_nodes": 4,
             "executed_test_nodes": 4,
@@ -79,7 +85,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, str, Path, dict[str, str]]:
 def _validate(repo: Path, sha: str, ledger: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(CI_HUB), "validate-status", "--sha", sha, "--ledger", str(ledger),
-         "--hermit-repo", str(repo), "--json"],
+         "--hermit-repo", str(repo), "--repo", "rrnewton/hermit", "--json"],
         capture_output=True, text=True, env=env, timeout=60,
     )
 
@@ -87,7 +93,7 @@ def _validate(repo: Path, sha: str, ledger: Path, env: dict[str, str]) -> subpro
 def _bulk(repo: Path, ledger: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(CI_HUB), "ledger", "qualified-rows", "--ledger", str(ledger),
-         "--hermit-repo", str(repo)],
+         "--hermit-repo", str(repo), "--repo", "rrnewton/hermit"],
         capture_output=True, text=True, env=env, timeout=60,
     )
 
@@ -168,6 +174,39 @@ def test_tampered_binding_refuses_every_executable_view(tmp_path: Path) -> None:
     assert json.loads(verdict.stdout)["qualifying_count"] == 0
     assert bulk.returncode == 0
     assert bulk.stdout == ""
+
+
+def test_receipt_repo_cannot_select_the_trusted_target(tmp_path: Path) -> None:
+    repo, sha, ledger, env = _fixture(tmp_path)
+    row = json.loads(ledger.read_text())
+    row["repo"] = "reverie"
+    ledger.write_text(json.dumps(row) + "\n")
+    verdict = _validate(repo, sha, ledger, env)
+    bulk = _bulk(repo, ledger, env)
+    assert verdict.returncode == 4
+    assert json.loads(verdict.stdout)["qualifying_count"] == 0
+    assert bulk.stdout == ""
+
+
+def test_explicit_reverie_target_accepts_full_sha_and_refuses_prefix(tmp_path: Path) -> None:
+    _repo, sha, ledger, env = _fixture(tmp_path)
+    row = json.loads(ledger.read_text())
+    row["repo"] = "reverie"
+    row.pop("reverie_binding")
+    ledger.write_text(json.dumps(row) + "\n")
+    command = [
+        str(CI_HUB), "ledger", "qualified-rows", "--ledger", str(ledger),
+        "--repo", "rrnewton/reverie",
+    ]
+    full = subprocess.run(command, capture_output=True, text=True, env=env, timeout=60)
+    assert full.returncode == 0
+    assert len(full.stdout.splitlines()) == 1
+
+    row["commit"] = sha[:12]
+    ledger.write_text(json.dumps(row) + "\n")
+    short = subprocess.run(command, capture_output=True, text=True, env=env, timeout=60)
+    assert short.returncode == 0
+    assert short.stdout == ""
 
 
 def test_all_authoritative_non_rust_consumers_delegate_to_cli() -> None:

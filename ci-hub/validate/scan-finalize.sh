@@ -5,16 +5,15 @@
 # cannot reach the parent count helper (DEV_HERMIT_PARENT unset in the slot /
 # systemd-run producer env -> executed_tests/filtered_tests stay null). With the
 # uncounted-receipt grandfather REMOVED (ci-hub/lib/validate_status.rs), such a
-# receipt is NotValidated. This helper re-mints a count-backed schema-5 row for
+# receipt is NotValidated. This helper appends a count/log/dependency-bound schema-6 row for
 # every count-less clean/full/pass green from that green's OWN durable log,
 # BEFORE a landing consumer reads the ledger -- so a genuine green is never
 # stranded merely because the producer failed to inline its counts.
 #
-# SAFETY: finalize_receipt.py --scan is APPEND-ONLY (O_APPEND) and idempotent (a
-# sha already carrying a satisfied schema-5 row is skipped), so it races no
-# concurrent validate.sh appender and can run on every landing. It NEVER
-# fabricates: a row whose log is gone ("no-log") or whose manifest is not
-# derivable at that sha ("no-manifest") is reported and skipped, not minted. It
+# SAFETY: finalize_receipt.py --scan is lock-serialized, APPEND-ONLY, and
+# content-idempotent, so it races no concurrent validate.sh appender. It NEVER
+# fabricates: a row whose log is gone ("no-log") or either required manifest is
+# absent/malformed ("no-manifest") is reported and skipped, not minted. It
 # is best-effort: this script always exits 0 -- the authoritative gate remains
 # validate-status, which fail-closes (NotValidated) if minting did not happen.
 #
@@ -53,7 +52,8 @@ if [ ! -d "$hermit_checkout/.git" ] && [ ! -f "$hermit_checkout/.git" ]; then
   echo "scan-finalize: SKIP (hermit checkout $hermit_checkout is not a git repo)"; exit 0
 fi
 
-out=$(python3 "$finalizer" --scan --ledger "$ledger" --hermit-checkout "$hermit_checkout" 2>&1)
+out=$(python3 "$finalizer" --scan --repo rrnewton/hermit --ledger "$ledger" \
+  --hermit-checkout "$hermit_checkout" 2>&1)
 rc=$?
 printf '%s\n' "$out" | sed 's/^/scan-finalize: /'
 if [ "$rc" -ne 0 ]; then

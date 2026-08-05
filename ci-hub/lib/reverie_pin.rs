@@ -85,9 +85,34 @@ fn bounded_ls_remote(remote: &str) -> Result<Output, String> {
         command.arg("with-proxy");
     }
     command.args(["git", "ls-remote", "--exit-code", remote, REVERIE_MAIN_REF]);
+    sanitize_git_environment(&mut command);
     command
         .output()
         .map_err(|error| format!("could not launch bounded Reverie main resolution: {error}"))
+}
+
+/// Keep caller-controlled Git locator state and replacement refs from changing
+/// the object/ref that this authority observes.  In particular, a
+/// `refs/replace/<tree>` entry can otherwise make `cat-file -t <tree>` report
+/// `commit`, defeating the exact-object check.
+fn sanitize_git_environment(command: &mut Command) {
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+    ] {
+        command.env_remove(variable);
+    }
+    command.env("GIT_NO_REPLACE_OBJECTS", "1");
 }
 
 /// Resolve the live Reverie main ref exactly once for one caller decision.
@@ -122,10 +147,10 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repo).args(args);
+    sanitize_git_environment(&mut command);
+    command
         .output()
         .map_err(|error| format!("could not launch git in {}: {error}", repo.display()))
 }
@@ -185,25 +210,53 @@ fn record_pin(
 }
 
 fn collect_dependency_spec(
+    dependency_name: &str,
     value: &toml::Value,
     path: &str,
     pins: &mut BTreeSet<String>,
     occurrences: &mut usize,
 ) -> Result<(), String> {
-    let Some(table) = value.as_table() else {
+    let table = value.as_table();
+    let package_name = table
+        .and_then(|fields| fields.get("package"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(dependency_name);
+    let git = table
+        .and_then(|fields| fields.get("git"))
+        .and_then(toml::Value::as_str);
+    let semantic_reverie = dependency_name.starts_with("reverie")
+        || package_name.starts_with("reverie")
+        || git.is_some_and(|source| reverie_repository_identity(source).is_some());
+    if !semantic_reverie {
         return Ok(());
-    };
-    if let Some(git) = table.get("git").and_then(toml::Value::as_str) {
-        if is_expected_reverie_source(git)? {
-            let rev = table
-                .get("rev")
-                .and_then(toml::Value::as_str)
-                .ok_or_else(|| {
-                    format!("{path} has a semantic Reverie git dependency without a pinned rev")
-                })?;
-            record_pin(path, rev, pins, occurrences)?;
-        }
     }
+    let Some(table) = table else {
+        return Err(format!(
+            "{path} has non-Git Reverie dependency {dependency_name:?}"
+        ));
+    };
+    // `workspace = true` is an indirection to the root workspace dependency;
+    // that root specification and Cargo.lock are scanned independently. Every
+    // other semantic Reverie dependency must itself name the expected Git
+    // authority and exact revision. This prevents a current-pin decoy from
+    // masking the actual path/registry/version dependency.
+    if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) && git.is_none() {
+        return Ok(());
+    }
+    let git =
+        git.ok_or_else(|| format!("{path} has non-Git Reverie dependency {dependency_name:?}"))?;
+    if !is_expected_reverie_source(git)? {
+        return Err(format!(
+            "{path} has Reverie dependency {dependency_name:?} from a non-Reverie source"
+        ));
+    }
+    let rev = table
+        .get("rev")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| {
+            format!("{path} has a semantic Reverie git dependency without a pinned rev")
+        })?;
+    record_pin(path, rev, pins, occurrences)?;
     Ok(())
 }
 
@@ -216,8 +269,8 @@ fn collect_dependency_table(
     let Some(table) = value.and_then(toml::Value::as_table) else {
         return Ok(());
     };
-    for dependency in table.values() {
-        collect_dependency_spec(dependency, path, pins, occurrences)?;
+    for (name, dependency) in table {
+        collect_dependency_spec(name, dependency, path, pins, occurrences)?;
     }
     Ok(())
 }
@@ -265,20 +318,38 @@ fn collect_manifest_pins(
     Ok(())
 }
 
-fn lock_source_rev(source: &str) -> Result<Option<&str>, String> {
+fn lock_source_rev(source: &str) -> Result<Option<String>, String> {
     if !is_expected_reverie_source(source)? {
         return Ok(None);
     }
-    let query = source
+    let (before_fragment, precise) = source
+        .rsplit_once('#')
+        .ok_or_else(|| "Cargo.lock Reverie source has no precise commit fragment".to_string())?;
+    let query = before_fragment
         .split_once('?')
         .map(|(_, rest)| rest)
-        .and_then(|rest| rest.split('#').next())
         .unwrap_or_default();
-    let rev = query
+    let revisions: Vec<&str> = query
         .split('&')
-        .find_map(|field| field.strip_prefix("rev="))
-        .ok_or_else(|| "Cargo.lock Reverie source has no rev query parameter".to_string())?;
-    Ok(Some(rev))
+        .filter_map(|field| field.strip_prefix("rev="))
+        .collect();
+    if revisions.len() != 1 {
+        return Err(format!(
+            "Cargo.lock Reverie source must carry exactly one rev query parameter: {source:?}"
+        ));
+    }
+    let rev = revisions[0];
+    if !is_full_sha(rev) || !is_full_sha(precise) {
+        return Err(format!(
+            "Cargo.lock Reverie source must carry full lowercase rev and precise commit: {source:?}"
+        ));
+    }
+    if rev != precise {
+        return Err(format!(
+            "Cargo.lock Reverie source rev {rev} disagrees with precise commit {precise}"
+        ));
+    }
+    Ok(Some(rev.to_string()))
 }
 
 fn collect_lock_pins(
@@ -294,9 +365,24 @@ fn collect_lock_pins(
         return Ok(());
     };
     for package in packages.iter().filter_map(toml::Value::as_table) {
-        if let Some(source) = package.get("source").and_then(toml::Value::as_str) {
-            if let Some(rev) = lock_source_rev(source)? {
-                record_pin(path, rev, pins, occurrences)?;
+        let name = package
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default();
+        let source = package.get("source").and_then(toml::Value::as_str);
+        let semantic_reverie = name.starts_with("reverie")
+            || source.is_some_and(|value| reverie_repository_identity(value).is_some());
+        if semantic_reverie && source.is_none() {
+            return Err(format!(
+                "{path} resolves Reverie package {name:?} without the canonical Git source"
+            ));
+        }
+        if let Some(source) = source {
+            if semantic_reverie {
+                let rev = lock_source_rev(source)?.ok_or_else(|| {
+                    format!("{path} resolves Reverie package {name:?} from an unexpected source")
+                })?;
+                record_pin(path, &rev, pins, occurrences)?;
             }
         }
     }
@@ -308,6 +394,15 @@ pub fn pinned_sha_at(repo: &Path, hermit_sha: &str) -> Result<String, String> {
     if !is_full_sha(hermit_sha) {
         return Err(format!(
             "Hermit commit is not lowercase full SHA: {hermit_sha:?}"
+        ));
+    }
+    let object_type = git_output(repo, ["cat-file", "-t", hermit_sha])?;
+    if !object_type.status.success()
+        || String::from_utf8_lossy(&object_type.stdout).trim() != "commit"
+    {
+        return Err(format!(
+            "exact Hermit object {hermit_sha} in {} is not a commit",
+            repo.display()
         ));
     }
     let tree = git_output(
@@ -579,6 +674,88 @@ mod tests {
         );
         assert_eq!(pinned_sha_at(&locked, &locked_head).unwrap(), pin);
         fs::remove_dir_all(locked).ok();
+    }
+
+    #[test]
+    fn lock_query_and_precise_commit_must_match() {
+        let query = "a".repeat(40);
+        let precise = "b".repeat(40);
+        let lock = format!(
+            "version=3\n[[package]]\nname=\"reverie-core\"\nversion=\"0.1.0\"\nsource=\"git+https://github.com/rrnewton/reverie?rev={query}#{precise}\"\n"
+        );
+        let (repo, head) = temp_repo_with_lock(
+            "lock-mismatched-precise",
+            "[package]\nname=\"fixture\"\nversion=\"0.1.0\"\n",
+            Some(&lock),
+        );
+        assert!(pinned_sha_at(&repo, &head)
+            .unwrap_err()
+            .contains("disagrees with precise commit"));
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn duplicate_lock_rev_and_non_git_actual_dependency_refuse_decoys() {
+        let pin = "a".repeat(40);
+        let duplicate = format!(
+            "version=3\n[[package]]\nname=\"reverie-core\"\nversion=\"0.2.0\"\nsource=\"git+https://github.com/rrnewton/reverie?rev={pin}&rev={pin}#{pin}\"\n"
+        );
+        let (duplicate_repo, duplicate_head) =
+            temp_repo_with_lock("duplicate-lock-rev", &manifest(&pin), Some(&duplicate));
+        assert!(pinned_sha_at(&duplicate_repo, &duplicate_head)
+            .unwrap_err()
+            .contains("exactly one rev"));
+        fs::remove_dir_all(duplicate_repo).ok();
+
+        let decoy = format!(
+            "[package]\nname=\"fixture\"\nversion=\"0.1.0\"\n[dependencies]\nreverie-core={{path=\"vendor/reverie-core\"}}\ndecoy={{git=\"https://github.com/rrnewton/reverie\",rev=\"{pin}\"}}\n"
+        );
+        let (decoy_repo, decoy_head) = temp_repo("path-plus-decoy", &decoy);
+        assert!(pinned_sha_at(&decoy_repo, &decoy_head)
+            .unwrap_err()
+            .contains("non-Git Reverie dependency"));
+        fs::remove_dir_all(decoy_repo).ok();
+    }
+
+    #[test]
+    fn tree_object_cannot_stand_in_for_a_commit() {
+        let pin = "a".repeat(40);
+        let (repo, head) = temp_repo("tree-object", &manifest(&pin));
+        let tree = git_output(&repo, ["rev-parse", &format!("{head}^{{tree}}")]).unwrap();
+        let tree_sha = String::from_utf8(tree.stdout).unwrap().trim().to_string();
+        assert!(pinned_sha_at(&repo, &tree_sha)
+            .unwrap_err()
+            .contains("is not a commit"));
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn replacement_ref_cannot_make_tree_object_a_commit() {
+        let pin = "a".repeat(40);
+        let (repo, head) = temp_repo("replace-tree-object", &manifest(&pin));
+        let tree = git_output(&repo, ["rev-parse", &format!("{head}^{{tree}}")]).unwrap();
+        let tree_sha = String::from_utf8(tree.stdout).unwrap().trim().to_string();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["update-ref", &format!("refs/replace/{tree_sha}"), &head,])
+            .status()
+            .unwrap()
+            .success());
+        let unsafe_type = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["cat-file", "-t", &tree_sha])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&unsafe_type.stdout).trim(),
+            "commit"
+        );
+        assert!(pinned_sha_at(&repo, &tree_sha)
+            .unwrap_err()
+            .contains("is not a commit"));
+        fs::remove_dir_all(repo).ok();
     }
 
     #[test]

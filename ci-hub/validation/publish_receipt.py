@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -76,11 +77,42 @@ def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
     started = "".join(ch for ch in row["started_at"] if ch.isalnum())
     destination = evidence_dir / f"{sha}-{started}.log"
     content = source.read_bytes()
+    source_digest = hashlib.sha256(content).hexdigest()
+    if row.get("source_log_sha256") != source_digest:
+        fail(
+            "selected row source_log_sha256 does not match its exact log_file bytes"
+        )
     if destination.exists() and destination.read_bytes() != content:
         fail(f"durable log path already contains different content: {destination}")
     if not destination.exists():
         destination.write_bytes(content)
     return destination
+
+
+def ledger_snapshot(ledger: Path, repo: str, sha: str) -> list[dict[str, Any]]:
+    """Read one lock-consistent exact-target snapshot without selecting truth."""
+    rows: list[dict[str, Any]] = []
+    try:
+        with ledger.open(encoding="utf-8", errors="replace") as source:
+            fcntl.flock(source.fileno(), fcntl.LOCK_SH)
+            for line in source:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict) or row.get("commit") != sha:
+                    continue
+                row_repo = row.get("repo")
+                if repo == "rrnewton/hermit" and row_repo in (None, "hermit"):
+                    rows.append(row)
+                elif repo == "rrnewton/reverie" and row_repo == "reverie":
+                    rows.append(row)
+            fcntl.flock(source.fileno(), fcntl.LOCK_UN)
+    except OSError as error:
+        fail(f"cannot snapshot ledger {ledger}: {error}")
+    if not rows:
+        fail(f"ledger has no exact-target rows for {repo}@{sha}")
+    return rows
 
 
 def build_receipt(
@@ -91,8 +123,10 @@ def build_receipt(
     *,
     selected_digest: str,
     canonicalization: str,
+    durable_repository: str = RECEIPT_REPO,
 ) -> tuple[dict[str, Any], bytes, str]:
     log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
+    durable_log_path = f"validation-logs/{repo}/{sha}/{log_digest}.log"
     # Host-in-identity (Req2): the receipt identity carries the producing host,
     # so a receipt cannot be read blind to where it was produced and its host
     # field cannot be swapped without breaking this tamper-evident run_id.
@@ -103,7 +137,8 @@ def build_receipt(
         "commit": sha,
         "run_id": run_id,
         "source_log_file": row["log_file"],
-        "durable_log_file": str(durable_log),
+        "durable_log_repository": durable_repository,
+        "durable_log_path": durable_log_path,
         "log_sha256": log_digest,
         "selected_receipt_identity": {
             "digest_algorithm": "sha256",
@@ -210,6 +245,7 @@ def execute(args: argparse.Namespace, canonical_record: bytes) -> dict[str, Any]
         expected_digest=args.selected_receipt_sha256,
         canonicalization=args.canonicalization,
     )
+    rows = ledger_snapshot(args.ledger, args.repo, args.sha)
     durable_log = preserve_log(args.ledger, args.sha, row)
     _receipt, body, digest = build_receipt(
         args.repo,
@@ -218,24 +254,65 @@ def execute(args: argparse.Namespace, canonical_record: bytes) -> dict[str, Any]
         durable_log,
         selected_digest=args.selected_receipt_sha256,
         canonicalization=args.canonicalization,
+        durable_repository=args.receipt_repo,
     )
+    log_body = durable_log.read_bytes()
+    log_digest = hashlib.sha256(log_body).hexdigest()
+    durable_log_path = f"validation-logs/{args.repo}/{args.sha}/{log_digest}.log"
     path = f"validation-receipts/{args.repo}/{args.sha}/{digest}.json"
+    outcome = {
+        "schema_version": 1,
+        "repository": args.repo,
+        "commit": args.sha,
+        "verdict": "VALIDATED",
+        "ledger_records": rows,
+        "selected_receipt_identity": {
+            "digest_algorithm": "sha256",
+            "canonicalization": args.canonicalization,
+            "digest": args.selected_receipt_sha256,
+        },
+        "receipt": {
+            "path": path,
+            "sha256": digest,
+            "durable_log_path": durable_log_path,
+            "durable_log_sha256": log_digest,
+        },
+    }
+    outcome_body = canonical(outcome)
+    outcome_digest = hashlib.sha256(outcome_body).hexdigest()
+    outcome_path = (
+        f"validation-outcomes/{args.repo}/{args.sha}/{outcome_digest}.json"
+    )
     if args.dry_run:
         action = "would-publish"
         commit = None
+        log_commit = None
+        outcome_commit = None
     else:
         action = "published"
+        log_commit = publish(
+            args.receipt_repo, args.receipt_branch, durable_log_path, log_body
+        )
         commit = publish(args.receipt_repo, args.receipt_branch, path, body)
+        outcome_commit = publish(
+            args.receipt_repo, args.receipt_branch, outcome_path, outcome_body
+        )
     return {
         "schema_version": 1,
         "action": action,
-        "receipt_commit": commit,
+        "receipt_commit": outcome_commit if not args.dry_run else commit,
         "receipt_repository": args.receipt_repo,
         "receipt_branch": args.receipt_branch,
         "path": path,
+        "durable_log_path": durable_log_path,
+        "durable_log_sha256": log_digest,
+        "durable_log_commit": log_commit,
         "receipt_identity_sha256": args.selected_receipt_sha256,
         "artifact_sha256": digest,
         "artifact_body": body.decode(),
+        "outcome_path": outcome_path,
+        "outcome_sha256": outcome_digest,
+        "outcome_body": outcome_body.decode(),
     }
 
 

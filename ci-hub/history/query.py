@@ -53,6 +53,7 @@ from check_outcome import (
 )
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # Authoritative main-branch workflow per repo for the green-time metric.
 # Override with --workflow (repeatable). These are the current fork gates; the
@@ -895,7 +896,7 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
 
 
-def load_ledger_index(parent: str) -> dict[str, list[dict]]:
+def load_ledger_index(parent: str, repo: str) -> dict[str, list[dict]]:
     """commit SHA -> rows admitted by the ONE canonical Rust verifier.
 
     No binary/ledger/network/exact-head authority means an empty index (fail
@@ -910,7 +911,7 @@ def load_ledger_index(parent: str) -> dict[str, list[dict]]:
     try:
         proc = subprocess.run(
             [ci_hub, "ledger", "qualified-rows", "--ledger", path,
-             "--hermit-repo", hermit],
+             "--hermit-repo", hermit, "--repo", repo],
             capture_output=True, text=True, timeout=45,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -923,7 +924,7 @@ def load_ledger_index(parent: str) -> dict[str, list[dict]]:
         except ValueError:
             continue
         sha = row.get("commit")
-        if sha:
+        if isinstance(sha, str) and FULL_SHA_RE.fullmatch(sha):
             idx.setdefault(sha, []).append(row)
     return idx
 
@@ -931,17 +932,12 @@ def load_ledger_index(parent: str) -> dict[str, list[dict]]:
 def _ledger_corroborates(idx: dict[str, list[dict]], sha: str) -> bool:
     """True iff the canonical verifier emitted a row for exact `sha`.
 
-    Prefers an exact 40-hex commit match; defensively also accepts a ledger row
-    whose (shorter) stored commit is a prefix of `sha`.
+    Both the workflow SHA and canonical ledger key must be the same full,
+    lowercase 40-hex identity. Prefixes are aliases, not evidence.
     """
-    if not sha:
+    if not FULL_SHA_RE.fullmatch(sha):
         return False
-    candidates = list(idx.get(sha, []))
-    if not candidates:  # defensive short-SHA prefix match only when no exact row
-        for c, rows in idx.items():
-            if c and len(c) < len(sha) and sha.startswith(c):
-                candidates.extend(rows)
-    return bool(candidates)
+    return bool(idx.get(sha))
 
 
 def _split_green_by_ledger(intervals: list[dict],
@@ -980,7 +976,7 @@ def green_time(parent: str, repo: str, since: str | None,
            for k, v in sec.items()}
     # Split the GREEN bucket into ledger-corroborated vs conclusion-only. These
     # are reported SEPARATELY; green_pct stays the combined figure for back-compat.
-    ledger_idx = load_ledger_index(parent)
+    ledger_idx = load_ledger_index(parent, repo)
     g_led_sec, g_concl_sec = _split_green_by_ledger(intervals, ledger_idx)
     green_ledger_hours = round(g_led_sec / 3600.0, 2)
     green_conclusion_only_hours = round(g_concl_sec / 3600.0, 2)

@@ -108,6 +108,35 @@ pub struct QualifyingPredicate {
     pub reverie_binding: ReverieBindingClause,
 }
 
+/// Trusted product identity supplied by the verifier call site. Never derive
+/// this decision from `HistoryRow.repo`: receipt bytes are attacker-controlled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptTarget {
+    Hermit,
+    Reverie,
+}
+
+impl ReceiptTarget {
+    pub fn from_repository(repository: &str) -> Result<Self, String> {
+        match repository.rsplit('/').next() {
+            Some("hermit") => Ok(Self::Hermit),
+            Some("reverie") => Ok(Self::Reverie),
+            _ => Err(format!(
+                "unsupported validation target {repository:?}; expected owner/hermit or owner/reverie"
+            )),
+        }
+    }
+
+    pub fn row_matches(self, row: &HistoryRow) -> bool {
+        match self {
+            // Historical Hermit rows omitted repo. That compatibility does not
+            // let an explicit Reverie row enter the Hermit authority path.
+            Self::Hermit => matches!(row.repo.as_deref(), None | Some("hermit")),
+            Self::Reverie => row.repo.as_deref() == Some("reverie"),
+        }
+    }
+}
+
 impl QualifyingPredicate {
     /// Parse from JSON text, mapping errors to a message that names the source.
     pub fn parse(text: &str, origin: &str) -> Result<Self, String> {
@@ -121,7 +150,18 @@ impl QualifyingPredicate {
 /// the node NAMES in the receipt lets this be re-derived without re-reading a log
 /// (Proxy Binding: the condition travels with the value).
 pub fn coverage_satisfied(cov: &CoverageRow) -> bool {
-    cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
+    cov.planned_test_nodes > 0
+        && cov.executed_test_nodes == cov.planned_test_nodes
+        && cov.zero_executed_nodes.is_empty()
+        && cov.absent_nodes.is_empty()
+        && cov.failed_nodes.is_empty()
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
@@ -130,9 +170,8 @@ pub fn coverage_satisfied(cov: &CoverageRow) -> bool {
 ///
 /// Over and above clean full coverage (the `require` string/bool fields) and
 /// `result == require.result`:
-///   * `failures` (defaulting to 0 when absent) must be `<= require.failures_max`
-///     — belt-and-suspenders with `result == pass`; a `pass`/`failures>0` row is
-///     malformed and must not qualify.
+///   * `failures` must be present and `<= require.failures_max` — missing is not
+///     zero, and a `pass`/`failures>0` row is malformed and must not qualify.
 ///   * a demonstrated zero-test run (`executed_tests == Some(0)`) is never a
 ///     green at any schema — never grandfathered.
 ///   * if `gate_filtered_tests`, additionally require `filtered_tests == 0`.
@@ -150,6 +189,7 @@ pub fn row_qualifies(
     row: &HistoryRow,
     sha: &str,
     pred: &QualifyingPredicate,
+    target: ReceiptTarget,
     expected_reverie: Option<&ReverieBinding>,
 ) -> bool {
     let req = &pred.require;
@@ -158,13 +198,13 @@ pub fn row_qualifies(
         && row.tree_dirty == Some(req.tree_dirty)
         && row.selection_mode.as_deref() == Some(req.selection_mode.as_str())
         && row.profile.as_deref() == Some(req.profile.as_str())
-        && row.result.as_deref() == Some(req.result.as_str()))
+        && row.result.as_deref() == Some(req.result.as_str())
+        && target.row_matches(row))
     {
         return false;
     }
-    // `pass` with a positive failure count is malformed; an absent count on a
-    // pass row is treated as zero (old rows predate the field).
-    if row.failures.unwrap_or(0) > req.failures_max {
+    // Every green carries its observed failure count. Missing is not zero.
+    if !matches!(row.failures, Some(failures) if failures <= req.failures_max) {
         return false;
     }
     // A demonstrated zero-test run is never a full green, at any schema.
@@ -179,7 +219,7 @@ pub fn row_qualifies(
     // Hermit row (historical rows omit `repo`, which means Hermit) must use the
     // new schema and carry the exact dynamic dependency identity. Old rows with
     // only `reverie_pin_current: true` prove no SHA and fail closed.
-    if row.repo.as_deref() != Some("reverie") {
+    if target == ReceiptTarget::Hermit {
         let Some(expected) = expected_reverie else {
             return false;
         };
@@ -194,6 +234,14 @@ pub fn row_qualifies(
         {
             return false;
         }
+        if !row.source_log_sha256.as_deref().is_some_and(is_sha256)
+            || !row
+                .log_file
+                .as_deref()
+                .is_some_and(|path| std::path::Path::new(path).is_absolute())
+        {
+            return false;
+        }
     }
     let count_capable = schema >= pred.counts_schema;
     let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
@@ -202,7 +250,7 @@ pub fn row_qualifies(
         let coverage_ok = !pred.coverage.per_node
             || schema < pred.coverage.applies_at_schema_min
             || row.coverage.as_ref().is_some_and(coverage_satisfied);
-        executed_ok && coverage_ok
+        counts_present && executed_ok && coverage_ok
     } else if counts_present {
         // Old-schema writer that carried counts but predates per-node coverage:
         // hold it to the strongest thing it can prove — nonzero execution.
@@ -330,6 +378,7 @@ mod tests {
             r#"{{"schema_version":6,"profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
                 "executed_tests":740,"filtered_tests":3,
+                "log_file":"/tmp/ci-hub-test.log","source_log_sha256":"1111111111111111111111111111111111111111111111111111111111111111",
                 "coverage":{{"planned_test_nodes":4,"executed_test_nodes":4,
                     "zero_executed_nodes":[],"absent_nodes":[]}},
                 "reverie_binding":{{"repository":"rrnewton/reverie","ref":"refs/heads/main",
@@ -342,11 +391,23 @@ mod tests {
             QualifyingPredicate::parse(&std::fs::read_to_string(&tightened).unwrap(), "tight")
                 .unwrap();
         assert!(
-            row_qualifies(&row, &sha, &live_pred, row.reverie_binding.as_ref()),
+            row_qualifies(
+                &row,
+                &sha,
+                &live_pred,
+                ReceiptTarget::Hermit,
+                row.reverie_binding.as_ref(),
+            ),
             "live must accept the genuine green"
         );
         assert!(
-            !row_qualifies(&row, &sha, &tight_pred, row.reverie_binding.as_ref()),
+            !row_qualifies(
+                &row,
+                &sha,
+                &tight_pred,
+                ReceiptTarget::Hermit,
+                row.reverie_binding.as_ref(),
+            ),
             "tightened must reject it"
         );
         std::fs::remove_dir_all(&dir).ok();

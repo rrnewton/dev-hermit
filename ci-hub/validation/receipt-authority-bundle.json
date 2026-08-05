@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "entrypoint": "ci-hub/validation/verify_receipt_bundle.sh",
+  "required_paths": [
+    "ci-hub/validation/receipt-authority-bundle.json",
+    "ci-hub/validation/verify_receipt_bundle.sh",
+    "ci-hub/validation/verify_receipt.sh",
+    "ci-hub/validation/receipt-comment-contract.json",
+    "ci-hub/validation/publish_receipt.py",
+    "ci-hub/validation/publish_outcome.py",
+    "ci-hub/check_outcome.py",
+    "ci-hub/ci-hub.rs",
+    "ci-hub/lib/history_queries.rs",
+    "ci-hub/lib/landing_lock.rs",
+    "ci-hub/lib/qualifying_receipt.rs",
+    "ci-hub/lib/records.rs",
+    "ci-hub/lib/reverie_pin.rs",
+    "ci-hub/lib/validate_lock.rs",
+    "ci-hub/lib/validate_status.rs",
+    "ci-hub/validate/qualifying-receipt.json",
+    "ci-hub/validate/finalize_receipt.py",
+    "ci-hub/remediation/nonzero_result.py"
+  ]
+}

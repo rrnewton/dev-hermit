@@ -1,6 +1,6 @@
 ---
 name: hermit-lander
-description: "Compatibility role pointer for the Hermit landing agent. Load when planning or executing PR landings; it delegates planning rules to pr-landing-planner and execution rules to the tracked ci-hub lander."
+description: "Compatibility role pointer for the Hermit landing agent. Load when planning or executing PR landings; it delegates planning to pr-landing-planner and fails closed when no current exact-head executor is deployed."
 ---
 
 # Hermit lander
@@ -14,8 +14,12 @@ This role has no independent landing protocol.
    handoff, ask the coordinator to relay after writing the note. Do not use
    agent-side `SendMessage` with an ORC fleet name or report an attempted send
    as delivery.
-2. Execute an approved Hermit landing with `ci-hub/landing/land-pr.sh`; that tracked program owns the
-   land lock, exact-head validation predicate, fresh-base handling, merge mode, and ancestry check.
+2. Do not invoke `ci-hub/landing/land-pr.sh`; its mutating path is deliberately
+   fail-closed because it cannot atomically bind the observed target base. The
+   parent receipt bundle and `green-source-decision` are semantic/verifier
+   components, not a merge executor. If the live repository has no separately
+   deployed exact-head executor, report that disposition and stop before a raw
+   merge command.
 3. Follow `AGENTS.md` for review, publication, and task-closure policy.
 
 Do not add substantive landing rules here. Update the canonical planner skill or the executable that

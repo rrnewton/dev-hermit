@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "producer_role": "[coordinator, gpt-5.6-sol]",
+  "envelope": "<!-- ci-hub-validation-receipt-v1 -->"
+}

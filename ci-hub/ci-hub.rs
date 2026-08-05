@@ -62,6 +62,7 @@ const GATE_FLOOR_POLICY: &str = "registry-effective-floor";
 const VALIDATION_RECEIPT_REPO: &str = "rrnewton/dev-hermit";
 const VALIDATION_RECEIPT_BRANCH: &str = "validation-receipts";
 const RECEIPT_CANONICALIZATION: &str = "serde_json::to_vec(HistoryRow)-v1";
+const RECEIPT_COMMENT_CONTRACT_REL: &str = "ci-hub/validation/receipt-comment-contract.json";
 const ROOT_HELP: &str = r#"Typed front door for dev-hermit CI state and operations
 
 Usage: ci-hub <COMMAND>
@@ -615,6 +616,10 @@ struct QualifiedRowsArgs {
     /// Hermit repository used to dereference exact commit pins.
     #[arg(long, default_value = "hermit")]
     hermit_repo: PathBuf,
+    /// Trusted repository identity for every emitted row. Receipt `repo` bytes
+    /// are checked against this value and never select the verifier path.
+    #[arg(long, default_value = "rrnewton/hermit")]
+    repo: String,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -3473,6 +3478,20 @@ fn describe_record(row: &HistoryRow) -> serde_json::Value {
     })
 }
 
+/// Identity of the exact typed row selected by the Rust authority. Consumers
+/// compare this object byte-for-byte with the immutable receipt's carried
+/// identity; neither shell nor Python reimplements row selection.
+fn receipt_row_identity(row: &HistoryRow) -> Result<serde_json::Value, CiHubError> {
+    let canonical = serde_json::to_vec(row).map_err(|error| {
+        CiHubError::ValidateStatus(format!("cannot canonicalize qualifying row: {error}"))
+    })?;
+    Ok(serde_json::json!({
+        "digest_algorithm": "sha256",
+        "canonicalization": RECEIPT_CANONICALIZATION,
+        "digest": format!("{:x}", Sha256::digest(canonical)),
+    }))
+}
+
 fn history_repo_path(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -4339,28 +4358,46 @@ fn run_green_source_decision(args: GreenSourceDecisionArgs) -> Result<i32, CiHub
 fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
+    let target = qualifying_receipt::ReceiptTarget::from_repository(&args.repo)
+        .map_err(CiHubError::ValidateStatus)?;
     let hermit_repo = history_repo_path(root, &args.hermit_repo);
-    let resolved = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
+    let resolved = if target == qualifying_receipt::ReceiptTarget::Hermit {
+        Some(reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?)
+    } else {
+        None
+    };
     let mut bindings: BTreeMap<String, Result<reverie_pin::ReverieBinding, String>> =
         BTreeMap::new();
     let mut selected = Vec::new();
     for row in &rows {
-        let expected = if row.repo.as_deref() == Some("reverie") {
-            None
-        } else {
-            let Some(sha) = row.commit.as_deref() else {
-                continue;
-            };
-            bindings
-                .entry(sha.to_string())
-                .or_insert_with(|| reverie_pin::verify_exact_head(&hermit_repo, sha, &resolved))
-                .as_ref()
-                .ok()
-        };
         let Some(sha) = row.commit.as_deref() else {
             continue;
         };
-        if qualifying_receipt::row_qualifies(row, sha, qualifying_receipt::active(), expected) {
+        if !reverie_pin::is_full_sha(sha) {
+            continue;
+        }
+        let expected = if target == qualifying_receipt::ReceiptTarget::Hermit {
+            bindings
+                .entry(sha.to_string())
+                .or_insert_with(|| {
+                    reverie_pin::verify_exact_head(
+                        &hermit_repo,
+                        sha,
+                        resolved.as_deref().expect("Hermit target resolved Reverie"),
+                    )
+                })
+                .as_ref()
+                .ok()
+        } else {
+            None
+        };
+        if qualifying_receipt::row_qualifies(
+            row,
+            sha,
+            qualifying_receipt::active(),
+            target,
+            expected,
+        ) {
             selected.push(row.clone());
         }
     }
@@ -4378,9 +4415,11 @@ fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHub
         );
     }
     eprintln!(
-        "qualified-rows: {}/{} canonical exact-dependency greens; reverie-main={resolved}",
+        "qualified-rows: {}/{} canonical exact-dependency greens; target={}; reverie-main={}",
         selected.len(),
-        rows.len()
+        rows.len(),
+        args.repo,
+        resolved.as_deref().unwrap_or("not-applicable"),
     );
     Ok(0)
 }
@@ -4406,8 +4445,10 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
         }
     };
     let hermit_repo = history_repo_path(root, &args.hermit_repo);
+    let target = qualifying_receipt::ReceiptTarget::from_repository(&args.repo)
+        .map_err(CiHubError::ValidateStatus)?;
     let (reverie_binding, reverie_problem, resolved_reverie_sha) =
-        if args.repo.rsplit('/').next() == Some("reverie") {
+        if target == qualifying_receipt::ReceiptTarget::Reverie {
             (None, None, None)
         } else {
             let resolved = reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?;
@@ -4416,8 +4457,23 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                 Err(problem) => (None, Some(problem), Some(resolved)),
             }
         };
-    let assessment = validate_status::assess_with_reverie(&rows, &sha, reverie_binding.as_ref());
+    let assessment =
+        validate_status::assess_with_reverie(&rows, &sha, target, reverie_binding.as_ref());
     let newest = validate_status::newest(&assessment.qualifying);
+    let newest_identity = newest.map(receipt_row_identity).transpose()?;
+    let newest_canonical_hex = newest
+        .map(|row| {
+            serde_json::to_vec(row).map(|bytes| {
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            })
+        })
+        .transpose()
+        .map_err(|error| {
+            CiHubError::ValidateStatus(format!("cannot canonicalize selected receipt: {error}"))
+        })?;
 
     if args.json {
         let report = serde_json::json!({
@@ -4429,6 +4485,8 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "disqualified_count": assessment.disqualified.len(),
             "newest_qualifying": newest.map(describe_record),
             "newest_qualifying_record": newest,
+            "newest_qualifying_identity": newest_identity,
+            "newest_qualifying_canonical_hex": newest_canonical_hex,
             "ledger": path.display().to_string(),
             "reverie_authority": {
                 "resolved_sha": resolved_reverie_sha,
@@ -4501,6 +4559,47 @@ struct VerifiedPublishedReceipt {
     run_id: String,
     executed_tests: i64,
     log_sha256: String,
+    durable_log_path: String,
+    outcome_path: String,
+    outcome_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReceiptCommentContract {
+    schema_version: u64,
+    producer_role: String,
+    envelope: String,
+}
+
+fn receipt_comment_contract(root: &Path) -> Result<ReceiptCommentContract, CiHubError> {
+    let path = root.join(RECEIPT_COMMENT_CONTRACT_REL);
+    let raw = std::fs::read_to_string(&path).map_err(|source| CiHubError::LedgerRead {
+        path: path.clone(),
+        source,
+    })?;
+    let contract: ReceiptCommentContract = serde_json::from_str(&raw).map_err(|error| {
+        CiHubError::ValidateStatus(format!(
+            "invalid receipt comment contract {}: {error}",
+            path.display()
+        ))
+    })?;
+    let role_is_safe = contract.producer_role.starts_with("[coordinator, ")
+        && contract.producer_role.ends_with(']')
+        && !contract.producer_role.contains('\n')
+        && !contract.producer_role.contains('\r');
+    let envelope_is_safe = contract
+        .envelope
+        .starts_with("<!-- ci-hub-validation-receipt-v")
+        && contract.envelope.ends_with(" -->")
+        && !contract.envelope.contains('\n')
+        && !contract.envelope.contains('\r');
+    if contract.schema_version != 1 || !role_is_safe || !envelope_is_safe {
+        return Err(CiHubError::ValidateStatus(format!(
+            "unsafe or unsupported receipt comment contract {}",
+            path.display()
+        )));
+    }
+    Ok(contract)
 }
 
 fn is_lower_hex(value: &str, length: usize) -> bool {
@@ -4641,6 +4740,106 @@ fn verify_publisher_report(
     if !is_lower_hex(log_sha256, 64) {
         return Err("publisher artifact log digest is malformed".into());
     }
+    if selected.source_log_sha256.as_deref() != Some(log_sha256) {
+        return Err("publisher log digest differs from selected row log binding".into());
+    }
+    let expected_log_path = format!("validation-logs/{repo}/{sha}/{log_sha256}.log");
+    if receipt
+        .get("durable_log_repository")
+        .and_then(|value| value.as_str())
+        != Some(VALIDATION_RECEIPT_REPO)
+        || receipt
+            .get("durable_log_path")
+            .and_then(|value| value.as_str())
+            != Some(expected_log_path.as_str())
+        || report
+            .get("durable_log_path")
+            .and_then(|value| value.as_str())
+            != Some(expected_log_path.as_str())
+        || report
+            .get("durable_log_sha256")
+            .and_then(|value| value.as_str())
+            != Some(log_sha256)
+    {
+        return Err("publisher durable log is not repository/content-address bound".into());
+    }
+    let outcome_body = report
+        .get("outcome_body")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted exact outcome body".to_string())?;
+    let outcome_sha256 = report
+        .get("outcome_sha256")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted outcome digest".to_string())?;
+    let actual_outcome_sha256 = format!("{:x}", Sha256::digest(outcome_body.as_bytes()));
+    if !is_lower_hex(outcome_sha256, 64) || outcome_sha256 != actual_outcome_sha256 {
+        return Err("publisher outcome bytes do not match outcome digest".into());
+    }
+    let outcome_path = report
+        .get("outcome_path")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "publisher omitted outcome path".to_string())?;
+    let expected_outcome_path = format!("validation-outcomes/{repo}/{sha}/{outcome_sha256}.json");
+    if outcome_path != expected_outcome_path {
+        return Err("publisher outcome path is not artifact-digest-addressed".into());
+    }
+    let outcome: serde_json::Value = serde_json::from_str(outcome_body)
+        .map_err(|error| format!("publisher outcome body is not JSON: {error}"))?;
+    if outcome
+        .get("schema_version")
+        .and_then(|value| value.as_u64())
+        != Some(1)
+        || outcome.get("repository").and_then(|value| value.as_str()) != Some(repo)
+        || outcome.get("commit").and_then(|value| value.as_str()) != Some(sha)
+        || outcome.get("verdict").and_then(|value| value.as_str()) != Some("VALIDATED")
+        || outcome.get("selected_receipt_identity")
+            != Some(&serde_json::json!({
+                "digest_algorithm": "sha256",
+                "canonicalization": RECEIPT_CANONICALIZATION,
+                "digest": selected_digest,
+            }))
+        || outcome.get("receipt")
+            != Some(&serde_json::json!({
+                "path": path,
+                "sha256": artifact_sha256,
+                "durable_log_path": expected_log_path,
+                "durable_log_sha256": log_sha256,
+            }))
+    {
+        return Err("publisher outcome is not bound to the selected receipt".into());
+    }
+    let snapshot: Vec<HistoryRow> = serde_json::from_value(
+        outcome
+            .get("ledger_records")
+            .cloned()
+            .ok_or_else(|| "publisher outcome omitted ledger snapshot".to_string())?,
+    )
+    .map_err(|error| format!("publisher outcome ledger snapshot is invalid: {error}"))?;
+    let target = qualifying_receipt::ReceiptTarget::from_repository(repo)?;
+    let expected_reverie = if target == qualifying_receipt::ReceiptTarget::Hermit {
+        selected.reverie_binding.as_ref()
+    } else {
+        None
+    };
+    let snapshot_assessment =
+        validate_status::assess_with_reverie(&snapshot, sha, target, expected_reverie);
+    if snapshot_assessment.verdict != validate_status::Verdict::Validated {
+        return Err(format!(
+            "publisher snapshot is {}, not VALIDATED",
+            snapshot_assessment.verdict.as_str()
+        ));
+    }
+    let snapshot_selected = validate_status::newest(&snapshot_assessment.qualifying)
+        .ok_or_else(|| "publisher snapshot has no selected pass".to_string())?;
+    let snapshot_identity = receipt_row_identity(snapshot_selected)
+        .map_err(|error| format!("cannot identify publisher snapshot selection: {error}"))?;
+    if snapshot_identity
+        .get("digest")
+        .and_then(|value| value.as_str())
+        != Some(selected_digest)
+    {
+        return Err("publisher snapshot selected a different pass row".into());
+    }
     let receipt_commit = match report.get("receipt_commit") {
         Some(serde_json::Value::String(value)) if !dry_run && is_lower_hex(value, 40) => {
             Some(value.clone())
@@ -4656,6 +4855,9 @@ fn verify_publisher_report(
         run_id: expected_run_id,
         executed_tests,
         log_sha256: log_sha256.to_string(),
+        durable_log_path: expected_log_path,
+        outcome_path: outcome_path.to_string(),
+        outcome_sha256: outcome_sha256.to_string(),
     })
 }
 
@@ -4739,15 +4941,164 @@ fn publish_selected_receipt(
     .map_err(CiHubError::ValidateStatus)
 }
 
-fn comment_pages_contain_marker(value: &serde_json::Value, marker: &str) -> bool {
+#[derive(Debug)]
+struct PublishedOutcome {
+    path: String,
+    digest: String,
+}
+
+fn publish_nonpass_outcome(
+    root: &Path,
+    ledger: &Path,
+    repo: &str,
+    sha: &str,
+    verdict: validate_status::Verdict,
+    target: qualifying_receipt::ReceiptTarget,
+    expected_reverie: Option<&reverie_pin::ReverieBinding>,
+    dry_run: bool,
+) -> Result<PublishedOutcome, CiHubError> {
+    if verdict == validate_status::Verdict::Validated {
+        return Err(CiHubError::ValidateStatus(
+            "nonpass outcome publisher received VALIDATED".into(),
+        ));
+    }
+    let publisher = root.join("ci-hub/validation/publish_outcome.py");
+    let ledger_arg = ledger.display().to_string();
+    let mut command = Command::new("python3");
+    command
+        .arg(&publisher)
+        .args([
+            "--repo",
+            repo,
+            "--sha",
+            sha,
+            "--ledger",
+            &ledger_arg,
+            "--verdict",
+            verdict.as_str(),
+            "--receipt-repo",
+            VALIDATION_RECEIPT_REPO,
+            "--receipt-branch",
+            VALIDATION_RECEIPT_BRANCH,
+        ])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    if let Some(config_dir) = gh_config_dir() {
+        command.env("GH_CONFIG_DIR", config_dir);
+    }
+    let output = command.output().map_err(|source| CiHubError::Launch {
+        tool: publisher.display().to_string(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(CiHubError::ValidateStatus(format!(
+            "mechanical outcome publisher exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        CiHubError::ValidateStatus(format!("outcome publisher output is not JSON: {error}"))
+    })?;
+    let body = report
+        .get("outcome_body")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| CiHubError::ValidateStatus("outcome publisher omitted body".into()))?;
+    let digest = report
+        .get("outcome_sha256")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| CiHubError::ValidateStatus("outcome publisher omitted digest".into()))?;
+    if !is_lower_hex(digest, 64) || format!("{:x}", Sha256::digest(body.as_bytes())) != digest {
+        return Err(CiHubError::ValidateStatus(
+            "outcome publisher body/digest mismatch".into(),
+        ));
+    }
+    let path = report
+        .get("outcome_path")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| CiHubError::ValidateStatus("outcome publisher omitted path".into()))?;
+    if path != format!("validation-outcomes/{repo}/{sha}/{digest}.json") {
+        return Err(CiHubError::ValidateStatus(
+            "outcome publisher path is not content-addressed".into(),
+        ));
+    }
+    let artifact: serde_json::Value = serde_json::from_str(body).map_err(|error| {
+        CiHubError::ValidateStatus(format!("outcome publisher body is invalid JSON: {error}"))
+    })?;
+    if artifact
+        .get("schema_version")
+        .and_then(|value| value.as_u64())
+        != Some(1)
+        || artifact.get("repository").and_then(|value| value.as_str()) != Some(repo)
+        || artifact.get("commit").and_then(|value| value.as_str()) != Some(sha)
+        || artifact.get("verdict").and_then(|value| value.as_str()) != Some(verdict.as_str())
+        || !artifact
+            .get("receipt")
+            .is_some_and(serde_json::Value::is_null)
+        || !artifact
+            .get("selected_receipt_identity")
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err(CiHubError::ValidateStatus(
+            "outcome publisher artifact binding mismatch".into(),
+        ));
+    }
+    let snapshot: Vec<HistoryRow> = serde_json::from_value(
+        artifact
+            .get("ledger_records")
+            .cloned()
+            .ok_or_else(|| CiHubError::ValidateStatus("outcome omitted ledger snapshot".into()))?,
+    )
+    .map_err(|error| CiHubError::ValidateStatus(format!("invalid outcome snapshot: {error}")))?;
+    let assessment = validate_status::assess_with_reverie(&snapshot, sha, target, expected_reverie);
+    if assessment.verdict != verdict {
+        return Err(CiHubError::ValidateStatus(format!(
+            "outcome snapshot is {}, expected {}",
+            assessment.verdict.as_str(),
+            verdict.as_str()
+        )));
+    }
+    match report.get("outcome_commit") {
+        Some(serde_json::Value::String(commit)) if !dry_run && is_lower_hex(commit, 40) => {}
+        Some(serde_json::Value::Null) if dry_run => {}
+        _ => {
+            return Err(CiHubError::ValidateStatus(
+                "outcome publisher commit does not match execution mode".into(),
+            ))
+        }
+    }
+    Ok(PublishedOutcome {
+        path: path.to_string(),
+        digest: digest.to_string(),
+    })
+}
+
+fn comment_pages_contain_trusted_marker(
+    value: &serde_json::Value,
+    owner: &str,
+    canonical_prefix: &str,
+    marker: &str,
+) -> bool {
     match value {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .any(|value| comment_pages_contain_marker(value, marker)),
-        serde_json::Value::Object(fields) => fields
-            .get("body")
-            .and_then(|value| value.as_str())
-            .is_some_and(|body| body.contains(marker)),
+        serde_json::Value::Array(values) => values.iter().any(|value| {
+            comment_pages_contain_trusted_marker(value, owner, canonical_prefix, marker)
+        }),
+        serde_json::Value::Object(fields) => {
+            let trusted_author = fields
+                .get("user")
+                .and_then(|value| value.get("login"))
+                .and_then(|value| value.as_str())
+                == Some(owner);
+            trusted_author
+                && fields
+                    .get("body")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|body| body.starts_with(canonical_prefix) && body.contains(marker))
+        }
         _ => false,
     }
 }
@@ -4763,6 +5114,12 @@ fn bind_verified_receipt_to_pr(
         .receipt_commit
         .as_deref()
         .ok_or_else(|| CiHubError::ValidateStatus("published receipt has no commit".into()))?;
+    let comment_contract = receipt_comment_contract(root)?;
+    let owner = repo.split('/').next().unwrap_or_default();
+    let canonical_prefix = format!(
+        "{}\n\n{}\n",
+        comment_contract.producer_role, comment_contract.envelope
+    );
     let marker = format!(
         "<!-- locally-validated-receipt commit={receipt_commit} path={} sha256={} -->",
         artifact.path, artifact.artifact_sha256
@@ -4784,15 +5141,18 @@ fn bind_verified_receipt_to_pr(
         serde_json::from_slice(&comments.stdout).map_err(|error| {
             CiHubError::ValidateStatus(format!("invalid issue comments JSON: {error}"))
         })?;
-    if !comment_pages_contain_marker(&comments_json, &marker) {
+    if !comment_pages_contain_trusted_marker(&comments_json, owner, &canonical_prefix, &marker) {
         let pr_arg = pr.to_string();
         let body = format!(
-            "[coordinator, gpt-5.6-sol]\n\nLocal validation receipt verified by Rust before applying `{LOCALLY_VALIDATED_LABEL}`.\n\n- SHA: `{sha}`\n- Run ID: `{}`\n- Executed tests: `{}`\n- Receipt identity SHA-256: `{}`\n- Immutable artifact: `{VALIDATION_RECEIPT_REPO}@{receipt_commit}:{}`\n- Artifact SHA-256: `{}`\n- Log SHA-256: `{}`\n\n{marker}",
+            "{}\n\n{}\n\nLocal validation receipt verified by Rust before applying `{LOCALLY_VALIDATED_LABEL}`.\n\n- SHA: `{sha}`\n- Run ID: `{}`\n- Executed tests: `{}`\n- Receipt identity SHA-256: `{}`\n- Immutable artifact: `{VALIDATION_RECEIPT_REPO}@{receipt_commit}:{}`\n- Artifact SHA-256: `{}`\n- Durable log: `{VALIDATION_RECEIPT_REPO}@{receipt_commit}:{}`\n- Log SHA-256: `{}`\n\n{marker}",
+            comment_contract.producer_role,
+            comment_contract.envelope,
             artifact.run_id,
             artifact.executed_tests,
             artifact.selected_digest,
             artifact.path,
             artifact.artifact_sha256,
+            artifact.durable_log_path,
             artifact.log_sha256,
         );
         let comment = gh_command(
@@ -4847,7 +5207,9 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
     let path = ledger_path(root, &args.ledger);
     let rows = load_ledger_rows(&path)?;
     let hermit_repo = history_repo_path(root, &args.hermit_repo);
-    let resolved_reverie = if args.repo.rsplit('/').next() == Some("reverie") {
+    let target = qualifying_receipt::ReceiptTarget::from_repository(&args.repo)
+        .map_err(CiHubError::ValidateStatus)?;
+    let resolved_reverie = if target == qualifying_receipt::ReceiptTarget::Reverie {
         None
     } else {
         Some(reverie_pin::resolve_live_main().map_err(CiHubError::ValidateStatus)?)
@@ -4877,25 +5239,78 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
                 continue;
             }
         };
-        let binding = match resolved_reverie.as_deref() {
+        let (binding, binding_problem) = match resolved_reverie.as_deref() {
             Some(resolved) => match reverie_pin::verify_exact_head(&hermit_repo, &head, resolved) {
-                Ok(binding) => Some(binding),
+                Ok(binding) => (Some(binding), None),
                 Err(problem) => {
-                    println!("PR #{pr}: skip -- exact-head Reverie authority refused: {problem}");
-                    actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": "NOT-VALIDATED", "reverie_problem": problem}));
-                    continue;
+                    println!("PR #{pr}: exact-head Reverie authority refused: {problem}");
+                    (None, Some(problem))
                 }
             },
-            None => None,
+            None => (None, None),
         };
-        let assessment = validate_status::assess_with_reverie(&rows, &head, binding.as_ref());
+        let assessment =
+            validate_status::assess_with_reverie(&rows, &head, target, binding.as_ref());
         if assessment.verdict != validate_status::Verdict::Validated {
-            println!(
-                "PR #{pr}: skip -- head {} is {}",
-                &head[..12.min(head.len())],
-                assessment.verdict.as_str()
-            );
-            actions.push(serde_json::json!({"pr": pr, "head": head, "action": "skip", "verdict": assessment.verdict.as_str()}));
+            if assessment.disqualified.is_empty() {
+                println!(
+                    "PR #{pr}: skip -- no completed local outcome for head {}",
+                    &head[..12.min(head.len())]
+                );
+                actions.push(serde_json::json!({
+                    "pr": pr,
+                    "head": head,
+                    "action": "skip",
+                    "verdict": assessment.verdict.as_str(),
+                    "reverie_problem": binding_problem,
+                }));
+                continue;
+            }
+            match publish_nonpass_outcome(
+                root,
+                &path,
+                &args.repo,
+                &head,
+                assessment.verdict,
+                target,
+                binding.as_ref(),
+                args.dry_run,
+            ) {
+                Ok(outcome) => {
+                    let action = if args.dry_run {
+                        "would-publish-outcome"
+                    } else {
+                        "published-outcome"
+                    };
+                    println!(
+                        "PR #{pr}: {action} {} for head {}",
+                        assessment.verdict.as_str(),
+                        &head[..12.min(head.len())],
+                    );
+                    actions.push(serde_json::json!({
+                        "pr": pr,
+                        "head": head,
+                        "action": action,
+                        "verdict": assessment.verdict.as_str(),
+                        "outcome_path": outcome.path,
+                        "outcome_sha256": outcome.digest,
+                        "reverie_problem": binding_problem,
+                    }));
+                    applied += 1;
+                }
+                Err(error) => {
+                    eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
+                    actions.push(serde_json::json!({
+                        "pr": pr,
+                        "head": head,
+                        "action": "outcome-failed",
+                        "verdict": assessment.verdict.as_str(),
+                        "detail": error.to_string(),
+                        "reverie_problem": binding_problem,
+                    }));
+                    failed += 1;
+                }
+            }
             continue;
         }
         let selected = validate_status::newest(&assessment.qualifying)
@@ -4939,6 +5354,8 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             "receipt_identity_sha256": artifact.selected_digest,
             "artifact_sha256": artifact.artifact_sha256,
             "path": artifact.path,
+            "outcome_sha256": artifact.outcome_sha256,
+            "outcome_path": artifact.outcome_path,
         }));
         applied += 1;
     }
@@ -5176,7 +5593,40 @@ mod tests {
 
     const PUBLISHER_TEST_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+    #[test]
+    fn receipt_comment_idempotency_requires_owner_and_canonical_envelope() {
+        let marker = "<!-- locally-validated-receipt commit=abc -->";
+        let prefix = "[coordinator, gpt-5.6-sol]\n\n<!-- ci-hub-validation-receipt-v1 -->\n";
+        let attacker = serde_json::json!([[{
+            "user": {"login": "attacker"},
+            "body": format!("{prefix}\n{marker}"),
+        }]]);
+        assert!(!comment_pages_contain_trusted_marker(
+            &attacker, "rrnewton", prefix, marker
+        ));
+        let wrong_envelope = serde_json::json!([[{
+            "user": {"login": "rrnewton"},
+            "body": format!("[impl agent, ci-hub]\n\n{marker}"),
+        }]]);
+        assert!(!comment_pages_contain_trusted_marker(
+            &wrong_envelope,
+            "rrnewton",
+            prefix,
+            marker,
+        ));
+        let trusted = serde_json::json!([[{
+            "user": {"login": "rrnewton"},
+            "body": format!("{prefix}\n{marker}"),
+        }]]);
+        assert!(comment_pages_contain_trusted_marker(
+            &trusted, "rrnewton", prefix, marker
+        ));
+    }
+
     fn publisher_fixture(log_file: &Path) -> HistoryRow {
+        let source_log_sha256 = std::fs::read(log_file)
+            .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            .unwrap_or_else(|_| "c".repeat(64));
         serde_json::from_value(serde_json::json!({
             "schema_version": 6,
             "started_at": "2026-08-05T12:00:00Z",
@@ -5205,6 +5655,7 @@ mod tests {
                 "resolved_sha": "dddddddddddddddddddddddddddddddddddddddd",
             },
             "log_file": log_file,
+            "source_log_sha256": source_log_sha256,
         }))
         .unwrap()
     }
@@ -5212,6 +5663,9 @@ mod tests {
     fn fixture_publisher_report(selected: &HistoryRow) -> (serde_json::Value, String) {
         let selected_bytes = serde_json::to_vec(selected).unwrap();
         let selected_digest = format!("{:x}", Sha256::digest(selected_bytes));
+        let log_sha256 = selected.source_log_sha256.as_deref().unwrap();
+        let durable_log_path =
+            format!("validation-logs/rrnewton/hermit/{PUBLISHER_TEST_SHA}/{log_sha256}.log");
         let receipt = serde_json::json!({
             "schema_version": 1,
             "repository": "rrnewton/hermit",
@@ -5222,8 +5676,9 @@ mod tests {
                 selected.host.as_deref().unwrap(),
             ),
             "source_log_file": selected.log_file.as_deref(),
-            "durable_log_file": "/tmp/durable-validate.log",
-            "log_sha256": "c".repeat(64),
+            "durable_log_repository": VALIDATION_RECEIPT_REPO,
+            "durable_log_path": durable_log_path,
+            "log_sha256": log_sha256,
             "selected_receipt_identity": {
                 "digest_algorithm": "sha256",
                 "canonicalization": RECEIPT_CANONICALIZATION,
@@ -5242,6 +5697,9 @@ mod tests {
             "path": format!(
                 "validation-receipts/rrnewton/hermit/{PUBLISHER_TEST_SHA}/{artifact_sha256}.json"
             ),
+            "durable_log_path": durable_log_path,
+            "durable_log_sha256": log_sha256,
+            "durable_log_commit": null,
             "receipt_identity_sha256": selected_digest.clone(),
             "artifact_sha256": artifact_sha256,
             "artifact_body": artifact_body,
@@ -5280,10 +5738,16 @@ mod tests {
         let log = temp.join("validate.log");
         std::fs::write(&log, b"test result: ok. 740 passed; 0 failed\n").unwrap();
         let selected = publisher_fixture(&log);
+        let ledger = temp.join("ledger.jsonl");
+        std::fs::write(
+            &ledger,
+            format!("{}\n", serde_json::to_string(&selected).unwrap()),
+        )
+        .unwrap();
         let artifact = publish_selected_receipt(
             &root,
             &root.join("ci-hub/validation/publish_receipt.py"),
-            &temp.join("ledger.jsonl"),
+            &ledger,
             "rrnewton/hermit",
             PUBLISHER_TEST_SHA,
             &selected,

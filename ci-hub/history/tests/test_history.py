@@ -396,6 +396,12 @@ class TempParentTest(unittest.TestCase):
         self.assertAlmostEqual(res["green_conclusion_only_pct"],
                                res["green_pct"], places=2)
 
+    def test_ledger_corroboration_requires_full_exact_sha(self):
+        full = "a" * 40
+        self.assertTrue(query._ledger_corroborates({full: [{}]}, full))
+        self.assertFalse(query._ledger_corroborates({full[:12]: [{}]}, full))
+        self.assertFalse(query._ledger_corroborates({full: [{}]}, full[:12]))
+
     def test_green_split_ledger_corroborated_when_full_pass_row_exists(self):
         # POSITIVE: a full-pass ledger row at the exact green commit SHA moves
         # that slice into green_ledger. Bracket the mechanism firing.

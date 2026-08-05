@@ -14,8 +14,11 @@ is the single fresh cross-repository predicate. It resolves Reverie main once,
 with a 30-second bound, then for each exact Hermit commit scans every tracked
 `Cargo.toml` and `Cargo.lock` from the commit object. Manifest pins count only
 from real direct/dev/build/workspace/target/patch/replace dependency tables;
-lock pins count only from `[[package]]` sources. Comments, package metadata, and
-lock metadata cannot manufacture a dependency. It accepts only one lowercase
+lock pins count only from `[[package]]` sources. Every semantic Reverie
+dependency/package must use that Git source; a path/version/registry dependency
+cannot be masked by a decoy current pin. Duplicate lock `rev` parameters,
+comments, package metadata, and lock metadata cannot manufacture a dependency. Git
+replacement and caller object-locator state are disabled. It accepts one lowercase
 40-hex Reverie revision equal to that resolved tip. Missing commits,
 missing/mixed/malformed pins, network failure, and tip mismatch fail closed.
 
@@ -33,35 +36,63 @@ Schema-6 Hermit ledger rows carry the result:
 ```
 
 The binding is inside the immutable receipt body/digest. Old Hermit rows and
-missing/tampered bindings do not qualify. `finalize_receipt.py --scan` can append
-a schema-6 clone only after this authority verifies the exact Hermit commit.
+missing/tampered bindings do not qualify. The authority mode of
+`finalize_receipt.py` accepts a trusted target, exact SHA and ledger; it selects
+that run's newest original row, follows only that row's own absolute `log_file`,
+recomputes counts/coverage and the log SHA-256, then append-locks and revalidates
+the source-row identity before adding a schema-6 clone. `--log` is diagnostics
+only and is refused with a ledger. A superficially complete row cannot skip log
+rereading, and the ledger is never rewritten.
 
-All current local-evidence consumers route through the Rust semantic verifier:
+All parent-tree local-evidence consumers route through the Rust semantic verifier:
 `validate-status`, `ledger qualified-rows` (and therefore `pr-status`),
 `newest-green`, label publication, immutable receipt verification, and hard/soft
-green reconciliation. The newest-green cache also records the resolved Reverie
+green reconciliation. This is a parent implementation claim, not proof that an
+older Hermit workflow has pinned the tree. The newest-green cache also records the resolved Reverie
 tip, so a ref move invalidates an otherwise byte-identical cache. Its
 `--no-fetch` mode never performs a hidden ref lookup and therefore reports the
 dependency frontier UNVERIFIABLE rather than emitting an offline green.
 
-Receipt minting keeps that same authority: Rust selects and hashes the exact
-schema-6 row, passes only those canonical bytes to the mechanical Python
-publisher, then verifies the returned artifact digest, exact row equality, and
-`SHA@started_at@host` identity before it can comment or label the PR. Python no
-longer scans the ledger or owns a second predicate. Recomputed-artifact wrong-row
-and wrong-host negatives prove that publisher output cannot substitute a
-self-consistent proxy for the row Rust selected.
+Receipt minting keeps that same authority. Each completed assessment publishes
+an append-only, content-addressed `validation-outcomes/<repo>/<sha>/<digest>.json`
+snapshot. A pass additionally publishes its receipt and durable log. Rust
+verifies the publisher's snapshot verdict and selected identity before labeling.
+The consumer resolves the canonical outcome branch tip once, enumerates every
+exact-SHA outcome, unions all carried rows, and delegates failure-over-pass
+selection to `validate-status`; a later pass can never erase a genuine published
+failure. It then re-derives the selected schema-6 row from the original source
+row, exact-commit manifests, and durable log. Planned-manifest defects, unplanned
+banner inflation, failed terminals, missing finalizer provenance, and log/count
+drift refuse. Comments and labels are routing/cache hints, never discovery or
+authority.
+
+The deployable verifier is the full-tree
+`ci-hub/validation/verify_receipt_bundle.sh` entrypoint. Its manifest names the
+Rust modules, predicate, hosted classifier, finalizer, and publishers; it rejects
+a modified bundle, requires an exact pinned dev-hermit commit, disables Git
+replacement/object-locator state, and proves the target SHA is a commit object
+before delegating. Downloading only `verify_receipt.sh`
+is not an authority bundle.
 
 ## Green-source independence
 
-GitHub and local validation remain interchangeable green authorities. A hosted
-green does not need a local ledger receipt. The dependency predicate is a
+The intended policy treats GitHub and local validation as independent,
+interchangeable green authorities; a genuine failure from either leg wins. A
+hosted green does not need a local ledger receipt. The dependency predicate is a
 separate pre-landing condition: whichever source supplied green, the landing
 path must freshly verify the exact Hermit head against live Reverie main.
 `ci-hub green-source-decision` is the pure OR combiner for already-dereferenced
 local and hosted outcomes: either PASS is sufficient, either genuine FAIL
 refuses, and two NO_RESULT inputs do not authorize. It accepts no label, run ID,
 comment, or ledger proxy and is not itself a dereferencing authority.
+
+This paragraph describes the semantic interface, not current live deployment.
+At this parent-layer commit the Hermit workflow still downloads an older single
+file and does not call the combiner. Therefore `AGENTS.md`'s current hosted-gate
+requirements remain the executable landing policy until the coordinated Hermit
+bundle/producer integration lands and a follow-up policy commit records that
+deployment. Parent tests must not claim the OR is live merely because the pure
+combiner is bracketed.
 
 ## #38 integration obligation
 

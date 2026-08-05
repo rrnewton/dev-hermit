@@ -18,7 +18,7 @@ class ReceiptTests(unittest.TestCase):
     def row(self, root: Path, executed: int = 12):
         log = root / "validate.log"
         log.write_text("running 12 tests\ntest result: ok. 12 passed; 0 failed\n")
-        return {
+        row = {
             "schema_version": 6,
             "started_at": "2026-08-04T12:00:00Z",
             "finished_at": "2026-08-04T12:01:00Z",
@@ -47,6 +47,8 @@ class ReceiptTests(unittest.TestCase):
             "host": "test-host",
             "log_file": str(log),
         }
+        row["source_log_sha256"] = MODULE.hashlib.sha256(log.read_bytes()).hexdigest()
+        return row
 
     def selected(self, row):
         body = json.dumps(row, separators=(",", ":")).encode()
@@ -78,7 +80,11 @@ class ReceiptTests(unittest.TestCase):
             )
             self.assertEqual(receipt["commit"], "a" * 40)
             self.assertEqual(len(receipt["log_sha256"]), 64)
-            self.assertTrue(Path(receipt["durable_log_file"]).is_file())
+            self.assertEqual(receipt["durable_log_repository"], MODULE.RECEIPT_REPO)
+            self.assertEqual(
+                receipt["durable_log_path"],
+                f"validation-logs/rrnewton/hermit/{'a' * 40}/{receipt['log_sha256']}.log",
+            )
             self.assertEqual(MODULE.hashlib.sha256(body).hexdigest(), digest)
 
     def test_run_id_binds_host_same_sha_and_started_at(self):

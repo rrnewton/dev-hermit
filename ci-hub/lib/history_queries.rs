@@ -5,6 +5,7 @@
 //! recorded observations for the newest PASS -> FAIL transition. Keeping the
 //! commit ordering and evidence rules here prevents the two answers drifting.
 
+use crate::qualifying_receipt::ReceiptTarget;
 use crate::records::{GateHistoryRow, HistoryRow};
 use crate::reverie_pin::ReverieBinding;
 use crate::validate_status::{assess_with_reverie, newest, Verdict};
@@ -209,7 +210,12 @@ impl HistoryQueryEngine {
             let Some(rows) = self.rows_by_commit.get(sha) else {
                 continue;
             };
-            let assessment = assess_with_reverie(rows, sha, self.reverie_bindings.get(sha));
+            let assessment = assess_with_reverie(
+                rows,
+                sha,
+                ReceiptTarget::Hermit,
+                self.reverie_bindings.get(sha),
+            );
             match assessment.verdict {
                 Verdict::Validated => {
                     trustworthy_recorded += 1;
@@ -759,8 +765,11 @@ mod tests {
             "commit_anchored": true,
             "tree_dirty": false,
             "result": result,
+            "failures": 0,
             "executed_tests": 36,
             "filtered_tests": 0,
+            "log_file": "/tmp/ci-hub-test.log",
+            "source_log_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
             "gates": [],
             "coverage": {
                 "planned_test_nodes": 1,

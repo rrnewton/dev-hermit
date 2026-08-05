@@ -52,6 +52,7 @@
 //! as full coverage. `commit_anchored`/`tree_dirty` guarantee the record
 //! describes the actual commit, not a dirty tree (the tree is not the commit).
 
+use crate::qualifying_receipt::ReceiptTarget;
 use crate::records::HistoryRow;
 use crate::reverie_pin::ReverieBinding;
 use std::collections::BTreeSet;
@@ -230,6 +231,7 @@ pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
 pub fn is_clean_full_pass(
     row: &HistoryRow,
     sha: &str,
+    target: ReceiptTarget,
     expected_reverie: Option<&ReverieBinding>,
 ) -> bool {
     // The predicate itself is NOT restated here — it is the ONE shared
@@ -243,6 +245,7 @@ pub fn is_clean_full_pass(
         row,
         sha,
         crate::qualifying_receipt::active(),
+        target,
         expected_reverie,
     )
 }
@@ -445,6 +448,7 @@ pub struct Assessment {
 pub fn assess_with_reverie(
     rows: &[HistoryRow],
     sha: &str,
+    target: ReceiptTarget,
     expected_reverie: Option<&ReverieBinding>,
 ) -> Assessment {
     let mut qualifying = Vec::new();
@@ -457,7 +461,11 @@ pub fn assess_with_reverie(
         if row.commit.as_deref() != Some(sha) {
             continue;
         }
-        if is_clean_full_pass(row, sha, expected_reverie) {
+        if !target.row_matches(row) {
+            disqualified.push(row.clone());
+            continue;
+        }
+        if is_clean_full_pass(row, sha, target, expected_reverie) {
             qualifying.push(row.clone());
         } else {
             match failure_disposition(row, sha) {
@@ -470,10 +478,13 @@ pub fn assess_with_reverie(
             disqualified.push(row.clone());
         }
     }
-    let verdict = if !qualifying.is_empty() {
-        Verdict::Validated
-    } else if saw_failed {
+    // A genuine complete failure for the exact SHA wins over a sibling pass.
+    // Conflicting authoritative outcomes are observed nondeterminism, never a
+    // green that can be selected by record order.
+    let verdict = if saw_failed {
         Verdict::FailedOnRecord
+    } else if !qualifying.is_empty() {
+        Verdict::Validated
     } else if saw_needs_rerun {
         Verdict::NeedsRerun
     } else if saw_truncated {
@@ -497,7 +508,7 @@ pub fn assess_with_reverie(
 #[cfg(test)]
 pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
     let expected = ReverieBinding::expected(tests::TEST_REVERIE_SHA);
-    assess_with_reverie(rows, sha, Some(&expected))
+    assess_with_reverie(rows, sha, ReceiptTarget::Hermit, Some(&expected))
 }
 
 /// Pick the most recent qualifying record (by `finished_at` string order, which
@@ -587,6 +598,7 @@ mod tests {
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
+                "log_file":"/tmp/ci-hub-test.log","source_log_sha256":"1111111111111111111111111111111111111111111111111111111111111111",
                 "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90,
                 "coverage":{{"planned_test_nodes":1,"executed_test_nodes":1,
                     "zero_executed_nodes":[],"absent_nodes":[]}},
@@ -638,6 +650,7 @@ mod tests {
             executed_test_nodes: planned,
             zero_executed_nodes: vec![],
             absent_nodes: vec![],
+            failed_nodes: vec![],
         }
     }
 
@@ -663,6 +676,55 @@ mod tests {
             .expect("fixture binding")
             .resolved_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into();
         assert_eq!(assess(&[tampered], PASS_SHA).verdict, Verdict::NotValidated);
+    }
+
+    #[test]
+    fn trusted_target_identity_cannot_be_selected_by_receipt_bytes() {
+        let mut forged = clean_full_pass(PASS_SHA);
+        forged.repo = Some("reverie".into());
+        assert_eq!(
+            assess(&[forged.clone()], PASS_SHA).verdict,
+            Verdict::NotValidated,
+            "a Hermit query must reject a row that claims to be Reverie"
+        );
+
+        // The same shape is a valid Reverie self-validation row only when the
+        // trusted call site explicitly selects the Reverie authority path.
+        forged.reverie_binding = None;
+        assert_eq!(
+            assess_with_reverie(&[forged], PASS_SHA, ReceiptTarget::Reverie, None).verdict,
+            Verdict::Validated
+        );
+    }
+
+    #[test]
+    fn missing_failure_or_count_field_is_not_a_green() {
+        let mut missing_failures = clean_full_pass(PASS_SHA);
+        missing_failures.failures = None;
+        assert_eq!(
+            assess(&[missing_failures], PASS_SHA).verdict,
+            Verdict::NotValidated
+        );
+
+        let mut missing_filtered = clean_full_pass(PASS_SHA);
+        missing_filtered.filtered_tests = None;
+        assert_eq!(
+            assess(&[missing_filtered], PASS_SHA).verdict,
+            Verdict::NotValidated
+        );
+    }
+
+    #[test]
+    fn partial_executed_node_count_cannot_claim_complete_coverage() {
+        let mut partial = clean_full_pass(PASS_SHA);
+        partial.coverage = Some(CoverageRow {
+            planned_test_nodes: 100,
+            executed_test_nodes: 1,
+            zero_executed_nodes: vec![],
+            absent_nodes: vec![],
+            failed_nodes: vec![],
+        });
+        assert_eq!(assess(&[partial], PASS_SHA).verdict, Verdict::NotValidated);
     }
 
     #[test]
@@ -931,7 +993,12 @@ mod tests {
         // (Before this rule the reverie 6-gate row only escaped FAILED by accident
         // — schema-3 carried no conditions and the 5-gate fallback mismatched its
         // gate count; once the producer emits conditions that accident vanishes.)
-        let a = assess(&[command_not_found_row(PASS_SHA)], PASS_SHA);
+        let a = assess_with_reverie(
+            &[command_not_found_row(PASS_SHA)],
+            PASS_SHA,
+            ReceiptTarget::Reverie,
+            None,
+        );
         assert_eq!(a.verdict, Verdict::NoResult);
         assert_eq!(a.verdict.exit_code(), 4);
     }
@@ -952,7 +1019,10 @@ mod tests {
         for gate in r.gates.iter_mut().filter(|g| gate_is_red(g)) {
             gate.failure_origin = Some("outer_gate".into());
         }
-        assert_eq!(assess(&[r], PASS_SHA).verdict, Verdict::NoResult);
+        assert_eq!(
+            assess_with_reverie(&[r], PASS_SHA, ReceiptTarget::Reverie, None).verdict,
+            Verdict::NoResult
+        );
     }
 
     #[test]
@@ -1010,10 +1080,14 @@ mod tests {
         // red. The genuine red must surface (FailedOnRecord), never be downgraded
         // by the env-fault sibling.
         let mut genuine = complete_failure(PASS_SHA);
+        genuine.repo = Some("reverie".into());
         genuine.real_seconds = Some(58.0);
         genuine.gates[0].real_seconds = Some(45.0);
         let rows = vec![command_not_found_row(PASS_SHA), genuine];
-        assert_eq!(assess(&rows, PASS_SHA).verdict, Verdict::FailedOnRecord);
+        assert_eq!(
+            assess_with_reverie(&rows, PASS_SHA, ReceiptTarget::Reverie, None).verdict,
+            Verdict::FailedOnRecord
+        );
     }
 
     #[test]
@@ -1186,6 +1260,7 @@ mod tests {
             executed_test_nodes: 12,
             zero_executed_nodes: vec![],
             absent_nodes: vec!["test.detcore_unit".into()],
+            failed_nodes: vec![],
         });
         let a = assess(&[absent], PASS_SHA);
         assert_eq!(a.verdict, Verdict::NotValidated);
@@ -1202,6 +1277,7 @@ mod tests {
             executed_test_nodes: 12,
             zero_executed_nodes: vec!["test.cli".into()],
             absent_nodes: vec![],
+            failed_nodes: vec![],
         });
         assert_eq!(assess(&[inert], PASS_SHA).verdict, Verdict::NotValidated);
 
@@ -1302,13 +1378,12 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_wins_over_a_sibling_failure() {
+    fn a_genuine_failure_wins_over_a_sibling_pass() {
         // Two records for one commit: an earlier fail and a later clean pass.
-        let mut fail = clean_full_pass(PASS_SHA);
-        fail.result = Some("fail".into());
+        let mut fail = complete_failure(PASS_SHA);
         fail.finished_at = Some("2026-08-03T10:00:00Z".into());
         let rows = vec![fail, clean_full_pass(PASS_SHA)];
-        assert_eq!(assess(&rows, PASS_SHA).verdict, Verdict::Validated);
+        assert_eq!(assess(&rows, PASS_SHA).verdict, Verdict::FailedOnRecord);
     }
 
     #[test]

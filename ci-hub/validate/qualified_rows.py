@@ -22,9 +22,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--hermit-repo", type=Path, default=ROOT / "hermit")
+    parser.add_argument("--repo", default="rrnewton/hermit")
     args = parser.parse_args()
     command = [str(CI_HUB), "ledger", "qualified-rows",
-               "--hermit-repo", str(args.hermit_repo)]
+               "--hermit-repo", str(args.hermit_repo), "--repo", args.repo]
     if args.ledger is not None:
         command += ["--ledger", str(args.ledger)]
     os.execv(command[0], command)

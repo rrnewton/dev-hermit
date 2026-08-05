@@ -2,206 +2,158 @@
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$script_dir/../.." && pwd)
 verifier=$script_dir/verify_receipt.sh
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 
 pin=dddddddddddddddddddddddddddddddddddddddd
-hermit_repo="$tmp/hermit"
-mkdir -p "$hermit_repo" "$tmp/bin"
-git -C "$hermit_repo" init -q
-git -C "$hermit_repo" config user.email ci-hub@example.invalid
-git -C "$hermit_repo" config user.name 'ci-hub test'
+target_repo="$tmp/hermit"
+mkdir -p "$target_repo/ci/dag" "$tmp/bin"
+git -C "$target_repo" init -q
+git -C "$target_repo" config user.email ci-hub@example.invalid
+git -C "$target_repo" config user.name 'ci-hub test'
 printf '[package]\nname="receipt-fixture"\nversion="0.1.0"\n[dependencies]\nreverie={git="https://github.com/rrnewton/reverie.git",rev="%s"}\n' \
-    "$pin" >"$hermit_repo/Cargo.toml"
-git -C "$hermit_repo" add Cargo.toml
-git -C "$hermit_repo" commit -q -m 'fixture one'
-sha=$(git -C "$hermit_repo" rev-parse HEAD)
-printf 'second\n' >"$hermit_repo/README.md"
-git -C "$hermit_repo" add README.md
-git -C "$hermit_repo" commit -q -m 'fixture two'
-sha2=$(git -C "$hermit_repo" rev-parse HEAD)
+    "$pin" >"$target_repo/Cargo.toml"
+printf 'version=3\n[[package]]\nname="reverie-core"\nversion="0.2.0"\nsource="git+https://github.com/rrnewton/reverie.git?rev=%s#%s"\n' \
+    "$pin" "$pin" >"$target_repo/Cargo.lock"
+printf '{"steps":[{"group":"test","job":"portable"}]}\n' \
+    >"$target_repo/ci/dag/portable.json"
+printf '{"steps":[{"group":"test","job":"privileged"}]}\n' \
+    >"$target_repo/ci/dag/privileged.json"
+git -C "$target_repo" add Cargo.toml Cargo.lock ci/dag/portable.json ci/dag/privileged.json
+git -C "$target_repo" commit -q -m fixture
+sha=$(git -C "$target_repo" rev-parse HEAD)
+
 tip_file="$tmp/reverie-tip"
 printf '%s\n' "$pin" >"$tip_file"
 export CI_HUB_TEST_TIP_FILE="$tip_file"
-printf '%s\n' '#!/usr/bin/env bash' \
-    'if [[ $1 == git && $2 == ls-remote ]]; then' \
-    '  tip=$(<"$CI_HUB_TEST_TIP_FILE")' \
-    '  printf "%s\trefs/heads/main\\n" "$tip"' \
-    '  exit 0' \
-    'fi' \
-    'exec "$@"' >"$tmp/bin/with-proxy"
+cp "$script_dir/tests/receipt_with_proxy_fixture.sh" "$tmp/bin/with-proxy"
 chmod +x "$tmp/bin/with-proxy"
 export PATH="$tmp/bin:$PATH"
-receipt_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-mkdir -p "$tmp/receipts/$receipt_commit"
 
-make_receipt() {
-    local executed=$1 output=$2
-    jq -cnS --arg sha "$sha" --argjson executed "$executed" '{
-      schema_version: 1,
-      repository: "rrnewton/hermit",
-      commit: $sha,
-      run_id: ($sha + "@2026-08-04T12:00:00Z@test-host"),
-      source_log_file: "/tmp/validate.log",
-      durable_log_file: "/durable/validate.log",
-      log_sha256: ("c" * 64),
-      ledger_record: {
-        schema_version: 6,
-        started_at: "2026-08-04T12:00:00Z",
-        finished_at: "2026-08-04T12:01:00Z",
-        host: "test-host",
-        commit: $sha,
-        profile: "full",
-        selection_mode: "full",
-        commit_anchored: true,
-        tree_dirty: false,
-        result: "pass",
-        checks: 5,
-        failures: 0,
-        executed_tests: $executed,
-        filtered_tests: 0,
-        coverage: {
-          planned_test_nodes: 1, executed_test_nodes: 1,
-          zero_executed_nodes: [], absent_nodes: []
-        },
-        reverie_binding: {
-          repository: "rrnewton/reverie",
-          ref: "refs/heads/main",
-          pinned_sha: ("d" * 40),
-          resolved_sha: ("d" * 40)
-        },
-        log_file: "/tmp/validate.log"
-      }
-    }' >"$output"
+log="$tmp/validate.log"
+for node in portable privileged; do
+    printf '[test.%s] running 6 tests\n' "$node"
+    printf '[test.%s] test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n' "$node"
+    printf '[test.%s] ✓ PASS [test result: ok. 6 passed]\n' "$node"
+done >"$log"
+
+ledger="$tmp/ledger.jsonl"
+jq -cn --arg sha "$sha" --arg log "$log" '{
+  schema_version:4,
+  started_at:"2026-08-05T12:00:00Z",
+  finished_at:"2026-08-05T12:01:00Z",
+  host:"test-host",
+  commit:$sha,
+  profile:"full",
+  selection_mode:"full",
+  commit_anchored:true,
+  tree_dirty:false,
+  result:"pass",
+  checks:5,
+  failures:0,
+  log_file:$log
+}' >"$ledger"
+python3 "$root/ci-hub/validate/finalize_receipt.py" \
+    --repo rrnewton/hermit --sha "$sha" --ledger "$ledger" \
+    --hermit-checkout "$target_repo" >/dev/null
+
+status="$tmp/status.json"
+"$root/ci-hub/ci-hub" validate-status --repo rrnewton/hermit --sha "$sha" \
+    --ledger "$ledger" --hermit-repo "$target_repo" --json >"$status"
+selected="$tmp/selected.json"
+jq -r '.newest_qualifying_canonical_hex' "$status" | xxd -r -p >"$selected"
+selected_digest=$(jq -r '.newest_qualifying_identity.digest' "$status")
+
+report="$tmp/publish-report.json"
+python3 "$script_dir/publish_receipt.py" --repo rrnewton/hermit --sha "$sha" \
+    --ledger "$ledger" --selected-receipt-sha256 "$selected_digest" \
+    --canonicalization 'serde_json::to_vec(HistoryRow)-v1' --dry-run \
+    <"$selected" >"$report"
+
+branch_tip=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+fixture="$tmp/receipts/$branch_tip"
+receipt_path=$(jq -r .path "$report")
+outcome_path=$(jq -r .outcome_path "$report")
+log_path=$(jq -r .durable_log_path "$report")
+mkdir -p "$fixture/$(dirname "$receipt_path")" \
+         "$fixture/$(dirname "$outcome_path")" \
+         "$fixture/$(dirname "$log_path")"
+jq -jr .artifact_body "$report" >"$fixture/$receipt_path"
+jq -jr .outcome_body "$report" >"$fixture/$outcome_path"
+cp "$log" "$fixture/$log_path"
+printf '[]\n' >"$tmp/comments.json"
+
+verify() {
+    "$verifier" --repo rrnewton/hermit --sha "$sha" \
+        --hermit-repo "$target_repo" --comments "$tmp/comments.json" \
+        --fixture-receipts "$tmp/receipts" --fixture-branch-tip "$branch_tip"
 }
 
-write_comments() {
-    local path=$1 digest=$2
-    jq -cn --arg commit "$receipt_commit" --arg path "$path" --arg digest "$digest" '{
-      user: {login: "rrnewton"},
-      body: ("[impl agent, ci-hub]\n\n<!-- locally-validated-receipt commit=" + $commit + " path=" + $path + " sha256=" + $digest + " -->")
-    } | [[.]]' >"$tmp/comments.json"
-}
+# Positive: a real source row was finalized, published, rediscovered from the
+# append-only branch-tip outcome set, and exactly recomputed from its durable log.
+verify >/dev/null
 
-verify_file() {
-    local file=$1 expected=$2 label=$3
-    local file_digest file_path status=0
-    file_digest=$(sha256sum "$file" | awk '{print $1}')
-    file_path="validation-receipts/rrnewton/hermit/$sha/$file_digest.json"
-    mkdir -p "$tmp/receipts/$receipt_commit/$(dirname "$file_path")"
-    cp "$file" "$tmp/receipts/$receipt_commit/$file_path"
-    write_comments "$file_path" "$file_digest"
-    "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-        --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" \
-        >/dev/null 2>&1 || status=$?
-    if [[ $expected == pass && $status != 0 ]] || [[ $expected == fail && $status == 0 ]]; then
-        printf 'FAIL: %s expected %s, verifier exit=%s\n' "$label" "$expected" "$status" >&2
-        exit 1
-    fi
-}
-
-# Missing but perfectly shaped: this is the negative #1578 omitted.
-forged_digest=$(printf 'd%.0s' {1..64})
-forged_path="validation-receipts/rrnewton/hermit/$sha/$forged_digest.json"
-write_comments "$forged_path" "$forged_digest"
-if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null 2>&1; then
-    echo "FAIL: well-shaped nonexistent receipt was accepted" >&2
+# The old bypass: a one-line arbitrary log cannot carry claimed full coverage,
+# even when supplied beside the otherwise legitimate row and snapshot.
+printf 'arbitrary one-line log\n' >"$tmp/arbitrary.log"
+if python3 "$root/ci-hub/validate/finalize_receipt.py" \
+    --repo rrnewton/hermit --sha "$sha" --hermit-checkout "$target_repo" \
+    --log "$tmp/arbitrary.log" --ledger-snapshot <(jq -c .ledger_records "$fixture/$outcome_path") \
+    --verify-finalized-row "$selected" >/dev/null 2>&1; then
+    echo 'FAIL: self-asserted coverage survived durable-log recomputation' >&2
     exit 1
 fi
 
-# One legitimate counted receipt is admitted.
-make_receipt 12 "$tmp/receipt.json"
-digest=$(sha256sum "$tmp/receipt.json" | awk '{print $1}')
-path="validation-receipts/rrnewton/hermit/$sha/$digest.json"
-mkdir -p "$tmp/receipts/$receipt_commit/$(dirname "$path")"
-cp "$tmp/receipt.json" "$tmp/receipts/$receipt_commit/$path"
-write_comments "$path" "$digest"
-"$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null
+# A genuine same-SHA failure published later is monotonic: unioning every
+# immutable outcome snapshot makes it beat the older pass forever.
+jq -cn --arg sha "$sha" '{
+  schema_version:6, profile:"full", selection_mode:"full", commit:$sha,
+  commit_anchored:true, tree_dirty:false, result:"fail", exit_code:1,
+  checks:5, gates_run:5, gates_expected:5, failures:1, executed_tests:765,
+  dag_jobs:4, concurrent_validates:0, known_flaky_failure:false,
+  solo_rerun_confirmation:false,
+  gates:[{name:"portable CI DAG lane",result:"fail",exit_code:1,
+          real_seconds:2,failure_origin:"lane_substep",
+          failed_substeps:["test.portable"]}]
+}' >>"$ledger"
+failure_report="$tmp/failure-report.json"
+python3 "$script_dir/publish_outcome.py" --repo rrnewton/hermit --sha "$sha" \
+    --ledger "$ledger" --verdict FAILED --dry-run >"$failure_report"
+failure_path=$(jq -r .outcome_path "$failure_report")
+mkdir -p "$fixture/$(dirname "$failure_path")"
+jq -jr .outcome_body "$failure_report" >"$fixture/$failure_path"
+if verify >/dev/null 2>&1; then
+    echo 'FAIL: immutable later failure did not beat the older pass' >&2
+    exit 1
+fi
+rm -- "$fixture/$failure_path"
+verify >/dev/null
 
-# Moving only the live Reverie tip invalidates the otherwise immutable receipt.
+# Every exact-SHA outcome and durable log is content-addressed and dereferenced
+# at one branch tip; tamper or absence is a refusal.
+cp "$fixture/$outcome_path" "$tmp/outcome.saved"
+printf '\n' >>"$fixture/$outcome_path"
+if verify >/dev/null 2>&1; then
+    echo 'FAIL: digest-tampered outcome was accepted' >&2
+    exit 1
+fi
+mv "$tmp/outcome.saved" "$fixture/$outcome_path"
+mv "$fixture/$log_path" "$tmp/log.saved"
+if verify >/dev/null 2>&1; then
+    echo 'FAIL: absent durable log was accepted' >&2
+    exit 1
+fi
+mv "$tmp/log.saved" "$fixture/$log_path"
+
+# Fresh dependency identity remains part of every decision.
 printf '%s\n' cccccccccccccccccccccccccccccccccccccccc >"$tip_file"
-if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null 2>&1; then
-    echo "FAIL: receipt remained valid after Reverie main moved" >&2
+if verify >/dev/null 2>&1; then
+    echo 'FAIL: receipt remained green after live Reverie main moved' >&2
     exit 1
 fi
 printf '%s\n' "$pin" >"$tip_file"
+verify >/dev/null
 
-# The same legitimate receipt must not authorize a different (rebased) head.
-stale_sha=ffffffffffffffffffffffffffffffffffffffff
-if "$verifier" --sha "$stale_sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null 2>&1; then
-    echo "FAIL: receipt for the prior head authorized a rebased head" >&2
-    exit 1
-fi
-
-# A tampered body and a real zero-executed receipt are both refused.
-printf '\n' >>"$tmp/receipts/$receipt_commit/$path"
-if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null 2>&1; then
-    echo "FAIL: tampered receipt was accepted" >&2
-    exit 1
-fi
-make_receipt 0 "$tmp/zero.json"
-zero_digest=$(sha256sum "$tmp/zero.json" | awk '{print $1}')
-zero_path="validation-receipts/rrnewton/hermit/$sha/$zero_digest.json"
-mkdir -p "$tmp/receipts/$receipt_commit/$(dirname "$zero_path")"
-cp "$tmp/zero.json" "$tmp/receipts/$receipt_commit/$zero_path"
-write_comments "$zero_path" "$zero_digest"
-if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
-    --fixture-receipts "$tmp/receipts" --hermit-repo "$hermit_repo" >/dev/null 2>&1; then
-    echo "FAIL: zero-executed receipt was accepted" >&2
-    exit 1
-fi
-
-# Host-in-identity negative: a receipt whose run_id host segment disagrees with
-# the ledger_record.host it embeds is refused (the host cannot be swapped without
-# breaking the tamper-evident run_id).
-make_receipt 12 "$tmp/host-good.json"
-jq -cS '.run_id = (.commit + "@" + .ledger_record.started_at + "@other-host")' \
-    "$tmp/host-good.json" >"$tmp/host-mismatch.json"
-verify_file "$tmp/host-mismatch.json" fail "run_id host disagrees with ledger host"
-# A receipt whose ledger_record omits host entirely is likewise refused.
-jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent.json"
-verify_file "$tmp/host-absent.json" fail "ledger host absent"
-jq -cS 'del(.ledger_record.reverie_binding)' "$tmp/host-good.json" >"$tmp/binding-absent.json"
-verify_file "$tmp/binding-absent.json" fail "Reverie binding absent"
-jq -cS '.ledger_record.reverie_binding.resolved_sha = ("c" * 40)' \
-    "$tmp/host-good.json" >"$tmp/binding-tampered.json"
-verify_file "$tmp/binding-tampered.json" fail "Reverie binding tampered"
-
-# Count-capable receipts additionally bind the per-node coverage obligation.
-# Use a second exact head so the two positive controls represent two distinct
-# legitimate landing authorizations rather than repeated parsing of one row.
-sha=$sha2
-make_receipt 12 "$tmp/schema5-base.json"
-jq 'del(.ledger_record.coverage)' "$tmp/schema5-base.json" >"$tmp/schema5-missing.json"
-verify_file "$tmp/schema5-missing.json" fail "schema6 missing coverage"
-jq '.ledger_record.coverage = {
-      planned_test_nodes: 0, executed_test_nodes: 0,
-      zero_executed_nodes: [], absent_nodes: []
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-zero-planned.json"
-verify_file "$tmp/schema5-zero-planned.json" fail "schema6 zero planned nodes"
-jq '.ledger_record.coverage = {
-      planned_test_nodes: 2, executed_test_nodes: 1,
-      zero_executed_nodes: [], absent_nodes: ["test.missing"]
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-absent.json"
-verify_file "$tmp/schema5-absent.json" fail "schema6 absent node"
-jq '.ledger_record.coverage = {
-      planned_test_nodes: 2, executed_test_nodes: 2,
-      zero_executed_nodes: [], absent_nodes: []
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid.json"
-verify_file "$tmp/schema5-valid.json" pass "schema6 complete coverage"
-
-plant_root=$tmp
-rm -rf -- "$plant_root"
-if [[ -e $plant_root ]]; then
-    echo "FAIL: receipt fixture plant was not deleted cleanly: $plant_root" >&2
-    exit 1
-fi
-trap - EXIT
-
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted at the same Reverie tip; moved-tip, missing/tampered binding, stale-head, forged, digest-tampered, zero-executed, host-mismatch/absent, and three incomplete schema6 controls refused; fixture plant deleted cleanly"
+echo 'PASS: branch-tip outcome discovery, monotonic failure precedence, exact finalizer/log recomputation, content addressing, and fresh Reverie binding bracketed'
