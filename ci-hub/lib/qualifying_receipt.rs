@@ -33,14 +33,12 @@
 //! 2. the on-disk `ci-hub/validate/qualifying-receipt.json` resolved against the
 //!    repo root — this is PRIMARY in production so an edit to the JSON takes
 //!    effect with no recompile (the "one edit" guarantee).
-//! 3. the compile-time [`EMBEDDED`] snapshot of that same file — a last-resort
-//!    fallback for unit tests that run the compiled binary from a temp dir where
-//!    the on-disk file is not reachable. It is `include_str!`-ed from the exact
-//!    file, so it cannot silently diverge from the source at compile time.
 //!
-//! A malformed override or on-disk file is a deploy defect and PANICS (loud),
-//! never silently falls through to the embed — silent fallback would mask the
-//! very drift this module exists to prevent.
+//! A missing, unreadable, or malformed override/on-disk file is a deploy defect
+//! and PANICS (loud). The compile-time [`EMBEDDED`] snapshot exists only for
+//! build-time alignment and isolated unit fixtures; it is never a runtime
+//! fallback. A fallback would let stale compiled rules authorize after the
+//! canonical live predicate was tightened or removed.
 
 use crate::records::{CoverageRow, HistoryRow};
 use crate::reverie_pin::ReverieBinding;
@@ -56,7 +54,7 @@ pub const PREDICATE_REL: &str = "ci-hub/validate/qualifying-receipt.json";
 pub const PREDICATE_ENV: &str = "QUALIFYING_RECEIPT_PREDICATE";
 pub const PREDICATE_TEST_SENTINEL_ENV: &str = "CI_HUB_TEST_PREDICATE_OVERRIDE";
 
-/// Compile-time snapshot of the live file (fallback only; see module docs).
+/// Compile-time snapshot used only by build-alignment and isolated unit tests.
 pub const EMBEDDED: &str = include_str!("../validate/qualifying-receipt.json");
 
 /// The mandatory receipt/ledger-row fields and their required values. A `pass`
@@ -285,20 +283,20 @@ pub fn load(root: &Path) -> Result<QualifyingPredicate, String> {
         return QualifyingPredicate::parse(&text, &path.display().to_string());
     }
     let path = predicate_path(root);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => QualifyingPredicate::parse(&text, &path.display().to_string()),
-        // Not reachable on disk (e.g. a unit-test temp dir): fall back to the
-        // compile-time snapshot of the very same file. A malformed on-disk file,
-        // by contrast, propagates as an error above and is never masked.
-        Err(_) => QualifyingPredicate::parse(EMBEDDED, "embedded qualifying-receipt.json"),
-    }
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "{}: cannot read canonical qualifying predicate: {error}",
+            path.display()
+        )
+    })?;
+    QualifyingPredicate::parse(&text, &path.display().to_string())
 }
 
 /// The process-wide active predicate for callers without a `root` in hand
 /// (`is_clean_full_pass`, `assess`). Resolved once and cached. Resolution
 /// mirrors `ci-hub.rs::workspace_root` (script/exe dir -> git toplevel) so a run
-/// from the parent finds the live file; on any failure it falls back to the
-/// embedded snapshot rather than stranding every green.
+/// from the parent finds the live file. Any resolution/read/parse defect refuses
+/// rather than authorizing under a stale compiled snapshot.
 pub fn active() -> &'static QualifyingPredicate {
     static ACTIVE: OnceLock<QualifyingPredicate> = OnceLock::new();
     ACTIVE.get_or_init(|| {
@@ -314,7 +312,8 @@ pub fn active() -> &'static QualifyingPredicate {
 }
 
 /// Best-effort repo root for [`active`], mirroring `ci-hub.rs::workspace_root`.
-/// Falls back to the current directory (the embed then covers a missing file).
+/// Falls back to the executable/source directory; a missing predicate there is
+/// still a hard error.
 fn resolve_root() -> PathBuf {
     let source = std::env::var_os("RUST_SCRIPT_PATH")
         .filter(|path| !path.is_empty())
@@ -348,13 +347,45 @@ mod tests {
         path
     }
 
-    /// The embedded snapshot must always parse — it is the fallback of last
-    /// resort and a parse failure would strand every green in a temp-dir run.
+    /// The embedded snapshot must always parse so build-time fixtures cannot
+    /// drift from the checked-in live predicate.
     #[test]
     fn embedded_snapshot_parses() {
         let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
         assert!(pred.counts_schema >= 1);
         assert!(pred.require.executed_tests_min >= 1);
+    }
+
+    #[test]
+    fn missing_canonical_predicate_refuses_without_embedded_fallback() {
+        let root = std::env::temp_dir().join(format!(
+            "qrp-missing-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let error = load(&root).expect_err("missing live predicate must refuse");
+        assert!(error.contains("cannot read canonical qualifying predicate"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn malformed_canonical_predicate_refuses_without_embedded_fallback() {
+        let root = std::env::temp_dir().join(format!(
+            "qrp-malformed-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let path = predicate_path(&root);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{not-json\n").unwrap();
+        let error = load(&root).expect_err("malformed live predicate must refuse");
+        assert!(error.contains("malformed qualifying predicate"));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// A tightened override MOVES the answer for the same row — the core of the

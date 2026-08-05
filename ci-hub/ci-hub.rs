@@ -37,9 +37,7 @@ mod validate_status;
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
-use history_queries::{
-    CellEvidenceCache, FirstBadOutcome, HistoryQueryEngine, NewestGreenCache, NewestGreenOutcome,
-};
+use history_queries::{CellEvidenceCache, FirstBadOutcome, HistoryQueryEngine, NewestGreenOutcome};
 use records::{HistoryRow, ObligationRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -540,6 +538,11 @@ struct ValidateStatusArgs {
     /// re-derives the complete row, so this cannot authorize by itself.
     #[arg(long)]
     finalized_log_map: Option<PathBuf>,
+    /// Refuse any malformed, other-commit, or other-target row. Immutable
+    /// outcome snapshots use this so a declared verdict cannot hide records
+    /// behind the tolerant append-only ledger parser.
+    #[arg(long)]
+    strict_ledger: bool,
     /// Emit the machine-readable verdict report.
     #[arg(long)]
     json: bool,
@@ -681,10 +684,11 @@ struct HistoryQueryArgs {
 struct NewestGreenArgs {
     #[command(flatten)]
     query: HistoryQueryArgs,
-    /// Override the cache path.
+    /// Deprecated compatibility option; authority caches are no longer read or
+    /// written because current evidence is always re-derived.
     #[arg(long)]
     cache: Option<PathBuf>,
-    /// Ignore a valid cache and recompute from the same ledger and branch tip.
+    /// Deprecated compatibility option; newest-green always recomputes.
     #[arg(long)]
     no_cache: bool,
 }
@@ -3366,9 +3370,10 @@ fn ledger_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
 }
 
 /// Load and parse the validate ledger. A missing ledger is an empty history (a
-/// commit is simply NOT validated), never an error. Unparseable lines are
-/// skipped with a warning so one bad append never blinds the whole query.
-fn load_ledger_rows(path: &Path) -> Result<Vec<HistoryRow>, CiHubError> {
+/// commit is simply NOT validated), never an error. Ordinary append-only reads
+/// skip malformed lines with a warning; immutable outcome snapshots request
+/// strict mode so no carried row can disappear during verdict recomputation.
+fn load_ledger_rows_with_mode(path: &Path, strict: bool) -> Result<Vec<HistoryRow>, CiHubError> {
     let buf = match std::fs::read_to_string(path) {
         Ok(buf) => buf,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
@@ -3381,12 +3386,22 @@ fn load_ledger_rows(path: &Path) -> Result<Vec<HistoryRow>, CiHubError> {
     };
     let (rows, skipped) = validate_status::parse_ledger(&buf);
     if skipped > 0 {
+        if strict {
+            return Err(CiHubError::ValidateStatus(format!(
+                "strict ledger {} contains {skipped} unparseable row(s)",
+                path.display()
+            )));
+        }
         eprintln!(
             "ci-hub: validate-status: skipped {skipped} unparseable ledger line(s) in {}",
             path.display()
         );
     }
     Ok(rows)
+}
+
+fn load_ledger_rows(path: &Path) -> Result<Vec<HistoryRow>, CiHubError> {
+    load_ledger_rows_with_mode(path, false)
 }
 
 /// Invoke the one finalized-row verifier over a ledger snapshot. The returned
@@ -3774,10 +3789,10 @@ fn history_at_or_after_gate_floor(
     Ok(commits)
 }
 
-fn ledger_stamp(path: &Path) -> Result<(u64, u128), CiHubError> {
+fn ledger_len(path: &Path) -> Result<u64, CiHubError> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
         Err(source) => {
             return Err(CiHubError::LedgerRead {
                 path: path.to_path_buf(),
@@ -3785,52 +3800,7 @@ fn ledger_stamp(path: &Path) -> Result<(u64, u128), CiHubError> {
             })
         }
     };
-    let modified_ns = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    Ok((metadata.len(), modified_ns))
-}
-
-fn read_newest_green_cache(path: &Path) -> Option<NewestGreenCache> {
-    let raw = std::fs::read(path).ok()?;
-    match serde_json::from_slice(&raw) {
-        Ok(cache) => Some(cache),
-        Err(error) => {
-            eprintln!(
-                "ci-hub: ignoring invalid newest-green cache {}: {error}",
-                path.display()
-            );
-            None
-        }
-    }
-}
-
-fn write_newest_green_cache(path: &Path, cache: &NewestGreenCache) -> Result<(), CiHubError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| {
-            CiHubError::HistoryQuery(format!(
-                "cannot create cache directory {}: {source}",
-                parent.display()
-            ))
-        })?;
-    }
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    let mut bytes = serde_json::to_vec_pretty(cache)
-        .map_err(|error| CiHubError::HistoryQuery(format!("serialize cache: {error}")))?;
-    bytes.push(b'\n');
-    std::fs::write(&temporary, bytes).map_err(|source| {
-        CiHubError::HistoryQuery(format!("write cache {}: {source}", temporary.display()))
-    })?;
-    std::fs::rename(&temporary, path).map_err(|source| {
-        CiHubError::HistoryQuery(format!(
-            "replace cache {} with {}: {source}",
-            path.display(),
-            temporary.display()
-        ))
-    })
+    Ok(metadata.len())
 }
 
 fn retain_cell_evidence(root: &Path, rows: &mut [HistoryRow]) -> Result<(), CiHubError> {
@@ -3907,12 +3877,12 @@ fn retain_cell_evidence(root: &Path, rows: &mut [HistoryRow]) -> Result<(), CiHu
     })
 }
 
-fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bool, json: bool) {
+fn print_newest_green(report: &history_queries::NewestGreenReport, json: bool) {
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "cache_hit": cache_hit,
+                "cache_hit": false,
                 "report": report,
             }))
             .expect("serialize newest-green report")
@@ -3932,13 +3902,12 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         report.gate_schema, report.gate_schema_floor,
     );
     println!(
-        "BRANCH {} tip={} commits-after-green={} recorded={} no-record={} cache={}",
+        "BRANCH {} tip={} commits-after-green={} recorded={} no-record={} cache=disabled",
         report.branch,
         report.branch_tip,
         report.commits_after_green,
         report.commits_with_records,
         report.commits_without_any_record,
-        if cache_hit { "hit" } else { "miss" },
     );
     println!(
         "EVIDENCE-WINDOW first-parent={}..{} commits={} trustworthy-recorded={} full-green={}",
@@ -3951,6 +3920,10 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
 }
 
 fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubError> {
+    // Retain the old flags for command-line compatibility, but never consume a
+    // cached verdict. A green is authority only after this invocation re-reads
+    // the current predicate, finalized source/log/tree evidence, and live pin.
+    let _retired_cache_options = (&args.cache, args.no_cache);
     let repo = history_repo_path(root, &args.query.repo_dir);
     let branch_ref = format!("origin/{}", args.query.branch);
     if !args.query.no_fetch {
@@ -3960,7 +3933,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     // any remote dependency lookup so an empty query cannot consume the
     // 30-second network bound.
     let ledger = ledger_path(root, &args.query.ledger);
-    let (ledger_len, ledger_modified_ns) = ledger_stamp(&ledger)?;
+    let ledger_len = ledger_len(&ledger)?;
     if ledger_len == 0 {
         if args.query.json {
             println!(
@@ -4042,27 +4015,6 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
         &branch_ref,
         &effective_floor.sha,
     )?;
-    let branch_tip = commits.first().expect("nonempty history");
-    let cache_path = history_queries::cache_path(root, &args.cache);
-    if !args.no_cache {
-        if let Some(cache) = read_newest_green_cache(&cache_path) {
-            if history_queries::cache_matches(
-                &cache,
-                &args.query.branch,
-                &branch_ref,
-                branch_tip,
-                &effective_floor.sha,
-                &ledger,
-                ledger_len,
-                ledger_modified_ns,
-                &resolved_reverie,
-            ) {
-                print_newest_green(&cache.report, true, args.query.json);
-                return Ok(0);
-            }
-        }
-    }
-
     let mut rows = load_ledger_rows(&ledger)?;
     retain_cell_evidence(root, &mut rows)?;
     let commits_with_rows: BTreeSet<String> =
@@ -4095,20 +4047,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
             &effective_floor.sha,
         ) {
         NewestGreenOutcome::Found(report) => {
-            let cache = NewestGreenCache {
-                schema_version: 6,
-                branch: report.branch.clone(),
-                branch_ref: report.branch_ref.clone(),
-                branch_tip: report.branch_tip.clone(),
-                gate_schema_floor: report.gate_schema_floor.clone(),
-                ledger_path: ledger.display().to_string(),
-                ledger_len,
-                ledger_modified_ns,
-                reverie_main_sha: resolved_reverie,
-                report: (*report).clone(),
-            };
-            write_newest_green_cache(&cache_path, &cache)?;
-            print_newest_green(&report, false, args.query.json);
+            print_newest_green(&report, args.query.json);
             Ok(0)
         }
         NewestGreenOutcome::FailedOnly {
@@ -4505,7 +4444,7 @@ fn run_qualified_rows(root: &Path, args: QualifiedRowsArgs) -> Result<i32, CiHub
 /// re-measurement state (TRUNCATED, NEEDS-RERUN, NO-RESULT, or NOT-VALIDATED).
 fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
-    let rows = load_ledger_rows(&path)?;
+    let rows = load_ledger_rows_with_mode(&path, args.strict_ledger)?;
     // A SHA may arrive as `--sha` or positionally; clap already forbids giving
     // both, or either together with `--pr`.
     let sha_input = args.sha.as_ref().or(args.sha_positional.as_ref());
@@ -4523,6 +4462,18 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
     let hermit_repo = history_repo_path(root, &args.hermit_repo);
     let target = qualifying_receipt::ReceiptTarget::from_repository(&args.repo)
         .map_err(CiHubError::ValidateStatus)?;
+    if args.strict_ledger
+        && rows
+            .iter()
+            .any(|row| row.commit.as_deref() != Some(&sha) || !target.row_matches(row))
+    {
+        return Err(CiHubError::ValidateStatus(format!(
+            "strict ledger {} contains a row outside trusted target {}@{}",
+            path.display(),
+            args.repo,
+            sha
+        )));
+    }
     let (reverie_binding, reverie_problem, resolved_reverie_sha) =
         if target == qualifying_receipt::ReceiptTarget::Reverie {
             (None, None, None)

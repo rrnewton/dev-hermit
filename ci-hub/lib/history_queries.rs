@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-pub const NEWEST_GREEN_CACHE_REL: &str = "ignored/ci-hub/newest-green-cache.json";
 pub const CELL_EVIDENCE_CACHE_REL: &str = "ignored/ci-hub/local-cell-evidence-cache.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -80,22 +79,6 @@ pub struct FirstBadReport {
     pub source_node: Option<String>,
     pub error_excerpt: Vec<String>,
     pub load_context: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct NewestGreenCache {
-    pub schema_version: u32,
-    pub branch: String,
-    pub branch_ref: String,
-    pub branch_tip: String,
-    pub gate_schema_floor: String,
-    pub ledger_path: String,
-    pub ledger_len: u64,
-    pub ledger_modified_ns: u128,
-    /// Fresh Reverie main identity under which `report.green` qualified. A main
-    /// move invalidates this cache even when Hermit/ledger bytes are unchanged.
-    pub reverie_main_sha: String,
-    pub report: NewestGreenReport,
 }
 
 /// Durable derived detail for a row in the append-only validation ledger. This
@@ -738,34 +721,6 @@ fn load_context(row: &HistoryRow) -> Option<String> {
         })
 }
 
-pub fn cache_matches(
-    cache: &NewestGreenCache,
-    branch: &str,
-    branch_ref: &str,
-    branch_tip: &str,
-    gate_schema_floor: &str,
-    ledger_path: &Path,
-    ledger_len: u64,
-    ledger_modified_ns: u128,
-    reverie_main_sha: &str,
-) -> bool {
-    cache.schema_version == 6
-        && cache.branch == branch
-        && cache.branch_ref == branch_ref
-        && cache.branch_tip == branch_tip
-        && cache.gate_schema_floor == gate_schema_floor
-        && cache.ledger_path == ledger_path.display().to_string()
-        && cache.ledger_len == ledger_len
-        && cache.ledger_modified_ns == ledger_modified_ns
-        && cache.reverie_main_sha == reverie_main_sha
-}
-
-pub fn cache_path(root: &Path, override_path: &Option<PathBuf>) -> PathBuf {
-    override_path
-        .clone()
-        .unwrap_or_else(|| root.join(NEWEST_GREEN_CACHE_REL))
-}
-
 pub fn cell_evidence_cache_path(root: &Path) -> PathBuf {
     root.join(CELL_EVIDENCE_CACHE_REL)
 }
@@ -1080,110 +1035,6 @@ mod tests {
         assert!(matches!(
             newest_green(HistoryQueryEngine::new(vec!["tip".into()], vec![dirty])),
             NewestGreenOutcome::NoEvidence { .. }
-        ));
-    }
-
-    #[test]
-    fn cache_invalidates_on_branch_tip_or_ledger_change() {
-        let report = NewestGreenReport {
-            schema_version: 3,
-            branch: "main".into(),
-            branch_ref: "origin/main".into(),
-            branch_tip: "tip-a".into(),
-            gate_schema: "merge-gate-v2".into(),
-            gate_schema_floor: "floor".into(),
-            range_oldest_commit: "root".into(),
-            branch_commits_in_range: 2,
-            trustworthy_recorded_commits_in_range: 1,
-            full_green_commits_in_range: 1,
-            green: evidence(
-                "tip-a",
-                &row("tip-a", "2026-08-03T01:00:00Z", "full", "full", "pass"),
-            ),
-            commits_after_green: 0,
-            commits_without_any_record: 0,
-            commits_with_records: 0,
-        };
-        let cache = NewestGreenCache {
-            schema_version: 6,
-            branch: "main".into(),
-            branch_ref: "origin/main".into(),
-            branch_tip: "tip-a".into(),
-            gate_schema_floor: "floor".into(),
-            ledger_path: "/tmp/ledger".into(),
-            ledger_len: 100,
-            ledger_modified_ns: 200,
-            reverie_main_sha: "d".repeat(40),
-            report,
-        };
-        let path = Path::new("/tmp/ledger");
-        assert!(cache_matches(
-            &cache,
-            "main",
-            "origin/main",
-            "tip-a",
-            "floor",
-            path,
-            100,
-            200,
-            &"d".repeat(40)
-        ));
-        let mut pre_finalizer_cache = cache.clone();
-        pre_finalizer_cache.schema_version = 5;
-        assert!(!cache_matches(
-            &pre_finalizer_cache,
-            "main",
-            "origin/main",
-            "tip-a",
-            "floor",
-            path,
-            100,
-            200,
-            &"d".repeat(40)
-        ));
-        assert!(!cache_matches(
-            &cache,
-            "main",
-            "origin/main",
-            "tip-b",
-            "floor",
-            path,
-            100,
-            200,
-            &"d".repeat(40)
-        ));
-        assert!(!cache_matches(
-            &cache,
-            "main",
-            "origin/main",
-            "tip-a",
-            "floor",
-            path,
-            101,
-            201,
-            &"d".repeat(40)
-        ));
-        assert!(!cache_matches(
-            &cache,
-            "main",
-            "origin/main",
-            "tip-a",
-            "new-floor",
-            path,
-            100,
-            200,
-            &"d".repeat(40)
-        ));
-        assert!(!cache_matches(
-            &cache,
-            "main",
-            "origin/main",
-            "tip-a",
-            "floor",
-            path,
-            100,
-            200,
-            &"e".repeat(40)
         ));
     }
 

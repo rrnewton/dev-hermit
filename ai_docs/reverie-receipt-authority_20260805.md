@@ -53,10 +53,10 @@ green reconciliation. For Hermit, that verifier admits a schema-6 row only after
 the finalizer has re-derived its unique original source row, exact log digest,
 per-node counts, coverage, and exact-commit DAG manifests; carried fields and a
 finalizer marker alone are not authority. This is a parent implementation claim,
-not proof that an older Hermit workflow has pinned the tree. The newest-green
-cache also records the resolved Reverie tip, so a ref move invalidates an
-otherwise byte-identical cache. Its
-`--no-fetch` mode never performs a hidden ref lookup and therefore reports the
+not proof that an older Hermit workflow has pinned the tree. `newest-green` no
+longer reads or writes a verdict cache: its legacy cache flags are inert and
+every invocation re-derives the current predicate, finalized source/log/tree
+evidence, and live Reverie binding. Its `--no-fetch` mode never performs a hidden ref lookup and therefore reports the
 dependency frontier UNVERIFIABLE rather than emitting an offline green.
 An identical-tree cache hit for another commit is soft evidence only: the
 exact-SHA consumer and producer both refuse hard green/receipt binding when the
@@ -67,12 +67,14 @@ an append-only, content-addressed `validation-outcomes/<repo>/<sha>/<digest>.jso
 snapshot. A pass additionally publishes its receipt and durable log. Rust
 verifies the publisher's snapshot verdict and selected identity before labeling.
 The consumer resolves the canonical outcome branch tip once, enumerates every
-exact-SHA outcome, unions all carried rows, and delegates failure-over-pass
-selection to `validate-status`; a later pass can never erase a genuine published
-failure. It then re-derives the selected schema-6 row from the original source
-row, exact-commit manifests, and durable log. Planned-manifest defects, unplanned
-banner inflation, failed terminals, missing finalizer provenance, and log/count
-drift refuse. Comments and labels are routing/cache hints, never discovery or
+exact-SHA outcome, and first requires each declared verdict to equal the
+canonical verdict recomputed from that outcome's own snapshot. It then unions
+all verified rows and delegates failure-over-pass selection to `validate-status`;
+a later pass can never erase a genuine published failure, while malformed or
+target-unbound rows cannot make a declared failure disappear. It re-derives the
+selected schema-6 row from the original source row, exact-commit manifests, and
+durable log. Planned-manifest defects, unplanned banner inflation, failed
+terminals, missing finalizer provenance, and log/count drift refuse. Comments and labels are routing/cache hints, never discovery or
 authority. The cache label is guarded by a fresh head read immediately before
 application and another after it; a detected concurrent push removes the label.
 

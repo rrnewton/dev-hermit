@@ -222,6 +222,24 @@ fi
 rm -- "$fixture/$failure_path"
 verify >/dev/null
 
+# A declared failure cannot win (or disappear) by carrying only malformed or
+# target-unbound rows. The verifier must reject the entire artifact set instead
+# of silently skipping `[{}]` and accepting the older pass.
+malformed_failure_body=$(jq -cn --arg repo rrnewton/hermit --arg sha "$sha" '{
+  schema_version:1, repository:$repo, commit:$sha, verdict:"FAILED",
+  ledger_records:[{}], selected_receipt_identity:null, receipt:null
+}')
+malformed_failure_digest=$(printf '%s' "$malformed_failure_body" | sha256sum | awk '{print $1}')
+malformed_failure_path="validation-outcomes/rrnewton/hermit/$sha/$malformed_failure_digest.json"
+mkdir -p "$fixture/$(dirname "$malformed_failure_path")"
+printf '%s' "$malformed_failure_body" >"$fixture/$malformed_failure_path"
+if verify >/dev/null 2>&1; then
+    echo 'FAIL: declared failure with target-unbound ledger rows was ignored' >&2
+    exit 1
+fi
+rm -- "$fixture/$malformed_failure_path"
+verify >/dev/null
+
 # Every exact-SHA outcome and durable log is content-addressed and dereferenced
 # at one branch tip; tamper or absence is a refusal.
 cp "$fixture/$outcome_path" "$tmp/outcome.saved"
@@ -322,4 +340,4 @@ fi
 grep -q 'bundle path is missing, untracked, or modified: ci-hub/ci-hub' \
     "$tmp/symlink-bundle.out"
 
-echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, zero-gate identical-tree cache refusal, head-race cache cleanup, fresh Reverie binding, bundle-owned manifest, and replacement-ref hardening bracketed'
+echo 'PASS: branch-tip outcomes, per-outcome verdict recomputation, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, zero-gate identical-tree cache refusal, head-race cache cleanup, fresh Reverie binding, bundle-owned manifest, and replacement-ref hardening bracketed'

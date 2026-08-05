@@ -120,6 +120,7 @@ fi
 combined_ledger="$tmp/combined.jsonl"
 : >"$combined_ledger"
 pass_outcomes=()
+outcome_files=()
 index=0
 for outcome_path in "${outcome_paths[@]}"; do
     if [[ ! $outcome_path =~ ^${outcome_prefix}([0-9a-f]{64})\.json$ ]]; then
@@ -140,10 +141,10 @@ for outcome_path in "${outcome_paths[@]}"; do
         printf 'tampered or malformed exact-head outcome: %s\n' "$outcome_path" >&2
         exit 1
     fi
-    jq -c '.ledger_records[]' "$outcome_file" >>"$combined_ledger"
     if [[ $(jq -r .verdict "$outcome_file") == VALIDATED ]]; then
         pass_outcomes+=("$outcome_file")
     fi
+    outcome_files+=("$outcome_file")
     index=$((index + 1))
 done
 
@@ -192,12 +193,57 @@ for outcome_file in "${pass_outcomes[@]}"; do
     pre_index=$((pre_index + 1))
 done
 
+# Verify every declared outcome against its own carried snapshot before taking
+# the union.  In particular, a content-addressed FAILED artifact whose rows are
+# malformed or do not match the trusted target is not evidence of failure and
+# must refuse the whole outcome set rather than disappear beside an older pass.
+outcome_index=0
+for outcome_file in "${outcome_files[@]}"; do
+    outcome_ledger="$tmp/outcome-ledger-$outcome_index.jsonl"
+    outcome_report="$tmp/outcome-status-$outcome_index.json"
+    outcome_error="$tmp/outcome-status-$outcome_index.err"
+    jq -c '.ledger_records[]' "$outcome_file" >"$outcome_ledger"
+    declared_verdict=$(jq -r .verdict "$outcome_file")
+    set +e
+    "$ci_hub" validate-status --repo "$repo" --sha "$sha" \
+        --ledger "$outcome_ledger" --hermit-repo "$target_repo" \
+        --finalized-log-map "$finalized_log_map" --strict-ledger --json \
+        >"$outcome_report" 2>"$outcome_error"
+    outcome_status=$?
+    set -e
+    if [[ $outcome_status -ne 0 && $outcome_status -ne 3 && $outcome_status -ne 4 ]]; then
+        printf 'cannot verify declared outcome %s: %s\n' "$declared_verdict" \
+            "$(<"$outcome_error")" >&2
+        exit 1
+    fi
+    computed_verdict=$(jq -er \
+        '.verdict | select(IN("VALIDATED", "FAILED", "TRUNCATED", "NEEDS-RERUN", "NO-RESULT", "NOT-VALIDATED"))' \
+        "$outcome_report") || {
+        echo 'canonical verifier returned no typed per-outcome verdict' >&2
+        exit 1
+    }
+    case "$computed_verdict:$outcome_status" in
+        VALIDATED:0|FAILED:3|TRUNCATED:4|NEEDS-RERUN:4|NO-RESULT:4|NOT-VALIDATED:4) ;;
+        *)
+            echo 'canonical per-outcome verdict/exit binding is inconsistent' >&2
+            exit 1
+            ;;
+    esac
+    if [[ $computed_verdict != "$declared_verdict" ]]; then
+        printf 'declared outcome %s recomputed as %s; refusing outcome set\n' \
+            "$declared_verdict" "$computed_verdict" >&2
+        exit 1
+    fi
+    cat "$outcome_ledger" >>"$combined_ledger"
+    outcome_index=$((outcome_index + 1))
+done
+
 # ONE semantic verifier sees the union of every immutable snapshot. A genuine
 # failure in any later or earlier outcome therefore wins monotonically forever.
 status_report="$tmp/status.json"
 if ! "$ci_hub" validate-status --repo "$repo" --sha "$sha" \
       --ledger "$combined_ledger" --hermit-repo "$target_repo" \
-      --finalized-log-map "$finalized_log_map" --json \
+      --finalized-log-map "$finalized_log_map" --strict-ledger --json \
       >"$status_report" 2>/dev/null; then
     printf 'immutable outcome set is not green for exact head %s\n' "$sha" >&2
     exit 1

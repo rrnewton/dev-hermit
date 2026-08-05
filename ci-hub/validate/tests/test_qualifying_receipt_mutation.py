@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -36,6 +37,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, str, Path, dict[str, str]]:
         check=True,
     )
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "fixture"], check=True)
+    subprocess.run(["git", "-C", str(repo), "branch", "-M", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(repo)],
+        check=True,
+    )
     sha = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True, capture_output=True, text=True,
@@ -80,6 +86,24 @@ def _fixture(tmp_path: Path) -> tuple[Path, str, Path, dict[str, str]]:
         "exec \"$@\"\n"
     )
     proxy.chmod(0o755)
+    python_proxy = bindir / "python3"
+    gate_report = json.dumps(
+        {
+            "ok": True,
+            "effective_floor": sha,
+            "effective_kind": "producer-anchor",
+        },
+        separators=(",", ":"),
+    )
+    python_proxy.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ $1 == */ci-hub/validate/gate_floors.py ]]; then\n"
+        f"  printf '%s\\n' '{gate_report}'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'exec "{sys.executable}" "$@"\n'
+    )
+    python_proxy.chmod(0o755)
     env = dict(os.environ)
     env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
     finalized = subprocess.run(
@@ -185,6 +209,79 @@ def test_self_asserted_schema6_row_is_not_finalized_authority(tmp_path: Path) ->
     assert json.loads(verdict.stdout)["qualifying_count"] == 0
     assert bulk.returncode == 0
     assert bulk.stdout == ""
+
+
+def test_stale_newest_green_cache_cannot_bypass_tightened_authority(
+    tmp_path: Path,
+) -> None:
+    """Negative bracket: a previously green cache file is inert when the live
+    predicate tightens; newest-green must recompute all authority inputs."""
+    repo, sha, ledger, env = _fixture(tmp_path)
+    cache = tmp_path / "stale-newest-green.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "schema_version": 6,
+                "branch": "main",
+                "branch_ref": "origin/main",
+                "branch_tip": sha,
+                "gate_schema_floor": sha,
+                "ledger_path": str(ledger),
+                "ledger_len": ledger.stat().st_size,
+                "ledger_modified_ns": ledger.stat().st_mtime_ns,
+                "reverie_main_sha": PIN,
+                "report": {
+                    "schema_version": 3,
+                    "branch": "main",
+                    "branch_ref": "origin/main",
+                    "branch_tip": sha,
+                    "gate_schema": "merge-gate-v2",
+                    "gate_schema_floor": sha,
+                    "range_oldest_commit": sha,
+                    "branch_commits_in_range": 1,
+                    "trustworthy_recorded_commits_in_range": 1,
+                    "full_green_commits_in_range": 1,
+                    "green": {
+                        "sha": sha,
+                        "finished_at": "2026-08-05T00:10:00Z",
+                        "profile": "full",
+                        "selection_mode": "full",
+                        "coverage": "full",
+                        "result": "pass",
+                        "log_file": str(tmp_path / "validate.log"),
+                    },
+                    "commits_after_green": 0,
+                    "commits_without_any_record": 0,
+                    "commits_with_records": 1,
+                },
+            }
+        )
+        + "\n"
+    )
+    tightened = _tightened_env(tmp_path, env)
+    result = subprocess.run(
+        [
+            str(CI_HUB),
+            "newest-green",
+            "--repo-dir",
+            str(repo),
+            "--branch",
+            "main",
+            "--ledger",
+            str(ledger),
+            "--cache",
+            str(cache),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        env=tightened,
+        timeout=60,
+    )
+    assert result.returncode == 4, result.stderr
+    report = json.loads(result.stdout)
+    assert report["verdict"] == "NOT-VALIDATED"
+    assert cache.is_file(), "retired cache option must not mutate caller data"
 
 
 def test_tightened_predicate_refuses_validate_status(tmp_path: Path) -> None:
