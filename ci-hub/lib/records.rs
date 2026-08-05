@@ -146,6 +146,12 @@ pub struct HistoryRow {
     /// a writer defect. Supersedes the blunt `filtered_tests == 0` predicate.
     #[serde(default)]
     pub coverage: Option<CoverageRow>,
+    /// Exact cross-repository dependency conditions for a Hermit validation.
+    /// Schema-6 Hermit greens must carry this object; the canonical verifier
+    /// compares it to both the exact Hermit commit's tracked Cargo pins and one
+    /// freshly resolved `rrnewton/reverie:main` tip.
+    #[serde(default)]
+    pub reverie_binding: Option<crate::reverie_pin::ReverieBinding>,
     /// Whether the run covered the FULL profile (`level == "full"`), not a
     /// partial `*-only` profile whose pass reads identically to a full green.
     #[serde(default)]

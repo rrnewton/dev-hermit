@@ -127,9 +127,10 @@ def candidate_commits(rows: list[dict]) -> list[str]:
 
 # ---- authoritative certifier + floor check (injectable) ----------------------
 
-def certify_validated(sha: str) -> bool:
+def certify_validated(sha: str, repo_checkout: str) -> bool:
     """is_clean_full_pass per the authoritative consumer: exit 0 == VALIDATED."""
-    cp = subprocess.run([CI_HUB_BIN, "validate-status", "--sha", sha, "--json"],
+    cp = subprocess.run([CI_HUB_BIN, "validate-status", "--sha", sha,
+                         "--hermit-repo", repo_checkout, "--json"],
                         capture_output=True, text=True, timeout=60)
     # exit 0 is the ONLY landable verdict; 3/4 (FAILED/NEEDS-RERUN/NOT-VALIDATED)
     # are not. Trust the exit code, not a parsed string.
@@ -245,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--prs-json", help="inject open-PR JSON (offline/test)")
     ap.add_argument("--history-json", help="inject local-history JSON (test)")
+    ap.add_argument("--repo-checkout", default=preflight_anchor.DEFAULT_CHECKOUT,
+                    help="Hermit object store used for exact-head pin verification")
     ap.add_argument("--no-fetch", action="store_true",
                     help="skip refreshing the remote before the local floor check")
     args = ap.parse_args(argv)
@@ -257,8 +260,9 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     commits = candidate_commits(rows)
+    certify = lambda sha: certify_validated(sha, args.repo_checkout)
     report = reconcile(open_prs, commits,
-                       certify=certify_validated, floor=floor_clearance,
+                       certify=certify, floor=floor_clearance,
                        repo=args.repo)
 
     if args.json:

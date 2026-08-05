@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Publish one immutable, remotely readable local-validation receipt.
+"""Mechanically publish one Rust-selected local-validation receipt.
 
-The local JSONL ledger is the authority.  A GitHub label or comment is only a
-cache of a qualifying ledger row and cannot create evidence by itself.
+This module is deliberately not an authority: it never scans a ledger, selects
+a row, comments on a PR, or applies a label. Rust passes one exact canonical
+schema-6 row and verifies the returned artifact bytes before binding anything.
 """
 
 from __future__ import annotations
@@ -18,62 +19,52 @@ import subprocess
 import sys
 from typing import Any
 
-# The shared qualifying-receipt predicate lives at the ci-hub root (beside
-# check_outcome.py), one directory above this validation/ package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import qualifying_receipt  # noqa: E402
-
 
 RECEIPT_REPO = "rrnewton/dev-hermit"
 RECEIPT_BRANCH = "validation-receipts"
-LABEL = "locally-validated"
-# The count-schema boundary is NOT redefined here -- it lives once in
-# qualifying-receipt.json (`counts_schema`) and is read via qualifying_receipt.
+RECEIPT_CANONICALIZATION = "serde_json::to_vec(HistoryRow)-v1"
 
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"publish-receipt: {message}")
 
 
-def qualifying_row(rows: list[dict[str, Any]], sha: str) -> dict[str, Any]:
-    # The green predicate is the ONE shared qualifying-receipt predicate
-    # (`ci-hub/validate/qualifying-receipt.json`) that every consumer reads --
-    # restating the clauses inline is the drift this delegation removes (task
-    # `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
-    # Publishing additionally requires the receipt to be preservable, so it keeps
-    # the started_at + log_file checks the predicate deliberately does not carry.
-    pred = qualifying_receipt.active()
-    matches: list[dict[str, Any]] = []
-    for row in rows:
-        if not qualifying_receipt.row_qualifies(row, sha, pred):
-            continue
-        if not row.get("started_at") or not row.get("log_file") or not row.get("host"):
-            continue
-        matches.append(row)
-    if not matches:
-        fail(f"no counted clean full PASS ledger row for exact head {sha}")
-    return max(matches, key=lambda row: row.get("finished_at") or "")
-
-
-def read_rows(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    try:
-        for number, line in enumerate(path.read_text().splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError as error:
-                fail(f"{path}:{number}: invalid JSON: {error}")
-            if isinstance(value, dict):
-                rows.append(value)
-    except OSError as error:
-        fail(f"cannot read ledger {path}: {error}")
-    return rows
-
-
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def selected_record(
+    canonical_record: bytes,
+    *,
+    sha: str,
+    expected_digest: str,
+    canonicalization: str,
+) -> dict[str, Any]:
+    """Check byte identity for the row Rust already authorized."""
+    if canonicalization != RECEIPT_CANONICALIZATION:
+        fail(f"unsupported canonicalization {canonicalization!r}")
+    if len(expected_digest) != 64 or any(
+        ch not in "0123456789abcdef" for ch in expected_digest
+    ):
+        fail("selected receipt digest must be exactly 64 lowercase hex characters")
+    actual_digest = hashlib.sha256(canonical_record).hexdigest()
+    if actual_digest != expected_digest:
+        fail(
+            "selected receipt digest mismatch: "
+            f"expected {expected_digest}, got {actual_digest}"
+        )
+    try:
+        row = json.loads(canonical_record)
+    except json.JSONDecodeError as error:
+        fail(f"selected canonical record is invalid JSON: {error}")
+    if not isinstance(row, dict):
+        fail("selected canonical record is not an object")
+    if row.get("commit") != sha:
+        fail("selected canonical record is not bound to --sha")
+    for field in ("started_at", "log_file", "host"):
+        if not isinstance(row.get(field), str) or not row[field]:
+            fail(f"selected canonical record has no {field}")
+    return row
 
 
 def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
@@ -92,7 +83,15 @@ def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
     return destination
 
 
-def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -> tuple[dict[str, Any], bytes, str]:
+def build_receipt(
+    repo: str,
+    sha: str,
+    row: dict[str, Any],
+    durable_log: Path,
+    *,
+    selected_digest: str,
+    canonicalization: str,
+) -> tuple[dict[str, Any], bytes, str]:
     log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
     # Host-in-identity (Req2): the receipt identity carries the producing host,
     # so a receipt cannot be read blind to where it was produced and its host
@@ -106,6 +105,11 @@ def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -
         "source_log_file": row["log_file"],
         "durable_log_file": str(durable_log),
         "log_sha256": log_digest,
+        "selected_receipt_identity": {
+            "digest_algorithm": "sha256",
+            "canonicalization": canonicalization,
+            "digest": selected_digest,
+        },
         "ledger_record": row,
     }
     body = canonical(receipt)
@@ -184,71 +188,61 @@ def publish(repo: str, branch: str, path: str, body: bytes) -> str:
     return json.loads(result.stdout)["commit"]["sha"]
 
 
-def issue_comments(repo: str, pr: int) -> list[dict[str, Any]]:
-    result = gh(["api", "--paginate", "--slurp", f"repos/{repo}/issues/{pr}/comments?per_page=100"])
-    values: list[dict[str, Any]] = []
-    for page in json.loads(result.stdout):
-        for value in page:
-            if isinstance(value, dict):
-                values.append(value)
-    return values
-
-
-def bind_pr(repo: str, pr: int, sha: str, receipt: dict[str, Any], receipt_commit: str,
-            receipt_path: str, receipt_sha256: str) -> None:
-    marker = (
-        "<!-- locally-validated-receipt "
-        f"commit={receipt_commit} path={receipt_path} sha256={receipt_sha256} -->"
-    )
-    if not any(marker in (comment.get("body") or "") for comment in issue_comments(repo, pr)):
-        body = "\n".join(
-            [
-                "[impl agent, ci-hub]",
-                "",
-                "Local validation receipt published before applying `locally-validated`.",
-                "",
-                f"- SHA: `{sha}`",
-                f"- Run ID: `{receipt['run_id']}`",
-                f"- Executed tests: `{receipt['ledger_record']['executed_tests']}`",
-                f"- Receipt: `{RECEIPT_REPO}@{receipt_commit}:{receipt_path}`",
-                f"- Receipt SHA-256: `{receipt_sha256}`",
-                f"- Log SHA-256: `{receipt['log_sha256']}`",
-                "",
-                marker,
-            ]
-        )
-        gh(["pr", "comment", str(pr), "--repo", repo, "--body", body])
-    gh(["pr", "edit", str(pr), "--repo", repo, "--add-label", LABEL])
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pr", type=int, required=True)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument("--selected-receipt-sha256", required=True)
+    parser.add_argument("--canonicalization", required=True)
     parser.add_argument("--receipt-repo", default=RECEIPT_REPO)
     parser.add_argument("--receipt-branch", default=RECEIPT_BRANCH)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def execute(args: argparse.Namespace, canonical_record: bytes) -> dict[str, Any]:
     if len(args.sha) != 40 or any(ch not in "0123456789abcdef" for ch in args.sha):
         fail("--sha must be exactly 40 lowercase hex characters")
-    row = qualifying_row(read_rows(args.ledger), args.sha)
+    row = selected_record(
+        canonical_record,
+        sha=args.sha,
+        expected_digest=args.selected_receipt_sha256,
+        canonicalization=args.canonicalization,
+    )
     durable_log = preserve_log(args.ledger, args.sha, row)
-    receipt, body, digest = build_receipt(args.repo, args.sha, row, durable_log)
+    _receipt, body, digest = build_receipt(
+        args.repo,
+        args.sha,
+        row,
+        durable_log,
+        selected_digest=args.selected_receipt_sha256,
+        canonicalization=args.canonicalization,
+    )
     path = f"validation-receipts/{args.repo}/{args.sha}/{digest}.json"
     if args.dry_run:
-        print(json.dumps({"action": "would-publish-and-bind", "path": path,
-                          "receipt_sha256": digest, "receipt": receipt}, sort_keys=True))
-        return 0
-    commit = publish(args.receipt_repo, args.receipt_branch, path, body)
-    bind_pr(args.repo, args.pr, args.sha, receipt, commit, path, digest)
-    print(json.dumps({"action": "bound", "receipt_commit": commit,
-                      "path": path, "receipt_sha256": digest}, sort_keys=True))
+        action = "would-publish"
+        commit = None
+    else:
+        action = "published"
+        commit = publish(args.receipt_repo, args.receipt_branch, path, body)
+    return {
+        "schema_version": 1,
+        "action": action,
+        "receipt_commit": commit,
+        "receipt_repository": args.receipt_repo,
+        "receipt_branch": args.receipt_branch,
+        "path": path,
+        "receipt_identity_sha256": args.selected_receipt_sha256,
+        "artifact_sha256": digest,
+        "artifact_body": body.decode(),
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    report = execute(args, sys.stdin.buffer.read())
+    print(json.dumps(report, sort_keys=True))
     return 0
 
 

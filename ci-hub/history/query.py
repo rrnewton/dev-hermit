@@ -38,6 +38,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,7 +51,6 @@ from check_outcome import (
     classify_check,
     select_latest_workflow_attempts,
 )
-import qualifying_receipt
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
@@ -888,59 +888,48 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 # sub-buckets, reported SEPARATELY and never silently summed:
 #   green_ledger           green-by-conclusion AND a validate-run-ledger receipt
 #                          at that exact commit SHA satisfies the full-pass
-#                          predicate below (the canonical shared predicate also
-#                          used by ci-hub/lib/validate_status.rs).
+#                          predicate in the canonical Rust verifier.
 #   green_conclusion_only  green-by-conclusion but NO corroborating receipt.
-# A row missing both count fields does NOT corroborate, and schema-5+ rows must
-# prove complete per-node coverage. `filtered_tests` is diagnostic: full runs
-# legitimately filter tests outside their planned DAG nodes.
+# Only rows emitted by `ci-hub ledger qualified-rows` corroborate here; that
+# verifier enforces counted coverage and the current schema-6 Reverie binding.
 LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
 
 
 def load_ledger_index(parent: str) -> dict[str, list[dict]]:
-    """commit SHA -> [ledger rows] from ignored/validate-run-ledger.jsonl.
+    """commit SHA -> rows admitted by the ONE canonical Rust verifier.
 
-    Absent file -> empty index -> every green falls to conclusion-only. One
-    malformed JSONL line is skipped, not fatal (the ledger has many writers).
+    No binary/ledger/network/exact-head authority means an empty index (fail
+    closed to conclusion-only), never a local Python reimplementation.
     """
     path = os.path.join(parent, LEDGER_REL)
+    ci_hub = os.path.join(parent, "ci-hub", "ci-hub")
+    hermit = os.path.join(parent, "hermit")
     idx: dict[str, list[dict]] = {}
-    if not os.path.isfile(path):
+    if not os.path.isfile(path) or not os.path.isfile(ci_hub):
         return idx
-    with open(path, errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            sha = row.get("commit")
-            if sha:
-                idx.setdefault(sha, []).append(row)
+    try:
+        proc = subprocess.run(
+            [ci_hub, "ledger", "qualified-rows", "--ledger", path,
+             "--hermit-repo", hermit],
+            capture_output=True, text=True, timeout=45,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return idx
+    if proc.returncode != 0:
+        return idx
+    for line in proc.stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        sha = row.get("commit")
+        if sha:
+            idx.setdefault(sha, []).append(row)
     return idx
 
 
-def _row_full_pass(row: dict) -> bool:
-    """The full-pass corroboration predicate, delegated to the ONE shared
-    qualifying-receipt predicate (`ci-hub/validate/qualifying-receipt.json`) that
-    every consumer across Rust/Python/jq reads -- restating the clauses inline is
-    exactly the drift this delegation removes (task
-    `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
-
-    This previously had NO per-node coverage clause and so would have accepted a
-    count-capable receipt whose coverage was incomplete (e.g. ee303899: 8 PASS
-    rows at executed=427 but 15 absent nodes) -- the DRIFT-4 gap the shared
-    predicate closes. The exact commit binding is handled by the index lookup, so
-    the predicate is asked about the row's own recorded commit."""
-    return qualifying_receipt.row_qualifies(
-        row, row.get("commit") or "", qualifying_receipt.active()
-    )
-
-
 def _ledger_corroborates(idx: dict[str, list[dict]], sha: str) -> bool:
-    """True iff ANY ledger row for `sha` satisfies the full-pass predicate.
+    """True iff the canonical verifier emitted a row for exact `sha`.
 
     Prefers an exact 40-hex commit match; defensively also accepts a ledger row
     whose (shorter) stored commit is a prefix of `sha`.
@@ -952,7 +941,7 @@ def _ledger_corroborates(idx: dict[str, list[dict]], sha: str) -> bool:
         for c, rows in idx.items():
             if c and len(c) < len(sha) and sha.startswith(c):
                 candidates.extend(rows)
-    return any(_row_full_pass(r) for r in candidates)
+    return bool(candidates)
 
 
 def _split_green_by_ledger(intervals: list[dict],
