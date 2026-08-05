@@ -4534,13 +4534,22 @@ fn verify_publisher_report(
     if receipt.get("ledger_record") != Some(&expected_row) {
         return Err("publisher artifact ledger row differs from Rust-selected row".into());
     }
+    // Derive the identity only from the exact Rust-selected ledger row. The
+    // Python publisher carries the same host field into the artifact so two
+    // otherwise-identical runs from different machines cannot collide.
     let expected_run_id = format!(
-        "{sha}@{}",
+        "{sha}@{}@{}",
         selected
             .row
             .started_at
             .as_deref()
-            .ok_or_else(|| "selected row omitted started_at".to_string())?
+            .ok_or_else(|| "selected row omitted started_at".to_string())?,
+        selected
+            .row
+            .host
+            .as_deref()
+            .filter(|host| !host.trim().is_empty())
+            .ok_or_else(|| "selected row omitted host".to_string())?
     );
     if receipt.get("run_id").and_then(|value| value.as_str()) != Some(&expected_run_id) {
         return Err("publisher artifact run identity differs from selected row".into());
@@ -5257,8 +5266,9 @@ mod tests {
             "repository": CANONICAL_VALIDATE_REPO,
             "commit": RECEIPT_SHA,
             "run_id": format!(
-                "{RECEIPT_SHA}@{}",
-                selected.row.started_at.as_deref().unwrap()
+                "{RECEIPT_SHA}@{}@{}",
+                selected.row.started_at.as_deref().unwrap(),
+                selected.row.host.as_deref().unwrap()
             ),
             "source_log_file": selected.row.log_file,
             "durable_log_file": "/tmp/durable-validate.log",
@@ -5286,6 +5296,128 @@ mod tests {
             "artifact_sha256": artifact_sha256,
             "artifact_body": artifact_body,
         })
+    }
+
+    fn rewrite_report_run_id(report: &mut serde_json::Value, run_id: &str) {
+        let mut artifact: serde_json::Value =
+            serde_json::from_str(report["artifact_body"].as_str().unwrap()).unwrap();
+        artifact["run_id"] = serde_json::json!(run_id);
+        let artifact_body = serde_json::to_string(&artifact).unwrap();
+        let artifact_sha256 = format!("{:x}", Sha256::digest(artifact_body.as_bytes()));
+        report["path"] = serde_json::json!(format!(
+            "validation-receipts/{CANONICAL_VALIDATE_REPO}/{RECEIPT_SHA}/{artifact_sha256}.json"
+        ));
+        report["artifact_sha256"] = serde_json::json!(artifact_sha256);
+        report["artifact_body"] = serde_json::json!(artifact_body);
+    }
+
+    #[test]
+    fn python_publisher_and_rust_verifier_share_host_bound_run_identity() {
+        let root = workspace_root().unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp = env::temp_dir().join(format!(
+            "ci-hub-publisher-contract-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let log = temp.join("validate.log");
+        std::fs::write(&log, b"test result: ok. 786 passed; 0 failed\n").unwrap();
+        let ledger = temp.join("ledger.jsonl");
+
+        let mut value = schema4_receipt_value();
+        value["log_file"] = serde_json::json!(log.display().to_string());
+        let selected = qualify_canonical_receipt(&history_row(value), RECEIPT_SHA).unwrap();
+        let publisher = root.join("ci-hub/validation/publish_receipt.py");
+        let mut child = Command::new("python3")
+            .arg(&publisher)
+            .args([
+                "--repo",
+                CANONICAL_VALIDATE_REPO,
+                "--sha",
+                RECEIPT_SHA,
+                "--ledger",
+                ledger.to_str().unwrap(),
+                "--selected-receipt-sha256",
+                &selected.canonical_sha256,
+                "--canonicalization",
+                RECEIPT_CANONICALIZATION,
+                "--receipt-repo",
+                VALIDATION_RECEIPT_REPO,
+                "--receipt-branch",
+                VALIDATION_RECEIPT_BRANCH,
+                "--dry-run",
+            ])
+            .current_dir(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(selected.canonical_row_json.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "Python publisher failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let verified = verify_publisher_report(
+            &output.stdout,
+            CANONICAL_VALIDATE_REPO,
+            RECEIPT_SHA,
+            &selected,
+            true,
+        )
+        .unwrap();
+        let expected_run_id = format!(
+            "{RECEIPT_SHA}@{}@{}",
+            selected.row.started_at.as_deref().unwrap(),
+            selected.row.host.as_deref().unwrap()
+        );
+        assert_eq!(verified.run_id, expected_run_id);
+
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        for (name, run_id) in [
+            (
+                "obsolete hostless identity",
+                format!(
+                    "{RECEIPT_SHA}@{}",
+                    selected.row.started_at.as_deref().unwrap()
+                ),
+            ),
+            (
+                "wrong-host identity",
+                format!(
+                    "{RECEIPT_SHA}@{}@other-host",
+                    selected.row.started_at.as_deref().unwrap()
+                ),
+            ),
+        ] {
+            let mut tampered = report.clone();
+            rewrite_report_run_id(&mut tampered, &run_id);
+            let error = verify_publisher_report(
+                serde_json::to_string(&tampered).unwrap().as_bytes(),
+                CANONICAL_VALIDATE_REPO,
+                RECEIPT_SHA,
+                &selected,
+                true,
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("run identity differs"),
+                "{name} reached the wrong refusal: {error}"
+            );
+        }
+
+        std::fs::remove_dir_all(temp).ok();
     }
 
     #[test]
