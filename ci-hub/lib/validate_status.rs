@@ -73,7 +73,7 @@
 //! as full coverage. `commit_anchored`/`tree_dirty` guarantee the record
 //! describes the actual commit, not a dirty tree (the tree is not the commit).
 
-use crate::records::{CoverageRow, HistoryRow};
+use crate::records::HistoryRow;
 use std::collections::BTreeSet;
 
 /// Canonical ledger path relative to the workspace root. This is the exact file
@@ -161,15 +161,21 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// even when a count is absent, because for such a writer an absent count is a
 /// DEFECT (it was contractually required to emit), not a pre-count receipt.
 ///
-/// This is the SINGLE source of truth for the version boundary: the count-emitting
-/// `hermit/validate.sh` `append_validation_ledger` stamps exactly this
-/// `schema_version`, and this consumer gates on `>=` it (see
-/// `emit_executed_and_filtered`). Do not hard-code the integer in the writer with
-/// a separate comment — writer and consumer are ONE judgement, or they diverge.
+/// The PRODUCTION source of truth for this boundary is now
+/// `qualifying-receipt.json` (`counts_schema`), which the shared predicate reads;
+/// the production predicate no longer keys on this const. It is retained ONLY as
+/// a test-fixture convenience and is PINNED to the JSON by
+/// `counts_schema_const_matches_shared_predicate`, so it cannot silently drift.
 ///
 /// Why 5, not 4: schema 1/2/3 are already in use and schema 4 is ALREADY in the
 /// ledger from a branch writer that emits NO counts, so 4 cannot mean "counts
 /// present". 5 is the first clean anchor.
+///
+/// `#[cfg(test)]`: production no longer reads this const (it reads the JSON via
+/// the shared predicate), so it exists ONLY for the test fixtures below and the
+/// pin `counts_schema_const_matches_shared_predicate`. Compiling it into the
+/// binary would be dead code (the `-D warnings` clippy gate would reject it).
+#[cfg(test)]
 pub const COUNTS_SCHEMA: u32 = 5;
 
 /// A schema-3+ full-profile run's known gate contract is five gates. When the
@@ -205,15 +211,6 @@ pub const EXECUTED_TESTS_NO_RESULT_MAX: i64 = 1;
 /// it never strands a green. Refine per-repo/per-version when the producer emits
 /// an expected-suite-size; until then this single floor is the safe temporary.
 pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
-
-/// A per-node coverage obligation is SATISFIED iff the run planned at least one
-/// test-bearing DAG node AND no planned test node was inert (ran but executed 0
-/// countable tests) or absent (never produced a terminal result). Carrying the
-/// NAMES in the receipt lets this verdict be re-derived here without re-reading a
-/// log (Proxy Binding: the condition travels with the value).
-fn coverage_satisfied(cov: &CoverageRow) -> bool {
-    cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
-}
 
 /// The landing / cache predicate — version-aware over the count-schema
 /// transition (see the module docs and the transition design note). Over and
@@ -253,38 +250,14 @@ fn coverage_satisfied(cov: &CoverageRow) -> bool {
 /// da98bdd): an evidence value must carry the condition it claims, so a receipt
 /// that carries no count cannot certify execution and is refused.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
-    if !(is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")) {
-        return false;
-    }
-    // Universal guard: a demonstrated zero-test run is never a full green, at any
-    // schema — never grandfathered. (No filtered_tests guard: see the doc above.)
-    if row.executed_tests == Some(0) {
-        return false;
-    }
-    let count_capable = row.schema_version.is_some_and(|v| v >= COUNTS_SCHEMA);
-    let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
-    if count_capable {
-        // FULL per-node contract: the coverage-capable writer MUST carry a
-        // nonzero executed count AND a satisfied per-node coverage obligation.
-        // Missing either on a count-capable receipt is a writer defect -> reject.
-        matches!(row.executed_tests, Some(n) if n > 0)
-            && row.coverage.as_ref().is_some_and(coverage_satisfied)
-    } else if counts_present {
-        // Old-schema writer that carried counts but predates per-node coverage
-        // (aggregate.py): hold it to the strongest thing it can prove — nonzero
-        // execution. Filtered no longer gates.
-        matches!(row.executed_tests, Some(n) if n > 0)
-    } else {
-        // STRICT (post-transition): a receipt carrying NEITHER count proves
-        // neither nonzero execution nor bounded filtering — an uncounted receipt
-        // is UNVERIFIED, not green. The transition grandfather (`else { true }`)
-        // is REMOVED now that the backlog is backfilled to schema-5
-        // (finalize_receipt.py --scan) and every landing consume-path re-mints
-        // count-backed rows before reading the ledger, so no legitimate green
-        // rides this branch. NotValidated (exit 4 = re-dispatch to mint counts),
-        // never FailedOnRecord.
-        false
-    }
+    // The predicate itself is NOT restated here — it is the ONE shared
+    // qualifying-receipt predicate loaded from `ci-hub/validate/qualifying-receipt.json`
+    // (module `qualifying_receipt`), which every consumer across Rust/Python/jq
+    // reads. Restating the clauses inline is exactly the drift this delegation
+    // removes (task
+    // `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
+    // The doc block above records the SEMANTICS the shared predicate implements.
+    crate::qualifying_receipt::row_qualifies(row, sha, crate::qualifying_receipt::active())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -596,6 +569,7 @@ pub fn parse_ledger(buf: &str) -> (Vec<HistoryRow>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::CoverageRow;
 
     const PASS_SHA: &str = "cde3c1195eee4e2691bac64a4aec10a45aba853e";
     const OTHER_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1271,6 +1245,25 @@ mod tests {
             );
             assert_eq!(a.verdict.exit_code(), 0);
         }
+    }
+
+    #[test]
+    fn counts_schema_const_matches_shared_predicate() {
+        // The const is a TEST fixture only; production reads the JSON. Pin it so a
+        // JSON tightening cannot leave this file's fixtures behind (the drift this
+        // whole change removes). Also assert the fixture assumptions this module
+        // relies on still hold in the shared predicate.
+        let pred = crate::qualifying_receipt::active();
+        assert_eq!(
+            pred.counts_schema, COUNTS_SCHEMA,
+            "qualifying-receipt.json counts_schema drifted from the test-fixture const"
+        );
+        assert_eq!(pred.require.executed_tests_min, 1);
+        assert_eq!(pred.require.failures_max, 0);
+        assert_eq!(pred.require.result, "pass");
+        assert!(!pred.gate_filtered_tests);
+        assert!(pred.coverage.per_node);
+        assert_eq!(pred.coverage.applies_at_schema_min, COUNTS_SCHEMA);
     }
 
     #[test]

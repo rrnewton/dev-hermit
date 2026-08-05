@@ -20,6 +20,8 @@
 mod history_queries;
 #[path = "lib/landing_lock.rs"]
 mod landing_lock;
+#[path = "lib/qualifying_receipt.rs"]
+mod qualifying_receipt;
 #[path = "lib/records.rs"]
 mod records;
 #[path = "lib/validate_lock.rs"]

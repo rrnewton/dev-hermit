@@ -18,11 +18,17 @@ import subprocess
 import sys
 from typing import Any
 
+# The shared qualifying-receipt predicate lives at the ci-hub root (beside
+# check_outcome.py), one directory above this validation/ package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import qualifying_receipt  # noqa: E402
+
 
 RECEIPT_REPO = "rrnewton/dev-hermit"
 RECEIPT_BRANCH = "validation-receipts"
 LABEL = "locally-validated"
-COUNTS_SCHEMA = 5
+# The count-schema boundary is NOT redefined here -- it lives once in
+# qualifying-receipt.json (`counts_schema`) and is read via qualifying_receipt.
 
 
 def fail(message: str) -> "NoReturn":
@@ -30,29 +36,17 @@ def fail(message: str) -> "NoReturn":
 
 
 def qualifying_row(rows: list[dict[str, Any]], sha: str) -> dict[str, Any]:
+    # The green predicate is the ONE shared qualifying-receipt predicate
+    # (`ci-hub/validate/qualifying-receipt.json`) that every consumer reads --
+    # restating the clauses inline is the drift this delegation removes (task
+    # `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
+    # Publishing additionally requires the receipt to be preservable, so it keeps
+    # the started_at + log_file checks the predicate deliberately does not carry.
+    pred = qualifying_receipt.active()
     matches: list[dict[str, Any]] = []
     for row in rows:
-        if not (
-            row.get("commit") == sha
-            and row.get("profile") == "full"
-            and row.get("selection_mode") == "full"
-            and row.get("commit_anchored") is True
-            and row.get("tree_dirty") is False
-            and row.get("result") == "pass"
-            and row.get("failures") == 0
-            and isinstance(row.get("executed_tests"), int)
-            and row["executed_tests"] > 0
-        ):
+        if not qualifying_receipt.row_qualifies(row, sha, pred):
             continue
-        if (row.get("schema_version") or 0) >= COUNTS_SCHEMA:
-            coverage = row.get("coverage")
-            if not (
-                isinstance(coverage, dict)
-                and coverage.get("planned_test_nodes", 0) > 0
-                and coverage.get("zero_executed_nodes") == []
-                and coverage.get("absent_nodes") == []
-            ):
-                continue
         if not row.get("started_at") or not row.get("log_file"):
             continue
         matches.append(row)
