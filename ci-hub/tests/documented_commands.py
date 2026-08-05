@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 40
+EXPECTED_COMMANDS = 43
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -108,6 +108,8 @@ def _classify(text: str) -> str:
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
     if normalized.startswith("./ci-hub/bin/close-task "):
         return "parse"
+    if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
+        return "live-read"
     if normalized == "./ci-hub/directives/check.py --quickstart":
         return "local-read"
     if normalized.startswith("with-proxy gh "):
