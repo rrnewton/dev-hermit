@@ -26,6 +26,7 @@ class CompletionTest(unittest.TestCase):
         genuine = {
             "profile": "full", "result": "fail", "checks": 5,
             "gates_run": 5, "gates_expected": 5, "failures": 1,
+            "executed_tests": 765,
         }
         analysis = fc.classify(genuine, [genuine], {})
         self.assertEqual(analysis.verdict, "defect")
@@ -77,7 +78,7 @@ class CompletionTest(unittest.TestCase):
         genuine = {
             "schema_version": 6, "profile": "full", "result": "fail",
             "checks": 5, "gates_run": 5, "gates_expected": 5, "failures": 1,
-            "real_seconds": 260,
+            "real_seconds": 260, "executed_tests": 765,
             "gates": [
                 {"name": "portable CI DAG lane", "result": "fail",
                  "exit_code": 101, "real_seconds": 221},
@@ -94,7 +95,7 @@ class CompletionTest(unittest.TestCase):
         mixed = {
             "schema_version": 6, "profile": "full", "result": "fail",
             "checks": 5, "gates_run": 5, "gates_expected": 5, "failures": 2,
-            "real_seconds": 260,
+            "real_seconds": 260, "executed_tests": 765,
             "gates": [
                 {"name": "portable CI DAG lane", "result": "fail",
                  "exit_code": 101, "real_seconds": 221},
@@ -113,7 +114,7 @@ class CompletionTest(unittest.TestCase):
         over = {
             "schema_version": 6, "profile": "full", "result": "fail",
             "checks": 6, "gates_run": 6, "gates_expected": 5, "failures": 1,
-            "real_seconds": 260,
+            "real_seconds": 260, "executed_tests": 765,
             "gates": [
                 {"name": "portable CI DAG lane", "result": "fail",
                  "exit_code": 101, "real_seconds": 221},

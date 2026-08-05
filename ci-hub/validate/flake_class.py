@@ -54,6 +54,36 @@ FLAKY_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "flaky-cells.json"
 CONTENTION_SAFE_JOBS = 4
 FULL_GATES_EXPECTED = 5
 
+# Executed-test plausibility — mirrors the Rust authority
+# (validate_status::EXECUTED_TESTS_NO_RESULT_MAX / _PLAUSIBLE_FLOOR) so the two
+# engines never disagree. A red that EXECUTED <= 1 test (or carries no count) is a
+# NO-RESULT wearing a red badge, not a defect; a positive count below the
+# plausible-full floor ran only a fraction of the suite and needs a re-run.
+# Measured (live ledger 2026-08-05): 168 of 197 fail/timeout rows executed <= 1
+# test or none — a recorded red is never re-run, so each falsely condemned a PR.
+# Floor 700 is TEMPORARY, justified by the measured PASS distribution (dominant
+# hermit cluster 740-792, reverie 942-961), not by the six-check count every false
+# red also reported. See flaky notes and the Rust module docs.
+EXECUTED_TESTS_NO_RESULT_MAX = 1
+EXECUTED_TESTS_PLAUSIBLE_FLOOR = 700
+
+
+def executed_plausibility(record: dict) -> str:
+    """Tier a red by its executed-test count: ``"no-result"`` (count missing or
+    <= EXECUTED_TESTS_NO_RESULT_MAX — exercised nothing), ``"needs-rerun"`` (a
+    positive count below EXECUTED_TESTS_PLAUSIBLE_FLOOR — ran only a fraction), or
+    ``"ok"`` (a full-suite count that can carry a durable failure). This is the
+    single predicate both ``effective_result`` and ``classify`` consult, and the
+    peer of the Rust ``failure_disposition`` executed-count gate."""
+    v = record.get("executed_tests")
+    if not isinstance(v, int) or isinstance(v, bool):
+        return "no-result"
+    if v <= EXECUTED_TESTS_NO_RESULT_MAX:
+        return "no-result"
+    if v < EXECUTED_TESTS_PLAUSIBLE_FLOOR:
+        return "needs-rerun"
+    return "ok"
+
 # The shell's "command not found" exit code. A gate at this code never ran the
 # tool it wraps, so it exercised nothing about the product.
 EXIT_COMMAND_NOT_FOUND = 127
@@ -212,6 +242,18 @@ def effective_result(record: dict) -> object:
         return "no-result"
     if is_truncated(record):
         return "truncated"
+    # A red that executed <= 1 test (or carries no count) exercised essentially
+    # nothing about the product — a no-result wearing a red badge, never a durable
+    # failure. Checked AFTER env-fault and truncation (each a more specific reading)
+    # and mirroring the Rust authority's executed-count gate. The NEEDS-RERUN tier
+    # (a positive partial count) is a re-run policy carried by ``classify``; this
+    # coarse analytics view keeps such a partial red as its raw ``fail``/``timeout``
+    # (it is not a no-result — some suite ran), while the <=1/absent tier is a
+    # genuine absence of result.
+    if record.get("result") in ("fail", "timeout") and (
+        executed_plausibility(record) == "no-result"
+    ):
+        return "no-result"
     if record.get("result") == "pass" and not is_full_coverage(record):
         return "pass-partial"
     return record.get("result")
@@ -364,6 +406,37 @@ def classify(
 
     if result not in ("fail", "timeout"):
         return FlakeAnalysis(verdict="n/a")
+
+    # Executed-test plausibility (mirrors the Rust authority
+    # validate_status::failure_disposition, and checked here AFTER env-fault and
+    # truncation, BEFORE flake/contention). A red that exercised essentially no
+    # tests certifies no defect: <= 1 executed (or no count) is a no-result; a
+    # positive count below the plausible-full floor ran only a fraction and needs a
+    # re-run. checks==6 is not evidence — every false red reported six checks.
+    plaus = executed_plausibility(record)
+    et = record.get("executed_tests")
+    if plaus == "no-result":
+        return FlakeAnalysis(
+            verdict="no-result",
+            reasons=[
+                "executed-test count {} exercised nothing (<= {} or absent) — a "
+                "no-result wearing a red, not a defect; re-dispatch".format(
+                    "absent" if not isinstance(et, int) or isinstance(et, bool)
+                    else et,
+                    EXECUTED_TESTS_NO_RESULT_MAX,
+                )
+            ],
+        )
+    if plaus == "needs-rerun":
+        return FlakeAnalysis(
+            verdict="needs-rerun",
+            reasons=[
+                "executed only {} tests (< plausible-full floor {}) — a partial "
+                "run cannot certify a durable failure; re-run solo".format(
+                    et, EXECUTED_TESTS_PLAUSIBLE_FLOOR
+                )
+            ],
+        )
 
     jobs = record.get("jobs")  # schema-4 producer field; None until it lands
     failing = parse_failing_cells(record.get("log_file"))

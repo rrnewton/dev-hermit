@@ -744,6 +744,13 @@ mod tests {
             value["checks"] = serde_json::json!(1);
             value["gates_run"] = serde_json::json!(1);
             value["gates_expected"] = serde_json::json!(1);
+            // A genuine clean failure must have exercised the full suite; the
+            // base 36-count above is a pass-side placeholder that would now trip
+            // the executed-test plausibility floor and demote these fixtures to
+            // NeedsRerun. These rows model DURABLE failures, so carry a
+            // plausible-full executed count (peer of complete_failure in
+            // validate_status).
+            value["executed_tests"] = serde_json::json!(765);
             value["failures"] = serde_json::json!(1);
             value["dag_jobs"] = serde_json::json!(4);
             value["concurrent_validates"] = serde_json::json!(0);
