@@ -32,6 +32,35 @@ class CompletionTest(unittest.TestCase):
         self.assertEqual(analysis.verdict, "defect")
         self.assertEqual(fc.effective_result(genuine), "fail")
 
+    def test_low_or_absent_executed_count_red_is_no_result(self):
+        # PLANT BOTH WAYS — the false-red direction, peer of the Rust
+        # `low_or_absent_executed_count_red_is_no_result_not_failed` bracket. A
+        # complete full-profile red (checks==6, both gate counts satisfied) is
+        # STILL demoted to no-result when its own executed-test count proves it
+        # exercised nothing: <=1 or an absent count. The count is the binding
+        # evidence, not the check count. Live shapes: 92db28e0 / e0c96c58
+        # (exec=1), 1288671f / 97eb2c75 (exec=null). Paired with
+        # test_genuine_five_of_five_red_is_classified (exec=765 stays "fail"):
+        # a classifier that called everything a no-result would be exactly as
+        # broken as one that called everything red.
+        for count in (1, 0, None):
+            row = {
+                "profile": "full", "result": "fail", "checks": 6,
+                "gates_run": 6, "gates_expected": 6, "failures": 1,
+                "executed_tests": count,
+            }
+            self.assertEqual(
+                fc.effective_result(row), "no-result",
+                f"executed_tests={count!r} full red must be a no-result",
+            )
+        # Control: an above-floor genuine full red is NOT laundered (both sides).
+        genuine = {
+            "profile": "full", "result": "fail", "checks": 6,
+            "gates_run": 6, "gates_expected": 6, "failures": 1,
+            "executed_tests": 765,
+        }
+        self.assertEqual(fc.effective_result(genuine), "fail")
+
     def test_old_reconstructed_four_gate_red_is_not_rewritten(self):
         old_complete = {
             "schema_version": 1, "profile": "full", "result": "fail",
