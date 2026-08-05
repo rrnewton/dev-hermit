@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -202,6 +203,35 @@ class ReceiptTests(unittest.TestCase):
              mock.patch.object(MODULE, "gh", side_effect=[metadata, blob]):
             commit = MODULE.publish("rrnewton/dev-hermit", "receipts", "path", body)
         self.assertEqual(commit, "d" * 40)
+
+    def test_large_publication_body_uses_stdin_not_argv(self):
+        body = b"x" * 200_000
+        missing = SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        success = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"commit": {"sha": "e" * 40}}),
+            stderr="",
+        )
+        calls = []
+
+        def fake_gh(args, *, check=True, input_text=None):
+            calls.append((args, check, input_text))
+            if len(calls) == 1:
+                return missing
+            self.assertEqual(args[-2:], ["--input", "-"])
+            self.assertFalse(any("content=" in argument for argument in args))
+            payload = json.loads(input_text)
+            self.assertEqual(payload["branch"], "receipts")
+            self.assertEqual(base64.b64decode(payload["content"]), body)
+            return success
+
+        with mock.patch.object(
+            MODULE, "branch_head", return_value="d" * 40
+        ), mock.patch.object(MODULE, "gh", side_effect=fake_gh):
+            commit = MODULE.publish(
+                "rrnewton/dev-hermit", "receipts", "large/path", body
+            )
+        self.assertEqual(commit, "e" * 40)
 
 
 if __name__ == "__main__":

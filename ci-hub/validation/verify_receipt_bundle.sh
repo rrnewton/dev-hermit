@@ -138,4 +138,8 @@ if [[ -n $fixture_root ]]; then
     args+=(--fixture-receipts "$fixture_root")
     args+=(--fixture-branch-tip "$fixture_tip")
 fi
-exec "$script_dir/verify_receipt.sh" "${args[@]}"
+# The mutation-test override is useful to direct non-authoritative tests at a
+# tightened copy, but an authority invocation must be bound to the predicate in
+# this exact manifest-checked bundle. Do not inherit a caller-selected policy.
+exec env -u QUALIFYING_RECEIPT_PREDICATE \
+    "$script_dir/verify_receipt.sh" "${args[@]}"

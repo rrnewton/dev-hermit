@@ -52,16 +52,31 @@ if [[ ${1:-} == api ]]; then
 
     endpoint=
     content=
+    branch=
+    input_json=
     is_put=false
+    previous=
     for argument in "$@"; do
         [[ $argument == --method ]] && is_put=true
         [[ $argument == repos/rrnewton/dev-hermit/contents/* ]] && endpoint=$argument
         [[ $argument == content=* ]] && content=${argument#content=}
+        [[ $argument == branch=* ]] && branch=${argument#branch=}
+        if [[ $previous == --input && $argument == - ]]; then
+            input_json=$(cat)
+        fi
+        previous=$argument
     done
+    if [[ -n $input_json ]]; then
+        content=$(jq -er '.content | select(type == "string" and length > 0)' \
+            <<<"$input_json")
+        branch=$(jq -er '.branch | select(type == "string" and length > 0)' \
+            <<<"$input_json")
+    fi
     if [[ -n $endpoint && $endpoint == *"?ref=validation-receipts" ]]; then
         exit 1
     fi
-    if [[ $is_put == true && -n $endpoint && -n $content ]]; then
+    if [[ $is_put == true && -n $endpoint && -n $content && \
+          $branch == validation-receipts ]]; then
         path=${endpoint#repos/rrnewton/dev-hermit/contents/}
         target="$CI_HUB_TEST_RECEIPT_ROOT/$CI_HUB_TEST_RECEIPT_COMMIT/$path"
         mkdir -p -- "$(dirname -- "$target")"

@@ -77,7 +77,8 @@ The deployable verifier is the full-tree
 `ci-hub/validation/verify_receipt_bundle.sh` entrypoint. Its manifest names the
 Rust modules, executable symlink, predicate, hosted classifier, finalizer, and publishers; it rejects
 a modified bundle, requires an exact pinned dev-hermit commit, disables Git
-replacement/object-locator state, and proves the target SHA is a commit object
+replacement/object-locator state, clears the mutation-only predicate override,
+and proves the target SHA is a commit object
 before delegating. Downloading only `verify_receipt.sh`
 is not an authority bundle.
 

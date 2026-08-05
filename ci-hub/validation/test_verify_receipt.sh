@@ -97,6 +97,20 @@ verify() {
 # append-only branch-tip outcome set, and exactly recomputed from its durable log.
 verify >/dev/null
 
+# A caller cannot redirect the authority to a different qualifying predicate.
+# A malformed explicit override would make the Rust verifier fail loudly if the
+# bundle forwarded it; passing proves the manifest-checked predicate is used.
+printf '{not valid json\n' >"$tmp/caller-predicate.json"
+if QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" \
+    "$script_dir/verify_receipt.sh" --repo rrnewton/hermit --sha "$sha" \
+        --hermit-repo "$target_repo" --comments "$tmp/comments.json" \
+        --fixture-receipts "$tmp/receipts" --fixture-branch-tip "$branch_tip" \
+        >/dev/null 2>&1; then
+    echo 'FAIL: planted predicate override did not affect the unbound verifier' >&2
+    exit 1
+fi
+QUALIFYING_RECEIPT_PREDICATE="$tmp/caller-predicate.json" verify >/dev/null
+
 # The old bypass: a one-line arbitrary log cannot carry claimed full coverage,
 # even when supplied beside the otherwise legitimate row and snapshot.
 printf 'arbitrary one-line log\n' >"$tmp/arbitrary.log"
@@ -209,4 +223,4 @@ fi
 grep -q 'bundle path is missing, untracked, or modified: ci-hub/ci-hub' \
     "$tmp/symlink-bundle.out"
 
-echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, fresh Reverie binding, and replacement-ref hardening bracketed'
+echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, predicate binding, fresh Reverie binding, and replacement-ref hardening bracketed'
