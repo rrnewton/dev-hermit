@@ -31,6 +31,21 @@ from nonzero_result import is_zero_test_green
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
 DEFAULT_WORKFLOW_FILE = "ci-portable.yml"
+REVERIE_REPO = "rrnewton/reverie"
+REVERIE_WORKFLOW = "Rust"
+REVERIE_WORKFLOW_FILE = "ci.yml"
+VERIFICATION_POLICY_SCHEMA_VERSION = 1
+_CURRENT_VERIFICATION_POLICY_VERSION = {
+    DEFAULT_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
+    REVERIE_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
+}
+# Historical entries are immutable. If a repository changes its authoritative
+# workflow, add a new policy version and retain the old tuple so an in-flight or
+# recovered obligation continues to mean exactly what its record says.
+_VERSIONED_REPO_GITHUB_WORKFLOWS = {
+    (DEFAULT_REPO, 1): (DEFAULT_WORKFLOW_FILE, DEFAULT_WORKFLOW),
+    (REVERIE_REPO, 1): (REVERIE_WORKFLOW_FILE, REVERIE_WORKFLOW),
+}
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
 DEFAULT_NETWORK_TIMEOUT = float(
@@ -299,6 +314,160 @@ def _read_local_output(log_path: Path, offset: int, *, cap: int = 64_000_000) ->
 
 class ProtocolError(RuntimeError):
     """The dual-verification protocol could not be armed or polled."""
+
+
+def verification_policy_for_repo(repo: str) -> dict[str, Any]:
+    """Return the only supported exact-SHA verification policy for ``repo``.
+
+    Repository identity is load-bearing: a workflow file/name from another
+    repository is not a missing result, but an invalid verification request.
+    Keep the policy versioned and persist it with each obligation so consumers
+    observe the binding instead of inferring it from a global default.
+    """
+    try:
+        schema_version = _CURRENT_VERIFICATION_POLICY_VERSION[repo]
+        workflow_file, workflow_name = _VERSIONED_REPO_GITHUB_WORKFLOWS[
+            (repo, schema_version)
+        ]
+    except KeyError as error:
+        supported = ", ".join(sorted(_CURRENT_VERIFICATION_POLICY_VERSION))
+        raise ProtocolError(
+            f"unsupported post-land verification repository {repo!r}; "
+            f"supported repositories: {supported}"
+        ) from error
+    return {
+        "schema_version": schema_version,
+        "repo": repo,
+        "github": {
+            "workflow_file": workflow_file,
+            "workflow_name": workflow_name,
+        },
+    }
+
+
+def validate_verification_policy(
+    policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    repo = policy.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("verification policy has no repository identity")
+    schema_version = policy.get("schema_version")
+    if type(schema_version) is not int:
+        raise ProtocolError("verification policy has no integer schema version")
+    try:
+        workflow_file, workflow_name = _VERSIONED_REPO_GITHUB_WORKFLOWS[
+            (repo, schema_version)
+        ]
+    except KeyError as error:
+        raise ProtocolError(
+            f"unsupported verification policy version {schema_version} for {repo!r}"
+        ) from error
+    expected = {
+        "schema_version": schema_version,
+        "repo": repo,
+        "github": {
+            "workflow_file": workflow_file,
+            "workflow_name": workflow_name,
+        },
+    }
+    if policy != expected:
+        raise ProtocolError(f"invalid verification policy for {repo!r}")
+    return expected
+
+
+def _verification_policy_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("obligation has no repository identity")
+    persisted = record.get("verification_policy")
+    if persisted is None:
+        # Pre-policy legacy events are migrated once, append-only, using the
+        # repository's current registered policy. New opened events never take
+        # this path because create_obligation stores their policy atomically.
+        return verification_policy_for_repo(repo)
+    if not isinstance(persisted, Mapping):
+        raise ProtocolError("obligation verification policy is not an object")
+    policy = validate_verification_policy(persisted)
+    if policy["repo"] != repo:
+        raise ProtocolError(
+            f"obligation {record.get('obligation_id', '<unknown>')} has a "
+            f"verification policy that does not match {repo!r}"
+        )
+    return policy
+
+
+def bind_verification_policy(
+    obligation_id: str,
+    store_path: Path,
+    *,
+    requested_policy: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist the repository policy, migrating legacy obligations append-only."""
+    record = obligations.get_record(obligation_id, store_path)
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("obligation has no repository identity")
+    requested = (
+        None
+        if requested_policy is None
+        else validate_verification_policy(requested_policy)
+    )
+    if requested is not None and requested["repo"] != repo:
+        raise ProtocolError(
+            "requested verification policy repository does not match obligation"
+        )
+    if record.get("verification_policy") is None:
+        policy = requested or verification_policy_for_repo(repo)
+        record = obligations.transition(
+            obligation_id,
+            "verification-policy-bound",
+            {"verification_policy": policy},
+            store_path,
+        )
+    else:
+        policy = _verification_policy_from_record(record)
+        if requested is not None and requested != policy:
+            raise ProtocolError(
+                "existing open obligation uses a different verification policy"
+            )
+    return record, policy
+
+
+def _record_policy_investigation(
+    record: Mapping[str, Any], error: ProtocolError, store_path: Path
+) -> dict[str, Any]:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return dict(record)
+    now = obligations.utc_now()
+    summary = f"invalid persisted verification policy: {error}"
+    updated = obligations.transition(
+        str(record["obligation_id"]),
+        "verification-policy-error",
+        {
+            "overall_state": "investigation_required",
+            "first_terminal_at": record.get("first_terminal_at") or now,
+            "failure_source": "verification_policy",
+            "failure_summary": summary,
+            "recommendation": None,
+            "alert": {"state": "raised", "raised_at": now},
+            "remediation": {"state": "not_required"},
+            "github": {
+                "state": "error",
+                "finished_at": now,
+                "last_poll_error": str(error),
+            },
+        },
+        store_path,
+    )
+    print(
+        f"HARD WARNING: obligation {record['obligation_id']} policy invalid: {error}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return updated
 
 
 def _percentile(values: Sequence[float], fraction: float) -> float:
@@ -804,7 +973,12 @@ def verify_landing(args: argparse.Namespace) -> int:
         )
 
 
-def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
+def _parse_github_runs(
+    output: str, sha: str, policy: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    policy = validate_verification_policy(policy)
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub query {sha!r}")
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as error:
@@ -814,11 +988,27 @@ def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
     return select_latest_workflow_attempts(
         payload,
         head_sha=sha,
-        workflows=(DEFAULT_WORKFLOW,),
+        workflows=(policy["github"]["workflow_name"],),
     )
 
 
-def github_runs(repo: str, sha: str) -> list[dict[str, Any]]:
+def github_runs(
+    repo: str,
+    sha: str,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    selected_policy = (
+        verification_policy_for_repo(repo)
+        if policy is None
+        else validate_verification_policy(policy)
+    )
+    if selected_policy["repo"] != repo:
+        raise ProtocolError(
+            f"verification policy for {selected_policy['repo']!r} cannot query {repo!r}"
+        )
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub query {sha!r}")
     result = _run(
         (
             "with-proxy",
@@ -830,7 +1020,7 @@ def github_runs(repo: str, sha: str) -> list[dict[str, Any]]:
             "--commit",
             sha,
             "--workflow",
-            DEFAULT_WORKFLOW_FILE,
+            selected_policy["github"]["workflow_file"],
             "--limit",
             "20",
             "--json",
@@ -839,7 +1029,7 @@ def github_runs(repo: str, sha: str) -> list[dict[str, Any]]:
         check=True,
         timeout=DEFAULT_NETWORK_TIMEOUT,
     )
-    return _parse_github_runs(result.stdout, sha)
+    return _parse_github_runs(result.stdout, sha, selected_policy)
 
 
 def github_main_sha(repo: str) -> str:
@@ -863,7 +1053,21 @@ def _github_state(run: Mapping[str, Any]) -> str:
     return "no_result"
 
 
-def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
+def _github_patch(
+    run: Mapping[str, Any], sha: str, policy: Mapping[str, Any]
+) -> dict[str, Any]:
+    policy = validate_verification_policy(policy)
+    run_sha = str(run.get("headSha") or "").lower()
+    workflow_name = str(run.get("workflowName") or "")
+    if run_sha != sha:
+        raise ProtocolError(
+            f"GitHub run is for {run_sha or '<missing>'}, expected exact SHA {sha}"
+        )
+    if workflow_name != policy["github"]["workflow_name"]:
+        raise ProtocolError(
+            f"GitHub run workflow is {workflow_name or '<missing>'!r}, expected "
+            f"{policy['github']['workflow_name']!r}"
+        )
     state = _github_state(run)
     return {
         "github": {
@@ -874,7 +1078,7 @@ def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
             ),
             "run_ids": [int(run["databaseId"])],
             "urls": [str(run.get("url") or "")],
-            "workflow_name": DEFAULT_WORKFLOW,
+            "workflow_name": workflow_name,
             "event": run.get("event"),
             "last_poll_error": None,
         }
@@ -905,18 +1109,21 @@ def ensure_github_verification(
     allow_dispatch: bool = True,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    record = obligations.get_record(obligation_id, store_path)
+    record, policy = bind_verification_policy(obligation_id, store_path)
     repo, sha = record["repo"], record["landed_sha"]
     deadline = time.monotonic() + wait_seconds
     dispatched = False
     while True:
-        runs = github_runs(repo, sha)
+        runs = github_runs(repo, sha, policy=policy)
         # Classify only the newest exact-head run. A cancelled/skipped/stale run
         # is a HOLE, not permission to fall through to an older opposite answer.
         usable = _latest_resolved_github_run(runs)
         if usable is not None:
             obligations.transition(
-                obligation_id, "github-observed", _github_patch(usable), store_path
+                obligation_id,
+                "github-observed",
+                _github_patch(usable, sha, policy),
+                store_path,
             )
             return evaluate_obligation(obligation_id, store_path=store_path)
         if time.monotonic() >= deadline:
@@ -933,7 +1140,7 @@ def ensure_github_verification(
                         "gh",
                         "workflow",
                         "run",
-                        DEFAULT_WORKFLOW_FILE,
+                        policy["github"]["workflow_file"],
                         "-R",
                         repo,
                         "--ref",
@@ -946,7 +1153,8 @@ def ensure_github_verification(
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
 
     summary = (
-        f"no resolved {DEFAULT_WORKFLOW!r} run appeared for exact SHA {sha} within "
+        f"no resolved {policy['github']['workflow_name']!r} run appeared for exact "
+        f"SHA {sha} within "
         f"{wait_seconds}s (only cancelled/superseded/no-result runs, if any)"
     )
     # A missing or unresolved GitHub result is NOT a failure: it leaves the leg in
@@ -984,8 +1192,11 @@ def _failure_details(record: Mapping[str, Any]) -> tuple[str, str]:
             f"exit={verification.get('exit_code')} log={verification.get('log_path')}"
         )
     else:
+        expected_workflow = _verification_policy_from_record(record)["github"][
+            "workflow_name"
+        ]
         summary = (
-            f"GitHub {verification.get('workflow_name') or DEFAULT_WORKFLOW} "
+            f"GitHub {verification.get('workflow_name') or expected_workflow} "
             f"state={verification.get('state')} urls={','.join(verification.get('urls') or [])}"
         )
     return source, summary
@@ -1014,15 +1225,17 @@ def remediation_recommendation(
 
 
 def _legs_disagree(record: Mapping[str, Any]) -> bool:
-    """A local red beside a GREEN GitHub leg for the same SHA.
+    """One exact-SHA verifier is green while the other is genuinely red.
 
     This is a THIRD outcome, neither a confirmed regression nor a clean pass: the
-    authoritative hosted verifier PASSED the exact SHA the local verifier failed.
-    It is never an auto-revert (the local leg alone cannot overrule a green
-    authoritative leg); it is surfaced for a human to investigate — a genuine
-    local-only regression, or a local-environment artifact the hosted leg avoided.
+    authorities contradict each other for the same commit. It is symmetric and
+    never reaches the actuator; a passing authority cannot be silently overruled
+    by a failing one from a different execution environment.
     """
-    return record["local"]["state"] == "red" and record["github"]["state"] == "green"
+    return {record["local"]["state"], record["github"]["state"]} == {
+        "green",
+        "red",
+    }
 
 
 def _local_red_uncorroborated(record: Mapping[str, Any]) -> bool:
@@ -1055,12 +1268,13 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """Whether a failing answer is CONFIRMED enough to revert a landed tip.
 
     Sequencing comes first: never arm a revert while EITHER verifier is still
-    ``running``. A leg in flight may be the tool's OWN exoneration arriving — the
+    ``starting`` or ``running``. A leg in flight may be the tool's OWN exoneration arriving — the
     incident that armed ``action=revert`` on a local red while the GitHub verify
     run (30873193855) was still executing (obligation 20260804-025419-0f891e43).
     A revert decision is never made on a partial picture. (``pending`` — a leg not
     yet dispatched — does not block the authoritative GitHub-red path below, which
-    is the intended safe revert; only an in-flight ``running`` answer is waited on.)
+    is the intended safe revert; only an active ``starting``/``running`` answer is
+    waited on.)
 
     Once both legs have reported, ONLY an authoritative GitHub red arms a revert —
     hosted CI does not flake the way a loaded local box does, and cancelled/absent
@@ -1084,7 +1298,7 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """
     local = record["local"]["state"]
     github = record["github"]["state"]
-    if "running" in (local, github):
+    if {local, github}.intersection({"starting", "running"}):
         return False
     if github == "red":
         return True
@@ -1102,6 +1316,10 @@ def evaluate_obligation(
     main_sha: str | None = None,
 ) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
+    try:
+        _verification_policy_from_record(record)
+    except ProtocolError as error:
+        return _record_policy_investigation(record, error, store_path)
     states = (record["local"]["state"], record["github"]["state"])
     now = obligations.utc_now()
     first_terminal_at = record.get("first_terminal_at")
@@ -1109,6 +1327,55 @@ def evaluate_obligation(
         state in TERMINAL_VERIFICATION_STATES for state in states
     ):
         first_terminal_at = now
+
+    if _legs_disagree(record):
+        failed_source = "local" if record["local"]["state"] == "red" else "github"
+        passed_source = "github" if failed_source == "local" else "local"
+        summary = (
+            f"{failed_source} verifier red but {passed_source} verifier green for "
+            f"the same SHA {record['landed_sha']}; NOT actuating — investigate "
+            "the contradictory exact-SHA authorities"
+        )
+        if record.get("overall_state") != "investigation_required":
+            record = obligations.transition(
+                obligation_id,
+                "verification-disagreement",
+                {
+                    "overall_state": "investigation_required",
+                    "first_terminal_at": first_terminal_at,
+                    "failure_source": failed_source,
+                    "failure_summary": summary,
+                    "recommendation": None,
+                    "alert": {"state": "raised", "raised_at": now},
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+            print(
+                f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return record
+
+    # One exact-SHA green is authoritative. The other source may still be
+    # pending, running, absent/no_result, or independently green; none is a
+    # failing answer, so waiting for it would turn a supplemental source into an
+    # AND gate. A known red was handled as DISAGREEMENT above.
+    if "green" in states:
+        if record.get("overall_state") != "satisfied":
+            record = obligations.transition(
+                obligation_id,
+                "satisfied",
+                {
+                    "overall_state": "satisfied",
+                    "first_terminal_at": first_terminal_at,
+                    "satisfied_at": now,
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+        return record
 
     if _remediation_ready(record):
         source, summary = _failure_details(record)
@@ -1148,49 +1415,6 @@ def evaluate_obligation(
                 flush=True,
             )
         return trigger_remediation(record, store_path=store_path)
-
-    if states == ("green", "green"):
-        if record.get("overall_state") != "satisfied":
-            record = obligations.transition(
-                obligation_id,
-                "satisfied",
-                {
-                    "overall_state": "satisfied",
-                    "first_terminal_at": first_terminal_at,
-                    "satisfied_at": now,
-                    "remediation": {"state": "not_required"},
-                },
-                store_path,
-            )
-        return record
-
-    if _legs_disagree(record):
-        summary = (
-            "local validate red but authoritative GitHub leg green for the same "
-            f"SHA {record['landed_sha']}; NOT reverting — investigate before any "
-            "manual revert (genuine local-only regression, or a local-env artifact)"
-        )
-        if record.get("overall_state") != "investigation_required":
-            record = obligations.transition(
-                obligation_id,
-                "verification-disagreement",
-                {
-                    "overall_state": "investigation_required",
-                    "first_terminal_at": first_terminal_at,
-                    "failure_source": "local",
-                    "failure_summary": summary,
-                    "recommendation": None,
-                    "alert": {"state": "raised", "raised_at": now},
-                    "remediation": {"state": "not_required"},
-                },
-                store_path,
-            )
-            print(
-                f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
-                file=sys.stderr,
-                flush=True,
-            )
-        return record
 
     if _local_red_uncorroborated(record):
         summary = (
@@ -1604,16 +1828,41 @@ def _pid_alive(raw_pid: object) -> bool:
     return True
 
 
+def _verification_in_flight(record: Mapping[str, Any]) -> bool:
+    return any(
+        record[source].get("state") in {"starting", "running"}
+        for source in ("local", "github")
+    )
+
+
 def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
-    if record["overall_state"] in obligations.CLOSED_STATES:
+    if record["overall_state"] in obligations.CLOSED_STATES and not (
+        record["overall_state"] == "satisfied" and _verification_in_flight(record)
+    ):
         return record
-    if record["github"]["state"] not in TERMINAL_VERIFICATION_STATES:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return record
+    policy: dict[str, Any] | None = None
+    try:
+        record, policy = bind_verification_policy(obligation_id, store_path)
+    except ProtocolError as error:
+        return _record_policy_investigation(record, error, store_path)
+    if (
+        policy is not None
+        and record["github"]["state"] not in TERMINAL_VERIFICATION_STATES
+    ):
         try:
-            runs = github_runs(record["repo"], record["landed_sha"])
+            runs = github_runs(record["repo"], record["landed_sha"], policy=policy)
             if runs:
                 record = obligations.transition(
-                    obligation_id, "github-polled", _github_patch(runs[0]), store_path
+                    obligation_id,
+                    "github-polled",
+                    _github_patch(runs[0], record["landed_sha"], policy),
+                    store_path,
                 )
         except ProtocolError as error:
             record = obligations.transition(
@@ -1713,6 +1962,13 @@ def _maybe_redispatch_local(
 
 
 def _watch_complete(record: Mapping[str, Any]) -> bool:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return True
+    if record["overall_state"] == "satisfied":
+        return not _verification_in_flight(record)
     if record["overall_state"] in obligations.CLOSED_STATES:
         return True
     return all(
@@ -1881,6 +2137,24 @@ def print_status(
 
 
 def arm(args: argparse.Namespace) -> int:
+    # Resolve repository policy before touching the append-only store or starting
+    # either verifier. Unsupported repositories must never acquire an obligation
+    # that no consumer can verify.
+    raw_policy = getattr(args, "verification_policy_json", None)
+    if raw_policy is None:
+        policy = verification_policy_for_repo(args.repo)
+    else:
+        try:
+            parsed_policy = json.loads(raw_policy)
+        except json.JSONDecodeError as error:
+            raise ProtocolError("--verification-policy-json is invalid JSON") from error
+        if not isinstance(parsed_policy, Mapping):
+            raise ProtocolError("--verification-policy-json must be an object")
+        policy = validate_verification_policy(parsed_policy)
+        if policy["repo"] != args.repo:
+            raise ProtocolError(
+                "--verification-policy-json repository does not match --repo"
+            )
     store_path = args.store.expanduser().resolve()
     source = args.source.expanduser().resolve()
     sha = resolve_landed_sha(source, args.sha, repo=args.repo, pr=args.pr)
@@ -1890,11 +2164,15 @@ def arm(args: argparse.Namespace) -> int:
             landed_sha=sha,
             land_mode=args.land_mode,
             verification_scope="total",
+            verification_policy=policy,
             actor=args.actor,
             path=store_path,
         )
     except obligations.DuplicateOpenObligation as error:
         record = error.record
+        bind_verification_policy(
+            record["obligation_id"], store_path, requested_policy=policy
+        )
         print(str(error), file=sys.stderr)
         return print_status(
             store_path, include_closed=False, json_output=False, gate=False
@@ -2049,6 +2327,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     arm_parser.add_argument("sha")
     arm_parser.add_argument("--repo", default=DEFAULT_REPO)
+    arm_parser.add_argument(
+        "--verification-policy-json",
+        help=argparse.SUPPRESS,
+    )
     arm_parser.add_argument(
         "--pr",
         type=int,

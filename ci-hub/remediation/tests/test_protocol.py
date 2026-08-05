@@ -17,10 +17,12 @@ sys.path.insert(0, str(REMEDIATION))
 sys.path.insert(0, str(HISTORY))
 
 import obligations
+import land_and_arm
 import protocol
 
 SHA = "a" * 40
 NEXT_SHA = "b" * 40
+REVERIE_LANDED_SHA = "025d37800d347c32711038bd0a3889e8e4774c2b"
 
 
 class ProtocolTest(unittest.TestCase):
@@ -37,6 +39,9 @@ class ProtocolTest(unittest.TestCase):
             repo="rrnewton/hermit",
             landed_sha=SHA,
             land_mode="speculative",
+            verification_policy=protocol.verification_policy_for_repo(
+                "rrnewton/hermit"
+            ),
             actor="test",
             obligation_id="test-obligation",
             path=self.store,
@@ -279,6 +284,7 @@ class ProtocolTest(unittest.TestCase):
         )
 
     def test_github_parser_requires_exact_sha_and_workflow(self) -> None:
+        policy = protocol.verification_policy_for_repo("rrnewton/hermit")
         payload = [
             {
                 "databaseId": 1,
@@ -299,10 +305,116 @@ class ProtocolTest(unittest.TestCase):
                 "createdAt": "2026-08-03T03:00:00Z",
             },
         ]
-        runs = protocol._parse_github_runs(json.dumps(payload), SHA)
+        self.assertEqual(len(payload) - 1, 2)  # two planted proxy negatives
+        runs = protocol._parse_github_runs(json.dumps(payload), SHA, policy)
         self.assertEqual([run["databaseId"] for run in runs], [1])
 
+    def test_repo_policy_routes_exact_workflow_queries(self) -> None:
+        cases = (
+            (
+                "rrnewton/hermit",
+                protocol.DEFAULT_WORKFLOW_FILE,
+                protocol.DEFAULT_WORKFLOW,
+            ),
+            (
+                "rrnewton/reverie",
+                protocol.REVERIE_WORKFLOW_FILE,
+                protocol.REVERIE_WORKFLOW,
+            ),
+        )
+        self.assertEqual(len(cases), 2)
+        for repo, workflow_file, workflow_name in cases:
+            payload = [
+                {
+                    "databaseId": 1,
+                    "headSha": SHA,
+                    "workflowName": workflow_name,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "createdAt": "2026-08-05T00:00:00Z",
+                }
+            ]
+            completed = subprocess.CompletedProcess(
+                [], 0, stdout=json.dumps(payload), stderr=""
+            )
+            with (
+                self.subTest(repo=repo),
+                mock.patch.object(protocol, "_run", return_value=completed) as run,
+            ):
+                runs = protocol.github_runs(repo, SHA)
+                command = run.call_args.args[0]
+                self.assertEqual(
+                    command[command.index("--workflow") + 1], workflow_file
+                )
+                self.assertEqual(runs[0]["workflowName"], workflow_name)
+
+    def test_repo_policy_routes_workflow_dispatch(self) -> None:
+        cases = (
+            ("rrnewton/hermit", protocol.DEFAULT_WORKFLOW_FILE),
+            ("rrnewton/reverie", protocol.REVERIE_WORKFLOW_FILE),
+        )
+        self.assertEqual(len(cases), 2)
+        for index, (repo, workflow_file) in enumerate(cases):
+            store = self.root / f"dispatch-{index}.jsonl"
+            obligation_id = f"dispatch-{index}"
+            obligations.create_obligation(
+                repo=repo,
+                landed_sha=SHA,
+                land_mode="speculative",
+                verification_policy=protocol.verification_policy_for_repo(repo),
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
+            )
+            now = [0.0]
+
+            def advance(seconds: float) -> None:
+                now[0] += seconds
+
+            with (
+                self.subTest(repo=repo),
+                mock.patch.object(protocol, "github_runs", return_value=[]),
+                mock.patch.object(protocol, "github_main_sha", return_value=SHA),
+                mock.patch.object(
+                    protocol,
+                    "_run",
+                    return_value=subprocess.CompletedProcess([], 0, "", ""),
+                ) as dispatch,
+                mock.patch.object(
+                    protocol.time, "monotonic", side_effect=lambda: now[0]
+                ),
+            ):
+                protocol.ensure_github_verification(
+                    obligation_id,
+                    store_path=store,
+                    wait_seconds=31,
+                    poll_seconds=1,
+                    sleep=advance,
+                )
+            command = dispatch.call_args.args[0]
+            self.assertEqual(command[4], workflow_file)
+
+    def test_github_patch_rejects_wrong_sha_and_wrong_workflow(self) -> None:
+        policy = protocol.verification_policy_for_repo("rrnewton/reverie")
+        run = {
+            "databaseId": 1,
+            "headSha": SHA,
+            "workflowName": protocol.REVERIE_WORKFLOW,
+            "status": "completed",
+            "conclusion": "success",
+        }
+        negatives = (
+            ({**run, "headSha": NEXT_SHA}, "expected exact SHA"),
+            ({**run, "workflowName": "Docs"}, "expected 'Rust'"),
+        )
+        self.assertEqual(len(negatives), 2)
+        for planted, message in negatives:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(protocol.ProtocolError, message):
+                    protocol._github_patch(planted, SHA, policy)
+
     def test_newest_no_result_never_falls_back_to_older_failure(self) -> None:
+        policy = protocol.verification_policy_for_repo("rrnewton/hermit")
         runs = protocol._parse_github_runs(
             json.dumps(
                 [
@@ -325,9 +437,264 @@ class ProtocolTest(unittest.TestCase):
                 ]
             ),
             SHA,
+            policy,
         )
         self.assertEqual(runs[0]["databaseId"], 11)
         self.assertIsNone(protocol._latest_resolved_github_run(runs))
+
+    def test_unsupported_repo_is_refused_before_arm_writes(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        args = argparse.Namespace(
+            repo="example/unsupported",
+            sha=SHA,
+            pr=None,
+            source=source,
+            store=self.store,
+            land_mode="speculative",
+            actor="test",
+            verification_policy_json=None,
+        )
+        with mock.patch.object(protocol, "resolve_landed_sha") as resolve:
+            with self.assertRaisesRegex(protocol.ProtocolError, "unsupported"):
+                protocol.arm(args)
+        resolve.assert_not_called()
+        self.assertFalse(self.store.exists())
+
+    def test_land_intent_persists_policy_and_refuses_unsupported_repo(self) -> None:
+        args = argparse.Namespace(
+            repo="rrnewton/reverie",
+            pr=378,
+            source=self.root,
+            land_mode="speculative",
+            actor="test",
+            store=self.store,
+            github_wait_seconds=5,
+            poll_seconds=1,
+        )
+        intent = land_and_arm._new_intent(args, ["/bin/true"])
+        self.assertEqual(
+            intent["verification_policy"],
+            protocol.verification_policy_for_repo("rrnewton/reverie"),
+        )
+        args.repo = "example/unsupported"
+        with self.assertRaisesRegex(protocol.ProtocolError, "unsupported"):
+            land_and_arm._new_intent(args, ["/bin/true"])
+
+    def test_land_intent_policy_is_forwarded_to_initial_obligation_arm(self) -> None:
+        args = argparse.Namespace(
+            repo="rrnewton/reverie",
+            pr=378,
+            source=self.root,
+            land_mode="speculative",
+            actor="test",
+            store=self.store,
+            github_wait_seconds=5,
+            poll_seconds=1,
+        )
+        intent = land_and_arm._new_intent(args, ["/bin/true"])
+        with mock.patch.object(protocol, "main", return_value=2) as arm:
+            code, obligation_id = land_and_arm.arm_sha(intent, SHA)
+        self.assertEqual(code, 2)
+        self.assertIsNone(obligation_id)
+        arguments = arm.call_args.args[0]
+        raw_policy = arguments[arguments.index("--verification-policy-json") + 1]
+        self.assertEqual(json.loads(raw_policy), intent["verification_policy"])
+
+    def test_existing_legacy_obligation_is_bound_before_arm_returns(self) -> None:
+        args = argparse.Namespace(
+            repo="rrnewton/reverie",
+            pr=378,
+            source=self.root,
+            land_mode="speculative",
+            actor="test",
+            store=self.store,
+            github_wait_seconds=5,
+            poll_seconds=1,
+        )
+        intent = land_and_arm._new_intent(args, ["/bin/true"])
+        obligations.create_obligation(
+            repo=args.repo,
+            landed_sha=SHA,
+            land_mode=args.land_mode,
+            actor=args.actor,
+            obligation_id="legacy-existing",
+            path=self.store,
+        )
+        with mock.patch.object(protocol, "main") as arm:
+            code, obligation_id = land_and_arm.arm_sha(intent, SHA)
+        arm.assert_not_called()
+        self.assertEqual(code, 0)
+        self.assertEqual(obligation_id, "legacy-existing")
+        record = obligations.get_record("legacy-existing", self.store)
+        self.assertEqual(record["verification_policy"], intent["verification_policy"])
+
+    def test_arm_persists_policy_in_initial_opened_event(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        args = argparse.Namespace(
+            repo="rrnewton/reverie",
+            sha=REVERIE_LANDED_SHA,
+            pr=None,
+            source=source,
+            store=self.store,
+            land_mode="speculative",
+            actor="test",
+            verification_policy_json=None,
+            github_wait_seconds=1,
+            poll_seconds=1,
+            no_dispatch=False,
+        )
+        estimate = {
+            "kind": "unknown",
+            "wall_seconds": 0.0,
+            "cpu_seconds": 0.0,
+            "basis": "test",
+        }
+        with (
+            mock.patch.object(
+                protocol, "resolve_landed_sha", return_value=REVERIE_LANDED_SHA
+            ),
+            mock.patch.object(
+                protocol, "estimate_local_validate_cost", return_value=estimate
+            ),
+            mock.patch.object(protocol, "_spawn_detached", side_effect=(101, 102)),
+            mock.patch.object(protocol, "ensure_github_verification"),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(protocol.arm(args), 0)
+        opened = json.loads(self.store.read_text().splitlines()[0])
+        self.assertEqual(opened["event_type"], "opened")
+        self.assertEqual(
+            opened["verification_policy"],
+            protocol.verification_policy_for_repo("rrnewton/reverie"),
+        )
+
+    def test_legacy_reverie_obligation_recovers_append_only_via_rust_workflow(
+        self,
+    ) -> None:
+        obligation_id = "20260805-054331-025d37800d34-963f83"
+        obligations.create_obligation(
+            repo="rrnewton/reverie",
+            landed_sha=REVERIE_LANDED_SHA,
+            land_mode="speculative",
+            actor="test",
+            obligation_id=obligation_id,
+            path=self.store,
+        )
+        obligations.transition(
+            obligation_id,
+            "incident-shape",
+            {
+                "local": {"state": "green", "exit_code": 0},
+                "github": {
+                    "state": "no_result",
+                    "last_poll_error": "HTTP 404: workflow ci-portable.yml not found",
+                },
+            },
+            self.store,
+        )
+        before = self.store.read_bytes()
+        payload = [
+            {
+                "databaseId": 30978954323,
+                "headSha": REVERIE_LANDED_SHA,
+                "workflowName": "Rust",
+                "status": "completed",
+                "conclusion": "success",
+                "createdAt": "2026-08-05T05:42:50Z",
+                "updatedAt": "2026-08-05T05:52:36Z",
+                "url": "https://github.com/rrnewton/reverie/actions/runs/30978954323",
+                "event": "push",
+            }
+        ]
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(payload), stderr=""
+        )
+        with mock.patch.object(protocol, "_run", return_value=completed) as run:
+            record = protocol.poll_obligation(obligation_id, self.store)
+        self.assertEqual(record["overall_state"], "satisfied")
+        self.assertEqual(record["github"]["run_ids"], [30978954323])
+        self.assertTrue(self.store.read_bytes().startswith(before))
+        events = [json.loads(line) for line in self.store.read_text().splitlines()]
+        self.assertIn(
+            "verification-policy-bound", [event["event_type"] for event in events]
+        )
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--workflow") + 1], "ci.yml")
+
+    def test_green_local_stops_poll_errors_after_one_append(self) -> None:
+        obligation_id = "reverie-poll-error"
+        obligations.create_obligation(
+            repo="rrnewton/reverie",
+            landed_sha=REVERIE_LANDED_SHA,
+            land_mode="speculative",
+            actor="test",
+            obligation_id=obligation_id,
+            path=self.store,
+        )
+        obligations.transition(
+            obligation_id,
+            "incident-shape",
+            {
+                "local": {"state": "green", "exit_code": 0},
+                "github": {"state": "no_result"},
+            },
+            self.store,
+        )
+        with mock.patch.object(
+            protocol,
+            "github_runs",
+            side_effect=protocol.ProtocolError("simulated GitHub query failure"),
+        ) as runs:
+            first = protocol.poll_obligation(obligation_id, self.store)
+            second = protocol.poll_obligation(obligation_id, self.store)
+        self.assertEqual(first["overall_state"], "satisfied")
+        self.assertEqual(second["overall_state"], "satisfied")
+        self.assertEqual(runs.call_count, 1)
+        events = [json.loads(line) for line in self.store.read_text().splitlines()]
+        self.assertEqual(
+            sum(event["event_type"] == "github-poll-error" for event in events), 1
+        )
+
+    def test_invalid_persisted_policy_cannot_be_or_satisfied(self) -> None:
+        obligation_id = "invalid-policy"
+        invalid_policy = {
+            **protocol.verification_policy_for_repo("rrnewton/reverie"),
+            "github": {"workflow_file": "docs.yml", "workflow_name": "Docs"},
+        }
+        obligations.create_obligation(
+            repo="rrnewton/reverie",
+            landed_sha=REVERIE_LANDED_SHA,
+            land_mode="speculative",
+            verification_policy=invalid_policy,
+            actor="test",
+            obligation_id=obligation_id,
+            path=self.store,
+        )
+        obligations.transition(
+            obligation_id,
+            "local-green",
+            {
+                "local": {"state": "green", "exit_code": 0},
+                "github": {"state": "no_result"},
+            },
+            self.store,
+        )
+        with (
+            mock.patch.object(protocol, "github_runs") as runs,
+            redirect_stderr(io.StringIO()),
+        ):
+            direct = protocol.evaluate_obligation(
+                obligation_id, store_path=self.store, main_sha=REVERIE_LANDED_SHA
+            )
+            record = protocol.poll_obligation(obligation_id, self.store)
+        runs.assert_not_called()
+        self.assertEqual(direct["overall_state"], "investigation_required")
+        self.assertEqual(record["overall_state"], "investigation_required")
+        self.assertEqual(record["failure_source"], "verification_policy")
+        self.assertEqual(record["remediation"]["state"], "not_required")
+        self.assertTrue(protocol._watch_complete(record))
 
     def test_estimate_uses_only_recorded_history(self) -> None:
         ledger = self.root / "ledger.jsonl"
@@ -448,51 +815,120 @@ class ProtocolTest(unittest.TestCase):
         self.assertNotEqual(record["overall_state"], "remediation_required")
         self.assertIsNone(record.get("recommendation"))
 
-    def test_github_red_waits_while_local_leg_still_running(self) -> None:
-        # The sequencing guard is symmetric: an authoritative GitHub red must not
-        # arm while the local leg is still in flight -- wait for the second leg to
-        # report ("one leg red, one leg still running -> nothing arms").
-        self.create()
-        self.transition(
-            {
-                "local": {"state": "running"},
-                "github": {"state": "red", "finished_at": "2026-08-04T03:00:00Z"},
-            }
-        )
-        with redirect_stderr(io.StringIO()):
-            record = protocol.evaluate_obligation(
-                "test-obligation", store_path=self.store, main_sha=SHA
+    def test_github_red_waits_while_local_leg_is_active(self) -> None:
+        # Count both active pre-answer states. A GitHub red must not actuate while
+        # the local verifier is starting or running and can still exonerate it.
+        active_states = ("starting", "running")
+        self.assertEqual(len(active_states), 2)
+        for index, local_state in enumerate(active_states):
+            store = self.root / f"active-local-{index}.jsonl"
+            obligation_id = f"active-local-{index}"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                verification_policy=protocol.verification_policy_for_repo(
+                    "rrnewton/hermit"
+                ),
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
             )
-        self.assertNotEqual(record["overall_state"], "remediation_required")
-
-    def test_local_red_and_github_green_is_a_disagreement_not_a_revert(self) -> None:
-        # THIRD outcome (obligation 20260804-025419-0f891e43): local red beside a
-        # GREEN authoritative GitHub leg for the same SHA is a DISAGREEMENT to
-        # investigate, never an auto-revert. Even a budget-spent local red cannot
-        # overrule a green hosted leg.
-        self.create()
-        self.transition(
-            {
-                "local": {
-                    "state": "red",
-                    "finished_at": "2026-08-04T03:04:59Z",
-                    "exit_code": 1,
-                    "log_path": "/tmp/local.log",
-                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+            obligations.transition(
+                obligation_id,
+                "legs",
+                {
+                    "local": {"state": local_state},
+                    "github": {
+                        "state": "red",
+                        "finished_at": "2026-08-04T03:00:00Z",
+                    },
                 },
-                "github": {"state": "green", "finished_at": "2026-08-04T03:20:00Z"},
-            }
-        )
-        stderr = io.StringIO()
-        with redirect_stderr(stderr):
-            record = protocol.evaluate_obligation(
-                "test-obligation", store_path=self.store, main_sha=SHA
+                store,
             )
-        self.assertEqual(record["overall_state"], "investigation_required")
-        self.assertNotEqual(record["overall_state"], "remediation_required")
-        self.assertIsNone(record.get("recommendation"))
-        self.assertEqual(record["remediation"]["state"], "not_required")
-        self.assertIn("DISAGREE", stderr.getvalue())
+            with (
+                mock.patch.object(protocol, "trigger_remediation") as actuator,
+                redirect_stderr(io.StringIO()),
+            ):
+                record = protocol.evaluate_obligation(
+                    obligation_id, store_path=store, main_sha=SHA
+                )
+            actuator.assert_not_called()
+            self.assertNotEqual(record["overall_state"], "remediation_required")
+
+    def test_green_red_disagreement_is_symmetric_and_never_actuates(self) -> None:
+        # Count both orientations: neither exact-SHA authority may overrule a
+        # contradictory green by reaching the remediation actuator first.
+        cases = (("red", "green", "local"), ("green", "red", "github"))
+        self.assertEqual(len(cases), 2)
+        for index, (local_state, github_state, failed_source) in enumerate(cases):
+            store = self.root / f"disagreement-{index}.jsonl"
+            obligation_id = f"disagreement-{index}"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                verification_policy=protocol.verification_policy_for_repo(
+                    "rrnewton/hermit"
+                ),
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
+            )
+            obligations.transition(
+                obligation_id,
+                "legs",
+                {
+                    "local": {"state": local_state},
+                    "github": {"state": github_state},
+                },
+                store,
+            )
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(protocol, "trigger_remediation") as actuator,
+                redirect_stderr(stderr),
+            ):
+                record = protocol.evaluate_obligation(
+                    obligation_id, store_path=store, main_sha=SHA
+                )
+            actuator.assert_not_called()
+            self.assertEqual(record["overall_state"], "investigation_required")
+            self.assertEqual(record["failure_source"], failed_source)
+            self.assertIsNone(record.get("recommendation"))
+            self.assertEqual(record["remediation"]["state"], "not_required")
+            self.assertIn("DISAGREE", stderr.getvalue())
+
+    def test_poll_observes_late_red_after_nonblocking_satisfaction(self) -> None:
+        self.create()
+        self.transition({"local": {"state": "green"}, "github": {"state": "running"}})
+        satisfied = protocol.evaluate_obligation(
+            "test-obligation", store_path=self.store, main_sha=SHA
+        )
+        self.assertEqual(satisfied["overall_state"], "satisfied")
+        self.assertFalse(protocol._watch_complete(satisfied))
+        late_red = {
+            "databaseId": 123,
+            "headSha": SHA,
+            "workflowName": protocol.DEFAULT_WORKFLOW,
+            "status": "completed",
+            "conclusion": "failure",
+            "createdAt": "2026-08-05T00:00:00Z",
+            "updatedAt": "2026-08-05T00:01:00Z",
+            "url": "https://example.test/run/123",
+            "event": "push",
+        }
+        with (
+            mock.patch.object(protocol, "github_runs", return_value=[late_red]) as runs,
+            mock.patch.object(protocol, "trigger_remediation") as actuator,
+            redirect_stderr(io.StringIO()),
+        ):
+            reopened = protocol.poll_obligation("test-obligation", self.store)
+        runs.assert_called_once()
+        actuator.assert_not_called()
+        self.assertEqual(reopened["overall_state"], "investigation_required")
+        self.assertEqual(reopened["remediation"]["state"], "not_required")
+        self.assertTrue(protocol._watch_complete(reopened))
 
     def test_authoritative_github_red_still_reverts_after_lone_local_guard(
         self,
@@ -712,14 +1148,47 @@ class ProtocolTest(unittest.TestCase):
             "fresh-session",
         )
 
-    def test_two_green_verifiers_satisfy_obligation(self) -> None:
-        self.create()
-        self.transition({"local": {"state": "green"}, "github": {"state": "green"}})
-        record = protocol.evaluate_obligation(
-            "test-obligation", store_path=self.store, main_sha=SHA
+    def test_either_green_satisfies_without_waiting_for_nonred_peer(self) -> None:
+        cases = (
+            ("green", "pending"),
+            ("green", "running"),
+            ("green", "no_result"),
+            ("green", "green"),
+            ("pending", "green"),
+            ("running", "green"),
+            ("no_result", "green"),
         )
-        self.assertEqual(record["overall_state"], "satisfied")
-        self.assertIsNotNone(record["satisfied_at"])
+        self.assertEqual(len(cases), 7)
+        for index, states in enumerate(cases):
+            store = self.root / f"green-or-{index}.jsonl"
+            obligation_id = f"green-or-{index}"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="speculative",
+                verification_policy=protocol.verification_policy_for_repo(
+                    "rrnewton/hermit"
+                ),
+                actor="test",
+                obligation_id=obligation_id,
+                path=store,
+            )
+            obligations.transition(
+                obligation_id,
+                "legs",
+                {
+                    "local": {"state": states[0]},
+                    "github": {"state": states[1]},
+                },
+                store,
+            )
+            with mock.patch.object(protocol, "trigger_remediation") as actuator:
+                record = protocol.evaluate_obligation(
+                    obligation_id, store_path=store, main_sha=SHA
+                )
+            actuator.assert_not_called()
+            self.assertEqual(record["overall_state"], "satisfied", states)
+            self.assertIsNotNone(record["satisfied_at"])
 
     def test_health_codes_distinguish_open_and_remediation(self) -> None:
         self.create()
@@ -865,10 +1334,9 @@ class GithubStateClassificationTest(unittest.TestCase):
         self.assertEqual(self._state("in_progress", ""), "no_result")
         self.assertEqual(self._state("queued", ""), "no_result")
 
-    def test_no_result_github_leg_does_not_remediate_a_green_local(self) -> None:
-        # (local=green, github=no_result) must be neither satisfied nor a
-        # remediation trigger — it stays armed, awaiting a resolved GitHub run,
-        # instead of reverting a locally-green tip whose hosted run was throttled.
+    def test_no_result_github_leg_does_not_block_a_green_local(self) -> None:
+        # A missing hosted answer is supplemental NO_RESULT, not an AND gate.
+        # The exact-SHA local green is sufficient authority and closes the watch.
         with tempfile.TemporaryDirectory() as tmp:
             store = Path(tmp) / "store.jsonl"
             obligations.create_obligation(
@@ -895,7 +1363,7 @@ class GithubStateClassificationTest(unittest.TestCase):
                     "ob-green-local-noresult", store_path=store
                 )
             self.assertNotEqual(record.get("overall_state"), "remediation_required")
-            self.assertNotEqual(record.get("overall_state"), "satisfied")
+            self.assertEqual(record.get("overall_state"), "satisfied")
 
 
 class LocalStateClassificationTest(unittest.TestCase):

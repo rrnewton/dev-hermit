@@ -129,6 +129,7 @@ def create_obligation(
     landed_sha: str,
     land_mode: str,
     verification_scope: str = "total",
+    verification_policy: Mapping[str, Any] | None = None,
     actor: str = "unknown",
     obligation_id: str | None = None,
     path: Path | None = None,
@@ -139,6 +140,8 @@ def create_obligation(
         raise StoreError("land_mode must be 'admin' or 'speculative'")
     if verification_scope not in {"total", "incremental"}:
         raise StoreError("verification_scope must be 'total' or 'incremental'")
+    if verification_policy is not None and not isinstance(verification_policy, Mapping):
+        raise StoreError("verification_policy must be an object")
 
     opened_at = utc_now()
     obligation_id = obligation_id or (
@@ -170,6 +173,7 @@ def create_obligation(
                 "landed_sha": landed_sha,
                 "land_mode": land_mode,
                 "verification_scope": verification_scope,
+                "verification_policy": copy.deepcopy(verification_policy),
                 "actor": actor,
                 "opened_at": opened_at,
                 "updated_at": opened_at,
@@ -241,6 +245,12 @@ def transition(
             immutable = {"obligation_id", "repo", "landed_sha", "opened_at"}
             if immutable.intersection(patch):
                 raise StoreError("transition cannot change immutable obligation identity")
+            if (
+                "verification_policy" in patch
+                and previous.get("verification_policy") is not None
+                and patch["verification_policy"] != previous["verification_policy"]
+            ):
+                raise StoreError("transition cannot change bound verification policy")
             _merge(record, patch)
             now = utc_now()
             record.update(

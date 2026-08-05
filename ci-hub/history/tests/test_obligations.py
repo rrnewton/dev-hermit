@@ -12,6 +12,14 @@ sys.path.insert(0, str(HISTORY))
 import obligations
 
 SHA = "a" * 40
+POLICY = {
+    "schema_version": 1,
+    "repo": "rrnewton/hermit",
+    "github": {
+        "workflow_file": "ci-portable.yml",
+        "workflow_name": "CI (GitHub-managed portable)",
+    },
+}
 
 
 class ObligationStoreTest(unittest.TestCase):
@@ -27,6 +35,7 @@ class ObligationStoreTest(unittest.TestCase):
             repo="rrnewton/hermit",
             landed_sha=SHA,
             land_mode="admin",
+            verification_policy=POLICY,
             actor="test",
             obligation_id="test-obligation",
             path=self.store,
@@ -37,6 +46,7 @@ class ObligationStoreTest(unittest.TestCase):
         self.assertEqual(record["landed_sha"], SHA)
         self.assertEqual(record["repo"], "rrnewton/hermit")
         self.assertEqual(record["overall_state"], "open")
+        self.assertEqual(record["verification_policy"], POLICY)
         self.assertEqual(record["local"]["cost"]["actual"], None)
         self.assertEqual(record["github"]["run_ids"], [])
 
@@ -86,6 +96,50 @@ class ObligationStoreTest(unittest.TestCase):
         with self.assertRaises(obligations.StoreError):
             obligations.transition(
                 "test-obligation", "bad", {"landed_sha": "b" * 40}, self.store
+            )
+
+    def test_bound_policy_is_in_initial_event_and_immutable(self) -> None:
+        self.create()
+        opened = json.loads(self.store.read_text().splitlines()[0])
+        self.assertEqual(opened["event_type"], "opened")
+        self.assertEqual(opened["verification_policy"], POLICY)
+        with self.assertRaisesRegex(obligations.StoreError, "bound verification"):
+            obligations.transition(
+                "test-obligation",
+                "bad-policy",
+                {"verification_policy": {**POLICY, "schema_version": 2}},
+                self.store,
+            )
+
+    def test_legacy_policy_can_be_bound_exactly_once(self) -> None:
+        obligations.create_obligation(
+            repo="rrnewton/hermit",
+            landed_sha=SHA,
+            land_mode="admin",
+            actor="test",
+            obligation_id="legacy",
+            path=self.store,
+        )
+        bound = obligations.transition(
+            "legacy",
+            "verification-policy-bound",
+            {"verification_policy": POLICY},
+            self.store,
+        )
+        self.assertEqual(bound["verification_policy"], POLICY)
+        repeated = obligations.transition(
+            "legacy",
+            "verification-policy-bound",
+            {"verification_policy": POLICY},
+            self.store,
+        )
+        self.assertEqual(repeated["verification_policy"], POLICY)
+        with self.assertRaisesRegex(obligations.StoreError, "bound verification"):
+            obligations.transition(
+                "legacy",
+                "policy-rebound",
+                {"verification_policy": {**POLICY, "schema_version": 2}},
+                self.store,
             )
 
 

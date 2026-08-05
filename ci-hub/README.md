@@ -227,15 +227,32 @@ protocol. It also dereferences the final pushed head's immutable validation
 receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
 the merged SHA it completes the prepared intent and calls `arm-land`. If the
 wrapper dies in that interval, the restartable ORC workflow recovers the intent
-and arms it. Arming appends an OPEN event to
+and arms it. The write-ahead intent and initial OPEN event both carry the
+versioned repository/workflow policy; an unsupported repository is refused
+before merge instead of creating an obligation no verifier can satisfy. Arming
+appends that OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
-1. clones Hermit into `ignored/ci-hub/obligations/<id>/hermit`, checks out the
-   exact landed commit detached, and runs full `./validate.sh --no-label-pr`;
-2. confirms `CI (GitHub-managed portable)` exists for the same SHA, dispatching
-   it only when GitHub `main` still equals that SHA; and
+1. clones the obligation's registered source repository into
+   `ignored/ci-hub/obligations/<id>/hermit`, checks out the exact landed commit
+   detached, and runs full `./validate.sh --no-label-pr`;
+2. confirms the policy-bound GitHub workflow exists for the same SHA,
+   dispatching it only when GitHub `main` still equals that SHA; and
 3. launches a detached watcher whose durable log lives beside the local
    validation log.
+
+The supported GitHub bindings are explicit rather than inferred from a global
+default:
+
+| Repository | Workflow file | Workflow name |
+|---|---|---|
+| `rrnewton/hermit` | `ci-portable.yml` | `CI (GitHub-managed portable)` |
+| `rrnewton/reverie` | `ci.yml` | `Rust` |
+
+Verification-policy schema v1 freezes this repository/workflow binding only;
+it does not snapshot the evaluator truth table or authority composition. A
+future change to those semantics therefore requires its own explicit migration
+and review rather than silently treating this workflow-policy version as proof.
 
 The event log is append-only and locked. Every transition retains timestamps,
 verification scope (`total` here), GitHub run IDs, local log path, and failure
@@ -250,7 +267,13 @@ with GitHub**. A merge can complete before arming; the machine-local intent lets
 ORC recover that window when the same workspace returns. Raw merges bypass the
 intent, and loss of the workspace/disk loses its machine-local recovery state.
 
-The first failing verifier immediately changes the obligation to
+Either exact-SHA green satisfies the obligation immediately; a pending,
+running, absent, or cancelled/no-result peer is supplemental and never becomes
+an AND gate. A simultaneously known green/red pair is a symmetric
+`investigation_required` disagreement and never reaches the remediation
+actuator. If an already-started peer later reports red, evaluation reopens the
+satisfied record as that same non-actuating disagreement; satisfaction never
+waits for it. With no green, an authoritative GitHub red changes the obligation to
 `remediation_required` and appends `remediation.state=triggered`: revert is
 recommended when the bad land is still the main tip; fix-forward is recommended
 after main has advanced. Outstanding work is enumerable from state alone with

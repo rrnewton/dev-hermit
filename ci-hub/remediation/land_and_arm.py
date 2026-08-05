@@ -120,15 +120,35 @@ def _existing_obligation(repo: str, sha: str, store: Path) -> dict[str, Any] | N
 
 
 def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
+    repo = str(intent["repo"])
+    persisted_policy = intent.get("verification_policy")
+    if persisted_policy is None:
+        # Compatibility for write-ahead intents created before policies were
+        # recorded. The resulting obligation persists this derived binding in
+        # its initial opened event.
+        policy = protocol.verification_policy_for_repo(repo)
+    elif isinstance(persisted_policy, Mapping):
+        policy = protocol.validate_verification_policy(persisted_policy)
+    else:
+        raise LandError("land intent verification policy is not an object")
+    if policy["repo"] != repo:
+        raise LandError(
+            f"land intent verification policy does not match repository {repo!r}"
+        )
     store = Path(str(intent["store"]))
-    existing = _existing_obligation(str(intent["repo"]), sha, store)
+    existing = _existing_obligation(repo, sha, store)
     if existing is not None:
+        protocol.bind_verification_policy(
+            str(existing["obligation_id"]), store, requested_policy=policy
+        )
         return 0, str(existing["obligation_id"])
     arguments = [
         "arm",
         sha,
         "--repo",
-        str(intent["repo"]),
+        repo,
+        "--verification-policy-json",
+        json.dumps(policy, sort_keys=True, separators=(",", ":")),
         "--source",
         str(intent["source"]),
         "--land-mode",
@@ -143,14 +163,16 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         str(store),
     ]
     code = protocol.main(arguments)
-    record = _existing_obligation(str(intent["repo"]), sha, store)
+    record = _existing_obligation(repo, sha, store)
     return code, str(record["obligation_id"]) if record is not None else None
 
 
 def _new_intent(args: argparse.Namespace, command: Sequence[str]) -> dict[str, Any]:
+    policy = protocol.verification_policy_for_repo(args.repo)
     return {
         "schema_version": 1,
         "repo": args.repo,
+        "verification_policy": policy,
         "pr": args.pr,
         "source": str(args.source.expanduser().resolve()),
         "land_mode": args.land_mode,
