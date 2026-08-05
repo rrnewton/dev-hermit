@@ -57,7 +57,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_REPO = "rrnewton/hermit"
-DEFAULT_CHECKOUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "hermit")
+DEFAULT_CHECKOUT = "/home/newton/work/dev-hermit/hermit"
 DEFAULT_REGISTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "rebase-base-floors.json")
 LOCAL_TIMEOUT = 30.0

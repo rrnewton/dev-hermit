@@ -11,9 +11,19 @@ Two consumers live here:
 | --- | --- | --- |
 | `validate/aggregate.py` | Every `validate.sh` run on this machine (parent JSONL ledger + raw per-run logs + `safe-ci-dag-runner` profiling CSVs). | "What has every worktree/agent/slot validated, and where is the profiling?" |
 | `validate/worktrees.py` | This hub's two report artifacts under parent `ignored/ci-hub/`. | "Which worktrees are registered with this hub, how fresh is each, and how did their recent runs go?" |
+| `validate/qualified_rows.py` | The parent validate ledger. | "Which complete, nonempty PASS measurements may feed timing or concurrency analysis?" |
 
 Both are read-only. The front door exposes them as `ci-hub local-history` and
 `ci-hub validate-worktrees`.
+
+Ad-hoc timing and concurrency analysis must start from
+`ci-hub ledger qualified-rows`. It sorts by `finished_at`, not file position,
+and emits only positive-execution PASS rows with matching positive gate counts.
+It uses explicit `gates_run`/`gates_expected` when present and the shared known
+five-gate contract for current full-profile rows that still call the completed
+count `checks`; older ambiguous schemas fail closed. Do not pipe the raw ledger
+through `tail`, and do not bucket raw rows: aborted and zero-test runs otherwise
+manufacture chronology and performance conclusions.
 
 ## Hub-report artifacts
 

@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+DIR="$(dirname -- "$SELF")"
+ROOT="${ROOT:-$(cd -- "$DIR/../.." && pwd)}"
 export DYNAMORIO_HOME=${DYNAMORIO_HOME:-$HOME/dynamorio/install}
 export HERMIT_DRRUN=${HERMIT_DRRUN:-$DYNAMORIO_HOME/bin64/drrun}
 export HERMIT_DBI_CLIENT=${HERMIT_DBI_CLIENT:?set HERMIT_DBI_CLIENT to libreverie_dbi_client.so}
@@ -9,15 +11,16 @@ DRRUN=$HERMIT_DRRUN
 HDBI=${HDBI:-$HOME/work/dev-hermit/hermit/target/debug/hermit}
 HPT=${HPT:-$HDBI}
 
+if [[ ${HERMIT_DBI_LONGBENCH_BOXED:-0} != 1 ]]; then
+  exec env HERMIT_DBI_LONGBENCH_BOXED=1 \
+    "$ROOT/scripts/hermit-box-run" --passthrough --label dbi-longbench \
+    --cpu-budget "${HERMIT_DBI_LONGBENCH_CPU_BUDGET:-7200}" -- \
+    "$SELF" "$@"
+fi
+
 meas() { # label reps timeout cmd...
-  # NOTE (route_bare_hermit_runs): the hermit legs here are deliberately NOT wrapped in
-  # scripts/hermit-box-run --passthrough. This function %e-times its argv and compares hermit
-  # (dbi/ptrace) against non-hermit baselines (native, bareDR) in the SAME table; the box adds
-  # ~0.28s scope-setup wall per invocation (measured), which is a large fraction of the short
-  # loop3s/loop10s runs and would only be paid by the hermit legs — making the comparison
-  # incomparable and distorting the very quantity this bench measures. To get leak protection
-  # without polluting per-run timing, run the WHOLE bench under the box once, e.g.:
-  #   scripts/hermit-box-run --passthrough --cpu-budget 7200 -- experiments/dbi_longbench_20260722/bench.sh
+  # The whole script is boxed above, before any timed region, so scope setup cannot distort
+  # the per-command wall measurements or favor native, bareDR, DBI, or ptrace.
   local label="$1" reps="$2" to="$3"; shift 3
   local out=""
   for r in $(seq 1 $reps); do
