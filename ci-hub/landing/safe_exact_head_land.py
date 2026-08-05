@@ -1093,7 +1093,10 @@ class CanonicalObligationArmer:
         if self.obligation_store is not None:
             query.extend(("--store", str(self.obligation_store)))
         observed = self.runner.run(query, timeout=60)
-        if observed.returncode != 0:
+        # The canonical CLI uses 1 for open obligations and 2 for obligations
+        # needing remediation.  Both are typed query results, not transport or
+        # decoding failures; the JSON record checks below remain authoritative.
+        if observed.returncode not in {0, 1, 2}:
             detail = (observed.stderr or observed.stdout).strip()
             raise LandingError(f"cannot dereference armed obligation store: {detail}")
         payload = _json_object(observed.stdout, "ci-hub obligations")

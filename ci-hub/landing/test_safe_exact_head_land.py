@@ -1520,10 +1520,12 @@ class SequenceRunner:
         self,
         *,
         arm_returncode: int = 0,
+        obligation_returncode: int = 0,
         obligation: dict[str, object] | None = None,
     ) -> None:
         self.commands: list[list[str]] = []
         self.arm_returncode = arm_returncode
+        self.obligation_returncode = obligation_returncode
         self.obligation = obligation if obligation is not None else durable_obligation()
 
     def run(
@@ -1533,7 +1535,9 @@ class SequenceRunner:
         self.commands.append(argv)
         if "obligations" in argv:
             payload = {"obligations": [self.obligation]}
-            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+            return subprocess.CompletedProcess(
+                argv, self.obligation_returncode, json.dumps(payload), ""
+            )
         return subprocess.CompletedProcess(
             argv, self.arm_returncode, "armed", "pending"
         )
@@ -1554,6 +1558,103 @@ def test_obligation_armer_passes_pr_and_dereferences_exact_mc(tmp_path: Path) ->
     assert arm_command[arm_command.index("--pr") + 1] == "42"
     assert result["obligation_id"] == "exact-mc-obligation"
     assert result["launch_durable"] is True
+
+
+@pytest.mark.parametrize(
+    ("returncode", "overall_state"),
+    [(1, "open"), (2, "remediation_required")],
+)
+def test_obligation_armer_accepts_typed_nonzero_query_state(
+    tmp_path: Path, returncode: int, overall_state: str
+) -> None:
+    obligation = durable_obligation()
+    obligation["overall_state"] = overall_state
+    runner = SequenceRunner(
+        obligation_returncode=returncode, obligation=obligation
+    )
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    armer = land.CanonicalObligationArmer(
+        runner, checkout, ci_hub=Path("/fixture/ci-hub")
+    )
+
+    result = armer.arm(land.SUPPORTED_REPO, 42, MC, "hermit-lander")
+
+    assert result["obligation_id"] == "exact-mc-obligation"
+    assert result["overall_state"] == overall_state
+    assert result["launch_durable"] is True
+
+
+def test_obligation_armer_refuses_unexpected_query_returncode(
+    tmp_path: Path,
+) -> None:
+    runner = SequenceRunner(obligation_returncode=3)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    armer = land.CanonicalObligationArmer(
+        runner, checkout, ci_hub=Path("/fixture/ci-hub")
+    )
+
+    with pytest.raises(land.LandingError, match="cannot dereference"):
+        armer.arm(land.SUPPORTED_REPO, 42, MC, "hermit-lander")
+
+
+@pytest.mark.parametrize("stdout", ["", "{", "[]"])
+def test_obligation_armer_refuses_malformed_json_for_typed_nonzero_query(
+    tmp_path: Path, stdout: str
+) -> None:
+    class RawQueryRunner(SequenceRunner):
+        def run(
+            self, command: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            argv = list(command)  # type: ignore[arg-type]
+            self.commands.append(argv)
+            if "obligations" in argv:
+                return subprocess.CompletedProcess(argv, 1, stdout, "")
+            return subprocess.CompletedProcess(argv, 0, "armed", "")
+
+    runner = RawQueryRunner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    armer = land.CanonicalObligationArmer(
+        runner, checkout, ci_hub=Path("/fixture/ci-hub")
+    )
+
+    with pytest.raises(land.LandingError):
+        armer.arm(land.SUPPORTED_REPO, 42, MC, "hermit-lander")
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"obligations": "not-a-list"}, "did not return a record list"),
+        ({"obligations": []}, "does not contain exactly one"),
+        (
+            {"obligations": [durable_obligation(), durable_obligation()]},
+            "does not contain exactly one",
+        ),
+        (
+            {"obligations": [{**durable_obligation(), "repo": "wrong/repo"}]},
+            "does not bind the exact repository and merge commit",
+        ),
+        (
+            {"obligations": [{**durable_obligation(), "landed_sha": O}]},
+            "does not bind the exact repository and merge commit",
+        ),
+    ],
+)
+def test_obligation_armer_keeps_record_checks_for_typed_nonzero_query(
+    tmp_path: Path, payload: dict[str, object], message: str
+) -> None:
+    runner = StaticRunner(payload, returncode=1)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    armer = land.CanonicalObligationArmer(
+        runner, checkout, ci_hub=Path("/fixture/ci-hub")
+    )
+
+    with pytest.raises(land.LandingError, match=message):
+        armer.verify(land.SUPPORTED_REPO, MC, "exact-mc-obligation")
 
 
 def test_obligation_armer_refuses_nonzero_arm_result_even_with_durable_record(
