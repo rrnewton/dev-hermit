@@ -639,9 +639,10 @@ class OperationalBoundsTest(unittest.TestCase):
             text=True,
             timeout=WALL_SECONDS,
         )
-        self.assertIn("2/2 legitimate exact-head landing receipts accepted", result.stdout)
-        self.assertIn("forged", result.stdout)
-        self.assertIn("fixture plant deleted cleanly", result.stdout)
+        self.assertIn("monotonic failure precedence", result.stdout)
+        self.assertIn("zero-gate identical-tree cache refusal", result.stdout)
+        self.assertIn("head-race cache cleanup", result.stdout)
+        self.assertIn("replacement-ref hardening", result.stdout)
 
     def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
         """Plant the run shape PR statusCheckRollup omitted for PR #1219."""

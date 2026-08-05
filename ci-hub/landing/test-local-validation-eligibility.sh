@@ -29,8 +29,11 @@ chmod +x "$tmp/bin/with-proxy"
 export PATH="$tmp/bin:$PATH"
 
 missing=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+log=$tmp/validate.log
+printf 'running 42 tests\ntest result: ok. 42 passed; 0 failed\n' >"$log"
+log_sha=$(sha256sum "$log" | awk '{print $1}')
 printf '%s\n' \
-  "{\"schema_version\":6,\"commit\":\"$valid\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[]},\"reverie_binding\":{\"repository\":\"rrnewton/reverie\",\"ref\":\"refs/heads/main\",\"pinned_sha\":\"$pin\",\"resolved_sha\":\"$pin\"},\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"real_seconds\":1}" \
+  "{\"schema_version\":6,\"commit\":\"$valid\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"failures\":0,\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[],\"failed_nodes\":[]},\"reverie_binding\":{\"repository\":\"rrnewton/reverie\",\"ref\":\"refs/heads/main\",\"pinned_sha\":\"$pin\",\"resolved_sha\":\"$pin\"},\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"real_seconds\":1,\"source_log_sha256\":\"$log_sha\",\"log_file\":\"$log\"}" \
   >"$ledger"
 
 run_case() {
