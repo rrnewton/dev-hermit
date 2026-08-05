@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import aggregate as agg
@@ -171,6 +172,18 @@ class RunLevelTest(unittest.TestCase):
         self.assertEqual(run["banner_lines"], 1)
         self.assertEqual(run["skipped_gates"], 1)
         self.assertEqual(run["checks"], 2)  # PASS + SKIPPED, banner excluded
+
+    def test_future_since_skips_old_raw_log_before_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hermit-validate.old.log"
+            path.write_text(HEADER + PASS)
+            with mock.patch.object(agg, "tmpdirs", return_value=[directory]), mock.patch.object(
+                agg, "parse_raw_log", side_effect=AssertionError("old log was parsed")
+            ):
+                self.assertEqual(
+                    agg.load_all_runs(directory, since="2999-01-01"),
+                    [],
+                )
 
 
 class RenderTest(unittest.TestCase):

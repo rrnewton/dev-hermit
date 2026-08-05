@@ -393,7 +393,18 @@ def parse_raw_log(path: str) -> dict:
     }
 
 
-def load_all_runs(parent: str) -> list[dict]:
+def _raw_log_can_match_since(path: str, since: str | None) -> bool:
+    """Reject old reconstructed logs before paying the cost to parse them."""
+    if not since:
+        return True
+    try:
+        return iso(os.path.getmtime(path)) >= since
+    except OSError:
+        # A concurrently removed log cannot contribute a durable run.
+        return False
+
+
+def load_all_runs(parent: str, since: str | None = None) -> list[dict]:
     records = load_ledger_records(parent)
     # Add reconstructed records for every raw log not already covered. Both
     # products write `<product>-validate.XXXXXX.log` via mktemp on every run.
@@ -401,6 +412,8 @@ def load_all_runs(parent: str) -> list[dict]:
         for prefix in ("hermit-validate", "reverie-validate"):
             for path in glob.glob(os.path.join(d, f"{prefix}.*.log")):
                 if path in records:
+                    continue
+                if not _raw_log_can_match_since(path, since):
                     continue
                 records[path] = parse_raw_log(path)
     # Also scan committed worktree run logs (validate-run-*.log) under any
@@ -410,6 +423,8 @@ def load_all_runs(parent: str) -> list[dict]:
 
     for path in walk_pruned(parent, is_run_log):
         if os.sep + "ignored" + os.sep in path and path not in records:
+            if not _raw_log_can_match_since(path, since):
+                continue
             records[path] = parse_raw_log(path)
     runs = list(records.values())
     for r in runs:
@@ -619,7 +634,7 @@ def main() -> int:
     args = ap.parse_args()
 
     parent = parent_root()
-    runs = load_all_runs(parent)
+    runs = load_all_runs(parent, since=args.since)
     profiles = discover_profiles(parent)
     linked = link_profiling(runs, profiles)
 
