@@ -22,7 +22,10 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 43
+# The disabled legacy lander example and its detached-run transcript were
+# removed from landing/README.md so documentation cannot suggest an unavailable
+# mutation path. Keep the inventory exact after that intentional subtraction.
+EXPECTED_COMMANDS = 40
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
