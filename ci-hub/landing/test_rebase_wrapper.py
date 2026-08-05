@@ -131,7 +131,7 @@ def test_receipt_identity_validated_carries_what_it_verified() -> None:
     report = {"verdict": "VALIDATED", "qualifying_count": 1,
               "newest_qualifying": {"profile": "full", "selection_mode": "full",
                                     "result": "pass", "finished_at": "t",
-                                    "slot": "lander2", "host": "testhost"}}
+                                    "slot": "lander2", "host": "devbig014"}}
     r = M.receipt_identity(report, Z)
     assert r is not None
     assert r["sha"] == Z and r["verdict"] == "VALIDATED" and r["profile"] == "full"

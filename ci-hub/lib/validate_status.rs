@@ -364,11 +364,16 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
 
     // Completeness is structural. Even when a fail-fast row carries a real red
     // gate, it did not execute the full validation contract and cannot become a
-    // durable FAILED verdict. A genuine red control has matching gate counts.
+    // durable FAILED verdict. A genuine red control SATISFIES its gate contract
+    // (`ran >= expected`, matching the `complete` check below): only an UNDER-run
+    // (`ran < expected`) is a truncation. An OVER-run (`ran > expected`, e.g. six
+    // live gates against a hardcoded five-gate expectation) is complete, not short,
+    // and must fall through to the failure logic — a stale expected count must not
+    // launder a genuine over-run failure into a non-verdict.
     let has_real_failure = row.failures.is_some_and(|f| f >= 1) || !failed_gates.is_empty();
     if gates_expected
         .zip(gates_run)
-        .is_some_and(|(expected, ran)| expected > 0 && ran != expected)
+        .is_some_and(|(expected, ran)| expected > 0 && ran < expected)
         || (!has_real_failure
             && (row.exit_code == Some(130)
                 || (row.failures == Some(0) && failed_gates.is_empty())))
@@ -728,6 +733,23 @@ mod tests {
         let a = assess(&[r], PASS_SHA);
         assert_eq!(a.verdict, Verdict::Truncated);
         assert_eq!(a.verdict.exit_code(), 4);
+    }
+
+    #[test]
+    fn over_run_red_is_failed_not_truncated() {
+        // OVER-RUN bracket: a genuine red that executed MORE gates than the
+        // expected count (six live gates against a stale five-gate expectation) is
+        // COMPLETE, not truncated. Before the `ran != expected` -> `ran < expected`
+        // fix this read TRUNCATED (exit 4, re-dispatch), laundering a real failure
+        // into a non-verdict and inconsistent with the `ran >= expected` complete
+        // check in the same function. Only an UNDER-run is a truncation.
+        let mut r = complete_failure(PASS_SHA);
+        r.checks = Some(6);
+        r.gates_run = Some(6);
+        r.gates_expected = Some(5);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::FailedOnRecord);
+        assert_eq!(a.verdict.exit_code(), 3);
     }
 
     #[test]

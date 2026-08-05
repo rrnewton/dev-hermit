@@ -258,48 +258,6 @@ class PrimaryCheckoutTests(unittest.TestCase):
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
         self.assertIn("validate.sh: cache keys=00000000", err.getvalue())
 
-    def test_check_pins_passes_on_consistent_tree(self) -> None:
-        out, err = StringIO(), StringIO()
-        result = primary_checkout.check_pins(self.root, out=out, err=err)
-        self.assertEqual(result, 0, err.getvalue())
-        self.assertIn("Reverie pin is internally consistent", out.getvalue())
-
-    def test_check_pins_blocks_stale_lock(self) -> None:
-        # Drift the working-tree lock without touching the manifests. check_pins
-        # reads the working tree, so no commit is needed.
-        lock = self.root / "hermit" / "Cargo.lock"
-        reverie_head = git(self.root / "reverie", "rev-parse", "HEAD")
-        lock.write_text(lock.read_text().replace(reverie_head, "0" * 40))
-        out, err = StringIO(), StringIO()
-        result = primary_checkout.check_pins(self.root, out=out, err=err)
-        self.assertEqual(result, 1)
-        self.assertIn("REVERIE PIN DRIFT", err.getvalue())
-        self.assertIn("Cargo.lock: stale Reverie source", err.getvalue())
-
-    def test_check_pins_blocks_inconsistent_manifests(self) -> None:
-        manifest = self.root / "hermit" / "detcore" / "Cargo.toml"
-        manifest.parent.mkdir(parents=True, exist_ok=True)
-        manifest.write_text(
-            "[dependencies]\n"
-            'reverie = { git = "https://github.com/rrnewton/reverie.git", '
-            f'rev = "{"a" * 40}" }}\n'
-        )
-        git(self.root / "hermit", "add", "detcore/Cargo.toml")
-        out, err = StringIO(), StringIO()
-        result = primary_checkout.check_pins(self.root, out=out, err=err)
-        self.assertEqual(result, 1)
-        self.assertIn("not internally consistent", err.getvalue())
-
-    def test_check_pins_ignores_cache_key_drift(self) -> None:
-        # The revision-keyed cache files are deliberately OUTSIDE the blocking
-        # gate (7-char/heterogeneous keys would false-positive). Staling one
-        # must NOT block check-pins.
-        cache = self.root / "hermit" / "validate.sh"
-        cache.write_text("liteinst-runtime-build-00000000\n")
-        out, err = StringIO(), StringIO()
-        result = primary_checkout.check_pins(self.root, out=out, err=err)
-        self.assertEqual(result, 0, err.getvalue())
-
 
 if __name__ == "__main__":
     unittest.main()

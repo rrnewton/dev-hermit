@@ -5,7 +5,7 @@
 # systemd scope cgroup is removed, and 0 processes hold that ns => namespace released,
 # with NO external kill.
 set -u
-ROOT="${ROOT:-$(git rev-parse --show-toplevel)}"
+ROOT=/home/newton/work/dev-hermit
 HB="$ROOT/hermit/target/debug/hermit"
 WRAP="$ROOT/scripts/hermit-box-run"
 N=${1:-2}
