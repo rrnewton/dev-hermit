@@ -660,14 +660,25 @@ def main() -> int:
         return 0
 
     if args.false_reds:
+        # A recorded red is NEVER re-run, so any red that classifies as NO-RESULT
+        # (exercised nothing / no count) or NEEDS-RERUN (partial suite, contention,
+        # or known-flaky) is a false row permanently condemning a healthy commit.
+        # Surface both, with a per-verdict count so the reclassification is
+        # reportable (deliverable: report the count).
         flagged = [r for r in runs
-                   if (r.get("flake_analysis") or {}).get("verdict") == "needs-rerun"]
+                   if (r.get("flake_analysis") or {}).get("verdict")
+                   in ("needs-rerun", "no-result")]
         if not flagged:
-            print("No recorded reds reclassify as needs-rerun "
+            print("No recorded reds reclassify as needs-rerun/no-result "
                   f"(scanned {len(runs)} runs).")
             return 0
-        print(f"{len(flagged)} recorded red(s) are NEEDS-RERUN, not defects — a "
-              "single FAILED here condemns a healthy commit until re-run:\n")
+        n_no_result = sum(1 for r in flagged
+                          if r["flake_analysis"]["verdict"] == "no-result")
+        n_rerun = len(flagged) - n_no_result
+        print(f"{len(flagged)} recorded red(s) are FALSE — a single FAILED here "
+              "condemns a healthy commit until re-run "
+              f"({n_no_result} NO-RESULT: exercised nothing / no count; "
+              f"{n_rerun} NEEDS-RERUN: partial suite, contention, or known-flaky):\n")
         for r in flagged:
             fa = r["flake_analysis"]
             t = (r.get("started_at") or r.get("finished_at") or "?")[:19]

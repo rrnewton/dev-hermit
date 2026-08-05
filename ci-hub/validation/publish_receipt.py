@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Mechanically publish one verifier-selected local-validation receipt.
 
-This module is deliberately not an authority: it never selects a ledger row,
-decides whether a row qualifies, comments on a PR, or applies a label.  The
-Rust ``ci-hub apply-local-label`` consumer passes one exact canonical row and
-its digest, verifies the returned artifact bytes, and alone may bind that
+This module is deliberately not an authority: it never scans or selects a
+ledger row, comments on a PR, or applies a label.  The Rust
+``ci-hub apply-local-label`` consumer selects one exact canonical row and
+passes its digest.  Python verifies byte identity and checks that selected row
+against the shared policy predicate; Rust alone authorizes and binds the
 artifact to a PR.
 """
 
@@ -20,6 +21,11 @@ import shutil
 import subprocess
 import sys
 from typing import Any
+
+# The shared qualifying-receipt predicate lives at the ci-hub root (beside
+# check_outcome.py), one directory above this validation/ package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import qualifying_receipt  # noqa: E402
 
 
 RECEIPT_REPO = "rrnewton/dev-hermit"
@@ -42,7 +48,7 @@ def selected_record(
     expected_digest: str,
     canonicalization: str,
 ) -> dict[str, Any]:
-    """Verify byte identity only; qualification remains exclusively in Rust."""
+    """Verify selected-row identity and shared-policy consistency."""
     if canonicalization != RECEIPT_CANONICALIZATION:
         fail(f"unsupported canonicalization {canonicalization!r}")
     if len(expected_digest) != 64 or any(
@@ -63,7 +69,9 @@ def selected_record(
         fail("selected canonical record is not an object")
     if row.get("commit") != sha:
         fail("selected canonical record is not bound to --sha")
-    for field in ("started_at", "log_file"):
+    if not qualifying_receipt.row_qualifies(row, sha, qualifying_receipt.active()):
+        fail("selected canonical record does not satisfy the shared receipt predicate")
+    for field in ("started_at", "log_file", "host"):
         if not isinstance(row.get(field), str) or not row[field]:
             fail(f"selected canonical record has no {field}")
     return row
@@ -95,7 +103,10 @@ def build_receipt(
     canonicalization: str,
 ) -> tuple[dict[str, Any], bytes, str]:
     log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
-    run_id = f"{sha}@{row['started_at']}"
+    # Host-in-identity (Req2): the receipt identity carries the producing host,
+    # so a receipt cannot be read blind to where it was produced and its host
+    # field cannot be swapped without breaking this tamper-evident run_id.
+    run_id = f"{sha}@{row['started_at']}@{row['host']}"
     receipt = {
         "schema_version": 1,
         "repository": repo,

@@ -24,6 +24,8 @@
 mod history_queries;
 #[path = "lib/landing_lock.rs"]
 mod landing_lock;
+#[path = "lib/qualifying_receipt.rs"]
+mod qualifying_receipt;
 #[path = "lib/records.rs"]
 mod records;
 #[path = "lib/validate_lock.rs"]
@@ -3435,7 +3437,8 @@ fn qualify_canonical_receipt(row: &HistoryRow, sha: &str) -> Option<QualifyingRe
         row.repo.as_deref(),
         Some("hermit") | Some(CANONICAL_VALIDATE_REPO)
     ) || (schema_version == 4 && row.repo.is_none());
-    if schema_version < 4
+    if !crate::qualifying_receipt::row_qualifies(row, sha, crate::qualifying_receipt::active())
+        || schema_version < 4
         || row.commit.as_deref() != Some(sha)
         || !is_oid(sha)
         || !repo_bound

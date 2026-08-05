@@ -492,7 +492,10 @@ fn reject_bad_max(max: u64) -> Result<(), ValidateLockError> {
 /// check can act on. A ref, a PR number, or a test placeholder (`sha-3`) is not
 /// resolvable here, so it is passed through un-gated rather than refused.
 fn is_full_sha(target: &str) -> bool {
-    target.len() == 40 && target.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    target.len() == 40
+        && target
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// MECHANICAL rebase-before-validate: refuse to admit a `Validate` whose base
@@ -537,9 +540,7 @@ fn base_admission_check(
     }
 
     let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
-        Ok(cmd) if !cmd.trim().is_empty() => {
-            cmd.split_whitespace().map(OsString::from).collect()
-        }
+        Ok(cmd) if !cmd.trim().is_empty() => cmd.split_whitespace().map(OsString::from).collect(),
         _ => vec![
             OsString::from("python3"),
             root.join("ci-hub/validate/preflight_anchor.py")
@@ -888,7 +889,8 @@ impl ValidateLock {
         // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
         // with STALE_BASE_EXIT_CODE (mirroring the --no-wait Held refusal) so a
         // wrapper reads a distinct, non-crashing exit and can surface the remedy.
-        if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check) {
+        if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check)
+        {
             match err {
                 ValidateLockError::StaleBase(msg) => {
                     eprintln!("{msg}");

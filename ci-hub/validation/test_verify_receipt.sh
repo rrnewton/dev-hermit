@@ -17,7 +17,7 @@ make_receipt() {
       schema_version: 1,
       repository: "rrnewton/hermit",
       commit: $sha,
-      run_id: ($sha + "@2026-08-04T12:00:00Z"),
+      run_id: ($sha + "@2026-08-04T12:00:00Z@fixture-host"),
       source_log_file: "/tmp/validate.log",
       durable_log_file: "/durable/validate.log",
       log_sha256: ("c" * 64),
@@ -108,7 +108,6 @@ jq '
   del(.selected_receipt_identity)
   | .ledger_record.schema_version = 1
   | del(
-      .ledger_record.host,
       .ledger_record.slot,
       .ledger_record.repo,
       .ledger_record.tree,
@@ -192,6 +191,14 @@ if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
     echo "FAIL: zero-executed receipt was accepted" >&2
     exit 1
 fi
+
+# Host provenance binds the wrapper identity for legacy and current roles.
+make_receipt 12 "$tmp/host-good.json"
+jq -cS '.run_id = (.commit + "@" + .ledger_record.started_at + "@other-host")' \
+    "$tmp/host-good.json" >"$tmp/host-mismatch.json"
+verify_file "$tmp/host-mismatch.json" fail "run_id host disagrees with ledger host"
+jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent.json"
+verify_file "$tmp/host-absent.json" fail "ledger host absent"
 
 # End-to-end current producer contract: one strong verifier-selected row is
 # passed as exact bytes with its canonical digest, the mechanical publisher
@@ -294,4 +301,4 @@ if [[ -e $plant_root ]]; then
 fi
 trap - EXIT
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"

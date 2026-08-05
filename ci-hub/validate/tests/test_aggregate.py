@@ -209,6 +209,7 @@ class SummaryCompletenessTest(unittest.TestCase):
         genuine = {
             "profile": "full", "result": "fail", "checks": 5,
             "gates_run": 5, "gates_expected": 5, "failures": 1,
+            "executed_tests": 765,
         }
         # N=2 legitimate passes are the unaffected positive controls.
         passes = [

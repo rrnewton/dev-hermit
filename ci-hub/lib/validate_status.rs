@@ -73,7 +73,7 @@
 //! as full coverage. `commit_anchored`/`tree_dirty` guarantee the record
 //! describes the actual commit, not a dirty tree (the tree is not the commit).
 
-use crate::records::{CoverageRow, HistoryRow};
+use crate::records::HistoryRow;
 use std::collections::BTreeSet;
 
 /// Canonical ledger path relative to the workspace root. This is the exact file
@@ -115,7 +115,10 @@ impl Verdict {
         match self {
             Verdict::Validated => 0,
             Verdict::FailedOnRecord => 3,
-            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NoResult | Verdict::NotValidated => 4,
+            Verdict::Truncated
+            | Verdict::NeedsRerun
+            | Verdict::NoResult
+            | Verdict::NotValidated => 4,
         }
     }
 
@@ -161,15 +164,21 @@ fn is_clean_full_coverage(row: &HistoryRow, sha: &str) -> bool {
 /// even when a count is absent, because for such a writer an absent count is a
 /// DEFECT (it was contractually required to emit), not a pre-count receipt.
 ///
-/// This is the SINGLE source of truth for the version boundary: the count-emitting
-/// `hermit/validate.sh` `append_validation_ledger` stamps exactly this
-/// `schema_version`, and this consumer gates on `>=` it (see
-/// `emit_executed_and_filtered`). Do not hard-code the integer in the writer with
-/// a separate comment — writer and consumer are ONE judgement, or they diverge.
+/// The PRODUCTION source of truth for this boundary is now
+/// `qualifying-receipt.json` (`counts_schema`), which the shared predicate reads;
+/// the production predicate no longer keys on this const. It is retained ONLY as
+/// a test-fixture convenience and is PINNED to the JSON by
+/// `counts_schema_const_matches_shared_predicate`, so it cannot silently drift.
 ///
 /// Why 5, not 4: schema 1/2/3 are already in use and schema 4 is ALREADY in the
 /// ledger from a branch writer that emits NO counts, so 4 cannot mean "counts
 /// present". 5 is the first clean anchor.
+///
+/// `#[cfg(test)]`: production no longer reads this const (it reads the JSON via
+/// the shared predicate), so it exists ONLY for the test fixtures below and the
+/// pin `counts_schema_const_matches_shared_predicate`. Compiling it into the
+/// binary would be dead code (the `-D warnings` clippy gate would reject it).
+#[cfg(test)]
 pub const COUNTS_SCHEMA: u32 = 5;
 
 /// A schema-3+ full-profile run's known gate contract is five gates. When the
@@ -179,14 +188,32 @@ pub const COUNTS_SCHEMA: u32 = 5;
 /// completeness rule (the canonical guard for validate_ledger_qualified_rows).
 pub const FULL_GATES_EXPECTED: u64 = 5;
 
-/// A per-node coverage obligation is SATISFIED iff the run planned at least one
-/// test-bearing DAG node AND no planned test node was inert (ran but executed 0
-/// countable tests) or absent (never produced a terminal result). Carrying the
-/// NAMES in the receipt lets this verdict be re-derived here without re-reading a
-/// log (Proxy Binding: the condition travels with the value).
-fn coverage_satisfied(cov: &CoverageRow) -> bool {
-    cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
-}
+/// A red that EXECUTED at most this many tests exercised essentially nothing —
+/// a NO-RESULT wearing a red badge, never a durable FAILED. `executed_tests`
+/// MISSING entirely is treated the same: an unmeasured red cannot certify a
+/// defect (symmetric with the pass side, where an uncounted receipt is
+/// UNVERIFIED, not green — see `is_clean_full_pass`). Measured on the live
+/// ledger (2026-08-05): of 197 rows whose effective result was fail/timeout, 168
+/// executed <= 1 test or none — ~45% of every recorded red was a no-result. A
+/// recorded red is NEVER re-run, so each false row permanently condemns a PR
+/// nobody re-examines; demoting it to NO-RESULT (exit 4 = re-dispatch) is the
+/// structural fix.
+pub const EXECUTED_TESTS_NO_RESULT_MAX: i64 = 1;
+
+/// The plausible-full floor. A red carrying a POSITIVE count below this ran only
+/// a fraction of the suite: NEEDS-RERUN, never a durable FAILED. TEMPORARY, and
+/// justified by the MEASURED distribution, not the gate count — all of tonight's
+/// false reds reported six checks, so check count alone is no evidence. Measured
+/// full-run PASS population (2026-08-05, this host): the dominant hermit cluster
+/// executes 740-792 tests (reverie 942-961); 700 sits safely below that cluster
+/// yet far above every partial red (measured partial fails at 415/430/434/515).
+/// A small 427-count hermit-pass outlier cluster exists below the floor, but the
+/// floor gates only the FAILURE-durability path (a low-count PASS still validates
+/// via `is_clean_full_pass`, which keys on `executed_tests > 0`, not this floor),
+/// so a conservative demotion of a low-count red to NEEDS-RERUN only re-runs it —
+/// it never strands a green. Refine per-repo/per-version when the producer emits
+/// an expected-suite-size; until then this single floor is the safe temporary.
+pub const EXECUTED_TESTS_PLAUSIBLE_FLOOR: i64 = 700;
 
 /// The landing / cache predicate — version-aware over the count-schema
 /// transition (see the module docs and the transition design note). Over and
@@ -226,38 +253,14 @@ fn coverage_satisfied(cov: &CoverageRow) -> bool {
 /// da98bdd): an evidence value must carry the condition it claims, so a receipt
 /// that carries no count cannot certify execution and is refused.
 pub fn is_clean_full_pass(row: &HistoryRow, sha: &str) -> bool {
-    if !(is_clean_full_coverage(row, sha) && row.result.as_deref() == Some("pass")) {
-        return false;
-    }
-    // Universal guard: a demonstrated zero-test run is never a full green, at any
-    // schema — never grandfathered. (No filtered_tests guard: see the doc above.)
-    if row.executed_tests == Some(0) {
-        return false;
-    }
-    let count_capable = row.schema_version.is_some_and(|v| v >= COUNTS_SCHEMA);
-    let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
-    if count_capable {
-        // FULL per-node contract: the coverage-capable writer MUST carry a
-        // nonzero executed count AND a satisfied per-node coverage obligation.
-        // Missing either on a count-capable receipt is a writer defect -> reject.
-        matches!(row.executed_tests, Some(n) if n > 0)
-            && row.coverage.as_ref().is_some_and(coverage_satisfied)
-    } else if counts_present {
-        // Old-schema writer that carried counts but predates per-node coverage
-        // (aggregate.py): hold it to the strongest thing it can prove — nonzero
-        // execution. Filtered no longer gates.
-        matches!(row.executed_tests, Some(n) if n > 0)
-    } else {
-        // STRICT (post-transition): a receipt carrying NEITHER count proves
-        // neither nonzero execution nor bounded filtering — an uncounted receipt
-        // is UNVERIFIED, not green. The transition grandfather (`else { true }`)
-        // is REMOVED now that the backlog is backfilled to schema-5
-        // (finalize_receipt.py --scan) and every landing consume-path re-mints
-        // count-backed rows before reading the ledger, so no legitimate green
-        // rides this branch. NotValidated (exit 4 = re-dispatch to mint counts),
-        // never FailedOnRecord.
-        false
-    }
+    // The predicate itself is NOT restated here — it is the ONE shared
+    // qualifying-receipt predicate loaded from `ci-hub/validate/qualifying-receipt.json`
+    // (module `qualifying_receipt`), which every consumer across Rust/Python/jq
+    // reads. Restating the clauses inline is exactly the drift this delegation
+    // removes (task
+    // `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
+    // The doc block above records the SEMANTICS the shared predicate implements.
+    crate::qualifying_receipt::row_qualifies(row, sha, crate::qualifying_receipt::active())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,8 +304,7 @@ fn is_env_fault_red(row: &HistoryRow, failed_gates: &[&crate::records::GateHisto
     // (A) A gate that genuinely exercised the product and failed disqualifies the
     // env-fault reading: it ran for real time at a non-command-not-found exit.
     let any_genuine_red = failed_gates.iter().any(|gate| {
-        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND)
-            && gate.real_seconds.is_some_and(|s| s > 0.0)
+        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND) && gate.real_seconds.is_some_and(|s| s > 0.0)
     });
     let any_command_not_found = failed_gates
         .iter()
@@ -375,11 +377,35 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
         .zip(gates_run)
         .is_some_and(|(expected, ran)| expected > 0 && ran < expected)
         || (!has_real_failure
-            && (row.exit_code == Some(130)
-                || (row.failures == Some(0) && failed_gates.is_empty())))
+            && (row.exit_code == Some(130) || (row.failures == Some(0) && failed_gates.is_empty())))
     {
         return FailureDisposition::Truncated;
     }
+
+    // Executed-test plausibility. A red that ran the full gate set can STILL be a
+    // no-result if it exercised essentially no tests: the build died, a setup
+    // step aborted, or contention killed the suite before it ran. `checks == 6`
+    // is not evidence — every one of tonight's false reds reported six checks.
+    // Bind the verdict to the observed executed-test count instead (Proxy
+    // Binding: carry the condition with the value). This is checked AFTER the
+    // env-fault and truncation readings (each a more specific "why nothing ran")
+    // and BEFORE the completeness/condition/flake logic, so a low/absent count
+    // demotes a would-be durable FAILED regardless of how complete its gates or
+    // conditions look. NO-RESULT and NEEDS-RERUN are both exit 4 (re-dispatch),
+    // never the permanent FAILED that condemns a PR nobody re-runs.
+    match row.executed_tests {
+        // Missing OR <= 1: an unmeasured red, or one that ran one test at most,
+        // certifies no defect. NO-RESULT.
+        None => return FailureDisposition::NoResult,
+        Some(n) if n <= EXECUTED_TESTS_NO_RESULT_MAX => return FailureDisposition::NoResult,
+        // A positive count below the plausible-full floor ran only a fraction of
+        // the suite — re-run before trusting it. NEEDS-RERUN.
+        Some(n) if n < EXECUTED_TESTS_PLAUSIBLE_FLOOR => return FailureDisposition::NeedsRerun,
+        // >= floor: a full-suite run whose failure can be durable if the other
+        // full-profile conditions below hold.
+        Some(_) => {}
+    }
+
     // Missing completeness or execution conditions cannot prove a defect. Old
     // reds therefore become re-measurement requests instead of permanent
     // condemnations when the schema tightens.
@@ -544,6 +570,7 @@ pub fn parse_ledger(buf: &str) -> (Vec<HistoryRow>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::CoverageRow;
 
     const PASS_SHA: &str = "cde3c1195eee4e2691bac64a4aec10a45aba853e";
     const OTHER_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -558,7 +585,7 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
+            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"test-host",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
@@ -571,7 +598,7 @@ mod tests {
             r#"{{"schema_version":6,"profile":"full","selection_mode":"full",
                 "commit":"{sha}","commit_anchored":true,"tree_dirty":false,
                 "result":"fail","exit_code":1,"checks":5,"gates_run":5,
-                "gates_expected":5,"failures":1,"dag_jobs":4,
+                "gates_expected":5,"failures":1,"executed_tests":765,"dag_jobs":4,
                 "concurrent_validates":0,"known_flaky_failure":false,
                 "solo_rerun_confirmation":false,
                 "gates":[{{"name":"portable CI DAG lane","result":"fail",
@@ -798,6 +825,67 @@ mod tests {
     }
 
     #[test]
+    fn low_or_absent_executed_count_red_is_no_result_not_failed() {
+        // PLANT BOTH WAYS #1 — the false-red direction. A complete, condition-
+        // bound, non-flaky red that would otherwise be a durable FAILED is demoted
+        // to NO-RESULT when its own executed-test count proves it exercised nothing
+        // (one test at most, or no count at all). checks==5 and full conditions are
+        // present and STILL insufficient — the count is the binding evidence. Live
+        // shapes: 92db28e0 / e0c96c58 (exec=1), 1288671f / 97eb2c75 (exec=null).
+        let mut one = complete_failure(PASS_SHA);
+        one.executed_tests = Some(1);
+        let a = assess(&[one], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NoResult);
+        assert_eq!(a.verdict.exit_code(), 4);
+
+        let mut zero = complete_failure(PASS_SHA);
+        zero.executed_tests = Some(0);
+        assert_eq!(assess(&[zero], PASS_SHA).verdict, Verdict::NoResult);
+
+        let mut absent = complete_failure(PASS_SHA);
+        absent.executed_tests = None;
+        assert_eq!(assess(&[absent], PASS_SHA).verdict, Verdict::NoResult);
+    }
+
+    #[test]
+    fn partial_executed_count_red_needs_rerun_not_failed() {
+        // A red carrying a POSITIVE count below the plausible-full floor ran only a
+        // fraction of the suite: NEEDS-RERUN, never a durable FAILED. Live shape:
+        // 54b4d4e5 (exec=430) — codex-rev already made this call.
+        let mut r = complete_failure(PASS_SHA);
+        r.executed_tests = Some(430);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::NeedsRerun);
+        assert_eq!(a.verdict.exit_code(), 4);
+
+        // Just below the floor still needs a re-run (not inert: the boundary bites).
+        let mut edge = complete_failure(PASS_SHA);
+        edge.executed_tests = Some(EXECUTED_TESTS_PLAUSIBLE_FLOOR - 1);
+        assert_eq!(assess(&[edge], PASS_SHA).verdict, Verdict::NeedsRerun);
+    }
+
+    #[test]
+    fn full_suite_executed_count_red_stays_failed() {
+        // PLANT BOTH WAYS #2 — the genuine-failure direction. A red that ran the
+        // full suite (>= floor) with complete gates and bound conditions is a
+        // durable FAILED: the executed-count gate must not launder a REAL failure
+        // into a no-result. A classifier that called everything a no-result would be
+        // as broken as one that called everything red. Live shape: 71bc3856 (exec
+        // 765, six checks, 403s) — a REAL failure.
+        let mut r = complete_failure(PASS_SHA);
+        r.executed_tests = Some(765);
+        let a = assess(&[r], PASS_SHA);
+        assert_eq!(a.verdict, Verdict::FailedOnRecord);
+        assert_eq!(a.verdict.exit_code(), 3);
+
+        // Exactly at the floor is plausible-full and stays FAILED (boundary is
+        // inclusive on the FAILED side).
+        let mut edge = complete_failure(PASS_SHA);
+        edge.executed_tests = Some(EXECUTED_TESTS_PLAUSIBLE_FLOOR);
+        assert_eq!(assess(&[edge], PASS_SHA).verdict, Verdict::FailedOnRecord);
+    }
+
+    #[test]
     fn conditionless_red_needs_rerun_instead_of_failed() {
         let mut r = complete_failure(PASS_SHA);
         r.gates_expected = None;
@@ -915,7 +1003,7 @@ mod tests {
     fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
-            r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
+            r#"{"schema_version":3,"host":"test-host","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );
@@ -1158,6 +1246,25 @@ mod tests {
             );
             assert_eq!(a.verdict.exit_code(), 0);
         }
+    }
+
+    #[test]
+    fn counts_schema_const_matches_shared_predicate() {
+        // The const is a TEST fixture only; production reads the JSON. Pin it so a
+        // JSON tightening cannot leave this file's fixtures behind (the drift this
+        // whole change removes). Also assert the fixture assumptions this module
+        // relies on still hold in the shared predicate.
+        let pred = crate::qualifying_receipt::active();
+        assert_eq!(
+            pred.counts_schema, COUNTS_SCHEMA,
+            "qualifying-receipt.json counts_schema drifted from the test-fixture const"
+        );
+        assert_eq!(pred.require.executed_tests_min, 1);
+        assert_eq!(pred.require.failures_max, 0);
+        assert_eq!(pred.require.result, "pass");
+        assert!(!pred.gate_filtered_tests);
+        assert!(pred.coverage.per_node);
+        assert_eq!(pred.coverage.applies_at_schema_min, COUNTS_SCHEMA);
     }
 
     #[test]

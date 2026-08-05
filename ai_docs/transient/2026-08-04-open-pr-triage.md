@@ -200,5 +200,3 @@ Adversarial-review protocol state for those 6 PRs: **complete = 0/6**. Ready one
 | PR | review_rounds | current_approvals | missing |
 |---|---|---|---|
 | #221 | missing | missing | review-round-codex, current-approval-codex, review-round-claude, current-approval-claude |
-
-

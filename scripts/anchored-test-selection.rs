@@ -504,6 +504,103 @@ fn resolve_anchor(ci_hub: &Path, branch: &str, no_fetch: bool) -> Option<Anchor>
     Some(Anchor { sha, source: format!("ci-hub newest-green --branch {branch}") })
 }
 
+/// Pure interpretation of `ci-hub validate-status --sha <sha> --json` output —
+/// the ONE canonical receipt verifier for an explicit anchor. It DEREFERENCES
+/// the ledger record behind the SHA and returns the resolved full SHA ONLY when
+/// that SHA carries a clean, commit-anchored, FULL-profile, FULL-selection,
+/// passing receipt (verdict == VALIDATED). Otherwise it returns Err naming
+/// exactly what was missing. Kept pure (string in, Result out) so the self-test
+/// can plant the three receipt shapes without shelling out.
+///
+/// `verdict == VALIDATED` is STRICTLY STRONGER than the "result=pass,
+/// profile=full, nonzero tests" checklist: the ci-hub verifier already requires
+/// a clean tree, commit anchoring, nonzero executed tests, and satisfied
+/// coverage before it will say VALIDATED (a 2-check `portable-strict-compat-only`
+/// record disqualifies and yields NOT-VALIDATED). We additionally re-assert the
+/// carried result/profile/selection fields — carry the condition with the value
+/// — so a future loosening of VALIDATED cannot silently widen what this gate
+/// accepts. `checks == 6` is deliberately NOT gated on: validate-status does not
+/// expose it, and VALIDATED already subsumes it.
+fn interpret_validate_status(sha: &str, json: &str) -> Result<String, String> {
+    // Tolerate `# COST`/log noise around the JSON body (newest-green wraps its
+    // JSON; validate-status currently does not, but be robust to either).
+    let body = match (json.find('{'), json.rfind('}')) {
+        (Some(a), Some(b)) if b >= a => &json[a..=b],
+        _ => return Err(format!("no JSON object in validate-status output for {sha}")),
+    };
+    let v: Value = serde_json::from_str(body)
+        .map_err(|e| format!("unparseable validate-status JSON for {sha}: {e}"))?;
+    let verdict = v["verdict"].as_str().unwrap_or("<absent>");
+    // validate-status resolves a prefix to the full 40-hex in `sha`; prefer it.
+    let resolved = v["sha"].as_str().unwrap_or(sha).to_string();
+    if verdict != "VALIDATED" {
+        let q = v["qualifying_count"].as_i64().unwrap_or(-1);
+        let d = v["disqualified_count"].as_i64().unwrap_or(-1);
+        return Err(format!(
+            "verdict={verdict} (qualifying={q}, disqualified={d}): NO full-green receipt \
+             dereferences this SHA — the DAG steps a narrowed run would SKIP were proven \
+             green NOWHERE"
+        ));
+    }
+    // Defense in depth: re-assert the conditions the accepted value must carry.
+    let rec = &v["newest_qualifying"];
+    let result = rec["result"].as_str().unwrap_or("<absent>");
+    let profile = rec["profile"].as_str().unwrap_or("<absent>");
+    let mode = rec["selection_mode"].as_str().unwrap_or("<absent>");
+    let mut missing = Vec::new();
+    if result != "pass" {
+        missing.push(format!("result={result} (want pass)"));
+    }
+    if profile != "full" {
+        missing.push(format!("profile={profile} (want full)"));
+    }
+    if mode != "full" {
+        missing.push(format!("selection_mode={mode} (want full)"));
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "verdict=VALIDATED but carried conditions incomplete: {} — refusing to trust it",
+            missing.join(", ")
+        ));
+    }
+    Ok(resolved)
+}
+
+/// Dereference an explicit `--anchor <sha>` through the canonical receipt
+/// verifier. An override is NEVER trusted on the bare SHA: an unverified anchor
+/// means the steps a selection would skip were proven green NOWHERE, which
+/// manufactures a fake green. Shells out to `ci-hub validate-status` (stdout is
+/// emitted with `--json` even on the NOT-VALIDATED exit-4 path, so we read it
+/// regardless of exit status) and REFUSES LOUDLY (exit 2) naming what was
+/// missing. This is the single writer/reader of the anchor authority — the
+/// script never re-parses the ledger itself (one verifier per authority).
+fn verify_anchor_override(ci_hub: &Path, sha: &str) -> Anchor {
+    let out = Command::new(ci_hub)
+        .args(["validate-status", "--sha", sha, "--json"])
+        .output()
+        .unwrap_or_else(|e| {
+            fail(&format!(
+                "--anchor {sha}: cannot run {} validate-status: {e}",
+                ci_hub.display()
+            ))
+        });
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    match interpret_validate_status(sha, &stdout) {
+        Ok(resolved) => Anchor {
+            sha: resolved,
+            source: format!(
+                "--anchor {sha} (dereferenced full-green receipt via ci-hub validate-status)"
+            ),
+        },
+        Err(why) => fail(&format!(
+            "--anchor {sha} REFUSED: {why}. An unverified anchor override manufactures a fake \
+             green — one-hop narrowing is sound ONLY against a dereferenced full-green receipt. \
+             Re-run WITHOUT --anchor to auto-resolve the newest full green, or pass a SHA that \
+             carries one."
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Changed-path discovery
 // ---------------------------------------------------------------------------
@@ -892,9 +989,13 @@ fn main() {
 
     let dag = Dag::load(&hermit);
 
-    // Resolve the ONE-HOP full-green anchor (unless the caller fixed one).
+    // Resolve the ONE-HOP full-green anchor. An explicit --anchor is NOT trusted
+    // on the bare SHA: it is DEREFERENCED to a clean full-green receipt exactly
+    // like the auto path, and REFUSED LOUDLY (exit 2) if the SHA is not one. See
+    // verify_anchor_override for why an unverified override manufactures a fake
+    // green.
     let anchor = match &anchor_override {
-        Some(sha) => Some(Anchor { sha: sha.clone(), source: "--anchor override".into() }),
+        Some(sha) => Some(verify_anchor_override(&ci_hub, sha)),
         None => resolve_anchor(&ci_hub, &branch, no_fetch),
     };
 
@@ -1110,7 +1211,12 @@ steps SELECTED and SKIPPED. Conservative: any unmapped path -> full suite.
   --hermit <dir>     Hermit checkout (default: hermit)
   --ci-hub <path>    ci-hub binary (default: ci-hub/ci-hub)
   --branch <name>    branch for newest-green anchor (default: main)
-  --anchor <sha>     use a fixed anchor instead of newest-green (testing/repro)
+  --anchor <sha>     use a fixed anchor instead of newest-green (testing/repro).
+                     NOT trusted on the bare SHA: it is DEREFERENCED through
+                     `ci-hub validate-status` and REFUSED (exit 2), naming what
+                     was missing, unless the SHA carries a clean FULL-profile,
+                     FULL-selection, passing receipt (verdict==VALIDATED). An
+                     unverified anchor would manufacture a fake green.
   --no-fetch         pass --no-fetch to newest-green (offline)
   --files <paths…>   classify an explicit path list (space-separated)
   --files -          read the path list from stdin (one per line)
@@ -1274,6 +1380,62 @@ source = \"git+https://github.com/rrnewton/reverie.git?rev=79517704abc1234def567
     check(
         "parse_reverie_rev stops at non-hex delimiter",
         parse_reverie_rev("...reverie.git?rev=deadbeef#deadbeef").as_deref() == Some("deadbeef"),
+    );
+
+    // --- anchor-override receipt verifier (interpret_validate_status) ---
+    // The THREE planted receipt shapes the owner named, exercised against the
+    // pure interpreter (the actual `ci-hub validate-status --json` output shapes).
+    //
+    // case1 NO RECORD: a nonexistent SHA has no ledger record => NOT-VALIDATED
+    //                  => REFUSE (its skipped steps were proven green nowhere).
+    let case1_no_record = r#"{"disqualified_count":0,"exit_code":4,
+        "newest_qualifying":null,"qualifying_count":0,"schema_version":1,
+        "sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","verdict":"NOT-VALIDATED"}"#;
+    check(
+        "override case1 (no record) => REFUSE",
+        interpret_validate_status("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", case1_no_record).is_err(),
+    );
+
+    // case2 COMPAT-ONLY: only a 2-check portable-strict-compat-only record
+    //                    exists; it is disqualified => NOT-VALIDATED => REFUSE.
+    let case2_compat_only = r#"{"disqualified_count":2,"exit_code":4,
+        "newest_qualifying":null,"qualifying_count":0,"schema_version":1,
+        "sha":"d8e95058b1fc7db5bb6b9cd41d0a5a0a4170148f","verdict":"NOT-VALIDATED"}"#;
+    check(
+        "override case2 (compat-only disqualified) => REFUSE",
+        interpret_validate_status("d8e95058b1fc7db5bb6b9cd41d0a5a0a4170148f", case2_compat_only).is_err(),
+    );
+
+    // case3 REAL FULL GREEN: THE POSITIVE CONTROL. A guard that refuses
+    //                        everything passes case1+case2 and is USELESS; this
+    //                        asserts it ACCEPTS a genuine full green and returns
+    //                        the RESOLVED full SHA.
+    let case3_full_green = r#"{"disqualified_count":1,"exit_code":0,
+        "newest_qualifying":{"finished_at":"2026-08-05T03:34:08Z","host":"test-host",
+        "profile":"full","real_seconds":556.0,"result":"pass","selection_mode":"full",
+        "slot":"standalone"},"qualifying_count":1,"schema_version":1,
+        "sha":"65ee45596ad3f9a16507e2fdd60ebbc5e23e5630","verdict":"VALIDATED"}"#;
+    check(
+        "override case3 (real full green) => ACCEPT [POSITIVE CONTROL]",
+        interpret_validate_status("65ee4559", case3_full_green).as_deref()
+            == Ok("65ee45596ad3f9a16507e2fdd60ebbc5e23e5630"),
+    );
+
+    // case4 LOOSENED-VALIDATED guard: verdict says VALIDATED but the carried
+    //       record is compat-only. Defense in depth must still REFUSE — a future
+    //       widening of VALIDATED cannot silently widen this gate.
+    let case4_loosened = r#"{"newest_qualifying":{"profile":"portable-strict-compat-only",
+        "result":"pass","selection_mode":"full"},"qualifying_count":1,
+        "sha":"abc1234","verdict":"VALIDATED"}"#;
+    check(
+        "override case4 (VALIDATED but compat-only profile) => REFUSE (defense in depth)",
+        interpret_validate_status("abc1234", case4_loosened).is_err(),
+    );
+
+    // Malformed output must fail closed, not accept.
+    check(
+        "override malformed output => REFUSE",
+        interpret_validate_status("whatever", "not json at all").is_err(),
     );
 
     drop(check);

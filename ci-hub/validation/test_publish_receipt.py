@@ -20,7 +20,14 @@ SPEC.loader.exec_module(MODULE)
 class ReceiptTests(unittest.TestCase):
     SHA = "a" * 40
 
-    def row(self, root: Path, *, weak: bool = False):
+    def row(
+        self,
+        root: Path,
+        *,
+        weak: bool = False,
+        executed: int = 12,
+        host: str = "test-host",
+    ):
         log = root / "validate.log"
         log.write_text("running 12 tests\ntest result: ok. 12 passed; 0 failed\n")
         return {
@@ -47,8 +54,12 @@ class ReceiptTests(unittest.TestCase):
                 ]
             ),
             "failures": 0,
-            "executed_tests": 1 if weak else 12,
+            "executed_tests": 0 if weak else executed,
             "filtered_tests": 0 if weak else 3,
+            "host": host,
+            "slot": "fixture-slot",
+            "repo": "hermit",
+            "tree": "b" * 40,
             "log_file": str(log),
         }
 
@@ -95,6 +106,110 @@ class ReceiptTests(unittest.TestCase):
             self.assertEqual(len(receipt["log_sha256"]), 64)
             self.assertTrue(Path(receipt["durable_log_file"]).is_file())
             self.assertEqual(hashlib.sha256(body).hexdigest(), artifact_digest)
+
+    def test_run_id_binds_host_same_sha_and_started_at(self):
+        # Host-in-identity (Req2): two runs of the SAME sha at the SAME started_at
+        # on DIFFERENT hosts must mint DISTINCT run_ids -- before host was in the
+        # identity there was no collision guard between them at all.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            durable = root / "durable.log"
+            durable.write_text("log\n")
+            row_a = self.row(root, host="host-a")
+            row_b = dict(row_a)
+            row_b["host"] = "host-b"
+            self.assertEqual(row_a["started_at"], row_b["started_at"])
+            digest_a = hashlib.sha256(self.canonical_row(row_a)).hexdigest()
+            digest_b = hashlib.sha256(self.canonical_row(row_b)).hexdigest()
+            receipt_a, _, _ = MODULE.build_receipt(
+                "rrnewton/hermit",
+                self.SHA,
+                row_a,
+                durable,
+                selected_digest=digest_a,
+                canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+            )
+            receipt_b, _, _ = MODULE.build_receipt(
+                "rrnewton/hermit",
+                self.SHA,
+                row_b,
+                durable,
+                selected_digest=digest_b,
+                canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+            )
+            self.assertNotEqual(receipt_a["run_id"], receipt_b["run_id"])
+            self.assertTrue(receipt_a["run_id"].endswith("@host-a"))
+            self.assertTrue(receipt_b["run_id"].endswith("@host-b"))
+
+    def test_hostless_row_is_refused_for_publish(self):
+        # The publish guard requires host present so a receipt can never be minted
+        # with an identity that omits where it was produced.
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.row(Path(directory))
+            del row["host"]
+            canonical_row = self.canonical_row(row)
+            with self.assertRaises(SystemExit):
+                MODULE.selected_record(
+                    canonical_row,
+                    sha=self.SHA,
+                    expected_digest=hashlib.sha256(canonical_row).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+
+    def test_zero_executed_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.row(Path(directory), executed=0)
+            canonical_row = self.canonical_row(row)
+            with self.assertRaises(SystemExit):
+                MODULE.selected_record(
+                    canonical_row,
+                    sha=self.SHA,
+                    expected_digest=hashlib.sha256(canonical_row).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+
+    def test_wrong_head_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.row(Path(directory))
+            canonical_row = self.canonical_row(row)
+            with self.assertRaises(SystemExit):
+                MODULE.selected_record(
+                    canonical_row,
+                    sha="b" * 40,
+                    expected_digest=hashlib.sha256(canonical_row).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+
+    def test_count_capable_row_requires_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.row(Path(directory))
+            row["schema_version"] = MODULE.qualifying_receipt.active()[
+                "counts_schema"
+            ]
+            canonical_row = self.canonical_row(row)
+            with self.assertRaises(SystemExit):
+                MODULE.selected_record(
+                    canonical_row,
+                    sha=self.SHA,
+                    expected_digest=hashlib.sha256(canonical_row).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+            row["coverage"] = {
+                "planned_test_nodes": 3,
+                "executed_test_nodes": 3,
+                "zero_executed_nodes": [],
+                "absent_nodes": [],
+            }
+            canonical_row = self.canonical_row(row)
+            self.assertEqual(
+                MODULE.selected_record(
+                    canonical_row,
+                    sha=self.SHA,
+                    expected_digest=hashlib.sha256(canonical_row).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                ),
+                row,
+            )
 
     def test_tampered_or_mismatched_selected_digest_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
