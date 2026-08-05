@@ -707,3 +707,15 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/slot01` | receipt_consumer_audit / pytest-importlib-discovery-floors | Detached clean children: Hermit `72e973f5a615092dba747aff3a054dc2e72b19c7`, Reverie `9470712afa9b421c72850ab7955fb335692e43a0`, LiteInst2 `860ec20aa550d6b3d3b13409fdda2dd2c7f57aed` | Parent feature head `db6fd5b53752557a1a68db9be4d198aabee0fe4e` is pushed and landed by dev-hermit PR [#43](https://github.com/rrnewton/dev-hermit/pull/43) as squash/main `077cd2baa778b0a3a588a4b74c01da3ede7765f2`; source and merge trees both equal `91f4f5832e3a25b4b73c1be926edd4db3b86d061`. The ignored isolated clone remains at `ignored/isolated-clones/receipt-consumer-audit/dev-hermit`. | Exact-head 4/4 mutation brackets and adversarial review passed; the slot children are unchanged, clean, detached, and have no live process CWD. Coordinator releases through `scripts/release-worktree.rs --slot slot01 --clean` without force, reset, stash, or clean. |
+
+### Drainer-4 cache-only reclaim refusal (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-4` | drainer-4 / review-lane-core-prs | No registered product worktree remains; Hermit, Reverie, and LiteInst2 `.git` entries are absent. | The already-released slot contains only 19 MiB of generated Hermit `target/` objects and an empty `.safe-ci-dag-runner` cache; no source, untracked evidence, branch checkout, or live process CWD is present. Generated build artifacts require no recovery under the artifact policy. | `scripts/release-worktree.rs --slot drainer-4 --clean` refused before mutation because the residual Hermit cache is no longer a registered Git worktree. The residue stays parked; no raw deletion, force, reset, stash, or broad cleanup was used. |
+
+### Drainer-3 superseded PR #1443 reclaim refusal (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-3` | drainer-3 / drain-hermit-1468-fix | Detached clean Hermit `c243497c605571ec4dfeab3c67131e2cd0f35f6b`; no Reverie or LiteInst2 child | The exact SHA is preserved at live remote branch `origin/codex/liteinst-perf-attribution-fastpath` and the closed, unmerged Hermit PR [#1443](https://github.com/rrnewton/hermit/pull/1443). The active `drainer-1` slot owns the current #1443 recovery; this parked slot is not its workspace. | Hermit is clean; nested submodules are uninitialized; no process CWD owns the slot. `scripts/release-worktree.rs --slot drainer-3 --clean` nevertheless refused before mutation because Git will not remove a worktree containing declared submodules. The parked cache and admin entry remain together; no raw deletion, force, reset, stash, or clean was used. |
