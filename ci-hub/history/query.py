@@ -888,13 +888,12 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 # sub-buckets, reported SEPARATELY and never silently summed:
 #   green_ledger           green-by-conclusion AND a validate-run-ledger receipt
 #                          at that exact commit SHA satisfies the full-pass
-#                          predicate below (mirrors ci-hub/lib/validate_status.rs
-#                          is_clean_full_pass, PLUS the filtered_tests==0 clause
-#                          that fixes the false-green (c) case).
+#                          predicate below (the canonical shared predicate also
+#                          used by ci-hub/lib/validate_status.rs).
 #   green_conclusion_only  green-by-conclusion but NO corroborating receipt.
-# A row missing any of the schema-3 count fields (executed_tests/filtered_tests)
-# does NOT corroborate — it falls to conclusion-only. That asymmetry is
-# intentional and honest: an uncounted green cannot back a stronger claim.
+# A row missing both count fields does NOT corroborate, and schema-5+ rows must
+# prove complete per-node coverage. `filtered_tests` is diagnostic: full runs
+# legitimately filter tests outside their planned DAG nodes.
 LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
 
 
