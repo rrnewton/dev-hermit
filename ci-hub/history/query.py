@@ -50,6 +50,7 @@ from check_outcome import (
     classify_check,
     select_latest_workflow_attempts,
 )
+import qualifying_receipt
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
@@ -923,16 +924,20 @@ def load_ledger_index(parent: str) -> dict[str, list[dict]]:
 
 
 def _row_full_pass(row: dict) -> bool:
-    """The full-pass corroboration predicate (the commit match is handled by the
-    index lookup). ALL clauses must hold; a row missing executed_tests or
-    filtered_tests fails and so cannot corroborate."""
-    return (row.get("commit_anchored") is True
-            and row.get("tree_dirty") is False
-            and row.get("selection_mode") == "full"
-            and row.get("profile") == "full"
-            and row.get("result") == "pass"
-            and row.get("executed_tests") not in (None, 0)
-            and row.get("filtered_tests") == 0)
+    """The full-pass corroboration predicate, delegated to the ONE shared
+    qualifying-receipt predicate (`ci-hub/validate/qualifying-receipt.json`) that
+    every consumer across Rust/Python/jq reads -- restating the clauses inline is
+    exactly the drift this delegation removes (task
+    `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`).
+
+    This previously had NO per-node coverage clause and so would have accepted a
+    count-capable receipt whose coverage was incomplete (e.g. ee303899: 8 PASS
+    rows at executed=427 but 15 absent nodes) -- the DRIFT-4 gap the shared
+    predicate closes. The exact commit binding is handled by the index lookup, so
+    the predicate is asked about the row's own recorded commit."""
+    return qualifying_receipt.row_qualifies(
+        row, row.get("commit") or "", qualifying_receipt.active()
+    )
 
 
 def _ledger_corroborates(idx: dict[str, list[dict]], sha: str) -> bool:
