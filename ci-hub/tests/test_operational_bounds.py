@@ -213,7 +213,10 @@ class OperationalBoundsTest(unittest.TestCase):
                     "--cache",
                     str(self.temp / "newest-green-cache.json"),
                 ),
-                {4},
+                # 2 is the explicit UNVERIFIABLE result when a product checkout
+                # is uninitialized or its history is shallow; 4 is the normal
+                # full-history no-evidence result exercised in the full workspace.
+                {2, 4},
                 self.env,
             ),
             (

@@ -13,12 +13,14 @@ from BOTH sides, as the owning task demands:
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -110,7 +112,10 @@ class DeriveEffectiveTest(unittest.TestCase):
     def test_publish_main_refuses_when_floor_off_history(self):
         path = _registry([_mg(), _pa(OTHER)])
         try:
-            with mock.patch.object(gf, "first_parent", return_value=self.HISTORY):
+            with mock.patch.object(
+                gf, "repository_state",
+                return_value={"checkout": "/co", "is_shallow": False},
+            ), mock.patch.object(gf, "first_parent", return_value=self.HISTORY):
                 rc = gf.main(["--no-fetch", "--registry", path])
             self.assertEqual(rc, gf.EXIT_REFUSED)
         finally:
@@ -119,11 +124,87 @@ class DeriveEffectiveTest(unittest.TestCase):
     def test_publish_main_ok_when_all_on_history(self):
         path = _registry([_mg(), _pa()])
         try:
-            with mock.patch.object(gf, "first_parent", return_value=self.HISTORY):
+            with mock.patch.object(
+                gf, "repository_state",
+                return_value={"checkout": "/co", "is_shallow": False},
+            ), mock.patch.object(gf, "first_parent", return_value=self.HISTORY):
                 rc = gf.main(["--no-fetch", "--registry", path])
             self.assertEqual(rc, gf.EXIT_OK)
         finally:
             os.unlink(path)
+
+
+class RepositoryDepthTest(unittest.TestCase):
+    def _git(self, cwd: str, *args: str) -> str:
+        cp = subprocess.run(
+            ["git", "-C", cwd, *args], capture_output=True, text=True,
+            check=True,
+        )
+        return cp.stdout.strip()
+
+    def test_uninitialized_product_checkout_does_not_climb_to_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._git(tmp, "init", "-q", "-b", "main")
+            product = os.path.join(tmp, "hermit")
+            os.mkdir(product)
+            with self.assertRaisesRegex(gf.FloorError,
+                                        "UNVERIFIABLE-CHECKOUT"):
+                gf.repository_state(product)
+
+    def test_shallow_history_is_unverifiable_and_full_history_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source")
+            shallow = os.path.join(tmp, "shallow")
+            full = os.path.join(tmp, "full")
+            os.mkdir(source)
+            self._git(source, "init", "-q", "-b", "main")
+            commits = []
+            for index in range(5):
+                Path(source, "history.txt").write_text(
+                    f"{index}\n", encoding="utf-8")
+                self._git(source, "add", "history.txt")
+                self._git(
+                    source, "-c", "user.name=CI Hub", "-c",
+                    "user.email=ci-hub@example.invalid", "commit", "-q", "-m",
+                    f"commit {index}",
+                )
+                commits.append(self._git(source, "rev-parse", "HEAD"))
+
+            subprocess.run(
+                ["git", "clone", "-q", "--no-local", "--depth", "2",
+                 source, shallow], check=True)
+            subprocess.run(
+                ["git", "clone", "-q", "--no-local", source, full],
+                check=True)
+            registry = os.path.join(tmp, "floors.json")
+            Path(registry).write_text(
+                json.dumps({"anchors": [_mg(commits[0])]}), encoding="utf-8")
+
+            shallow_out = io.StringIO()
+            with redirect_stdout(shallow_out):
+                shallow_rc = gf.main([
+                    "--repo-checkout", shallow, "--no-fetch", "--registry",
+                    registry, "--json",
+                ])
+            shallow_doc = json.loads(shallow_out.getvalue())
+            self.assertEqual(shallow_rc, gf.EXIT_REFUSED)
+            self.assertEqual(shallow_doc["verdict"], gf.VERDICT_SHALLOW)
+            self.assertEqual(shallow_doc["history_depth"], 2)
+            self.assertEqual(shallow_doc["required_history_depth_min"], 3)
+            self.assertEqual(shallow_doc["required_history_depth"], "full")
+            self.assertNotIn("FAILED", shallow_doc["verdict"])
+
+            full_out = io.StringIO()
+            with redirect_stdout(full_out):
+                full_rc = gf.main([
+                    "--repo-checkout", full, "--no-fetch", "--registry",
+                    registry, "--json",
+                ])
+            full_doc = json.loads(full_out.getvalue())
+            self.assertEqual(full_rc, gf.EXIT_OK)
+            self.assertEqual(full_doc["verdict"], gf.VERDICT_EFFECTIVE)
+            self.assertEqual(full_doc["history_depth"], 5)
+            self.assertEqual(full_doc["effective_floor"], commits[0])
 
 
 class ClearsAllHeadTest(unittest.TestCase):
@@ -151,7 +232,10 @@ class ClearsAllHeadTest(unittest.TestCase):
         path = _registry([_mg(), _pa()])
         accepted = 0
         try:
-            with mock.patch.object(gf, "is_ancestor", return_value=True):
+            with mock.patch.object(
+                gf, "repository_state",
+                return_value={"checkout": "/co", "is_shallow": False},
+            ), mock.patch.object(gf, "is_ancestor", return_value=True):
                 for head in ("1" * 40, "2" * 40, "3" * 40):
                     res = gf.clears_all([_mg(), _pa()], "/co", head)
                     self.assertTrue(res["ok"])

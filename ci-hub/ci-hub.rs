@@ -3431,12 +3431,47 @@ struct GateFloorQueryOutput {
     ok: bool,
     effective_floor: Option<String>,
     effective_kind: Option<String>,
+    verdict: Option<String>,
+    history_depth: Option<usize>,
+    required_history_depth: Option<String>,
+    required_history_depth_min: Option<usize>,
 }
 
-fn parse_effective_gate_floor(raw: &[u8]) -> Result<EffectiveGateFloor, CiHubError> {
+#[derive(Debug, PartialEq, Eq)]
+enum GateFloorResolution {
+    Effective(EffectiveGateFloor),
+    UnverifiableShallow {
+        visible_depth: usize,
+        required_depth: String,
+        required_depth_min: usize,
+    },
+}
+
+fn parse_gate_floor_resolution(raw: &[u8]) -> Result<GateFloorResolution, CiHubError> {
     let output: GateFloorQueryOutput = serde_json::from_slice(raw).map_err(|error| {
         CiHubError::HistoryQuery(format!("gate_floors.py returned invalid JSON: {error}"))
     })?;
+    if output.verdict.as_deref() == Some("UNVERIFIABLE-SHALLOW-HISTORY") {
+        return Ok(GateFloorResolution::UnverifiableShallow {
+            visible_depth: output.history_depth.ok_or_else(|| {
+                CiHubError::HistoryQuery(
+                    "shallow-history result omitted history_depth; refusing to guess".into(),
+                )
+            })?,
+            required_depth: output.required_history_depth.ok_or_else(|| {
+                CiHubError::HistoryQuery(
+                    "shallow-history result omitted required_history_depth; refusing to guess"
+                        .into(),
+                )
+            })?,
+            required_depth_min: output.required_history_depth_min.ok_or_else(|| {
+                CiHubError::HistoryQuery(
+                    "shallow-history result omitted required_history_depth_min; refusing to guess"
+                        .into(),
+                )
+            })?,
+        });
+    }
     if !output.ok {
         return Err(CiHubError::HistoryQuery(
             "gate_floors.py refused to derive an effective floor; refusing to guess a rebase base"
@@ -3453,17 +3488,28 @@ fn parse_effective_gate_floor(raw: &[u8]) -> Result<EffectiveGateFloor, CiHubErr
             "gate_floors.py returned invalid effective_floor {sha:?}; refusing to guess"
         )));
     }
-    Ok(EffectiveGateFloor {
+    Ok(GateFloorResolution::Effective(EffectiveGateFloor {
         sha: sha.to_ascii_lowercase(),
         kind: output.effective_kind.unwrap_or_else(|| "unknown".into()),
-    })
+    }))
+}
+
+#[cfg(test)]
+fn parse_effective_gate_floor(raw: &[u8]) -> Result<EffectiveGateFloor, CiHubError> {
+    match parse_gate_floor_resolution(raw)? {
+        GateFloorResolution::Effective(floor) => Ok(floor),
+        GateFloorResolution::UnverifiableShallow { .. } => Err(CiHubError::HistoryQuery(
+            "gate_floors.py reported UNVERIFIABLE-SHALLOW-HISTORY where a floor was required"
+                .into(),
+        )),
+    }
 }
 
 fn query_effective_gate_floor(
     root: &Path,
     repo: &Path,
     branch: &str,
-) -> Result<EffectiveGateFloor, CiHubError> {
+) -> Result<GateFloorResolution, CiHubError> {
     let script = root.join("ci-hub/validate/gate_floors.py");
     let registry = root.join("ci-hub/validate/rebase-base-floors.json");
     let output = Command::new("python3")
@@ -3481,7 +3527,14 @@ fn query_effective_gate_floor(
             tool: script.display().to_string(),
             source,
         })?;
-    if !output.status.success() {
+    let parsed = parse_gate_floor_resolution(&output.stdout);
+    if output.status.success() {
+        return parsed;
+    }
+    if let Ok(resolution @ GateFloorResolution::UnverifiableShallow { .. }) = parsed {
+        return Ok(resolution);
+    }
+    {
         let detail = if output.stdout.is_empty() {
             String::from_utf8_lossy(&output.stderr).trim().to_string()
         } else {
@@ -3492,7 +3545,6 @@ fn query_effective_gate_floor(
             exit_status_code(output.status)
         )));
     }
-    parse_effective_gate_floor(&output.stdout)
 }
 
 fn history_at_or_after_gate_floor(
@@ -3692,7 +3744,35 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     if !args.query.no_fetch {
         fetch_history_branch(&repo, &args.query.branch)?;
     }
-    let effective_floor = query_effective_gate_floor(root, &repo, &args.query.branch)?;
+    let effective_floor = match query_effective_gate_floor(root, &repo, &args.query.branch)? {
+        GateFloorResolution::Effective(floor) => floor,
+        GateFloorResolution::UnverifiableShallow {
+            visible_depth,
+            required_depth,
+            required_depth_min,
+        } => {
+            if args.query.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "schema_version": 2,
+                        "verdict": "UNVERIFIABLE-SHALLOW-HISTORY",
+                        "exit_code": 2,
+                        "branch": args.query.branch,
+                        "visible_first_parent_depth": visible_depth,
+                        "required_history_depth": required_depth,
+                        "required_history_depth_min": required_depth_min,
+                    })
+                );
+            } else {
+                println!(
+                    "NEWEST-GREEN UNVERIFIABLE-SHALLOW-HISTORY branch={} visible-first-parent-depth={} required-depth={} required-depth-min={} -- deepen or unshallow the repository before deciding whether a qualifying green exists",
+                    args.query.branch, visible_depth, required_depth, required_depth_min
+                );
+            }
+            return Ok(2);
+        }
+    };
     let floor_policy = format!("{GATE_FLOOR_POLICY}:{}", effective_floor.kind);
     let commits = history_at_or_after_gate_floor(
         branch_history(&repo, &branch_ref)?,
@@ -4664,6 +4744,22 @@ mod tests {
         .to_string();
         assert!(error.contains("refused"));
         assert!(error.contains("refusing to guess"));
+    }
+
+    #[test]
+    fn shallow_floor_result_is_an_explicit_third_state() {
+        let result = parse_gate_floor_resolution(
+            br#"{"ok":false,"effective_floor":null,"effective_kind":null,"verdict":"UNVERIFIABLE-SHALLOW-HISTORY","history_depth":11,"required_history_depth":"full","required_history_depth_min":12}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            GateFloorResolution::UnverifiableShallow {
+                visible_depth: 11,
+                required_depth: "full".into(),
+                required_depth_min: 12,
+            }
+        );
     }
 
     #[test]

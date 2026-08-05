@@ -23,15 +23,18 @@ WHAT IT DOES.
   * default (publish): walk `origin/<branch>` first-parent history; locate every
     registry floor in it; the EFFECTIVE floor is the one CLOSEST to the tip
     (smallest first-parent index). If ANY floor is not on that history, REFUSE
-    (exit 2) -- refusing to guess a usable floor is the point. Prints the full
-    enumeration and the effective floor.
+    (exit 2) -- refusing to guess a usable floor is the point. In a shallow
+    repository, report UNVERIFIABLE-SHALLOW-HISTORY with the visible depth and
+    the full-history requirement instead of claiming no green exists. Prints
+    the full enumeration and the effective floor.
   * --head <sha-or-ref>: does this candidate base/head CLEAR ALL floors (contain
     every floor commit)? exit 0 if it clears all; exit 2 (REFUSED) naming the
     specific floor(s) it predates. This is the both-directions verifier: a
     pre-floor head is refused as a base even when green; a post-floor head passes.
 
     exit 0  OK        -- effective floor derived (publish) / head clears all floors
-    exit 2  REFUSED   -- a floor is off first-parent history / head predates a floor
+    exit 2  REFUSED or UNVERIFIABLE-SHALLOW-HISTORY
+                       -- a floor is off visible history / head predates a floor
     exit 3  ERROR     -- could not read the registry or resolve git history
 
 The refusal-when-empty is deliberate: when GREEN and at-or-after-the-effective-
@@ -51,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_CHECKOUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "hermit")
@@ -62,6 +66,10 @@ NETWORK_TIMEOUT = 120.0
 EXIT_OK = 0
 EXIT_REFUSED = 2
 EXIT_ERROR = 3
+
+VERDICT_EFFECTIVE = "EFFECTIVE-FLOOR"
+VERDICT_REFUSED = "REFUSED"
+VERDICT_SHALLOW = "UNVERIFIABLE-SHALLOW-HISTORY"
 
 
 class FloorError(Exception):
@@ -135,6 +143,39 @@ def _on_path(prog: str) -> bool:
                for d in os.environ.get("PATH", "").split(os.pathsep) if d)
 
 
+def repository_state(checkout: str) -> dict:
+    """Return repository identity and depth without letting git climb upward.
+
+    `git -C empty/submodule rev-parse` otherwise discovers the parent repository,
+    which can turn an uninitialized product checkout into a plausible history
+    answer about the wrong repository. Check the exact checkout's `.git` marker
+    first; `--show-toplevel` is not usable on this fleet because a work-tree
+    checkout may deliberately carry `core.bare=true`.
+    """
+    expected = str(Path(checkout).resolve())
+    marker = Path(expected, ".git")
+    if not marker.exists():
+        raise FloorError(
+            f"UNVERIFIABLE-CHECKOUT: requested checkout {expected} is not an "
+            f"initialized repository (missing {marker})")
+    cp = _run(["git", "-C", checkout, "rev-parse", "--absolute-git-dir",
+               "--is-shallow-repository"], timeout=LOCAL_TIMEOUT)
+    if cp.returncode != 0:
+        raise FloorError(
+            f"UNVERIFIABLE-CHECKOUT: cannot inspect repository at {checkout}: "
+            f"{(cp.stderr or cp.stdout).strip()}")
+    lines = [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+    if len(lines) != 2 or lines[1] not in ("true", "false"):
+        raise FloorError(
+            f"UNVERIFIABLE-CHECKOUT: git returned unexpected repository state "
+            f"for {checkout}: {cp.stdout.strip()!r}")
+    return {
+        "checkout": expected,
+        "git_dir": str(Path(lines[0]).resolve()),
+        "is_shallow": lines[1] == "true",
+    }
+
+
 def first_parent(checkout: str, branch_ref: str) -> list[str]:
     """First-parent commit list of branch_ref, newest first (index 0 == tip)."""
     cp = _run(["git", "-C", checkout, "rev-list", "--first-parent", branch_ref],
@@ -196,6 +237,20 @@ def derive_effective(floors: list[dict], commits: list[str]) -> dict:
     }
 
 
+def classify_history(res: dict, *, is_shallow: bool) -> dict:
+    """Name a missing floor as unverifiable when history is truncated."""
+    res["is_shallow"] = is_shallow
+    if res["ok"]:
+        res["verdict"] = VERDICT_EFFECTIVE
+    elif is_shallow:
+        res["verdict"] = VERDICT_SHALLOW
+        res["required_history_depth"] = "full"
+        res["required_history_depth_min"] = res["history_depth"] + 1
+    else:
+        res["verdict"] = VERDICT_REFUSED
+    return res
+
+
 def clears_all(floors: list[dict], checkout: str, head: str) -> dict:
     """Does `head` contain every floor? Names the floor(s) it predates."""
     resolved = []
@@ -217,6 +272,13 @@ def render_publish(res: dict) -> str:
             f"EFFECTIVE-FLOOR {_short(res['effective_floor'])} kind={eff['kind']} "
             f"landed={eff['landed_utc']} first-parent-index={eff['first_parent_index']} "
             f"tip={_short(res['branch_tip'])}")
+    elif res.get("verdict") == VERDICT_SHALLOW:
+        lines.append(
+            f"{VERDICT_SHALLOW}: visible-first-parent-depth="
+            f"{res['history_depth']} required-depth=full "
+            f"required-depth-min={res['required_history_depth_min']} -- "
+            f"{len(res['off_history'])} required floor(s) are outside the "
+            f"visible shallow history; deepen or unshallow before deciding.")
     else:
         lines.append(
             f"REFUSE: cannot derive an effective floor -- "
@@ -267,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         floors = load_floors(args.registry)
+        repo_state = repository_state(args.repo_checkout)
         if args.head:
             res = clears_all(floors, args.repo_checkout, args.head)
             body = render_head(res)
@@ -276,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             branch_ref = f"origin/{args.branch}"
             commits = first_parent(args.repo_checkout, branch_ref)
             res = derive_effective(floors, commits)
+            res["history_depth"] = len(commits)
+            res = classify_history(res, is_shallow=repo_state["is_shallow"])
             res["branch"] = args.branch
             body = render_publish(res)
     except FloorError as err:
