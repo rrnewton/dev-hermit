@@ -93,6 +93,255 @@ fn git(dir: &Path, args: &[&str]) -> (bool, String, String) {
     )
 }
 
+/// Slot name is a named token [a-z0-9-]+ (for example kvm) or slotNN.
+fn valid_slot(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphanumeric())
+            .unwrap_or(false)
+}
+
+struct CleanTarget {
+    label: &'static str,
+    branch_key: &'static str,
+    primary: PathBuf,
+    path: PathBuf,
+}
+
+enum CheckoutIdentity {
+    Branch(String),
+    Detached(String),
+    Unreadable(String),
+}
+
+fn checkout_identity(path: &Path) -> CheckoutIdentity {
+    let (inside, _, error) = git(path, &["rev-parse", "--is-inside-work-tree"]);
+    if !inside {
+        return CheckoutIdentity::Unreadable(if error.is_empty() {
+            "not a git worktree".to_string()
+        } else {
+            error
+        });
+    }
+    let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if on_branch && !branch.is_empty() {
+        return CheckoutIdentity::Branch(branch);
+    }
+    let (has_head, head, error) = git(path, &["rev-parse", "HEAD"]);
+    if has_head && !head.is_empty() {
+        CheckoutIdentity::Detached(head)
+    } else {
+        CheckoutIdentity::Unreadable(error)
+    }
+}
+
+fn checkout_matches(expected: &str, actual: &CheckoutIdentity) -> bool {
+    if expected == "detached" {
+        return matches!(actual, CheckoutIdentity::Detached(_));
+    }
+    if let Some(prefix) = expected.strip_prefix("detached:") {
+        return matches!(actual, CheckoutIdentity::Detached(head) if head.starts_with(prefix));
+    }
+    matches!(actual, CheckoutIdentity::Branch(branch) if branch == expected)
+}
+
+fn checkout_display(actual: &CheckoutIdentity) -> String {
+    match actual {
+        CheckoutIdentity::Branch(branch) => branch.clone(),
+        CheckoutIdentity::Detached(head) => {
+            format!("detached:{}", &head[..head.len().min(12)])
+        }
+        CheckoutIdentity::Unreadable(reason) => format!("unreadable:{reason}"),
+    }
+}
+
+/// Resolve the exact product worktrees recorded for one slot before --clean
+/// performs its first mutation. A missing child is not evidence that a
+/// repository-wide prune is safe: it is an inconsistent allocation and must
+/// be repaired explicitly.
+fn clean_targets_from_state(
+    root: &Path,
+    state: &Value,
+    slot: &str,
+) -> Result<Vec<CleanTarget>, String> {
+    let slot_state = state["slots"]
+        .get(slot)
+        .ok_or_else(|| format!("slot {slot} is not registered"))?;
+    let mut targets = Vec::new();
+
+    for (label, branch_key, path_key) in [
+        ("hermit", "hermit_branch", "hermit_path"),
+        ("reverie", "reverie_branch", "reverie_path"),
+        ("liteinst2", "liteinst2_branch", "liteinst2_path"),
+    ] {
+        let branch = slot_state
+            .get(branch_key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("slot {slot} has missing/non-string {branch_key}"))?;
+        if branch == "-" {
+            continue;
+        }
+
+        let recorded = slot_state[path_key]
+            .as_str()
+            .ok_or_else(|| format!("slot {slot} has no recorded {label} path"))?;
+        let expected_rel = PathBuf::from("worktrees").join(slot).join(label);
+        if !expected_rel.is_relative() {
+            return Err(format!(
+                "slot {slot} produced non-relative {label} path; refusing before mutation"
+            ));
+        }
+        if Path::new(recorded) != expected_rel {
+            return Err(format!(
+                "slot {slot} records {label} path '{recorded}', expected '{}'",
+                expected_rel.display()
+            ));
+        }
+
+        let path = root.join(&expected_rel);
+        if !path.exists() {
+            return Err(format!(
+                "slot {slot} allocated {label} worktree is missing at {}; refusing before mutation",
+                path.display()
+            ));
+        }
+        if std::fs::symlink_metadata(&path)
+            .map_err(|e| format!("could not inspect allocated {label} path: {e}"))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(format!(
+                "slot {slot} allocated {label} path {} is a symlink; refusing alias",
+                path.display()
+            ));
+        }
+        let canonical = std::fs::canonicalize(&path).map_err(|e| {
+            format!(
+                "could not canonicalize allocated {label} worktree {}: {e}",
+                path.display()
+            )
+        })?;
+        let canonical_root = std::fs::canonicalize(root)
+            .map_err(|e| format!("could not canonicalize workspace root: {e}"))?;
+        let canonical_expected = canonical_root.join(&expected_rel);
+        if canonical != canonical_expected {
+            return Err(format!(
+                "slot {slot} allocated {label} path {} resolves outside its canonical location",
+                path.display()
+            ));
+        }
+        let primary = root.join(label);
+        let (ok, listing, err) = git(&primary, &["worktree", "list", "--porcelain"]);
+        if !ok {
+            return Err(format!("could not list {label} worktrees: {err}"));
+        }
+        let registered = listing.lines().any(|line| {
+            let Some(candidate) = line.strip_prefix("worktree ") else {
+                return false;
+            };
+            std::fs::canonicalize(candidate)
+                .map(|p| p == canonical)
+                .unwrap_or(false)
+        });
+        if !registered {
+            return Err(format!(
+                "slot {slot} {label} path {} is not that primary's registered worktree; refusing before mutation",
+                path.display()
+            ));
+        }
+
+        let (top_ok, child_top, top_err) = git(
+            &path,
+            &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        );
+        if !top_ok {
+            return Err(format!(
+                "could not resolve {label} child top-level {}: {top_err}",
+                path.display()
+            ));
+        }
+        let canonical_child_top = std::fs::canonicalize(&child_top).map_err(|e| {
+            format!("could not canonicalize {label} child top-level '{child_top}': {e}")
+        })?;
+        if canonical_child_top != canonical {
+            return Err(format!(
+                "slot {slot} {label} checkout top-level {} does not equal its canonical target {}",
+                canonical_child_top.display(),
+                canonical.display()
+            ));
+        }
+
+        let common_args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+        let (primary_ok, primary_common, primary_err) = git(&primary, &common_args);
+        let (child_ok, child_common, child_err) = git(&path, &common_args);
+        if !primary_ok || !child_ok {
+            return Err(format!(
+                "could not bind {label} child to primary common-dir: primary='{primary_err}' child='{child_err}'"
+            ));
+        }
+        let canonical_primary_common = std::fs::canonicalize(&primary_common).map_err(|e| {
+            format!("could not canonicalize {label} primary common-dir '{primary_common}': {e}")
+        })?;
+        let canonical_child_common = std::fs::canonicalize(&child_common).map_err(|e| {
+            format!("could not canonicalize {label} child common-dir '{child_common}': {e}")
+        })?;
+        if canonical_child_common != canonical_primary_common {
+            return Err(format!(
+                "slot {slot} {label} child common-dir {} does not match primary {}",
+                canonical_child_common.display(),
+                canonical_primary_common.display()
+            ));
+        }
+
+        let actual = checkout_identity(&path);
+        if !checkout_matches(branch, &actual) {
+            return Err(format!(
+                "slot {slot} records {label} checkout '{branch}', actual '{}'; refusing before mutation",
+                checkout_display(&actual)
+            ));
+        }
+
+        targets.push(CleanTarget {
+            label,
+            branch_key,
+            primary,
+            path,
+        });
+    }
+
+    let slot_dir = root.join("worktrees").join(slot);
+    if slot_dir.exists() {
+        let allowed: std::collections::BTreeSet<&str> =
+            targets.iter().map(|target| target.label).collect();
+        for entry in std::fs::read_dir(&slot_dir).map_err(|e| {
+            format!(
+                "could not inspect slot directory {}: {e}",
+                slot_dir.display()
+            )
+        })? {
+            let entry = entry.map_err(|e| format!("could not inspect slot entry: {e}"))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return Err(format!(
+                    "slot {slot} contains a non-UTF8 entry; refusing before mutation"
+                ));
+            };
+            if !allowed.contains(name) {
+                return Err(format!(
+                    "slot {slot} contains unexpected entry '{}'; refusing before mutation",
+                    entry.path().display()
+                ));
+            }
+        }
+    }
+    Ok(targets)
+}
+
 fn state_path(root: &Path) -> PathBuf {
     root.join("worktree-state.json")
 }
@@ -220,7 +469,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
     }
     // Fast path: if HEAD is already an ancestor of origin/main, every commit is
     // on origin (nothing unique to this branch) -> durable, no network needed.
-    let (on_main, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, "origin/main"]);
+    let (on_main, _, _) = git(
+        path,
+        &["merge-base", "--is-ancestor", &local_head, "origin/main"],
+    );
     if on_main {
         return None;
     }
@@ -237,7 +489,11 @@ fn missing_on_origin(path: &Path) -> Option<String> {
             .next()
             .unwrap_or("")
             .to_string(),
-        Ok(_) => return Some(format!("branch '{branch}' ls-remote failed (treat as unpushed)")),
+        Ok(_) => {
+            return Some(format!(
+                "branch '{branch}' ls-remote failed (treat as unpushed)"
+            ))
+        }
         Err(e) => return Some(format!("branch '{branch}' ls-remote could not run ({e})")),
     };
     if remote_sha.is_empty() {
@@ -249,7 +505,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
     // Remote differs. Safe ONLY if HEAD is an ancestor of the remote tip (origin
     // is strictly ahead and carries all our commits). This requires the remote
     // object locally; if it is not present we cannot prove safety -> at risk.
-    let (ok_anc, _, _) = git(path, &["merge-base", "--is-ancestor", &local_head, &remote_sha]);
+    let (ok_anc, _, _) = git(
+        path,
+        &["merge-base", "--is-ancestor", &local_head, &remote_sha],
+    );
     if ok_anc {
         None
     } else {
@@ -265,7 +524,10 @@ fn missing_on_origin(path: &Path) -> Option<String> {
 fn push_branch(path: &Path) -> bool {
     let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     if !ok_b || branch.is_empty() {
-        eprintln!("  cannot push {}: detached HEAD / no branch", path.display());
+        eprintln!(
+            "  cannot push {}: detached HEAD / no branch",
+            path.display()
+        );
         return false;
     }
     let refspec = format!("HEAD:refs/heads/{branch}");
@@ -289,7 +551,10 @@ fn push_branch(path: &Path) -> bool {
             false
         }
         Err(e) => {
-            eprintln!("  could not spawn with-proxy git push for {}: {e}", path.display());
+            eprintln!(
+                "  could not spawn with-proxy git push for {}: {e}",
+                path.display()
+            );
             false
         }
     }
@@ -330,6 +595,11 @@ fn main() {
     if slot.is_empty() {
         die(&format!("--slot is required\n\n{USAGE}"));
     }
+    if !valid_slot(&slot) {
+        die(&format!(
+            "invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"
+        ));
+    }
 
     let root = find_root();
     let mut state = load_state(&root);
@@ -364,17 +634,35 @@ fn main() {
         println!("agent '{name}' was the last owner of {slot}; releasing whole slot");
     }
 
+    // Bind --clean to the exact product paths recorded for this slot before
+    // inspecting or mutating any worktree. Never infer authority from an
+    // absent directory, and never widen one-slot cleanup into repo-wide prune.
+    let clean_targets = if clean {
+        clean_targets_from_state(&root, &state, &slot)
+            .unwrap_or_else(|e| die(&format!("clean preflight failed: {e}")))
+    } else {
+        Vec::new()
+    };
+
     // Inspect all product worktrees for uncommitted work.
     let slot_dir = root.join("worktrees").join(&slot);
     let hpath = slot_dir.join("hermit");
     let rpath = slot_dir.join("reverie");
     let lpath = slot_dir.join("liteinst2");
     let mut any_dirty = false;
-    for (label, p) in [
-        ("hermit", &hpath),
-        ("reverie", &rpath),
-        ("liteinst2", &lpath),
-    ] {
+    let inspect_paths: Vec<(&str, &Path)> = if clean {
+        clean_targets
+            .iter()
+            .map(|target| (target.label, target.path.as_path()))
+            .collect()
+    } else {
+        vec![
+            ("hermit", hpath.as_path()),
+            ("reverie", rpath.as_path()),
+            ("liteinst2", lpath.as_path()),
+        ]
+    };
+    for (label, p) in inspect_paths {
         if let Some(status) = dirty(p) {
             any_dirty = true;
             eprintln!("⚠  {label} worktree {} has uncommitted work:", p.display());
@@ -397,33 +685,30 @@ fn main() {
     // (verified authoritatively via git ls-remote), unless --push (push-then-verify)
     // or --force (explicit override, discards durability guarantee).
     if clean {
-        let children = [
-            ("hermit", &hpath),
-            ("reverie", &rpath),
-            ("liteinst2", &lpath),
-        ];
         let mut at_risk: Vec<&str> = Vec::new();
-        eprintln!("pre-recycle guardrail: verifying committed work is on origin (git ls-remote)...");
-        for (label, p) in children {
-            if let Some(reason) = missing_on_origin(p) {
-                at_risk.push(label);
-                eprintln!("⚠  {label}: {reason}");
+        eprintln!(
+            "pre-recycle guardrail: verifying committed work is on origin (git ls-remote)..."
+        );
+        for target in &clean_targets {
+            if let Some(reason) = missing_on_origin(&target.path) {
+                at_risk.push(target.label);
+                eprintln!("⚠  {}: {reason}", target.label);
             }
         }
         if !at_risk.is_empty() {
             if push {
                 println!("--push: pushing at-risk slot branches (with-proxy)...");
                 let mut push_ok = true;
-                for (label, p) in children {
-                    if at_risk.contains(&label) && !push_branch(p) {
+                for target in &clean_targets {
+                    if at_risk.contains(&target.label) && !push_branch(&target.path) {
                         push_ok = false;
                     }
                 }
                 // Re-verify authoritatively AFTER pushing; only proceed if now durable.
                 let mut still_at_risk: Vec<&str> = Vec::new();
-                for (label, p) in children {
-                    if missing_on_origin(p).is_some() {
-                        still_at_risk.push(label);
+                for target in &clean_targets {
+                    if missing_on_origin(&target.path).is_some() {
+                        still_at_risk.push(target.label);
                     }
                 }
                 if !still_at_risk.is_empty() && !force {
@@ -442,7 +727,10 @@ fn main() {
                     at_risk.join(", ")
                 ));
             } else {
-                eprintln!("⚠  --force: releasing {slot} despite work not on origin ({}).", at_risk.join(", "));
+                eprintln!(
+                    "⚠  --force: releasing {slot} despite work not on origin ({}).",
+                    at_risk.join(", ")
+                );
             }
         } else {
             eprintln!("✓ all committed work verified on origin");
@@ -450,56 +738,52 @@ fn main() {
     }
 
     if clean {
-        let mut remove_failed = false;
-        for (label, primary, p) in [
-            ("hermit", root.join("hermit"), &hpath),
-            ("reverie", root.join("reverie"), &rpath),
-            ("liteinst2", root.join("liteinst2"), &lpath),
-        ] {
-            if p.exists() {
-                let ps = p.to_string_lossy().to_string();
-                let mut args = vec!["worktree", "remove", &ps];
-                if force {
-                    args.insert(2, "--force");
-                }
-                let (ok, _, err) = git(&primary, &args);
-                if ok {
-                    println!("  removed {label} worktree {}", p.display());
-                    // Prune ONLY after this product's remove succeeded. A prune run
-                    // after a FAILED remove reaps the half-removed worktree's admin
-                    // entry while its data dir is still on disk, ORPHANING the data
-                    // (recoverable-residue -> permanent artifact). A transient IO
-                    // fault (e.g. EROFS) plus a non-idempotent cleanup is strictly
-                    // worse than either alone, so prune is bound to remove success.
-                    git(&primary, &["worktree", "prune"]);
-                } else {
-                    remove_failed = true;
-                    eprintln!("  could not remove {label} worktree {}: {err}", p.display());
-                    eprintln!(
-                        "     NOT pruning {label} registry: a prune here would orphan the retained data dir {}.",
-                        p.display()
-                    );
-                    eprintln!(
-                        "     residue retained for recovery (data dir + admin entry kept together): {}",
-                        p.display()
-                    );
-                }
+        for target in &clean_targets {
+            let ps = target.path.to_string_lossy().to_string();
+            let mut args = vec!["worktree", "remove", &ps];
+            if force {
+                args.insert(2, "--force");
+            }
+            let (ok, _, err) = git(&target.primary, &args);
+            if ok {
+                println!(
+                    "  removed {} worktree {}",
+                    target.label,
+                    target.path.display()
+                );
+                // Commit per-product progress so a later exact-target failure is
+                // retryable and the registry never claims this removed child is
+                // still allocated.
+                state["slots"][&slot][target.branch_key] = json!("-");
+                state["slots"][&slot]["updated"] = json!(now_iso());
+                save_state(&root, &mut state);
+                regen_active_md(&root, &state);
             } else {
-                // Worktree dir already gone: prune is safe (nothing to orphan) and
-                // clears any stale admin entry left behind.
-                git(&primary, &["worktree", "prune"]);
+                eprintln!(
+                    "  could not remove {} worktree {}: {err}",
+                    target.label,
+                    target.path.display()
+                );
+                eprintln!(
+                    "     residue retained for recovery (data dir + admin entry kept together): {}",
+                    target.path.display()
+                );
+                die(&format!(
+                    "could not remove exact {} target; completed product removals are recorded and retryable",
+                    target.label
+                ));
             }
         }
-        if remove_failed {
-            eprintln!(
-                "ACTION: retry `release-worktree.rs --slot {slot} --clean` after the transient \
-                 fault clears (e.g. IO/EROFS); the retained product(s) above are recoverable, \
-                 not orphaned. Their data dir and admin entry were kept together."
-            );
-            die("one or more product worktrees could not be removed; slot state retained");
+        // Remove only the now-empty target slot directory. Failure means
+        // unexpected residue exists, so retain registry state for recovery.
+        if slot_dir.exists() {
+            std::fs::remove_dir(&slot_dir).unwrap_or_else(|e| {
+                die(&format!(
+                    "could not remove now-empty slot directory {}: {e}; slot state retained",
+                    slot_dir.display()
+                ))
+            });
         }
-        // Remove the now-empty slot dir.
-        std::fs::remove_dir(&slot_dir).ok();
         state["slots"].as_object_mut().unwrap().remove(&slot);
         println!("✓ released and cleaned {slot} (removed from state)");
     } else {

@@ -91,6 +91,13 @@ jobs:
           ulimit -t 240
           timeout --signal=KILL 4m python3 ci-hub/tests/documented_commands.py
 
+      - name: Prove worktree release is target-scoped
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m scripts/release-worktree-target-scope-test.sh
+
       - name: Materialize the pinned live-query dependency
         shell: bash
         run: |
