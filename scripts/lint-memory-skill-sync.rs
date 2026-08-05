@@ -9,7 +9,7 @@
 //!   * Versioned `.claude/skills/` files are the source of truth.
 //!   * A local memory may mirror a skill, but absence or drift is advisory and
 //!     can never make local state overwrite repository policy.
-//!   * Every mapping is a flat `.claude/skills/<memory-slug>.md` file.
+//!   * Every mapping is `.claude/skills/<memory-slug>/SKILL.md`.
 //!   * A directory symlink may bridge directly to a versioned canonical skill
 //!     under `agent-utils/skills/<same-name>/`; the external skill is its own
 //!     source of truth and deliberately has no duplicate memory body.
@@ -92,10 +92,10 @@ fn main() {
             ));
             continue;
         };
-        let expected = flat_skill_rel(slug);
+        let expected = package_skill_rel(slug);
         if want_skill_rel != &expected {
             warnings.push(format!(
-                "FLAT  {slug}: core_skill must be '{expected}', got '{want_skill_rel}'"
+                "PATH  {slug}: core_skill must be '{expected}', got '{want_skill_rel}'"
             ));
             continue;
         }
@@ -110,7 +110,9 @@ fn main() {
         // 3. mapped skill presence + content equality.
         let skill_path = root.join(want_skill_rel);
         if !skill_path.is_file() {
-            warnings.push(format!("LOCAL {slug}: mapped repository skill is absent at {want_skill_rel}"));
+            warnings.push(format!(
+                "LOCAL {slug}: mapped repository skill is absent at {want_skill_rel}"
+            ));
             continue;
         }
         let skill = std::fs::read_to_string(&skill_path).unwrap_or_default();
@@ -135,19 +137,39 @@ fn main() {
         }
     }
 
-    // 4. The active skill directory is flat except for explicit symlinks to
-    // versioned canonical agent-utils skills (Claude's native discovery shape).
+    // 4. Canonical skills are real package directories. The sole exception is
+    // an explicit bridge to a versioned canonical agent-utils package.
     if let Ok(entries) = std::fs::read_dir(&skill_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && !is_external_skill_bridge_dir(&root, &path) {
-                let rel = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .display()
-                    .to_string();
+            if path.is_file() {
+                if path.file_name().and_then(|name| name.to_str()) != Some("README.md") {
+                    let rel = path.strip_prefix(&root).unwrap_or(&path).display();
+                    problems.push(format!(
+                        "PACKAGE {rel}: flat canonical skills are unsupported; use <slug>/SKILL.md"
+                    ));
+                }
+                continue;
+            }
+            if is_external_skill_bridge_dir(&root, &path) {
+                continue;
+            }
+            if !path.is_dir() {
+                let rel = path.strip_prefix(&root).unwrap_or(&path).display();
+                problems.push(format!("PACKAGE {rel}: unsupported canonical skill entry"));
+                continue;
+            }
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let is_symlink = std::fs::symlink_metadata(&path)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_symlink || !path.join("SKILL.md").is_file() {
                 problems.push(format!(
-                    "NEST  {rel}: nested skill directories must be an agent-utils canonical bridge"
+                    "PACKAGE {rel}: canonical package must be a real directory containing SKILL.md"
                 ));
             }
         }
@@ -168,7 +190,7 @@ fn main() {
         }
         let content = std::fs::read_to_string(skill_path).unwrap_or_default();
         let meta = parse_meta(&content);
-        let slug = stem(skill_path);
+        let slug = skill_slug(skill_path);
         if meta.name != slug || meta.description.is_empty() {
             problems.push(format!(
                 "META  {rel}: frontmatter name must be '{slug}' and description must be nonempty"
@@ -316,8 +338,8 @@ fn normalize_lines(lines: Vec<String>) -> String {
 
 // ---- filesystem helpers ----
 
-fn flat_skill_rel(slug: &str) -> String {
-    format!("{SKILL_DIR}/{slug}.md")
+fn package_skill_rel(slug: &str) -> String {
+    format!("{SKILL_DIR}/{slug}/SKILL.md")
 }
 
 fn memory_dir(root: &Path) -> PathBuf {
@@ -365,13 +387,6 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if name != "README.md" && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-                out.push(path);
-            }
             continue;
         }
         if !path.is_dir() {
@@ -423,6 +438,18 @@ fn stem(p: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_string()
+}
+
+fn skill_slug(path: &Path) -> String {
+    if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    stem(path)
 }
 
 fn find_root() -> PathBuf {

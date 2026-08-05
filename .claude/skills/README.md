@@ -6,21 +6,20 @@ repository that owns their code and tests.
 
 ## Discovery surfaces
 
-- `.claude/skills/<slug>.md` contains the versioned coordinator instructions
-  used by the existing workspace hook and the `.llms/skills` compatibility
-  link.
-- `.agents/skills/<slug>/SKILL.md` is the stock-Codex discovery surface. Each
-  small generated entrypoint carries the same trigger metadata and links back
-  to one canonical flat file, so the instructions are not copied or allowed to
-  drift.
-- `scripts/check-codex-setup.py --write` regenerates those entrypoints.
-  `scripts/check-codex-setup.py` verifies exact metadata/content, the optional
+- `.claude/skills/<slug>/SKILL.md` is the one versioned coordinator package.
+  The package may also carry `references/`, `scripts/`, or other resources.
+- `.agents/skills/<slug>` is a tracked whole-package symlink to that canonical
+  directory. `.llms/skills` links to the canonical skill root. Claude, Codex,
+  and `.llms` consumers therefore read the same instructions and resources.
+- `scripts/check-codex-setup.py` is read-only. It verifies package metadata,
+  exact link targets and containment, local Markdown links, the optional
   planner bridge, and the project instruction-size budget.
 - `.codex/config.toml` raises `project_doc_max_bytes` so Codex loads the complete
   root-plus-product `AGENTS.md` chain, including the root tail canary.
 
-Edit the canonical flat skill, regenerate the Codex adapters, and run the
-checker. Do not hand-edit generated `.agents` entrypoints.
+Edit the canonical package and run the checker. Do not replace a package link
+with a generated pointer file, a link to `SKILL.md` alone, or a root-level
+`.agents/skills` symlink.
 
 ## Active coordinator groups
 
@@ -48,7 +47,7 @@ stale or missing tooling pin; use ci-hub's tracked planning/status entrypoints.
 `AGENTS.md` is policy. Skills provide task workflows and routing; a stale skill
 cannot override the canonical policy or an executable semantic verifier.
 
-Some flat skills have mirrors in an operator-local Claude memory directory.
+Some skills have mirrors in an operator-local Claude memory directory.
 That bridge is optional and unversioned. It cannot import into or delete
 repository skills. The linter gates repository structure and reports local
 drift only as advisory; explicit `--adopt-skill` exports a reviewed repository

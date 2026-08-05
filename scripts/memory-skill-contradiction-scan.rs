@@ -19,8 +19,8 @@
 //!      coordinator to judge against `orc.sessionMemories()`.
 //!   2. DRIFT (bidirectional) —
 //!        MEMORY_WITHOUT_SKILL: a `core_memory: true` memory whose mapped
-//!          `.claude/skills/<slug>.md` is missing.
-//!        SKILL_WITHOUT_MEMORY: an active `.claude/skills/*.md` no core memory
+//!          `.claude/skills/<slug>/SKILL.md` is missing.
+//!        SKILL_WITHOUT_MEMORY: an active package has no optional core memory
 //!          maps to. (lint-memory-skill-sync.rs is the authoritative gate for
 //!          this; here it is a one-line summary alongside contradictions.)
 //!
@@ -171,7 +171,7 @@ fn main() {
                     if all_needles_present(content, &entry.needles) {
                         findings.push(Finding {
                             kind: "CONTRADICTION",
-                            subject: format!("{SKILL_DIR}/{slug}.md"),
+                            subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
                             detail: format!(
                                 "matches [{}] -> {}\n        {}",
                                 entry.raw_needles,
@@ -204,7 +204,7 @@ fn main() {
                     if slug.to_ascii_lowercase() == target {
                         findings.push(Finding {
                             kind: "CONTRADICTION",
-                            subject: format!("{SKILL_DIR}/{slug}.md"),
+                            subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
                             detail: format!("slug is denylisted -> {}", entry.reason),
                         });
                     }
@@ -223,14 +223,14 @@ fn main() {
     }
 
     // ---- detector 2: bidirectional drift ----
-    // core memories and the flat skill each maps to.
+    // Core memories and the package skill each maps to.
     let mut mapped_skill_slugs: Vec<String> = Vec::new();
     for (slug, _content, meta) in &memories {
         if !meta.core_memory {
             continue;
         }
-        let expected_rel = flat_skill_rel(slug);
-        // trust the memory's declared mapping only if it matches the flat convention.
+        let expected_rel = package_skill_rel(slug);
+        // Trust the optional memory mapping only if it names the package skill.
         let declared_ok = meta.core_skill.as_deref() == Some(expected_rel.as_str());
         let skill_exists = root.join(&expected_rel).is_file();
         if declared_ok && skill_exists {
@@ -257,7 +257,7 @@ fn main() {
         if !mapped_skill_slugs.iter().any(|s| s == slug) {
             findings.push(Finding {
                 kind: "SKILL_WITHOUT_MEMORY",
-                subject: format!("{SKILL_DIR}/{slug}.md"),
+                subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
                 detail: "repository skill has no optional local-memory mirror".to_string(),
             });
         }
@@ -274,17 +274,21 @@ fn main() {
         let gate_findings: Vec<Finding> = findings
             .iter()
             .filter(|finding| {
-                finding.kind == "CONTRADICTION"
-                    && finding.subject.starts_with(SKILL_DIR)
+                finding.kind == "CONTRADICTION" && finding.subject.starts_with(SKILL_DIR)
             })
             .cloned()
             .collect();
         let gate_contradictions = gate_findings.len();
-        let state = if gate_findings.is_empty() { "ok" } else { "contradiction" };
+        let state = if gate_findings.is_empty() {
+            "ok"
+        } else {
+            "contradiction"
+        };
         let summary = if gate_findings.is_empty() {
             format!(
                 "{} authoritative repository skills clean; {} optional local finding(s)",
-                skills.len(), findings.len()
+                skills.len(),
+                findings.len()
             )
         } else {
             let named: Vec<String> = gate_findings
@@ -292,7 +296,10 @@ fn main() {
                 .take(3)
                 .map(|finding| finding.subject.clone())
                 .collect();
-            format!("{gate_contradictions} repository-skill contradiction(s) — {}", named.join(", "))
+            format!(
+                "{gate_contradictions} repository-skill contradiction(s) — {}",
+                named.join(", ")
+            )
         };
         emit(state, &summary, gate_contradictions, 0);
         if !gate_findings.is_empty() {
@@ -505,8 +512,8 @@ fn unquote(s: &str) -> String {
 
 // ---- filesystem helpers (mirror lint-memory-skill-sync.rs) ----
 
-fn flat_skill_rel(slug: &str) -> String {
-    format!("{SKILL_DIR}/{slug}.md")
+fn package_skill_rel(slug: &str) -> String {
+    format!("{SKILL_DIR}/{slug}/SKILL.md")
 }
 
 fn memory_dir(root: &Path) -> PathBuf {
