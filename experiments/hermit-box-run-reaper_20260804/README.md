@@ -87,7 +87,7 @@ code (the ptrace `--verify` "hang" was already refuted as slow-drain, not a dead
 ## Reproduce
 
 ```bash
-cd "$(git rev-parse --show-toplevel)"   # repo root
+cd /home/newton/work/dev-hermit
 # cores dimension (synthetic):
 bash scratch/verify-hang-repro/wrapper-proof/before_after.sh 3 3
 # namespace dimension (real KVM), both sides:

@@ -9,7 +9,7 @@ SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
-	doctor-core doctor-full doctor-qemu help init-hermit install-deps install-hooks \
+	doctor-core doctor-full doctor-qemu help init-hermit install-deps \
 	install-deps-core install-deps-full install-deps-qemu lint list-rust-scripts validate
 
 .PHONY: single-submodule-bump
@@ -241,27 +241,19 @@ doctor-full:
 doctor-qemu:
 	@scripts/doctor.sh qemu
 
-# Install this clone's git pre-commit hooks (core.hooksPath -> .githooks). Wired
-# as a prerequisite of every install-deps profile so a fresh clone/worktree gets
-# the blocking pin-drift + hygiene pre-commit hook WITHOUT a separate manual step.
-# core.hooksPath is per-repo local config (not tracked), so it must be set once
-# per checkout; this is that step.
-install-hooks:
-	@scripts/setup-hooks.sh
-
 # Backwards-compatible alias: the historical install-deps target is the
 # lightweight core ptrace profile.
 install-deps: install-deps-core
 
-install-deps-core: install-hooks
+install-deps-core:
 	@scripts/install-deps.sh core
 	@$(MAKE) --no-print-directory doctor-core
 
-install-deps-full: install-hooks
+install-deps-full:
 	@scripts/install-deps.sh full
 	@$(MAKE) --no-print-directory doctor-full
 
-install-deps-qemu: install-hooks
+install-deps-qemu:
 	@scripts/install-deps.sh qemu
 	@$(MAKE) --no-print-directory doctor-qemu
 

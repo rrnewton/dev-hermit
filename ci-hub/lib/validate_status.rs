@@ -364,11 +364,16 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
 
     // Completeness is structural. Even when a fail-fast row carries a real red
     // gate, it did not execute the full validation contract and cannot become a
-    // durable FAILED verdict. A genuine red control has matching gate counts.
+    // durable FAILED verdict. A genuine red control SATISFIES its gate contract
+    // (`ran >= expected`, matching the `complete` check below): only an UNDER-run
+    // (`ran < expected`) is a truncation. An OVER-run (`ran > expected`, e.g. six
+    // live gates against a hardcoded five-gate expectation) is complete, not short,
+    // and must fall through to the failure logic — a stale expected count must not
+    // launder a genuine over-run failure into a non-verdict.
     let has_real_failure = row.failures.is_some_and(|f| f >= 1) || !failed_gates.is_empty();
     if gates_expected
         .zip(gates_run)
-        .is_some_and(|(expected, ran)| expected > 0 && ran != expected)
+        .is_some_and(|(expected, ran)| expected > 0 && ran < expected)
         || (!has_real_failure
             && (row.exit_code == Some(130)
                 || (row.failures == Some(0) && failed_gates.is_empty())))

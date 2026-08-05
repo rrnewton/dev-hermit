@@ -25,7 +25,7 @@ DEFAULT_REPOS = (
 )
 DEFAULT_RUN_LIMIT = 100
 # Basis: the complete three-repository main-health query measured 7.28s on
-# a devserver on 2026-08-03. Each repository makes two gh calls. A 15s call cap
+# devbig014 on 2026-08-03. Each repository makes two gh calls. A 15s call cap
 # gives more than 6x the measured average call time; the 60s overall deadline
 # gives more than 8x the measured complete-query time while remaining useful to
 # an interactive health command. CI deliberately overrides these lower.

@@ -123,6 +123,95 @@ def test_persist_never_fabricates_when_log_is_missing(tmp_path):
     assert not out.exists()
 
 
+def _red_row_with_classes(
+    commit: str, finished_at: str, log_file: str | None, *classes: dict
+) -> dict:
+    """A red row as the PRODUCER (validate.sh) now writes it: the per-node
+    failed_substep_classes are inlined INTO the row, so attribution no longer
+    depends on log_file surviving."""
+    row = _red_row(commit, finished_at, log_file)
+    row["failed_substep_classes"] = list(classes)
+    return row
+
+
+def _cls(node: str, first_error_line: str, fault_class: str) -> dict:
+    return {
+        "node": node,
+        "group": node.split(".", 1)[0],
+        "sub_step_class": "build" if node.startswith("build") else "test",
+        "fault_class": fault_class,
+        "infra_signature": "link-error" if fault_class == "infrastructure" else None,
+        "first_error_line": first_error_line,
+        "known_flaky": fault_class == "code",
+    }
+
+
+def test_row_inlined_classes_survive_log_eviction(tmp_path):
+    """The producer-leg durability contract: a row carrying
+    failed_substep_classes is attributable even when its log_file NEVER EXISTED
+    (already evicted). This is the eviction test at the consumer boundary."""
+    out = tmp_path / "attr.jsonl"
+    gone = str(tmp_path / "already-evicted.log")
+    assert not Path(gone).exists()
+    row = _red_row_with_classes(
+        "ec0ec0ec",
+        "2026-08-04T22:00:00Z",
+        gone,
+        _cls(
+            "build.runtime_release",
+            "scheduler_impl.h:1325: undefined reference to "
+            "`dynamorio::drmemtrace::op_infile[abi:cxx11]'",
+            "infrastructure",
+        ),
+    )
+    records, (appended, skipped) = _persist([row], out)
+    assert records[0]["classes_source"] == "row"
+    assert records[0]["log_status"] == "missing"  # log is gone...
+    assert (appended, skipped) == (1, 0)  # ...but attribution still persisted
+    [rec] = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+    assert rec["node"] == "build.runtime_release"
+    assert rec["fault_class"] == "infrastructure"
+    assert rec["source"] == "row"
+    assert "undefined reference to" in rec["first_error_line"]
+
+
+def test_row_inlined_classes_preferred_over_surviving_log(tmp_path):
+    """When both are present the ROW wins — the producer's inlined verdict is the
+    fact; the log is only a fallback. Proves the reader does not silently re-derive
+    from (and disagree with) a stale/other log."""
+    # The log names a CODE fault; the row inlines an INFRA fault. Row must win.
+    log = _log(tmp_path, "both.log", "build.runtime_release", "error: boom")
+    out = tmp_path / "attr.jsonl"
+    row = _red_row_with_classes(
+        "b077b077",
+        "2026-08-04T22:05:00Z",
+        str(log),
+        _cls("build.runtime_release", "row-verbatim: undefined reference to X", "infrastructure"),
+    )
+    record = attribute_row(row)
+    assert record["classes_source"] == "row"
+    assert record["log_status"] == "present"
+    assert record["classes"][0]["first_error_line"] == "row-verbatim: undefined reference to X"
+    persist_attributions([record], out)
+    [rec] = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+    assert rec["first_error_line"] == "row-verbatim: undefined reference to X"
+    assert rec["source"] == "row"
+
+
+def test_empty_row_classes_falls_back_to_log(tmp_path):
+    """An empty failed_substep_classes (e.g. outer-gate fail, no substep) is not
+    row-attribution — the reader falls back to the log rather than recording
+    nothing when a log still survives."""
+    log = _log(tmp_path, "fb.log", "e2e.metadata", "some noise")
+    out = tmp_path / "attr.jsonl"
+    row = _red_row("fa11fa11", "2026-08-04T22:10:00Z", str(log))
+    row["failed_substep_classes"] = []  # present but empty
+    record = attribute_row(row)
+    assert record["classes_source"] == "log"
+    appended, _ = persist_attributions([record], out)
+    assert appended == 1
+
+
 def _null_record(commit: str, finished_at: str, node: str, log_file: str) -> str:
     """A record as an OLDER extractor would have persisted it: no first_error_line."""
     return json.dumps(
