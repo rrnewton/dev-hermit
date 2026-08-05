@@ -113,10 +113,23 @@ def observe_merged_sha(
 
 
 def _existing_obligation(repo: str, sha: str, store: Path) -> dict[str, Any] | None:
-    for record in obligations.latest_records(store).values():
-        if record.get("repo") == repo and record.get("landed_sha") == sha:
-            return record
-    return None
+    matches = [
+        record
+        for record in obligations.latest_records(store).values()
+        if record.get("repo") == repo
+        and record.get("landed_sha") == sha
+        and record.get("overall_state") not in obligations.CLOSED_STATES
+    ]
+    if not matches:
+        return None
+    return max(
+        matches,
+        key=lambda record: (
+            str(record.get("updated_at") or ""),
+            str(record.get("opened_at") or ""),
+            str(record.get("obligation_id") or ""),
+        ),
+    )
 
 
 def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
@@ -135,6 +148,11 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         raise LandError(
             f"land intent verification policy does not match repository {repo!r}"
         )
+    raw_source = intent.get("source")
+    source = protocol.resolve_repo_source(
+        repo,
+        Path(str(raw_source)) if raw_source is not None else None,
+    )
     store = Path(str(intent["store"]))
     existing = _existing_obligation(repo, sha, store)
     if existing is not None:
@@ -142,6 +160,11 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
             str(existing["obligation_id"]), store, requested_policy=policy
         )
         return 0, str(existing["obligation_id"])
+    prior_ids = {
+        str(record["obligation_id"])
+        for record in obligations.latest_records(store).values()
+        if record.get("repo") == repo and record.get("landed_sha") == sha
+    }
     arguments = [
         "arm",
         sha,
@@ -150,7 +173,7 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         "--verification-policy-json",
         json.dumps(policy, sort_keys=True, separators=(",", ":")),
         "--source",
-        str(intent["source"]),
+        str(source),
         "--land-mode",
         str(intent["land_mode"]),
         "--actor",
@@ -163,18 +186,37 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         str(store),
     ]
     code = protocol.main(arguments)
-    record = _existing_obligation(repo, sha, store)
+    matching = [
+        record
+        for record in obligations.latest_records(store).values()
+        if record.get("repo") == repo
+        and record.get("landed_sha") == sha
+        and str(record.get("obligation_id")) not in prior_ids
+    ]
+    record = (
+        max(
+            matching,
+            key=lambda candidate: (
+                str(candidate.get("updated_at") or ""),
+                str(candidate.get("opened_at") or ""),
+                str(candidate.get("obligation_id") or ""),
+            ),
+        )
+        if matching
+        else _existing_obligation(repo, sha, store)
+    )
     return code, str(record["obligation_id"]) if record is not None else None
 
 
 def _new_intent(args: argparse.Namespace, command: Sequence[str]) -> dict[str, Any]:
     policy = protocol.verification_policy_for_repo(args.repo)
+    source = protocol.resolve_repo_source(args.repo, args.source)
     return {
         "schema_version": 1,
         "repo": args.repo,
         "verification_policy": policy,
         "pr": args.pr,
-        "source": str(args.source.expanduser().resolve()),
+        "source": str(source),
         "land_mode": args.land_mode,
         "actor": args.actor,
         "store": str(args.store.expanduser().resolve()),
@@ -346,7 +388,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run_parser = subparsers.add_parser("run", help="run a land and arm its merged SHA")
     run_parser.add_argument("--repo", default=protocol.DEFAULT_REPO)
     run_parser.add_argument("--pr", type=int, required=True)
-    run_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    run_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     run_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), required=True
     )
@@ -376,7 +423,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     prepare_parser.add_argument("--repo", default=protocol.DEFAULT_REPO)
     prepare_parser.add_argument("--pr", type=int, required=True)
-    prepare_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    prepare_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     prepare_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), required=True
     )

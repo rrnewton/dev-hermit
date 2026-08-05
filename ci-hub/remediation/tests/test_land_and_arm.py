@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,19 @@ class LandAndArmTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.intent_dir = self.root / "intents"
         self.store = self.root / "obligations.jsonl"
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/rrnewton/hermit.git",
+            ],
+            check=True,
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -122,6 +136,43 @@ class LandAndArmTest(unittest.TestCase):
             self.assertEqual(land_and_arm.complete(complete_args), 0)
         self.assertEqual(self.intent()["state"], "armed")
         self.assertEqual(self.intent()["command"], ["external-bounded-lander"])
+
+    def test_cross_repo_source_mismatch_is_refused_before_intent_or_land(self) -> None:
+        args = self.args()
+        args.repo = "rrnewton/reverie"
+        path = land_and_arm._intent_path(args.intent_dir, args.repo, args.pr)
+        with mock.patch.object(land_and_arm, "_run_land_command") as land:
+            with self.assertRaisesRegex(
+                land_and_arm.protocol.ProtocolError, "not required repository"
+            ):
+                land_and_arm.run(args)
+        land.assert_not_called()
+        self.assertFalse(path.exists())
+
+    def test_reverie_source_identity_is_persisted_in_write_ahead_intent(self) -> None:
+        source = self.root / "reverie-source"
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source),
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:rrnewton/reverie.git",
+            ],
+            check=True,
+        )
+        args = self.args()
+        args.repo = "rrnewton/reverie"
+        args.source = source
+        intent = land_and_arm._new_intent(args, ["/bin/true"])
+        self.assertEqual(intent["source"], str(source.resolve()))
+        self.assertEqual(intent["verification_policy"]["repo"], args.repo)
+        self.assertEqual(
+            intent["verification_policy"]["github"]["required_positive_count"], 2
+        )
 
 
 if __name__ == "__main__":

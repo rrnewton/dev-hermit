@@ -13,11 +13,22 @@ import obligations
 
 SHA = "a" * 40
 POLICY = {
-    "schema_version": 1,
+    "schema_version": 2,
     "repo": "rrnewton/hermit",
     "github": {
-        "workflow_file": "ci-portable.yml",
-        "workflow_name": "CI (GitHub-managed portable)",
+        "required_jobs": [
+            {
+                "workflow_file": ".github/workflows/ci-portable.yml",
+                "workflow_name": "CI (GitHub-managed portable)",
+                "job_name": "Regular tests (GitHub-managed portable)",
+            },
+            {
+                "workflow_file": ".github/workflows/ci-privileged.yml",
+                "workflow_name": "CI (privileged)",
+                "job_name": "Privileged capability and E2E tests",
+            },
+        ],
+        "required_positive_count": 2,
     },
 }
 
@@ -107,7 +118,7 @@ class ObligationStoreTest(unittest.TestCase):
             obligations.transition(
                 "test-obligation",
                 "bad-policy",
-                {"verification_policy": {**POLICY, "schema_version": 2}},
+                {"verification_policy": {**POLICY, "schema_version": 3}},
                 self.store,
             )
 
@@ -138,7 +149,7 @@ class ObligationStoreTest(unittest.TestCase):
             obligations.transition(
                 "legacy",
                 "policy-rebound",
-                {"verification_policy": {**POLICY, "schema_version": 2}},
+                {"verification_policy": {**POLICY, "schema_version": 3}},
                 self.store,
             )
 

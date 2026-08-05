@@ -228,31 +228,39 @@ receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
 the merged SHA it completes the prepared intent and calls `arm-land`. If the
 wrapper dies in that interval, the restartable ORC workflow recovers the intent
 and arms it. The write-ahead intent and initial OPEN event both carry the
-versioned repository/workflow policy; an unsupported repository is refused
-before merge instead of creating an obligation no verifier can satisfy. Arming
+versioned repository/workflow/job policy; an unsupported repository or a
+`--source` checkout whose `origin` names another repository is refused before
+merge instead of creating an obligation no verifier can satisfy. Omitting
+`--source` selects the canonical `hermit/` or `reverie/` checkout from `--repo`;
+Reverie never inherits Hermit's default. Arming
 appends that OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
 1. clones the obligation's registered source repository into
    `ignored/ci-hub/obligations/<id>/hermit`, checks out the exact landed commit
    detached, and runs full `./validate.sh --no-label-pr`;
-2. confirms the policy-bound GitHub workflow exists for the same SHA,
-   dispatching it only when GitHub `main` still equals that SHA; and
+2. dereferences the policy-bound jobs from their exact workflow runs for the
+   same SHA, dispatching the workflows only when GitHub `main` still equals
+   that SHA; and
 3. launches a detached watcher whose durable log lives beside the local
    validation log.
 
 The supported GitHub bindings are explicit rather than inferred from a global
 default:
 
-| Repository | Workflow file | Workflow name |
-|---|---|---|
-| `rrnewton/hermit` | `ci-portable.yml` | `CI (GitHub-managed portable)` |
-| `rrnewton/reverie` | `ci.yml` | `Rust` |
+| Repository | Workflow file | Workflow name | Required job |
+|---|---|---|---|
+| `rrnewton/hermit` | `.github/workflows/ci-portable.yml` | `CI (GitHub-managed portable)` | `Regular tests (GitHub-managed portable)` |
+| `rrnewton/hermit` | `.github/workflows/ci-privileged.yml` | `CI (privileged)` | `Privileged capability and E2E tests` |
+| `rrnewton/reverie` | `.github/workflows/ci.yml` | `Rust` | `Regular tests (GitHub-hosted)` |
+| `rrnewton/reverie` | `.github/workflows/ci.yml` | `Rust` | `Host-dependent tests (self-hosted)` |
 
-Verification-policy schema v1 freezes this repository/workflow binding only;
-it does not snapshot the evaluator truth table or authority composition. A
-future change to those semantics therefore requires its own explicit migration
-and review rather than silently treating this workflow-policy version as proof.
+Verification-policy schema v2 freezes each repository's two job tuples and an
+exact positive count of two. A workflow conclusion alone is not authority: the
+consumer dereferences the exact-SHA jobs and refuses a green for a missing,
+skipped, duplicate, truncated, or otherwise vacuous required set. The schema
+does not snapshot the cross-source OR evaluator truth table; a future change to
+those semantics therefore requires its own explicit migration and review.
 
 The event log is append-only and locked. Every transition retains timestamps,
 verification scope (`total` here), GitHub run IDs, local log path, and failure
@@ -269,7 +277,10 @@ intent, and loss of the workspace/disk loses its machine-local recovery state.
 
 Either exact-SHA green satisfies the obligation immediately; a pending,
 running, absent, or cancelled/no-result peer is supplemental and never becomes
-an AND gate. A simultaneously known green/red pair is a symmetric
+an AND gate. Queued and in-progress producer states remain `pending` and
+`running` in the durable record. The global watcher includes satisfied records
+with either state, so a watcher restart cannot lose the peer's eventual result.
+A simultaneously known green/red pair is a symmetric, P0
 `investigation_required` disagreement and never reaches the remediation
 actuator. If an already-started peer later reports red, evaluation reopens the
 satisfied record as that same non-actuating disagreement; satisfaction never

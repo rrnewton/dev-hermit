@@ -30,21 +30,50 @@ from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
-DEFAULT_WORKFLOW_FILE = "ci-portable.yml"
+DEFAULT_WORKFLOW_FILE = ".github/workflows/ci-portable.yml"
+PRIVILEGED_WORKFLOW = "CI (privileged)"
+PRIVILEGED_WORKFLOW_FILE = ".github/workflows/ci-privileged.yml"
 REVERIE_REPO = "rrnewton/reverie"
 REVERIE_WORKFLOW = "Rust"
-REVERIE_WORKFLOW_FILE = "ci.yml"
-VERIFICATION_POLICY_SCHEMA_VERSION = 1
+REVERIE_WORKFLOW_FILE = ".github/workflows/ci.yml"
+VERIFICATION_POLICY_SCHEMA_VERSION = 2
 _CURRENT_VERIFICATION_POLICY_VERSION = {
     DEFAULT_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
     REVERIE_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
 }
-# Historical entries are immutable. If a repository changes its authoritative
-# workflow, add a new policy version and retain the old tuple so an in-flight or
-# recovered obligation continues to mean exactly what its record says.
-_VERSIONED_REPO_GITHUB_WORKFLOWS = {
-    (DEFAULT_REPO, 1): (DEFAULT_WORKFLOW_FILE, DEFAULT_WORKFLOW),
-    (REVERIE_REPO, 1): (REVERIE_WORKFLOW_FILE, REVERIE_WORKFLOW),
+# Each tuple is (exact workflow path, exact workflow name, exact job name).
+# The positive count is persisted beside this complete set and must equal its
+# cardinality.  Workflow-level conclusions are deliberately absent: only the
+# exact-SHA jobs below are hosted authority.
+_VERSIONED_REPO_GITHUB_JOBS = {
+    (DEFAULT_REPO, 2): (
+        (
+            DEFAULT_WORKFLOW_FILE,
+            DEFAULT_WORKFLOW,
+            "Regular tests (GitHub-managed portable)",
+        ),
+        (
+            PRIVILEGED_WORKFLOW_FILE,
+            PRIVILEGED_WORKFLOW,
+            "Privileged capability and E2E tests",
+        ),
+    ),
+    (REVERIE_REPO, 2): (
+        (
+            REVERIE_WORKFLOW_FILE,
+            REVERIE_WORKFLOW,
+            "Regular tests (GitHub-hosted)",
+        ),
+        (
+            REVERIE_WORKFLOW_FILE,
+            REVERIE_WORKFLOW,
+            "Host-dependent tests (self-hosted)",
+        ),
+    ),
+}
+_DEFAULT_REPO_SOURCES = {
+    DEFAULT_REPO: ROOT / "hermit",
+    REVERIE_REPO: ROOT / "reverie",
 }
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
@@ -326,9 +355,7 @@ def verification_policy_for_repo(repo: str) -> dict[str, Any]:
     """
     try:
         schema_version = _CURRENT_VERIFICATION_POLICY_VERSION[repo]
-        workflow_file, workflow_name = _VERSIONED_REPO_GITHUB_WORKFLOWS[
-            (repo, schema_version)
-        ]
+        required_jobs = _VERSIONED_REPO_GITHUB_JOBS[(repo, schema_version)]
     except KeyError as error:
         supported = ", ".join(sorted(_CURRENT_VERIFICATION_POLICY_VERSION))
         raise ProtocolError(
@@ -339,8 +366,15 @@ def verification_policy_for_repo(repo: str) -> dict[str, Any]:
         "schema_version": schema_version,
         "repo": repo,
         "github": {
-            "workflow_file": workflow_file,
-            "workflow_name": workflow_name,
+            "required_jobs": [
+                {
+                    "workflow_file": workflow_file,
+                    "workflow_name": workflow_name,
+                    "job_name": job_name,
+                }
+                for workflow_file, workflow_name, job_name in required_jobs
+            ],
+            "required_positive_count": len(required_jobs),
         },
     }
 
@@ -355,9 +389,7 @@ def validate_verification_policy(
     if type(schema_version) is not int:
         raise ProtocolError("verification policy has no integer schema version")
     try:
-        workflow_file, workflow_name = _VERSIONED_REPO_GITHUB_WORKFLOWS[
-            (repo, schema_version)
-        ]
+        required_jobs = _VERSIONED_REPO_GITHUB_JOBS[(repo, schema_version)]
     except KeyError as error:
         raise ProtocolError(
             f"unsupported verification policy version {schema_version} for {repo!r}"
@@ -366,8 +398,15 @@ def validate_verification_policy(
         "schema_version": schema_version,
         "repo": repo,
         "github": {
-            "workflow_file": workflow_file,
-            "workflow_name": workflow_name,
+            "required_jobs": [
+                {
+                    "workflow_file": workflow_file,
+                    "workflow_name": workflow_name,
+                    "job_name": job_name,
+                }
+                for workflow_file, workflow_name, job_name in required_jobs
+            ],
+            "required_positive_count": len(required_jobs),
         },
     }
     if policy != expected:
@@ -550,6 +589,28 @@ def _run(
         else:
             detail = str(error)
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
+
+
+def resolve_repo_source(repo: str, source: Path | None) -> Path:
+    """Resolve a repository-specific donor checkout and prove its origin binding."""
+    verification_policy_for_repo(repo)
+    candidate = source if source is not None else _DEFAULT_REPO_SOURCES[repo]
+    candidate = candidate.expanduser().resolve()
+    if not candidate.is_dir():
+        raise ProtocolError(f"source checkout for {repo!r} is missing: {candidate}")
+    result = _run(
+        ("git", "-C", str(candidate), "remote", "get-url", "origin"),
+        check=True,
+    )
+    origin = result.stdout.strip()
+    match = re.search(r"github[.]com[:/]([^/:\s]+/[^/\s]+?)(?:[.]git)?/?$", origin)
+    observed = match.group(1) if match is not None else None
+    if observed != repo:
+        raise ProtocolError(
+            f"source checkout {candidate} origin is {origin or '<missing>'!r}, "
+            f"not required repository {repo!r}"
+        )
+    return candidate
 
 
 def _fetch_target(source: Path, target: str) -> str:
@@ -839,20 +900,10 @@ def _claim_fields(
 
 
 def verify_landing(args: argparse.Namespace) -> int:
-    source = args.source.expanduser().resolve()
     item = getattr(args, "item", None)
     claimed_oid = getattr(args, "claimed_oid", None)
-    if not source.is_dir():
-        return _print_landing_verdict(
-            state="unverifiable",
-            rc=2,
-            reference=args.reference,
-            target_ref=f"origin/{args.target}",
-            json_output=args.json,
-            reason=f"source checkout is missing: {source}",
-        )
-
     try:
+        source = resolve_repo_source(args.repo, args.source)
         target_ref = _fetch_target(source, args.target)
         reference = args.reference.lower()
         if claimed_oid and not item:
@@ -973,6 +1024,22 @@ def verify_landing(args: argparse.Namespace) -> int:
         )
 
 
+def _required_github_jobs(
+    policy: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    validated = validate_verification_policy(policy)
+    return [dict(job) for job in validated["github"]["required_jobs"]]
+
+
+def _required_workflows(policy: Mapping[str, Any]) -> list[tuple[str, str]]:
+    workflows: list[tuple[str, str]] = []
+    for job in _required_github_jobs(policy):
+        identity = (job["workflow_file"], job["workflow_name"])
+        if identity not in workflows:
+            workflows.append(identity)
+    return workflows
+
+
 def _parse_github_runs(
     output: str, sha: str, policy: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -982,14 +1049,131 @@ def _parse_github_runs(
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as error:
-        raise ProtocolError("gh run list returned invalid JSON") from error
-    if not isinstance(payload, list):
-        raise ProtocolError("gh run list returned a non-list payload")
-    return select_latest_workflow_attempts(
-        payload,
-        head_sha=sha,
-        workflows=(policy["github"]["workflow_name"],),
-    )
+        raise ProtocolError("GitHub workflow-runs API returned invalid JSON") from error
+    if not isinstance(payload, Mapping) or not isinstance(
+        payload.get("workflow_runs"), list
+    ):
+        raise ProtocolError("GitHub workflow-runs API returned an invalid payload")
+    raw_runs = payload["workflow_runs"]
+    total_count = payload.get("total_count")
+    if type(total_count) is not int or total_count != len(raw_runs):
+        raise ProtocolError(
+            "GitHub workflow-runs response is truncated or has an invalid exact count"
+        )
+
+    expected_by_file = dict(_required_workflows(policy))
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for raw in raw_runs:
+        if not isinstance(raw, Mapping):
+            raise ProtocolError("GitHub workflow-runs response contains a non-object")
+        run_sha = str(raw.get("head_sha") or "").lower()
+        if run_sha != sha:
+            raise ProtocolError(
+                f"GitHub workflow run is for {run_sha or '<missing>'}, "
+                f"expected exact SHA {sha}"
+            )
+        workflow_file = str(raw.get("path") or "")
+        if workflow_file not in expected_by_file:
+            continue
+        workflow_name = str(raw.get("name") or "")
+        expected_name = expected_by_file[workflow_file]
+        if workflow_name != expected_name:
+            raise ProtocolError(
+                f"GitHub workflow {workflow_file!r} is named "
+                f"{workflow_name or '<missing>'!r}, expected {expected_name!r}"
+            )
+        try:
+            run_id = int(raw["id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ProtocolError("GitHub workflow run has no integer id") from error
+        normalized = {
+            "databaseId": run_id,
+            "headSha": run_sha,
+            "workflowFile": workflow_file,
+            "workflowName": workflow_name,
+            "status": raw.get("status"),
+            "conclusion": raw.get("conclusion"),
+            "createdAt": raw.get("created_at"),
+            "startedAt": raw.get("run_started_at"),
+            "updatedAt": raw.get("updated_at"),
+            "url": raw.get("html_url"),
+            "event": raw.get("event"),
+            "runAttempt": raw.get("run_attempt"),
+        }
+        grouped.setdefault((workflow_file, workflow_name), []).append(normalized)
+
+    selected: list[dict[str, Any]] = []
+    for identity in _required_workflows(policy):
+        candidates = grouped.get(identity, [])
+        if not candidates:
+            continue
+        attempts = select_latest_workflow_attempts(
+            candidates,
+            head_sha=sha,
+            workflows=(identity[1],),
+        )
+        if attempts:
+            selected.append(attempts[0])
+    return selected
+
+
+def _parse_github_jobs(
+    output: str,
+    *,
+    run: Mapping[str, Any],
+    sha: str,
+) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise ProtocolError("GitHub jobs API returned invalid JSON") from error
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("jobs"), list):
+        raise ProtocolError("GitHub jobs API returned an invalid payload")
+    raw_jobs = payload["jobs"]
+    total_count = payload.get("total_count")
+    if type(total_count) is not int or total_count != len(raw_jobs):
+        raise ProtocolError(
+            "GitHub jobs response is truncated or has an invalid exact count"
+        )
+    run_id = int(run["databaseId"])
+    jobs: list[dict[str, Any]] = []
+    seen_job_ids: set[int] = set()
+    for raw in raw_jobs:
+        if not isinstance(raw, Mapping):
+            raise ProtocolError("GitHub jobs response contains a non-object")
+        job_sha = str(raw.get("head_sha") or "").lower()
+        if job_sha != sha:
+            raise ProtocolError(
+                f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        try:
+            observed_run_id = int(raw["run_id"])
+            job_id = int(raw["id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ProtocolError("GitHub job has no integer job/run identity") from error
+        if observed_run_id != run_id:
+            raise ProtocolError(
+                f"GitHub job belongs to run {observed_run_id}, expected {run_id}"
+            )
+        if job_id in seen_job_ids:
+            raise ProtocolError(
+                f"GitHub jobs response repeats job identity ({run_id}, {job_id})"
+            )
+        seen_job_ids.add(job_id)
+        jobs.append(
+            {
+                "id": job_id,
+                "run_id": observed_run_id,
+                "head_sha": job_sha,
+                "name": str(raw.get("name") or ""),
+                "status": raw.get("status"),
+                "conclusion": raw.get("conclusion"),
+                "started_at": raw.get("started_at"),
+                "completed_at": raw.get("completed_at"),
+                "html_url": raw.get("html_url"),
+            }
+        )
+    return jobs
 
 
 def github_runs(
@@ -1013,23 +1197,30 @@ def github_runs(
         (
             "with-proxy",
             "gh",
-            "run",
-            "list",
-            "-R",
-            repo,
-            "--commit",
-            sha,
-            "--workflow",
-            selected_policy["github"]["workflow_file"],
-            "--limit",
-            "20",
-            "--json",
-            "databaseId,status,conclusion,createdAt,startedAt,updatedAt,url,event,headSha,workflowName",
+            "api",
+            f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100",
         ),
         check=True,
         timeout=DEFAULT_NETWORK_TIMEOUT,
     )
-    return _parse_github_runs(result.stdout, sha, selected_policy)
+    runs = _parse_github_runs(result.stdout, sha, selected_policy)
+    for run in runs:
+        jobs_result = _run(
+            (
+                "with-proxy",
+                "gh",
+                "api",
+                f"repos/{repo}/actions/runs/{run['databaseId']}/jobs?filter=latest&per_page=100",
+            ),
+            check=True,
+            timeout=DEFAULT_NETWORK_TIMEOUT,
+        )
+        run["jobs"] = _parse_github_jobs(
+            jobs_result.stdout,
+            run=run,
+            sha=sha,
+        )
+    return runs
 
 
 def github_main_sha(repo: str) -> str:
@@ -1045,6 +1236,16 @@ def github_main_sha(repo: str) -> str:
 
 
 def _github_state(run: Mapping[str, Any]) -> str:
+    status = str(run.get("status") or "").lower()
+    if status in {"requested", "waiting", "queued", "pending"}:
+        return "pending"
+    if status == "in_progress":
+        return "running"
+    # A conclusion without a completed producer status is not a verdict.  In
+    # particular, accepting ``status=None, conclusion=success`` would let a
+    # partial/malformed API object manufacture a positive authority record.
+    if status != "completed":
+        return "no_result"
     outcome = classify_check(run.get("status"), run.get("conclusion"))
     if outcome is CheckOutcome.PASSED:
         return "green"
@@ -1054,50 +1255,183 @@ def _github_state(run: Mapping[str, Any]) -> str:
 
 
 def _github_patch(
-    run: Mapping[str, Any], sha: str, policy: Mapping[str, Any]
+    runs: Sequence[Mapping[str, Any]], sha: str, policy: Mapping[str, Any]
 ) -> dict[str, Any]:
     policy = validate_verification_policy(policy)
-    run_sha = str(run.get("headSha") or "").lower()
-    workflow_name = str(run.get("workflowName") or "")
-    if run_sha != sha:
-        raise ProtocolError(
-            f"GitHub run is for {run_sha or '<missing>'}, expected exact SHA {sha}"
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub observation {sha!r}")
+    expected_jobs = _required_github_jobs(policy)
+    expected_count = policy["github"]["required_positive_count"]
+    if expected_count != len(expected_jobs) or expected_count <= 0:
+        raise ProtocolError("verification policy has a vacuous positive count")
+
+    runs_by_workflow: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    run_workflows: dict[int, tuple[str, str]] = {}
+    for run in runs:
+        run_sha = str(run.get("headSha") or "").lower()
+        if run_sha != sha:
+            raise ProtocolError(
+                f"GitHub run is for {run_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        identity = (
+            str(run.get("workflowFile") or ""),
+            str(run.get("workflowName") or ""),
         )
-    if workflow_name != policy["github"]["workflow_name"]:
-        raise ProtocolError(
-            f"GitHub run workflow is {workflow_name or '<missing>'!r}, expected "
-            f"{policy['github']['workflow_name']!r}"
+        if identity not in _required_workflows(policy):
+            raise ProtocolError(f"unexpected GitHub workflow identity {identity!r}")
+        try:
+            run_id = int(run["databaseId"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ProtocolError("GitHub workflow evidence has no integer run id") from error
+        previous_identity = run_workflows.get(run_id)
+        if previous_identity is not None and previous_identity != identity:
+            raise ProtocolError(
+                f"GitHub run {run_id} is reused for workflow identities "
+                f"{previous_identity!r} and {identity!r}"
+            )
+        run_workflows[run_id] = identity
+        runs_by_workflow.setdefault(identity, []).append(run)
+
+    observed_jobs: list[dict[str, Any]] = []
+    run_ids: list[int] = []
+    selected_job_identities: set[tuple[int, int]] = set()
+    urls: list[str] = []
+    reasons: list[str] = []
+    for expected in expected_jobs:
+        workflow_identity = (
+            expected["workflow_file"],
+            expected["workflow_name"],
         )
-    state = _github_state(run)
+        workflow_runs = runs_by_workflow.get(workflow_identity, [])
+        if len(workflow_runs) > 1:
+            raise ProtocolError(
+                f"duplicate latest workflow evidence for {workflow_identity!r}"
+            )
+        if not workflow_runs:
+            observed_jobs.append(
+                {**expected, "state": "pending", "reason": "missing workflow run"}
+            )
+            reasons.append(
+                f"missing workflow run {expected['workflow_file']} / "
+                f"{expected['workflow_name']}"
+            )
+            continue
+        run = workflow_runs[0]
+        run_id = int(run["databaseId"])
+        if run_id not in run_ids:
+            run_ids.append(run_id)
+        run_url = str(run.get("url") or "")
+        if run_url and run_url not in urls:
+            urls.append(run_url)
+        jobs = run.get("jobs")
+        if not isinstance(jobs, list):
+            raise ProtocolError(f"GitHub run {run_id} has no dereferenced jobs list")
+        matches = [job for job in jobs if job.get("name") == expected["job_name"]]
+        if len(matches) > 1:
+            raise ProtocolError(
+                f"duplicate required GitHub job {expected['job_name']!r} in run {run_id}"
+            )
+        if not matches:
+            run_state = _github_state(run)
+            state = run_state if run_state in {"pending", "running"} else "no_result"
+            reason = f"required job missing from {run_state} workflow run"
+            observed_jobs.append(
+                {
+                    **expected,
+                    "run_id": run_id,
+                    "state": state,
+                    "reason": reason,
+                }
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+            continue
+        job = matches[0]
+        job_sha = str(job.get("head_sha") or "").lower()
+        if job_sha != sha:
+            raise ProtocolError(
+                f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        if int(job.get("run_id") or 0) != run_id:
+            raise ProtocolError(
+                f"GitHub job {job.get('id')} is not bound to selected run {run_id}"
+            )
+        try:
+            job_id = int(job["id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ProtocolError("required GitHub job has no integer identity") from error
+        job_identity = (run_id, job_id)
+        if job_identity in selected_job_identities:
+            raise ProtocolError(
+                f"required GitHub evidence repeats job identity {job_identity!r}"
+            )
+        selected_job_identities.add(job_identity)
+        state = _github_state(job)
+        reason = None
+        if state == "no_result":
+            reason = (
+                f"required job completed without a verdict "
+                f"(conclusion={job.get('conclusion') or '<missing>'})"
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+        job_url = str(job.get("html_url") or "")
+        if job_url and job_url not in urls:
+            urls.append(job_url)
+        observed_jobs.append(
+            {
+                **expected,
+                "run_id": run_id,
+                "job_id": job_id,
+                "state": state,
+                "status": job.get("status"),
+                "conclusion": job.get("conclusion"),
+                "url": job_url,
+                "reason": reason,
+            }
+        )
+
+    states = [job["state"] for job in observed_jobs]
+    positive_count = sum(state == "green" for state in states)
+    if "red" in states:
+        state = "red"
+    elif positive_count == expected_count and len(observed_jobs) == expected_count:
+        state = "green"
+    elif "running" in states:
+        state = "running"
+    elif "pending" in states:
+        state = "pending"
+    else:
+        state = "no_result"
+    started = [
+        str(run.get("startedAt") or run.get("createdAt"))
+        for run in runs
+        if run.get("startedAt") or run.get("createdAt")
+    ]
+    finished = [str(run.get("updatedAt")) for run in runs if run.get("updatedAt")]
     return {
         "github": {
             "state": state,
-            "started_at": run.get("startedAt") or run.get("createdAt"),
+            "started_at": min(started) if started else None,
             "finished_at": (
-                run.get("updatedAt") if state in TERMINAL_VERIFICATION_STATES else None
+                max(finished)
+                if finished
+                and (state in TERMINAL_VERIFICATION_STATES or state == "no_result")
+                else None
             ),
-            "run_ids": [int(run["databaseId"])],
-            "urls": [str(run.get("url") or "")],
-            "workflow_name": workflow_name,
-            "event": run.get("event"),
-            "last_poll_error": None,
+            "run_ids": run_ids,
+            "urls": urls,
+            "workflow_name": ", ".join(
+                workflow_name for _, workflow_name in _required_workflows(policy)
+            ),
+            "event": ", ".join(
+                sorted({str(run.get("event")) for run in runs if run.get("event")})
+            )
+            or None,
+            "required_positive_count": expected_count,
+            "positive_count": positive_count,
+            "jobs": observed_jobs,
+            "last_poll_error": "; ".join(reasons) or None,
         }
     }
-
-
-def _latest_resolved_github_run(
-    runs: Sequence[Mapping[str, Any]],
-) -> Mapping[str, Any] | None:
-    """Return the newest run only when that run produced a real verdict.
-
-    ``github_runs`` is sorted newest-first at one exact head. Looking past a
-    newest NO_RESULT would revive stale pass/fail evidence and make duplicate
-    same-head runs order-dependent.
-    """
-    if not runs:
-        return None
-    latest = runs[0]
-    return latest if _github_state(latest) in {"green", "red"} else None
 
 
 def ensure_github_verification(
@@ -1113,18 +1447,21 @@ def ensure_github_verification(
     repo, sha = record["repo"], record["landed_sha"]
     deadline = time.monotonic() + wait_seconds
     dispatched = False
+    latest_runs: list[dict[str, Any]] = []
+    latest_patch = _github_patch([], sha, policy)
     while True:
         runs = github_runs(repo, sha, policy=policy)
-        # Classify only the newest exact-head run. A cancelled/skipped/stale run
-        # is a HOLE, not permission to fall through to an older opposite answer.
-        usable = _latest_resolved_github_run(runs)
-        if usable is not None:
-            obligations.transition(
+        latest_runs = runs
+        latest_patch = _github_patch(runs, sha, policy)
+        record = obligations.get_record(obligation_id, store_path)
+        if record.get("github") != latest_patch["github"]:
+            record = obligations.transition(
                 obligation_id,
                 "github-observed",
-                _github_patch(usable, sha, policy),
+                latest_patch,
                 store_path,
             )
+        if latest_patch["github"]["state"] in {"green", "red"}:
             return evaluate_obligation(obligation_id, store_path=store_path)
         if time.monotonic() >= deadline:
             break
@@ -1134,28 +1471,33 @@ def ensure_github_verification(
             and deadline - time.monotonic() <= max(0, wait_seconds - 30)
         ):
             if github_main_sha(repo) == sha:
-                _run(
-                    (
-                        "with-proxy",
-                        "gh",
-                        "workflow",
-                        "run",
-                        policy["github"]["workflow_file"],
-                        "-R",
-                        repo,
-                        "--ref",
-                        "main",
-                    ),
-                    check=True,
-                    timeout=DEFAULT_NETWORK_TIMEOUT,
-                )
+                for workflow_file, _ in _required_workflows(policy):
+                    _run(
+                        (
+                            "with-proxy",
+                            "gh",
+                            "workflow",
+                            "run",
+                            workflow_file,
+                            "-R",
+                            repo,
+                            "--ref",
+                            "main",
+                        ),
+                        check=True,
+                        timeout=DEFAULT_NETWORK_TIMEOUT,
+                    )
                 dispatched = True
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
 
+    active = any(_github_state(run) in {"pending", "running"} for run in latest_runs)
+    if active:
+        # A real queued/in-progress producer remains durable and watchable. It is
+        # not collapsed into no_result just because the synchronous arm wait ended.
+        return evaluate_obligation(obligation_id, store_path=store_path)
     summary = (
-        f"no resolved {policy['github']['workflow_name']!r} run appeared for exact "
-        f"SHA {sha} within "
-        f"{wait_seconds}s (only cancelled/superseded/no-result runs, if any)"
+        f"required hosted job set did not produce {policy['github']['required_positive_count']} "
+        f"exact-SHA positives for {sha} within {wait_seconds}s"
     )
     # A missing or unresolved GitHub result is NOT a failure: it leaves the leg in
     # no_result so a locally-green land is never reverted purely because its hosted
@@ -1168,6 +1510,9 @@ def ensure_github_verification(
             "github": {
                 "state": "no_result",
                 "finished_at": None,
+                "required_positive_count": policy["github"]["required_positive_count"],
+                "positive_count": latest_patch["github"]["positive_count"],
+                "jobs": latest_patch["github"]["jobs"],
                 "last_poll_error": summary,
             }
         },
@@ -1192,9 +1537,12 @@ def _failure_details(record: Mapping[str, Any]) -> tuple[str, str]:
             f"exit={verification.get('exit_code')} log={verification.get('log_path')}"
         )
     else:
-        expected_workflow = _verification_policy_from_record(record)["github"][
-            "workflow_name"
-        ]
+        expected_workflow = ", ".join(
+            workflow_name
+            for _, workflow_name in _required_workflows(
+                _verification_policy_from_record(record)
+            )
+        )
         summary = (
             f"GitHub {verification.get('workflow_name') or expected_workflow} "
             f"state={verification.get('state')} urls={','.join(verification.get('urls') or [])}"
@@ -1317,7 +1665,10 @@ def evaluate_obligation(
 ) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
     try:
-        _verification_policy_from_record(record)
+        # Evaluation is an authority consumer, so a legacy record must first
+        # acquire its repository policy in the append-only ledger. Merely
+        # deriving a default in memory would let a green satisfy an unbound fact.
+        record, _ = bind_verification_policy(obligation_id, store_path)
     except ProtocolError as error:
         return _record_policy_investigation(record, error, store_path)
     states = (record["local"]["state"], record["github"]["state"])
@@ -1346,7 +1697,12 @@ def evaluate_obligation(
                     "failure_source": failed_source,
                     "failure_summary": summary,
                     "recommendation": None,
-                    "alert": {"state": "raised", "raised_at": now},
+                    "alert": {
+                        "state": "raised",
+                        "raised_at": now,
+                        "severity": "P0",
+                        "action": "investigate",
+                    },
                     "remediation": {"state": "not_required"},
                 },
                 store_path,
@@ -1830,7 +2186,7 @@ def _pid_alive(raw_pid: object) -> bool:
 
 def _verification_in_flight(record: Mapping[str, Any]) -> bool:
     return any(
-        record[source].get("state") in {"starting", "running"}
+        record[source].get("state") in {"pending", "starting", "running"}
         for source in ("local", "github")
     )
 
@@ -1858,12 +2214,14 @@ def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
         try:
             runs = github_runs(record["repo"], record["landed_sha"], policy=policy)
             if runs:
-                record = obligations.transition(
-                    obligation_id,
-                    "github-polled",
-                    _github_patch(runs[0], record["landed_sha"], policy),
-                    store_path,
-                )
+                patch = _github_patch(runs, record["landed_sha"], policy)
+                if record.get("github") != patch["github"]:
+                    record = obligations.transition(
+                        obligation_id,
+                        "github-polled",
+                        patch,
+                        store_path,
+                    )
         except ProtocolError as error:
             record = obligations.transition(
                 obligation_id,
@@ -1988,7 +2346,18 @@ def watch(
         records = (
             [obligations.get_record(obligation_id, store_path)]
             if obligation_id
-            else obligations.unresolved_records(store_path)
+            else sorted(
+                (
+                    record
+                    for record in obligations.latest_records(store_path).values()
+                    if record.get("overall_state") not in obligations.CLOSED_STATES
+                    or _verification_in_flight(record)
+                ),
+                key=lambda record: (
+                    str(record.get("opened_at", "")),
+                    record["obligation_id"],
+                ),
+            )
         )
         updated = [
             poll_obligation(record["obligation_id"], store_path) for record in records
@@ -2156,7 +2525,7 @@ def arm(args: argparse.Namespace) -> int:
                 "--verification-policy-json repository does not match --repo"
             )
     store_path = args.store.expanduser().resolve()
-    source = args.source.expanduser().resolve()
+    source = resolve_repo_source(args.repo, args.source)
     sha = resolve_landed_sha(source, args.sha, repo=args.repo, pr=args.pr)
     try:
         record = obligations.create_obligation(
@@ -2336,7 +2705,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         help="resolve a rebase-merged PR head to GitHub's replay SHA",
     )
-    arm_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    arm_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     arm_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), default="speculative"
     )
@@ -2368,7 +2742,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="OID originally reported for a PR landing (requires --item)",
     )
     verify_landing_parser.add_argument("--repo", default=DEFAULT_REPO)
-    verify_landing_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    verify_landing_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     verify_landing_parser.add_argument("--target", default="main")
     verify_landing_parser.add_argument("--json", action="store_true")
 
