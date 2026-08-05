@@ -9,6 +9,7 @@
     "ci-hub/validation/publish_receipt.py",
     "ci-hub/validation/publish_outcome.py",
     "ci-hub/check_outcome.py",
+    "ci-hub/ci-hub",
     "ci-hub/ci-hub.rs",
     "ci-hub/lib/history_queries.rs",
     "ci-hub/lib/landing_lock.rs",

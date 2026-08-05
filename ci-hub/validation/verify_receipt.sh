@@ -65,8 +65,17 @@ fetch_at_tip() {
         local source_file="$fixture_root/$authority_tip/$path"
         [[ -f $source_file ]] && cp -- "$source_file" "$output"
     else
+        # Contents API omits inline bytes for logs above 1 MiB. Resolve the blob
+        # from the already-frozen exact-tip tree, then use the Git Blobs API
+        # (same 100 MiB ceiling as publication) so large validation logs remain
+        # dereferenceable without following a mutable download URL.
+        local blob_sha
+        blob_sha=$(jq -er --arg path "$path" '
+            .tree[] | select(.type == "blob" and .path == $path) | .sha
+        ' "$tree_file" 2>/dev/null) || return 1
+        [[ $blob_sha =~ ^[0-9a-f]{40}$ ]] || return 1
         "${gh_cmd[@]}" api \
-            "repos/${receipt_repo}/contents/${path}?ref=${authority_tip}" \
+            "repos/${receipt_repo}/git/blobs/${blob_sha}" \
             --jq .content 2>/dev/null | tr -d '\n' | base64 --decode >"$output"
     fi
 }

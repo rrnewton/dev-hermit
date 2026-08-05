@@ -18,12 +18,14 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 
 
 RECEIPT_REPO = "rrnewton/dev-hermit"
 RECEIPT_BRANCH = "validation-receipts"
 RECEIPT_CANONICALIZATION = "serde_json::to_vec(HistoryRow)-v1"
+PUBLISH_ATTEMPTS = 6
 
 
 def fail(message: str) -> "NoReturn":
@@ -196,31 +198,50 @@ def branch_head(repo: str, branch: str) -> str:
 
 
 def publish(repo: str, branch: str, path: str, body: bytes) -> str:
-    branch_head(repo, branch)
     endpoint = f"repos/{repo}/contents/{path}"
-    existing = gh(["api", f"{endpoint}?ref={branch}"], check=False)
-    if existing.returncode == 0:
-        value = json.loads(existing.stdout)
-        found = base64.b64decode(value["content"].replace("\n", ""))
-        if found != body:
-            fail(f"immutable receipt path already exists with different content: {path}")
-        return branch_head(repo, branch)
+    last_error = ""
+    for attempt in range(PUBLISH_ATTEMPTS):
+        branch_head(repo, branch)
+        existing = gh(["api", f"{endpoint}?ref={branch}"], check=False)
+        if existing.returncode == 0:
+            value = json.loads(existing.stdout)
+            encoded = value.get("content") if value.get("encoding") == "base64" else None
+            if not encoded:
+                blob_sha = value.get("sha")
+                if not isinstance(blob_sha, str):
+                    fail(f"existing immutable path has no Git blob identity: {path}")
+                blob = gh(["api", f"repos/{repo}/git/blobs/{blob_sha}"])
+                encoded = json.loads(blob.stdout).get("content")
+            if not isinstance(encoded, str):
+                fail(f"existing immutable path has no readable bytes: {path}")
+            found = base64.b64decode(encoded.replace("\n", ""))
+            if found != body:
+                fail(f"immutable receipt path already exists with different content: {path}")
+            return branch_head(repo, branch)
 
-    result = gh(
-        [
-            "api",
-            "--method",
-            "PUT",
-            endpoint,
-            "-f",
-            f"message=validation receipt: {path.rsplit('/', 1)[-1]}",
-            "-f",
-            f"content={base64.b64encode(body).decode()}",
-            "-f",
-            f"branch={branch}",
-        ]
-    )
-    return json.loads(result.stdout)["commit"]["sha"]
+        result = gh(
+            [
+                "api",
+                "--method",
+                "PUT",
+                endpoint,
+                "-f",
+                f"message=validation receipt: {path.rsplit('/', 1)[-1]}",
+                "-f",
+                f"content={base64.b64encode(body).decode()}",
+                "-f",
+                f"branch={branch}",
+            ],
+            check=False,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)["commit"]["sha"]
+        last_error = result.stderr.strip() or f"exit {result.returncode}"
+        # A concurrent content-addressed publisher commonly advances the branch
+        # between the existence check and PUT. Re-resolve/retry; never overwrite.
+        if attempt + 1 < PUBLISH_ATTEMPTS:
+            time.sleep(0.05 * (attempt + 1))
+    fail(f"could not append immutable artifact after {PUBLISH_ATTEMPTS} attempts: {last_error}")
 
 
 def parse_args() -> argparse.Namespace:

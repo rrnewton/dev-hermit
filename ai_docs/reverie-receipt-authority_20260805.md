@@ -18,7 +18,9 @@ lock pins count only from `[[package]]` sources. Every semantic Reverie
 dependency/package must use that Git source; a path/version/registry dependency
 cannot be masked by a decoy current pin. Duplicate lock `rev` parameters,
 comments, package metadata, and lock metadata cannot manufacture a dependency. Git
-replacement and caller object-locator state are disabled. It accepts one lowercase
+replacement, caller object-locator state, and global/system/parameter/local
+configuration redirects are disabled; the live lookup runs outside any repository.
+It accepts one lowercase
 40-hex Reverie revision equal to that resolved tip. Missing commits,
 missing/mixed/malformed pins, network failure, and tip mismatch fail closed.
 
@@ -66,9 +68,14 @@ banner inflation, failed terminals, missing finalizer provenance, and log/count
 drift refuse. Comments and labels are routing/cache hints, never discovery or
 authority.
 
+Artifact publication retries bounded branch-head races without overwriting an
+existing content-addressed path. Existing and consumed logs above the Contents
+API's 1 MiB inline limit are dereferenced through their exact Git blob identity;
+the mutable download URL is never followed.
+
 The deployable verifier is the full-tree
 `ci-hub/validation/verify_receipt_bundle.sh` entrypoint. Its manifest names the
-Rust modules, predicate, hosted classifier, finalizer, and publishers; it rejects
+Rust modules, executable symlink, predicate, hosted classifier, finalizer, and publishers; it rejects
 a modified bundle, requires an exact pinned dev-hermit commit, disables Git
 replacement/object-locator state, and proves the target SHA is a commit object
 before delegating. Downloading only `verify_receipt.sh`

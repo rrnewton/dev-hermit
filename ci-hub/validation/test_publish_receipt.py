@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 
 SCRIPT = Path(__file__).with_name("publish_receipt.py")
@@ -166,6 +168,40 @@ class ReceiptTests(unittest.TestCase):
                     expected_digest=digest,
                     canonicalization="unknown",
                 )
+
+    def test_publish_retries_concurrent_branch_advance(self):
+        missing = SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        conflict = SimpleNamespace(returncode=1, stdout="", stderr="conflict")
+        success = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"commit": {"sha": "b" * 40}}),
+            stderr="",
+        )
+        with mock.patch.object(MODULE, "branch_head", return_value="a" * 40), \
+             mock.patch.object(MODULE, "gh", side_effect=[missing, conflict, missing, success]), \
+             mock.patch.object(MODULE.time, "sleep"):
+            commit = MODULE.publish("rrnewton/dev-hermit", "receipts", "path", b"body")
+        self.assertEqual(commit, "b" * 40)
+
+    def test_existing_large_blob_is_read_through_git_blob_api(self):
+        body = b"large-log-bytes"
+        metadata = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"encoding": "none", "content": "", "sha": "c" * 40}),
+            stderr="",
+        )
+        blob = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "encoding": "base64",
+                "content": MODULE.base64.b64encode(body).decode(),
+            }),
+            stderr="",
+        )
+        with mock.patch.object(MODULE, "branch_head", return_value="d" * 40), \
+             mock.patch.object(MODULE, "gh", side_effect=[metadata, blob]):
+            commit = MODULE.publish("rrnewton/dev-hermit", "receipts", "path", body)
+        self.assertEqual(commit, "d" * 40)
 
 
 if __name__ == "__main__":

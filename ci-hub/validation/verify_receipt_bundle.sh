@@ -18,7 +18,10 @@ safe_git() {
         -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
         -u GIT_COMMON_DIR -u GIT_NAMESPACE -u GIT_CONFIG_COUNT \
         -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
-        GIT_NO_REPLACE_OBJECTS=1 git "$@"
+        -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG -u GIT_CONFIG_GLOBAL \
+        -u GIT_CONFIG_SYSTEM GIT_NO_REPLACE_OBJECTS=1 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+        GIT_CONFIG_NOSYSTEM=1 git "$@"
 }
 
 usage() {
@@ -77,7 +80,8 @@ fi
 for relative in "${required_paths[@]}"; do
     if [[ $relative == /* || $relative == *..* ]] || \
        ! safe_git -C "$root" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 || \
-       ! safe_git -C "$root" diff --quiet "$bundle_sha" -- "$relative"; then
+       ! safe_git -C "$root" diff --no-ext-diff --no-textconv --quiet \
+           "$bundle_sha" -- "$relative"; then
         printf 'receipt authority bundle path is missing, untracked, or modified: %s\n' \
             "$relative" >&2
         exit 2
@@ -99,15 +103,23 @@ if [[ -z $target_repo ]]; then
     fetch=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
         -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
         -u GIT_COMMON_DIR -u GIT_NAMESPACE -u GIT_CONFIG_COUNT \
-        -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 GIT_NO_REPLACE_OBJECTS=1 \
+        -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+        -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG -u GIT_CONFIG_GLOBAL \
+        -u GIT_CONFIG_SYSTEM GIT_NO_REPLACE_OBJECTS=1 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+        GIT_CONFIG_NOSYSTEM=1 \
         git -C "$target_repo" fetch --quiet --depth=1 --no-tags \
         "https://github.com/${repo}.git" "$sha")
     if command -v with-proxy >/dev/null 2>&1; then
-        fetch=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+        fetch=(with-proxy env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
             -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
             -u GIT_COMMON_DIR -u GIT_NAMESPACE -u GIT_CONFIG_COUNT \
-            -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 GIT_NO_REPLACE_OBJECTS=1 \
-            with-proxy git -C "$target_repo" fetch --quiet --depth=1 --no-tags \
+            -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+            -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG -u GIT_CONFIG_GLOBAL \
+            -u GIT_CONFIG_SYSTEM GIT_NO_REPLACE_OBJECTS=1 \
+            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+            GIT_CONFIG_NOSYSTEM=1 \
+            git -C "$target_repo" fetch --quiet --depth=1 --no-tags \
             "https://github.com/${repo}.git" "$sha")
     fi
     if ! timeout --signal=TERM --kill-after=2s 60s "${fetch[@]}"; then

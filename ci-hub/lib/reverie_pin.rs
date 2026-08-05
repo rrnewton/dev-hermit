@@ -21,6 +21,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const REVERIE_REPOSITORY: &str = "rrnewton/reverie";
 pub const REVERIE_REMOTE: &str = "https://github.com/rrnewton/reverie.git";
@@ -86,9 +87,27 @@ fn bounded_ls_remote(remote: &str) -> Result<Output, String> {
     }
     command.args(["git", "ls-remote", "--exit-code", remote, REVERIE_MAIN_REF]);
     sanitize_git_environment(&mut command);
-    command
+    // A repository-local config can carry `url.*.insteadOf` too. Resolve the
+    // remote from a newly-created non-repository directory so neither the
+    // caller's checkout nor its `.git/config` can redirect the canonical URL.
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("cannot timestamp isolated Git lookup: {error}"))?
+        .as_nanos();
+    let isolation =
+        env::temp_dir().join(format!("ci-hub-reverie-ref-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&isolation).map_err(|error| {
+        format!(
+            "cannot create isolated Git lookup directory {}: {error}",
+            isolation.display()
+        )
+    })?;
+    command.current_dir(&isolation);
+    let result = command
         .output()
-        .map_err(|error| format!("could not launch bounded Reverie main resolution: {error}"))
+        .map_err(|error| format!("could not launch bounded Reverie main resolution: {error}"));
+    std::fs::remove_dir(&isolation).ok();
+    result
 }
 
 /// Keep caller-controlled Git locator state and replacement refs from changing
@@ -109,10 +128,18 @@ fn sanitize_git_environment(command: &mut Command) {
         "GIT_CONFIG_COUNT",
         "GIT_CONFIG_KEY_0",
         "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
     ] {
         command.env_remove(variable);
     }
-    command.env("GIT_NO_REPLACE_OBJECTS", "1");
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
 }
 
 /// Resolve the live Reverie main ref exactly once for one caller decision.
@@ -755,6 +782,48 @@ mod tests {
         assert!(pinned_sha_at(&repo, &tree_sha)
             .unwrap_err()
             .contains("is not a commit"));
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn global_git_config_cannot_redirect_live_tip() {
+        const CHILD: &str = "CI_HUB_GIT_CONFIG_REDIRECT_CHILD";
+        if env::var_os(CHILD).is_some() {
+            let result = resolve_live_main_from("https://127.0.0.1:9/canonical-reverie.git");
+            assert!(result.is_err(), "global url.insteadOf redirected authority");
+            return;
+        }
+        let pin = "a".repeat(40);
+        let (repo, _) = temp_repo("git-config-redirect", &manifest(&pin));
+        let config = repo
+            .parent()
+            .unwrap()
+            .join(format!("ci-hub-git-config-redirect-{}", std::process::id()));
+        fs::write(
+            &config,
+            format!(
+                "[url \"file://{}\"]\n\tinsteadOf = https://127.0.0.1:9/canonical-reverie.git\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reverie_pin::tests::global_git_config_cannot_redirect_live_tip",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("GIT_CONFIG_GLOBAL", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "redirect child failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_file(config).ok();
         fs::remove_dir_all(repo).ok();
     }
 

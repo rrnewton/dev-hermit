@@ -108,9 +108,14 @@ def _sanitized_git_environment() -> dict[str, str]:
         "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
         "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
         "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_PARAMETERS", "GIT_CONFIG", "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
     ):
         environment.pop(variable, None)
     environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    environment["GIT_CONFIG_NOSYSTEM"] = "1"
     return environment
 
 

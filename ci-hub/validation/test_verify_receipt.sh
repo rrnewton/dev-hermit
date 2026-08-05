@@ -192,4 +192,21 @@ if "$replace_clone/ci-hub/validation/verify_receipt_bundle.sh" \
 fi
 grep -q 'bundle path is missing, untracked, or modified' "$tmp/replace-bundle.out"
 
+# The tracked executable symlink is part of the bundle too; checking only its
+# Rust target would let a working-tree link redirect the consumer elsewhere.
+symlink_clone="$tmp/symlink-bundle"
+git clone -q --no-hardlinks "$root" "$symlink_clone"
+symlink_head=$(git -C "$symlink_clone" rev-parse HEAD)
+ln -sfn /bin/true "$symlink_clone/ci-hub/ci-hub"
+if "$symlink_clone/ci-hub/validation/verify_receipt_bundle.sh" \
+    --repo rrnewton/hermit --sha "$sha" --target-repo "$target_repo" \
+    --comments "$tmp/comments.json" --expected-bundle-sha "$symlink_head" \
+    --fixture-receipts "$tmp/receipts" --fixture-branch-tip "$branch_tip" \
+    >"$tmp/symlink-bundle.out" 2>&1; then
+    echo 'FAIL: redirected ci-hub executable symlink was omitted from the bundle' >&2
+    exit 1
+fi
+grep -q 'bundle path is missing, untracked, or modified: ci-hub/ci-hub' \
+    "$tmp/symlink-bundle.out"
+
 echo 'PASS: branch-tip outcomes, monotonic failure precedence, exact log/finalizer recomputation, content addressing, fresh Reverie binding, and replacement-ref hardening bracketed'
