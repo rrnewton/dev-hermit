@@ -32,34 +32,39 @@ class CompletionTest(unittest.TestCase):
         self.assertEqual(analysis.verdict, "defect")
         self.assertEqual(fc.effective_result(genuine), "fail")
 
-    def test_low_or_absent_executed_count_red_is_no_result(self):
-        # PLANT BOTH WAYS — the false-red direction, peer of the Rust
-        # `low_or_absent_executed_count_red_is_no_result_not_failed` bracket. A
-        # complete full-profile red (checks==6, both gate counts satisfied) is
-        # STILL demoted to no-result when its own executed-test count proves it
-        # exercised nothing: <=1 or an absent count. The count is the binding
-        # evidence, not the check count. Live shapes: 92db28e0 / e0c96c58
-        # (exec=1), 1288671f / 97eb2c75 (exec=null). Paired with
-        # test_genuine_five_of_five_red_is_classified (exec=765 stays "fail"):
-        # a classifier that called everything a no-result would be exactly as
-        # broken as one that called everything red.
-        for count in (1, 0, None):
+    def test_executed_count_does_not_move_a_named_gate_red(self):
+        # UNWIRE bracket — the genuine-failure direction, peer of the Rust
+        # `executed_count_does_not_move_a_named_gate_red_off_failed`. `executed_tests`
+        # was refuted as a proxy in BOTH directions, so it no longer keys the
+        # verdict: a complete full-profile red carrying a NAMED failing gate stays
+        # a real "fail" across every executed-count value, absent included. A
+        # build/clippy red that exercises zero tests is still a genuine defect.
+        for count in (None, 0, 1, 430, 765):
             row = {
                 "profile": "full", "result": "fail", "checks": 6,
                 "gates_run": 6, "gates_expected": 6, "failures": 1,
                 "executed_tests": count,
+                "gates": [{"name": "portable CI DAG lane", "result": "fail",
+                           "exit_code": 101, "real_seconds": 221}],
             }
             self.assertEqual(
-                fc.effective_result(row), "no-result",
-                f"executed_tests={count!r} full red must be a no-result",
+                fc.effective_result(row), "fail",
+                f"executed_tests={count!r} with a named gate must stay a real red",
             )
-        # Control: an above-floor genuine full red is NOT laundered (both sides).
-        genuine = {
+            self.assertEqual(fc.failure_tier(row), "ok")
+
+    def test_red_without_named_gate_or_failure_count_is_no_result(self):
+        # UNWIRE bracket — the no-evidence direction. A red with no named failing
+        # gate and no failure count carries no observable defect, so it is a
+        # no-result regardless of a high executed-test count: the count is
+        # diagnostic only and cannot conjure a durable failure.
+        row = {
             "profile": "full", "result": "fail", "checks": 6,
-            "gates_run": 6, "gates_expected": 6, "failures": 1,
-            "executed_tests": 765,
+            "gates_run": 6, "gates_expected": 6,
+            "executed_tests": 765, "gates": [],
         }
-        self.assertEqual(fc.effective_result(genuine), "fail")
+        self.assertEqual(fc.effective_result(row), "no-result")
+        self.assertEqual(fc.failure_tier(row), "no-result")
 
     def test_old_reconstructed_four_gate_red_is_not_rewritten(self):
         old_complete = {

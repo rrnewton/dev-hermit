@@ -654,17 +654,17 @@ class RenderTests(unittest.TestCase):
 
 
 class ExecutedTestsCarveOutTests(unittest.TestCase):
-    """The PR-facing peer of the ledger-side executed_tests gate (d05874e): a
-    GitHub product red whose EXACT head ran <= 1 test locally is a NO-RESULT, not a
-    real red. Bind the demotion to the observed executed-test count, never the
-    check count (Proxy Binding)."""
+    """The PR-facing peer of the ledger-side named-gate predicate: a GitHub
+    product red whose EXACT head carries no named failing gate locally is a
+    NO-RESULT, not a real red. Bind the demotion to the observed named-gate
+    authority (gates[]), never a check or executed-test count (Proxy Binding)."""
 
-    # The canonical same-check-count control pair (both rows report SIX checks;
-    # only executed_tests separates them). 40-hex heads padded from the real ledger
-    # commit prefixes so the ledger row and the PR head bind by exact SHA.
-    HEAD_GENUINE = "17b59fc6" + "1" * 32  # tests=760, full failure -> stays RED
-    HEAD_NO_RESULT = "98573d14" + "2" * 32  # tests=1 in 83s -> NO-RESULT, demoted
-    HEAD_NEEDS_RERUN = "54b4d4e5" + "3" * 32  # tests=430 -> NEEDS-RERUN, demoted
+    # The canonical same-check-count control pair (both rows report SIX gates;
+    # only the named-gate evidence separates them). 40-hex heads padded from the
+    # real ledger commit prefixes so the ledger row and the PR head bind by exact SHA.
+    HEAD_GENUINE = "17b59fc6" + "1" * 32  # named failing gate -> stays RED (ok)
+    HEAD_NO_RESULT = "98573d14" + "2" * 32  # no named gate, no count -> NO-RESULT
+    HEAD_NEEDS_RERUN = "54b4d4e5" + "3" * 32  # failure count, no named gate -> NEEDS-RERUN
 
     def _product_fail(self, number: int, head: str):
         # A genuine PRODUCT-test failing check (not a gate meta-check), base known
@@ -683,31 +683,37 @@ class ExecutedTestsCarveOutTests(unittest.TestCase):
             head=head,
         )
 
-    def test_tier_derives_from_executed_tests_not_check_count(self) -> None:
+    def test_tier_derives_from_named_gate_not_check_count(self) -> None:
         # banked_failure_tier_commits reads the machine-local ledger and tiers each
-        # fail row by executed_tests via the SHARED predicate. Both control rows
-        # carry checks=6 (gates_run=6); only executed_tests separates them.
+        # fail row by the NAMED-GATE predicate. All control rows report six gates
+        # (gates_run=6); only the named-gate evidence separates their tiers.
         import tempfile
 
+        genuine_gate = [{"name": "portable CI DAG lane", "result": "fail",
+                         "exit_code": 101, "real_seconds": 221}]
         ledger = "\n".join(
             json.dumps(row)
             for row in [
                 {"result": "fail", "commit": self.HEAD_GENUINE,
-                 "executed_tests": 760, "gates_run": 6, "cwd": "/w/hermit"},
+                 "gates_run": 6, "gates_expected": 6, "failures": 1,
+                 "gates": genuine_gate, "cwd": "/w/hermit"},
                 {"result": "fail", "commit": self.HEAD_NO_RESULT,
-                 "executed_tests": 1, "gates_run": 6, "cwd": "/w/hermit"},
+                 "gates_run": 6, "gates_expected": 6, "gates": [],
+                 "cwd": "/w/hermit"},
                 {"result": "timeout", "commit": self.HEAD_NEEDS_RERUN,
-                 "executed_tests": 430, "gates_run": 6, "cwd": "/w/hermit"},
-                # strongest-wins: a second run at the genuine head that ran nothing
-                # must NOT downgrade the real full-suite failure.
+                 "gates_run": 6, "gates_expected": 6, "failures": 1, "gates": [],
+                 "cwd": "/w/hermit"},
+                # strongest-wins: a second run at the genuine head with no named gate
+                # must NOT downgrade the real named-gate failure.
                 {"result": "fail", "commit": self.HEAD_GENUINE,
-                 "executed_tests": 1, "gates_run": 6, "cwd": "/w/hermit"},
+                 "gates_run": 6, "gates_expected": 6, "gates": [],
+                 "cwd": "/w/hermit"},
                 # repo isolation: a reverie fail must not appear for hermit.
                 {"result": "fail", "commit": "b" * 40,
-                 "executed_tests": 1, "cwd": "/w/reverie"},
+                 "gates": [], "cwd": "/w/reverie"},
                 # a PASS row is not a failure tier.
                 {"result": "pass", "commit": "c" * 40,
-                 "executed_tests": 900, "cwd": "/w/hermit"},
+                 "gates": genuine_gate, "cwd": "/w/hermit"},
             ]
         )
         with tempfile.TemporaryDirectory() as d:
@@ -715,7 +721,7 @@ class ExecutedTestsCarveOutTests(unittest.TestCase):
             (Path(d) / "ignored" / "validate-run-ledger.jsonl").write_text(ledger)
             with mock.patch.object(pr_status, "ROOT", Path(d)):
                 tiers = pr_status.banked_failure_tier_commits("rrnewton/hermit")
-        self.assertEqual(tiers[self.HEAD_GENUINE], "ok")  # 760 >= floor, wins over the ran-nothing dup
+        self.assertEqual(tiers[self.HEAD_GENUINE], "ok")  # named gate wins over the no-gate dup
         self.assertEqual(tiers[self.HEAD_NO_RESULT], "no-result")
         self.assertEqual(tiers[self.HEAD_NEEDS_RERUN], "needs-rerun")
         self.assertNotIn("b" * 40, tiers)  # reverie isolated

@@ -54,36 +54,6 @@ FLAKY_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "flaky-cells.json"
 CONTENTION_SAFE_JOBS = 4
 FULL_GATES_EXPECTED = 5
 
-# Executed-test plausibility — mirrors the Rust authority
-# (validate_status::EXECUTED_TESTS_NO_RESULT_MAX / _PLAUSIBLE_FLOOR) so the two
-# engines never disagree. A red that EXECUTED <= 1 test (or carries no count) is a
-# NO-RESULT wearing a red badge, not a defect; a positive count below the
-# plausible-full floor ran only a fraction of the suite and needs a re-run.
-# Measured (live ledger 2026-08-05): 168 of 197 fail/timeout rows executed <= 1
-# test or none — a recorded red is never re-run, so each falsely condemned a PR.
-# Floor 700 is TEMPORARY, justified by the measured PASS distribution (dominant
-# hermit cluster 740-792, reverie 942-961), not by the six-check count every false
-# red also reported. See flaky notes and the Rust module docs.
-EXECUTED_TESTS_NO_RESULT_MAX = 1
-EXECUTED_TESTS_PLAUSIBLE_FLOOR = 700
-
-
-def executed_plausibility(record: dict) -> str:
-    """Tier a red by its executed-test count: ``"no-result"`` (count missing or
-    <= EXECUTED_TESTS_NO_RESULT_MAX — exercised nothing), ``"needs-rerun"`` (a
-    positive count below EXECUTED_TESTS_PLAUSIBLE_FLOOR — ran only a fraction), or
-    ``"ok"`` (a full-suite count that can carry a durable failure). This is the
-    single predicate both ``effective_result`` and ``classify`` consult, and the
-    peer of the Rust ``failure_disposition`` executed-count gate."""
-    v = record.get("executed_tests")
-    if not isinstance(v, int) or isinstance(v, bool):
-        return "no-result"
-    if v <= EXECUTED_TESTS_NO_RESULT_MAX:
-        return "no-result"
-    if v < EXECUTED_TESTS_PLAUSIBLE_FLOOR:
-        return "needs-rerun"
-    return "ok"
-
 # The shell's "command not found" exit code. A gate at this code never ran the
 # tool it wraps, so it exercised nothing about the product.
 EXIT_COMMAND_NOT_FOUND = 127
@@ -242,21 +212,46 @@ def effective_result(record: dict) -> object:
         return "no-result"
     if is_truncated(record):
         return "truncated"
-    # A red that executed <= 1 test (or carries no count) exercised essentially
-    # nothing about the product — a no-result wearing a red badge, never a durable
-    # failure. Checked AFTER env-fault and truncation (each a more specific reading)
-    # and mirroring the Rust authority's executed-count gate. The NEEDS-RERUN tier
-    # (a positive partial count) is a re-run policy carried by ``classify``; this
-    # coarse analytics view keeps such a partial red as its raw ``fail``/``timeout``
-    # (it is not a no-result — some suite ran), while the <=1/absent tier is a
-    # genuine absence of result.
-    if record.get("result") in ("fail", "timeout") and (
-        executed_plausibility(record) == "no-result"
-    ):
+    # A red with no NAMED failing gate and no failure count carries no observable
+    # defect — a no-result wearing a red badge, never a durable failure. Checked
+    # AFTER env-fault and truncation (each a more specific reading) and mirroring
+    # the Rust authority's ``failure_disposition`` gate. ``executed_tests`` was
+    # refuted as a proxy in BOTH directions (a build/clippy red exercises zero
+    # tests yet is a genuine defect; a high count can still be a no-result), so the
+    # verdict binds to the named-gate authority, not a count.
+    if record.get("result") in ("fail", "timeout") and not has_real_failure(record):
         return "no-result"
     if record.get("result") == "pass" and not is_full_coverage(record):
         return "pass-partial"
     return record.get("result")
+
+
+def failure_tier(record: dict) -> str:
+    """Tier a fail/timeout row by the STRENGTH of its failure evidence, keyed on
+    the named-gate authority — the successor of the refuted executed-count gate and
+    the ONE shared red-side predicate for pr-status. Returns:
+
+      ``"ok"``          — a genuine named failing gate survives the env-fault and
+                          truncation readings: a durable defect.
+      ``"needs-rerun"`` — the run did not complete its gate contract (truncated),
+                          or it recorded a failure count with no named gate to
+                          attribute it to: re-run to obtain observable evidence.
+      ``"no-result"``   — not a red, an environment fault, or a red with neither a
+                          named failing gate nor a failure count: no observable
+                          defect; re-dispatch.
+
+    Ordering mirrors the Rust authority ``validate_status::failure_disposition``
+    (env-fault, then truncation, then named-gate presence) so the two engines never
+    disagree. ``executed_tests`` is diagnostic only and no longer keys the tier."""
+    if record.get("result") not in ("fail", "timeout"):
+        return "no-result"
+    if is_env_fault(record):
+        return "no-result"
+    if is_truncated(record):
+        return "needs-rerun"
+    if not _failing_gates(record):
+        return "needs-rerun" if has_real_failure(record) else "no-result"
+    return "ok"
 
 
 def load_registry(path: str = FLAKY_REGISTRY_PATH) -> dict[str, dict]:
@@ -407,34 +402,18 @@ def classify(
     if result not in ("fail", "timeout"):
         return FlakeAnalysis(verdict="n/a")
 
-    # Executed-test plausibility (mirrors the Rust authority
-    # validate_status::failure_disposition, and checked here AFTER env-fault and
-    # truncation, BEFORE flake/contention). A red that exercised essentially no
-    # tests certifies no defect: <= 1 executed (or no count) is a no-result; a
-    # positive count below the plausible-full floor ran only a fraction and needs a
-    # re-run. checks==6 is not evidence — every false red reported six checks.
-    plaus = executed_plausibility(record)
-    et = record.get("executed_tests")
-    if plaus == "no-result":
+    # No NAMED failing gate and no failure count means no observable defect to
+    # judge (mirrors the Rust authority validate_status::failure_disposition, and
+    # checked here AFTER env-fault and truncation, BEFORE flake/contention).
+    # ``executed_tests`` was refuted as a proxy in BOTH directions, so the verdict
+    # binds to the named-gate authority, not a count: a build/clippy red exercises
+    # zero tests yet is a genuine defect. checks==6 is not evidence either.
+    if not has_real_failure(record):
         return FlakeAnalysis(
             verdict="no-result",
             reasons=[
-                "executed-test count {} exercised nothing (<= {} or absent) — a "
-                "no-result wearing a red, not a defect; re-dispatch".format(
-                    "absent" if not isinstance(et, int) or isinstance(et, bool)
-                    else et,
-                    EXECUTED_TESTS_NO_RESULT_MAX,
-                )
-            ],
-        )
-    if plaus == "needs-rerun":
-        return FlakeAnalysis(
-            verdict="needs-rerun",
-            reasons=[
-                "executed only {} tests (< plausible-full floor {}) — a partial "
-                "run cannot certify a durable failure; re-run solo".format(
-                    et, EXECUTED_TESTS_PLAUSIBLE_FLOOR
-                )
+                "no named failing gate and no failure count — the red carries no "
+                "observable defect; re-dispatch"
             ],
         )
 
