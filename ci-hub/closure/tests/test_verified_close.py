@@ -24,8 +24,16 @@ def completed(command, rc=0, stdout="", stderr=""):
 
 
 class FakeRunner:
-    def __init__(self, code_state="landed"):
+    def __init__(
+        self,
+        code_state="landed",
+        *,
+        artifact_present=True,
+        artifact_ancestry_rc=0,
+    ):
         self.code_state = code_state
+        self.artifact_present = artifact_present
+        self.artifact_ancestry_rc = artifact_ancestry_rc
         self.task_mutations: list[tuple[str, ...]] = []
 
     def __call__(self, command, **_kwargs):
@@ -71,7 +79,16 @@ class FakeRunner:
             "cat-file",
             "-e",
         ):
-            return completed(command)
+            return completed(command, rc=0 if self.artifact_present else 1)
+        if command[:4] == ("git", "-C", str(verified_close.ROOT), "log"):
+            return completed(command, stdout="d" * 40 + "\n")
+        if command[:4] == (
+            "git",
+            "-C",
+            str(verified_close.ROOT),
+            "merge-base",
+        ):
+            return completed(command, rc=self.artifact_ancestry_rc)
         if command[:4] == ("git", "-C", str(verified_close.ROOT), "rev-parse"):
             return completed(command, stdout="c" * 40 + "\n")
         if command and command[0] == "tg":
@@ -129,6 +146,33 @@ class VerifiedCloseTest(unittest.TestCase):
             ["note", "update"] * 3,
             [command[1] for command in runner.task_mutations],
         )
+        artifact_note = next(
+            command[3]
+            for command in notes
+            if "kind=artifact" in command[3]
+        )
+        self.assertIn("rrnewton/dev-hermit:AGENTS.md@" + "d" * 40, artifact_note)
+        self.assertIn("target=main@" + "c" * 40, artifact_note)
+
+    def test_missing_or_nonancestral_artifact_never_mutates_task(self):
+        missing = FakeRunner(artifact_present=False)
+        nonancestral = FakeRunner(artifact_ancestry_rc=1)
+
+        self.assertEqual(
+            verified_close.REFUSED,
+            verified_close.main(
+                ["missing-artifact", "--artifact", "AGENTS.md"], run=missing
+            ),
+        )
+        self.assertEqual(
+            verified_close.REFUSED,
+            verified_close.main(
+                ["orphan-artifact", "--artifact", "AGENTS.md"],
+                run=nonancestral,
+            ),
+        )
+        self.assertEqual([], missing.task_mutations)
+        self.assertEqual([], nonancestral.task_mutations)
 
 
 if __name__ == "__main__":

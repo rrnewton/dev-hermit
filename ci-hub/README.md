@@ -133,9 +133,13 @@ Task closure is a separate, fail-closed consumer of that verifier:
 ```
 
 The gateway records `CLOSURE-VERIFIED` on the task before changing its status.
-It closes only a landed code reference, a URL that resolves or a local artifact
+It closes only a landed code reference, a URL that resolves, a local artifact
 tracked on freshly fetched parent `main`, or a GitHub Actions run ID that
-resolves. `REFUSED` exits 1 for a reference known not to satisfy the criterion;
+resolves. Local artifact evidence is recorded as the typed tuple
+`rrnewton/dev-hermit:path@last-content-commit;target=main@tip`; the gateway
+verifies that content commit is ancestral to the fetched target. This proves
+publication, not that the artifact answers the task's goal, which the
+coordinator checks separately. `REFUSED` exits 1 for a reference known not to satisfy the criterion;
 `UNVERIFIABLE` exits 2 when no answer can be obtained.
 Neither nonzero state calls `tg`. Use `--check-only` to validate evidence without
 mutating a live task. The upstream `tg` binary has no project hook, so project

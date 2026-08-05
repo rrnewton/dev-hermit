@@ -236,9 +236,14 @@ merged to `main`.
 3. **The task stays IMPLEMENTED until the PR lands on `main`.** A green unmerged PR is IMPLEMENTED, not LANDED. Do not close on local validation, a green check, or an approval alone.
 4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway freshly verifies code ancestry (via the PR replay SHA when applicable), confirms the artifact/run exists, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close.
 
-**Exceptions:** **Research-only tasks** produce no PR — tag `implemented` (status `in_progress`) with the
-durable artifact path (`ai_docs/…`, `experiments/…`, or a memory slug); the coordinator closes after
-confirming it exists and answers the question. **Blocked tasks** stay `in_progress` (or move to `open`) with
+**Exceptions:** **Research-only tasks** produce no PR. Their closure evidence is a typed tuple, not a bare
+path: repository identity + durable artifact path + the artifact's last content commit + fresh target-main
+ancestry. For parent artifacts, `./ci-hub/bin/close-task TASK --artifact ai_docs/path.md` derives and records
+`rrnewton/dev-hermit:path@content-commit;target=main@tip`. The coordinator separately confirms that the
+artifact answers the task's stated question; existence/ancestry proves publication, not goal completion.
+Tag `implemented` (status `in_progress`) with the durable artifact path and exact content SHA. A memory slug
+must be exported to a versioned artifact or another typed durable authority before closure. **Blocked tasks**
+stay `in_progress` (or move to `open`) with
 the exact blocker and any partial committed SHA; never tag `implemented` or close to signal progress.
 **Stale-premise tasks** are tagged `implemented` with a note explaining the stale premise and evidence SHA; the
 coordinator closes after verifying it.

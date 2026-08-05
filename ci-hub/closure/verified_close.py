@@ -13,6 +13,7 @@ from typing import Callable, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PARENT_REPO = "rrnewton/dev-hermit"
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 CLOSED = 0
@@ -167,8 +168,75 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
         return Evidence(
             "refused", "artifact", reference, reason="artifact is not on parent main"
         )
+    content = run(
+        (
+            "git",
+            "-C",
+            str(ROOT),
+            "log",
+            "-1",
+            "--format=%H",
+            "origin/main",
+            "--",
+            relative,
+        ),
+        cwd=ROOT,
+    )
+    content_oid = content.stdout.strip()
+    if (
+        content.returncode != 0
+        or len(content_oid) != 40
+        or any(character not in "0123456789abcdef" for character in content_oid)
+    ):
+        return Evidence(
+            "unverifiable",
+            "artifact",
+            reference,
+            reason="cannot resolve the artifact content commit on parent main",
+        )
+    ancestry = run(
+        (
+            "git",
+            "-C",
+            str(ROOT),
+            "merge-base",
+            "--is-ancestor",
+            content_oid,
+            "origin/main",
+        ),
+        cwd=ROOT,
+    )
+    if ancestry.returncode == 1:
+        return Evidence(
+            "refused",
+            "artifact",
+            reference,
+            reason="artifact content commit is not an ancestor of parent main",
+        )
+    if ancestry.returncode != 0:
+        return Evidence(
+            "unverifiable",
+            "artifact",
+            reference,
+            reason=(ancestry.stderr or "cannot verify artifact ancestry").strip(),
+        )
     tip = run(("git", "-C", str(ROOT), "rev-parse", "origin/main"), cwd=ROOT)
-    resolved = f"{relative}@{tip.stdout.strip()}"
+    target_tip = tip.stdout.strip()
+    if (
+        tip.returncode != 0
+        or len(target_tip) != 40
+        or any(character not in "0123456789abcdef" for character in target_tip)
+    ):
+        return Evidence(
+            "unverifiable",
+            "artifact",
+            reference,
+            reason="cannot resolve parent main after fetching it",
+        )
+    resolved = (
+        f"{PARENT_REPO}:{relative}@{content_oid};"
+        f"target=main@{target_tip}"
+    )
     return Evidence("verified", "artifact", reference, resolved=resolved)
 
 
