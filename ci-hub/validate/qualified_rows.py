@@ -24,6 +24,8 @@ import sys
 from typing import Iterable, Mapping
 
 from flake_class import gate_counts
+from green_class import HARD
+from green_class import derive_class
 
 
 DEFAULT_LEDGER = Path(__file__).resolve().parents[2] / "ignored" / "validate-run-ledger.jsonl"
@@ -49,8 +51,18 @@ def is_qualified(row: Mapping[str, object]) -> bool:
     # five-gate contract is known. Older/ambiguous rows remain unqualified.
     ran, expected = gate_counts(dict(row))
     executed = row.get("executed_tests")
+    # A SOFT (inherited) green is not a measurement AT THIS HEAD: validation ran
+    # on an ancestor and is being speculatively trusted here. This view is the
+    # canonical population for green timing/concurrency analysis, so admitting a
+    # run that never executed at this head would corrupt exactly what it measures.
+    # The class is DERIVED from provenance (`validated_head_sha`/`inherited_from`)
+    # and a disagreeing `green_class` label is REFUSED, so this cannot be passed
+    # by stamping a field. Rows predating the provenance fields default to HARD,
+    # which is why adding this clause does not reject any existing producer.
+    green_class, _green_reason = derive_class(dict(row))
     return (
-        row.get("result") == "pass"
+        green_class == HARD
+        and row.get("result") == "pass"
         and isinstance(executed, int)
         and not isinstance(executed, bool)
         and executed > 0

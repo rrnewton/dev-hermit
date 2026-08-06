@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -70,3 +71,113 @@ def test_n_equals_three_legitimate_passes_remain_qualified() -> None:
         _row("c", "2026-08-04T10:02:00Z"),
     ]
     assert qr.qualified_rows(rows) == rows
+
+
+# --- Brackets added after a mutation sweep found four unprotected clauses. ---
+# Each mutation below (delete the clause / weaken the comparison) previously left
+# the whole file green. A guard clause with no failing mutant is decoration: it
+# can be deleted in a refactor and nothing reports it.
+
+
+def test_non_pass_results_never_qualify() -> None:
+    """The headline claim: only a PASS counts as green.
+
+    This is the fake-green direction the accessor exists to prevent, and it was
+    the one clause with NO coverage — deleting `result == "pass"` from
+    `is_qualified` left the suite fully green. Every row here is otherwise
+    perfect (complete gate contract, positive executed count, parseable time),
+    so only the result field can disqualify them.
+    """
+    rejected = [
+        _row("failed", "2026-08-04T10:00:00Z", result="fail"),
+        _row("timed-out", "2026-08-04T10:01:00Z", result="timeout"),
+        _row("truncated", "2026-08-04T10:02:00Z", result="truncated"),
+        # `pass-partial` is `flake_class.effective_result`'s downgrade for a pass
+        # that did not cover the full profile. It contains the substring "pass";
+        # a prefix/`in` test instead of equality would wrongly admit it.
+        _row("partial", "2026-08-04T10:03:00Z", result="pass-partial"),
+        _row("no-result", "2026-08-04T10:04:00Z", result="no_result"),
+        _row("empty", "2026-08-04T10:05:00Z", result=""),
+        _row("wrong-case", "2026-08-04T10:06:00Z", result="PASS"),
+    ]
+    assert qr.qualified_rows(rejected) == []
+
+    missing_result = _row("missing", "2026-08-04T10:07:00Z")
+    missing_result.pop("result")
+    assert qr.qualified_rows([missing_result]) == []
+
+    # Positive control: the identical row shape with `result == "pass"` DOES
+    # qualify, so the refusals above are the result field and not some other
+    # defect in the fixture.
+    assert qr.qualified_rows([_row("ok", "2026-08-04T10:08:00Z")]) != []
+
+
+def test_boolean_executed_tests_does_not_qualify() -> None:
+    """`bool` is a subclass of `int` in Python, so `True > 0` is True.
+
+    Without the explicit `not isinstance(executed, bool)` guard a row recording
+    `executed_tests: true` — a producer type error, not a measurement — would
+    satisfy a naive `isinstance(x, int) and x > 0` check and be counted as a
+    green with an unknown test count.
+    """
+    assert qr.qualified_rows([_row("bool", "2026-08-04T10:00:00Z", executed_tests=True)]) == []
+    assert qr.qualified_rows([_row("bool0", "2026-08-04T10:01:00Z", executed_tests=False)]) == []
+    # Positive control: a real integer count still qualifies.
+    assert qr.qualified_rows([_row("int", "2026-08-04T10:02:00Z", executed_tests=1)]) != []
+
+
+def test_zero_expected_gate_contract_does_not_qualify() -> None:
+    """`expected > 0` is load-bearing: without it `0 >= 0` admits a vacuous row.
+
+    A row claiming zero expected gates has no gate contract to satisfy, so
+    `ran >= expected` is trivially true. That is the "green over no work at all"
+    no-result, and it must fail closed.
+    """
+    vacuous = _row("vacuous", "2026-08-04T10:00:00Z", gates_run=0, gates_expected=0)
+    assert qr.qualified_rows([vacuous]) == []
+
+
+def test_equal_event_times_sort_deterministically() -> None:
+    """Rows sharing a `finished_at` must not fall back to file position.
+
+    Concurrent slots routinely finish inside the same recorded second. Without
+    the commit/slot/log_file tie-breakers the order of an equal-timestamp group
+    is whatever order the reader happened to see, which is exactly the
+    position-not-event-time defect this accessor exists to remove.
+    """
+    same = "2026-08-04T10:00:00Z"
+    forward = [_row("c", same), _row("a", same), _row("b", same)]
+    reverse = list(reversed(forward))
+    assert [row["commit"] for row in qr.qualified_rows(forward)] == ["a", "b", "c"]
+    assert qr.qualified_rows(forward) == qr.qualified_rows(reverse)
+
+
+def test_naive_timestamp_fails_closed() -> None:
+    """A timestamp without a zone cannot be ordered against zoned rows."""
+    naive = _row("naive", "2026-08-04T10:00:00")
+    unparseable = _row("junk", "not-a-timestamp")
+    assert qr.event_time(naive) is None
+    assert qr.qualified_rows([naive, unparseable]) == []
+    # Positive control: the same instant WITH a zone parses and qualifies.
+    assert qr.event_time(_row("zoned", "2026-08-04T10:00:00Z")) is not None
+
+
+def test_load_rows_counts_malformed_and_skips_non_dict(tmp_path) -> None:
+    """Malformed input is counted, never silently folded into the population."""
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps(_row("good", "2026-08-04T10:00:00Z")),
+                "",  # blank lines are skipped without counting
+                "{not json",
+                json.dumps(["a", "list", "is", "not", "a", "row"]),
+                json.dumps(_row("also-good", "2026-08-04T10:01:00Z")),
+            ]
+        )
+        + "\n"
+    )
+    rows, malformed = qr.load_rows(ledger)
+    assert len(rows) == 2
+    assert malformed == 2
+    assert [row["commit"] for row in qr.qualified_rows(rows)] == ["good", "also-good"]

@@ -416,6 +416,36 @@ pub struct Assessment {
     /// Every other record for the same commit (subset, dirty, failed, ...),
     /// retained so callers can explain WHY a commit is NOT validated.
     pub disqualified: Vec<HistoryRow>,
+    /// How many records for this commit are GENUINE clean full-coverage
+    /// FAILURES — i.e. [`FailureDisposition::Failed`], which already excludes
+    /// subset/dirty runs, truncated and needs-rerun records, and environment
+    /// faults (command-not-found storms, sub-second collapses).
+    ///
+    /// The ledger does NOT latch: a later clean full PASS supersedes an earlier
+    /// clean full FAIL and the verdict flips to VALIDATED. That is correct — but
+    /// a VALIDATED banner that says nothing about the superseded failure claims
+    /// more than it verified. The same commit both passing and failing a clean
+    /// full run is a FLAKE SIGNAL, and it is exactly the evidence a green would
+    /// otherwise bury. Counted here so the print path can surface it rather than
+    /// each caller re-deriving it (and re-deriving it differently).
+    ///
+    /// This is a raw count, not a judgement: whether these failures are
+    /// "superseded" depends on the verdict, which is the caller's to read.
+    pub failed_records: usize,
+    /// Clean full-coverage NON-PASS records that the classifier deliberately
+    /// WITHHELD from [`Self::failed_records`] — contended reds, reds whose
+    /// producer predates the solo-execution condition fields, truncated runs,
+    /// and environment faults. Each carries no product verdict on its own, so
+    /// withholding them from the failure count is correct.
+    ///
+    /// They are counted separately because withholding them from the COUNT is
+    /// not the same as withholding them from the OPERATOR. Measured on the live
+    /// ledger: 20 of 105 VALIDATED commits carry at least one same-commit
+    /// `result: "fail"` record, and every one of those failures is withheld —
+    /// so a banner that reports only `failed_records` says nothing at all about
+    /// any of them. "1 non-pass record (withheld: contended)" and silence are
+    /// very different claims.
+    pub withheld_nonpass_records: usize,
 }
 
 /// Assess a single commit against all ledger rows. `sha` must be a full 40-hex
@@ -423,6 +453,8 @@ pub struct Assessment {
 pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
     let mut qualifying = Vec::new();
     let mut disqualified = Vec::new();
+    let mut failed_records = 0usize;
+    let mut withheld_nonpass_records = 0usize;
     let mut saw_failed = false;
     let mut saw_needs_rerun = false;
     let mut saw_truncated = false;
@@ -435,10 +467,28 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
             qualifying.push(row.clone());
         } else {
             match failure_disposition(row, sha) {
-                FailureDisposition::Failed => saw_failed = true,
-                FailureDisposition::NeedsRerun => saw_needs_rerun = true,
-                FailureDisposition::Truncated => saw_truncated = true,
-                FailureDisposition::NoResult => saw_no_result = true,
+                FailureDisposition::Failed => {
+                    saw_failed = true;
+                    failed_records += 1;
+                }
+                FailureDisposition::NeedsRerun => {
+                    saw_needs_rerun = true;
+                    if is_clean_full_coverage(row, sha) {
+                        withheld_nonpass_records += 1;
+                    }
+                }
+                FailureDisposition::Truncated => {
+                    saw_truncated = true;
+                    if is_clean_full_coverage(row, sha) {
+                        withheld_nonpass_records += 1;
+                    }
+                }
+                FailureDisposition::NoResult => {
+                    saw_no_result = true;
+                    if is_clean_full_coverage(row, sha) {
+                        withheld_nonpass_records += 1;
+                    }
+                }
                 FailureDisposition::NotFailure => {}
             }
             disqualified.push(row.clone());
@@ -462,6 +512,8 @@ pub fn assess(rows: &[HistoryRow], sha: &str) -> Assessment {
         verdict,
         qualifying,
         disqualified,
+        failed_records,
+        withheld_nonpass_records,
     }
 }
 
@@ -553,6 +605,114 @@ mod tests {
                 "executed_tests":36,"filtered_tests":0,
                 "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90}}"#
         ))
+    }
+
+    // ---- SUPERSEDED-FAIL SURFACING -------------------------------------
+    // The ledger does not latch, so a later clean full PASS flips the verdict to
+    // VALIDATED. `failed_records` is what stops that green from silently burying
+    // the same commit's clean full FAIL. Bracketed BOTH ways: it must count a
+    // genuine superseded failure, and must NOT fire on a green with no failure
+    // or on a red that carries no information about the product.
+
+    #[test]
+    fn validated_commit_counts_its_superseded_clean_full_failures() {
+        let rows = vec![complete_failure(PASS_SHA), clean_full_pass(PASS_SHA)];
+        let assessment = assess(&rows, PASS_SHA);
+        // The pass supersedes the fail -- the verdict is genuinely VALIDATED ...
+        assert_eq!(assessment.verdict, Verdict::Validated);
+        // ... and the failure is still SURFACED rather than buried.
+        assert_eq!(assessment.failed_records, 1);
+    }
+
+    #[test]
+    fn a_clean_green_reports_no_superseded_failures() {
+        // POSITIVE CONTROL: without this, a counter that always returned >0
+        // would pass the test above and warn on every green.
+        let rows = vec![clean_full_pass(PASS_SHA)];
+        let assessment = assess(&rows, PASS_SHA);
+        assert_eq!(assessment.verdict, Verdict::Validated);
+        assert_eq!(assessment.failed_records, 0);
+    }
+
+    #[test]
+    fn an_environment_fault_is_not_counted_as_a_superseded_failure() {
+        // A command-not-found storm exercised nothing about the product, so it is
+        // not a flake signal and must not raise the alarm on a legitimate green.
+        let rows = vec![command_not_found_row(PASS_SHA), clean_full_pass(PASS_SHA)];
+        let assessment = assess(&rows, PASS_SHA);
+        assert_eq!(assessment.verdict, Verdict::Validated);
+        assert_eq!(assessment.failed_records, 0);
+    }
+
+    #[test]
+    fn superseded_failures_are_counted_not_merely_flagged() {
+        // The banner prints N; a boolean would under-report a repeatedly-flaking
+        // commit as indistinguishable from a single blip.
+        let rows = vec![
+            complete_failure(PASS_SHA),
+            complete_failure(PASS_SHA),
+            complete_failure(PASS_SHA),
+            clean_full_pass(PASS_SHA),
+        ];
+        assert_eq!(assess(&rows, PASS_SHA).failed_records, 3);
+    }
+
+    #[test]
+    fn failures_on_a_different_commit_are_not_attributed_here() {
+        let rows = vec![complete_failure(OTHER_SHA), clean_full_pass(PASS_SHA)];
+        let assessment = assess(&rows, PASS_SHA);
+        assert_eq!(assessment.verdict, Verdict::Validated);
+        assert_eq!(assessment.failed_records, 0);
+    }
+
+    #[test]
+    fn failed_on_record_counts_only_genuine_clean_full_failures() {
+        // The FAILED banner used `disqualified.len()`, which also counts subset,
+        // dirty, truncated and env-fault rows. With no qualifying pass the
+        // verdict is FailedOnRecord; the reported number must be the genuine
+        // failures only -- here 1, not the 2 rows sitting in `disqualified`.
+        let rows = vec![complete_failure(PASS_SHA), command_not_found_row(PASS_SHA)];
+        let assessment = assess(&rows, PASS_SHA);
+        assert_eq!(assessment.verdict, Verdict::FailedOnRecord);
+        assert_eq!(assessment.disqualified.len(), 2);
+        assert_eq!(assessment.failed_records, 1);
+    }
+
+    #[test]
+    fn a_contended_red_is_withheld_from_failures_but_still_counted() {
+        // The live shape: a clean full red recorded while other validates ran.
+        // It is NOT a product failure (so `failed_records` stays 0) but the
+        // operator must still learn the record exists.
+        let contended = row(&format!(
+            r#"{{"schema_version":4,"profile":"full","selection_mode":"full",
+                "commit":"{PASS_SHA}","commit_anchored":true,"tree_dirty":false,
+                "result":"fail","exit_code":1,"checks":5,"gates_run":5,
+                "gates_expected":5,"failures":1,"executed_tests":765,"dag_jobs":16,
+                "concurrent_validates":9,"known_flaky_failure":false,
+                "solo_rerun_confirmation":false,"real_seconds":507,
+                "gates":[{{"name":"portable CI DAG lane","result":"fail",
+                    "exit_code":1,"real_seconds":423}}]}}"#
+        ));
+        let assessment = assess(&[contended, clean_full_pass(PASS_SHA)], PASS_SHA);
+        assert_eq!(assessment.verdict, Verdict::Validated);
+        assert_eq!(assessment.failed_records, 0, "a contended red is not a product failure");
+        assert_eq!(assessment.withheld_nonpass_records, 1, "but it must not be silent");
+    }
+
+    #[test]
+    fn a_clean_green_has_nothing_withheld() {
+        // POSITIVE CONTROL for the second banner line.
+        let assessment = assess(&[clean_full_pass(PASS_SHA)], PASS_SHA);
+        assert_eq!(assessment.failed_records, 0);
+        assert_eq!(assessment.withheld_nonpass_records, 0);
+    }
+
+    #[test]
+    fn a_genuine_failure_is_counted_as_a_failure_not_withheld() {
+        // The two counters must not double-count the same record.
+        let assessment = assess(&[complete_failure(PASS_SHA), clean_full_pass(PASS_SHA)], PASS_SHA);
+        assert_eq!(assessment.failed_records, 1);
+        assert_eq!(assessment.withheld_nonpass_records, 0);
     }
 
     fn complete_failure(sha: &str) -> HistoryRow {
