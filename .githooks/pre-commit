@@ -22,6 +22,63 @@ set -u
 LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
 POLICY=".githooks/hygiene-policy.md"
 
+# ---------------------------------------------------------------------------
+# SHARED-INDEX GUARD.
+#
+# Every agent in this parent shares ONE working tree and therefore ONE
+# .git/index, so `git add` is not private: a BARE `git commit` commits whatever
+# is staged, including another agent's paths. This is not hypothetical -- six
+# staged files were swept into commit 0b40af7 on 2026-08-06. Bare
+# `git commit --amend` sweeps identically (measured).
+#
+# The fix is `git commit -m msg -- <paths>`, which builds a temporary index from
+# HEAD plus the named paths, so it can only ever contain what you named and it
+# leaves everyone else's staged work alone. git points GIT_INDEX_FILE at that
+# temporary `next-index-*` for hooks, which is what makes this detectable rather
+# than merely advisable.
+#
+# WARN-ONLY BY DEFAULT, deliberately: 12 `git commit` call sites in this repo's
+# own tooling currently use no pathspec (including `--amend --no-edit` in the
+# landing union-rebase scripts), so default-deny would break landing today.
+# Flip to blocking with HERMIT_SHARED_INDEX_GUARD=block once those are converted;
+# silence with =off. Evidence + harness:
+# experiments/shared-git-index-race_20260806/
+# ---------------------------------------------------------------------------
+shared_index_guard() {
+  [ "${HERMIT_SHARED_INDEX_GUARD:-warn}" = "off" ] && return 0
+  # A pathspec commit is already safe -- nothing to warn about.
+  case "${GIT_INDEX_FILE:-.git/index}" in *next-index*) return 0 ;; esac
+
+  local staged
+  staged=$(git diff --cached --name-only 2>/dev/null) || return 0
+  [ -z "$staged" ] && return 0
+
+  {
+    echo "----------------------------------------------------------------------"
+    echo "SHARED INDEX: this is a BARE commit, so it takes EVERYTHING staged in"
+    echo "the parent's shared index -- including any path another agent staged:"
+    echo "$staged" | sed 's/^/    /'
+    echo
+    echo "If any line above is not yours, abort (Ctrl-C) and instead run:"
+    echo "      git add <your paths> && git commit -m 'msg' -- <your paths>"
+  } >&2
+
+  if [ "${HERMIT_SHARED_INDEX_GUARD:-warn}" = "block" ]; then
+    echo "BLOCKED (HERMIT_SHARED_INDEX_GUARD=block)." >&2
+    echo "----------------------------------------------------------------------" >&2
+    return 1
+  fi
+  echo "(warn-only; set HERMIT_SHARED_INDEX_GUARD=block to enforce)" >&2
+  echo "----------------------------------------------------------------------" >&2
+  return 0
+}
+# Never let a defect in the guard itself block a commit in warn mode.
+if [ "${HERMIT_SHARED_INDEX_GUARD:-warn}" = "block" ]; then
+  shared_index_guard || exit 1
+else
+  shared_index_guard || true
+fi
+
 # Warning-only checkout/snapshot freshness probe. A stale/detached primary,
 # stale parent gitlink, or Reverie-pin currency mismatch must be loud, but it
 # must not prevent a parent commit that repairs a stale gitlink or hook.

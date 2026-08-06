@@ -1,0 +1,45 @@
+{
+  "experiment": "shared-git-index-race",
+  "date": "2026-08-06",
+  "question": "The parent repo's git index is shared across agents; which of pathspec-commit / index-lock / per-agent GIT_INDEX_FILE actually fixes the sweeping, verified by planting?",
+  "trigger_incident": {
+    "commit": "0b40af7",
+    "what": "6 staged files of another agent swept into it",
+    "outcome": "content byte-identical, not rewritten"
+  },
+  "repo_shas": {
+    "dev_hermit_parent": "240d09e39ae400f46837bcec61ce00f73aa29f9c"
+  },
+  "git_version": "git version 2.53.0-Meta",
+  "host": {
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": "316"
+  },
+  "command": "./race_harness.sh",
+  "isolation": "every scenario runs in a fresh mktemp repo; the live parent is never used as a test subject",
+  "results": {
+    "checks": 23,
+    "pass": 23,
+    "fail": 0
+  },
+  "verdict": {
+    "adopted": "git add <paths> && git commit -m msg -- <paths>, as ONE step",
+    "rejected_git_index_file": "S7: an index seeded by an earlier read-tree HEAD SILENTLY REVERTS a concurrent commit (no conflict, no warning)",
+    "not_implemented_lock": "needs a coordination primitive and universal cooperation; strictly more expensive than the pathspec rule and solves no extra case",
+    "mechanism": "pre-commit guard in .githooks/pre-commit; detects bare vs pathspec via GIT_INDEX_FILE (bare=.git/index, pathspec=.git/next-index-<pid>.lock)",
+    "default_mode": "warn"
+  },
+  "call_site_census": {
+    "git_commit_sites_in_parent_tooling": 12,
+    "with_pathspec": 0,
+    "why_it_matters": "default-deny would break landing today; notably --amend --no-edit in ci-hub/landing/union-rebase.sh and scripts/e2e-union-rebase.sh"
+  },
+  "additional_measurement": "bare `git commit --amend` sweeps identically to a bare commit; the bystander's staged file is absorbed and left unstaged",
+  "guard_modes_bracketed": [
+    "warn: allows and NAMES the foreign staged path",
+    "pathspec: silent",
+    "block: refuses",
+    "off: silent"
+  ],
+  "follow_up": "convert the parent-committing call sites (union-rebase amends, 2 sites in ci-hub/ci-hub.rs) to pathspec form, then flip the guard default to block"
+}
