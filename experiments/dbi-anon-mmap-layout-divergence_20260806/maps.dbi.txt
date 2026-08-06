@@ -1,0 +1,180 @@
+00400000-00401000 r--p 00000000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00401000-00402000 r-xp 00001000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00402000-00403000 r--p 00002000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00403000-00404000 r--p 00002000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00404000-00405000 rw-p 00003000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00405000-00406000 ---p 00000000 00:00 0 
+00406000-00427000 rw-p 00000000 00:00 0 
+4ebdd000-4ebe5000 rw-p 00000000 00:00 0 
+4ebe5000-4ebe6000 ---p 00000000 00:00 0 
+4ebe6000-4ebec000 rw-p 00000000 00:00 0 
+4ebec000-4ebee000 ---p 00000000 00:00 0 
+4ebee000-4ebef000 rwxp 00000000 00:00 0 
+4ebef000-4ebf1000 r-xp 00000000 00:00 0 
+4ebf1000-4ebf2000 rwxp 00000000 00:00 0 
+4ebf2000-4ebf5000 ---p 00000000 00:00 0 
+4ebf5000-4ec03000 rwxp 00000000 00:00 0 
+4ec03000-4ec05000 ---p 00000000 00:00 0 
+4ec05000-4ec08000 rwxp 00000000 00:00 0 
+4ec08000-4ec15000 ---p 00000000 00:00 0 
+4ec15000-4ec16000 rwxp 00000000 00:00 0 
+4ec16000-4ec18000 ---p 00000000 00:00 0 
+4ec18000-4ec19000 rwxp 00000000 00:00 0 
+4ec19000-4ec1b000 ---p 00000000 00:00 0 
+4ec1b000-4ec21000 rw-p 00000000 00:00 0 
+4ec21000-4ec23000 ---p 00000000 00:00 0 
+4ec23000-4ec2c000 rw-p 00000000 00:00 0 
+4ec2c000-4ec31000 ---p 00000000 00:00 0 
+4ec31000-4ec32000 rwxp 00000000 00:00 0 
+4ec32000-4ec41000 ---p 00000000 00:00 0 
+4ec41000-4ec52000 rw-p 00000000 00:00 0 
+4ec52000-4ec5b000 ---p 00000000 00:00 0 
+4ec5b000-4ec5c000 rw-p 00000000 00:00 0 
+4ec5c000-4ec63000 ---p 00000000 00:00 0 
+4ec63000-4ec65000 rwxp 00000000 00:00 0 
+4ec65000-4ec67000 ---p 00000000 00:00 0 
+4ec67000-4ec6b000 rwxp 00000000 00:00 0 
+4ec6b000-4ec6d000 ---p 00000000 00:00 0 
+4ec6d000-4ec7b000 rwxp 00000000 00:00 0 
+4ec7b000-4ec7d000 ---p 00000000 00:00 0 
+4ec7d000-4ec83000 rwxp 00000000 00:00 0 
+4ec7d000-4ec84000 rwxp 00000000 00:00 0 
+4ec84000-4ec87000 ---p 00000000 00:00 0 
+4ec87000-4ec95000 rwxp 00000000 00:00 0 
+4ec95000-4ec97000 ---p 00000000 00:00 0 
+4ec97000-4eca0000 rwxp 00000000 00:00 0 
+4eca0000-72000000 ---p 00000000 00:00 0 
+72000000-72003000 r--p 00000000 00:2d 218985657                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/libreverie_dbi_client.so
+72003000-7200a000 r-xp 00003000 00:2d 218985657                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/libreverie_dbi_client.so
+7200a000-7200c000 r--p 0000a000 00:2d 218985657                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/libreverie_dbi_client.so
+7200c000-7200e000 rw-p 0000b000 00:2d 218985657                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/libreverie_dbi_client.so
+7200e000-72010000 rw-p 00000000 00:00 0 
+72010000-73000000 ---p 00000000 00:00 0 
+73000000-73005000 r--p 00000000 00:2d 218985610                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrmgr.so
+73005000-7300f000 r-xp 00005000 00:2d 218985610                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrmgr.so
+7300f000-73012000 r--p 0000f000 00:2d 218985610                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrmgr.so
+73012000-73014000 rw-p 00011000 00:2d 218985610                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrmgr.so
+73014000-78000000 ---p 00000000 00:00 0 
+78000000-78003000 r--p 00000000 00:2d 218985611                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrreg.so
+78003000-7800a000 r-xp 00003000 00:2d 218985611                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrreg.so
+7800a000-7800c000 r--p 0000a000 00:2d 218985611                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrreg.so
+7800c000-7800e000 rw-p 0000b000 00:2d 218985611                          /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrreg.so
+7800e000-8ebdd000 ---p 00000000 00:00 0 
+7ffdf6e00000-7ffdf6e29000 r--p 00000000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf6e29000-7ffdf6f9e000 r-xp 00029000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf6f9e000-7ffdf6ff7000 r--p 0019e000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf6ff7000-7ffdf6ffb000 r--p 001f6000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf6ffb000-7ffdf6ffd000 rw-p 001fa000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf6ffd000-7ffdf700a000 rw-p 00000000 00:00 0 
+7ffdf71f5000-7ffdf721e000 r--p 00000000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf721e000-7ffdf7393000 r-xp 00029000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf7393000-7ffdf73ec000 r--p 0019e000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf73ec000-7ffdf73f2000 rw-p 001f6000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffdf73f2000-7ffdf73ff000 rw-p 00000000 00:00 0 
+7ffdf73ff000-7ffdf7400000 ---p 00000000 00:00 0 
+7ffdf76c6000-7ffdf7823000 r--p 00000000 00:2d 218870603                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/release/libdetcore_dbi.so
+7ffdf7823000-7ffdf7bc6000 r-xp 0015c000 00:2d 218870603                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/release/libdetcore_dbi.so
+7ffdf7bc6000-7ffdf7bfa000 rw-p 004fe000 00:2d 218870603                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/release/libdetcore_dbi.so
+7ffdf7bfa000-7ffdf7bfe000 rw-p 00531000 00:2d 218870603                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/release/libdetcore_dbi.so
+7ffdf7bfe000-7ffdf7bff000 ---p 00000000 00:00 0 
+7ffdf7bff000-7ffdf7c3f000 rw-p 00000000 00:00 0 
+7ffdf7c3f000-7ffdf7c40000 ---p 00000000 00:00 0 
+7ffdf7c40000-7ffdf7c46000 rw-p 00000000 00:00 0 
+7ffdf7c46000-7ffdf7c48000 ---p 00000000 00:00 0 
+7ffdf7c48000-7ffdf7c4a000 rw-p 00000000 00:00 0 
+7ffdf7c4a000-7ffdf7c50000 ---p 00000000 00:00 0 
+7ffdf7c50000-7ffdf7c56000 rw-p 00000000 00:00 0 
+7ffdf7c56000-7ffdf7c58000 ---p 00000000 00:00 0 
+7ffdf7c58000-7ffdf7c70000 rw-p 00000000 00:00 0 
+7ffdf7c70000-7ffdf7c72000 ---p 00000000 00:00 0 
+7ffdf7c72000-7ffdf7e72000 rw-p 00000000 00:00 0 
+7ffdf7e72000-7ffdf7e74000 ---p 00000000 00:00 0 
+7ffdf7e74000-7ffdf7e80000 rw-p 00000000 00:00 0 
+7ffdf7e80000-7ffdf7e82000 ---p 00000000 00:00 0 
+7ffdf7e82000-7ffdf7e8e000 rw-p 00000000 00:00 0 
+7ffdf7e8e000-7ffdf7e90000 ---p 00000000 00:00 0 
+7ffdf7e90000-7ffdf7e91000 rw-p 00000000 00:00 0 
+7ffdf7e91000-7ffdf7e93000 ---p 00000000 00:00 0 
+7ffdf7e93000-7ffdf7e95000 rw-p 00000000 00:00 0 
+7ffdf7e95000-7ffdf7e97000 ---p 00000000 00:00 0 
+7ffdf7e97000-7ffdf8097000 rw-p 00000000 00:00 0 
+7ffdf8097000-7ffdf8099000 ---p 00000000 00:00 0 
+7ffdf8099000-7ffdf809f000 rw-p 00000000 00:00 0 
+7ffdf809f000-7ffdf80a1000 ---p 00000000 00:00 0 
+7ffdf80a1000-7ffdf80a3000 rw-p 00000000 00:00 0 
+7ffdf80a3000-7ffdf80a6000 ---p 00000000 00:00 0 
+7ffdf80a6000-7ffdf80a7000 rw-p 00000000 00:00 0 
+7ffdf80a7000-7ffdf80ae000 ---p 00000000 00:00 0 
+7ffdf80ae000-7ffdf80b6000 rw-p 00000000 00:00 0 
+7ffdf80b6000-7ffdf80b8000 ---p 00000000 00:00 0 
+7ffdf80b8000-7ffdf80d0000 rw-p 00000000 00:00 0 
+7ffdf80d0000-7ffdf80d2000 ---p 00000000 00:00 0 
+7ffdf80d2000-7ffdf82d2000 rw-p 00000000 00:00 0 
+7ffdf82d2000-7ffdf82d4000 ---p 00000000 00:00 0 
+7ffdf82d4000-7ffdf82d5000 rw-p 00000000 00:00 0 
+7ffdf82d5000-7ffdf82d7000 ---p 00000000 00:00 0 
+7ffdf82d7000-7ffdf82d9000 rw-p 00000000 00:00 0 
+7ffdf82d9000-7ffdf82db000 ---p 00000000 00:00 0 
+7ffdf82db000-7ffdf82dd000 rw-p 00000000 00:00 0 
+7ffdf82dd000-7ffdf82e3000 ---p 00000000 00:00 0 
+7ffdf82e3000-7ffdf82e5000 rw-p 00000000 00:00 0 
+7ffdf82e5000-7ffdf82e8000 ---p 00000000 00:00 0 
+7ffdf82e8000-7ffdf82e9000 rw-p 00000000 00:00 0 
+7ffdf82e9000-7ffdf82f0000 ---p 00000000 00:00 0 
+7ffdf82f0000-7ffdf82f8000 rw-p 00000000 00:00 0 
+7ffdf82f8000-7ffdf82fa000 ---p 00000000 00:00 0 
+7ffdf82fa000-7ffdf8305000 rw-p 00000000 00:00 0 
+7ffdf8305000-7ffdf8308000 ---p 00000000 00:00 0 
+7ffdf8308000-7ffdf8314000 rw-p 00000000 00:00 0 
+7ffdf8314000-7ffdf8316000 ---p 00000000 00:00 0 
+7ffdf8316000-7ffdf832e000 rw-p 00000000 00:00 0 
+7ffdf832e000-7ffdf8330000 ---p 00000000 00:00 0 
+7ffdf8330000-7ffdf8332000 rw-p 00000000 00:00 0 
+7ffdf8332000-7ffdf8362000 ---p 00000000 00:00 0 
+7ffdf8362000-7ffdf8392000 rw-p 00000000 00:00 0 
+7ffdf8392000-7ffdf8394000 ---p 00000000 00:00 0 
+7ffdf8394000-7ffdf83ad000 rw-p 00000000 00:00 0 
+7ffdf83ad000-7ffff7c00000 ---p 00000000 00:00 0 
+7ffff7c00000-7ffff7c4f000 r--p 00000000 00:2d 218985604                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/lib64/release/libdynamorio.so
+7ffff7c4f000-7ffff7d3e000 r-xp 0004f000 00:2d 218985604                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/lib64/release/libdynamorio.so
+7ffff7d3e000-7ffff7d87000 r--p 0013e000 00:2d 218985604                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/lib64/release/libdynamorio.so
+7ffff7d87000-7ffff7df9000 rw-p 00187000 00:2d 218985604                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/lib64/release/libdynamorio.so
+7ffff7df9000-7ffff7e30000 rw-p 00000000 00:00 0 
+7ffff7e4b000-7ffff7e5c000 rw-s 00000000 00:01 31878                      /memfd:reverie-dbi-pids (deleted)
+7ffff7e5c000-7ffff7e69000 r--p 00000000 00:1f 1253157                    /usr/lib64/libm.so.6
+7ffff7e69000-7ffff7edb000 r-xp 0000d000 00:1f 1253157                    /usr/lib64/libm.so.6
+7ffff7edb000-7ffff7f37000 r--p 0007f000 00:1f 1253157                    /usr/lib64/libm.so.6
+7ffff7f37000-7ffff7f39000 rw-p 000da000 00:1f 1253157                    /usr/lib64/libm.so.6
+7ffff7f39000-7ffff7f3a000 ---p 00000000 00:00 0 
+7ffff7f3a000-7ffff7f3c000 r--p 00000000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7f3c000-7ffff7f65000 r-xp 00002000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7f65000-7ffff7f71000 r--p 0002b000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7f71000-7ffff7f75000 rw-p 00037000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7f75000-7ffff7f76000 ---p 00000000 00:00 0 
+7ffff7f76000-7ffff7f79000 r--p 00000000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7f79000-7ffff7f8d000 r-xp 00003000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7f8d000-7ffff7f91000 r--p 00017000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7f91000-7ffff7f92000 rw-p 0001a000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7f92000-7ffff7f93000 rw-p 00000000 00:00 0 
+7ffff7f93000-7ffff7f94000 ---p 00000000 00:00 0 
+7ffff7f94000-7ffff7f97000 r--p 00000000 00:2d 218985612                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrwrap.so
+7ffff7f97000-7ffff7f9e000 r-xp 00003000 00:2d 218985612                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrwrap.so
+7ffff7f9e000-7ffff7fa0000 r--p 0000a000 00:2d 218985612                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrwrap.so
+7ffff7fa0000-7ffff7fa2000 rw-p 0000b000 00:2d 218985612                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrwrap.so
+7ffff7fa2000-7ffff7fa3000 ---p 00000000 00:00 0 
+7ffff7fa3000-7ffff7fa7000 r--p 00000000 00:2d 218985609                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrx.so
+7ffff7fa7000-7ffff7fb1000 r-xp 00004000 00:2d 218985609                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrx.so
+7ffff7fb1000-7ffff7fb3000 r--p 0000e000 00:2d 218985609                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrx.so
+7ffff7fb3000-7ffff7fb5000 rw-p 0000f000 00:2d 218985609                  /home/newton/work/dev-hermit/worktrees/dbi/hermit/target/install_pkg/rsrcs/dynamorio/ext/lib64/release/libdrx.so
+7ffff7fb5000-7ffff7fb6000 ---p 00000000 00:00 0 
+7ffff7fb6000-7ffff7fb8000 r--p 00000000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fb8000-7ffff7fe1000 r-xp 00002000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fe1000-7ffff7fef000 r--p 0002b000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fef000-7ffff7ff1000 rw-p 00039000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7ff1000-7ffff7ff2000 ---p 00000000 00:00 0 
+7ffff7ff2000-7ffff7ff7000 rw-p 00000000 00:00 0 
+7ffff7ff7000-7ffff7ffb000 r--p 00000000 00:00 0                          [vvar]
+7ffff7ffb000-7ffff7ffd000 r--p 00000000 00:00 0                          [vvar_vclock]
+7ffff7ffd000-7ffff7fff000 r-xp 00000000 00:00 0                          [vdso]
+7ffffffdb000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]

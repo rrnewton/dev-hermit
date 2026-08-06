@@ -1,0 +1,29 @@
+{
+  "experiment": "dbi-anon-mmap-layout-divergence",
+  "date": "2026-08-06",
+  "question": "Can DBI's anonymous-mmap page layout be made to match the ptrace/native reference by a DBI-side change?",
+  "answer": "No. The hole structure that produces ptrace's d23=-8 does not exist anywhere in DBI's address space (0 of 7 gaps), so relocating any DBI mapping cannot reproduce it.",
+  "repos": {
+    "dev-hermit": "branch research/dbi-anon-mmap-layout",
+    "hermit_binary": "worktrees/dbi/hermit/target/release/hermit (release, third-party-backends)"
+  },
+  "guest": "~/.local/hermit-deps/guests/mlo (from PR #1703 fixture mmap_layout_pointer_order.c @ f93109f2e)",
+  "command": "hermit run --backend {ptrace,dbi} --strict -- mlo",
+  "measurements": {
+    "native_d23": -8,
+    "ptrace_d23": -8,
+    "dbi_d23": -4,
+    "ptrace_vmas": 25,
+    "dbi_vmas": 185,
+    "ptrace_glibc_signature_holes": 1,
+    "dbi_glibc_signature_holes": 0,
+    "hermit_owned_vmas_leaked_into_guest_under_dbi": 9,
+    "hermit_owned_vmas_under_ptrace": 0
+  },
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316
+  },
+  "status": "NOT FIXED; blocker confirmed by measurement. Fix requires detcore-assigned guest mmap addresses (new determinization strategy, owner sign-off)."
+}
