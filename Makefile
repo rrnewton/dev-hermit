@@ -134,7 +134,7 @@ check-harness-help: ## Assert every harness entrypoint's -h/--help/--version is 
 check-rust-error-string-proxies: ## Reject Rust control flow that classifies typed errors by display strings
 	@scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
-check-agent-utils-pin: ## Fetch and reject stale/diverged/unpushed agent-utils state
+check-agent-utils-pin: ## Fetch and reject stale/diverged agent-utils state, plus STRANDED local commits (in-flight work on a checked-out branch is reported, not failed)
 	@scripts/check-agent-utils-pin.rs
 
 # The harness spawn-cost warning fires at 40000 chars (the file loads in full at
