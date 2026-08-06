@@ -78,3 +78,63 @@ each clean primary, then commit and push the three gitlinks as one coherent
 snapshot. Dirty primaries are preserved and skipped with a warning. Tick-hub
 runs this same strict routine every five minutes; it hard-warns instead of
 publishing if any cleanliness, branch, freshness, pin, or parent-main gate fails.
+
+## The shared index: never `git commit` bare in the parent
+
+Every agent in this parent shares one working tree and therefore **one
+`.git/index`**. `git add` is not private. A bare `git commit` commits everything
+currently staged, including paths another agent staged seconds earlier. This is
+not hypothetical: six staged files were swept into commit `0b40af7` on
+2026-08-06. Bare `git commit --amend` sweeps identically — which means the
+landing `union-rebase.sh` scripts can absorb a bystander's work.
+
+**The rule: stage and commit your explicit paths in ONE step.**
+
+```bash
+git add <your paths> && git commit -m "msg" -- <your paths>
+```
+
+`git commit -- <paths>` builds a temporary index from `HEAD` plus the named
+paths, so the commit can only contain what you named, and everyone else's staged
+work is left untouched. Verify afterwards with
+`git log --oneline -1 -- <your paths>` that your commit owns them.
+
+Three things worth knowing before you rely on it:
+
+- **It only protects other people from you.** If someone else commits bare while
+  your paths are staged, you are still swept. That is why the rule has to be
+  universal, and why `.githooks/pre-commit` warns rather than relying on memory.
+- **It commits the WORKING TREE, not what you staged.** If you staged one version
+  and then edited the file, the edited version is what lands. Do not combine it
+  with partial staging (`git add -p`).
+- **A brand-new file must be `git add`ed first**; a pathspec commit alone refuses
+  a path git has never seen.
+
+Rejected alternative: a per-agent `GIT_INDEX_FILE`. It does give private staging,
+but a commit from an index seeded by an earlier `read-tree HEAD` **silently
+reverts** anything committed in the meantime — measured, it discarded a
+concurrent change with no conflict and no warning. Strictly worse than the
+problem it solves.
+
+The `.githooks/pre-commit` shared-index guard **blocks bare commits by default**
+(since 2026-08-06). Deliberate exception: `HERMIT_SHARED_INDEX_GUARD=warn` to
+report and allow, `=off` to silence. It is independent of
+`HERMIT_PIN_DRIFT_OVERRIDE`, which is a different guard.
+
+The earlier warn-only default cited "12 call sites with no pathspec". **That
+census was wrong twice**: it counted error-message strings as call sites, and its
+grep missed the `--only` / `-o` plus separate-`--` argv form. Re-derived, every
+tool site that commits in the *parent* working tree was already safe:
+
+| site | form |
+|---|---|
+| `ci-hub/ci-hub.rs` ×2 | `git -C <root> commit -m MSG -o -- <path>` |
+| `scripts/primary_checkout.py` | `git -C <root> commit --only -m MSG -- <paths>` |
+
+The union-rebase amends are not parent commits at all — both scripts take
+`WT=${1:?hermit worktree path}` and `cd "$WT"`, so they use that worktree's own
+index and cannot race the parent. No call site needed converting; `-o -- <path>`
+and `--only -- <paths>` were both verified ALLOWED under block before flipping.
+
+Evidence and the planting harness (29 checks):
+`experiments/shared-git-index-race_20260806/`.

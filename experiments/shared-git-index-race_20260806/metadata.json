@@ -1,0 +1,59 @@
+{
+  "experiment": "shared-git-index-race",
+  "date": "2026-08-06",
+  "question": "The parent repo's git index is shared across agents; which of pathspec-commit / index-lock / per-agent GIT_INDEX_FILE actually fixes the sweeping, verified by planting?",
+  "trigger_incident": {
+    "commit": "0b40af7",
+    "what": "6 staged files of another agent swept into it",
+    "outcome": "content byte-identical, not rewritten"
+  },
+  "repo_shas": {
+    "dev_hermit_parent": "240d09e39ae400f46837bcec61ce00f73aa29f9c"
+  },
+  "git_version": "git version 2.53.0-Meta",
+  "host": {
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": "316"
+  },
+  "command": "./race_harness.sh",
+  "isolation": "every scenario runs in a fresh mktemp repo; the live parent is never used as a test subject",
+  "results": {
+    "checks": 29,
+    "pass": 29,
+    "fail": 0
+  },
+  "verdict": {
+    "adopted": "git add <paths> && git commit -m msg -- <paths>, as ONE step",
+    "rejected_git_index_file": "S7: an index seeded by an earlier read-tree HEAD SILENTLY REVERTS a concurrent commit (no conflict, no warning)",
+    "not_implemented_lock": "needs a coordination primitive and universal cooperation; strictly more expensive than the pathspec rule and solves no extra case",
+    "mechanism": "pre-commit guard in .githooks/pre-commit; detects bare vs pathspec via GIT_INDEX_FILE (bare=.git/index, pathspec=.git/next-index-<pid>.lock)",
+    "default_mode": "block (flipped 2026-08-06 after re-deriving the census)"
+  },
+  "call_site_census": {
+    "correction": "the earlier '12 sites, 0 with pathspec' was WRONG TWICE: it counted error-message strings as call sites, and its grep missed the --only / -o plus separate-`--` argv form",
+    "parent_committing_sites": 3,
+    "already_safe": 3,
+    "conversions_required": 0,
+    "sites": {
+      "ci-hub/ci-hub.rs x2": "git -C <root> commit -m MSG -o -- <path>",
+      "scripts/primary_checkout.py": "git -C <root> commit --only -m MSG -- <paths>"
+    },
+    "union_rebase": "NOT parent commits: both scripts take WT=${1:?hermit worktree path} and cd \"$WT\", so they use that worktree's own index"
+  },
+  "additional_measurement": "bare `git commit --amend` sweeps identically to a bare commit; the bystander's staged file is absorbed and left unstaged",
+  "guard_modes_bracketed": [
+    "warn: allows and NAMES the foreign staged path",
+    "pathspec: silent",
+    "block: refuses",
+    "off: silent"
+  ],
+  "follow_up": "convert the parent-committing call sites (union-rebase amends, 2 sites in ci-hub/ci-hub.rs) to pathspec form, then flip the guard default to block",
+  "flip_verification": {
+    "precondition": "S13 proved `-o -- <path>` and `--only -- <paths>` are ALLOWED under block, commit only the named path, and leave a bystander's staged file untouched",
+    "live_negative": "real hook + real index simulating a bare commit -> rc=1, BLOCKED, 113 staged paths reported (capped at 15)",
+    "live_positive": "real hook simulating a pathspec commit -> guard SILENT (the rc=1 there was the pre-existing Reverie pin-drift guard, 0 occurrences of the guard's own marker)",
+    "escape_hatches": "HERMIT_SHARED_INDEX_GUARD=warn -> rc=0; =off -> rc=0 and silent; HERMIT_PIN_DRIFT_OVERRIDE=1 unaffected",
+    "safety": "a live BARE-commit test was deliberately NOT run: 113 other-agent paths were staged, so a guard failure would have swept real work. The hook was exercised directly instead, which is faithful and creates no commit."
+  },
+  "usability_fix": "the guard now caps its listing at 15 paths plus a count; with 113 staged it would otherwise print a wall of text, and a guard that floods the terminal gets disabled"
+}
