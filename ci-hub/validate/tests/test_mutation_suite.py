@@ -31,7 +31,8 @@ def test_the_runner_reports_a_survivor_and_lowers_the_score(monkeypatch) -> None
 
     rep = MS.run()
     assert rep["mutation_score"] == {"killed": 1, "total_scored": 2,
-                                     "skipped": 0, "percent": 50.0}
+                                     "skipped": 0, "unavailable": 0,
+                                     "percent": 50.0}
     assert [s["id"] for s in rep["survivors"]] == ["fake/survivor"]
     # The survivor must be named INDIVIDUALLY in the rendered output -- the
     # survivors ARE the finding, so a bare percentage would bury them.
@@ -116,3 +117,95 @@ def test_every_mutant_id_is_unique() -> None:
     tracking of which mutants survived."""
     ids = [m.id for m in MS._catalogue()[0]]
     assert len(ids) == len(set(ids)), [i for i in ids if ids.count(i) > 1]
+
+
+# --- UNAVAILABLE: a guard that could not run must never read as a kill --------
+#
+# These brackets exist because the failure they guard against already happened
+# once, one level down: a hand audit ran these fixtures NATIVELY, saw the same
+# exit code clean and mutated, and recorded a working fixture as BROKEN. The
+# suite's answer is to refuse to have an opinion when it cannot run the fixture
+# properly -- which is only safe if "cannot run" is impossible to confuse with
+# "ran and passed".
+
+
+def _report_for(probe):
+    """Run a one-mutant catalogue through the real runner."""
+    orig = MS._catalogue
+    MS._catalogue = lambda: ([MS.Mutant("t/x", "tguard", "d", probe)], [])
+    try:
+        return MS.run()
+    finally:
+        MS._catalogue = orig
+
+
+def test_fixture_unavailable_is_reported_unavailable_not_killed() -> None:
+    def probe():
+        raise MS.FixtureUnavailable("no hermit binary here")
+
+    rep = _report_for(probe)
+    g = rep["guards"]["tguard"]
+    assert g["unavailable"] and "no hermit binary" in g["unavailable"][0]["reason"]
+    assert g["killed"] == [] and g["survived"] == []
+    # And it must NOT be laundered into the score's numerator or denominator.
+    assert rep["mutation_score"]["killed"] == 0
+    assert rep["mutation_score"]["total_scored"] == 0
+    assert rep["mutation_score"]["unavailable"] == 1
+
+
+def test_unavailable_is_distinct_from_skipped() -> None:
+    """SKIPPED means the probe is broken; UNAVAILABLE means it could not run for
+    a declared reason. Collapsing them would hide suite bugs among expected gaps."""
+    def boom():
+        raise RuntimeError("probe is broken")
+
+    rep = _report_for(boom)
+    g = rep["guards"]["tguard"]
+    assert g["skipped"] and not g["unavailable"]
+
+
+def test_clean_score_over_unavailable_guards_does_not_exit_zero() -> None:
+    """THE POINT OF THE EXIT CODE. 100% over guards that never ran is precisely
+    the vacuity this suite exists to detect, so it must not look like success."""
+    def probe():
+        raise MS.FixtureUnavailable("absent")
+
+    orig = MS._catalogue
+    MS._catalogue = lambda: ([MS.Mutant("t/ok", "tguard", "d", lambda: True),
+                              MS.Mutant("t/na", "tguard", "d", probe)], [])
+    try:
+        rc = MS.main([])
+    finally:
+        MS._catalogue = orig
+    assert rc == 2, "a clean score with an unexercised guard must not exit 0"
+
+
+def test_a_real_failure_outranks_incomplete_coverage() -> None:
+    """Exit 1 must win over exit 2: a survivor is a worse signal than a gap, and
+    a caller that only checks `rc == 2` must not miss it."""
+    def probe():
+        raise MS.FixtureUnavailable("absent")
+
+    orig = MS._catalogue
+    MS._catalogue = lambda: ([MS.Mutant("t/survivor", "tguard", "d", lambda: False),
+                              MS.Mutant("t/na", "tguard", "d", probe)], [])
+    try:
+        rc = MS.main([])
+    finally:
+        MS._catalogue = orig
+    assert rc == 1
+
+
+def test_c_fixture_probe_refuses_to_run_natively(monkeypatch, tmp_path) -> None:
+    """The exact mistake that produced a false BROKEN verdict: bracketing a
+    fixture on the host, where its contract is genuinely violated. With no
+    hermit available the probe must decline, not fall back to a native run."""
+    monkeypatch.setenv("HERMIT_BIN", str(tmp_path / "nope"))
+    src = tmp_path / "x.c"
+    src.write_text("int main(void){return 0;}\n")
+    try:
+        MS._run_c_fixture_under_hermit(src, negative=False)
+    except MS.FixtureUnavailable as err:
+        assert "NATIVELY" in str(err)
+    else:                                                     # pragma: no cover
+        raise AssertionError("probe ran the fixture without hermit")

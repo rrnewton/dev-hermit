@@ -28,7 +28,11 @@ USAGE
   python3 ci-hub/validate/mutation_suite.py            # run, print the score
   python3 ci-hub/validate/mutation_suite.py --json     # machine-readable
   python3 ci-hub/validate/mutation_suite.py --guard qualified_rows
-Exit 0 iff every mutant was killed AND every population control held.
+Exit 0 iff every mutant was killed AND every population control held AND every
+registered mutant actually RAN. Exit 1 on a real failure (survivor, skipped
+probe, or a broken population control); exit 2 when nothing failed but some
+registered guard could not be exercised here -- a clean score over guards that
+never ran is the vacuity this suite exists to detect, so it does not read as 0.
 """
 
 from __future__ import annotations
@@ -36,6 +40,9 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 import json
+import tempfile
+import subprocess
+import os
 from pathlib import Path
 import sys
 from typing import Any, Callable, Optional
@@ -49,6 +56,13 @@ for p in (HERE, CI_HUB, CI_HUB / "landing", CI_HUB / "timeout_audit"):
 KILLED = "KILLED"
 SURVIVED = "SURVIVED"
 SKIPPED = "SKIPPED"
+# A mutant that COULD NOT BE RUN for a declared structural reason -- the fixture
+# is not on main yet, or the interpreter it needs (a built `hermit`) is absent.
+# Distinct from SKIPPED, which means the probe RAISED and is therefore a defect
+# in the suite. Both are uncounted; neither is ever a kill. The distinction
+# matters because UNAVAILABLE is expected and actionable ("land the branch",
+# "point HERMIT_BIN at a build") while SKIPPED is a bug.
+UNAVAILABLE = "UNAVAILABLE"
 
 # Hazard classes. Only INERT mutants may be constructed: an INERT mutant cannot
 # authorise anything even if it leaked, which is the property that makes the
@@ -59,6 +73,14 @@ AUTHORISATION = "authorisation"
 
 class UnsafeMutant(Exception):
     """Refused: this mutant could trigger the live hazard it is testing."""
+
+
+class FixtureUnavailable(Exception):
+    """This mutant cannot run here, for a declared reason. NEVER a kill.
+
+    Raised (not returned) so a probe physically cannot report "guard refused
+    the mutant" when it never got as far as asking the guard.
+    """
 
 
 @dataclass
@@ -99,6 +121,7 @@ class GuardReport:
     killed: list[str] = field(default_factory=list)
     survived: list[dict] = field(default_factory=list)
     skipped: list[dict] = field(default_factory=list)
+    unavailable: list[dict] = field(default_factory=list)
     population: Optional[dict] = None
 
 
@@ -106,6 +129,133 @@ class GuardReport:
 # Each probe returns True iff the guard REFUSED the mutant. Probes are tiny and
 # call the REAL guard -- a probe that reimplemented the predicate would score
 # itself, which is the failure this suite exists to detect.
+
+
+# ------------------------------------------------------- hermit C-fixture probes
+#
+# The backend-parity C fixtures each carry their own negative bracket: compiling
+# with -DHERMIT_TEST_ORACLE_NEGATIVE drops one satisfied check, so a working
+# fixture exits 0 clean and 1 mutated. That is a real mutation and this is the
+# subprocess probe mechanism the original catalogue lacked.
+#
+# *** THESE FIXTURES MUST BE RUN UNDER HERMIT, NEVER NATIVELY. ***
+#
+# This is not a preference. A hand audit of these fixtures ran them natively and
+# concluded membarrier_query was BROKEN with an inert negative bracket. It is
+# not broken. Natively it exits 1 BOTH clean and mutated -- because natively the
+# host's real membarrier mask (1023 on kernel 6.18) is exactly the host-dependent
+# value the fixture exists to reject. Under hermit, detcore normalizes the mask
+# to its emulated set (31), so the fixture reads 0 clean and 1 mutated and
+# discriminates perfectly.
+#
+# The general rule: a fixture whose contract is "hermit replaces this host value"
+# CANNOT be bracketed on the host, because on the host the contract is genuinely
+# violated. A native run of such a fixture yields a false BROKEN verdict. So when
+# no hermit binary is available this probe reports UNAVAILABLE and declines to
+# have an opinion, rather than guessing from a native run.
+
+def _hermit_checkout() -> Path:
+    """Which hermit checkout to read fixtures from.
+
+    Defaults to the parent's primary. `HERMIT_CHECKOUT` overrides it, because the
+    primary is a coordinator-owned integration surface that an ordinary agent must
+    not update, and it is routinely a few commits behind main -- in which case a
+    fixture that IS on main is simply absent from its working tree. Reporting that
+    as "not on main" would be wrong, so the reason string names the checkout and
+    its HEAD rather than guessing.
+    """
+    env = os.environ.get("HERMIT_CHECKOUT")
+    return Path(env) if env else PARENT / "hermit"
+
+
+def _fixture_path(name: str) -> Path:
+    return _hermit_checkout() / "tests" / "backend-parity" / "fixtures" / name
+
+
+def _hermit_binary() -> Optional[Path]:
+    """A built `hermit`, or None. `HERMIT_BIN` wins; then conventional builds."""
+    env = os.environ.get("HERMIT_BIN")
+    if env:
+        p = Path(env)
+        return p if p.is_file() and os.access(p, os.X_OK) else None
+    for rel in ("hermit/target/debug/hermit", "hermit/target/release/hermit"):
+        p = PARENT / rel
+        if p.is_file() and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _run_c_fixture_under_hermit(source: Path, negative: bool) -> int:
+    """Compile `source` (optionally mutated) and run it under hermit. Returns rc."""
+    hermit = _hermit_binary()
+    if hermit is None:
+        raise FixtureUnavailable(
+            "no built `hermit` found. Set HERMIT_BIN=/path/to/hermit, or build one "
+            "(cargo build -p hermit --bin hermit). Refusing to run this fixture "
+            "NATIVELY: for a fixture whose contract is 'hermit replaces this host "
+            "value', a native run reports a FALSE broken verdict -- that exact "
+            "mistake is why membarrier_query was recorded as broken when it works."
+        )
+    if not source.is_file():
+        co = _hermit_checkout()
+        head = "unknown"
+        try:
+            head = subprocess.run(["git", "-C", str(co), "rev-parse", "--short", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip() or "unknown"
+        except Exception:
+            pass
+        raise FixtureUnavailable(
+            f"{source.name} absent from checkout {co} (HEAD {head}). Either it is "
+            "still on an unlanded branch, or this checkout is behind main -- the "
+            "reason is deliberately not guessed. Point HERMIT_CHECKOUT at a "
+            "checkout that has it; the mutant scores the moment it is reachable."
+        )
+    # NOT the default /tmp: hermit refuses to run a program under host /tmp
+    # ("Hermit replaces guest /tmp with an isolated directory"), so a fixture
+    # built there fails for a reason that has nothing to do with its contract --
+    # and the NEGATIVE half would then be "killed" for that wrong reason while
+    # the clean half looks broken. Build somewhere hermit will execute from.
+    scratch = PARENT / "scratch" / "mutation-suite"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=str(scratch)) as td:
+        exe = Path(td) / "fixture"
+        cc = ["gcc", "-O1", "-o", str(exe), str(source)]
+        if negative:
+            cc.insert(2, "-DHERMIT_TEST_ORACLE_NEGATIVE")
+        build = subprocess.run(cc, capture_output=True, text=True)
+        if build.returncode != 0:
+            raise FixtureUnavailable(
+                f"cannot compile {source.name}: {build.stderr.strip()[:300]}")
+        # --base-env=minimal keeps the host environment out of the comparison.
+        proc = subprocess.run(
+            [str(hermit), "run", "--strict", "--base-env=minimal", "--", str(exe)],
+            capture_output=True, text=True, timeout=300)
+        return proc.returncode
+
+
+def _c_fixture_mutants(mutants: list[Mutant], guard: str, fixture: str,
+                       pins: str) -> None:
+    """Register both halves of one C fixture's bracket as mutants.
+
+    Both halves are mutants on purpose. "The mutated build fails" alone is
+    satisfied by a fixture that fails on everything, which gets disabled within
+    a day; "the clean build passes" alone is satisfied by one that fails on
+    nothing. Only the pair says the oracle DISCRIMINATES.
+    """
+    src = _fixture_path(fixture)
+
+    mutants.append(Mutant(
+        f"{guard}/negative-bracket-fires", guard,
+        f"{pins} -- with one contract check deliberately dropped "
+        "(-DHERMIT_TEST_ORACLE_NEGATIVE) the fixture must FAIL; if it still "
+        "passes, the fixture cannot detect the violation it claims to pin",
+        lambda: _run_c_fixture_under_hermit(src, negative=True) != 0))
+
+    mutants.append(Mutant(
+        f"{guard}/clean-build-passes", guard,
+        f"{pins} -- the UNMUTATED fixture must PASS under hermit; a fixture "
+        "that fails on everything is as useless as one that fails on nothing",
+        lambda: _run_c_fixture_under_hermit(src, negative=False) == 0))
 
 
 def _catalogue() -> tuple[list[Mutant], list[Population]]:
@@ -400,6 +550,67 @@ def _catalogue() -> tuple[list[Mutant], list[Population]]:
     except Exception:                                         # pragma: no cover
         pass
 
+    # ---- guards: the hermit contract fixtures ------------------------------
+    #
+    # Registered here so their can-it-fail property stops being a fact somebody
+    # established by hand once. A hand verification decays silently: the next
+    # edit to the fixture, to the parity seam, or to the syscall handler it
+    # pins can make it vacuous, and nothing says so.
+    #
+    # Landing status is deliberately NOT hardcoded as a comment that will rot --
+    # the probe resolves the real path and reports UNAVAILABLE with the reason
+    # when it is absent, so this catalogue self-corrects as branches land.
+
+    _c_fixture_mutants(
+        mutants, "fixture/membarrier_query", "membarrier_query.c",
+        "membarrier(CMD_QUERY) returns detcore's emulated command set (31), not "
+        "the host kernel's mask (1023 here) -- a host capability value must not "
+        "reach the guest")
+
+    _c_fixture_mutants(
+        mutants, "fixture/personality_domain", "personality_domain.c",
+        "the personality(2) domain is fail-closed rather than reflecting host state")
+
+    _c_fixture_mutants(
+        mutants, "fixture/rlimit_identity", "rlimit_identity.c",
+        "getrlimit/setrlimit report identical VALUES across backends -- one of "
+        "only two parity fixtures that emit the value through the parity_probe.h "
+        "seam instead of collapsing it to a boolean")
+
+    _c_fixture_mutants(
+        mutants, "fixture/sched_getaffinity_identity", "sched_getaffinity_identity.c",
+        "sched_getaffinity reports an identical mask across backends rather than "
+        "the host's CPU set")
+
+    # The remaining three named guards are Rust/Python rather than C fixtures and
+    # need their own probe shapes (cargo test; invoking the harness). Registered
+    # as declared holes rather than omitted: an unregistered guard is invisible,
+    # and invisibility is the decay this task exists to stop. Each raises
+    # FixtureUnavailable with what it needs, so it is counted and named on every
+    # run without ever being mistaken for a kill.
+    def _todo(guard: str, need: str):
+        def probe() -> bool:
+            raise FixtureUnavailable(need)
+        mutants.append(Mutant(
+            f"{guard}/probe-not-implemented", guard,
+            "registered so the gap is COUNTED AND NAMED on every run; an "
+            "unregistered guard is an invisible one", probe))
+
+    _todo("fixture/parity_mutation_harness",
+          "needs a probe that invokes hermit/tests/backend-parity/parity_mutation.py "
+          "and asserts its EXIT CODE (not its printed verdict -- a hand check of "
+          "this harness first read rc=0 from a `tail` in the pipeline rather than "
+          "from the harness). Absent from main; lives only on the local-only "
+          "branch mutation-audit-fixtures.")
+    _todo("fixture/file_contents_detlog_determinism",
+          "needs a `cargo test` probe (minutes, and a hermit build). Pins that no "
+          "raw host inode reaches ResourceID::FileContents. Absent from main; "
+          "lives only on the local-only branch mutation-audit-fixtures.")
+    _todo("fixture/register_file_hashing",
+          "needs a `cargo test` probe plus a product-seam mutation in "
+          "detcore/src/regdigest.rs. Absent from main; lives only on the "
+          "local-only branch mutation-audit-fixtures.")
+
     return mutants, pops
 
 
@@ -417,6 +628,10 @@ def run(only_guard: Optional[str] = None) -> dict[str, Any]:
         rep = reports.setdefault(m.guard, GuardReport(m.guard))
         try:
             killed = bool(m.probe())
+        except FixtureUnavailable as err:
+            # Declared, expected, and never a kill.
+            rep.unavailable.append({"id": m.id, "reason": str(err)})
+            continue
         except Exception as err:
             rep.skipped.append({"id": m.id, "error": f"{type(err).__name__}: {err}"})
             continue
@@ -437,6 +652,7 @@ def run(only_guard: Optional[str] = None) -> dict[str, Any]:
     killed = sum(len(r.killed) for r in reports.values())
     survived = sum(len(r.survived) for r in reports.values())
     skipped = sum(len(r.skipped) for r in reports.values())
+    unavailable = sum(len(r.unavailable) for r in reports.values())
     scored = killed + survived
     pops_total = sum(1 for r in reports.values() if r.population is not None)
     pops_holding = sum(1 for r in reports.values()
@@ -448,13 +664,14 @@ def run(only_guard: Optional[str] = None) -> dict[str, Any]:
             "killed": killed,
             "total_scored": scored,
             "skipped": skipped,
+            "unavailable": unavailable,
             "percent": round(100.0 * killed / scored, 1) if scored else None,
         },
         "population_controls": {"holding": pops_holding, "total": pops_total},
         "survivors": [s for r in reports.values() for s in r.survived],
         "guards": {
             g: {"killed": r.killed, "survived": r.survived, "skipped": r.skipped,
-                "population": r.population}
+                "unavailable": r.unavailable, "population": r.population}
             for g, r in sorted(reports.items())
         },
     }
@@ -478,6 +695,8 @@ def render(rep: dict) -> str:
             out.append(f"      SURVIVED  {sv['id']} -- {sv['defect']}")
         for sk in d["skipped"]:
             out.append(f"      SKIPPED   {sk['id']} -- {sk['error']}")
+        for un in d.get("unavailable", []):
+            out.append(f"      UNAVAILABLE {un['id']} -- {un['reason']}")
     out += ["",
             f"MUTATION SCORE: {s['killed']}/{s['total_scored']}"
             + (f" ({s['percent']}%)" if s["percent"] is not None else ""),
@@ -485,6 +704,13 @@ def render(rep: dict) -> str:
             f"{rep['population_controls']['total']} holding"]
     if s["skipped"]:
         out.append(f"SKIPPED (uncounted, NOT killed): {s['skipped']}")
+    if s.get("unavailable"):
+        # Loud on purpose. A guard that cannot run is exactly as protective as a
+        # guard that does not exist, and the whole point of registering these is
+        # that the shortfall is stated on every run instead of being remembered.
+        out.append(
+            f"UNAVAILABLE (uncounted, NOT killed): {s['unavailable']} "
+            "-- registered guards that could not be exercised here; see reasons above")
     if rep["survivors"]:
         out.append("")
         out.append("SURVIVORS -- each is a guard reporting health while not guarding:")
@@ -504,9 +730,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(json.dumps(rep, indent=2) if args.json else render(rep))
 
     s = rep["mutation_score"]
-    ok = (s["killed"] == s["total_scored"] and s["skipped"] == 0
-          and rep["population_controls"]["holding"] == rep["population_controls"]["total"])
-    return 0 if ok else 1
+    failed = (s["killed"] != s["total_scored"] or s["skipped"] != 0
+              or rep["population_controls"]["holding"]
+              != rep["population_controls"]["total"])
+    if failed:
+        return 1
+    # A clean score over guards that could not RUN is the exact vacuity this
+    # suite exists to detect, so incomplete coverage gets its own exit code
+    # rather than being folded into success. 0 means "no failures AND nothing
+    # unexercised"; 2 means "no failures, but the denominator is short".
+    # Callers that want a hard gate should treat 2 as failure.
+    if s.get("unavailable"):
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
