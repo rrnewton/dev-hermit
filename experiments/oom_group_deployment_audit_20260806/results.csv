@@ -1,0 +1,16 @@
+id,question,measurement,result,verdict
+D1,is memory.oom.group written by the Python engine,agent-utils/py/safe_ci_dag_runner/cgroup.py:582,"(child / \"memory.oom.group\").write_text(\"1\") best-effort with warn",YES
+D2,is it written by the Rust engine,rs/safe-ci-dag-runner/src/cgroup.rs:402-425,"enable_outer_oom_group(): write then READ BACK, not trusted until it reads 1",YES
+D3,is it deployed at the parent pin,parent gitlink vs adding commits,"pin=570e7865; e94924a/af76a8a/4affd42 are ancestors; checkout == pin",DEPLOYED
+D4,is there an engine-parity gap,af76a8a is an explicit Rust<->Python parity commit,none,"my initial 'python never writes it' hypothesis was a head-truncation artifact of my own grep -- corrected"
+D5,live cgroup snapshot,41 non-empty user cgroups on this box,all read oom.group=0,"INCONCLUSIVE: all are agent shells/tmux/3pai sandboxes; no boxed DAG step was running"
+P1,over-cap step WITH oom.group=1,sentinel + allocator in one step cgroup,"both DEAD, oom_group_kill=1",step dies as a UNIT
+P2,over-cap step WITHOUT oom.group (control),same shape,"allocator DEAD, sentinel ALIVE, oom_group_kill=0","half-dead step -- proves the fix is NOT inert"
+P3,offender vs neighbour,two sibling step cgroups,"OFFENDER DEAD (oom_group_kill=1), NEIGHBOUR ALIVE (oom_kill=0)",blast radius contained
+P4,positive control,N=10 legitimate steps at 32MiB under a 64MiB cap,"alive 10/10, total_oom_kill=0",not over-eager
+P5,cleanup,child cgroups drained and rmdir'd,14 removed / 0 failed,no residue
+X1,does oom.group defeat make's .DELETE_ON_ERROR,measured in cmake_mtime_vs_content_20260806,"whole-cgroup kill -> make dies -> 0-byte artifact SURVIVES and gmake -q says up-to-date forever",the paired risk
+X2,is the artifact-integrity half landed,hermit origin/main validate.sh:872-878 + call at :1002,purge_zero_byte_objects PRESENT,LANDED
+X3,does the landed purge cover the live corrupt artifact,"find -type f -name '*.o' -size 0","today's only live corrupt CMake artifact is libdrpoints.so (0 bytes, 2026-08-04 11:44:50)","NO -- .o-only, misses .so/.a/.rlib"
+S1,is the 21-row drain-unlock justification true,hermit-liteinst read all 21 band logs,"zero hits for memory.oom / oom-kill / memory.max / killed process / out of memory",REFUTED
+S2,was an innocent-neighbour OOM ever observed in the corpus,ledger + band logs,none found,"justified on principle, not on an observed incident"

@@ -1,0 +1,15 @@
+{
+  "question": "Is memory.oom.group set on the boxing cgroups, does it contain the blast radius, and what does enabling it cost?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930",
+  "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "dev_hermit_parent_head": "761183fdff6c0c86539f56b88cf36a4481302f82",
+  "harness_reused": "experiments/oom-group-blast-radius_20260804/inside.sh (committed by a prior agent; re-run independently here)",
+  "boxing": "systemd-run --user --scope -p Delegate=yes -p MemorySwapMax=0; +memory subtree_control; per-step children at memory.max=64MiB swap.max=0",
+  "not_done": [
+    "could not confirm oom.group=1 on a LIVE boxed DAG step -- none was running (ledger idle ~26h)",
+    "no code change made: the setting is already deployed at the pin"
+  ]
+}
