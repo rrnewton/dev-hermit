@@ -5,8 +5,8 @@
 //! predicate:
 //!
 //! * the exact Hermit commit being admitted;
-//! * the single Reverie revision found in every tracked Cargo manifest/lockfile
-//!   at that commit; and
+//! * the single Reverie revision found in every tracked Cargo manifest and
+//!   Cargo workspace-root lockfile at that commit; and
 //! * one freshly resolved `rrnewton/reverie:refs/heads/main` tip.
 //!
 //! The scan is performed with `git show <hermit-sha>:<path>` over the exact
@@ -433,6 +433,33 @@ fn collect_lock_pins(
     Ok(())
 }
 
+/// Cargo resolves one lockfile per workspace root. Hermit marks each nested
+/// independent workspace with `[workspace]`; the repository root is also an
+/// implicit root for historical commits that predate that table. A lock beside
+/// an ordinary member (for example `hermit-cli/Cargo.lock`) is not consulted by
+/// Cargo and is therefore neither positive nor negative authority.
+fn is_workspace_root_manifest(path: &str, value: &toml::Value) -> Result<bool, String> {
+    let root = value
+        .as_table()
+        .ok_or_else(|| format!("{path} manifest root is not a TOML table"))?;
+    match root.get("workspace") {
+        Some(workspace) if !workspace.is_table() => {
+            Err(format!("{path} has a non-table workspace declaration"))
+        }
+        Some(_) => Ok(true),
+        None => Ok(path == "Cargo.toml"),
+    }
+}
+
+fn sibling_lock_path(manifest_path: &str) -> String {
+    format!(
+        "{}Cargo.lock",
+        manifest_path
+            .strip_suffix("Cargo.toml")
+            .expect("caller supplies Cargo.toml")
+    )
+}
+
 /// Derive the single tracked Reverie revision from the exact Hermit commit.
 pub fn pinned_sha_at(repo: &Path, hermit_sha: &str) -> Result<String, String> {
     if !is_full_sha(hermit_sha) {
@@ -483,9 +510,11 @@ pub fn pinned_sha_at(repo: &Path, hermit_sha: &str) -> Result<String, String> {
         ));
     }
 
+    let tracked: BTreeSet<String> = paths.iter().cloned().collect();
+    let mut authoritative_locks = BTreeSet::new();
     let mut pins = BTreeSet::new();
     let mut occurrences = 0usize;
-    for path in paths {
+    for path in paths.iter().filter(|path| path.ends_with("Cargo.toml")) {
         let object = format!("{hermit_sha}:{path}");
         let contents = git_output(repo, ["show", &object])?;
         if !contents.status.success() {
@@ -498,11 +527,28 @@ pub fn pinned_sha_at(repo: &Path, hermit_sha: &str) -> Result<String, String> {
             .map_err(|_| format!("{object} is not UTF-8 Cargo metadata"))?;
         let parsed: toml::Value = toml::from_str(&text)
             .map_err(|error| format!("{object} is not valid TOML: {error}"))?;
-        if path.ends_with("Cargo.lock") {
-            collect_lock_pins(&parsed, &path, &mut pins, &mut occurrences)?;
-        } else {
-            collect_manifest_pins(&parsed, &path, &mut pins, &mut occurrences)?;
+        collect_manifest_pins(&parsed, path, &mut pins, &mut occurrences)?;
+        if is_workspace_root_manifest(path, &parsed)? {
+            let lock = sibling_lock_path(path);
+            if tracked.contains(&lock) {
+                authoritative_locks.insert(lock);
+            }
         }
+    }
+    for path in authoritative_locks {
+        let object = format!("{hermit_sha}:{path}");
+        let contents = git_output(repo, ["show", &object])?;
+        if !contents.status.success() {
+            return Err(format!(
+                "cannot read {object}: {}",
+                String::from_utf8_lossy(&contents.stderr).trim()
+            ));
+        }
+        let text = String::from_utf8(contents.stdout)
+            .map_err(|_| format!("{object} is not UTF-8 Cargo metadata"))?;
+        let parsed: toml::Value = toml::from_str(&text)
+            .map_err(|error| format!("{object} is not valid TOML: {error}"))?;
+        collect_lock_pins(&parsed, &path, &mut pins, &mut occurrences)?;
     }
     if occurrences == 0 {
         return Err(format!(
@@ -623,6 +669,56 @@ mod tests {
         )
     }
 
+    fn workspace_manifest(pin: &str) -> String {
+        format!(
+            "[workspace]\nmembers=[\"member\"]\n[package]\nname=\"fixture\"\nversion=\"0.1.0\"\n[dependencies]\nreverie={{git=\"https://github.com/rrnewton/reverie\",rev=\"{pin}\"}}\n"
+        )
+    }
+
+    fn lock_with_pin(pin: &str) -> String {
+        format!(
+            "version=3\n[[package]]\nname=\"reverie-core\"\nversion=\"0.2.0\"\nsource=\"git+https://github.com/rrnewton/reverie?rev={pin}#{pin}\"\n"
+        )
+    }
+
+    fn workspace_repo_with_member_lock(
+        name: &str,
+        manifest: &str,
+        root_lock: &str,
+        member_lock: &str,
+    ) -> (PathBuf, String) {
+        let (repo, _) = temp_repo_with_lock(name, manifest, Some(root_lock));
+        fs::create_dir(repo.join("member")).unwrap();
+        fs::write(
+            repo.join("member/Cargo.toml"),
+            "[package]\nname=\"member\"\nversion=\"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(repo.join("member/Cargo.lock"), member_lock).unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "member/Cargo.toml", "member/Cargo.lock"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-q", "-m", "member lock fixture"])
+            .status()
+            .unwrap()
+            .success());
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let head = String::from_utf8(out.stdout).unwrap().trim().to_string();
+        (repo, head)
+    }
+
     #[test]
     fn same_tip_accepts_and_moved_tip_refuses() {
         let pin = "a".repeat(40);
@@ -718,6 +814,56 @@ mod tests {
         );
         assert_eq!(pinned_sha_at(&locked, &locked_head).unwrap(), pin);
         fs::remove_dir_all(locked).ok();
+    }
+
+    #[test]
+    fn workspace_root_lock_ignores_stale_member_lock() {
+        let pin = "a".repeat(40);
+        let stale_member_lock = "version=3\n[[package]]\nname=\"reverie\"\nversion=\"0.1.0\"\n";
+        let (repo, head) = workspace_repo_with_member_lock(
+            "workspace-member-lock",
+            &workspace_manifest(&pin),
+            &lock_with_pin(&pin),
+            stale_member_lock,
+        );
+        assert_eq!(pinned_sha_at(&repo, &head).unwrap(), pin);
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn member_lock_decoy_cannot_mask_bad_workspace_root_lock() {
+        let live = "a".repeat(40);
+        let stale = "b".repeat(40);
+        let good_member_decoy = lock_with_pin(&live);
+        let noncanonical = format!(
+            "version=3\n[[package]]\nname=\"reverie-core\"\nversion=\"0.2.0\"\nsource=\"git+https://github.com/other/reverie?rev={live}#{live}\"\n"
+        );
+        let cases = [
+            (
+                "stale-root",
+                lock_with_pin(&stale),
+                "2 distinct Reverie revisions",
+            ),
+            (
+                "path-root",
+                "version=3\n[[package]]\nname=\"reverie\"\nversion=\"0.1.0\"\n".to_string(),
+                "without the canonical Git source",
+            ),
+            ("noncanonical-root", noncanonical, "unexpected repository"),
+        ];
+        for (name, root_lock, expected) in cases {
+            let (repo, head) = workspace_repo_with_member_lock(
+                name,
+                &workspace_manifest(&live),
+                &root_lock,
+                &good_member_decoy,
+            );
+            assert!(
+                pinned_sha_at(&repo, &head).unwrap_err().contains(expected),
+                "{name} did not refuse for {expected}"
+            );
+            fs::remove_dir_all(repo).ok();
+        }
     }
 
     #[test]

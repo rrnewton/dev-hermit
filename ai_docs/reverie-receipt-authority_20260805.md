@@ -12,8 +12,11 @@ cannot remain landing authority after that ref moves.
 `ci-hub reverie-pin-status --hermit-repo CHECKOUT --sha H [--sha H...] --json`
 is the single fresh cross-repository predicate. It resolves Reverie main once,
 with a 30-second bound, then for each exact Hermit commit scans every tracked
-`Cargo.toml` and `Cargo.lock` from the commit object. Manifest pins count only
-from real direct/dev/build/workspace/target/patch/replace dependency tables;
+`Cargo.toml` plus the `Cargo.lock` owned by the repository root and each nested
+manifest that declares an independent `[workspace]`. A stale lock beside an
+ordinary workspace member is not part of Cargo's resolution and is neither
+positive nor negative authority. Manifest pins count only from real
+direct/dev/build/workspace/target/patch/replace dependency tables; workspace-root
 lock pins count only from `[[package]]` sources. Every semantic Reverie
 dependency/package must use that Git source; a path/version/registry dependency
 cannot be masked by a decoy current pin. Duplicate lock `rev` parameters,
