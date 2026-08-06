@@ -1,0 +1,18 @@
+{
+  "experiment": "scorecard-not-exercised-bucket_20260806",
+  "question": "Can a parity scorecard cell read GREEN on a test that never exercises the property it claims to measure -- and how many do?",
+  "date_utc": "2026-08-06",
+  "discriminator": "A cell is EXERCISED when the ptrace-golden stdout differs from the BARE-HOST stdout. If the bare host already produces the golden bytes, hermit changed nothing observable, so no backend can fail the cell and parity=1 asserts coverage that does not exist.",
+  "why_bare_exec": "hermit has NO `native` backend -- `--backend` accepts only ptrace/dbi/liteinst/sabre/kvm/e9patch -- so the do-nothing control must bypass hermit entirely. A prior design note asserted `backend_available(\"native\")==true`; that is refuted.",
+  "denominator": {
+    "population": "tests/backend-parity/fixtures/*.c at hermit 4c70658e7",
+    "checked": 82, "exercised": 19, "not_exercised": 62, "no_payload": 1
+  },
+  "host": "devbig014",
+  "flags": "--strict --base-env minimal -e LC_ALL=C -e TZ=UTC --no-virtualize-cpuid --max-timeslice=disabled",
+  "not_established": [
+    "cpuid_probe's NO-PAYLOAD is an artifact of MY flag choice: --no-virtualize-cpuid defeats the very identity that fixture asserts, so it exits nonzero and emits nothing. It is not evidence about that cell.",
+    "NOT-EXERCISED is a statement about the STDOUT-PARITY metric the scorecard uses, not a claim that the fixture is worthless: several of these fixtures branch internally and would exit nonzero on a wrong answer. The parity CELL still cannot distinguish a determinizing backend from an inert one.",
+    "Scope is the backend-parity-c fixture family (82 guests), not the full 618-row scorecard. The mechanism is wired for every cell; only this family was swept."
+  ]
+}
