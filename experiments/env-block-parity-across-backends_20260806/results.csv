@@ -1,0 +1,5 @@
+arm,backend,environ_count,environ_bytes,procenv_count,procenv_bytes,rawblock_bytes,verdict,delta_vs_ptrace_bytes,cause
+ptrace,ptrace,7,183,7,183,183,REFERENCE,0,
+ptrace#control,ptrace,7,183,7,183,183,IDENTICAL,0,control arm; proves the check can report parity
+sabre,sabre,7,183,7,261,261,DIVERGES,78,blanked-in-place REVERIE_SABRE_HERMIT_RPC_SOCKET (entry lists match; block does not)
+dbi,dbi,11,2347,11,2347,2347,DIVERGES,2164,"HERMIT_DBI_DETCONFIG (hermit-owned) + 3 DYNAMORIO_* (drrun-owned)"

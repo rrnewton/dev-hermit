@@ -1,0 +1,26 @@
+{
+  "experiment": "env-block-parity-across-backends",
+  "date": "2026-08-06",
+  "question": "Do the Hermit backend arms present the same environment block to the guest as the ptrace reference?",
+  "repos": {
+    "dev-hermit": "parent workspace, branch research/env-block-parity",
+    "hermit": "f89c69766371806d3c9b2c3003531df2d59d6118",
+    "reverie": "097868594f530ff2e179d94cc6f816ce6ad8d1b5"
+  },
+  "hermit_binary": "hermit/target/debug/hermit",
+  "command": "compat-envelope/check-env-block-parity.rs --backends ptrace,ptrace#control,sabre,dbi",
+  "guest_invocation": "hermit run --backend <arm> --base-env minimal -e LC_ALL=C -e TZ=UTC -- <probe>",
+  "guest": "compat-envelope/fixtures/env_block_probe.c",
+  "seed": "n/a (env-block shape is not seed-dependent)",
+  "inputs": {
+    "TMPDIR": "/tmp for the canonical run; varied to 51 chars for the sabre causal test"
+  },
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316
+  },
+  "toolchain": {
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  }
+}
