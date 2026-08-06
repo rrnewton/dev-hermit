@@ -1,0 +1,22 @@
+{
+  "experiment": "demo05-golden-capture_20260806",
+  "question": "Can the demo05 ptrace golden be made double-run stable by fixing how it is captured?",
+  "answer": "No. Four capture defects were real (three prior, one found and fixed here), but a correct capture through 05-qemu-boot.py still yields 5 distinct qcow2 SHAs in ~18 runs. demo05 is DISQUALIFIED as a golden; dd bs=1 count=N reproduces at the same scale and should replace it.",
+  "date_utc": "2026-08-06",
+  "hermit_binary": "ignored/det4-parity/hermit/target/release/hermit",
+  "hermit_version": "hermit 0.2.0 (2026-08-06, g4c70658e7858)",
+  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "binary_provenance": "baked-in version string carries a -dirty marker; this binary reports clean",
+  "backend": "ptrace",
+  "flags": "--strict; demo05 additionally --target-timeslice 100000 --max-timeslice 2000000000",
+  "relaxations": "none; only the real wall-clock prefix is stripped",
+  "host": "devbig014",
+  "cores": 316,
+  "mechanism": "virtual-time drift: rcbs (PMU retired conditional branches) differs by 1 between runs, propagating into COMMIT times and clock_gettime results returned to the guest",
+  "not_established": [
+    "which element of run 1's published pre-state reaches the guest (no targeted bisect)",
+    "PMU counter variability characterisation or its load dependence",
+    "whether the inode/address masks earn their keep across genuinely different host environments (untested; they removed 0 lines same-env)",
+    "the unpinned make build-hermit path was deliberately not exercised (it would move the primary checkout)"
+  ]
+}

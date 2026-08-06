@@ -1,0 +1,14 @@
+measurement,subject,condition,samples,records_or_lines,result
+rung,python3 -c print(1),direct argv n=3,3,2756,IDENTICAL
+rung,dd bs=1 count=1000,sh n=3,3,4849,IDENTICAL
+rung,dd bs=1 count=10000,sh n=3,3,40850,IDENTICAL
+rung,dd bs=1 count=100000,sh n=3,3,400859,IDENTICAL
+rung,dd bs=1 count=400000,sh n=3 default timeslice,3,1600889,IDENTICAL
+rung,dd bs=1 count=400000,sh n=3 demo05 timeslice flags,3,1681726,IDENTICAL
+demo05,qcow2 sha256,controlled runs through 05-qemu-boot.py,18,5 distinct values,DISQUALIFIED
+demo05,serial sha256,controlled runs through 05-qemu-boot.py,18,1 value 5d24dc06c1cb82f1,STABLE
+demo05,INFO log pair A,L1 wallclock-stripped,1 pair,20601 of 1999034 lines (1.03%),DIVERGENT
+demo05,INFO log pair A,L2 +inode mask,1 pair,20601 (mask removed 0),DIVERGENT
+demo05,INFO log pair A,L3 +0x7f addr mask,1 pair,20601 (mask removed 0),DIVERGENT
+demo05,INFO log pair B,L1 wallclock-stripped,1 pair,484438 of 1996752 lines (24.26%),DIVERGENT
+demo05,rdtsc DetTime lines,rcbs delta,22 lines total,14 differ all delta -1,PMU-branch-count
