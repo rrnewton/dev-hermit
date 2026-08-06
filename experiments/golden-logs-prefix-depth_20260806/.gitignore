@@ -1,0 +1,7 @@
+# The point of this experiment is that the goldens live IN-REPO. The two prior
+# attempts at this work left their evidence in /tmp and lost it. The repo-root
+# `*.log` rule would silently drop every golden from the commit -- the artifacts
+# would look stored and would not be -- so it is negated here, scoped to this
+# directory only.
+!goldens/*.log
+__pycache__/
