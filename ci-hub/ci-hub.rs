@@ -11,10 +11,20 @@
 //! chrono = "0.4"
 //! clap = { version = "4", features = ["derive"] }
 //! fs2 = "0.4"
+//! libc = "0.2"
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
 //! thiserror = "2"
 //! ```
+//!
+//! `libc` is used by `lib/landing_lock.rs` (pidfd / kill process-domain
+//! cleanup). A `#[path]` module cannot declare its own dependency, so anything
+//! those modules use must be declared HERE. Combined with `--force` above,
+//! omitting one does not degrade gracefully and does not fail only the landing
+//! subcommand: Cargo fails to build the single binary, so EVERY ci-hub
+//! subcommand stops working -- `pr-status`, `newest-green`, `validate-status`,
+//! `validate-run`, `close-task`. That is a fleet-wide landing outage from one
+//! missing line, so add the dependency in the same commit as the first use.
 
 #[path = "lib/history_queries.rs"]
 mod history_queries;
