@@ -63,13 +63,33 @@ fn actual_checkout(path: &Path) -> Actual {
     if !path.exists() {
         return Actual::Absent;
     }
-    let (inside, _, error) = git(path, &["rev-parse", "--is-inside-work-tree"]);
-    if !inside {
+    let requested = match std::fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) => {
+            return Actual::Unreadable(format!("canonicalize requested checkout: {error}"))
+        }
+    };
+    let (has_top, top, error) = git(
+        path,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+    );
+    if !has_top || top.is_empty() {
         return Actual::Unreadable(if error.is_empty() {
             "not a git worktree".to_string()
         } else {
             error
         });
+    }
+    let observed = match std::fs::canonicalize(&top) {
+        Ok(path) => path,
+        Err(error) => return Actual::Unreadable(format!("canonicalize git top-level: {error}")),
+    };
+    if observed != requested {
+        return Actual::Unreadable(format!(
+            "git top-level {} does not equal requested checkout {}",
+            observed.display(),
+            requested.display()
+        ));
     }
     let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     if on_branch && !branch.is_empty() {
@@ -264,11 +284,16 @@ fn main() {
 
         for product in ["hermit", "reverie", "liteinst2"] {
             let expected = entry[format!("{product}_branch")].as_str().unwrap_or("-");
-            let relative = entry[format!("{product}_path")]
-                .as_str()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("worktrees/{slot}/{product}")));
-            let actual = actual_checkout(&root.join(relative));
+            let expected_relative = format!("worktrees/{slot}/{product}");
+            let recorded_path = entry[format!("{product}_path")].as_str();
+            if recorded_path != Some(expected_relative.as_str()) {
+                drift_cells += 1;
+                issues.entry(slot.clone()).or_default().push(format!(
+                    "{product} path recorded={recorded_path:?} expected={expected_relative}"
+                ));
+                continue;
+            }
+            let actual = actual_checkout(&root.join(PathBuf::from(expected_relative)));
             if !matches_expected(expected, &actual) {
                 drift_cells += 1;
                 issues.entry(slot.clone()).or_default().push(format!(

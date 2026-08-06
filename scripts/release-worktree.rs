@@ -15,9 +15,11 @@
 //! fs2 = "0.4"
 //! libc = "0.2"
 //! serde_json = "1"
+//! sha2 = "0.10"
 //! ```
 use fs2::FileExt;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsStr};
 use std::fs;
@@ -52,6 +54,14 @@ Options:
                       Recover an interrupted normal cleanup: restore any exact
                       quarantined admin, reinitialize recursively, and repeat all
                       proofs. Requires --clean and is incompatible with --force.
+  --coordinator-finalize-orphan-residue
+                      Finalize a released legacy row whose product path is only
+                      generated residue and has zero Git worktree registrations.
+                      Requires --clean and --orphan-recovery-note. This explicit
+                      coordinator recovery is journaled and preserves hashed
+                      textual evidence before removing generated residue.
+  --orphan-recovery-note TEXT
+                      Required durable reason for orphan-residue finalization.
   --force             Allow --clean despite uncommitted/unpushed work (dangerous).
   -h, --help          Show this help.
 
@@ -218,6 +228,29 @@ struct CleanTarget {
     path: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+struct OrphanTarget {
+    label: &'static str,
+    original: PathBuf,
+    fenced: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResidueFile {
+    relative: String,
+    bytes: u64,
+    sha256: String,
+    copied: bool,
+    device: u64,
+    inode: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResidueInventory {
+    directories: Vec<String>,
+    files: Vec<ResidueFile>,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RepoSnapshot {
     path: PathBuf,
@@ -269,6 +302,19 @@ fn validate_owners(slot: &str, slot_state: &Value) -> Result<(), String> {
         return Err(format!(
             "slot {slot} must have exactly one mutating owner, found {mutating}"
         ));
+    }
+    Ok(())
+}
+
+fn validate_canonical_slot_paths(slot: &str, slot_state: &Value) -> Result<(), String> {
+    for product in ["hermit", "reverie", "liteinst2"] {
+        let key = format!("{product}_path");
+        let expected = format!("worktrees/{slot}/{product}");
+        if slot_state[key.as_str()].as_str() != Some(expected.as_str()) {
+            return Err(format!(
+                "slot {slot} records noncanonical {key}; expected exact path '{expected}'"
+            ));
+        }
     }
     Ok(())
 }
@@ -339,12 +385,13 @@ fn clean_targets_from_state(
         .get(slot)
         .ok_or_else(|| format!("slot {slot} is not registered"))?;
     validate_owners(slot, slot_state)?;
+    validate_canonical_slot_paths(slot, slot_state)?;
 
     let mut targets = Vec::new();
-    for (label, branch_key, path_key) in [
-        ("hermit", "hermit_branch", "hermit_path"),
-        ("reverie", "reverie_branch", "reverie_path"),
-        ("liteinst2", "liteinst2_branch", "liteinst2_path"),
+    for (label, branch_key) in [
+        ("hermit", "hermit_branch"),
+        ("reverie", "reverie_branch"),
+        ("liteinst2", "liteinst2_branch"),
     ] {
         let expected_checkout = slot_state
             .get(branch_key)
@@ -354,16 +401,7 @@ fn clean_targets_from_state(
             continue;
         }
 
-        let recorded = slot_state
-            .get(path_key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("slot {slot} has missing/non-string {path_key}"))?;
         let expected_recorded = format!("worktrees/{slot}/{label}");
-        if recorded != expected_recorded {
-            return Err(format!(
-                "slot {slot} records {label} path '{recorded}', expected '{expected_recorded}'"
-            ));
-        }
         let expected_relative = PathBuf::from(&expected_recorded);
         let canonical = canonical_exact(root, &expected_relative)?;
         let primary = root.join(label);
@@ -2415,6 +2453,1338 @@ fn verify_absent_slot_recovery(root: &Path, slot: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("open {} for SHA-256: {error}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("read {} for SHA-256: {error}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn textual_evidence(relative: &Path) -> bool {
+    let under_profiles = relative
+        .components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == ".safe-ci-dag-runner");
+    let extension = relative.extension().and_then(OsStr::to_str);
+    relative == Path::new("target/validate-results.txt")
+        || ((under_profiles
+            || relative
+                .components()
+                .next()
+                .is_some_and(|component| component.as_os_str() == "target"))
+            && matches!(extension, Some("csv" | "json" | "jsonl" | "log" | "txt")))
+}
+
+fn recognized_generated_file(relative: &Path, metadata: &fs::Metadata) -> bool {
+    let mut components = relative.components();
+    let Some(Component::Normal(top)) = components.next() else {
+        return false;
+    };
+    if top == OsStr::new(".safe-ci-dag-runner") {
+        return textual_evidence(relative);
+    }
+    if top != OsStr::new("target") {
+        return false;
+    }
+    if textual_evidence(relative) {
+        return true;
+    }
+
+    let Some(name) = relative.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    if matches!(
+        name,
+        "CACHEDIR.TAG"
+            | ".cargo-lock"
+            | ".rustc_info.json"
+            | "cargo-timings.html"
+            | "invoked.timestamp"
+            | "root-output"
+            | "stderr"
+    ) {
+        return true;
+    }
+    if [
+        "bin-",
+        "build-script-",
+        "dep-",
+        "lib-",
+        "output-",
+        "run-build-script-",
+        "test-",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+    {
+        return true;
+    }
+    if matches!(
+        relative.extension().and_then(OsStr::to_str),
+        Some(
+            "a" | "bc"
+                | "bin"
+                | "crate"
+                | "css"
+                | "d"
+                | "dll"
+                | "dylib"
+                | "exe"
+                | "gcda"
+                | "gcno"
+                | "html"
+                | "js"
+                | "json"
+                | "jsonl"
+                | "lib"
+                | "ll"
+                | "lock"
+                | "log"
+                | "map"
+                | "o"
+                | "pdb"
+                | "profdata"
+                | "profraw"
+                | "rlib"
+                | "rmeta"
+                | "so"
+                | "stamp"
+                | "svg"
+                | "timestamp"
+                | "txt"
+                | "wasm"
+                | "woff"
+                | "woff2"
+        )
+    ) {
+        return true;
+    }
+
+    let profile = components.next().and_then(|component| match component {
+        Component::Normal(value) => value.to_str(),
+        _ => None,
+    });
+    matches!(profile, Some("debug" | "release")) && metadata.mode() & 0o111 != 0
+}
+
+fn decode_mountinfo_path(field: &str, line_number: usize) -> Result<PathBuf, String> {
+    let bytes = field.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 3 >= bytes.len()
+            || !bytes[index + 1..=index + 3]
+                .iter()
+                .all(|byte| matches!(byte, b'0'..=b'7'))
+        {
+            return Err(format!(
+                "mountinfo line {line_number} has malformed escaped mount path"
+            ));
+        }
+        let value = (bytes[index + 1] - b'0') * 64
+            + (bytes[index + 2] - b'0') * 8
+            + (bytes[index + 3] - b'0');
+        decoded.push(value);
+        index += 4;
+    }
+    let decoded = String::from_utf8(decoded)
+        .map_err(|_| format!("mountinfo line {line_number} has non-UTF8 mount path"))?;
+    Ok(PathBuf::from(decoded))
+}
+
+fn verify_no_nested_mounts(root: &Path, residue: &Path) -> Result<(), String> {
+    let authority = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_MOUNTINFO")?
+        .unwrap_or_else(|| PathBuf::from("/proc/self/mountinfo"));
+    let text = fs::read_to_string(&authority)
+        .map_err(|error| format!("read mount authority {}: {error}", authority.display()))?;
+    for (offset, line) in text.lines().enumerate() {
+        let line_number = offset + 1;
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 7 || !fields.iter().any(|field| *field == "-") {
+            return Err(format!("mountinfo line {line_number} is malformed"));
+        }
+        let mount = decode_mountinfo_path(fields[4], line_number)?;
+        if mount == residue || mount.starts_with(residue) {
+            return Err(format!(
+                "nested mount {} remains inside orphan residue {}; refusing disposal",
+                mount.display(),
+                residue.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn walk_residue(
+    base: &Path,
+    directory: &Path,
+    directories: &mut Vec<String>,
+    files: &mut Vec<ResidueFile>,
+) -> Result<(), String> {
+    let mut entries: Vec<_> = fs::read_dir(directory)
+        .map_err(|error| format!("enumerate residue {}: {error}", directory.display()))?
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("enumerate residue entry: {error}"))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("inspect residue {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "orphan residue contains symlink {}; refusing generated-residue disposal",
+                path.display()
+            ));
+        }
+        let relative = path
+            .strip_prefix(base)
+            .map_err(|_| format!("residue path escaped base: {}", path.display()))?;
+        let relative_text = relative
+            .to_str()
+            .ok_or_else(|| format!("orphan residue has non-UTF8 path: {}", path.display()))?
+            .to_string();
+        if metadata.is_dir() {
+            directories.push(relative_text);
+            walk_residue(base, &path, directories, files)?;
+        } else if metadata.is_file() {
+            if !recognized_generated_file(relative, &metadata) {
+                return Err(format!(
+                    "orphan residue contains unrecognized generated file {}; preserve or classify it before retry",
+                    path.display()
+                ));
+            }
+            let copied = textual_evidence(relative);
+            if copied && metadata.len() > 2 * 1024 * 1024 {
+                return Err(format!(
+                    "textual evidence {} exceeds 2 MiB; preserve it explicitly before retry",
+                    path.display()
+                ));
+            }
+            files.push(ResidueFile {
+                relative: relative_text,
+                bytes: metadata.len(),
+                sha256: sha256_file(&path)?,
+                copied,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            });
+        } else {
+            return Err(format!(
+                "orphan residue contains non-file/non-directory {}; refusing",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn residue_inventory(root: &Path, path: &Path) -> Result<ResidueInventory, String> {
+    verify_no_nested_mounts(root, path)?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect orphan residue {}: {error}", path.display()))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "orphan residue {} is not an exact directory",
+            path.display()
+        ));
+    }
+    let allowed: BTreeSet<&str> = [".safe-ci-dag-runner", "target"].into_iter().collect();
+    let mut top_entries: Vec<_> = fs::read_dir(path)
+        .map_err(|error| format!("enumerate orphan residue {}: {error}", path.display()))?
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("enumerate orphan residue entry: {error}"))?;
+    top_entries.sort_by_key(|entry| entry.file_name());
+    if top_entries.is_empty() {
+        return Err(format!(
+            "orphan residue {} is empty; absence alone is not cleanup authority",
+            path.display()
+        ));
+    }
+    for entry in &top_entries {
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| format!("orphan residue has non-UTF8 top-level entry"))?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("inspect orphan residue entry: {error}"))?;
+        if !allowed.contains(name) || !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(format!(
+                "orphan residue contains non-generated top-level entry {}; allowed entries are target/ and .safe-ci-dag-runner/",
+                entry.path().display()
+            ));
+        }
+    }
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    walk_residue(path, path, &mut directories, &mut files)?;
+    directories.sort();
+    files.sort_by(|left, right| left.relative.cmp(&right.relative));
+    Ok(ResidueInventory { directories, files })
+}
+
+fn inventory_json(inventory: &ResidueInventory) -> Value {
+    json!({
+        "directories": inventory.directories,
+        "files": inventory.files.iter().map(|file| json!({
+            "path": file.relative,
+            "bytes": file.bytes,
+            "sha256": file.sha256,
+            "copied": file.copied,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn copy_evidence_file(source: &Path, destination: &Path, expected: &str) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create evidence directory {}: {error}", parent.display()))?;
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "existing evidence destination {} is not an exact file",
+                    destination.display()
+                ));
+            }
+            if sha256_file(destination)? != expected {
+                return Err(format!(
+                    "existing evidence copy {} has the wrong SHA-256",
+                    destination.display()
+                ));
+            }
+            return Ok(());
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect evidence destination {}: {error}",
+                destination.display()
+            ))
+        }
+    }
+    let mut input = fs::File::open(source)
+        .map_err(|error| format!("open evidence source {}: {error}", source.display()))?;
+    let mut output = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|error| format!("create evidence copy {}: {error}", destination.display()))?;
+    io::copy(&mut input, &mut output)
+        .and_then(|_| output.sync_all())
+        .map_err(|error| format!("persist evidence copy {}: {error}", destination.display()))?;
+    if sha256_file(destination)? != expected {
+        return Err(format!(
+            "evidence copy {} failed post-copy SHA-256 verification",
+            destination.display()
+        ));
+    }
+    Ok(())
+}
+
+fn evidence_directory(root: &Path, slot: &str, nonce: &str) -> Result<PathBuf, String> {
+    let relative = PathBuf::from("ignored/worktree-recovery")
+        .join(slot)
+        .join(nonce);
+    let directory = root.join(&relative);
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "create orphan evidence directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    let canonical_root =
+        fs::canonicalize(root).map_err(|error| format!("canonicalize workspace root: {error}"))?;
+    let canonical = fs::canonicalize(&directory)
+        .map_err(|error| format!("canonicalize orphan evidence directory: {error}"))?;
+    let expected = canonical_root.join(relative);
+    if canonical != expected {
+        return Err(format!(
+            "orphan evidence directory {} resolves to {}; refusing alias",
+            expected.display(),
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
+}
+
+fn build_or_verify_evidence(
+    root: &Path,
+    slot: &str,
+    nonce: &str,
+    snapshot: &Value,
+    targets: &[OrphanTarget],
+    sources: &[(PathBuf, ResidueInventory)],
+) -> Result<(PathBuf, String, Value), String> {
+    let directory = evidence_directory(root, slot, nonce)?;
+    let mut target_rows = Vec::new();
+    for (target, (source, inventory)) in targets.iter().zip(sources.iter()) {
+        for file in &inventory.files {
+            if file.copied {
+                copy_evidence_file(
+                    &source.join(&file.relative),
+                    &directory.join(target.label).join(&file.relative),
+                    &file.sha256,
+                )?;
+            }
+        }
+        target_rows.push(json!({
+            "label": target.label,
+            "original": target.original,
+            "fenced": target.fenced,
+            "inventory": inventory_json(inventory),
+        }));
+    }
+    let manifest = json!({
+        "schema_version": 1,
+        "source": "coordinator-orphan-residue-v1",
+        "slot": slot,
+        "transaction_nonce": nonce,
+        "slot_snapshot": snapshot,
+        "targets": target_rows,
+    });
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize orphan evidence manifest: {error}"))?;
+    let mut persisted = bytes.clone();
+    persisted.push(b'\n');
+    let path = directory.join("manifest.json");
+    match fs::read(&path) {
+        Ok(existing) if existing != persisted => {
+            return Err(format!(
+                "existing orphan evidence manifest {} does not match current residue",
+                path.display()
+            ))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            durable_replace(&path, &persisted)
+                .map_err(|error| format!("persist orphan evidence manifest: {error}"))?;
+        }
+        Err(error) => return Err(format!("read orphan evidence manifest: {error}")),
+    }
+    Ok((directory, sha256_bytes(&persisted), manifest))
+}
+
+fn verify_inventory_row(
+    manifest: &Value,
+    label: &str,
+    inventory: &ResidueInventory,
+) -> Result<(), String> {
+    let rows = manifest["targets"]
+        .as_array()
+        .ok_or_else(|| "orphan evidence manifest has no targets".to_string())?;
+    let row = rows
+        .iter()
+        .find(|row| row["label"].as_str() == Some(label))
+        .ok_or_else(|| format!("orphan evidence manifest has no {label} target"))?;
+    if row["inventory"] != inventory_json(inventory) {
+        return Err(format!(
+            "{label} residue changed after evidence capture; retaining fenced residue"
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_identity(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn orphan_owner_names(slot_state: &Value) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for owner in slot_state["agents"]
+        .as_array()
+        .ok_or_else(|| "orphan slot has no agents array".to_string())?
+    {
+        let name = owner["name"]
+            .as_str()
+            .ok_or_else(|| "orphan slot owner has no name".to_string())?;
+        names.insert(name.to_string());
+    }
+    Ok(names)
+}
+
+fn verify_orphan_owners_absent(
+    root: &Path,
+    slot_state: &Value,
+) -> Result<BTreeSet<String>, String> {
+    let names = orphan_owner_names(slot_state)?;
+    let agents = agent_snapshot(root)?;
+    let panes = tmux_panes(root)?;
+    for name in &names {
+        if agents.get(name).is_some_and(|presence| presence.live) {
+            return Err(format!(
+                "recorded orphan owner '{name}' is still live in ORC"
+            ));
+        }
+        if panes.iter().any(|pane| pane.window == *name) {
+            return Err(format!(
+                "recorded orphan owner '{name}' still has a tmux pane"
+            ));
+        }
+        if agents
+            .get(name)
+            .and_then(|presence| presence.pane.as_deref())
+            .is_some_and(|pane| panes.iter().any(|candidate| candidate.pane == pane))
+        {
+            return Err(format!(
+                "recorded orphan owner '{name}' retains its recorded tmux pane"
+            ));
+        }
+    }
+    Ok(names)
+}
+
+fn verify_orphan_units_absent(
+    root: &Path,
+    owners: &BTreeSet<String>,
+    targets: &[PathBuf],
+) -> Result<(), String> {
+    let rows: Vec<Value> =
+        if let Some(path) = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_SYSTEMD_UNITS")? {
+            serde_json::from_slice(&fs::read(&path).map_err(|error| {
+                format!("read test systemd authority {}: {error}", path.display())
+            })?)
+            .map_err(|error| format!("parse test systemd authority: {error}"))?
+        } else {
+            let mut rows = Vec::new();
+            for user in [true, false] {
+                let mut command = Command::new("systemctl");
+                if user {
+                    command.arg("--user");
+                }
+                let output = command
+                    .args(["list-units", "--all", "--output=json", "--no-pager"])
+                    .output()
+                    .map_err(|error| format!("query systemd unit authority: {error}"))?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "systemd unit authority failed: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                let listed: Vec<Value> = serde_json::from_slice(&output.stdout)
+                    .map_err(|error| format!("parse systemd unit authority: {error}"))?;
+                for mut row in listed {
+                    row["scope"] = json!(if user { "user" } else { "system" });
+                    rows.push(row);
+                }
+            }
+            rows
+        };
+    let owner_tokens: Vec<String> = owners
+        .iter()
+        .map(|name| normalized_identity(name))
+        .collect();
+    for row in rows {
+        let active = row["active"]
+            .as_str()
+            .ok_or_else(|| format!("systemd authority row has no active state: {row}"))?;
+        if matches!(active, "inactive" | "failed") {
+            continue;
+        }
+        let unit = row["unit"]
+            .as_str()
+            .filter(|unit| !unit.is_empty())
+            .ok_or_else(|| format!("systemd authority row has no unit identity: {row}"))?;
+        let mut details = row["details"].as_str().unwrap_or("").to_string();
+        let unit_token = normalized_identity(unit);
+        let name_match = owner_tokens
+            .iter()
+            .any(|owner| !owner.is_empty() && unit_token.contains(owner));
+        if details.is_empty() && (unit.ends_with(".service") || unit.ends_with(".scope")) {
+            let mut command = Command::new("systemctl");
+            if row["scope"].as_str() == Some("user") {
+                command.arg("--user");
+            }
+            let output = command
+                .args([
+                    "show",
+                    unit,
+                    "--no-pager",
+                    "--property=Id,ActiveState,SubState,WorkingDirectory,ExecStart",
+                ])
+                .output()
+                .map_err(|error| format!("inspect live systemd unit {unit}: {error}"))?;
+            if !output.status.success() {
+                return Err(format!("could not inspect live systemd unit {unit}"));
+            }
+            details = String::from_utf8_lossy(&output.stdout).to_string();
+        }
+        let target_match = targets
+            .iter()
+            .any(|target| details.contains(target.to_string_lossy().as_ref()));
+        if name_match || target_match {
+            return Err(format!(
+                "live systemd unit {unit} remains associated with orphan owner/path"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn orphan_process_users(
+    proc_root: &Path,
+    owners: &BTreeSet<String>,
+    targets: &[PathBuf],
+) -> Result<Vec<String>, String> {
+    let own_uid = fs::metadata("/proc/self")
+        .map_err(|error| format!("could not inspect /proc/self: {error}"))?
+        .uid();
+    let mut users = Vec::new();
+    for entry in fs::read_dir(proc_root)
+        .map_err(|error| format!("could not enumerate {}: {error}", proc_root.display()))?
+    {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("could not enumerate proc entry: {error}")),
+        };
+        let Some(pid_text) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<u32>() else {
+            continue;
+        };
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect proc entry for pid {pid}: {error}"
+                ))
+            }
+        };
+        if metadata.uid() != own_uid {
+            continue;
+        }
+        let proc_path = entry.path();
+        if process_agent_name(&proc_path).is_some_and(|name| owners.contains(&name)) {
+            return Err(format!(
+                "recorded orphan owner process pid {pid} remains live"
+            ));
+        }
+        for kind in ["cwd", "exe", "root"] {
+            inspect_process_link(pid, kind, &proc_path.join(kind), targets, &mut users);
+        }
+        inspect_process_directory_links(pid, "fd", &proc_path.join("fd"), targets, &mut users);
+        inspect_process_maps(pid, &proc_path, targets, &mut users);
+        inspect_process_directory_links(
+            pid,
+            "map_files",
+            &proc_path.join("map_files"),
+            targets,
+            &mut users,
+        );
+    }
+    users.sort();
+    users.dedup();
+    Ok(users)
+}
+
+fn verify_orphan_locks_absent(root: &Path, inventories: &[ResidueInventory]) -> Result<(), String> {
+    let path = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_LOCKS")?
+        .unwrap_or_else(|| PathBuf::from("/proc/locks"));
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("read kernel lock authority {}: {error}", path.display()))?;
+    let identities: BTreeSet<(u64, u64, u64)> = inventories
+        .iter()
+        .flat_map(|inventory| inventory.files.iter())
+        .map(|file| {
+            (
+                libc::major(file.device) as u64,
+                libc::minor(file.device) as u64,
+                file.inode,
+            )
+        })
+        .collect();
+    for line in text.lines() {
+        for token in line.split_whitespace() {
+            let fields: Vec<&str> = token.split(':').collect();
+            if fields.len() != 3 {
+                continue;
+            }
+            let parsed = (
+                u64::from_str_radix(fields[0], 16),
+                u64::from_str_radix(fields[1], 16),
+                fields[2].parse::<u64>(),
+            );
+            if let (Ok(major), Ok(minor), Ok(inode)) = parsed {
+                if identities.contains(&(major, minor, inode)) {
+                    return Err(format!(
+                        "live kernel lock references orphan residue: {line}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn orphan_consumer_observation(
+    root: &Path,
+    slot_state: &Value,
+    proc_root: &Path,
+    container_token: &str,
+    targets: &[PathBuf],
+    inventories: &[ResidueInventory],
+) -> Result<Value, String> {
+    let owners = verify_orphan_owners_absent(root, slot_state)?;
+    verify_orphan_units_absent(root, &owners, targets)?;
+    verify_orphan_locks_absent(root, inventories)?;
+    let users = orphan_process_users(proc_root, &owners, targets)?;
+    if !users.is_empty() {
+        return Err(format!(
+            "live process references orphan residue: {}",
+            users.join(", ")
+        ));
+    }
+    container_release_audit(root, container_token, &owners, targets)
+}
+
+fn verify_no_slot_registrations(root: &Path, slot: &str) -> Result<(), String> {
+    let slot_dir = root.join("worktrees").join(slot);
+    for product in ["hermit", "reverie", "liteinst2"] {
+        let listing = git_inspect(&root.join(product), &["worktree", "list", "--porcelain"])?;
+        if let Some(candidate) = listing
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .map(Path::new)
+            .find(|candidate| candidate.starts_with(&slot_dir))
+        {
+            return Err(format!(
+                "orphan finalizer found registered {product} worktree {}; expected zero registrations below {}",
+                candidate.display(),
+                slot_dir.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn initial_orphan_targets(
+    root: &Path,
+    slot: &str,
+    slot_state: &Value,
+    nonce: &str,
+) -> Result<Vec<OrphanTarget>, String> {
+    if slot_state["status"].as_str() != Some("released") {
+        return Err(format!(
+            "orphan finalizer requires status=released, found {:?}",
+            slot_state["status"].as_str()
+        ));
+    }
+    for forbidden in [
+        "coordinator_lease",
+        "coordinator_lease_intent",
+        "coordinator_lease_revocation",
+        "release_journal",
+        "orphan_residue_journal",
+    ] {
+        if slot_state.get(forbidden).is_some() {
+            return Err(format!(
+                "orphan finalizer refuses slot with existing {forbidden} authority"
+            ));
+        }
+    }
+    for owner in slot_state["agents"].as_array().into_iter().flatten() {
+        if owner.get("tmux_pane_id").is_some() || owner.get("cgroup_path").is_some() {
+            return Err(
+                "orphan finalizer is only for legacy lease-less rows; use normal release for leased owners"
+                    .to_string(),
+            );
+        }
+    }
+    validate_canonical_slot_paths(slot, slot_state)?;
+    verify_no_slot_registrations(root, slot)?;
+    let mut targets = Vec::new();
+    for (label, branch_key) in [
+        ("hermit", "hermit_branch"),
+        ("reverie", "reverie_branch"),
+        ("liteinst2", "liteinst2_branch"),
+    ] {
+        let branch = slot_state[branch_key]
+            .as_str()
+            .ok_or_else(|| format!("orphan slot has no string {branch_key}"))?;
+        if branch == "-" {
+            continue;
+        }
+        let expected_relative = PathBuf::from("worktrees").join(slot).join(label);
+        let original = canonical_exact(root, &expected_relative)?;
+        let top = git_output(
+            &original,
+            &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        )?;
+        if top.status.success() {
+            let observed_text = String::from_utf8_lossy(&top.stdout).trim().to_string();
+            let observed = fs::canonicalize(&observed_text).map_err(|error| {
+                format!("canonicalize observed Git top-level {observed_text}: {error}")
+            })?;
+            if observed == original {
+                return Err(format!(
+                    "orphan finalizer refuses actual {label} Git worktree {}",
+                    original.display()
+                ));
+            }
+        }
+        residue_inventory(root, &original)?;
+        let fenced = original
+            .parent()
+            .expect("orphan target has slot parent")
+            .join(format!(".{label}.orphan-residue-{nonce}"));
+        if exact_path_present(&fenced)? {
+            return Err(format!(
+                "orphan fence destination already exists: {}",
+                fenced.display()
+            ));
+        }
+        targets.push(OrphanTarget {
+            label,
+            original,
+            fenced,
+        });
+    }
+    if targets.is_empty() {
+        return Err("orphan finalizer found no recorded product residue".to_string());
+    }
+    let slot_dir = root.join("worktrees").join(slot);
+    let allowed: BTreeSet<&str> = targets.iter().map(|target| target.label).collect();
+    for entry in fs::read_dir(&slot_dir)
+        .map_err(|error| format!("enumerate orphan slot {}: {error}", slot_dir.display()))?
+    {
+        let entry = entry.map_err(|error| format!("enumerate orphan slot entry: {error}"))?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "orphan slot has non-UTF8 entry".to_string())?;
+        if !allowed.contains(name.as_str()) {
+            return Err(format!(
+                "orphan slot contains unexpected entry {}; refusing",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(targets)
+}
+
+fn parse_orphan_targets(
+    root: &Path,
+    slot: &str,
+    journal: &Value,
+) -> Result<Vec<OrphanTarget>, String> {
+    let nonce = journal["transaction_nonce"]
+        .as_str()
+        .ok_or_else(|| "orphan journal has no transaction nonce".to_string())?;
+    let rows = journal["targets"]
+        .as_array()
+        .ok_or_else(|| "orphan journal has no targets".to_string())?;
+    let mut targets = Vec::new();
+    for row in rows {
+        let label = match row["label"].as_str() {
+            Some("hermit") => "hermit",
+            Some("reverie") => "reverie",
+            Some("liteinst2") => "liteinst2",
+            other => return Err(format!("orphan journal has invalid target {other:?}")),
+        };
+        let original = root.join("worktrees").join(slot).join(label);
+        let fenced = original
+            .parent()
+            .expect("orphan target has slot parent")
+            .join(format!(".{label}.orphan-residue-{nonce}"));
+        if row["original"].as_str() != original.to_str()
+            || row["fenced"].as_str() != fenced.to_str()
+        {
+            return Err(format!(
+                "orphan journal does not bind exact {label} original/fenced paths"
+            ));
+        }
+        targets.push(OrphanTarget {
+            label,
+            original,
+            fenced,
+        });
+    }
+    if targets.is_empty() {
+        return Err("orphan journal has no targets".to_string());
+    }
+    Ok(targets)
+}
+
+fn validate_orphan_journal(
+    root: &Path,
+    slot: &str,
+    slot_state: &Value,
+    note: &str,
+) -> Result<(Value, Value, Vec<OrphanTarget>), String> {
+    let journal = slot_state["orphan_residue_journal"]
+        .as_object()
+        .map(|_| slot_state["orphan_residue_journal"].clone())
+        .ok_or_else(|| "slot has no readable orphan residue journal".to_string())?;
+    if journal["schema_version"].as_u64() != Some(1)
+        || journal["source"].as_str() != Some("coordinator-orphan-residue-v1")
+        || journal["slot"].as_str() != Some(slot)
+        || journal["recovery_note"].as_str() != Some(note)
+        || journal["transaction_nonce"].as_str().is_none_or(|nonce| {
+            nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(
+            "orphan residue journal does not match this exact recovery request".to_string(),
+        );
+    }
+    if !matches!(
+        journal["phase"].as_str(),
+        Some(
+            "armed"
+                | "evidence-complete"
+                | "fence-authorized"
+                | "fenced"
+                | "residue-removed"
+                | "physical-removal-complete"
+        )
+    ) {
+        return Err("orphan residue journal has invalid phase".to_string());
+    }
+    let snapshot = journal["slot_snapshot"]
+        .as_object()
+        .map(|_| journal["slot_snapshot"].clone())
+        .ok_or_else(|| "orphan residue journal has no slot snapshot".to_string())?;
+    if snapshot["status"].as_str() != Some("released") {
+        return Err("orphan journal snapshot was not released".to_string());
+    }
+    validate_canonical_slot_paths(slot, &snapshot)?;
+    let mut current_base = slot_state.clone();
+    let mut snapshot_base = snapshot.clone();
+    for value in [&mut current_base, &mut snapshot_base] {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "orphan slot record is not an object".to_string())?;
+        object.remove("status");
+        object.remove("updated");
+        object.remove("orphan_residue_journal");
+    }
+    if current_base != snapshot_base {
+        return Err("orphan slot authorization changed after journal arm".to_string());
+    }
+    let targets = parse_orphan_targets(root, slot, &journal)?;
+    Ok((journal, snapshot, targets))
+}
+
+fn load_orphan_manifest(
+    root: &Path,
+    slot: &str,
+    journal: &Value,
+) -> Result<(PathBuf, String, Value), String> {
+    let nonce = journal["transaction_nonce"]
+        .as_str()
+        .ok_or_else(|| "orphan journal has no nonce".to_string())?;
+    let directory = evidence_directory(root, slot, nonce)?;
+    let bytes = fs::read(directory.join("manifest.json"))
+        .map_err(|error| format!("read orphan evidence manifest: {error}"))?;
+    let digest = sha256_bytes(&bytes);
+    if journal["manifest_sha256"].as_str() != Some(&digest) {
+        return Err("orphan evidence manifest SHA-256 does not match journal".to_string());
+    }
+    let manifest: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse orphan evidence manifest: {error}"))?;
+    if manifest["source"].as_str() != Some("coordinator-orphan-residue-v1")
+        || manifest["slot"].as_str() != Some(slot)
+        || manifest["transaction_nonce"] != journal["transaction_nonce"]
+        || manifest["slot_snapshot"] != journal["slot_snapshot"]
+    {
+        return Err("orphan evidence manifest is not bound to the journal".to_string());
+    }
+    for target in manifest["targets"]
+        .as_array()
+        .ok_or_else(|| "orphan evidence manifest has no targets".to_string())?
+    {
+        let label = target["label"]
+            .as_str()
+            .ok_or_else(|| "orphan evidence target has no label".to_string())?;
+        for file in target["inventory"]["files"]
+            .as_array()
+            .ok_or_else(|| format!("orphan evidence target {label} has no file inventory"))?
+        {
+            if file["copied"].as_bool() != Some(true) {
+                continue;
+            }
+            let relative = file["path"]
+                .as_str()
+                .ok_or_else(|| "orphan evidence file has no path".to_string())?;
+            let copy = directory.join(label).join(relative);
+            let metadata = fs::symlink_metadata(&copy).map_err(|error| {
+                format!("inspect orphan evidence copy {}: {error}", copy.display())
+            })?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() != file["bytes"].as_u64().unwrap_or(u64::MAX)
+                || sha256_file(&copy)? != file["sha256"].as_str().unwrap_or("")
+            {
+                return Err(format!(
+                    "orphan evidence copy {} does not match its manifest",
+                    copy.display()
+                ));
+            }
+        }
+    }
+    Ok((directory, digest, manifest))
+}
+
+fn current_orphan_sources(
+    targets: &[OrphanTarget],
+    allow_absent: bool,
+) -> Result<Vec<Option<PathBuf>>, String> {
+    let mut sources = Vec::new();
+    for target in targets {
+        let original = exact_path_present(&target.original)?;
+        let fenced = exact_path_present(&target.fenced)?;
+        match (original, fenced) {
+            (true, false) => sources.push(Some(target.original.clone())),
+            (false, true) => sources.push(Some(target.fenced.clone())),
+            (true, true) => {
+                return Err(format!(
+                    "both orphan paths exist for {}: {}, {}",
+                    target.label,
+                    target.original.display(),
+                    target.fenced.display()
+                ))
+            }
+            (false, false) if allow_absent => sources.push(None),
+            (false, false) => {
+                return Err(format!(
+                    "orphan {} paths are absent without journaled removal authority",
+                    target.label
+                ))
+            }
+        }
+    }
+    Ok(sources)
+}
+
+fn save_orphan_phase(root: &Path, state: &mut Value, slot: &str, phase: &str) {
+    state["slots"][slot]["status"] = json!("finalizing-orphan-residue");
+    state["slots"][slot]["updated"] = json!(now_iso());
+    state["slots"][slot]["orphan_residue_journal"]["phase"] = json!(phase);
+    save_state(root, state);
+    regen_active_md(root, state);
+}
+
+fn verify_completed_orphan(root: &Path, slot: &str) -> Result<(), String> {
+    verify_absent_slot_recovery(root, slot)?;
+    let directory = root.join("ignored/worktree-recovery").join(slot);
+    let mut completions = 0usize;
+    for entry in fs::read_dir(&directory).map_err(|error| {
+        format!(
+            "read orphan recovery directory {}: {error}",
+            directory.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("read orphan recovery entry: {error}"))?;
+        let completion = entry.path().join("completion.json");
+        let Ok(bytes) = fs::read(&completion) else {
+            continue;
+        };
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("parse {}: {error}", completion.display()))?;
+        if value["schema_version"].as_u64() != Some(1)
+            || value["source"].as_str() != Some("coordinator-orphan-residue-v1")
+            || value["slot"].as_str() != Some(slot)
+            || value["phase"].as_str() != Some("physical-removal-complete")
+        {
+            continue;
+        }
+        let manifest = entry.path().join("manifest.json");
+        if sha256_file(&manifest)? != value["manifest_sha256"].as_str().unwrap_or("") {
+            return Err(format!(
+                "completed orphan evidence {} has wrong manifest hash",
+                entry.path().display()
+            ));
+        }
+        completions += 1;
+    }
+    if completions == 0 {
+        return Err("slot is absent without a completed orphan-residue transaction".to_string());
+    }
+    Ok(())
+}
+
+fn coordinator_finalize_orphan(
+    root: &Path,
+    state: &mut Value,
+    slot: &str,
+    note: &str,
+) -> Result<(), String> {
+    let crash_after_journal =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_ORPHAN_JOURNAL")?;
+    let crash_after_evidence =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_ORPHAN_EVIDENCE")?;
+    let crash_after_fence =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_ORPHAN_FENCE")?;
+    let crash_after_remove =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_ORPHAN_REMOVE")?;
+    let crash_after_final_state =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_ORPHAN_FINAL_STATE")?;
+
+    if state["slots"].get(slot).is_none() {
+        verify_completed_orphan(root, slot)?;
+        regen_active_md(root, state);
+        println!("✓ orphan residue for {slot} was already finalized");
+        return Ok(());
+    }
+    validate_owners(slot, &state["slots"][slot])?;
+    let proc_root = process_root(root)?;
+    let (_container_lock, container_token) = lock_container_lifecycle(root)?;
+
+    if state["slots"][slot].get("orphan_residue_journal").is_none() {
+        let nonce = secure_transaction_nonce()?;
+        let snapshot = state["slots"][slot].clone();
+        let targets = initial_orphan_targets(root, slot, &snapshot, &nonce)?;
+        let paths: Vec<PathBuf> = targets
+            .iter()
+            .map(|target| target.original.clone())
+            .collect();
+        let inventories: Vec<ResidueInventory> = paths
+            .iter()
+            .map(|path| residue_inventory(root, path))
+            .collect::<Result<_, _>>()?;
+        orphan_consumer_observation(
+            root,
+            &snapshot,
+            &proc_root,
+            &container_token,
+            &paths,
+            &inventories,
+        )?;
+        state["slots"][slot]["status"] = json!("finalizing-orphan-residue");
+        state["slots"][slot]["updated"] = json!(now_iso());
+        state["slots"][slot]["orphan_residue_journal"] = json!({
+            "schema_version": 1,
+            "source": "coordinator-orphan-residue-v1",
+            "slot": slot,
+            "phase": "armed",
+            "transaction_nonce": nonce,
+            "recovery_note": note,
+            "authorized_at": now_iso(),
+            "slot_snapshot": snapshot,
+            "targets": targets.iter().map(|target| json!({
+                "label": target.label,
+                "original": target.original,
+                "fenced": target.fenced,
+            })).collect::<Vec<_>>(),
+        });
+        save_state(root, state);
+        maybe_inject_fixture_crash(
+            crash_after_journal.as_deref(),
+            "post-orphan-journal crash injected",
+        )?;
+        regen_active_md(root, state);
+    }
+
+    let (mut journal, snapshot, targets) =
+        validate_orphan_journal(root, slot, &state["slots"][slot], note)?;
+    verify_no_slot_registrations(root, slot)?;
+    let phase = journal["phase"].as_str().unwrap_or("").to_string();
+    if phase == "armed" {
+        let source_paths = current_orphan_sources(&targets, false)?
+            .into_iter()
+            .map(|path| path.expect("non-absent orphan source"))
+            .collect::<Vec<_>>();
+        let inventories = source_paths
+            .iter()
+            .map(|path| residue_inventory(root, path))
+            .collect::<Result<Vec<_>, _>>()?;
+        let paired: Vec<(PathBuf, ResidueInventory)> = source_paths
+            .iter()
+            .cloned()
+            .zip(inventories.iter().cloned())
+            .collect();
+        let (_, manifest_sha256, _) = build_or_verify_evidence(
+            root,
+            slot,
+            journal["transaction_nonce"].as_str().unwrap(),
+            &snapshot,
+            &targets,
+            &paired,
+        )?;
+        state["slots"][slot]["orphan_residue_journal"]["manifest_sha256"] = json!(manifest_sha256);
+        save_orphan_phase(root, state, slot, "evidence-complete");
+        maybe_inject_fixture_crash(
+            crash_after_evidence.as_deref(),
+            "post-orphan-evidence crash injected",
+        )?;
+        journal = state["slots"][slot]["orphan_residue_journal"].clone();
+    }
+
+    let (evidence_dir, manifest_sha256, manifest) = load_orphan_manifest(root, slot, &journal)?;
+    let phase = journal["phase"].as_str().unwrap_or("");
+    if !matches!(phase, "residue-removed" | "physical-removal-complete") {
+        let allow_absent = phase == "fenced";
+        let sources = current_orphan_sources(&targets, allow_absent)?;
+        let mut current_paths = Vec::new();
+        let mut inventories = Vec::new();
+        for (target, source) in targets.iter().zip(sources.iter()) {
+            if let Some(source) = source {
+                let inventory = residue_inventory(root, source)?;
+                verify_inventory_row(&manifest, target.label, &inventory)?;
+                current_paths.push(source.clone());
+                inventories.push(inventory);
+            }
+        }
+        let pre_containers = orphan_consumer_observation(
+            root,
+            &state["slots"][slot],
+            &proc_root,
+            &container_token,
+            &current_paths,
+            &inventories,
+        )?;
+        state["slots"][slot]["orphan_residue_journal"]["container_observation"] =
+            pre_containers.clone();
+        save_orphan_phase(root, state, slot, "fence-authorized");
+        for target in &targets {
+            if exact_path_present(&target.original)? {
+                rename_no_replace(&target.original, &target.fenced).map_err(|error| {
+                    format!(
+                        "could not fence orphan residue {} -> {}: {error}",
+                        target.original.display(),
+                        target.fenced.display()
+                    )
+                })?;
+            }
+        }
+        let fenced_paths: Vec<PathBuf> = targets
+            .iter()
+            .filter(|target| target.fenced.exists())
+            .map(|target| target.fenced.clone())
+            .collect();
+        let fenced_inventories: Vec<ResidueInventory> = fenced_paths
+            .iter()
+            .map(|path| residue_inventory(root, path))
+            .collect::<Result<_, _>>()?;
+        for target in &targets {
+            if target.fenced.exists() {
+                verify_inventory_row(
+                    &manifest,
+                    target.label,
+                    &residue_inventory(root, &target.fenced)?,
+                )?;
+            }
+        }
+        let post_containers = orphan_consumer_observation(
+            root,
+            &state["slots"][slot],
+            &proc_root,
+            &container_token,
+            &fenced_paths,
+            &fenced_inventories,
+        )?;
+        if post_containers != pre_containers {
+            return Err(
+                "container census/config/mount observation changed across orphan path fence"
+                    .to_string(),
+            );
+        }
+        save_orphan_phase(root, state, slot, "fenced");
+        maybe_inject_fixture_crash(
+            crash_after_fence.as_deref(),
+            "post-orphan-fence crash injected",
+        )?;
+        for target in &targets {
+            if target.fenced.exists() {
+                let inventory = residue_inventory(root, &target.fenced)?;
+                verify_inventory_row(&manifest, target.label, &inventory)?;
+                orphan_consumer_observation(
+                    root,
+                    &state["slots"][slot],
+                    &proc_root,
+                    &container_token,
+                    &[target.fenced.clone()],
+                    &[inventory],
+                )?;
+                fs::remove_dir_all(&target.fenced).map_err(|error| {
+                    format!(
+                        "remove fenced generated residue {}: {error}",
+                        target.fenced.display()
+                    )
+                })?;
+            }
+        }
+        save_orphan_phase(root, state, slot, "residue-removed");
+        maybe_inject_fixture_crash(
+            crash_after_remove.as_deref(),
+            "post-orphan-remove crash injected",
+        )?;
+    }
+
+    for target in &targets {
+        if exact_path_present(&target.original)? || exact_path_present(&target.fenced)? {
+            return Err(format!(
+                "orphan {} residue remains after removal",
+                target.label
+            ));
+        }
+    }
+    verify_no_slot_registrations(root, slot)?;
+    let slot_dir = root.join("worktrees").join(slot);
+    if slot_dir.exists() {
+        fs::remove_dir(&slot_dir).map_err(|error| {
+            format!(
+                "remove now-empty orphan slot directory {}: {error}",
+                slot_dir.display()
+            )
+        })?;
+    }
+    let completion = json!({
+        "schema_version": 1,
+        "source": "coordinator-orphan-residue-v1",
+        "phase": "physical-removal-complete",
+        "slot": slot,
+        "transaction_nonce": journal["transaction_nonce"],
+        "manifest_sha256": manifest_sha256,
+        "completed_at": now_iso(),
+    });
+    let mut completion_bytes = serde_json::to_vec_pretty(&completion)
+        .map_err(|error| format!("serialize orphan completion: {error}"))?;
+    completion_bytes.push(b'\n');
+    durable_replace(&evidence_dir.join("completion.json"), &completion_bytes)
+        .map_err(|error| format!("persist orphan completion evidence: {error}"))?;
+    save_orphan_phase(root, state, slot, "physical-removal-complete");
+    state["slots"].as_object_mut().unwrap().remove(slot);
+    save_state(root, state);
+    maybe_inject_fixture_crash(
+        crash_after_final_state.as_deref(),
+        "post-orphan-final-state crash injected",
+    )?;
+    regen_active_md(root, state);
+    println!(
+        "✓ finalized orphan residue for {slot}; evidence: {}",
+        evidence_dir.display()
+    );
+    Ok(())
+}
+
 fn verify_completed_git_removal(target: &CleanTarget, fenced: &Path) -> Result<(), String> {
     let original_present = exact_path_present(&target.path)?;
     let fenced_present = exact_path_present(fenced)?;
@@ -2732,6 +4102,8 @@ fn main() {
     let mut force = false;
     let mut push = false;
     let mut recover_submodules = false;
+    let mut finalize_orphan_residue = false;
+    let mut orphan_recovery_note = String::new();
 
     let mut i = 0;
     let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
@@ -2749,6 +4121,10 @@ fn main() {
             "--force" => force = true,
             "--push" => push = true,
             "--recover-submodule-cleanup" => recover_submodules = true,
+            "--coordinator-finalize-orphan-residue" => finalize_orphan_residue = true,
+            "--orphan-recovery-note" => {
+                orphan_recovery_note = take(&mut i, &argv, "--orphan-recovery-note")
+            }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return;
@@ -2769,10 +4145,26 @@ fn main() {
     if recover_submodules && (!clean || force) {
         die("--recover-submodule-cleanup requires --clean and is incompatible with --force");
     }
+    if finalize_orphan_residue && (!clean || force || push || recover_submodules || agent.is_some())
+    {
+        die("--coordinator-finalize-orphan-residue requires --clean and is incompatible with --agent, --push, --force, and --recover-submodule-cleanup");
+    }
+    if finalize_orphan_residue && orphan_recovery_note.trim().is_empty() {
+        die("--coordinator-finalize-orphan-residue requires a non-empty --orphan-recovery-note");
+    }
+    if !finalize_orphan_residue && !orphan_recovery_note.is_empty() {
+        die("--orphan-recovery-note is valid only with --coordinator-finalize-orphan-residue");
+    }
 
     let root = find_root();
     let _registry_lock = lock_registry(&root);
     let mut state = load_state(&root);
+
+    if finalize_orphan_residue {
+        coordinator_finalize_orphan(&root, &mut state, &slot, &orphan_recovery_note)
+            .unwrap_or_else(|error| die(&format!("orphan finalization refused: {error}")));
+        return;
+    }
 
     // ACTIVE.md is a durable, human-augmented projection of the JSON
     // authority, but no filesystem offers an atomic rename spanning both
@@ -2806,6 +4198,14 @@ fn main() {
         .is_some()
     {
         die("slot has an unfinished coordinator-sentinel launch intent; complete the exact allocator invocation before release");
+    }
+    if let Some(orphan_journal) = state["slots"][&slot].get("orphan_residue_journal") {
+        let recorded_note = orphan_journal["recovery_note"]
+            .as_str()
+            .unwrap_or("<unreadable recorded note>");
+        die(&format!(
+            "slot {slot} has an unfinished orphan-residue journal; rerun ./scripts/release-worktree.rs --slot {slot} --clean --coordinator-finalize-orphan-residue with the exact original --orphan-recovery-note {recorded_note:?}"
+        ));
     }
     if (state["slots"][&slot]["status"].as_str() == Some("releasing")
         || state["slots"][&slot].get("release_journal").is_some()

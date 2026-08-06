@@ -542,12 +542,37 @@ fn regen_active_md(root: &Path, state: &Value) -> bool {
 /// Physical checkout of a product worktree, read from git porcelain. Mirrors the
 /// canonical verifier scripts/check-worktree-registry.rs::actual_checkout so the
 /// repair mode and the verifier agree on what "the actual branch" means.
+fn exact_checkout_root(path: &Path) -> Result<PathBuf, String> {
+    let requested = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize requested checkout: {error}"))?;
+    let (ok, top, error) = git(
+        path,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+    );
+    if !ok || top.is_empty() {
+        return Err(if error.is_empty() {
+            "not a git worktree".to_string()
+        } else {
+            error
+        });
+    }
+    let observed =
+        fs::canonicalize(&top).map_err(|error| format!("canonicalize git top-level: {error}"))?;
+    if observed != requested {
+        return Err(format!(
+            "git top-level {} does not equal requested checkout {}",
+            observed.display(),
+            requested.display()
+        ));
+    }
+    Ok(requested)
+}
+
 fn actual_checkout(path: &Path) -> Option<String> {
     if !path.exists() {
         return Some("-".to_string()); // Absent -> recorded as "-"
     }
-    let (inside, _, _) = git(path, &["rev-parse", "--is-inside-work-tree"]);
-    if !inside {
+    if exact_checkout_root(path).is_err() {
         return None; // Unreadable: do NOT rewrite the recorded value; skip + warn.
     }
     let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
@@ -561,6 +586,19 @@ fn actual_checkout(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+fn validate_canonical_slot_paths(slot: &str, record: &Value) -> Result<(), String> {
+    for product in ["hermit", "reverie", "liteinst2"] {
+        let key = format!("{product}_path");
+        let expected = format!("worktrees/{slot}/{product}");
+        if record[key.as_str()].as_str() != Some(expected.as_str()) {
+            return Err(format!(
+                "slot {slot} records noncanonical {key}; expected exact path '{expected}'"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// SINGLE-WRITER REPAIR/SYNC: reconcile the recorded {product}_branch cells in
@@ -606,6 +644,7 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
             let record = &state["slots"][*slot];
             record["status"].as_str() == Some("releasing")
                 || record.get("release_journal").is_some()
+                || record.get("orphan_residue_journal").is_some()
                 || record.get("coordinator_lease_intent").is_some()
                 || record.get("coordinator_lease_revocation").is_some()
         })
@@ -625,15 +664,17 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
     let mut changed = 0usize;
     let mut skipped = 0usize;
     for slot in &slot_names {
+        if let Err(error) = validate_canonical_slot_paths(slot, &state["slots"][slot]) {
+            skipped += 3;
+            eprintln!("  skip {slot}: {error}; all branch cells left as-is");
+            continue;
+        }
         for product in ["hermit", "reverie", "liteinst2"] {
             let recorded = state["slots"][slot][format!("{product}_branch")]
                 .as_str()
                 .unwrap_or("-")
                 .to_string();
-            let rel = state["slots"][slot][format!("{product}_path")]
-                .as_str()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("worktrees/{slot}/{product}")));
+            let rel = PathBuf::from(format!("worktrees/{slot}/{product}"));
             match actual_checkout(&root.join(&rel)) {
                 None => {
                     skipped += 1;
@@ -967,6 +1008,7 @@ fn validate_codex_intent_replay(slot_record: &Value, intent: &Value) -> Result<(
         || snapshot.get("coordinator_lease_intent").is_some()
         || snapshot.get("coordinator_lease_revocation").is_some()
         || snapshot.get("release_journal").is_some()
+        || snapshot.get("orphan_residue_journal").is_some()
     {
         return Err(
             "Codex sentinel slot snapshot already contains transaction authority".to_string(),
@@ -1056,13 +1098,31 @@ fn next_free_slot(root: &Path, state: &Value) -> String {
 
 fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
     if dst.exists() {
-        let (ok, _, _) = git(dst, &["rev-parse", "--is-inside-work-tree"]);
-        if ok {
+        let canonical = exact_checkout_root(dst).unwrap_or_else(|error| {
+            die(&format!(
+                "path exists but is not the exact requested git worktree {}: {error}",
+                dst.display()
+            ))
+        });
+        let (listed, porcelain, error) = git(primary, &["worktree", "list", "--porcelain"]);
+        if !listed {
+            die(&format!(
+                "could not inspect physical worktree registry for {}: {error}",
+                primary.display()
+            ));
+        }
+        let registrations = porcelain
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter(|candidate| Path::new(candidate) == canonical)
+            .count();
+        if registrations == 1 {
             println!("  adopt existing worktree {}", dst.display());
             return;
         }
         die(&format!(
-            "path exists but is not a git worktree: {}",
+            "path exists but has {registrations} matching registrations in {}: {}",
+            primary.display(),
             dst.display()
         ));
     }
@@ -1077,6 +1137,31 @@ fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
     if !ok {
         die(&format!(
             "git worktree add failed for {}: {err}",
+            dst.display()
+        ));
+    }
+    let canonical = exact_checkout_root(dst).unwrap_or_else(|error| {
+        die(&format!(
+            "new worktree {} failed exact-root verification: {error}",
+            dst.display()
+        ))
+    });
+    let (listed, porcelain, error) = git(primary, &["worktree", "list", "--porcelain"]);
+    let registrations = if listed {
+        porcelain
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter(|candidate| Path::new(candidate) == canonical)
+            .count()
+    } else {
+        die(&format!(
+            "could not verify physical worktree registry for {}: {error}",
+            primary.display()
+        ));
+    };
+    if registrations != 1 {
+        die(&format!(
+            "new worktree {} has {registrations} matching physical registrations",
             dst.display()
         ));
     }
@@ -1235,8 +1320,10 @@ fn main() {
         ));
     }
     if let Some(existing) = state["slots"].get(&slot) {
+        validate_canonical_slot_paths(&slot, existing).unwrap_or_else(|error| die(&error));
         if existing["status"].as_str() == Some("releasing")
             || existing.get("release_journal").is_some()
+            || existing.get("orphan_residue_journal").is_some()
             || existing.get("coordinator_lease_revocation").is_some()
         {
             die(&format!(
