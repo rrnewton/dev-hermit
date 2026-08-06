@@ -156,3 +156,46 @@ on a third** (pin bumps cannot be mutually disjoint — every one rewrites the r
 `Cargo.lock`). Do not revive it under any reformulation that still contains the word
 "batch". If the underlying worry is that PRs are stale-*based*, that is a rebase question
 against ancestry data and needs planning from scratch.
+
+## E. How the premise was probably manufactured — and the fix, landed
+
+Section D noted the canonical checker was unrunnable in the primary. That was
+repaired mid-session by another agent, so the checker ran — and it **disagrees**
+with everything above:
+
+    ./scripts/check-reverie-pin.rs --print-pin   -> 9470712afa9b421c72850ab7955fb335692e43a0
+    git show origin/main:detcore/Cargo.toml      -> dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6
+
+Not a contradiction. The checker reads the **working tree**, and the primary's
+local `main` ref is stale:
+
+| ref | commit |
+| --- | --- |
+| primary HEAD / local `main` | `f89c69766371806d3c9b2c3003531df2d59d6118` |
+| real `origin/main` | `4c70658e785834737cbe1524f77330c781a6f5ea` |
+
+`merge-base --is-ancestor` confirms HEAD is a **strict ancestor** of main. At
+`f89c6976` the pin genuinely *was* `9470712a`. The checker is correct about the
+commit it is standing on and silently wrong about main, because `--print-pin`
+returns a bare SHA carrying none of its conditions — the textbook Proxy Binding
+failure: **the value does not record which tree produced it.**
+
+This is a sufficient and, until now, still-live cause for this whole task. Any
+agent running the documented command in the primary gets `9470712a`, compares it
+to live reverie main `dd3c178e`, sees a mismatch, and files "the pin is stale, N
+PRs need bumping". It cannot be proven to be *the* origin, but it reproduces the
+premise exactly, on demand.
+
+**Fixed in `rrnewton/hermit` PR #1758** (`reverie-pin-provenance-warning`,
+head `1b16397845630972134d63c4e7d95d0417f1e1dc`): the pin is now always reported
+with the HEAD it was read from, plus a loud warning when HEAD is a strict
+ancestor of `origin/main`. stdout keeps the bare pin (four shell callers capture
+it by command substitution), the check stays offline (local refs only), it keys
+on strict ancestry so a PR head does not trip it, and it warns rather than
+refuses so no CI lane changes behavior. Self-test 14/14, mutation-verified,
+bracketed on both sides, zero new fmt/clippy findings.
+
+**Standing rule regardless of that fix:** derive the pin from `origin/main` after
+a fresh fetch, never from a primary working tree, and check
+`git rev-parse HEAD origin/main` first. If they differ, the checker is answering
+a question about history, not about main.
