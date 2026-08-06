@@ -804,11 +804,35 @@ def state_timeline(parent: str, repo: str, since: str | None,
 
     now = dt.datetime.now(dt.timezone.utc).timestamp()
     order = sorted(first_seen, key=lambda s: first_seen[s])
+
+    # OBSERVATION HORIZON. The store only has evidence up to its newest row.
+    # Past that we know NOTHING -- ingest may simply not have run (egress down,
+    # scheduler stopped). Extending the last commit's reign to `now` would
+    # ATTRIBUTE UNOBSERVED TIME TO THE LAST KNOWN STATE, and when that state is
+    # success it reports hours nobody measured as GREEN. That is the precise
+    # defect this metric exists to avoid: absence of a record is not a green
+    # period. Measured on 2026-08-06 before this cap: the trailing interval was
+    # 58.81h -- 53.3% of the whole denominator -- entirely extrapolated.
+    # So the timeline STOPS at the horizon and the remainder is gap(no-record).
+    horizon = 0.0
+    for r in rows:
+        for field in ("created_at", "updated_at", "run_started_at"):
+            t = _epoch(r.get(field))
+            if t is not None and t > horizon:
+                horizon = t
+    if horizon <= 0:
+        horizon = now
+    observed_end = min(now, horizon)
     intervals: list[dict] = []
     for i, sha in enumerate(order):
         t0 = first_seen[sha]
-        t1 = first_seen[order[i + 1]] if i + 1 < len(order) else now
-        if t1 <= t0:
+        t1 = first_seen[order[i + 1]] if i + 1 < len(order) else observed_end
+        # t1 == t0 is legitimate for the TIP once the horizon cap applies (its
+        # reign has zero observed duration). Classify it anyway: a zero-length
+        # interval adds nothing to the duration buckets (_sum_by_state skips
+        # span<=0) but preserves the tip's verdict for `current_state`.
+        # Dropping it would report the PREVIOUS commit as the current state.
+        if t1 < t0:
             continue
         wf_states: list[str] = []
         terminal_times: list[float] = []
@@ -853,6 +877,17 @@ def state_timeline(parent: str, repo: str, since: str | None,
                               "reason": "pending", "sha": sha})
         intervals.append({"start": split, "end": t1, "state": combined,
                           "reason": None, "sha": sha})
+
+    # The unobserved tail is GAP, explicitly, with the horizon named in the
+    # reason so a reader can tell "CI told us nothing" from "ingest stopped".
+    stale_s = max(0.0, now - observed_end)
+    if stale_s > 0:
+        intervals.append({
+            "start": observed_end, "end": now, "state": "gap",
+            "reason": f"no-record: store has no observation after "
+                      f"{_iso_utc(observed_end)}",
+            "sha": None,
+        })
     return {
         "repo": repo,
         "workflows": wanted,
@@ -860,6 +895,8 @@ def state_timeline(parent: str, repo: str, since: str | None,
         "samples": len(order),
         "window_start": _iso_utc(first_seen[order[0]]),
         "window_end_utc": _iso_utc(now),
+        "observed_through_utc": _iso_utc(observed_end),
+        "store_stale_hours": round(stale_s / 3600.0, 2),
         "runs_by_conclusion": by_concl,
         "job_level_red_promotions": job_promotions,
         "current_sha": order[-1],
@@ -977,6 +1014,19 @@ def _split_green_by_ledger(intervals: list[dict],
     return led, concl
 
 
+def _last_observed(intervals: list[dict]) -> dict:
+    """Last interval backed by a real commit, skipping the stale-gap tail.
+
+    The tail appended past the store's observation horizon has ``sha=None``; it
+    is real elapsed time (so it belongs in the duration buckets) but it is not
+    a verdict about any commit, so it must not be reported as the current state.
+    """
+    for iv in reversed(intervals):
+        if iv.get("sha"):
+            return iv
+    return intervals[-1]
+
+
 def green_time(parent: str, repo: str, since: str | None,
                workflows: list[str] | None) -> dict:
     tl = state_timeline(parent, repo, since, workflows)
@@ -1010,6 +1060,8 @@ def green_time(parent: str, repo: str, since: str | None,
         "samples": tl["samples"],
         "window_start": tl["window_start"],
         "window_end_utc": tl["window_end_utc"],
+        "observed_through_utc": tl.get("observed_through_utc"),
+        "store_stale_hours": tl.get("store_stale_hours", 0.0),
         "green_pct": pct["green"],
         "green_ledger_pct": green_ledger_pct,
         "green_conclusion_only_pct": green_conclusion_only_pct,
@@ -1025,8 +1077,16 @@ def green_time(parent: str, repo: str, since: str | None,
         "total_hours": round(total / 3600.0, 2),
         "runs_by_conclusion": tl["runs_by_conclusion"],
         "job_level_red_promotions": tl.get("job_level_red_promotions", 0),
-        "current_state": intervals[-1]["state"],
-        "current_reason": intervals[-1].get("reason"),
+        # STATE vs DURATION are different claims and must not be conflated.
+        # "main is currently green" is a claim about the TIP's last known
+        # verdict, and stays that. "main was green X% of the window" is a claim
+        # about wall-clock, and must not bill unobserved hours to that verdict.
+        # So current_state reports the last OBSERVED verdict (skipping the
+        # synthetic stale-gap tail, which carries no sha), while the buckets
+        # above count the unobserved tail as gap. store_stale_hours tells the
+        # reader how old that "current" verdict is.
+        "current_state": _last_observed(intervals)["state"],
+        "current_reason": _last_observed(intervals).get("reason"),
         "current_sha": tl["current_sha"],
     }
 
@@ -1466,6 +1526,12 @@ def main() -> int:
                 print(f"  red={res['red_pct']}% no_result={res['no_result_pct']}% "
                       f"gap={res['gap_pct']}%  over {res['samples']} commits "
                       f"since {res['window_start']}")
+                stale = res.get("store_stale_hours") or 0.0
+                if stale > 0:
+                    print(f"  ⚠ store observed only through "
+                          f"{res.get('observed_through_utc')}; the trailing "
+                          f"{stale}h is counted as GAP, not carried forward "
+                          f"from the last known state")
                 cur = res['current_state']
                 reason = res.get('current_reason')
                 cur_disp = f"{cur}({reason})" if reason else cur
