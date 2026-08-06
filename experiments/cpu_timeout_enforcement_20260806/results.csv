@@ -1,0 +1,10 @@
+id,case,runner,dag,result,verdict
+E1,CPU spinner (60s wall of pure CPU) with cpu_timeout=3,parent pin 570e7865,spin3.json,"FAIL (3s, CPU-TIMEOUT >3s cpu); 'CPU BREACH SURVIVED' never printed",ENFORCEMENT FIRES
+E2,"sleep 20 (uses ~0 CPU) with the SAME cpu_timeout=3",parent pin 570e7865,sleep_ctrl.json,"PASS (20s); ran 6.7x its budget in WALL terms and was not killed",BOUND IS CPU-TIME NOT WALL
+E3,undeclared spinner (no cpu_timeout),parent pin 570e7865,undeclared.json,"FAIL (10s, CPU-TIMEOUT >10s cpu)",SMALL DEFAULT IS ON
+E4,SAME undeclared spinner,hermit pin a6f4232,undeclared.json,"PASS (60s) 'UNDECLARED SPINNER SURVIVED 60s CPU'",SMALL DEFAULT IS OFF
+D1,cpu_timeout declarations in hermit's DAG,n/a,ci/dag/{portable privileged}.json,0 of 55 steps,NO STEP DECLARES A BUDGET
+D2,does hermit's run-dag.sh override the default,n/a,ci/run-dag.sh:121,"exec \"$runner\" \"$verb\" --dag \"$dag\" \"$@\" -- no cpu flag",NO OVERRIDE
+D3,hermit agent-utils pin,n/a,git ls-tree origin/main agent-utils,"a6f4232 'make the SMALL default cap OPT-IN (default OFF) via --small-default-cap'",OFF IN HERMIT'S LANE
+D4,parent agent-utils pin,n/a,git ls-tree HEAD agent-utils,"570e7865; --small-default-cap is now a no-op compatibility flag, caps ON by default",ON IN THE PARENT'S LANE
+D5,is hermit's pin behind the parent's,n/a,merge-base --is-ancestor,YES -- hermit is behind,PIN ADVANCE WOULD FLIP OFF->ON

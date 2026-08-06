@@ -1,0 +1,3 @@
+{"default_step_timeout":600,"steps":[
+ {"group":"control","job":"sleeper_under_cpu_budget","cmd":"sleep 20; echo 'SLEEPER OK (used ~0 CPU over 20s wall)'","timeout":300,"cpu_timeout":3,
+  "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":268435456,"est_duration_s":20}}]}
