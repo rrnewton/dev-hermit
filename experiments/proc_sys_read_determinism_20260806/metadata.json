@@ -1,0 +1,14 @@
+{
+  "question": "Do guest reads of /proc and /sys leak host nondeterminism?",
+  "answer": "No leak in the enumerated set of 27 (stability verified non-vacuous against a host-varies control). Residual: /proc/self/stat utime/stime are FROZEN at zero -- the opposite failure.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30",
+  "backend": "ptrace only",
+  "flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
+  "paths_swept": 27,
+  "leaks_found": 0,
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "892a5088684ca3f3887d93ebb013c2bdf43e0566",
+  "not_done": ["not an exhaustive /proc+/sys enumeration", "DBI and KVM not swept", "intra-run evolution probed for only 2 paths"]
+}
