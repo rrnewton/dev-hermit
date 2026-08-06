@@ -115,7 +115,7 @@ CARGO_PROFILE_DEV_DEBUG=line-tables-only
 CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked
 ```
 
-Measured on the reference host (`detcore_misc`, `cargo test -p hermit-detcore --test
+Measured on the reference host (`detcore_misc`, `cargo test -p detcore --test
 tests_misc --no-run`):
 
 | config | cold wall | cold CPU | `target/` | test binary | backtraces |

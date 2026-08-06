@@ -160,7 +160,7 @@ Start with the narrowest relevant test, then use the repository gates that the
 host can actually support:
 
 ```bash
-cargo test -p hermit-detcore
+cargo test -p detcore
 cargo test -p hermit
 cargo test --workspace
 cargo fmt --all -- --check

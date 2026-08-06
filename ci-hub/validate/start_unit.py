@@ -147,9 +147,10 @@ def build_systemd_command(
     # repo; point the unit at them when they are present. Nothing is
     # substituted or weakened if they are absent -- the unit simply runs as it
     # did before and the build fails loudly, as it should.
-    # THREE variables are required, and they are not interchangeable -- getting
-    # this wrong yields a DIFFERENT failure at a LATER node, which is why the
-    # first two alone still looked broken:
+    #
+    # THREE variables are required, and they are NOT interchangeable -- getting
+    # this wrong yields a DIFFERENT failure at a LATER node, which is why
+    # propagating only the first and third still looked broken:
     #   PKG_CONFIG_PATH  build time. Without it unwind-sys's build.rs panics on
     #                    `pkg-config --libs --cflags libunwind-ptrace`.
     #   LIBRARY_PATH     LINK time. pkg-config emits `-lunwind-ptrace

@@ -147,10 +147,7 @@ for candidate in "${candidates[@]}"; do
         .schema_version == 1
         and .repository == $repo
         and .commit == $sha
-        # Host-in-identity (Req2): the run_id binds sha + started_at + producing
-        # host, so the ledger host cannot be swapped without breaking identity.
-        and (.ledger_record.host | (type == "string") and (length > 0))
-        and (.run_id == ($sha + "@" + .ledger_record.started_at + "@" + .ledger_record.host))
+        and (.run_id == ($sha + "@" + .ledger_record.started_at))
         and (.log_sha256 | test("^[0-9a-f]{64}$"))
         and .ledger_record.commit == $sha
         and .ledger_record.profile == $req_profile

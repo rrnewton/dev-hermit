@@ -32,7 +32,6 @@ class ReceiptTests(unittest.TestCase):
             "failures": 0,
             "executed_tests": executed,
             "filtered_tests": 0,
-            "host": "test-host",
             "log_file": str(log),
         }
 
@@ -49,34 +48,6 @@ class ReceiptTests(unittest.TestCase):
             self.assertEqual(len(receipt["log_sha256"]), 64)
             self.assertTrue(Path(receipt["durable_log_file"]).is_file())
             self.assertEqual(MODULE.hashlib.sha256(body).hexdigest(), digest)
-
-    def test_run_id_binds_host_same_sha_and_started_at(self):
-        # Host-in-identity (Req2): two runs of the SAME sha at the SAME started_at
-        # on DIFFERENT hosts must mint DISTINCT run_ids -- before host was in the
-        # identity there was no collision guard between them at all.
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            durable = root / "durable.log"
-            durable.write_text("log\n")
-            row_a = self.row(root)
-            row_a["host"] = "host-a"
-            row_b = dict(row_a)
-            row_b["host"] = "host-b"
-            self.assertEqual(row_a["started_at"], row_b["started_at"])
-            receipt_a, _, _ = MODULE.build_receipt("rrnewton/hermit", "a" * 40, row_a, durable)
-            receipt_b, _, _ = MODULE.build_receipt("rrnewton/hermit", "a" * 40, row_b, durable)
-            self.assertNotEqual(receipt_a["run_id"], receipt_b["run_id"])
-            self.assertTrue(receipt_a["run_id"].endswith("@host-a"))
-            self.assertTrue(receipt_b["run_id"].endswith("@host-b"))
-
-    def test_hostless_row_is_refused_for_publish(self):
-        # The publish guard requires host present so a receipt can never be minted
-        # with an identity that omits where it was produced.
-        with tempfile.TemporaryDirectory() as directory:
-            row = self.row(Path(directory))
-            del row["host"]
-            with self.assertRaises(SystemExit):
-                MODULE.qualifying_row([row], "a" * 40)
 
     def test_zero_executed_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:

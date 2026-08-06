@@ -1,0 +1,11 @@
+{
+  "question": "Is --detlog-stack reproducible run-to-run on the golden ptrace reference, and if not, what makes it vary?",
+  "hermit_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "backend": "ptrace",
+  "flags": "-l info run --backend ptrace --strict --detlog-heap --detlog-stack",
+  "guest": "trivial C program: malloc(4096), write 64 bytes, printf, free",
+  "command": "GUEST=<path outside /tmp> ./repro.sh",
+  "host": "devbig014",
+  "env_note": "guest binary must live OUTSIDE /tmp; hermit replaces guest /tmp with an isolated dir",
+  "date_utc": "2026-08-06"
+}

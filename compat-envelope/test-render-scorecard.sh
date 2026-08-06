@@ -45,8 +45,9 @@ EOF
 
 write_csv() {
   local evidence_path=$1 evidence_sha=$2
+  # Current spelling of the stdout-parity column.
   cat >"$TMP/score.csv" <<EOF
-run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,comparison_contract,bitwise_result,bitwise_evidence_path,bitwise_evidence_sha256
+run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,comparison_contract,bitwise_result,bitwise_evidence_path,bitwise_evidence_sha256
 fixture,@0,$SHA,unknown,false,regression,portable,c-programs,$TEST,verify,ptrace,enabled,pass,1,1,hash,1,,,,,,,
 fixture,@0,$SHA,unknown,false,regression,portable,c-programs,$TEST,verify,dbi,enabled,pass,1,1,hash,1,,,BitwiseInfoV1,1,$evidence_path,$evidence_sha
 EOF
@@ -101,6 +102,10 @@ render | jq -e '.rows[-1].backends.dbi.absolute_assertion_count == 0' >/dev/null
 
 # Append order is not chronology: a delayed older run must not mask the newer
 # pass for either the aggregate or latest-run view.
+#
+# NOTE: this fixture deliberately keeps the LEGACY `parity` column name. Published
+# scorecards still carry it, so the renderer must go on reading them; if this ever
+# needs changing to `stdout_parity` to pass, the back-compat path has regressed.
 cat >"$TMP/score.csv" <<EOF
 run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason
 new,@200,$SHA,unknown,false,regression,portable,c-programs,$TEST,verify,ptrace,enabled,pass,1,1,hash,1,,

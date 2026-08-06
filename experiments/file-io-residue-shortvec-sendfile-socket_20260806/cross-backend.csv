@@ -1,0 +1,15 @@
+mode,stdout_eq,structural_diffs
+iov-edge,1,0
+pipe-write-short,1,0
+pipe-writev-block,1,0
+readv-eof-short,1,0
+readv-nonblock-short,1,2
+readv-pipe-short,1,0
+sendfile-sock-fallback,1,0
+sendfile-sock-nodrain,1,0
+sendfile-sock-tcp,1,0
+sendfile-sock-unix,1,0
+sock-write-short,1,0
+sock-writev-block,1,0
+writev-drain-short,1,0
+writev-nonblock-short,1,0

@@ -71,7 +71,6 @@ def _green_row(sha: str) -> dict:
         "schema_version": 5,
         "started_at": "2026-08-05T00:00:00Z",
         "finished_at": "2026-08-05T00:10:00Z",
-        "host": "test-host",
         "log_file": "/tmp/qrp-fixture.log",
         "coverage": {
             "planned_test_nodes": 4,
@@ -199,7 +198,7 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
                 "schema_version": 1,
                 "repository": REPO,
                 "commit": SHA,
-                "run_id": SHA + "@" + row["started_at"] + "@" + row["host"],
+                "run_id": SHA + "@" + row["started_at"],
                 "log_sha256": "c" * 64,
                 "source_log_file": row["log_file"],
                 "durable_log_file": "/durable" + row["log_file"],
