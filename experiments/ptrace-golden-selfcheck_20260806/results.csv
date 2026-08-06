@@ -1,12 +1,29 @@
-set,rung,argv,Z_commits,pairs_clean,pairs,verdict
-A-ratchet-f89c69766,true,"/bin/true",23,5,5,IDENTICAL
-A-ratchet-f89c69766,echo,"/bin/echo hello",52,5,5,IDENTICAL
-A-ratchet-f89c69766,wc-hostname,"/usr/bin/wc -c /etc/hostname",53,5,5,IDENTICAL
-A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",182,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,true,"/bin/true",5,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,echo,"/bin/echo hermit-golden",6,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,cat-hostname,"/bin/cat /etc/hostname",7,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,wc-passwd,"/usr/bin/wc -l /etc/passwd",7,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,head-passwd,"/usr/bin/head -1 /etc/passwd",7,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,sh-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",30,5,5,IDENTICAL
-B-pinned-goldens-4c70658e7,sh-loop-exec,"/bin/sh -c for i in 1 2 3; do /bin/echo $i; done",45,5,5,IDENTICAL
+pass,set,rung,argv,env,cwd,Z_commits,pairs,whole_divergent,stream_divergent,commit_divergent,reorder_only,verdict
+first,A-ratchet-f89c69766,true,"/bin/true",inherited,experiments-dir,23,5,0,,,,IDENTICAL
+first,A-ratchet-f89c69766,echo-hello,"/bin/echo hello",inherited,experiments-dir,52,5,0,,,,IDENTICAL
+first,A-ratchet-f89c69766,wc-hostname,"/usr/bin/wc -c /etc/hostname",inherited,experiments-dir,53,5,0,,,,IDENTICAL
+first,A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",inherited,experiments-dir,182,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,true,"/bin/true",minimal,experiments-dir,5,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,echo-golden,"/bin/echo hermit-golden",minimal,experiments-dir,6,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,cat-hostname,"/bin/cat /etc/hostname",minimal,experiments-dir,7,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,wc-passwd,"/usr/bin/wc -l /etc/passwd",minimal,experiments-dir,7,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,head-passwd,"/usr/bin/head -1 /etc/passwd",minimal,experiments-dir,7,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,sh-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",minimal,experiments-dir,30,5,0,,,,IDENTICAL
+first,B-pinned-goldens-4c70658e7,sh-loop-exec,"/bin/sh -c for i in 1 2 3; do /bin/echo $i; done",minimal,experiments-dir,45,5,0,,,,IDENTICAL
+deep-sweep,A-ratchet-f89c69766,true,"/bin/true",inherited,experiments-dir,23,300,0,,,,IDENTICAL
+deep-sweep,A-ratchet-f89c69766,echo-hello,"/bin/echo hello",inherited,experiments-dir,52,300,1,,,1,DIVERGENT-reorder
+deep-sweep,A-ratchet-f89c69766,wc-hostname,"/usr/bin/wc -c /etc/hostname",inherited,experiments-dir,53,300,0,,,,IDENTICAL
+deep-sweep,A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",inherited,experiments-dir,182,300,2,,0,0,DIVERGENT-ambient-fs
+deep-sweep,B-pinned-goldens-4c70658e7,true,"/bin/true",minimal,experiments-dir,5,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,echo-golden,"/bin/echo hermit-golden",minimal,experiments-dir,6,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,cat-hostname,"/bin/cat /etc/hostname",minimal,experiments-dir,7,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,wc-passwd,"/usr/bin/wc -l /etc/passwd",minimal,experiments-dir,7,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,head-passwd,"/usr/bin/head -1 /etc/passwd",minimal,experiments-dir,7,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,sh-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",minimal,experiments-dir,30,300,0,,,,IDENTICAL
+deep-sweep,B-pinned-goldens-4c70658e7,sh-loop-exec,"/bin/sh -c for i in 1 2 3; do /bin/echo $i; done",minimal,experiments-dir,45,300,0,,,,IDENTICAL
+comparator-matrix,A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",inherited,quiescent,182,400,6,6,0,0,DIVERGENT-ambient-fs
+comparator-matrix,A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",minimal,quiescent,30,400,0,0,0,0,IDENTICAL
+comparator-matrix,A-ratchet-f89c69766,echo-hello,"/bin/echo hello",inherited,quiescent,52,1500,0,0,0,0,IDENTICAL
+comparator-matrix,A-ratchet-f89c69766,echo-hello,"/bin/echo hello",minimal,quiescent,6,1500,0,0,0,0,IDENTICAL
+debug-depth,B-pinned-goldens-4c70658e7,true-raw,"/bin/true",minimal,quiescent,5,40,40,,,,DIVERGENT-raw-debug
+debug-depth,B-pinned-goldens-4c70658e7,true-canonicalized,"/bin/true",minimal,quiescent,5,40,0,,,,IDENTICAL-after-5-class-canon

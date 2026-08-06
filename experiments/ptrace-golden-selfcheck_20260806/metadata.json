@@ -2,26 +2,90 @@
   "experiment": "ptrace-golden-selfcheck_20260806",
   "question": "Is the PTRACE reference itself double-run deterministic at every ladder rung? Any rung where it diverges from itself is disqualified as a golden.",
   "date_utc": "2026-08-06",
-  "method": "Per rung, N=5 INDEPENDENT PAIRS. Each pair: two `--log info --log-file` captures under --strict, leading wall-clock timestamp stripped, compared byte-for-byte. This is the golden's own definition of identity, so the verdict binds to what the ratchet actually compares.",
-  "comparison_depth": "INFO log (Detcore COMMIT + DETLOG records). NOT stdout-only.",
+  "passes": {
+    "first": {
+      "method": "N=5 independent pairs per rung, INFO log, timestamp-stripped byte compare. Stopped at the first divergence.",
+      "result": "0 divergences in 55 pairs; disqualification list reported EMPTY."
+    },
+    "deep": {
+      "method": "N=300 independent pairs per rung (11 rungs), plus a 3800-pair controlled matrix varying env (inherited vs --base-env minimal) and cwd (busy vs quiescent), each pair scored under three comparators. Does NOT stop at first divergence, so a flaky rung yields a rate rather than an existence claim.",
+      "result": "9 divergent pairs in 7100. Disqualification list is NOT empty: 2 Set-A rung configurations flake. All 7 pinned goldens qualify (0/2100)."
+    }
+  },
+  "comparison_depth": "INFO log (Detcore COMMIT + DETLOG records), NOT stdout-only. Plus a separate DEBUG-depth class analysis.",
+  "comparators": {
+    "WHOLE": "whole timestamp-stripped log; what the golden uses today",
+    "STREAM": "DETLOG + COMMIT lines only; immune to startup-banner reordering, NOT to ambient host state",
+    "COMMIT": "COMMIT turns only; immune to everything observed, but discards the syscall detail a golden exists to carry -- NOT recommended"
+  },
   "sets": {
     "A-ratchet-f89c69766": {
-      "binary": "debug build at f89c69766371806d3c9b2c3003531df2d59d6118",
+      "binary": "ignored/regress-kvm-livelock/bin/hermit-HEAD-asis",
+      "version_string": "hermit 0.2.0 (2026-08-06, gf89c69766371)",
+      "provenance": "baked-in SHA, no -dirty suffix (contrast: the primary checkout's binary reports gf89c69766371-dirty)",
       "why": "the SHA the prefix-depth ratchet captured its golden at",
       "flags": "--log info --log-file <p> run --strict"
     },
     "B-pinned-goldens-4c70658e7": {
-      "binary": "debug build at 4c70658e785834737cbe1524f77330c781a6f5ea",
+      "binary": "ignored/regress-kvm-livelock/bin/hermit-4c70658e7-clean",
+      "version_string": "hermit 0.2.0 (2026-08-06, g4c70658e7858)",
+      "provenance": "baked-in SHA, no -dirty suffix",
       "why": "the 7 goldens pinned by experiments/golden-logs-prefix-depth_20260806",
       "flags": "--log info --log-file <p> run --base-env minimal -e LC_ALL=C -e TZ=UTC --strict"
     }
   },
   "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
-  "disqualified_rungs": [],
+  "cores": 316,
+  "total_info_depth_pairs": 7100,
+  "disqualified_rungs": [
+    {
+      "rung": "fork-pipeline: /bin/sh -c 'echo a | wc -c'",
+      "config": "Set A, FULL INHERITED ENV",
+      "rate": "8 divergent in 700 pairs",
+      "cause": "guest stats a live directory; the directory's st_size is written into DETLOG. Observed deltas 1662->1692, 1622->1644, 1692->1698, /home/newton 6032->5924, . 106->132. Ambient host filesystem state, mutated by 18 agents sharing the box and (for the '.' case) by this experiment's own file writes.",
+      "eliminated_by": "--base-env minimal -> 0 divergent in 400 pairs, same guest argv, same cwd, same time window",
+      "hermit_at_fault": false
+    },
+    {
+      "rung": "echo-hello: /bin/echo hello",
+      "config": "Set A, FULL INHERITED ENV, 11-way concurrency",
+      "rate": "1 divergent in 300 pairs under 11-way concurrency; 0 in 1500 pairs under 4-way",
+      "cause": "startup log-interleaving race: the scheduler daemon's banner races the root thread's SCHEDRAND/USERRAND/CHAOSRAND seeding lines. The two logs are IDENTICAL AS MULTISETS (489 lines each) and the 52-COMMIT stream is byte-identical. Pure emission-order difference.",
+      "eliminated_by": "not eliminated; load-dependent. STREAM comparator is immune to it.",
+      "hermit_at_fault": false
+    }
+  ],
+  "qualified_rungs": [
+    "B/true (0/300)", "B/echo-golden (0/300)", "B/cat-hostname (0/300)",
+    "B/wc-passwd (0/300)", "B/head-passwd (0/300)", "B/sh-pipeline (0/300)",
+    "B/sh-loop-exec (0/300)", "A/true (0/300)", "A/wc-hostname (0/300)"
+  ],
+  "invariant_that_never_broke": "In all 7100 INFO-depth pairs, across every rung, both SHAs, both envs and both cwd conditions, the COMMIT stream was BYTE-IDENTICAL. Zero exceptions. No observed divergence was hermit scheduling nondeterminism.",
+  "debug_depth": {
+    "raw_divergent": "40/40 pairs",
+    "after_canonicalization": "0/40 pairs",
+    "classes": [
+      "1. wall clock: 'Nondeterministic realtime elapsed' -- hermit self-labels this; benign",
+      "2. host CPU identity: initial_local_apic_id, x2apic_id, core_id, max_cores_for_cache -- which core/CCX the host scheduler picked",
+      "3. hex addresses: host-side vdso patch targets -- host ASLR",
+      "4. DECIMAL addresses: inject SyscallArgs { arg1: 94011568533984 } -- the same ASLR, decimal-rendered; a hex-keyed canonicalizer misses these",
+      "5. vdso patch ORDER: symbols patched in a permuted sequence -- iteration over a randomly-seeded Rust hash container. NOT an address problem; no address canonicalizer can remove it."
+    ],
+    "correction_to_first_pass": "The first pass named only classes 1 and 4 and recommended fixing decimal-address canonicalization before deepening past INFO. That is necessary but NOT sufficient: classes 2, 3 and especially 5 remain. Class 5 must also be canonicalized BEFORE address ordinals are assigned, since the permutation changes the order addresses are first seen and ordinal-mapping first can never converge.",
+    "guest_side_is_clean": "The guest-side vdso address (@7ffff7fc2fe0) is identical across runs while the host-side one is not; the guest address space is properly determinized."
+  },
+  "statistical_strength": {
+    "first_pass_per_rung": "0/5 -> ~45% one-sided 95% upper bound on a per-pair flake rate",
+    "deep_per_rung": "0/300 -> ~0.99%",
+    "deep_pooled_over_7_pinned_goldens": "0/2100 -> ~0.14%",
+    "caveat": "Still an upper bound, not a proof. 0/300 means 'not observed to diverge in 300 pairs'."
+  },
   "not_established": [
-    "Set A's Z counts (23/52/53/182) differ from the ratchet doc's (14/43/44/16) because the ratchet's env and its exact fork/exec guest are not recorded in the doc; my Set A rungs approximate rather than reproduce them.",
-    "Set B used a debug build at the golden SHA, not the manifest's exact release binary (sha256 differs); the Z counts match the manifest exactly, which is the strongest available cross-check.",
-    "N=5 pairs bounds a flake rate loosely: 0/5 clean pairs leaves a ~45% one-sided 95% upper bound on a per-pair flake rate. IDENTICAL here means 'not observed to diverge in 5 pairs', not 'proven deterministic'."
+    "The load curve of the startup logger race. Observed 1/300 at 11-way concurrency and 0/1500 at 4-way; no single rate is quotable and I did not characterize the dependence.",
+    "Set A's Z counts (23/52/53/182) differ from the ratchet doc's (14/43/44/16) because the ratchet's env and exact fork/exec guest are not recorded in that doc; Set A rungs APPROXIMATE its ladder rather than reproduce it. 'Disqualified' therefore binds to the rungs as run here.",
+    "Set B used a debug build at the golden SHA, not the manifest's exact release binary (sha256 differs). The Z counts (5,6,7,7,7,30,45) match the pinned manifest exactly, which is the strongest available cross-check.",
+    "Whether the ambient-filesystem-state failure also affects rungs beyond fork-pipeline. Any guest that stats a mutable directory is exposed; only the rungs listed here were tested.",
+    "Whether the vdso patch-order nondeterminism (DEBUG class 5) can affect anything observable. It did not affect INFO or the COMMIT stream in any pair here."
   ]
 }
