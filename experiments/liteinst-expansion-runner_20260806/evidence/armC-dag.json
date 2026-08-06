@@ -1,0 +1,118 @@
+{
+  "default_step_timeout": 135,
+  "resource_caps": {},
+  "steps": [
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pid-probe__chaos__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pid-probe' 'chaos' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pid-probe [chaos] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pid-probe__chaos__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pid-probe__custom__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pid-probe' 'custom' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pid-probe [custom] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pid-probe__custom__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pid-probe__replay__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pid-probe' 'replay' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pid-probe [replay] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pid-probe__replay__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pid-probe__verify__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pid-probe' 'verify' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pid-probe [verify] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pid-probe__verify__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pthread-lifecycle__chaos__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pthread-lifecycle' 'chaos' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pthread-lifecycle [chaos] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pthread-lifecycle__chaos__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pthread-lifecycle__custom__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pthread-lifecycle' 'custom' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pthread-lifecycle [custom] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pthread-lifecycle__custom__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pthread-lifecycle__replay__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pthread-lifecycle' 'replay' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pthread-lifecycle [replay] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pthread-lifecycle__replay__liteinst",
+      "timeout": 135
+    },
+    {
+      "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-464cbd9f/evidence/armC-464cbd9f/backend-parity-c__backend-parity-c-pthread-lifecycle__verify__liteinst' 'portable' 'backend-parity-c' 'backend-parity-c/pthread-lifecycle' 'verify' 'liteinst'",
+      "deps": [],
+      "desc": "expansion cell backend-parity-c/pthread-lifecycle [verify] on liteinst",
+      "group": "backend-parity-c",
+      "hint": {
+        "classification": "cpu-bound",
+        "est_duration_s": 89.7614405875634,
+        "hard_mem_max_bytes": 1207959552,
+        "rss_baseline_bytes": 805306368
+      },
+      "job": "pthread-lifecycle__verify__liteinst",
+      "timeout": 135
+    }
+  ]
+}
