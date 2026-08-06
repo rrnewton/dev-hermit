@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -307,10 +307,21 @@ fn main() {
             } else {
                 ""
             };
-            let (parity, output_hash, ref_output_hash) = if with_parity && pass {
-                capture_parity(&repo, &lane, c, backend)
+            let (parity, parity_exercised, native_output_hash, output_hash, ref_output_hash) =
+                if with_parity && pass {
+                    capture_parity(&repo, &lane, c, backend)
+                } else {
+                    (None, None, String::new(), String::new(), String::new())
+                };
+            // NOT-EXERCISED is a THIRD bucket, not a downgrade of pass/fail. A cell whose guest
+            // produces the same bytes with and without hermit did not exercise the property the
+            // cell claims to measure, so reporting it as parity asserts coverage that does not
+            // exist. The verdict is RECLASSIFIED, never dropped: `parity` keeps its measured
+            // value so the row stays auditable, and `outcome` names the vacuity.
+            let outcome = if parity_exercised == Some(false) {
+                "not-exercised".to_string()
             } else {
-                (None, String::new(), String::new())
+                outcome
             };
             // WHICH INVOCATION produced this row. Without it, "pass" is ambiguous across
             // strictness levels: the same cell id can be run under different harness flags and
@@ -337,6 +348,8 @@ fn main() {
                 outcome,
                 deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 parity.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
+                parity_exercised.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
+                native_output_hash,
                 output_hash,
                 ref_output_hash,
                 duration_ms.to_string(),
@@ -487,7 +500,23 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
 /// Capture guest stdout under ptrace and under `backend`; parity = hashes match.
 /// Only reconstructable guest commands are attempted (`.sh` fixtures run with
 /// `--run`, and `direct` commands); otherwise returns (None, "").
-/// Returns `(parity, output_hash, ref_output_hash)`.
+/// Returns `(parity, exercised, native_hash, output_hash, ref_output_hash)`.
+///
+/// `parity` alone is a POSITIVE-ONLY comparison: it asks "does the candidate match the ptrace
+/// golden" and nothing else, so it passes whenever both sides agree -- INCLUDING when they agree
+/// because the guest never exercised the determinization under test. A test whose output is the
+/// same with and without hermit cannot distinguish a determinizing backend from an inert one, so
+/// it scores parity on EVERY backend and the whole row reads green. That is the same shape as an
+/// e9patch cell scoring byte-identical parity while reporting `candidate_sites=0`.
+///
+/// `exercised` supplies the missing negative side by running the guest with NO hermit at all and
+/// comparing that host answer to the golden. If the bare host already produces the golden output,
+/// hermit changed nothing observable and the cell is NOT-EXERCISED -- a distinct bucket from pass
+/// and fail, because the cell is neither evidence of parity nor evidence of a defect.
+///
+/// The negative control is a BARE EXEC, not `--backend native`: hermit has no `native` backend
+/// (`--backend` accepts only ptrace/dbi/liteinst/sabre/kvm/e9patch), so the do-nothing run has to
+/// bypass hermit entirely.
 ///
 /// The reference hash was always computed here and then DISCARDED, which left a `parity=1` row
 /// unable to say what it matched. A comparison result that does not name both sides is not
@@ -498,20 +527,56 @@ fn capture_parity(
     lane: &str,
     cell: &PlanCell,
     backend: &str,
-) -> (Option<bool>, String, String) {
+) -> (Option<bool>, Option<bool>, String, String, String) {
     let Some(guest) = guest_command(repo, &cell.test) else {
-        return (None, String::new(), String::new());
+        return (None, None, String::new(), String::new(), String::new());
     };
     let ref_hash = run_and_hash(repo, lane, "ptrace", &guest);
     let this_hash = run_and_hash(repo, lane, backend, &guest);
+    let native_hash = run_native_and_hash(repo, &guest);
+    // A cell is EXERCISED when the determinized answer differs from the bare host answer. If they
+    // are equal the guest observed nothing hermit virtualizes, so no backend could ever fail it.
+    let exercised = match (ref_hash.clone(), native_hash.clone()) {
+        (Some(r), Some(n)) => Some(r != n),
+        // The bare run failing is not evidence either way (the guest may need the container), so
+        // exercise stays UNKNOWN rather than being silently asserted.
+        _ => None,
+    };
+    let native = native_hash.unwrap_or_default();
     match (ref_hash.clone(), this_hash.clone()) {
-        (Some(r), Some(t)) => (Some(r == t), t, r),
+        (Some(r), Some(t)) => (Some(r == t), exercised, native, t, r),
         _ => (
             None,
+            exercised,
+            native,
             this_hash.unwrap_or_default(),
             ref_hash.unwrap_or_default(),
         ),
     }
+}
+
+/// Run the guest with NO hermit -- the do-nothing control that gives parity its negative side.
+/// Mirrors `run_and_hash`'s pinned guest environment so the only difference between the two runs
+/// is hermit itself; otherwise an env delta, not determinization, would explain any divergence.
+fn run_native_and_hash(repo: &Path, guest: &[String]) -> Option<String> {
+    let (prog, args) = guest.split_first()?;
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120s").arg(prog);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .current_dir(repo);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut h = Sha256::new();
+    h.update(&out.stdout);
+    Some(format!("{:x}", h.finalize()))
 }
 
 /// Resolve a test-id to a runnable guest argv from the harness manifest docs.
@@ -676,6 +741,22 @@ fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Opt
     let hermit = hermit_bin(repo);
     let mut cmd = Command::new("timeout");
     cmd.arg("120s").arg(&hermit).arg("run").arg("--backend").arg(backend).arg("--strict");
+    // Pin the GUEST environment. `--base-env` defaults to `host`, which passes every one of
+    // hermit's own variables through to the guest. The kernel builds the initial stack from
+    // argv/envp/auxv, so the size of that block decides where the stack sits: a collector run
+    // from a shell with one extra (or longer) variable shifts every guest stack address.
+    // Measured on ptrace/--strict with an otherwise identical guest, changing a single variable's
+    // length moved the stack 16 bytes and changed 110 of 172 DETLOG lines — all 54 [stack] hashes
+    // plus 56 INFO-log syscall arguments that carry stack addresses. Stdout parity does not see
+    // this, but any stack-derived observable does, so pinning here (once, at the env) is what
+    // keeps cells comparable across invocations instead of two downstream exclusions that drift.
+    // `minimal` is hermit's own deterministic base: PATH, HOSTNAME, HOME and nothing else.
+    cmd.arg("--base-env").arg("minimal");
+    // Re-add the two variables this harness has always relied on for guest determinism.
+    // `minimal` would otherwise drop them, and an UNSET TZ is worse than an inherited one:
+    // glibc then falls back to /etc/localtime, i.e. host state. Pinned guest env is exactly:
+    // PATH, HOSTNAME, HOME (hermit `minimal`) + LC_ALL=C + TZ=UTC. Nothing else reaches the guest.
+    cmd.arg("-e").arg("LC_ALL=C").arg("-e").arg("TZ=UTC");
     if lane == "portable" {
         cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
     }
