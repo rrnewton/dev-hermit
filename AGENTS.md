@@ -361,13 +361,13 @@ Re-derive the live pre-anchor set with the loop; do not trust a stale list. HOLD
 version-aware counts consumer lands (task `prs-predating-commit-anchoring-can-never-produce-a-qualifying-receipt`).
 
 **An agent sandbox CANNOT run `validate.sh` directly** (BpfJailer denies creating its own cgroup; the wrapper
-exits 3 in ~9s having run nothing, tell: `CPU/wall 1.0x`). The working path launches validate as a transient
-user unit — still boxed, detached, with a durable log that outlives recycling (green *evidence*, not a *claim*):
+exits 3 in ~9s having run nothing, tell: `CPU/wall 1.0x`). `ci-hub validate-run` is the sole admission point.
+It launches a transient user unit which enters through `ci-hub validate-lock` before invoking `validate.sh` —
+still boxed, detached, and with a durable log that outlives recycling (green *evidence*, not a *claim*):
 
 ```
-systemd-run --user --unit=<name> --description='...' --working-directory=<worktree> \
-  --setenv=HOME=... --setenv=PATH=... \
-  /bin/bash -c 'exec env PR_NUMBER=<n> with-proxy ./validate.sh > <durable-log> 2>&1'
+./ci-hub/ci-hub validate-run --checkout <worktree> --agent <agent> \
+  --target <exact-40-hex-head> --pr <number> -- full
 ```
 
 Let `apply-local-label` add the label FROM the ledger record — never by hand. Derive safe concurrency against

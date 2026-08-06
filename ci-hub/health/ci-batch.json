@@ -1,7 +1,72 @@
 {
-  "name": "",
-  "reason": "",
-  "since": "",
-  "actor": "",
-  "prs": []
+  "name": "batch-3",
+  "reason": "batch-3 coalesce: 16 conflict-free MERGEABLE PRs on main b7f9c7131; #1620 dropped (privileged DAG critical path 370s>270s hard bound, self-inconsistent), #1547/1585/1618/1629 fell out as in-batch conflicts",
+  "since": "2026-08-05T06:06:54Z",
+  "actor": "devbig014.atn7.facebook.com:1163546",
+  "prs": [
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1491
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1543
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1544
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1551
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1559
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1568
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1588
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1596
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1598
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1607
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1615
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1625
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1626
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1628
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1630
+    },
+    {
+      "repo": "rrnewton/hermit",
+      "number": 1631
+    }
+  ]
 }
