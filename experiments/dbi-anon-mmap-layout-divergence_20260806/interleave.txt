@@ -1,0 +1,13 @@
+# VMAs overlapping the span occupied by the guest's four anonymous mmaps (1+2+3+4 = 10 pages)
+# guest: interleave-probe.c ; hermit: worktrees/dbi/hermit/target/release/hermit (release, third-party-backends)
+
+== ptrace ==
+span 7ffff7fac000-7ffff7fba000 = 14 pages; guest asked for 10 pages total
+  VMA[0] 7ffff7fac000-7ffff7fb3000 rw-p 00000000 00:00 0 
+  VMA[1] 7ffff7fb4000-7ffff7fbc000 rw-p 00000000 00:00 0 
+VMAS_OVERLAPPING_SPAN=2
+
+== dbi ==
+span 7ffff7e41000-7ffff7e4b000 = 10 pages; guest asked for 10 pages total
+  VMA[0] 7ffff7e41000-7ffff7e4b000 rw-p 00000000 00:00 0 
+VMAS_OVERLAPPING_SPAN=1

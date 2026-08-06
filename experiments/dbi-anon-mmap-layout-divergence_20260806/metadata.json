@@ -25,7 +25,7 @@
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "cores": 316
   },
-  "status": "NOT FIXED. Session 3 showed no DBI-side change can produce -8. Session 4 shows the target itself is not a constant, so the acceptance criterion is ill-posed as a DBI-side fix. Remaining lever unchanged: detcore-assigned guest mmap addresses (new determinization strategy, post-facto-review trigger 3, guest memory contract) => owner decision, now costed: it moves ptrace away from native at 9 of 9 prefixes.",
+  "status": "ROOT-CAUSED. Verdict: INHERENT via address-space displacement, not via intermixing (0 translator VMAs in the guest's span) and not via inseparability (separable but unplumbed). Mark the DBI cell NOT-PARITY-ACHIEVABLE-FOR-DBT for ADDRESS parity only; contents parity remains reachable and required.",
   "sessions": [
     {
       "session": "1-3",
@@ -75,6 +75,33 @@
         "hermit-cli/src/replayer/mmap.rs:43": "comment 'anonymous mappings should already be deterministic because ASLR is disabled' states a weaker precondition than the code needs; the real precondition is an identical address space. Not a live bug: replay is ptrace-only per the manifests.",
         "hermit-cli/src/replayer/mmap.rs:69-80": "address forcing for file-backed maps already exists and is asserted (with_addr(Some(addr)) + assert 'Failed to inject mmap at desired address'), so the injection half of a determinized allocator is shipped in-tree."
       }
+    },
+    {
+      "session": "5",
+      "agent": "hermit-w4",
+      "task": "root-cause-dbi-anon-mmap-divergence-inherent-or-fixable",
+      "question": "Is the divergence DynamoRIO's own runtime allocations intermixing with the guest's anon mmaps (separable/fixable), or inherent to DBT?",
+      "answer": "INHERENT, by a mechanism neither branch names. (a) refuted by measurement: under DBI the guest's four anon mmaps occupy a span of exactly the 10 pages requested, coalesced into ONE VMA, with ZERO translator allocations interleaved -- the quantity the proposed fix would subtract is already zero, and the 4 extra pages are on the PTRACE side (glibc loader slack). (b) not the mechanism: DR's allocations ARE separable by provenance per w10/PR#57 (dr_memory_is_dr_internal, dr_query_memory_ex), merely unplumbed. The real mechanism is ADDRESS-SPACE DISPLACEMENT: DR's runtime makes the guest-visible space 185 VMAs vs 25, which moves where the kernel places the GUEST'S OWN mappings. Perfect separability would not move them by one byte -- attribution and placement are different properties. This is the first measurement of hermit-w10's unmeasured qualification (b).",
+      "verdict": "NOT-PARITY-ACHIEVABLE-FOR-DBT (per #319 / e9patch-vacuous precedent), NOT a failure-to-fix.",
+      "scope": "ADDRESS parity is unreachable for DBT; CONTENTS parity is reachable (w10 measured identical guest heap digests across ptrace/sabre/dbi with a planted mutation caught in all three). Pointer ORDERING (the fixture's cmp/word) agrees on every arm and prefix; only SPACING diverges.",
+      "artifacts": [
+        "VERDICT.md",
+        "interleave-probe.c",
+        "interleave.txt"
+      ],
+      "measurements": {
+        "dbi_span_pages": 10,
+        "dbi_pages_requested": 10,
+        "dbi_vmas_overlapping_span": 1,
+        "dbi_translator_vmas_in_span": 0,
+        "ptrace_span_pages": 14,
+        "ptrace_pages_requested": 10,
+        "ptrace_vmas_overlapping_span": 2,
+        "ptrace_translator_vmas_in_span": 0,
+        "guest_visible_vmas_ptrace": 25,
+        "guest_visible_vmas_dbi": 185
+      },
+      "dispatch_premise_correction": "The task title states 'DBI -8 vs ptrace -4'. Measured: ptrace -8, DBI -4, native -8. The arms are inverted in the dispatch."
     }
   ]
 }
