@@ -89,6 +89,23 @@ hermit --log=info run --backend=ptrace --strict --verify \
        --no-virtualize-cpuid --max-timeslice=disabled <abs-path>/prog
 ```
 
+**The three libunwind variables are not one setting — the runtime one points somewhere else.**
+`ignored/lu-parity/usr/lib64` ships `libunwind-ptrace` as a **static `.a` only**, so putting it on
+`LD_LIBRARY_PATH` can fail with `libunwind-ptrace.so.0: cannot open shared object file`, which
+reads as a broken build and is not one:
+
+```
+PKG_CONFIG_PATH=…/ignored/lu-parity/usr/lib64/pkgconfig   # build script
+LIBRARY_PATH=…/ignored/lu-parity/usr/lib64                # link search
+LD_LIBRARY_PATH=/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib   # runtime
+```
+
+The bracket above was originally run with lu-parity on `LD_LIBRARY_PATH`. That did **not** affect
+these results — the debug `hermit` needs only `libunwind-x86_64.so.8` and `libunwind.so.8`, both of
+which lu-parity ships (`ldd` → 0 not-found under either path), and links `libunwind-ptrace`
+statically. Confirmed rather than assumed by **replaying the whole bracket** under the corrected
+runtime path: **7/7 clean controls passed, 7/7 planted violations caught — identical.**
+
 | fixture | clean control | planted violation | verdict |
 | --- | --- | --- | --- |
 | `cwd_roundtrip.c` | rc=0 | rc=1 | can-fail |
