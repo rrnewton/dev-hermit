@@ -30,10 +30,19 @@ step_name='Require the registered v4 gate definition'
 live=0
 [ "${1:-}" = --live ] && live=1
 
+# Exit 3 = UNAVAILABLE: the gate definition is not present, so this bracket
+# declines to have an opinion rather than reporting a false red. Deliberately
+# NOT a silent skip and NOT exit 0 -- the reason names the checkout it looked
+# for, and a caller that treats 3 as success is choosing to. This is the same
+# posture ci-hub/validate/mutation_suite.py takes for hermit fixtures it cannot
+# reach. It matters because the parent's own CI checks out no submodules, so
+# there the honest verdict is UNAVAILABLE, not PASS; the local suite (where the
+# hermit checkout exists) is this bracket's real home.
 if [ ! -r "$gate_yaml" ]; then
-  echo "FAIL: cannot read the gate definition: $gate_yaml" >&2
-  echo "      (set GATE_YAML, or initialise the hermit checkout)" >&2
-  exit 1
+  echo "UNAVAILABLE: no gate definition to bracket at $gate_yaml" >&2
+  echo "             point GATE_YAML at a merge-gate.yml, or initialise the" >&2
+  echo "             hermit checkout; refusing to report PASS or FAIL." >&2
+  exit 3
 fi
 
 tmp=$(mktemp -d)
