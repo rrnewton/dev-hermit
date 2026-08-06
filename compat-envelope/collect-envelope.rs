@@ -20,9 +20,12 @@
 //!     `timeout(1)`; use `expansion-dag.rs` for the cgroup-boxed parallel run.
 //!
 //! Determinism vs parity:
-//!   * determinism = the cell passed under its own backend (for `verify`, hermit's
-//!     internal --strict --verify double-run already proved run1==run2, so a
-//!     passing verify cell is deterministic by construction);
+//!   * determinism = a TWO-RUN comparison observed run1==run2. Only `verify`
+//!     executes a second run, so only a passing `verify` cell earns a value;
+//!     `strict`/`chaos`/`custom`/`replay` are single runs and are recorded BLANK
+//!     (unmeasured), never 1. `verify_compare` records what the two runs were
+//!     compared BY -- `stripped` normalises addresses/tmp paths and does not
+//!     compare the detlog, so it is weaker than bitwise and must stay legible;
 //!   * parity = the backend's guest output is bitwise-identical to the ptrace
 //!     reference. We compute it by capturing guest stdout under ptrace and under
 //!     the backend and comparing SHA-256 (only for reconstructable guest commands
@@ -74,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -255,14 +258,43 @@ fn main() {
                     c.test, c.mode
                 ));
             }
-            // Determinism is BLANK (unmeasured) for an unavailable backend or a
-            // skipped cell; a run that completed non-pass is confirmed false.
+            // DETERMINISM MUST BE EARNED BY A TWO-RUN COMPARISON, never inferred
+            // from a single passing run.
+            //
+            // The previous rule was `pass => deterministic=1` for EVERY mode. Only
+            // `verify` actually executes a second run and compares it; `strict`,
+            // `chaos`, `custom` and `replay` are single runs that cannot observe
+            // run1==run2 at all. On the live scorecard that rule minted
+            // deterministic=1 for 105 single-run cells (strict 102, chaos 1,
+            // custom 1, replay 1) against 63 that genuinely compared — i.e. most
+            // of the determinism evidence was an artifact of the rule, not a
+            // measurement. A single run passing says the program worked once; it
+            // is silent about reproducibility.
+            //
+            // BLANK means UNMEASURED and is the honest answer for a single run.
+            // It is deliberately NOT `0`: `0` asserts observed nondeterminism,
+            // which a single run cannot establish either.
+            let ran_two_run_comparison = c.mode == "verify";
             let deterministic = if !available || outcome == "skip" {
                 None
-            } else if pass {
+            } else if !pass {
+                // A completed non-pass IS confirmed: the cell did not reproduce
+                // its expected behaviour under its own backend.
+                Some(false)
+            } else if ran_two_run_comparison {
                 Some(true)
             } else {
-                Some(false)
+                None
+            };
+            // WHAT the two runs were compared BY. hermit's `--verify` defaults to
+            // the STRIPPED comparison (this harness passes no compare-mode flag),
+            // which normalises addresses and tmp paths and does NOT compare the
+            // detlog. So `stripped` is a weaker claim than bitwise determinism and
+            // must be legible as such in the row rather than hidden behind a `1`.
+            let verify_compare = if deterministic == Some(true) && ran_two_run_comparison {
+                "stripped"
+            } else {
+                ""
             };
             let (parity, output_hash) = if with_parity && pass {
                 capture_parity(&repo, &lane, c, backend)
@@ -289,6 +321,7 @@ fn main() {
                 duration_ms.to_string(),
                 String::new(), // max_rss_kb: filled by expansion-dag.rs cgroup path
                 reason,
+                verify_compare.to_string(),
             ];
             let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
             writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
