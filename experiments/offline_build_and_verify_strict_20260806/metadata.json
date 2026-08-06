@@ -1,0 +1,22 @@
+{
+  "question": "Does crates.io 403 block the hardened rebuild, and does --verify-strict require one?",
+  "date": "2026-08-06",
+  "host": "devbig014, 316 cores",
+  "answers": {
+    "verify_strict_needs_rebuild": false,
+    "verify_strict_evidence": "current binary emits 'required arguments were not provided: --verify', a REQUIRED-arg error misread as 'unexpected argument'. Runs correctly as: hermit run --verify --verify-strict",
+    "offline_build_works": true,
+    "offline_build": {"cmd": "cargo build --release --bin hermit --offline", "exit": 0, "wall": "1m07s", "crates_compiled": 218, "crates_in_lock": 308, "error_lines": 0, "rustc_wrapper": "unset (no sccache)", "target_dir": "fresh isolated dir, NOT the shared hermit/target"},
+    "crates_io_403": true,
+    "cargo_cache": {"registry": "691MB", "cached_crate_files": 659, "git_cache_has": ["reverie 9470712a", "liteinst2 95ee5e69"]}
+  },
+  "first_hardened_measurement": {
+    "cmd": "hermit run --verify --verify-strict -- /bin/true (ptrace)",
+    "result": "nondeterministic, rc=1",
+    "logs": "both 515 lines, 956 differing lines",
+    "divergence_shape": "register values and numeric fields only; normalized shapes identical both sides; SIGSEGV handling 31 lines/side",
+    "reproduced_on_fresh_binary": true,
+    "caveat": "consistent with the known 'L2 unattainable on this box, ptrace reproduces it' condition; one host cannot attribute product-gap vs host-limitation"
+  },
+  "allowlist_ask_narrowed": "github.com + api.github.com for push/PR; crates.io NOT required for rebuilds while ~/.cargo stays warm"
+}

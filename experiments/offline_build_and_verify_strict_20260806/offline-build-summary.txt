@@ -1,0 +1,4 @@
+error_lines=0
+--- first 20 error lines ---
+--- missing-crate signatures ---
+DONE
