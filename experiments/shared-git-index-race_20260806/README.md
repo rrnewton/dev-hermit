@@ -13,7 +13,7 @@ lock/serialization, per-agent `GIT_INDEX_FILE`. Which one survives contact?
 ## Method
 
 `race_harness.sh` plants a two-agent race: agent **A** stages and is slow to
-commit, agent **B** commits while A's paths are still staged. 23 checks across 12
+commit, agent **B** commits while A's paths are still staged. 29 checks across 13
 scenarios.
 
 **Every scenario runs in a throwaway repo, never the parent.** Planting a
@@ -22,7 +22,7 @@ order to test a hypothesis about losing work. Each scenario gets a fresh repo so
 they cannot contaminate each other.
 
 ```bash
-./race_harness.sh     # 23/23 PASS
+./race_harness.sh     # 29/29 PASS
 ```
 
 ## Results
@@ -40,6 +40,7 @@ they cannot contaminate each other.
 | S10 | can a hook tell the two apart? | **yes** — bare sees `.git/index`, pathspec sees `.git/next-index-<pid>.lock` |
 | S11 | hook refusing bare, allowing pathspec | refuses / allows / only own paths / bystander survives |
 | S12 | the shipped guard, all four modes | warn allows **and names the foreign path**; pathspec silent; block refuses; off silent |
+| S13 | the `-o` / `--only` forms the real tool sites use | ALLOWED under block; only the named path; bystander's staging intact |
 
 Measured separately: **bare `git commit --amend` sweeps identically** — the
 bystander's file was absorbed into the amended commit and left unstaged.
@@ -122,7 +123,7 @@ the terminal gets switched off within a day — at which point it protects nobod
 
 | file | contents |
 |---|---|
-| `race_harness.sh` | the planting harness, 23 checks, throwaway repos only |
+| `race_harness.sh` | the planting harness, 29 checks, throwaway repos only |
 | `metadata.json` | git version, host, parent SHA, call-site census |
 
 Shipped alongside, outside this directory:
