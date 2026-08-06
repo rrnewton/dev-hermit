@@ -1,0 +1,117 @@
+{
+  "experiment": "golden-logs-prefix-depth",
+  "date": "2026-08-06",
+  "question": "Can we build ptrace golden INFO logs that are pinned and proven deterministic against themselves, and what is Z (detcore commits) per guest?",
+  "repo_shas": {
+    "hermit": "4c70658e785834737cbe1524f77330c781a6f5ea",
+    "dev_hermit_parent": "507e1578b77a5813327cd1315e75b45edd2100a2",
+    "reverie_pin_in_hermit": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6"
+  },
+  "hermit_binary_sha256": "e381c1127ed46abda1ecedadef1aeb75f7b1644362165c0114d127d90061b920",
+  "build": {
+    "profile": "release",
+    "cmd": "cargo build --release -p hermit --bin hermit",
+    "env_required": [
+      "PKG_CONFIG_PATH",
+      "LIBRARY_PATH",
+      "LD_LIBRARY_PATH"
+    ],
+    "libdir": "/home/newton/work/dev-hermit/ignored/lu-parity/usr/lib64"
+  },
+  "command": "python3 capture_goldens.py --binary <checkout>/target/release/hermit --hermit-sha 4c70658e78... --libdir <libunwind dir>",
+  "backend": "ptrace",
+  "flags": [
+    "--log info",
+    "--log-file <path>",
+    "run",
+    "--base-env minimal",
+    "-e LC_ALL=C",
+    "-e TZ=UTC",
+    "--strict"
+  ],
+  "guest_env": {
+    "base": "minimal",
+    "explicit": [
+      "LC_ALL=C",
+      "TZ=UTC"
+    ]
+  },
+  "seed": "none (hermit --strict seeds scheduler/PRNG deterministically: SCHEDRAND/USER RAND/CHAOSRAND all seed 0)",
+  "host": {
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": "316",
+    "cpu": "AMD EPYC 9D85 158-Core Processor"
+  },
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "inputs": [
+    [
+      "/bin/true"
+    ],
+    [
+      "/bin/echo",
+      "hermit-golden"
+    ],
+    [
+      "/bin/cat",
+      "/etc/hostname"
+    ],
+    [
+      "/usr/bin/wc",
+      "-l",
+      "/etc/passwd"
+    ],
+    [
+      "/usr/bin/head",
+      "-1",
+      "/etc/passwd"
+    ],
+    [
+      "/bin/sh",
+      "-c",
+      "/bin/echo a | /usr/bin/wc -c"
+    ],
+    [
+      "/bin/sh",
+      "-c",
+      "for i in 1 2 3; do /bin/echo $i; done"
+    ]
+  ],
+  "Z_definition": "count of COMMIT messages == hermit's reported scheduler turn count",
+  "self_determinism_gate": "captured twice; byte-identical after normalization or NOT-A-GOLDEN",
+  "negative_control": "bracket_gate.py: 7/7 planted divergence classes caught through the same classify(); positive control held. No live nondeterministic guest exists on this host (id/getent/proc all deterministic), so the synthetic bracket is the only proof the gate works.",
+  "results_summary": {
+    "true": {
+      "Z": 5,
+      "verdict": "GOLDEN"
+    },
+    "echo": {
+      "Z": 6,
+      "verdict": "GOLDEN"
+    },
+    "cat-hostname": {
+      "Z": 7,
+      "verdict": "GOLDEN"
+    },
+    "wc-passwd": {
+      "Z": 7,
+      "verdict": "GOLDEN"
+    },
+    "head-passwd": {
+      "Z": 7,
+      "verdict": "GOLDEN"
+    },
+    "sh-pipeline": {
+      "Z": 30,
+      "verdict": "GOLDEN"
+    },
+    "sh-loop-exec": {
+      "Z": 45,
+      "verdict": "GOLDEN"
+    }
+  },
+  "not_done": {
+    "demo05": "qemu-system-x86_64 not installed AND kernel download blocked by egress allowlist",
+    "backend_arm": "this task produces the reference only; Y is not measured here",
+    "kvm": "cannot complete a guest on this host (startup livelock)"
+  }
+}
