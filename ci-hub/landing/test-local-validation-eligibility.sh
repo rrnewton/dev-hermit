@@ -256,6 +256,23 @@ else
   audit "land-pr.sh no longer routes the label through apply-local-label" bad
 fi
 
+# 3b. The predicate's authority is only as strong as the environment it runs in:
+#     CI_HUB_VALIDATE_STATUS_BIN replaces the authority binary and
+#     CI_HUB_VALIDATE_LEDGER replaces the ledger (and the step-4a re-mint's
+#     ledger). Those overrides are what make THIS test inert and possible, so
+#     they stay -- but a real landing must not inherit them. The lander clears
+#     both before anything reads them; assert the clear is still there and still
+#     ahead of the first read.
+# `|| true` is load-bearing: under `set -euo pipefail` a non-matching grep would
+# abort the script here, and a guard that crashes is not a guard that fired.
+unset_line=$( { grep -n '^unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER$' "$lander" || true; } | head -1 | cut -d: -f1)
+first_read=$( { grep -n 'local-validation-eligibility\.sh"\|scan-finalize\.sh' "$lander" || true; } | head -1 | cut -d: -f1)
+if [ -n "$unset_line" ] && [ -n "$first_read" ] && [ "$unset_line" -lt "$first_read" ]; then
+  audit "land-pr.sh clears both validate env overrides (line $unset_line) before first read (line $first_read)" ok
+else
+  audit "land-pr.sh does not clear CI_HUB_VALIDATE_STATUS_BIN/LEDGER before use (unset=${unset_line:-none} first-read=${first_read:-none})" bad
+fi
+
 # 4. COORDINATOR DECISION: no merge path outside land-pr.sh. A bare label can
 #    still authorize at the merge gate, so the hole is closed structurally by
 #    keeping exactly one merge call site behind this predicate. Any other

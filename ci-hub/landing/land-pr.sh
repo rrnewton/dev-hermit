@@ -41,6 +41,19 @@
 #                    with a durable timestamped log and returns immediately.
 set -uo pipefail
 
+# The eligibility predicate binds landing to the validate ledger, but it honours
+# two env overrides (CI_HUB_VALIDATE_STATUS_BIN substitutes the authority binary
+# outright; CI_HUB_VALIDATE_LEDGER substitutes the ledger file, and also
+# redirects the scan-finalize re-mint at step 4a). Those overrides exist so the
+# predicate can be bracketed inertly -- but inherited into a real landing they
+# make the authority "the ledger AND whatever environment the lander was started
+# in". Measured: with CI_HUB_VALIDATE_STATUS_BIN pointed at a two-line `exit 0`
+# script, EVERY unbacked/stale/tampered head returns ELIGIBILITY=VALIDATED.
+# Clear them once, before anything reads them and before the detached re-exec,
+# so the ledger on disk is the only authority a landing can consult. Nothing in
+# this repo legitimately sets either for the lander.
+unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER
+
 PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
