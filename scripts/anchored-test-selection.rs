@@ -1411,7 +1411,7 @@ source = \"git+https://github.com/rrnewton/reverie.git?rev=79517704abc1234def567
     //                        asserts it ACCEPTS a genuine full green and returns
     //                        the RESOLVED full SHA.
     let case3_full_green = r#"{"disqualified_count":1,"exit_code":0,
-        "newest_qualifying":{"finished_at":"2026-08-05T03:34:08Z","host":"test-host",
+        "newest_qualifying":{"finished_at":"2026-08-05T03:34:08Z","host":"devbig014",
         "profile":"full","real_seconds":556.0,"result":"pass","selection_mode":"full",
         "slot":"standalone"},"qualifying_count":1,"schema_version":1,
         "sha":"65ee45596ad3f9a16507e2fdd60ebbc5e23e5630","verdict":"VALIDATED"}"#;

@@ -55,13 +55,6 @@ jobs:
           set -euo pipefail
           command -v rust-script >/dev/null 2>&1 || cargo install rust-script
 
-      - name: Install the pinned Python test runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check \
-            --requirement ci-hub/tests/requirements-workflow.txt
-
       - name: Compile the typed front door
         shell: bash
         run: |
@@ -78,8 +71,18 @@ jobs:
           timeout --signal=KILL 1m python3 -m compileall -q ci-hub
           timeout --signal=KILL 1m \
             rustfmt --edition 2021 --check ci-hub/ci-hub.rs ci-hub/lib/*.rs
-          timeout --signal=KILL 8m \
-            python3 ci-hub/tests/run_python_suites.py
+          for suite in \
+            ci-hub/directives/tests \
+            ci-hub/health/tests \
+            ci-hub/history/tests \
+            ci-hub/lib/tests \
+            ci-hub/remediation/tests \
+            ci-hub/runners/tests \
+            ci-hub/validate/tests \
+            ci-hub/tests; do
+            timeout --signal=KILL 1m \
+              python3 -m unittest discover -s "$suite" -p "test_*.py"
+          done
 
       - name: Exercise documented ci-hub commands without side effects
         shell: bash

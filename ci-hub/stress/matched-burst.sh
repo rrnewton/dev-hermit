@@ -46,10 +46,6 @@ MATCHED_SH="${MATCHED_SH:-$ROOT/experiments/multisect_detcore_misc_20260803/matc
 
 short() { git -C "$WT" rev-parse --short HEAD 2>/dev/null || echo "${SHA:0:12}"; }
 row_err() { echo "$SHA,$(short 2>/dev/null || echo "${SHA:0:12}"),${1:-},$WIDTH,,,,,$2"; }
-detcore_package_name() {
-  grep -m1 -E '^name = "(hermit-)?detcore"$' "$1/detcore/Cargo.toml" |
-    cut -d '"' -f 2
-}
 
 # --- preconditions: the calibrated primitive + the known-flaky witness ---------
 [ -x "$MATCHED_SH" ]  || { row_err "" MATCHED_MISSING; exit 0; }
@@ -66,12 +62,7 @@ else
 fi
 
 bstart=$(date +%s)
-DETCOR_PACKAGE="$(detcore_package_name "$WT")"
-case "$DETCOR_PACKAGE" in
-  detcore | hermit-detcore) ;;
-  *) row_err "$(( $(date +%s)-bstart ))" BUILD_FAIL; exit 0 ;;
-esac
-if ! ( cd "$WT" && with-proxy cargo test -p "$DETCOR_PACKAGE" --test "$BIN_NAME" --no-run ) >/dev/null 2>&1; then
+if ! ( cd "$WT" && with-proxy cargo test -p detcore --test "$BIN_NAME" --no-run ) >/dev/null 2>&1; then
   row_err "$(( $(date +%s)-bstart ))" BUILD_FAIL; exit 0
 fi
 BUILD_S=$(( $(date +%s)-bstart ))
