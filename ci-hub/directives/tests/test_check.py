@@ -62,6 +62,14 @@ class FakeRunner:
                     ),
                 }
                 return completed(command, rc=2, stdout=json.dumps(payload))
+            if identity == "1234":
+                payload = {
+                    "state": "landed",
+                    "ancestry": "ancestor",
+                    "resolved_sha": "e" * 40,
+                    "merge_commit_oid": "e" * 40,
+                }
+                return completed(command, stdout=json.dumps(payload))
             payload = {"state": "unverifiable", "reason": "no mergeCommit.oid"}
             return completed(command, rc=2, stdout=json.dumps(payload))
         if command[:3] == ("git", "-C", str(directive_check.ROOT)) or (
@@ -79,6 +87,7 @@ def directive(
     owner: str = "agent",
     parent_id: str | None = None,
     gate: str | None = None,
+    kind: str = "commit",
 ):
     record = {
         "id": item_id,
@@ -93,7 +102,7 @@ def directive(
         "parent_id": parent_id,
         "implementation": None
         if identity is None
-        else {"kind": "commit", "identity": identity},
+        else {"kind": kind, "identity": identity},
     }
     if gate is not None:
         record["gate"] = gate
@@ -229,6 +238,88 @@ class DirectiveCheckTest(unittest.TestCase):
         item = next(item for item in report.directives if item.id == "ambiguous")
         self.assertEqual("unverifiable", item.state)
         self.assertEqual(0, report.counts.get("fetch_failed", 0))
+
+    def test_pr_identity_resolves_to_merge_oid_before_ancestry(self):
+        report, runner = self.evaluate(
+            [directive("merged-pr", identity="1234", kind="pr")]
+        )
+
+        item = report.directives[0]
+        self.assertEqual("satisfied", item.state)
+        self.assertEqual("pr", item.implementation_kind)
+        self.assertEqual("1234", item.implementation_identity)
+        self.assertEqual("e" * 40, item.resolved_sha)
+        self.assertEqual(["1234"], runner.verifier_calls)
+
+
+class TaskGraphSourceTest(unittest.TestCase):
+    @staticmethod
+    def note(payload):
+        return directive_check.OWNER_DIRECTIVE_PREFIX + " " + json.dumps(payload)
+
+    def run_source(self, rows: list[tuple[str, list[str]]]):
+        output = "\n".join(
+            f"{task}|{json.dumps(notes)}" for task, notes in rows
+        )
+
+        def runner(command, **_kwargs):
+            self.assertEqual(("tg", "sql"), tuple(command[:2]))
+            return completed(command, stdout=output + "\n")
+
+        return directive_check.load_taskgraph_directives(run=runner)
+
+    def payload(self, item_id, task, **changes):
+        payload = directive(item_id, identity="a" * 40, task=task)
+        payload["revision"] = 1
+        payload.update(changes)
+        return payload
+
+    def test_typed_child_obligations_survive_taskgraph_projection(self):
+        parent = self.payload("parent", "one")
+        child = self.payload("child", "two", parent_id="parent")
+
+        version, records = self.run_source([
+            ("one", [self.note(parent)]),
+            ("two", [self.note(child)]),
+        ])
+
+        self.assertEqual(2, version)
+        self.assertEqual(["parent", "child"], [item.id for item in records])
+        self.assertEqual("parent", records[1].parent_id)
+
+    def test_highest_revision_wins_independent_of_note_order(self):
+        old = self.payload("one", "task-one")
+        new = dict(old, revision=2, owner="new-owner")
+
+        _version, records = self.run_source([
+            ("task-one", [self.note(new), self.note(old)])
+        ])
+
+        self.assertEqual("new-owner", records[0].owner)
+
+    def test_conflicting_same_revision_is_refused(self):
+        first = self.payload("one", "task-one")
+        conflict = dict(first, owner="different")
+
+        with self.assertRaisesRegex(
+            directive_check.LedgerError, "conflicting owner directive one revision 1"
+        ):
+            self.run_source([
+                ("task-one", [self.note(first), self.note(conflict)])
+            ])
+
+    def test_tag_without_typed_note_is_refused(self):
+        with self.assertRaisesRegex(
+            directive_check.LedgerError, "have no typed note: task-one"
+        ):
+            self.run_source([("task-one", ["ordinary progress note"])])
+
+    def test_note_cannot_impersonate_another_task(self):
+        payload = self.payload("one", "different-task")
+        with self.assertRaisesRegex(
+            directive_check.LedgerError, "note task does not match task-one"
+        ):
+            self.run_source([("task-one", [self.note(payload)])])
 
 
 if __name__ == "__main__":

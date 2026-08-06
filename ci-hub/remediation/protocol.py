@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -36,6 +37,7 @@ DEFAULT_GITHUB_WAIT_SECONDS = 120
 DEFAULT_NETWORK_TIMEOUT = float(
     os.environ.get("CI_HUB_REMEDIATION_NETWORK_TIMEOUT", "120")
 )
+_HERDR_AGENT: str | None = None
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 # Only a genuine failing ANSWER remediates. A no_result (a cancelled hosted run,
 # an OOM-killed local validate, a lost runner, a network error reaching GitHub)
@@ -383,9 +385,40 @@ def _run(
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
 
 
+def _network_run(
+    command: Sequence[str],
+    *,
+    check: bool = False,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run one network command, optionally through the agent-jail escape hatch.
+
+    ``herdr-run`` accepts the entire child command as one positional argument
+    and starts in the parent repository.  Callers therefore supply explicit
+    ``git -C`` commands; ``shlex.join`` preserves that single-positional
+    contract without invoking another shell in this process.
+    """
+    if not _HERDR_AGENT:
+        return _run(command, check=check, timeout=timeout)
+    herdr_root = Path(os.environ.get("DEV_HERMIT_PARENT", str(ROOT))).resolve()
+    herdr_run = herdr_root / "agent-utils/bin/herdr-run"
+    if not herdr_run.is_file():
+        raise ProtocolError(f"herdr-run entrypoint is missing: {herdr_run}")
+    return _run(
+        (
+            str(herdr_run),
+            "--agent",
+            _HERDR_AGENT,
+            shlex.join(str(part) for part in command),
+        ),
+        check=check,
+        timeout=timeout,
+    )
+
+
 def _fetch_target(source: Path, target: str) -> str:
     target_ref = f"origin/{target}"
-    _run(
+    _network_run(
         (
             "with-proxy",
             "git",
@@ -425,7 +458,7 @@ def _is_main_ancestor(source: Path, sha: str) -> bool:
 
 
 def _query_pr_landing(repo: str, pr: int) -> tuple[str, str, str]:
-    result = _run(
+    result = _network_run(
         (
             "with-proxy",
             "gh",
@@ -486,7 +519,7 @@ def resolve_landed_sha(
     """
     if not source.is_dir():
         raise ProtocolError(f"Hermit source checkout is missing: {source}")
-    _run(
+    _network_run(
         ("with-proxy", "git", "-C", str(source), "fetch", "origin", "main"),
         check=True,
         timeout=DEFAULT_NETWORK_TIMEOUT,
@@ -559,7 +592,7 @@ def _resolve_raw_sha(source: Path, reference: str) -> str:
     )
     result = _run(rev_parse, check=False)
     if result.returncode != 0:
-        _run(
+        _network_run(
             (
                 "with-proxy",
                 "git",
@@ -614,7 +647,7 @@ def _resolve_claimed_oid(
             return full_oid, True, True
 
     if obligations.SHA_RE.fullmatch(pr_head) and pr_head.startswith(abbreviated):
-        fetched = _run(
+        fetched = _network_run(
             (
                 "with-proxy",
                 "git",
@@ -670,6 +703,8 @@ def _claim_fields(
 
 
 def verify_landing(args: argparse.Namespace) -> int:
+    global _HERDR_AGENT
+    _HERDR_AGENT = getattr(args, "herdr_agent", None)
     source = args.source.expanduser().resolve()
     item = getattr(args, "item", None)
     claimed_oid = getattr(args, "claimed_oid", None)
@@ -2088,6 +2123,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_landing_parser.add_argument("--repo", default=DEFAULT_REPO)
     verify_landing_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
     verify_landing_parser.add_argument("--target", default="main")
+    verify_landing_parser.add_argument(
+        "--herdr-agent",
+        help="route git/gh egress through herdr-run as one quoted positional",
+    )
     verify_landing_parser.add_argument("--json", action="store_true")
 
     watch_parser = subparsers.add_parser(
