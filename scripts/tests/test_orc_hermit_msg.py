@@ -38,12 +38,12 @@ def _load_module():
 ohm = _load_module()
 
 ORC_START = (
-    '"if [ -f \'/home/newton/.orc/tmux.conf\' ]; then tmux source-file '
-    "'/home/newton/.orc/tmux.conf'; fi; exec '/home/newton/orc-bin/orc' "
+    '"if [ -f \'/home/test/.orc/tmux.conf\' ]; then tmux source-file '
+    "'/home/test/.orc/tmux.conf'; fi; exec '/home/test/orc-bin/orc' "
     "'--db' 'hermit' '--resume' '--tui'\""
 )
 AGENT_START = (
-    '"cd /home/newton/work/dev-hermit && exec env AGENT=orc claude '
+    '"cd /home/test/work/dev-hermit && exec env AGENT=orc claude '
     '--permission-mode acceptEdits"'
 )
 
@@ -111,7 +111,7 @@ class TestCoordinatorSelection(DiscoveryTestCase):
 
     def test_coordinator_without_a_db_flag_falls_back_to_session_name(self):
         panes = pane_line(
-            "orc-hermit", "orc", "%0", "orc", '"exec /home/newton/orc-bin/orc --tui"'
+            "orc-hermit", "orc", "%0", "orc", '"exec /home/test/orc-bin/orc --tui"'
         )
         self.assertEqual(self.find(panes=panes).pane_id, "%0")
 
@@ -211,7 +211,7 @@ class TestLivePaneParsing(unittest.TestCase):
         self.assertEqual([pane.pane_id for pane in parsed], ["%0", "%1", "%2"])
 
     def test_command_is_reduced_to_its_basename(self):
-        panes = pane_line("orc-hermit", "orc", "%0", "/home/newton/orc-bin/orc", ORC_START)
+        panes = pane_line("orc-hermit", "orc", "%0", "/home/test/orc-bin/orc", ORC_START)
         self.assertTrue(ohm.parse_live_panes(panes, ["orc-hermit"])[0].is_orc)
 
 

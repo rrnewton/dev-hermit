@@ -50,7 +50,7 @@ from collections import Counter
 from pathlib import Path
 
 DEFAULT_DB = Path.home() / ".tg" / "hermit.db"
-DEFAULT_ROOT = Path("/home/newton/work/dev-hermit")
+DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 #: repo key -> (checkout path relative to root, gh repo slug or None)
 REPOS = {

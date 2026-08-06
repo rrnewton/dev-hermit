@@ -73,7 +73,8 @@
 
 set -uo pipefail
 
-ROOT="${ROOT:-/home/newton/work/dev-hermit}"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT="${ROOT:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
 BASE="origin/main"
 PATHS=()
 
