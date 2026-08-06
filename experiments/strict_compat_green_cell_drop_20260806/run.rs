@@ -10,6 +10,9 @@
 //! wait-timeout = "0.2"
 //! ```
 
+#[path = "log_authority.rs"]
+mod log_authority;
+
 use anyhow::{bail, Context, Result};
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
@@ -18,6 +21,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,8 +31,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wait_timeout::ChildExt;
 
-const SCHEMA: u32 = 2;
-const FULL_TESTS: usize = 234;
+const SCHEMA: u32 = 3;
+const FULL_TESTS: usize = 231;
 const BACKENDS: [&str; 6] = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"];
 const MAIN_MODE: &str = "strict_raw";
 const CALIBRATION_TEST: &str = "backend-parity-c/pid-probe";
@@ -100,6 +104,33 @@ struct CompileSpec {
     command: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PreparedArtifact {
+    path: String,
+    sha256: String,
+    bytes: u64,
+    mode: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NoncPreparationReceipt {
+    protocol: String,
+    prepare_command: Vec<String>,
+    prepare_command_sha256: String,
+    prepare_environment: BTreeMap<String, String>,
+    prepare_environment_sha256: String,
+    run_environment_template: BTreeMap<String, String>,
+    run_environment_template_sha256: String,
+    source_chain: Vec<SourceFact>,
+    exit_code: i32,
+    log: ArtifactFact,
+    prepared_artifacts: Vec<PreparedArtifact>,
+    prepared_artifacts_sha256: String,
+    canonical_argv: Vec<String>,
+    canonical_argv_sha256: String,
+    receipt_sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TestSpec {
     id: String,
@@ -111,6 +142,7 @@ struct TestSpec {
     workload_identity_sha256: String,
     compile: Option<CompileSpec>,
     compile_receipt: Option<CompileReceipt>,
+    nonc_preparation: Option<NoncPreparationReceipt>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,6 +160,7 @@ struct FrozenManifest {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     toolchain: ToolchainReceipt,
     hermit_build: HermitBuildReceipt,
     guest_set_sha256: String,
@@ -165,11 +198,20 @@ struct ExecutionRecord {
     termination: Termination,
     duration_ms: u128,
     log_event_count: u64,
+    log_parser: String,
+    log_level: String,
+    log_counts: log_authority::CanonicalLogCounts,
+    log_parser_command: Vec<String>,
+    log_parser_command_sha256: String,
+    log_parser_diagnostic: ArtifactFact,
     stdout: ArtifactFact,
     stderr: ArtifactFact,
     ordered_log_stream: ArtifactFact,
     command: Vec<String>,
     command_sha256: String,
+    environment: BTreeMap<String, String>,
+    environment_sha256: String,
+    preparation_receipt_sha256: Option<String>,
     guest_binary_sha256: String,
     error: Option<String>,
 }
@@ -215,6 +257,7 @@ struct Denominator {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     guest_set_sha256: String,
     input_audit_path: String,
     input_audit_sha256: String,
@@ -240,6 +283,30 @@ struct EvidenceFile {
     sha256: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SpotCompletion {
+    schema: u32,
+    record_type: String,
+    complete: bool,
+    run_instance: String,
+    run_binding_sha256: String,
+    denominator_sha256: String,
+    executions_jsonl_sha256: String,
+    cells_jsonl_sha256: String,
+    tests: Vec<String>,
+    backends: Vec<String>,
+    observation_modes: Vec<String>,
+    run_ordinals: Vec<u8>,
+    expected_cells: usize,
+    expected_executions: usize,
+    attempted_executions: usize,
+    nonzero_info_executions: usize,
+    successful_exit_executions: usize,
+    strict_green_cells: usize,
+    raw_equal_cells: usize,
+    completion_digest_sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RunBinding {
     schema: u32,
@@ -249,6 +316,7 @@ struct RunBinding {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     requested_manifest_sha256: String,
     input_audit_sha256: String,
     manifest_sha256: String,
@@ -275,9 +343,11 @@ struct RequestedInput {
     corpus_line: usize,
     corpus_row: String,
     argv: Vec<String>,
+    canonical_argv: Vec<String>,
     compile_command: Vec<String>,
     workload_identity_sha256: String,
     sources: Vec<RequestedSource>,
+    nonc_preparation: Option<NoncPreparationReceipt>,
     available: bool,
 }
 
@@ -352,6 +422,7 @@ fn main() -> Result<()> {
     let rest: Vec<String> = args.collect();
     let paths = Paths::from_args(&rest)?;
     match command.as_str() {
+        "self-test" => self_test(&paths),
         "audit-inputs" => audit_inputs_command(&paths),
         "prepare" => prepare(&paths, value_usize(&rest, "--jobs", 32)),
         "run" => run_jobs(
@@ -428,10 +499,11 @@ impl Paths {
 fn print_help() {
     println!(
         "strict raw compatibility metric\n\
-         audit-inputs                 freeze requested rows and fail closed if any source is absent\n\
-         prepare [--jobs 32]        freeze inputs and compile 234 guests\n\
+         self-test                    run bounded producer/cache/receipt brackets\n\
+         audit-inputs                 prepare/freeze requested rows and fail closed on any gap\n\
+         prepare [--jobs 32]        freeze inputs and prepare/compile 231 guests\n\
          run --kind calibration     run 1 test x 6 paths x 2 ordinals\n\
-         run --kind full            run 234 x 6 x 2 = 2,808 executions\n\
+         run --kind full            run 231 x 6 x 2 = 2,772 executions\n\
          run --kind spot            run 2 short tests x 6 x 3 L3 modes x 2\n\
          assemble --kind KIND       deterministically write typed JSONL\n\
          run/assemble require --run-instance; full also requires --spot-run-instance\n\
@@ -477,7 +549,7 @@ fn freeze_requested_inputs(paths: &Paths) -> Result<InputAudit> {
         paths.experiment.join("frozen-corpus-nonc.tsv"),
     )?;
 
-    let manifest = build_requested_manifest(paths)?;
+    let manifest = build_requested_manifest(paths, true)?;
     let requested_manifest_path = paths.experiment.join("requested-manifest.json");
     write_json_atomic(&requested_manifest_path, &manifest)?;
     let requested_manifest_sha256 = sha256_file(&requested_manifest_path)?;
@@ -501,6 +573,9 @@ fn freeze_requested_inputs(paths: &Paths) -> Result<InputAudit> {
                 role: source.role.clone(),
                 path: source.path.clone(),
             });
+        }
+        if !input.available {
+            missing_test_ids.insert(input.id.clone());
         }
     }
     missing_sources
@@ -532,6 +607,7 @@ fn freeze_requested_inputs(paths: &Paths) -> Result<InputAudit> {
     let nonc_rows = manifest.inputs.len() - c_rows;
     let complete = manifest.inputs.len() == manifest.denominator_expected_tests
         && unique_ids == manifest.denominator_expected_tests
+        && executable_tests == manifest.denominator_expected_tests
         && missing_sources.is_empty()
         && duplicate_ids.is_empty()
         && duplicate_workload_identities.is_empty();
@@ -569,7 +645,7 @@ fn freeze_requested_inputs(paths: &Paths) -> Result<InputAudit> {
     Ok(audit)
 }
 
-fn build_requested_manifest(paths: &Paths) -> Result<RequestedManifest> {
+fn build_requested_manifest(paths: &Paths, execute_preparation: bool) -> Result<RequestedManifest> {
     let mut inputs = Vec::new();
     let c_file = File::open(&paths.corpus_c)?;
     for (line_no, line) in BufReader::new(c_file).lines().enumerate() {
@@ -641,10 +717,12 @@ fn build_requested_manifest(paths: &Paths) -> Result<RequestedManifest> {
             corpus_line: line_no + 1,
             corpus_row: line,
             argv: Vec::new(),
+            canonical_argv: Vec::new(),
             compile_command,
             workload_identity_sha256,
             available: sources.iter().all(|source| source.exists),
             sources,
+            nonc_preparation: None,
         });
     }
 
@@ -671,22 +749,11 @@ fn build_requested_manifest(paths: &Paths) -> Result<RequestedManifest> {
                 line_no + 1
             );
         }
-        let executable = PathBuf::from(&argv[0]);
-        let exists = executable.is_file();
-        let sources = vec![RequestedSource {
-            role: "executable".to_owned(),
-            path: executable.display().to_string(),
-            exists,
-            sha256: if exists {
-                Some(sha256_file(&executable)?)
-            } else {
-                None
-            },
-        }];
+        let prepared = prepare_nonc_input(paths, fields[0], &argv, execute_preparation)?;
         let workload_identity_sha256 = workload_identity(
             "script_or_interpreter",
-            &argv,
-            &sources,
+            &prepared.canonical_argv,
+            &prepared.semantic_sources,
             &[],
             &paths.hermit_repo,
         )?;
@@ -698,10 +765,12 @@ fn build_requested_manifest(paths: &Paths) -> Result<RequestedManifest> {
             corpus_line: line_no + 1,
             corpus_row: line,
             argv,
+            canonical_argv: prepared.canonical_argv,
             compile_command: Vec::new(),
             workload_identity_sha256,
-            available: sources.iter().all(|source| source.exists),
-            sources,
+            available: prepared.available,
+            sources: prepared.sources,
+            nonc_preparation: Some(prepared.receipt),
         });
     }
     inputs.sort_by(|a, b| a.id.cmp(&b.id));
@@ -722,8 +791,795 @@ fn build_requested_manifest(paths: &Paths) -> Result<RequestedManifest> {
     })
 }
 
+struct PreparedNoncInput {
+    sources: Vec<RequestedSource>,
+    semantic_sources: Vec<RequestedSource>,
+    canonical_argv: Vec<String>,
+    receipt: NoncPreparationReceipt,
+    available: bool,
+}
+
+fn prepare_nonc_input(
+    paths: &Paths,
+    id: &str,
+    argv: &[String],
+    execute: bool,
+) -> Result<PreparedNoncInput> {
+    let canonical_argv = canonical_nonc_argv(paths, argv)?;
+    let sources = discover_nonc_sources(paths, argv)?;
+    let semantic_sources = discover_nonc_sources(paths, &canonical_argv)?;
+    let source_chain: Vec<_> = sources
+        .iter()
+        .filter_map(|source| {
+            source.sha256.as_ref().map(|sha256| SourceFact {
+                role: source.role.clone(),
+                path: source.path.clone(),
+                sha256: sha256.clone(),
+            })
+        })
+        .collect();
+
+    let cell = paths
+        .artifacts
+        .join("preparation")
+        .join("nonc")
+        .join(slug(id));
+    let home = cell.join("home");
+    let xdg = cell.join("xdg-config");
+    let tmp = cell.join("tmp");
+    let fixtures = cell.join("fixtures");
+    let captures = cell.join("captures");
+    if execute {
+        if cell.exists() {
+            fs::remove_dir_all(&cell).with_context(|| {
+                format!("replacing owned non-C preparation cell {}", cell.display())
+            })?;
+        }
+        for directory in [&home, &xdg, &tmp, &fixtures, &captures] {
+            fs::create_dir_all(directory)?;
+        }
+        let source_xdg = paths.hermit_repo.join("tests/e2e/xdg-config");
+        if source_xdg.is_dir() {
+            copy_tree(&source_xdg, &xdg)?;
+        }
+    }
+
+    let prepare_environment = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), tmp.display().to_string()),
+        ("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string()),
+    ]);
+    let run_environment_template = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
+        (
+            "E2E_FIXTURE_DIR".to_owned(),
+            "${EXECUTION_FIXTURE_DIR}".to_owned(),
+        ),
+    ]);
+
+    let wrapper_protocol = argv.last().map(String::as_str) == Some("--run")
+        && resolve_program(paths, &argv[0])?
+            .extension()
+            .and_then(|value| value.to_str())
+            == Some("sh");
+    let prepare_command = if wrapper_protocol {
+        let mut command = argv.to_vec();
+        command[0] = resolve_program(paths, &command[0])?.display().to_string();
+        *command.last_mut().unwrap() = "--prepare".to_owned();
+        command
+    } else {
+        vec![
+            "/usr/bin/test".to_owned(),
+            "-x".to_owned(),
+            direct_probe_path(paths, argv)?.display().to_string(),
+        ]
+    };
+    let log_path = cell.join("prepare.log");
+    let exit_code = if execute {
+        let log = File::create(&log_path)?;
+        match Command::new(&prepare_command[0])
+            .args(&prepare_command[1..])
+            .current_dir(&paths.hermit_repo)
+            .envs(&prepare_environment)
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(128),
+            Err(error) => {
+                fs::write(&log_path, format!("prepare spawn failed: {error}\n"))?;
+                127
+            }
+        }
+    } else {
+        if !log_path.is_file() {
+            bail!("non-C preparation receipt log is missing for {id}");
+        }
+        0
+    };
+    let prepared_artifacts = collect_prepared_artifacts(paths, &cell, &log_path)?;
+    let mut receipt = NoncPreparationReceipt {
+        protocol: if wrapper_protocol {
+            "e2e-shell-prepare-run-v1".to_owned()
+        } else {
+            "direct-executable-probe-v1".to_owned()
+        },
+        prepare_command_sha256: sha256_bytes(&serde_json::to_vec(&prepare_command)?),
+        prepare_command,
+        prepare_environment_sha256: sha256_bytes(&serde_json::to_vec(&prepare_environment)?),
+        prepare_environment,
+        run_environment_template_sha256: sha256_bytes(&serde_json::to_vec(
+            &run_environment_template,
+        )?),
+        run_environment_template,
+        source_chain,
+        exit_code,
+        log: artifact_fact(paths, &log_path)?,
+        prepared_artifacts_sha256: sha256_bytes(&serde_json::to_vec(&prepared_artifacts)?),
+        prepared_artifacts,
+        canonical_argv_sha256: sha256_bytes(&serde_json::to_vec(&canonical_argv)?),
+        canonical_argv: canonical_argv.clone(),
+        receipt_sha256: String::new(),
+    };
+    receipt.receipt_sha256 = nonc_receipt_sha256(&receipt)?;
+    let available = sources.iter().all(|source| source.exists) && exit_code == 0;
+    Ok(PreparedNoncInput {
+        sources,
+        semantic_sources,
+        canonical_argv,
+        receipt,
+        available,
+    })
+}
+
+fn nonc_receipt_sha256(receipt: &NoncPreparationReceipt) -> Result<String> {
+    Ok(sha256_bytes(&serde_json::to_vec(&serde_json::json!({
+        "protocol": receipt.protocol,
+        "prepare_command": receipt.prepare_command,
+        "prepare_command_sha256": receipt.prepare_command_sha256,
+        "prepare_environment": receipt.prepare_environment,
+        "prepare_environment_sha256": receipt.prepare_environment_sha256,
+        "run_environment_template": receipt.run_environment_template,
+        "run_environment_template_sha256": receipt.run_environment_template_sha256,
+        "source_chain": receipt.source_chain,
+        "exit_code": receipt.exit_code,
+        "log": receipt.log,
+        "prepared_artifacts": receipt.prepared_artifacts,
+        "prepared_artifacts_sha256": receipt.prepared_artifacts_sha256,
+        "canonical_argv": receipt.canonical_argv,
+        "canonical_argv_sha256": receipt.canonical_argv_sha256,
+    }))?))
+}
+
+fn discover_nonc_sources(paths: &Paths, argv: &[String]) -> Result<Vec<RequestedSource>> {
+    let mut pending = VecDeque::new();
+    let mut discovered = BTreeSet::new();
+    let mut scanned = BTreeSet::new();
+    let launcher = resolve_program(paths, &argv[0])?;
+    discovered.insert(launcher.clone());
+    if let Some(script) = direct_script_path(paths, argv)? {
+        pending.push_back(script);
+    } else if launcher.starts_with(&paths.hermit_repo) {
+        pending.push_back(launcher);
+    }
+
+    while let Some(path) = pending.pop_front() {
+        let path = path.canonicalize().unwrap_or(path);
+        discovered.insert(path.clone());
+        if !scanned.insert(path.clone()) || !path.is_file() {
+            continue;
+        }
+        if let Some(interpreter) = shebang_interpreter(paths, &path)? {
+            discovered.insert(interpreter);
+        }
+        if path.starts_with(&paths.hermit_repo) {
+            let contents = fs::read_to_string(&path).unwrap_or_default();
+            for nested in referenced_repo_files(paths, &path, &contents) {
+                if !discovered.contains(&nested) {
+                    pending.push_back(nested);
+                }
+            }
+        }
+    }
+
+    Ok(discovered
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let exists = path.is_file();
+            Ok(RequestedSource {
+                role: format!("source_{:03}", index + 1),
+                path: path.display().to_string(),
+                exists,
+                sha256: exists.then(|| sha256_file(&path)).transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?)
+}
+
+fn direct_script_path(paths: &Paths, argv: &[String]) -> Result<Option<PathBuf>> {
+    if argv.len() == 3
+        && argv[1] == "-c"
+        && matches!(
+            Path::new(&argv[0])
+                .file_name()
+                .and_then(|value| value.to_str()),
+            Some("bash" | "sh")
+        )
+        && !argv[2]
+            .bytes()
+            .any(|byte| b";&|`$()<>*?[]{}".contains(&byte))
+    {
+        return Ok(Some(resolve_program(paths, &argv[2])?));
+    }
+    let program = resolve_program(paths, &argv[0])?;
+    let has_shebang = fs::read(&program)
+        .ok()
+        .is_some_and(|bytes| bytes.starts_with(b"#!"));
+    Ok(has_shebang.then_some(program))
+}
+
+fn direct_probe_path(paths: &Paths, argv: &[String]) -> Result<PathBuf> {
+    direct_script_path(paths, argv)?.map_or_else(|| resolve_program(paths, &argv[0]), Ok)
+}
+
+fn resolve_program(paths: &Paths, value: &str) -> Result<PathBuf> {
+    let declared = PathBuf::from(value);
+    if declared.is_absolute() {
+        return Ok(declared.canonicalize().unwrap_or(declared));
+    }
+    if value.contains('/') {
+        return Ok(paths.hermit_repo.join(declared));
+    }
+    let search = std::env::var_os("PATH").context("PATH is unset")?;
+    for directory in std::env::split_paths(&search) {
+        let candidate = directory.join(value);
+        if candidate.is_file() && fs::metadata(&candidate)?.permissions().mode() & 0o111 != 0 {
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        }
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn shebang_interpreter(paths: &Paths, script: &Path) -> Result<Option<PathBuf>> {
+    let bytes = fs::read(script)?;
+    let Some(first) = bytes.split(|byte| *byte == b'\n').next() else {
+        return Ok(None);
+    };
+    let Ok(first) = std::str::from_utf8(first) else {
+        return Ok(None);
+    };
+    let Some(spec) = first.strip_prefix("#!") else {
+        return Ok(None);
+    };
+    let words = shell_words::split(spec.trim())?;
+    if words.is_empty() {
+        return Ok(None);
+    }
+    if words[0] == "/usr/bin/env" {
+        let program = words
+            .iter()
+            .skip(1)
+            .find(|value| !value.starts_with('-'))
+            .context("/usr/bin/env shebang lacks a program")?;
+        Ok(Some(resolve_program(paths, program)?))
+    } else {
+        Ok(Some(resolve_program(paths, &words[0])?))
+    }
+}
+
+fn referenced_repo_files(paths: &Paths, script: &Path, contents: &str) -> Vec<PathBuf> {
+    let mut result = BTreeSet::new();
+    for (marker, base) in [
+        ("$ROOT_DIR/", paths.hermit_repo.clone()),
+        (
+            "${BASH_SOURCE[0]%/*}/",
+            script.parent().unwrap_or(&paths.hermit_repo).to_path_buf(),
+        ),
+    ] {
+        let mut rest = contents;
+        while let Some(index) = rest.find(marker) {
+            let tail = &rest[index + marker.len()..];
+            let value: String = tail
+                .chars()
+                .take_while(|character| {
+                    !character.is_whitespace()
+                        && !matches!(*character, '\'' | '"' | ';' | ')' | '(')
+                })
+                .collect();
+            if !value.is_empty() {
+                let candidate = base.join(&value);
+                if candidate.is_file() {
+                    result.insert(candidate.canonicalize().unwrap_or(candidate));
+                }
+            }
+            rest = &tail[value.len()..];
+        }
+    }
+    result.into_iter().collect()
+}
+
+fn self_test(default_paths: &Paths) -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "strict-metric-producer-selftest-{}-{}",
+        std::process::id(),
+        epoch_ms()
+    ));
+    if root.exists() {
+        bail!("producer self-test root already exists: {}", root.display());
+    }
+    fs::create_dir_all(&root)?;
+    log_authority::self_test(&default_paths.binary, &root.join("log-authority"))?;
+
+    let mut paths = default_paths.clone();
+    paths.artifacts = root.join("artifacts");
+    paths.experiment = root.join("experiment");
+    fs::create_dir_all(paths.artifacts.join("compile-logs"))?;
+    fs::create_dir_all(paths.artifacts.join("guests/tiny"))?;
+    fs::create_dir_all(&paths.experiment)?;
+
+    let mut healthy_spot = SpotCompletion {
+        schema: SCHEMA,
+        record_type: "strict_metric_spot_completion".to_owned(),
+        complete: true,
+        run_instance: "producer-selftest-spot".to_owned(),
+        run_binding_sha256: "1".repeat(64),
+        denominator_sha256: "2".repeat(64),
+        executions_jsonl_sha256: "3".repeat(64),
+        cells_jsonl_sha256: "4".repeat(64),
+        tests: SPOT_TESTS.iter().map(|value| (*value).to_owned()).collect(),
+        backends: BACKENDS.iter().map(|value| (*value).to_owned()).collect(),
+        observation_modes: vec![
+            "heap".to_owned(),
+            "heap_stack".to_owned(),
+            "stack".to_owned(),
+        ],
+        run_ordinals: vec![1, 2],
+        expected_cells: 36,
+        expected_executions: 72,
+        attempted_executions: 72,
+        nonzero_info_executions: 72,
+        successful_exit_executions: 72,
+        strict_green_cells: 36,
+        raw_equal_cells: 36,
+        completion_digest_sha256: String::new(),
+    };
+    healthy_spot.completion_digest_sha256 = spot_completion_digest(&healthy_spot)?;
+    validate_spot_completion(&healthy_spot, "producer-selftest-spot")?;
+    let mut unhealthy_spot = healthy_spot.clone();
+    unhealthy_spot.successful_exit_executions = 71;
+    unhealthy_spot.completion_digest_sha256 = spot_completion_digest(&unhealthy_spot)?;
+    require_refusal(
+        "digest-valid unhealthy spot completion",
+        validate_spot_completion(&unhealthy_spot, "producer-selftest-spot"),
+    )?;
+
+    let source = root.join("tiny.c");
+    fs::write(&source, b"int main(void) { return 0; }\n")?;
+    let output = paths.artifacts.join("guests/tiny/guest");
+    let compile_log = paths.artifacts.join("compile-logs/tiny.log");
+    let compile_command = c_compile_command(&source, &[], &[], &output);
+    let log = File::create(&compile_log)?;
+    let status = Command::new(&compile_command[0])
+        .args(&compile_command[1..])
+        .stdout(Stdio::from(log.try_clone()?))
+        .stderr(Stdio::from(log))
+        .status()?;
+    if !status.success() || !output.is_file() {
+        bail!("bounded real tiny compiler command failed: {status}");
+    }
+    let toolchain = capture_toolchain()?;
+    let compile = CompileSpec {
+        source: source.display().to_string(),
+        cflags: Vec::new(),
+        extra_sources: Vec::new(),
+        command: compile_command.clone(),
+    };
+    let compile_receipt = CompileReceipt {
+        command: compile_command.clone(),
+        command_sha256: sha256_bytes(&serde_json::to_vec(&compile_command)?),
+        inputs: vec![SourceFact {
+            role: "primary".to_owned(),
+            path: source.display().to_string(),
+            sha256: sha256_file(&source)?,
+        }],
+        toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
+        exit_code: status.code().context("tiny compiler exited without code")?,
+        log: artifact_fact(&paths, &compile_log)?,
+        output: artifact_fact(&paths, &output)?,
+    };
+    let test = TestSpec {
+        id: "fixture/tiny-compile".to_owned(),
+        lane: "portable".to_owned(),
+        kind: "compiled_c".to_owned(),
+        argv: vec![output.display().to_string()],
+        source_sha256: sha256_file(&source)?,
+        binary_sha256: sha256_file(&output)?,
+        workload_identity_sha256: sha256_bytes(b"fixture/tiny-compile"),
+        compile: Some(compile),
+        compile_receipt: Some(compile_receipt),
+        nonc_preparation: None,
+    };
+    validate_test_preparation(&paths, &test, &toolchain.receipt_sha256)?;
+
+    let mut missing = test.clone();
+    missing.compile_receipt = None;
+    require_refusal(
+        "missing compile receipt",
+        validate_test_preparation(&paths, &missing, &toolchain.receipt_sha256),
+    )?;
+    let mut tampered = test.clone();
+    tampered.compile_receipt.as_mut().unwrap().output.sha256 = "f".repeat(64);
+    require_refusal(
+        "tampered compile receipt",
+        validate_test_preparation(&paths, &tampered, &toolchain.receipt_sha256),
+    )?;
+    let mut relabelled = test.clone();
+    relabelled.compile_receipt.as_mut().unwrap().inputs[0].role = "extra_source_1".to_owned();
+    require_refusal(
+        "relabelled compile receipt",
+        validate_test_preparation(&paths, &relabelled, &toolchain.receipt_sha256),
+    )?;
+    let mut partial = test.clone();
+    partial.compile = None;
+    require_refusal(
+        "partial compile receipt",
+        validate_test_preparation(&paths, &partial, &toolchain.receipt_sha256),
+    )?;
+
+    let binding = RunBinding {
+        schema: SCHEMA,
+        record_type: "strict_metric_run_binding".to_owned(),
+        run_kind: "calibration".to_owned(),
+        run_instance: "producer-selftest".to_owned(),
+        parent_commit: "a".repeat(40),
+        run_rs_sha256: "b".repeat(64),
+        verify_rs_sha256: "c".repeat(64),
+        log_authority_rs_sha256: "d".repeat(64),
+        requested_manifest_sha256: "e".repeat(64),
+        input_audit_sha256: "1".repeat(64),
+        manifest_sha256: "2".repeat(64),
+        denominator_sha256: "3".repeat(64),
+        hermit_binary_sha256: sha256_file(&paths.binary)?,
+        guest_set_sha256: "4".repeat(64),
+        required_spot_completion: None,
+    };
+    let binding_sha256 = sha256_bytes(b"producer-selftest-binding");
+    let job = Job {
+        run_kind: binding.run_kind.clone(),
+        test: test.clone(),
+        backend: "ptrace".to_owned(),
+        observation_mode: MAIN_MODE.to_owned(),
+    };
+    let cell_id = job_cell_id(&job);
+    let artifact_dir = paths
+        .artifacts
+        .join("artifacts")
+        .join(&binding.run_kind)
+        .join(&binding.run_instance)
+        .join(&binding_sha256)
+        .join(&cell_id);
+    fs::create_dir_all(&artifact_dir)?;
+    let one = make_self_test_execution(&paths, &job, &binding, &binding_sha256, 1, &artifact_dir)?;
+    let two = make_self_test_execution(&paths, &job, &binding, &binding_sha256, 2, &artifact_dir)?;
+    let diagnostic = artifact_dir.join("legacy-log-diff.stderr");
+    fs::write(&diagnostic, b"")?;
+    let cell = CellRecord {
+        schema: SCHEMA,
+        record_type: "strict_metric_cell".to_owned(),
+        run_kind: binding.run_kind.clone(),
+        run_instance: binding.run_instance.clone(),
+        run_binding_sha256: binding_sha256.clone(),
+        cell_id: cell_id.clone(),
+        test_id: job.test.id.clone(),
+        backend: job.backend.clone(),
+        observation_mode: job.observation_mode.clone(),
+        execution_ordinals: vec![1, 2],
+        stdout_equal: true,
+        stderr_equal: true,
+        termination_equal: true,
+        ordered_log_stream_equal: true,
+        nonzero_log_events: true,
+        successful_exit_both: true,
+        raw_observations_equal: true,
+        strict_green: true,
+        legacy_log_match: true,
+        legacy_green: true,
+        legacy_comparator: "self-test".to_owned(),
+        legacy_diagnostic: artifact_fact(&paths, &diagnostic)?,
+    };
+    validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell)?;
+
+    let state = state_root(&paths, &binding, &binding_sha256);
+    let execution_dir = state.join("executions");
+    let cell_dir = state.join("cells");
+    fs::create_dir_all(&execution_dir)?;
+    fs::create_dir_all(&cell_dir)?;
+    let one_record_path = execution_dir.join(format!("{cell_id}--1.json"));
+    let two_record_path = execution_dir.join(format!("{cell_id}--2.json"));
+    let cell_record_path = cell_dir.join(format!("{cell_id}.json"));
+
+    let mut relabelled_cache = one.clone();
+    relabelled_cache.preparation_receipt_sha256 = Some("9".repeat(64));
+    write_json_atomic(&one_record_path, &relabelled_cache)?;
+    write_json_atomic(&two_record_path, &two)?;
+    write_json_atomic(&cell_record_path, &cell)?;
+    require_refusal(
+        "relabelled cached preparation",
+        run_pair(&paths, &job, &binding, &binding_sha256, 1),
+    )?;
+    let stdout_path = paths.artifacts.join(&one.stdout.path);
+    write_json_atomic(&one_record_path, &one)?;
+    fs::write(&stdout_path, b"tampered")?;
+    require_refusal(
+        "tampered cached artifact",
+        run_pair(&paths, &job, &binding, &binding_sha256, 1),
+    )?;
+    fs::write(&stdout_path, b"")?;
+    fs::remove_file(&stdout_path)?;
+    require_refusal(
+        "missing cached artifact",
+        run_pair(&paths, &job, &binding, &binding_sha256, 1),
+    )?;
+    fs::write(&stdout_path, b"")?;
+
+    fs::remove_dir_all(&state)?;
+    fs::create_dir_all(state.join("executions"))?;
+    write_json_atomic(
+        &state.join("executions").join(format!("{cell_id}--1.json")),
+        &one,
+    )?;
+    require_refusal(
+        "partial cached receipt set",
+        run_pair(&paths, &job, &binding, &binding_sha256, 1),
+    )?;
+
+    fs::remove_dir_all(&root)?;
+    println!(
+        "PRODUCER SELF-TEST PASS: real tiny compiler receipt positive; 4 compile-receipt and 4 run-consumer cached-resume negatives refused; canonical parser brackets passed; digest-valid unhealthy spot completion refused"
+    );
+    Ok(())
+}
+
+fn make_self_test_execution(
+    paths: &Paths,
+    job: &Job,
+    binding: &RunBinding,
+    binding_sha256: &str,
+    ordinal: u8,
+    artifact_dir: &Path,
+) -> Result<ExecutionRecord> {
+    let stdout = artifact_dir.join(format!("run{ordinal}.stdout"));
+    let stderr = artifact_dir.join(format!("run{ordinal}.stderr"));
+    let log = artifact_dir.join(format!("run{ordinal}.info.log"));
+    let parser_diagnostic = artifact_dir.join(format!("run{ordinal}.log-inspection.stderr"));
+    fs::write(&stdout, b"")?;
+    fs::write(&stderr, b"")?;
+    fs::write(
+        &log,
+        b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=7\n",
+    )?;
+    let inspection = log_authority::inspect_file(&paths.binary, &log)?;
+    fs::write(&parser_diagnostic, &inspection.diagnostic_stderr)?;
+    let command = command_argv(paths, job, &log);
+    let environment = execution_environment(paths, job, binding, binding_sha256, ordinal, true)?;
+    Ok(ExecutionRecord {
+        schema: SCHEMA,
+        record_type: "strict_metric_execution".to_owned(),
+        run_kind: binding.run_kind.clone(),
+        run_instance: binding.run_instance.clone(),
+        run_binding_sha256: binding_sha256.to_owned(),
+        cell_id: job_cell_id(job),
+        test_id: job.test.id.clone(),
+        backend: job.backend.clone(),
+        observation_mode: job.observation_mode.clone(),
+        ordinal,
+        attempted: true,
+        termination: Termination {
+            kind: "exit".to_owned(),
+            code: Some(0),
+            signal: None,
+            timed_out: false,
+        },
+        duration_ms: 1,
+        log_event_count: inspection.counts.info_messages,
+        log_parser: inspection.parser_id,
+        log_level: "INFO".to_owned(),
+        log_counts: inspection.counts,
+        log_parser_command_sha256: sha256_bytes(&serde_json::to_vec(&inspection.command)?),
+        log_parser_command: inspection.command,
+        log_parser_diagnostic: artifact_fact(paths, &parser_diagnostic)?,
+        stdout: artifact_fact(paths, &stdout)?,
+        stderr: artifact_fact(paths, &stderr)?,
+        ordered_log_stream: artifact_fact(paths, &log)?,
+        command_sha256: sha256_bytes(&serde_json::to_vec(&command)?),
+        command,
+        environment_sha256: sha256_bytes(&serde_json::to_vec(&environment)?),
+        environment,
+        preparation_receipt_sha256: None,
+        guest_binary_sha256: job.test.binary_sha256.clone(),
+        error: None,
+    })
+}
+
+fn require_refusal(label: &str, result: Result<()>) -> Result<()> {
+    if result.is_ok() {
+        bail!("negative producer bracket was accepted: {label}");
+    }
+    Ok(())
+}
+
+fn canonical_nonc_argv(paths: &Paths, argv: &[String]) -> Result<Vec<String>> {
+    let mut current = argv.to_vec();
+    for _ in 0..16 {
+        if current.len() == 3
+            && current[1] == "-c"
+            && matches!(
+                Path::new(&current[0])
+                    .file_name()
+                    .and_then(|value| value.to_str()),
+                Some("bash" | "sh")
+            )
+            && !current[2]
+                .bytes()
+                .any(|byte| b";&|`$()<>*?[]{}".contains(&byte))
+        {
+            current = vec![resolve_program(paths, &current[2])?.display().to_string()];
+            continue;
+        }
+        current[0] = resolve_program(paths, &current[0])?.display().to_string();
+        if current.last().map(String::as_str) != Some("--run") {
+            return Ok(current);
+        }
+        let Some(next) = trivial_exec_run(Path::new(&current[0]))? else {
+            return Ok(current);
+        };
+        current = next;
+    }
+    bail!("trivial exec wrapper recursion exceeded 16 levels: {argv:?}")
+}
+
+fn trivial_exec_run(script: &Path) -> Result<Option<Vec<String>>> {
+    let contents = fs::read_to_string(script)?;
+    let Some((_, after)) = contents.split_once("--run)") else {
+        return Ok(None);
+    };
+    let Some((branch, _)) = after.split_once(";;") else {
+        return Ok(None);
+    };
+    let branch = branch.trim();
+    let Some(command) = branch.strip_prefix("exec ") else {
+        return Ok(None);
+    };
+    if command.contains('\n') {
+        return Ok(None);
+    }
+    let parent = script.parent().context("wrapper has no parent")?;
+    let expanded = command.replace("${BASH_SOURCE[0]%/*}", &parent.display().to_string());
+    let argv = shell_words::split(&expanded)?;
+    if argv.is_empty() || argv.iter().any(|value| value.contains('$')) {
+        return Ok(None);
+    }
+    Ok(Some(argv))
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            fs::create_dir_all(&target)?;
+            copy_tree(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), target)?;
+        } else {
+            bail!("unsupported xdg-config entry: {}", entry.path().display());
+        }
+    }
+    Ok(())
+}
+
+fn collect_prepared_artifacts(
+    paths: &Paths,
+    root: &Path,
+    excluded: &Path,
+) -> Result<Vec<PreparedArtifact>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut result = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() && path != excluded {
+                result.push(PreparedArtifact {
+                    path: path.strip_prefix(&paths.artifacts)?.display().to_string(),
+                    sha256: sha256_file(&path)?,
+                    bytes: metadata.len(),
+                    mode: metadata.permissions().mode() & 0o7777,
+                });
+            } else if !metadata.is_file() {
+                bail!(
+                    "prepared artifact is not a regular file: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    result.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(result)
+}
+
+fn validate_nonc_preparation(paths: &Paths, receipt: &NoncPreparationReceipt) -> Result<()> {
+    if receipt.exit_code != 0
+        || receipt.prepare_command.is_empty()
+        || receipt.prepare_command_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepare_command)?)
+        || receipt.prepare_environment_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepare_environment)?)
+        || receipt.run_environment_template_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.run_environment_template)?)
+        || receipt.canonical_argv.is_empty()
+        || receipt.canonical_argv_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.canonical_argv)?)
+        || receipt.prepared_artifacts_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepared_artifacts)?)
+        || receipt.receipt_sha256 != nonc_receipt_sha256(receipt)?
+        || receipt
+            .run_environment_template
+            .get("E2E_TMPDIR")
+            .map(String::as_str)
+            != Some("${EXECUTION_TMPDIR}")
+        || receipt
+            .run_environment_template
+            .get("E2E_FIXTURE_DIR")
+            .map(String::as_str)
+            != Some("${EXECUTION_FIXTURE_DIR}")
+    {
+        bail!("non-C preparation receipt is internally inconsistent");
+    }
+    verify_artifact_fact(paths, &receipt.log)?;
+    let mut paths_seen = BTreeSet::new();
+    for artifact in &receipt.prepared_artifacts {
+        if !paths_seen.insert(&artifact.path) {
+            bail!(
+                "non-C preparation receipt aliases artifact {}",
+                artifact.path
+            );
+        }
+        let path = paths.artifacts.join(&artifact.path);
+        let metadata = fs::metadata(&path)
+            .with_context(|| format!("missing prepared artifact {}", path.display()))?;
+        if !metadata.is_file()
+            || metadata.len() != artifact.bytes
+            || metadata.permissions().mode() & 0o7777 != artifact.mode
+            || sha256_file(&path)? != artifact.sha256
+        {
+            bail!("prepared artifact fact mismatch: {}", path.display());
+        }
+    }
+    for source in &receipt.source_chain {
+        let path = Path::new(&source.path);
+        if !path.is_file() || sha256_file(path)? != source.sha256 {
+            bail!("non-C preparation source changed: {}", source.path);
+        }
+    }
+    Ok(())
+}
+
 fn prepare(paths: &Paths, jobs: usize) -> Result<()> {
-    let (parent_commit, run_rs_sha256, verify_rs_sha256) = harness_binding(paths)?;
+    let (parent_commit, run_rs_sha256, verify_rs_sha256, log_authority_rs_sha256) =
+        harness_binding(paths)?;
     require_repo_at_head(&paths.hermit_repo)?;
     require_repo_at_head(&paths.reverie_repo)?;
     require_repo_at_head(&paths.liteinst_repo)?;
@@ -744,7 +1600,7 @@ fn prepare(paths: &Paths, jobs: usize) -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n  ");
         bail!(
-            "234-test input preflight is incomplete: observed_rows={} unique_ids={} executable_tests={} missing_tests={} missing_sources={} duplicate_ids={:?} duplicate_workloads={:?}; requested_manifest_sha256={}; missing:\n  {}",
+            "231-test input preflight is incomplete: observed_rows={} unique_ids={} executable_tests={} missing_tests={} missing_sources={} duplicate_ids={:?} duplicate_workloads={:?}; requested_manifest_sha256={}; missing:\n  {}",
             input_audit.denominator_observed_rows,
             input_audit.denominator_unique_ids,
             input_audit.denominator_executable_tests,
@@ -774,7 +1630,7 @@ fn prepare(paths: &Paths, jobs: usize) -> Result<()> {
 
     compile_c_guests(paths, &mut tests, jobs, &toolchain)?;
     for test in &mut tests {
-        let guest = resolved_guest_path(paths, test);
+        let guest = resolved_guest_path(paths, test)?;
         if !guest.is_file() {
             bail!(
                 "prepared guest missing for {}: {}",
@@ -809,6 +1665,7 @@ fn prepare(paths: &Paths, jobs: usize) -> Result<()> {
         parent_commit,
         run_rs_sha256,
         verify_rs_sha256,
+        log_authority_rs_sha256,
         toolchain,
         hermit_build,
         guest_set_sha256: guest_set_sha256(&tests)?,
@@ -1113,17 +1970,20 @@ fn run_one(
     let stdout_path = artifact_dir.join(format!("run{ordinal}.stdout"));
     let stderr_path = artifact_dir.join(format!("run{ordinal}.stderr"));
     let log_path = artifact_dir.join(format!("run{ordinal}.info.log"));
+    let log_parser_diagnostic_path =
+        artifact_dir.join(format!("run{ordinal}.log-inspection.stderr"));
     File::create(&log_path)?;
     let command = command_argv(paths, job, &log_path);
     let command_sha256 = sha256_bytes(&serde_json::to_vec(&command)?);
+    let environment = execution_environment(paths, job, binding, binding_sha256, ordinal, true)?;
+    let environment_sha256 = sha256_bytes(&serde_json::to_vec(&environment)?);
     let stdout = File::create(&stdout_path)?;
     let stderr = File::create(&stderr_path)?;
     let started = Instant::now();
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..])
         .current_dir(&paths.hermit_repo)
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
+        .envs(&environment)
         .env_remove("RUST_LOG")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -1171,7 +2031,9 @@ fn run_one(
         File::create(&log_path)?;
     }
     let duration_ms = started.elapsed().as_millis();
-    let log_event_count = count_raw_log_events(&log_path)?;
+    let inspection = log_authority::inspect_file(&paths.binary, &log_path)?;
+    fs::write(&log_parser_diagnostic_path, &inspection.diagnostic_stderr)?;
+    let log_event_count = inspection.counts.info_messages;
     Ok(ExecutionRecord {
         schema: SCHEMA,
         record_type: "strict_metric_execution".to_owned(),
@@ -1187,11 +2049,24 @@ fn run_one(
         termination,
         duration_ms,
         log_event_count,
+        log_parser: inspection.parser_id,
+        log_level: "INFO".to_owned(),
+        log_counts: inspection.counts,
+        log_parser_command_sha256: sha256_bytes(&serde_json::to_vec(&inspection.command)?),
+        log_parser_command: inspection.command,
+        log_parser_diagnostic: artifact_fact(paths, &log_parser_diagnostic_path)?,
         stdout: artifact_fact(paths, &stdout_path)?,
         stderr: artifact_fact(paths, &stderr_path)?,
         ordered_log_stream: artifact_fact(paths, &log_path)?,
         command,
         command_sha256,
+        environment,
+        environment_sha256,
+        preparation_receipt_sha256: job
+            .test
+            .nonc_preparation
+            .as_ref()
+            .map(|receipt| receipt.receipt_sha256.clone()),
         guest_binary_sha256: job.test.binary_sha256.clone(),
         error,
     })
@@ -1224,6 +2099,74 @@ fn command_argv(paths: &Paths, job: &Job, log_path: &Path) -> Vec<String> {
     command.push("--".to_owned());
     command.extend(job.test.argv.clone());
     command
+}
+
+fn execution_environment(
+    paths: &Paths,
+    job: &Job,
+    binding: &RunBinding,
+    binding_sha256: &str,
+    ordinal: u8,
+    reset_tmp: bool,
+) -> Result<BTreeMap<String, String>> {
+    let Some(receipt) = &job.test.nonc_preparation else {
+        return Ok(BTreeMap::from([
+            ("LC_ALL".to_owned(), "C".to_owned()),
+            ("TZ".to_owned(), "UTC".to_owned()),
+        ]));
+    };
+    validate_nonc_preparation(paths, receipt)?;
+    let runtime = paths
+        .artifacts
+        .join("runtime")
+        .join(&binding.run_kind)
+        .join(&binding.run_instance)
+        .join(binding_sha256)
+        .join(job_cell_id(job))
+        .join(format!("run{ordinal}"));
+    let tmp = runtime.join("tmp");
+    let fixtures = runtime.join("fixtures");
+    if reset_tmp && runtime.exists() {
+        fs::remove_dir_all(&runtime).with_context(|| {
+            format!(
+                "resetting owned execution environment {}",
+                runtime.display()
+            )
+        })?;
+    }
+    if reset_tmp {
+        fs::create_dir_all(&tmp)?;
+        fs::create_dir_all(&fixtures)?;
+        let prepared_fixtures = receipt
+            .prepare_environment
+            .get("E2E_FIXTURE_DIR")
+            .context("non-C preparation lacks E2E_FIXTURE_DIR")?;
+        let prepared_fixtures = Path::new(prepared_fixtures);
+        if !prepared_fixtures.is_dir() {
+            bail!(
+                "prepared fixture directory is missing: {}",
+                prepared_fixtures.display()
+            );
+        }
+        copy_tree(prepared_fixtures, &fixtures)?;
+    } else if !tmp.is_dir() || !fixtures.is_dir() {
+        bail!(
+            "cached execution tmp/fixture directory is missing: {}",
+            runtime.display()
+        );
+    }
+    let mut environment = receipt.run_environment_template.clone();
+    if environment.insert("E2E_TMPDIR".to_owned(), tmp.display().to_string())
+        != Some("${EXECUTION_TMPDIR}".to_owned())
+    {
+        bail!("non-C run environment lacks the execution tmpdir placeholder");
+    }
+    if environment.insert("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string())
+        != Some("${EXECUTION_FIXTURE_DIR}".to_owned())
+    {
+        bail!("non-C run environment lacks the execution fixture placeholder");
+    }
+    Ok(environment)
 }
 
 fn run_legacy_logdiff(paths: &Paths, left: &Path, right: &Path, diagnostic: &Path) -> Result<bool> {
@@ -1284,7 +2227,7 @@ fn write_denominator(
         || input_audit.executable_manifest_path.as_deref() != Some("manifest.json")
         || input_audit.executable_manifest_sha256.as_deref() != Some(&manifest_sha256)
     {
-        bail!("input audit does not authorize the complete 234-workload denominator");
+        bail!("input audit does not authorize the complete 231-workload denominator");
     }
     let jobs = build_jobs(manifest, kind)?;
     let tests: BTreeSet<_> = jobs.iter().map(|j| j.test.id.clone()).collect();
@@ -1307,6 +2250,11 @@ fn write_denominator(
         "minimum_log_events_per_execution".to_owned(),
         serde_json::json!(1),
     );
+    comparison_contract.insert(
+        "log_event_parser".to_owned(),
+        serde_json::json!(log_authority::PARSER_ID),
+    );
+    comparison_contract.insert("log_event_level".to_owned(), serde_json::json!("INFO"));
     let required_spot_completion = match (kind, spot_run_instance) {
         ("full", Some(instance)) => {
             let path = run_dir(paths, "spot", instance).join("spot-completion.json");
@@ -1316,6 +2264,9 @@ fn write_denominator(
                     path.display()
                 );
             }
+            reverify_spot_before_full(paths, instance)?;
+            let completion: SpotCompletion = read_json(&path)?;
+            validate_spot_completion(&completion, instance)?;
             Some(EvidenceFile {
                 path: path.strip_prefix(&paths.experiment)?.display().to_string(),
                 sha256: sha256_file(&path)?,
@@ -1339,6 +2290,7 @@ fn write_denominator(
         parent_commit: manifest.parent_commit.clone(),
         run_rs_sha256: manifest.run_rs_sha256.clone(),
         verify_rs_sha256: manifest.verify_rs_sha256.clone(),
+        log_authority_rs_sha256: manifest.log_authority_rs_sha256.clone(),
         guest_set_sha256: manifest.guest_set_sha256.clone(),
         input_audit_path: "input-audit.json".to_owned(),
         input_audit_sha256: sha256_file(&input_audit_path)?,
@@ -1377,6 +2329,7 @@ fn write_denominator(
         parent_commit: manifest.parent_commit.clone(),
         run_rs_sha256: manifest.run_rs_sha256.clone(),
         verify_rs_sha256: manifest.verify_rs_sha256.clone(),
+        log_authority_rs_sha256: manifest.log_authority_rs_sha256.clone(),
         requested_manifest_sha256: input_audit.requested_manifest_sha256.clone(),
         input_audit_sha256: sha256_file(&input_audit_path)?,
         manifest_sha256: sha256_file(&paths.experiment.join("manifest.json"))?,
@@ -1398,12 +2351,112 @@ fn write_denominator(
     Ok((binding, binding_sha256))
 }
 
+fn reverify_spot_before_full(paths: &Paths, instance: &str) -> Result<()> {
+    let verifier = paths.experiment.join("verify.rs");
+    let arguments = vec![
+        "verify".to_owned(),
+        "--kind".to_owned(),
+        "spot".to_owned(),
+        "--run-instance".to_owned(),
+        instance.to_owned(),
+        "--parent".to_owned(),
+        paths.parent_repo.display().to_string(),
+        "--experiment".to_owned(),
+        paths.experiment.display().to_string(),
+        "--artifacts".to_owned(),
+        paths.artifacts.display().to_string(),
+        "--hermit".to_owned(),
+        paths.hermit_repo.display().to_string(),
+        "--reverie".to_owned(),
+        paths.reverie_repo.display().to_string(),
+        "--liteinst2".to_owned(),
+        paths.liteinst_repo.display().to_string(),
+        "--binary".to_owned(),
+        paths.binary.display().to_string(),
+        "--corpus-c".to_owned(),
+        paths.corpus_c.display().to_string(),
+        "--corpus-nonc".to_owned(),
+        paths.corpus_nonc.display().to_string(),
+    ];
+    let output = Command::new(&verifier)
+        .args(&arguments)
+        .output()
+        .with_context(|| format!("launching exact spot verifier {}", verifier.display()))?;
+    if !output.status.success() {
+        bail!(
+            "full run refused because exact spot reverification failed: status={} stdout={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn validate_spot_completion(completion: &SpotCompletion, expected_instance: &str) -> Result<()> {
+    let expected_tests: Vec<_> = SPOT_TESTS.iter().map(|value| (*value).to_owned()).collect();
+    let expected_backends: Vec<_> = BACKENDS.iter().map(|value| (*value).to_owned()).collect();
+    let expected_modes = vec![
+        "heap".to_owned(),
+        "heap_stack".to_owned(),
+        "stack".to_owned(),
+    ];
+    if completion.schema != SCHEMA
+        || completion.record_type != "strict_metric_spot_completion"
+        || !completion.complete
+        || completion.run_instance != expected_instance
+        || completion.tests != expected_tests
+        || completion.backends != expected_backends
+        || completion.observation_modes != expected_modes
+        || completion.run_ordinals != vec![1, 2]
+        || completion.expected_cells != 36
+        || completion.expected_executions != 72
+        || completion.attempted_executions != 72
+        || completion.nonzero_info_executions != 72
+        || completion.successful_exit_executions != 72
+        || completion.strict_green_cells != 36
+        || completion.raw_equal_cells != 36
+        || completion.completion_digest_sha256 != spot_completion_digest(completion)?
+    {
+        bail!(
+            "full run requires a digest-valid healthy exact 36-cell/72-execution spot completion"
+        );
+    }
+    Ok(())
+}
+
+fn spot_completion_digest(completion: &SpotCompletion) -> Result<String> {
+    let value = serde_json::json!({
+        "schema": completion.schema,
+        "record_type": completion.record_type,
+        "complete": completion.complete,
+        "run_instance": completion.run_instance,
+        "run_binding_sha256": completion.run_binding_sha256,
+        "denominator_sha256": completion.denominator_sha256,
+        "executions_jsonl_sha256": completion.executions_jsonl_sha256,
+        "cells_jsonl_sha256": completion.cells_jsonl_sha256,
+        "tests": completion.tests,
+        "backends": completion.backends,
+        "observation_modes": completion.observation_modes,
+        "run_ordinals": completion.run_ordinals,
+        "expected_cells": completion.expected_cells,
+        "expected_executions": completion.expected_executions,
+        "attempted_executions": completion.attempted_executions,
+        "nonzero_info_executions": completion.nonzero_info_executions,
+        "successful_exit_executions": completion.successful_exit_executions,
+        "strict_green_cells": completion.strict_green_cells,
+        "raw_equal_cells": completion.raw_equal_cells,
+    });
+    Ok(sha256_bytes(&serde_json::to_vec(&value)?))
+}
+
 fn validate_frozen_inputs(paths: &Paths, manifest: &FrozenManifest) -> Result<()> {
     verify_harness_commit(
         paths,
         &manifest.parent_commit,
         &manifest.run_rs_sha256,
         &manifest.verify_rs_sha256,
+        &manifest.log_authority_rs_sha256,
     )?;
     let checks = [
         (
@@ -1475,39 +2528,7 @@ fn validate_frozen_inputs(paths: &Paths, manifest: &FrozenManifest) -> Result<()
         if !guest.is_file() || sha256_file(guest)? != test.binary_sha256 {
             bail!("guest binary missing or changed for {}", test.id);
         }
-        match (&test.compile, &test.compile_receipt) {
-            (Some(compile), Some(receipt)) => {
-                let mut expected_inputs = vec![SourceFact {
-                    role: "primary".to_owned(),
-                    path: compile.source.clone(),
-                    sha256: sha256_file(Path::new(&compile.source))?,
-                }];
-                for (index, source) in compile.extra_sources.iter().enumerate() {
-                    expected_inputs.push(SourceFact {
-                        role: format!("extra_source_{}", index + 1),
-                        path: source.clone(),
-                        sha256: sha256_file(Path::new(source))?,
-                    });
-                }
-                if receipt.command != compile.command
-                    || receipt.command_sha256
-                        != sha256_bytes(&serde_json::to_vec(&compile.command)?)
-                    || receipt.inputs != expected_inputs
-                    || receipt.output.sha256 != test.binary_sha256
-                    || receipt.exit_code != 0
-                    || receipt.toolchain_receipt_sha256 != manifest.toolchain.receipt_sha256
-                {
-                    bail!("compile receipt no longer binds guest {}", test.id);
-                }
-                verify_artifact_fact(paths, &receipt.log)?;
-                verify_artifact_fact(paths, &receipt.output)?;
-            }
-            (None, None) => {}
-            _ => bail!(
-                "compile specification/receipt pairing is invalid: {}",
-                test.id
-            ),
-        }
+        validate_test_preparation(paths, test, &manifest.toolchain.receipt_sha256)?;
     }
     if manifest.tests.len() != FULL_TESTS {
         bail!("frozen manifest must contain exactly {FULL_TESTS} unique semantic workloads");
@@ -1518,10 +2539,50 @@ fn validate_frozen_inputs(paths: &Paths, manifest: &FrozenManifest) -> Result<()
     Ok(())
 }
 
+fn validate_test_preparation(
+    paths: &Paths,
+    test: &TestSpec,
+    toolchain_receipt_sha256: &str,
+) -> Result<()> {
+    match (&test.compile, &test.compile_receipt, &test.nonc_preparation) {
+        (Some(compile), Some(receipt), None) => {
+            let mut expected_inputs = vec![SourceFact {
+                role: "primary".to_owned(),
+                path: compile.source.clone(),
+                sha256: sha256_file(Path::new(&compile.source))?,
+            }];
+            for (index, source) in compile.extra_sources.iter().enumerate() {
+                expected_inputs.push(SourceFact {
+                    role: format!("extra_source_{}", index + 1),
+                    path: source.clone(),
+                    sha256: sha256_file(Path::new(source))?,
+                });
+            }
+            if receipt.command != compile.command
+                || receipt.command_sha256 != sha256_bytes(&serde_json::to_vec(&compile.command)?)
+                || receipt.inputs != expected_inputs
+                || receipt.output.sha256 != test.binary_sha256
+                || receipt.exit_code != 0
+                || receipt.toolchain_receipt_sha256 != toolchain_receipt_sha256
+            {
+                bail!("compile receipt no longer binds guest {}", test.id);
+            }
+            verify_artifact_fact(paths, &receipt.log)?;
+            verify_artifact_fact(paths, &receipt.output)?;
+        }
+        (None, None, Some(receipt)) => validate_nonc_preparation(paths, receipt)?,
+        _ => bail!(
+            "compile/non-C preparation receipt pairing is invalid: {}",
+            test.id
+        ),
+    }
+    Ok(())
+}
+
 fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<()> {
     let requested_path = paths.experiment.join("requested-manifest.json");
     let recorded: RequestedManifest = read_json(&requested_path)?;
-    let derived = build_requested_manifest(paths)?;
+    let derived = build_requested_manifest(paths, false)?;
     if serde_json::to_vec(&recorded)? != serde_json::to_vec(&derived)? {
         bail!("requested manifest differs from independent corpus/source rederivation");
     }
@@ -1539,6 +2600,14 @@ fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<
         for _source in input.sources.iter().filter(|source| !source.exists) {
             missing_source_count += 1;
             missing_test_ids.insert(input.id.clone());
+        }
+        if !input.available {
+            missing_test_ids.insert(input.id.clone());
+        }
+        match (&input.kind[..], &input.nonc_preparation) {
+            ("script_or_interpreter", Some(receipt)) => validate_nonc_preparation(paths, receipt)?,
+            ("compiled_c", None) => {}
+            _ => bail!("requested input preparation type mismatch: {}", input.id),
         }
     }
     let duplicate_ids: Vec<_> = id_counts
@@ -1614,7 +2683,7 @@ fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<
         || !duplicate_ids.is_empty()
         || !duplicate_workloads.is_empty()
     {
-        bail!("input audit does not equal independently rederived 234-workload authority");
+        bail!("input audit does not equal independently rederived 231-workload authority");
     }
     Ok(())
 }
@@ -1689,12 +2758,21 @@ fn parse_c_tests(paths: &Paths) -> Result<Vec<TestSpec>> {
                 command,
             }),
             compile_receipt: None,
+            nonc_preparation: None,
         });
     }
     Ok(result)
 }
 
 fn parse_nonc_tests(paths: &Paths) -> Result<Vec<TestSpec>> {
+    let requested: RequestedManifest =
+        read_json(&paths.experiment.join("requested-manifest.json"))?;
+    let requested_by_id: BTreeMap<_, _> = requested
+        .inputs
+        .into_iter()
+        .filter(|input| input.kind == "script_or_interpreter")
+        .map(|input| (input.id.clone(), input))
+        .collect();
     let input = File::open(&paths.corpus_nonc)?;
     let mut result = Vec::new();
     for (line_no, line) in BufReader::new(input).lines().enumerate() {
@@ -1719,28 +2797,32 @@ fn parse_nonc_tests(paths: &Paths) -> Result<Vec<TestSpec>> {
                 line_no + 1
             );
         }
-        let source = RequestedSource {
-            role: "executable".to_owned(),
-            path: argv[0].clone(),
-            exists: true,
-            sha256: Some(sha256_file(Path::new(&argv[0]))?),
-        };
+        let requested = requested_by_id
+            .get(fields[0])
+            .with_context(|| format!("requested non-C receipt missing for {}", fields[0]))?;
+        if requested.argv != argv || !requested.available {
+            bail!(
+                "requested non-C command is not prepared/runnable: {}",
+                fields[0]
+            );
+        }
+        let preparation = requested
+            .nonc_preparation
+            .clone()
+            .with_context(|| format!("non-C preparation receipt missing for {}", fields[0]))?;
+        validate_nonc_preparation(paths, &preparation)?;
+        let launcher = resolve_program(paths, &argv[0])?;
         result.push(TestSpec {
             id: fields[0].to_owned(),
             lane: fields[1].to_owned(),
             kind: "script_or_interpreter".to_owned(),
-            source_sha256: sha256_file(Path::new(&argv[0]))?,
-            binary_sha256: sha256_file(Path::new(&argv[0]))?,
-            workload_identity_sha256: workload_identity(
-                "script_or_interpreter",
-                &argv,
-                std::slice::from_ref(&source),
-                &[],
-                &paths.hermit_repo,
-            )?,
+            source_sha256: sha256_bytes(&serde_json::to_vec(&preparation.source_chain)?),
+            binary_sha256: sha256_file(&launcher)?,
+            workload_identity_sha256: requested.workload_identity_sha256.clone(),
             argv,
             compile: None,
             compile_receipt: None,
+            nonc_preparation: Some(preparation),
         });
     }
     Ok(result)
@@ -2028,14 +3110,27 @@ fn build_hermit(
     })
 }
 
-fn harness_binding(paths: &Paths) -> Result<(String, String, String)> {
+fn harness_binding(paths: &Paths) -> Result<(String, String, String, String)> {
     let run_path = paths.experiment.join("run.rs");
     let verify_path = paths.experiment.join("verify.rs");
+    let log_authority_path = paths.experiment.join("log_authority.rs");
     let parent_commit = git_head(&paths.parent_repo)?;
     let run_rs_sha256 = sha256_file(&run_path)?;
     let verify_rs_sha256 = sha256_file(&verify_path)?;
-    verify_harness_commit(paths, &parent_commit, &run_rs_sha256, &verify_rs_sha256)?;
-    Ok((parent_commit, run_rs_sha256, verify_rs_sha256))
+    let log_authority_rs_sha256 = sha256_file(&log_authority_path)?;
+    verify_harness_commit(
+        paths,
+        &parent_commit,
+        &run_rs_sha256,
+        &verify_rs_sha256,
+        &log_authority_rs_sha256,
+    )?;
+    Ok((
+        parent_commit,
+        run_rs_sha256,
+        verify_rs_sha256,
+        log_authority_rs_sha256,
+    ))
 }
 
 fn verify_harness_commit(
@@ -2043,13 +3138,19 @@ fn verify_harness_commit(
     parent_commit: &str,
     run_rs_sha256: &str,
     verify_rs_sha256: &str,
+    log_authority_rs_sha256: &str,
 ) -> Result<()> {
     if parent_commit.len() != 40 || !parent_commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("parent harness commit is not a 40-hex object name");
     }
     let run_path = paths.experiment.join("run.rs");
     let verify_path = paths.experiment.join("verify.rs");
-    for (path, expected_hash) in [(&run_path, run_rs_sha256), (&verify_path, verify_rs_sha256)] {
+    let log_authority_path = paths.experiment.join("log_authority.rs");
+    for (path, expected_hash) in [
+        (&run_path, run_rs_sha256),
+        (&verify_path, verify_rs_sha256),
+        (&log_authority_path, log_authority_rs_sha256),
+    ] {
         let relative = path
             .strip_prefix(&paths.parent_repo)
             .with_context(|| format!("harness path escaped parent: {}", path.display()))?;
@@ -2085,20 +3186,28 @@ fn verify_harness_commit(
 fn guest_set_sha256(tests: &[TestSpec]) -> Result<String> {
     let values: Vec<_> = tests
         .iter()
-        .map(|test| (&test.id, &test.binary_sha256))
+        .map(|test| {
+            (
+                &test.id,
+                &test.binary_sha256,
+                test.nonc_preparation
+                    .as_ref()
+                    .map(|receipt| &receipt.receipt_sha256),
+            )
+        })
         .collect();
     Ok(sha256_bytes(&serde_json::to_vec(&values)?))
 }
 
-fn resolved_guest_path(paths: &Paths, test: &TestSpec) -> PathBuf {
+fn resolved_guest_path(paths: &Paths, test: &TestSpec) -> Result<PathBuf> {
     if test.compile.is_some() {
-        paths
+        Ok(paths
             .artifacts
             .join("guests")
             .join(slug(&test.id))
-            .join("guest")
+            .join("guest"))
     } else {
-        PathBuf::from(&test.argv[0])
+        resolve_program(paths, &test.argv[0])
     }
 }
 
@@ -2278,11 +3387,18 @@ fn validate_cached_pair(
                 &cell_id,
                 &format!("run{ordinal}.info.log"),
             ),
+            canonical_artifact_relative(
+                binding,
+                binding_sha256,
+                &cell_id,
+                &format!("run{ordinal}.log-inspection.stderr"),
+            ),
         ];
         let facts = [
             &execution.stdout,
             &execution.stderr,
             &execution.ordered_log_stream,
+            &execution.log_parser_diagnostic,
         ];
         for (fact, expected) in facts.into_iter().zip(expected_paths) {
             if fact.path != expected {
@@ -2292,22 +3408,44 @@ fn validate_cached_pair(
         }
         let log_path = paths.artifacts.join(&execution.ordered_log_stream.path);
         let expected_command = command_argv(paths, job, &log_path);
+        let expected_environment =
+            execution_environment(paths, job, binding, binding_sha256, ordinal, false)?;
+        let inspection = log_authority::inspect_file(&paths.binary, &log_path)?;
+        let diagnostic_path = paths.artifacts.join(&execution.log_parser_diagnostic.path);
         if execution.command != expected_command
             || execution.command_sha256 != sha256_bytes(&serde_json::to_vec(&expected_command)?)
-            || execution.log_event_count != count_raw_log_events(&log_path)?
+            || execution.environment != expected_environment
+            || execution.environment_sha256
+                != sha256_bytes(&serde_json::to_vec(&expected_environment)?)
+            || execution.preparation_receipt_sha256
+                != job
+                    .test
+                    .nonc_preparation
+                    .as_ref()
+                    .map(|receipt| receipt.receipt_sha256.clone())
+            || execution.log_parser != log_authority::PARSER_ID
+            || execution.log_level != "INFO"
+            || execution.log_counts != inspection.counts
+            || execution.log_event_count != inspection.counts.info_messages
+            || execution.log_parser_command != inspection.command
+            || execution.log_parser_command_sha256
+                != sha256_bytes(&serde_json::to_vec(&inspection.command)?)
+            || fs::read(&diagnostic_path)? != inspection.diagnostic_stderr
         {
-            bail!("cached command/log binding mismatch for {cell_id}::{ordinal}");
+            bail!("cached command/environment/log binding mismatch for {cell_id}::{ordinal}");
         }
     }
     let all_paths = BTreeSet::from([
         one.stdout.path.as_str(),
         one.stderr.path.as_str(),
         one.ordered_log_stream.path.as_str(),
+        one.log_parser_diagnostic.path.as_str(),
         two.stdout.path.as_str(),
         two.stderr.path.as_str(),
         two.ordered_log_stream.path.as_str(),
+        two.log_parser_diagnostic.path.as_str(),
     ]);
-    if all_paths.len() != 6 {
+    if all_paths.len() != 8 {
         bail!("cached execution artifacts alias ordinals or streams for {cell_id}");
     }
     let stdout_equal = files_equal(
@@ -2386,23 +3524,6 @@ fn verify_artifact_fact(paths: &Paths, fact: &ArtifactFact) -> Result<()> {
         bail!("artifact fact mismatch: {}", path.display());
     }
     Ok(())
-}
-
-fn count_raw_log_events(path: &Path) -> Result<u64> {
-    let file = File::open(path)?;
-    let mut count = 0;
-    for line in BufReader::new(file).split(b'\n') {
-        let line = line?;
-        let timestamp_shape = line.len() >= 20
-            && line[0..4].iter().all(u8::is_ascii_digit)
-            && line.get(4) == Some(&b'-')
-            && line.get(7) == Some(&b'-')
-            && line.get(10) == Some(&b'T');
-        if timestamp_shape {
-            count += 1;
-        }
-    }
-    Ok(count)
 }
 
 fn files_equal(left: &Path, right: &Path) -> Result<bool> {

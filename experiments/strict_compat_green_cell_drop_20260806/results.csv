@@ -1,2 +1,2 @@
 record_type,input_preflight_complete,metric_complete,denominator_expected_tests,denominator_observed_rows,denominator_executable_tests,missing_test_count,duplicate_test_ids,duplicate_workload_identities,legacy_green_cells,strict_green_cells,absolute_drop_cells,note
-strict_metric_preflight,true,false,234,234,234,0,0,0,,,,"NO RESULT: input authority passes; real metric execution remains disabled pending two independent harness review passes"
+strict_metric_preflight,true,false,231,231,231,0,0,0,,,,"NO RESULT: input authority passes; real metric execution remains disabled pending two independent harness review passes"

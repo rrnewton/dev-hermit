@@ -1,23 +1,62 @@
 {
-  "schema": 2,
+  "schema": 3,
   "record_type": "strict_metric_denominator_decision",
-  "decision": "retire_duplicate_semantic_workload",
+  "decision": "retire_trivial_exec_aliases",
   "prior_named_rows": 235,
-  "corrected_unique_workloads": 234,
-  "removed": {
-    "id": "applications/timed-progress-bar",
-    "corpus_row": "applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run",
-    "wrapper_path": "tests/e2e/applications/timed-progress-bar.sh",
-    "wrapper_last_present_commit": "bb56774c90ae13e63a0a75d6cc1f6c01c69d5734",
-    "wrapper_sha256": "8475285e1c568e81d543c4ebb402fbc4c3d41dadc9c492263115197c80089d15",
-    "wrapper_run_action": "exec examples/timed-progress-bar.py"
-  },
-  "retained": {
-    "id": "applications/example-timed-progress-bar",
-    "corpus_row": "applications/example-timed-progress-bar|portable|HERMITROOT/examples/timed-progress-bar.py",
-    "executable_path": "examples/timed-progress-bar.py",
-    "executable_sha256_at_hermit_head": "4c9a4ed94ed492021bd04ba236bb625cb60600c088cafcd84b3ec1bdf9f0e094"
-  },
-  "deletion_commit": "0c6cda68dbdd76cee3e77ed480f4533c6308486b",
-  "rationale": "The removed wrapper's --run arm execs the already-retained Python workload, so the two rows name one semantic workload. No filler row is introduced."
+  "corrected_unique_workloads": 231,
+  "retired_aliases": [
+    {
+      "id": "applications/timed-progress-bar",
+      "corpus_row": "applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run",
+      "wrapper_path": "tests/e2e/applications/timed-progress-bar.sh",
+      "wrapper_last_present_commit": "bb56774c90ae13e63a0a75d6cc1f6c01c69d5734",
+      "wrapper_sha256": "8475285e1c568e81d543c4ebb402fbc4c3d41dadc9c492263115197c80089d15",
+      "wrapper_run_action": "exec examples/timed-progress-bar.py",
+      "retained_id": "applications/example-timed-progress-bar",
+      "retained_path": "examples/timed-progress-bar.py",
+      "retained_sha256": "4c9a4ed94ed492021bd04ba236bb625cb60600c088cafcd84b3ec1bdf9f0e094",
+      "retirement_commit": "0c6cda68dbdd76cee3e77ed480f4533c6308486b"
+    },
+    {
+      "id": "determinism-stress/thread-output",
+      "corpus_row": "determinism-stress/thread-output|portable|HERMITROOT/tests/e2e/determinism-stress/thread-output.sh --run",
+      "wrapper_path": "tests/e2e/determinism-stress/thread-output.sh",
+      "wrapper_sha256_at_hermit_head": "27b8a443c7fcadebc09e9fe50dc6f6b21b3025690e2d5186ca0245d9b62fbf74",
+      "wrapper_prepare_action": "test -x /bin/bash",
+      "wrapper_run_action": "exec examples/race.sh",
+      "retained_id": "determinism-stress/example-race",
+      "retained_path": "examples/race.sh",
+      "retained_sha256": "00ba1d05db05f914c990da9dcd45c7b41c300cc2db9c5ad7bf5d1b9766a44fc1"
+    },
+    {
+      "id": "language-runtimes/python-random",
+      "corpus_row": "language-runtimes/python-random|portable|HERMITROOT/tests/e2e/language-runtimes/python-random.sh --run",
+      "wrapper_path": "tests/e2e/language-runtimes/python-random.sh",
+      "wrapper_sha256_at_hermit_head": "fb3fb07d73685d3fdfe37ff804ffa46dd7db413b0002fd2237b834ecc2f6c2af",
+      "wrapper_prepare_action": "test -x /usr/bin/python3",
+      "wrapper_run_action": "exec examples/rand.py",
+      "retained_id": "language-runtimes/example-python-random",
+      "retained_path": "examples/rand.py",
+      "retained_sha256": "e1a32fd938403f394f36555be180f2b17dd497859f28e9aa9ac0dadcd0372343"
+    },
+    {
+      "id": "system-utils/random-device",
+      "corpus_row": "system-utils/random-device|portable|HERMITROOT/tests/e2e/system-utils/random-device.sh --run",
+      "wrapper_path": "tests/e2e/system-utils/random-device.sh",
+      "wrapper_sha256_at_hermit_head": "61321a5e85b9ab248bd3b4d01a8678bff01b0674563c74bce763e51f4b1da4cf",
+      "wrapper_prepare_action": "command -v hexdump",
+      "wrapper_run_action": "exec examples/devrand.sh",
+      "retained_id": "system-utils/example-devrand",
+      "retained_path": "examples/devrand.sh",
+      "retained_sha256": "00b605c8021ff67eb7d1615275b828b970b31f7715316ed363a3bd6ce3500f6c"
+    }
+  ],
+  "retained_corpus_rows": [
+    "applications/example-timed-progress-bar|portable|HERMITROOT/examples/timed-progress-bar.py",
+    "determinism-stress/example-race|portable|bash -c HERMITROOT/examples/race.sh",
+    "language-runtimes/example-python-random|portable|HERMITROOT/examples/rand.py",
+    "system-utils/example-devrand|portable|bash -c HERMITROOT/examples/devrand.sh"
+  ],
+  "launcher_decision": "The portable CI command builder launches direct shell examples through bash -c. The retained race, date, and devrand rows therefore record that launcher, while workload identity recursively canonicalizes it and trivial --run exec wrappers to the payload source chain.",
+  "rationale": "Each retired --run arm only execs an already-retained example payload. These are duplicate names for identical semantic workloads, so no filler row is introduced. The exact Hermit authority is 214 C rows plus 17 non-C rows = 231 unique workloads."
 }

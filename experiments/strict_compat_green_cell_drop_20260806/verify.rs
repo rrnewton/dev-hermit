@@ -8,10 +8,13 @@
 //! shell-words = "1"
 //! ```
 
+#[path = "log_authority.rs"]
+mod log_authority;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -19,8 +22,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA: u32 = 2;
-const FULL_TESTS: usize = 234;
+const SCHEMA: u32 = 3;
+const FULL_TESTS: usize = 231;
 const BACKENDS: [&str; 6] = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"];
 const CALIBRATION_TEST: &str = "backend-parity-c/pid-probe";
 const SPOT_TESTS: [&str; 2] = ["backend-parity-c/pid-probe", "c-programs/print-memaddrs"];
@@ -84,6 +87,33 @@ struct CompileReceiptEvidence {
     output: ArtifactFact,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PreparedArtifact {
+    path: String,
+    sha256: String,
+    bytes: u64,
+    mode: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NoncPreparationReceiptEvidence {
+    protocol: String,
+    prepare_command: Vec<String>,
+    prepare_command_sha256: String,
+    prepare_environment: BTreeMap<String, String>,
+    prepare_environment_sha256: String,
+    run_environment_template: BTreeMap<String, String>,
+    run_environment_template_sha256: String,
+    source_chain: Vec<SourceFact>,
+    exit_code: i32,
+    log: ArtifactFact,
+    prepared_artifacts: Vec<PreparedArtifact>,
+    prepared_artifacts_sha256: String,
+    canonical_argv: Vec<String>,
+    canonical_argv_sha256: String,
+    receipt_sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HermitBuildReceiptEvidence {
     source_sha: String,
@@ -116,11 +146,20 @@ struct ExecutionRecord {
     termination: Termination,
     duration_ms: u128,
     log_event_count: u64,
+    log_parser: String,
+    log_level: String,
+    log_counts: log_authority::CanonicalLogCounts,
+    log_parser_command: Vec<String>,
+    log_parser_command_sha256: String,
+    log_parser_diagnostic: ArtifactFact,
     stdout: ArtifactFact,
     stderr: ArtifactFact,
     ordered_log_stream: ArtifactFact,
     command: Vec<String>,
     command_sha256: String,
+    environment: BTreeMap<String, String>,
+    environment_sha256: String,
+    preparation_receipt_sha256: Option<String>,
     guest_binary_sha256: String,
     error: Option<String>,
 }
@@ -166,6 +205,7 @@ struct Denominator {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     guest_set_sha256: String,
     input_audit_path: String,
     input_audit_sha256: String,
@@ -200,6 +240,7 @@ struct FrozenManifestEvidence {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     toolchain: ToolchainReceipt,
     hermit_build: HermitBuildReceiptEvidence,
     guest_set_sha256: String,
@@ -217,6 +258,7 @@ struct FrozenTestEvidence {
     workload_identity_sha256: String,
     compile: Option<CompileSpecEvidence>,
     compile_receipt: Option<CompileReceiptEvidence>,
+    nonc_preparation: Option<NoncPreparationReceiptEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,9 +310,11 @@ struct RequestedInputEvidence {
     corpus_line: usize,
     corpus_row: String,
     argv: Vec<String>,
+    canonical_argv: Vec<String>,
     compile_command: Vec<String>,
     workload_identity_sha256: String,
     sources: Vec<RequestedSourceEvidence>,
+    nonc_preparation: Option<NoncPreparationReceiptEvidence>,
     available: bool,
 }
 
@@ -299,6 +343,7 @@ struct RunBinding {
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
+    log_authority_rs_sha256: String,
     requested_manifest_sha256: String,
     input_audit_sha256: String,
     manifest_sha256: String,
@@ -324,6 +369,11 @@ struct SpotCompletion {
     run_ordinals: Vec<u8>,
     expected_cells: usize,
     expected_executions: usize,
+    attempted_executions: usize,
+    nonzero_info_executions: usize,
+    successful_exit_executions: usize,
+    strict_green_cells: usize,
+    raw_equal_cells: usize,
     completion_digest_sha256: String,
 }
 
@@ -358,6 +408,7 @@ struct VerificationSummary {
     nonzero_log_executions: usize,
     successful_exit_executions: usize,
     legacy_green_cells: usize,
+    raw_equal_cells: usize,
     strict_green_cells: usize,
     legacy_green_percent: f64,
     strict_green_percent: f64,
@@ -625,6 +676,7 @@ fn verify(
             &execution.stdout,
             &execution.stderr,
             &execution.ordered_log_stream,
+            &execution.log_parser_diagnostic,
         ] {
             if !artifact_paths.insert(fact.path.clone()) {
                 bail!("ordinal/stream artifact alias detected: {}", fact.path);
@@ -633,16 +685,27 @@ fn verify(
             artifact_hashes_verified += 1;
         }
         let log_path = resolve_artifact(paths, &execution.ordered_log_stream.path)?;
-        let actual_events = count_raw_log_events(&log_path)?;
-        if actual_events != execution.log_event_count {
+        let inspection = log_authority::inspect_file(&paths.binary, &log_path)?;
+        let diagnostic_path = resolve_artifact(paths, &execution.log_parser_diagnostic.path)?;
+        if execution.log_parser != log_authority::PARSER_ID
+            || execution.log_level != "INFO"
+            || execution.log_counts != inspection.counts
+            || execution.log_event_count != inspection.counts.info_messages
+            || execution.log_parser_command != inspection.command
+            || execution.log_parser_command_sha256
+                != sha256_bytes(&serde_json::to_vec(&inspection.command)?)
+            || fs::read(&diagnostic_path)? != inspection.diagnostic_stderr
+        {
             bail!(
-                "log event count mismatch for {key}: record={} actual={actual_events}",
-                execution.log_event_count
+                "canonical INFO parser evidence mismatch for {key}: record={} actual={}",
+                execution.log_event_count,
+                inspection.counts.info_messages
             );
         }
     }
 
     let mut legacy_green_cells = 0;
+    let mut raw_equal_cells = 0;
     let mut strict_green_cells = 0;
     let mut mismatch_components: BTreeMap<String, usize> = BTreeMap::new();
     let mut by_backend_counts: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
@@ -771,6 +834,7 @@ fn verify(
                 .or_default() += 1;
         }
         legacy_green_cells += usize::from(legacy_green);
+        raw_equal_cells += usize::from(raw_observations_equal);
         strict_green_cells += usize::from(strict_green);
         let entry = by_backend_counts.entry(cell.backend.clone()).or_default();
         entry.0 += 1;
@@ -817,6 +881,7 @@ fn verify(
         nonzero_log_executions,
         successful_exit_executions,
         legacy_green_cells,
+        raw_equal_cells,
         strict_green_cells,
         legacy_green_percent: legacy_percent,
         strict_green_percent: strict_percent,
@@ -895,7 +960,7 @@ fn verify_axes(denominator: &Denominator, kind: &str) -> Result<()> {
         other => bail!("unknown run kind {other:?}"),
     };
     if kind == "full" && unique_tests.len() != FULL_TESTS {
-        bail!("full denominator must contain exactly 234 unique semantic workloads");
+        bail!("full denominator must contain exactly 231 unique semantic workloads");
     }
     if let Some(expected_tests) = expected_tests {
         if unique_tests != expected_tests {
@@ -927,6 +992,7 @@ fn verify_run_binding(
         || binding.parent_commit != denominator.parent_commit
         || binding.run_rs_sha256 != denominator.run_rs_sha256
         || binding.verify_rs_sha256 != denominator.verify_rs_sha256
+        || binding.log_authority_rs_sha256 != denominator.log_authority_rs_sha256
         || binding.requested_manifest_sha256 != denominator.requested_manifest_sha256
         || binding.input_audit_sha256 != denominator.input_audit_sha256
         || binding.manifest_sha256 != denominator.manifest_sha256
@@ -960,9 +1026,11 @@ fn verify_parent_harness(paths: &VerifyPaths, denominator: &Denominator) -> Resu
     }
     let run_path = paths.experiment.join("run.rs");
     let verify_path = paths.experiment.join("verify.rs");
+    let log_authority_path = paths.experiment.join("log_authority.rs");
     for (path, expected_hash) in [
         (&run_path, &denominator.run_rs_sha256),
         (&verify_path, &denominator.verify_rs_sha256),
+        (&log_authority_path, &denominator.log_authority_rs_sha256),
     ] {
         if sha256_file(path)? != *expected_hash {
             bail!("harness bytes moved after run binding: {}", path.display());
@@ -1034,8 +1102,20 @@ fn make_spot_completion(
         || summary.denominator_cells != 36
         || summary.expected_executions != 72
         || summary.observed_executions != 72
+        || summary.attempted_executions != 72
+        || summary.nonzero_log_executions != 72
+        || summary.successful_exit_executions != 72
+        || summary.raw_equal_cells != 36
+        || summary.strict_green_cells != 36
     {
-        bail!("spot summary is not the exact completed 36-cell/72-execution profile");
+        bail!(
+            "spot summary is not the healthy exact 36-cell/72-execution profile: attempted={} nonzero_info={} successful={} raw_equal={} strict_green={}",
+            summary.attempted_executions,
+            summary.nonzero_log_executions,
+            summary.successful_exit_executions,
+            summary.raw_equal_cells,
+            summary.strict_green_cells
+        );
     }
     let denominator: Denominator =
         read_json(&run_dir(paths, "spot", &summary.run_instance).join("denominator.json"))?;
@@ -1054,6 +1134,11 @@ fn make_spot_completion(
         run_ordinals: denominator.run_ordinals,
         expected_cells: summary.denominator_cells,
         expected_executions: summary.expected_executions,
+        attempted_executions: summary.attempted_executions,
+        nonzero_info_executions: summary.nonzero_log_executions,
+        successful_exit_executions: summary.successful_exit_executions,
+        strict_green_cells: summary.strict_green_cells,
+        raw_equal_cells: summary.raw_equal_cells,
         completion_digest_sha256: String::new(),
     };
     completion.completion_digest_sha256 = spot_completion_digest(&completion)?;
@@ -1076,6 +1161,11 @@ fn spot_completion_digest(completion: &SpotCompletion) -> Result<String> {
         "run_ordinals": completion.run_ordinals,
         "expected_cells": completion.expected_cells,
         "expected_executions": completion.expected_executions,
+        "attempted_executions": completion.attempted_executions,
+        "nonzero_info_executions": completion.nonzero_info_executions,
+        "successful_exit_executions": completion.successful_exit_executions,
+        "strict_green_cells": completion.strict_green_cells,
+        "raw_equal_cells": completion.raw_equal_cells,
     });
     Ok(sha256_bytes(&serde_json::to_vec(&value)?))
 }
@@ -1087,10 +1177,13 @@ fn verify_input_audit(paths: &VerifyPaths, denominator: &Denominator, kind: &str
     }
     let audit: InputAuditEvidence = read_json(&audit_path)?;
     let expected_tests = if kind == "selftest" { 2 } else { FULL_TESTS };
+    let requested_path = paths.experiment.join(&denominator.requested_manifest_path);
+    let requested: RequestedManifestEvidence = read_json(&requested_path)?;
     let derived = derive_requested_inputs(
         paths,
         &paths.experiment.join("frozen-corpus-c.tsv"),
         &paths.experiment.join("frozen-corpus-nonc.tsv"),
+        Some(&requested),
     )?;
     let mut id_counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut workload_counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1104,6 +1197,9 @@ fn verify_input_audit(paths: &VerifyPaths, denominator: &Denominator, kind: &str
         for source in input.sources.iter().filter(|source| !source.exists) {
             derived_missing_sources += 1;
             let _ = source;
+            derived_missing_tests.insert(input.id.clone());
+        }
+        if !input.available {
             derived_missing_tests.insert(input.id.clone());
         }
     }
@@ -1174,11 +1270,9 @@ fn verify_input_audit(paths: &VerifyPaths, denominator: &Denominator, kind: &str
         bail!("input audit facts disagree with denominator");
     }
 
-    let requested_path = paths.experiment.join(&denominator.requested_manifest_path);
     if sha256_file(&requested_path)? != denominator.requested_manifest_sha256 {
         bail!("requested manifest hash does not match denominator");
     }
-    let requested: RequestedManifestEvidence = read_json(&requested_path)?;
     if requested.schema != SCHEMA
         || requested.record_type != "strict_metric_requested_manifest"
         || requested.denominator_expected_tests != expected_tests
@@ -1234,7 +1328,7 @@ fn rederive_requested_inputs(
     {
         bail!("requested manifest header is detached from the denominator");
     }
-    let derived = derive_requested_inputs(paths, &frozen_c, &frozen_nonc)?;
+    let derived = derive_requested_inputs(paths, &frozen_c, &frozen_nonc, Some(&requested))?;
     if derived.len() != expected_count {
         bail!(
             "rederived corpus count is {}, expected {expected_count}",
@@ -1291,10 +1385,21 @@ fn rederive_requested_inputs(
                 );
             }
         } else {
+            let receipt = input
+                .nonc_preparation
+                .as_ref()
+                .with_context(|| format!("non-C requested receipt is missing: {}", input.id))?;
+            let mut expected_argv = input.argv.clone();
+            expected_argv[0] = resolve_program(paths, &expected_argv[0])?
+                .display()
+                .to_string();
             if test.compile.is_some()
-                || test.argv != input.argv
-                || test.source_sha256 != input.sources[0].sha256.as_deref().unwrap_or("")
-                || test.binary_sha256 != test.source_sha256
+                || test.compile_receipt.is_some()
+                || test.argv != expected_argv
+                || test.source_sha256 != sha256_bytes(&serde_json::to_vec(&receipt.source_chain)?)
+                || test.binary_sha256 != sha256_file(Path::new(&expected_argv[0]))?
+                || serde_json::to_vec(&test.nonc_preparation)?
+                    != serde_json::to_vec(&input.nonc_preparation)?
             {
                 bail!(
                     "non-C argv/source binding differs from corpus: {}",
@@ -1317,8 +1422,18 @@ fn derive_requested_inputs(
     paths: &VerifyPaths,
     corpus_c: &Path,
     corpus_nonc: &Path,
+    recorded: Option<&RequestedManifestEvidence>,
 ) -> Result<Vec<RequestedInputEvidence>> {
     let mut inputs = Vec::new();
+    let recorded_by_id: BTreeMap<_, _> = recorded
+        .map(|manifest| {
+            manifest
+                .inputs
+                .iter()
+                .map(|input| (input.id.as_str(), input))
+                .collect()
+        })
+        .unwrap_or_default();
     for (line_no, line) in BufReader::new(File::open(corpus_c)?).lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() || line.starts_with('#') {
@@ -1368,6 +1483,7 @@ fn derive_requested_inputs(
             corpus_line: line_no + 1,
             corpus_row: line,
             argv: Vec::new(),
+            canonical_argv: Vec::new(),
             compile_command,
             workload_identity_sha256: workload_identity(
                 "compiled_c",
@@ -1378,6 +1494,7 @@ fn derive_requested_inputs(
             )?,
             available: sources.iter().all(|source| source.exists),
             sources,
+            nonc_preparation: None,
         });
     }
     for (line_no, line) in BufReader::new(File::open(corpus_nonc)?).lines().enumerate() {
@@ -1398,14 +1515,26 @@ fn derive_requested_inputs(
         if argv.is_empty() {
             bail!("{}:{} empty command", corpus_nonc.display(), line_no + 1);
         }
-        let executable = PathBuf::from(&argv[0]);
-        let exists = executable.is_file();
-        let sources = vec![RequestedSourceEvidence {
-            role: "executable".to_owned(),
-            path: executable.display().to_string(),
-            exists,
-            sha256: exists.then(|| sha256_file(&executable)).transpose()?,
-        }];
+        let sources = discover_nonc_sources(paths, &argv)?;
+        let canonical_argv = canonical_nonc_argv(paths, &argv)?;
+        let semantic_sources = discover_nonc_sources(paths, &canonical_argv)?;
+        let receipt = recorded_by_id
+            .get(fields[0])
+            .and_then(|input| input.nonc_preparation.clone());
+        if let Some(receipt) = &receipt {
+            validate_expected_nonc_preparation(
+                paths,
+                fields[0],
+                &argv,
+                &canonical_argv,
+                &sources,
+                receipt,
+            )?;
+        }
+        let available = sources.iter().all(|source| source.exists)
+            && receipt
+                .as_ref()
+                .is_none_or(|receipt| receipt.exit_code == 0);
         inputs.push(RequestedInputEvidence {
             id: fields[0].to_owned(),
             lane: fields[1].to_owned(),
@@ -1414,20 +1543,347 @@ fn derive_requested_inputs(
             corpus_line: line_no + 1,
             corpus_row: line,
             argv: argv.clone(),
+            canonical_argv: canonical_argv.clone(),
             compile_command: Vec::new(),
             workload_identity_sha256: workload_identity(
                 "script_or_interpreter",
-                &argv,
-                &sources,
+                &canonical_argv,
+                &semantic_sources,
                 &[],
                 &paths.hermit_repo,
             )?,
-            available: sources.iter().all(|source| source.exists),
+            available,
             sources,
+            nonc_preparation: receipt,
         });
     }
     inputs.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(inputs)
+}
+
+fn validate_expected_nonc_preparation(
+    paths: &VerifyPaths,
+    id: &str,
+    argv: &[String],
+    canonical_argv: &[String],
+    sources: &[RequestedSourceEvidence],
+    receipt: &NoncPreparationReceiptEvidence,
+) -> Result<()> {
+    validate_nonc_preparation(paths, receipt)?;
+    let cell = paths
+        .artifacts
+        .join("preparation")
+        .join("nonc")
+        .join(slug(id));
+    let home = cell.join("home");
+    let xdg = cell.join("xdg-config");
+    let tmp = cell.join("tmp");
+    let fixtures = cell.join("fixtures");
+    let prepare_environment = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), tmp.display().to_string()),
+        ("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string()),
+    ]);
+    let run_environment_template = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
+        (
+            "E2E_FIXTURE_DIR".to_owned(),
+            "${EXECUTION_FIXTURE_DIR}".to_owned(),
+        ),
+    ]);
+    let wrapper_protocol = argv.last().map(String::as_str) == Some("--run")
+        && resolve_program(paths, &argv[0])?
+            .extension()
+            .and_then(|value| value.to_str())
+            == Some("sh");
+    let prepare_command = if wrapper_protocol {
+        let mut command = argv.to_vec();
+        command[0] = resolve_program(paths, &command[0])?.display().to_string();
+        *command.last_mut().unwrap() = "--prepare".to_owned();
+        command
+    } else {
+        vec![
+            "/usr/bin/test".to_owned(),
+            "-x".to_owned(),
+            direct_probe_path(paths, argv)?.display().to_string(),
+        ]
+    };
+    let source_chain: Vec<_> = sources
+        .iter()
+        .filter_map(|source| {
+            source.sha256.as_ref().map(|sha256| SourceFact {
+                role: source.role.clone(),
+                path: source.path.clone(),
+                sha256: sha256.clone(),
+            })
+        })
+        .collect();
+    let log_path = cell.join("prepare.log");
+    let prepared_artifacts = collect_prepared_artifacts(paths, &cell, &log_path)?;
+    let expected_log_path = log_path
+        .strip_prefix(&paths.artifacts)?
+        .display()
+        .to_string();
+    if receipt.protocol
+        != if wrapper_protocol {
+            "e2e-shell-prepare-run-v1"
+        } else {
+            "direct-executable-probe-v1"
+        }
+        || receipt.prepare_command != prepare_command
+        || receipt.prepare_environment != prepare_environment
+        || receipt.run_environment_template != run_environment_template
+        || receipt.source_chain != source_chain
+        || receipt.canonical_argv != canonical_argv
+        || receipt.prepared_artifacts != prepared_artifacts
+        || receipt.log.path != expected_log_path
+    {
+        bail!("non-C preparation receipt does not equal independent rederivation: {id}");
+    }
+    Ok(())
+}
+
+fn discover_nonc_sources(
+    paths: &VerifyPaths,
+    argv: &[String],
+) -> Result<Vec<RequestedSourceEvidence>> {
+    let mut pending = VecDeque::new();
+    let mut discovered = BTreeSet::new();
+    let mut scanned = BTreeSet::new();
+    let launcher = resolve_program(paths, &argv[0])?;
+    discovered.insert(launcher.clone());
+    if let Some(script) = direct_script_path(paths, argv)? {
+        pending.push_back(script);
+    } else if launcher.starts_with(&paths.hermit_repo) {
+        pending.push_back(launcher);
+    }
+    while let Some(path) = pending.pop_front() {
+        let path = path.canonicalize().unwrap_or(path);
+        discovered.insert(path.clone());
+        if !scanned.insert(path.clone()) || !path.is_file() {
+            continue;
+        }
+        if let Some(interpreter) = shebang_interpreter(paths, &path)? {
+            discovered.insert(interpreter);
+        }
+        if path.starts_with(&paths.hermit_repo) {
+            let contents = fs::read_to_string(&path).unwrap_or_default();
+            for nested in referenced_repo_files(paths, &path, &contents) {
+                if !discovered.contains(&nested) {
+                    pending.push_back(nested);
+                }
+            }
+        }
+    }
+    discovered
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let exists = path.is_file();
+            Ok(RequestedSourceEvidence {
+                role: format!("source_{:03}", index + 1),
+                path: path.display().to_string(),
+                exists,
+                sha256: exists.then(|| sha256_file(&path)).transpose()?,
+            })
+        })
+        .collect()
+}
+
+fn direct_script_path(paths: &VerifyPaths, argv: &[String]) -> Result<Option<PathBuf>> {
+    if argv.len() == 3
+        && argv[1] == "-c"
+        && matches!(
+            Path::new(&argv[0])
+                .file_name()
+                .and_then(|value| value.to_str()),
+            Some("bash" | "sh")
+        )
+        && !argv[2]
+            .bytes()
+            .any(|byte| b";&|`$()<>*?[]{}".contains(&byte))
+    {
+        return Ok(Some(resolve_program(paths, &argv[2])?));
+    }
+    let program = resolve_program(paths, &argv[0])?;
+    let has_shebang = fs::read(&program)
+        .ok()
+        .is_some_and(|bytes| bytes.starts_with(b"#!"));
+    Ok(has_shebang.then_some(program))
+}
+
+fn direct_probe_path(paths: &VerifyPaths, argv: &[String]) -> Result<PathBuf> {
+    direct_script_path(paths, argv)?.map_or_else(|| resolve_program(paths, &argv[0]), Ok)
+}
+
+fn resolve_program(paths: &VerifyPaths, value: &str) -> Result<PathBuf> {
+    let declared = PathBuf::from(value);
+    if declared.is_absolute() {
+        return Ok(declared.canonicalize().unwrap_or(declared));
+    }
+    if value.contains('/') {
+        return Ok(paths.hermit_repo.join(declared));
+    }
+    let search = std::env::var_os("PATH").context("PATH is unset")?;
+    for directory in std::env::split_paths(&search) {
+        let candidate = directory.join(value);
+        if candidate.is_file() && fs::metadata(&candidate)?.permissions().mode() & 0o111 != 0 {
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        }
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn shebang_interpreter(paths: &VerifyPaths, script: &Path) -> Result<Option<PathBuf>> {
+    let bytes = fs::read(script)?;
+    let Some(first) = bytes.split(|byte| *byte == b'\n').next() else {
+        return Ok(None);
+    };
+    let Ok(first) = std::str::from_utf8(first) else {
+        return Ok(None);
+    };
+    let Some(spec) = first.strip_prefix("#!") else {
+        return Ok(None);
+    };
+    let words = shell_words::split(spec.trim())?;
+    if words.is_empty() {
+        return Ok(None);
+    }
+    if words[0] == "/usr/bin/env" {
+        let program = words
+            .iter()
+            .skip(1)
+            .find(|value| !value.starts_with('-'))
+            .context("/usr/bin/env shebang lacks a program")?;
+        Ok(Some(resolve_program(paths, program)?))
+    } else {
+        Ok(Some(resolve_program(paths, &words[0])?))
+    }
+}
+
+fn referenced_repo_files(paths: &VerifyPaths, script: &Path, contents: &str) -> Vec<PathBuf> {
+    let mut result = BTreeSet::new();
+    for (marker, base) in [
+        ("$ROOT_DIR/", paths.hermit_repo.clone()),
+        (
+            "${BASH_SOURCE[0]%/*}/",
+            script.parent().unwrap_or(&paths.hermit_repo).to_path_buf(),
+        ),
+    ] {
+        let mut rest = contents;
+        while let Some(index) = rest.find(marker) {
+            let tail = &rest[index + marker.len()..];
+            let value: String = tail
+                .chars()
+                .take_while(|character| {
+                    !character.is_whitespace()
+                        && !matches!(*character, '\'' | '"' | ';' | ')' | '(')
+                })
+                .collect();
+            if !value.is_empty() {
+                let candidate = base.join(&value);
+                if candidate.is_file() {
+                    result.insert(candidate.canonicalize().unwrap_or(candidate));
+                }
+            }
+            rest = &tail[value.len()..];
+        }
+    }
+    result.into_iter().collect()
+}
+
+fn canonical_nonc_argv(paths: &VerifyPaths, argv: &[String]) -> Result<Vec<String>> {
+    let mut current = argv.to_vec();
+    for _ in 0..16 {
+        if current.len() == 3
+            && current[1] == "-c"
+            && matches!(
+                Path::new(&current[0])
+                    .file_name()
+                    .and_then(|value| value.to_str()),
+                Some("bash" | "sh")
+            )
+            && !current[2]
+                .bytes()
+                .any(|byte| b";&|`$()<>*?[]{}".contains(&byte))
+        {
+            current = vec![resolve_program(paths, &current[2])?.display().to_string()];
+            continue;
+        }
+        current[0] = resolve_program(paths, &current[0])?.display().to_string();
+        if current.last().map(String::as_str) != Some("--run") {
+            return Ok(current);
+        }
+        let Some(next) = trivial_exec_run(Path::new(&current[0]))? else {
+            return Ok(current);
+        };
+        current = next;
+    }
+    bail!("trivial exec wrapper recursion exceeded 16 levels: {argv:?}")
+}
+
+fn trivial_exec_run(script: &Path) -> Result<Option<Vec<String>>> {
+    let contents = fs::read_to_string(script)?;
+    let Some((_, after)) = contents.split_once("--run)") else {
+        return Ok(None);
+    };
+    let Some((branch, _)) = after.split_once(";;") else {
+        return Ok(None);
+    };
+    let branch = branch.trim();
+    let Some(command) = branch.strip_prefix("exec ") else {
+        return Ok(None);
+    };
+    if command.contains('\n') {
+        return Ok(None);
+    }
+    let parent = script.parent().context("wrapper has no parent")?;
+    let expanded = command.replace("${BASH_SOURCE[0]%/*}", &parent.display().to_string());
+    let argv = shell_words::split(&expanded)?;
+    if argv.is_empty() || argv.iter().any(|value| value.contains('$')) {
+        return Ok(None);
+    }
+    Ok(Some(argv))
+}
+
+fn collect_prepared_artifacts(
+    paths: &VerifyPaths,
+    root: &Path,
+    excluded: &Path,
+) -> Result<Vec<PreparedArtifact>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut result = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() && path != excluded {
+                result.push(PreparedArtifact {
+                    path: path.strip_prefix(&paths.artifacts)?.display().to_string(),
+                    sha256: sha256_file(&path)?,
+                    bytes: metadata.len(),
+                    mode: metadata.permissions().mode() & 0o7777,
+                });
+            } else if !metadata.is_file() {
+                bail!(
+                    "prepared artifact is not a regular file: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    result.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(result)
 }
 
 fn verify_manifest(
@@ -1468,7 +1924,9 @@ fn verify_manifest(
         &manifest.verify_rs_sha256,
         &manifest.guest_set_sha256,
     );
-    if denominator_binding != manifest_binding {
+    if denominator_binding != manifest_binding
+        || denominator.log_authority_rs_sha256 != manifest.log_authority_rs_sha256
+    {
         bail!("denominator facts disagree with dereferenced frozen manifest");
     }
     if sha256_file(&paths.experiment.join("frozen-corpus-c.tsv"))? != manifest.corpus_c_sha256
@@ -1514,8 +1972,8 @@ fn verify_manifest(
             .entry(test.workload_identity_sha256.clone())
             .or_default()
             .push(test.id.clone());
-        match (&test.compile, &test.compile_receipt) {
-            (Some(compile), Some(receipt)) => {
+        match (&test.compile, &test.compile_receipt, &test.nonc_preparation) {
+            (Some(compile), Some(receipt), None) => {
                 if receipt.command != compile.command
                     || receipt.command_sha256
                         != sha256_bytes(&serde_json::to_vec(&compile.command)?)
@@ -1543,9 +2001,9 @@ fn verify_manifest(
                 verify_artifact(paths, &receipt.log)?;
                 verify_artifact(paths, &receipt.output)?;
             }
-            (None, None) => {}
+            (None, None, Some(receipt)) => validate_nonc_preparation(paths, receipt)?,
             _ => bail!(
-                "compile specification/receipt pairing is invalid: {}",
+                "compile/non-C preparation receipt pairing is invalid: {}",
                 test.id
             ),
         }
@@ -1561,7 +2019,7 @@ fn verify_manifest(
         bail!("duplicate workload identity in frozen manifest: {duplicate_workloads:?}");
     }
     if kind != "selftest" && tests.len() != FULL_TESTS {
-        bail!("frozen manifest must contain exactly 234 unique semantic workloads");
+        bail!("frozen manifest must contain exactly 231 unique semantic workloads");
     }
     let denominator_tests: BTreeSet<_> = denominator.tests.iter().cloned().collect();
     let manifest_tests: BTreeSet<_> = tests.keys().cloned().collect();
@@ -1572,12 +2030,95 @@ fn verify_manifest(
     }
     let guest_values: Vec<_> = tests
         .values()
-        .map(|test| (&test.id, &test.binary_sha256))
+        .map(|test| {
+            (
+                &test.id,
+                &test.binary_sha256,
+                test.nonc_preparation
+                    .as_ref()
+                    .map(|receipt| &receipt.receipt_sha256),
+            )
+        })
         .collect();
     if sha256_bytes(&serde_json::to_vec(&guest_values)?) != manifest.guest_set_sha256 {
         bail!("guest-set digest does not match frozen manifest");
     }
     Ok(tests)
+}
+
+fn nonc_receipt_sha256(receipt: &NoncPreparationReceiptEvidence) -> Result<String> {
+    Ok(sha256_bytes(&serde_json::to_vec(&serde_json::json!({
+        "protocol": receipt.protocol,
+        "prepare_command": receipt.prepare_command,
+        "prepare_command_sha256": receipt.prepare_command_sha256,
+        "prepare_environment": receipt.prepare_environment,
+        "prepare_environment_sha256": receipt.prepare_environment_sha256,
+        "run_environment_template": receipt.run_environment_template,
+        "run_environment_template_sha256": receipt.run_environment_template_sha256,
+        "source_chain": receipt.source_chain,
+        "exit_code": receipt.exit_code,
+        "log": receipt.log,
+        "prepared_artifacts": receipt.prepared_artifacts,
+        "prepared_artifacts_sha256": receipt.prepared_artifacts_sha256,
+        "canonical_argv": receipt.canonical_argv,
+        "canonical_argv_sha256": receipt.canonical_argv_sha256,
+    }))?))
+}
+
+fn validate_nonc_preparation(
+    paths: &VerifyPaths,
+    receipt: &NoncPreparationReceiptEvidence,
+) -> Result<()> {
+    if receipt.exit_code != 0
+        || receipt.prepare_command.is_empty()
+        || receipt.prepare_command_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepare_command)?)
+        || receipt.prepare_environment_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepare_environment)?)
+        || receipt.run_environment_template_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.run_environment_template)?)
+        || receipt.canonical_argv.is_empty()
+        || receipt.canonical_argv_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.canonical_argv)?)
+        || receipt.prepared_artifacts_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepared_artifacts)?)
+        || receipt.receipt_sha256 != nonc_receipt_sha256(receipt)?
+        || receipt
+            .run_environment_template
+            .get("E2E_TMPDIR")
+            .map(String::as_str)
+            != Some("${EXECUTION_TMPDIR}")
+        || receipt
+            .run_environment_template
+            .get("E2E_FIXTURE_DIR")
+            .map(String::as_str)
+            != Some("${EXECUTION_FIXTURE_DIR}")
+    {
+        bail!("non-C preparation receipt is internally inconsistent");
+    }
+    verify_artifact(paths, &receipt.log)?;
+    let mut seen = BTreeSet::new();
+    for artifact in &receipt.prepared_artifacts {
+        if !seen.insert(&artifact.path) {
+            bail!("non-C preparation aliases artifact {}", artifact.path);
+        }
+        let path = resolve_artifact(paths, &artifact.path)?;
+        let metadata = fs::metadata(&path)?;
+        if !metadata.is_file()
+            || metadata.len() != artifact.bytes
+            || metadata.permissions().mode() & 0o7777 != artifact.mode
+            || sha256_file(&path)? != artifact.sha256
+        {
+            bail!("prepared artifact fact mismatch: {}", path.display());
+        }
+    }
+    for source in &receipt.source_chain {
+        let path = Path::new(&source.path);
+        if !path.is_file() || sha256_file(path)? != source.sha256 {
+            bail!("non-C preparation source changed: {}", source.path);
+        }
+    }
+    Ok(())
 }
 
 fn verify_execution_identity(
@@ -1606,8 +2147,11 @@ fn verify_execution_identity(
     {
         bail!("execution identity is not bound to denominator axes: {key}");
     }
-    if sha256_bytes(&serde_json::to_vec(&execution.command)?) != execution.command_sha256 {
-        bail!("execution command hash mismatch: {key}");
+    if sha256_bytes(&serde_json::to_vec(&execution.command)?) != execution.command_sha256
+        || sha256_bytes(&serde_json::to_vec(&execution.environment)?)
+            != execution.environment_sha256
+    {
+        bail!("execution command/environment hash mismatch: {key}");
     }
     let test = manifest
         .get(&execution.test_id)
@@ -1635,11 +2179,19 @@ fn verify_execution_identity(
             &bound_cell_id,
             &format!("run{}.info.log", execution.ordinal),
         ),
+        canonical_artifact_relative(
+            kind,
+            &denominator.run_instance,
+            binding_sha256,
+            &bound_cell_id,
+            &format!("run{}.log-inspection.stderr", execution.ordinal),
+        ),
     ];
     if [
         &execution.stdout.path,
         &execution.stderr.path,
         &execution.ordered_log_stream.path,
+        &execution.log_parser_diagnostic.path,
     ]
     .into_iter()
     .zip(expected_paths.iter())
@@ -1649,6 +2201,23 @@ fn verify_execution_identity(
     }
     if execution.guest_binary_sha256 != test.binary_sha256 {
         bail!("execution guest binary hash does not match frozen manifest: {key}");
+    }
+    let expected_environment = expected_execution_environment(
+        paths,
+        denominator,
+        binding_sha256,
+        &bound_cell_id,
+        execution.ordinal,
+        test,
+    )?;
+    if execution.environment != expected_environment
+        || execution.preparation_receipt_sha256
+            != test
+                .nonc_preparation
+                .as_ref()
+                .map(|receipt| receipt.receipt_sha256.clone())
+    {
+        bail!("execution environment/preparation binding mismatch: {key}");
     }
     let mut expected = vec![
         paths.binary.display().to_string(),
@@ -1679,6 +2248,51 @@ fn verify_execution_identity(
         bail!("execution command is not bound to typed cell/manifest: {key}");
     }
     Ok(())
+}
+
+fn expected_execution_environment(
+    paths: &VerifyPaths,
+    denominator: &Denominator,
+    binding_sha256: &str,
+    cell_id: &str,
+    ordinal: u8,
+    test: &FrozenTestEvidence,
+) -> Result<BTreeMap<String, String>> {
+    let Some(receipt) = &test.nonc_preparation else {
+        return Ok(BTreeMap::from([
+            ("LC_ALL".to_owned(), "C".to_owned()),
+            ("TZ".to_owned(), "UTC".to_owned()),
+        ]));
+    };
+    validate_nonc_preparation(paths, receipt)?;
+    let runtime = paths
+        .artifacts
+        .join("runtime")
+        .join(&denominator.run_kind)
+        .join(&denominator.run_instance)
+        .join(binding_sha256)
+        .join(cell_id)
+        .join(format!("run{ordinal}"));
+    let tmp = runtime.join("tmp");
+    let fixtures = runtime.join("fixtures");
+    if !tmp.is_dir() || !fixtures.is_dir() {
+        bail!(
+            "bound execution tmp/fixture directory is missing: {}",
+            runtime.display()
+        );
+    }
+    let mut environment = receipt.run_environment_template.clone();
+    if environment.insert("E2E_TMPDIR".to_owned(), tmp.display().to_string())
+        != Some("${EXECUTION_TMPDIR}".to_owned())
+    {
+        bail!("non-C run environment lacks the execution tmpdir placeholder");
+    }
+    if environment.insert("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string())
+        != Some("${EXECUTION_FIXTURE_DIR}".to_owned())
+    {
+        bail!("non-C run environment lacks the execution fixture placeholder");
+    }
+    Ok(environment)
 }
 
 fn verify_termination(termination: &Termination, key: &str) -> Result<()> {
@@ -1721,7 +2335,12 @@ fn verify_contract(denominator: &Denominator) -> Result<()> {
     require("stripped_prefixes", serde_json::json!([]))?;
     require("canonicalizations", serde_json::json!([]))?;
     require("filters", serde_json::json!([]))?;
-    require("minimum_log_events_per_execution", serde_json::json!(1))
+    require("minimum_log_events_per_execution", serde_json::json!(1))?;
+    require(
+        "log_event_parser",
+        serde_json::json!(log_authority::PARSER_ID),
+    )?;
+    require("log_event_level", serde_json::json!("INFO"))
 }
 
 fn expected_cell_keys(denominator: &Denominator) -> BTreeSet<String> {
@@ -1855,22 +2474,6 @@ fn legacy_log_match(paths: &VerifyPaths, left: &Path, right: &Path) -> Result<bo
         Some(1) => Ok(false),
         other => bail!("legacy log-diff infrastructure error: status {other:?}"),
     }
-}
-
-fn count_raw_log_events(path: &Path) -> Result<u64> {
-    let mut count = 0;
-    for line in BufReader::new(File::open(path)?).split(b'\n') {
-        let line = line?;
-        if line.len() >= 20
-            && line[0..4].iter().all(u8::is_ascii_digit)
-            && line.get(4) == Some(&b'-')
-            && line.get(7) == Some(&b'-')
-            && line.get(10) == Some(&b'T')
-        {
-            count += 1;
-        }
-    }
-    Ok(count)
 }
 
 fn successful(termination: &Termination) -> bool {
@@ -2118,6 +2721,7 @@ fn self_test(default_paths: &VerifyPaths) -> Result<()> {
         bail!("self-test path unexpectedly exists: {}", root.display());
     }
     fs::create_dir_all(&root)?;
+    log_authority::self_test(&default_paths.binary, &root.join("log-authority"))?;
 
     let fixture = build_self_fixture(
         default_paths,
@@ -2139,13 +2743,16 @@ fn self_test(default_paths: &VerifyPaths) -> Result<()> {
 
     let mut empty_log = original_executions.clone();
     let empty_log_path = resolve_artifact(&fixture.paths, &empty_log[0].ordered_log_stream.path)?;
+    let empty_diag_path =
+        resolve_artifact(&fixture.paths, &empty_log[0].log_parser_diagnostic.path)?;
     let original_log = fs::read(&empty_log_path)?;
+    let original_diag = fs::read(&empty_diag_path)?;
     fs::write(&empty_log_path, b"")?;
-    empty_log[0].ordered_log_stream = artifact_fact_for(&fixture.paths, &empty_log_path)?;
-    empty_log[0].log_event_count = 0;
+    refresh_execution_log_evidence(&fixture.paths, &mut empty_log[0])?;
     write_records(&empty_log, &original_cells)?;
     run_verifier_cli(&fixture, false, "zero-message")?;
     fs::write(&empty_log_path, &original_log)?;
+    fs::write(&empty_diag_path, &original_diag)?;
 
     let mut stale = original_executions.clone();
     stale[0].run_binding_sha256 = "f".repeat(64);
@@ -2226,10 +2833,14 @@ fn self_test(default_paths: &VerifyPaths) -> Result<()> {
         &second_log,
         b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=999\n",
     )?;
-    normalization[1].ordered_log_stream = artifact_fact_for(&fixture.paths, &second_log)?;
+    let second_diag =
+        resolve_artifact(&fixture.paths, &normalization[1].log_parser_diagnostic.path)?;
+    let original_second_diag = fs::read(&second_diag)?;
+    refresh_execution_log_evidence(&fixture.paths, &mut normalization[1])?;
     write_records(&normalization, &original_cells)?;
     run_verifier_cli(&fixture, false, "producer cell verdict")?;
     fs::write(&second_log, &original_second_log)?;
+    fs::write(&second_diag, &original_second_diag)?;
     write_records(&original_executions, &original_cells)?;
 
     let harness_path = fixture.paths.experiment.join("verify.rs");
@@ -2263,6 +2874,32 @@ fn self_test(default_paths: &VerifyPaths) -> Result<()> {
         FixtureFault::CompileReceipt,
     )?;
     run_verifier_cli(&bad_compile, false, "compile receipt")?;
+
+    let unhealthy_spot = build_self_fixture(
+        default_paths,
+        &root.join("unhealthy-spot"),
+        "spot",
+        FixtureFault::None,
+    )?;
+    let mut unhealthy_executions = unhealthy_spot.executions.clone();
+    let mut unhealthy_cells = unhealthy_spot.cells.clone();
+    for execution in &mut unhealthy_executions[0..2] {
+        execution.termination.code = Some(1);
+    }
+    unhealthy_cells[0].successful_exit_both = false;
+    unhealthy_cells[0].strict_green = false;
+    unhealthy_cells[0].legacy_green = false;
+    let unhealthy_run_dir = run_dir(
+        &unhealthy_spot.paths,
+        &unhealthy_spot.kind,
+        &unhealthy_spot.run_instance,
+    );
+    write_jsonl_owned(
+        &unhealthy_run_dir.join("executions.jsonl"),
+        &unhealthy_executions,
+    )?;
+    write_jsonl_owned(&unhealthy_run_dir.join("cells.jsonl"), &unhealthy_cells)?;
+    run_verifier_cli(&unhealthy_spot, false, "healthy exact")?;
 
     let spot = build_self_fixture(
         default_paths,
@@ -2311,8 +2948,27 @@ fn self_test(default_paths: &VerifyPaths) -> Result<()> {
 
     fs::remove_dir_all(&root)?;
     println!(
-        "SELF-TEST PASS: normal CLI positive profiles=3 (selftest, exact 72-execution spot, spot-gated 2,808-execution full); negatives=18 refused, including harness/build/compile/workload authority, empty logs, stale binding, ordinal aliases, substitutions, missing/duplicate coverage, malformed termination, normalization, malformed spot axes, and malformed spot completion"
+        "SELF-TEST PASS: normal CLI positive profiles=3 (selftest, exact 72-execution spot, spot-gated 2,772-execution full); negatives=19 refused, including harness/build/compile/workload authority, empty logs, stale binding, ordinal aliases, substitutions, missing/duplicate coverage, malformed termination, normalization, unhealthy spot evidence, malformed spot axes, and malformed spot completion"
     );
+    Ok(())
+}
+
+fn refresh_execution_log_evidence(
+    paths: &VerifyPaths,
+    execution: &mut ExecutionRecord,
+) -> Result<()> {
+    let log = resolve_artifact(paths, &execution.ordered_log_stream.path)?;
+    let diagnostic = resolve_artifact(paths, &execution.log_parser_diagnostic.path)?;
+    let inspection = log_authority::inspect_file(&paths.binary, &log)?;
+    fs::write(&diagnostic, &inspection.diagnostic_stderr)?;
+    execution.ordered_log_stream = artifact_fact_for(paths, &log)?;
+    execution.log_event_count = inspection.counts.info_messages;
+    execution.log_parser = inspection.parser_id;
+    execution.log_level = "INFO".to_owned();
+    execution.log_counts = inspection.counts;
+    execution.log_parser_command_sha256 = sha256_bytes(&serde_json::to_vec(&inspection.command)?);
+    execution.log_parser_command = inspection.command;
+    execution.log_parser_diagnostic = artifact_fact_for(paths, &diagnostic)?;
     Ok(())
 }
 
@@ -2328,7 +2984,15 @@ fn build_self_fixture(
     fs::create_dir_all(&experiment)?;
     fs::create_dir_all(artifacts.join("preparation"))?;
     let fixture_binary = root.join("fixture-hermit");
-    fs::write(&fixture_binary, b"#!/bin/sh\nexit 0\n")?;
+    let real_binary = default_paths
+        .binary
+        .display()
+        .to_string()
+        .replace('\'', "'\\''");
+    fs::write(
+        &fixture_binary,
+        format!("#!/bin/sh\nexec '{real_binary}' \"$@\"\n"),
+    )?;
     fs::set_permissions(&fixture_binary, fs::Permissions::from_mode(0o755))?;
     fs::copy(
         default_paths.experiment.join("run.rs"),
@@ -2337,6 +3001,10 @@ fn build_self_fixture(
     fs::copy(
         default_paths.experiment.join("verify.rs"),
         experiment.join("verify.rs"),
+    )?;
+    fs::copy(
+        default_paths.experiment.join("log_authority.rs"),
+        experiment.join("log_authority.rs"),
     )?;
     run_checked(
         Command::new("git")
@@ -2359,7 +3027,12 @@ fn build_self_fixture(
     )?;
     run_checked(
         Command::new("git")
-            .args(["add", "experiment/run.rs", "experiment/verify.rs"])
+            .args([
+                "add",
+                "experiment/run.rs",
+                "experiment/verify.rs",
+                "experiment/log_authority.rs",
+            ])
             .current_dir(&parent_repo),
     )?;
     run_checked(
@@ -2372,7 +3045,7 @@ fn build_self_fixture(
     let corpus_nonc = experiment.join("frozen-corpus-nonc.tsv");
     let mut test_ids: Vec<String> = if kind == "spot" {
         let mut ids = vec![SPOT_TESTS[0].to_owned(), SPOT_TESTS[1].to_owned()];
-        ids.extend((0..232).map(|index| format!("fixture/spot-dummy-{index:03}")));
+        ids.extend((0..229).map(|index| format!("fixture/spot-dummy-{index:03}")));
         ids
     } else {
         SELF_TESTS.iter().map(|value| (*value).to_owned()).collect()
@@ -2416,7 +3089,16 @@ fn build_self_fixture(
         corpus_c: corpus_c.clone(),
         corpus_nonc: corpus_nonc.clone(),
     };
-    let inputs = derive_requested_inputs(&paths, &corpus_c, &corpus_nonc)?;
+    let mut inputs = derive_requested_inputs(&paths, &corpus_c, &corpus_nonc, None)?;
+    for input in inputs
+        .iter_mut()
+        .filter(|input| input.kind == "script_or_interpreter")
+    {
+        let receipt = make_self_nonc_preparation(&paths, input)?;
+        input.available =
+            input.sources.iter().all(|source| source.exists) && receipt.exit_code == 0;
+        input.nonc_preparation = Some(receipt);
+    }
     let hermit_sha = git_head(&paths.hermit_repo)?;
     let reverie_sha = git_head(&paths.reverie_repo)?;
     let liteinst2_sha = git_head(&paths.liteinst_repo)?;
@@ -2459,12 +3141,22 @@ fn build_self_fixture(
                     .context("self-test compile command lacks output")?,
             );
             fs::create_dir_all(output.parent().context("self-test guest lacks parent")?)?;
-            fs::write(&output, format!("compiled fixture {}\n", input.id))?;
             let compile_log = artifacts
                 .join("compile-logs")
                 .join(format!("{}.log", slug(&input.id)));
             fs::create_dir_all(compile_log.parent().unwrap())?;
-            fs::write(&compile_log, b"self-test inert compile receipt\n")?;
+            let log = File::create(&compile_log)?;
+            let status = Command::new(&input.compile_command[0])
+                .args(&input.compile_command[1..])
+                .stdout(Stdio::from(log.try_clone()?))
+                .stderr(Stdio::from(log))
+                .status()?;
+            if !status.success() || !output.is_file() {
+                bail!(
+                    "self-test real compiler command failed for {}: {status}",
+                    input.id
+                );
+            }
             let source = paths.hermit_repo.join(&input.sources[0].path);
             let extra_sources: Vec<_> = input.sources[1..]
                 .iter()
@@ -2507,29 +3199,47 @@ fn build_self_fixture(
                     command: receipt_command,
                     inputs: receipt_inputs,
                     toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
-                    exit_code: 0,
+                    exit_code: status
+                        .code()
+                        .context("self-test compiler exited without code")?,
                     log: artifact_fact_for(&paths, &compile_log)?,
                     output: artifact_fact_for(&paths, &output)?,
                 }),
+                nonc_preparation: None,
             });
         } else {
+            let receipt = input
+                .nonc_preparation
+                .clone()
+                .with_context(|| format!("self-test non-C receipt missing: {}", input.id))?;
+            let mut argv = input.argv.clone();
+            argv[0] = resolve_program(&paths, &argv[0])?.display().to_string();
             tests.push(FrozenTestEvidence {
                 id: input.id.clone(),
                 lane: input.lane.clone(),
                 kind: input.kind.clone(),
-                argv: input.argv.clone(),
-                source_sha256: source_sha256.clone(),
-                binary_sha256: source_sha256,
+                argv: argv.clone(),
+                source_sha256: sha256_bytes(&serde_json::to_vec(&receipt.source_chain)?),
+                binary_sha256: sha256_file(Path::new(&argv[0]))?,
                 workload_identity_sha256: input.workload_identity_sha256.clone(),
                 compile: None,
                 compile_receipt: None,
+                nonc_preparation: Some(receipt),
             });
         }
     }
     tests.sort_by(|left, right| left.id.cmp(&right.id));
     let guest_values: Vec<_> = tests
         .iter()
-        .map(|test| (&test.id, &test.binary_sha256))
+        .map(|test| {
+            (
+                &test.id,
+                &test.binary_sha256,
+                test.nonc_preparation
+                    .as_ref()
+                    .map(|receipt| &receipt.receipt_sha256),
+            )
+        })
         .collect();
     let guest_set_sha256 = sha256_bytes(&serde_json::to_vec(&guest_values)?);
     let build_command = if fault == FixtureFault::BuildReceipt {
@@ -2551,6 +3261,7 @@ fn build_self_fixture(
         parent_commit: parent_commit.clone(),
         run_rs_sha256: sha256_file(&experiment.join("run.rs"))?,
         verify_rs_sha256: sha256_file(&experiment.join("verify.rs"))?,
+        log_authority_rs_sha256: sha256_file(&experiment.join("log_authority.rs"))?,
         toolchain: toolchain.clone(),
         hermit_build: HermitBuildReceiptEvidence {
             source_sha: hermit_sha.clone(),
@@ -2612,6 +3323,113 @@ fn build_self_fixture(
     write_self_run(paths, kind, None)
 }
 
+fn make_self_nonc_preparation(
+    paths: &VerifyPaths,
+    input: &RequestedInputEvidence,
+) -> Result<NoncPreparationReceiptEvidence> {
+    let cell = paths
+        .artifacts
+        .join("preparation")
+        .join("nonc")
+        .join(slug(&input.id));
+    let home = cell.join("home");
+    let xdg = cell.join("xdg-config");
+    let tmp = cell.join("tmp");
+    let fixtures = cell.join("fixtures");
+    let captures = cell.join("captures");
+    for directory in [&home, &xdg, &tmp, &fixtures, &captures] {
+        fs::create_dir_all(directory)?;
+    }
+    let source_xdg = paths.hermit_repo.join("tests/e2e/xdg-config");
+    if source_xdg.is_dir() {
+        copy_self_fixture_tree(&source_xdg, &xdg)?;
+    }
+    let prepare_environment = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), tmp.display().to_string()),
+        ("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string()),
+    ]);
+    let run_environment_template = BTreeMap::from([
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+        ("HOME".to_owned(), home.display().to_string()),
+        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("E2E_TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
+        (
+            "E2E_FIXTURE_DIR".to_owned(),
+            "${EXECUTION_FIXTURE_DIR}".to_owned(),
+        ),
+    ]);
+    let prepare_command = vec![
+        "/usr/bin/test".to_owned(),
+        "-x".to_owned(),
+        direct_probe_path(paths, &input.argv)?.display().to_string(),
+    ];
+    let log_path = cell.join("prepare.log");
+    let log = File::create(&log_path)?;
+    let status = Command::new(&prepare_command[0])
+        .args(&prepare_command[1..])
+        .envs(&prepare_environment)
+        .stdout(Stdio::from(log.try_clone()?))
+        .stderr(Stdio::from(log))
+        .status()?;
+    let source_chain: Vec<_> = input
+        .sources
+        .iter()
+        .map(|source| {
+            Ok(SourceFact {
+                role: source.role.clone(),
+                path: source.path.clone(),
+                sha256: source
+                    .sha256
+                    .clone()
+                    .with_context(|| format!("missing source hash for {}", input.id))?,
+            })
+        })
+        .collect::<Result<_>>()?;
+    let prepared_artifacts = collect_prepared_artifacts(paths, &cell, &log_path)?;
+    let mut receipt = NoncPreparationReceiptEvidence {
+        protocol: "direct-executable-probe-v1".to_owned(),
+        prepare_command_sha256: sha256_bytes(&serde_json::to_vec(&prepare_command)?),
+        prepare_command,
+        prepare_environment_sha256: sha256_bytes(&serde_json::to_vec(&prepare_environment)?),
+        prepare_environment,
+        run_environment_template_sha256: sha256_bytes(&serde_json::to_vec(
+            &run_environment_template,
+        )?),
+        run_environment_template,
+        source_chain,
+        exit_code: status
+            .code()
+            .context("self-test preparation exited without code")?,
+        log: artifact_fact_for(paths, &log_path)?,
+        prepared_artifacts_sha256: sha256_bytes(&serde_json::to_vec(&prepared_artifacts)?),
+        prepared_artifacts,
+        canonical_argv_sha256: sha256_bytes(&serde_json::to_vec(&input.canonical_argv)?),
+        canonical_argv: input.canonical_argv.clone(),
+        receipt_sha256: String::new(),
+    };
+    receipt.receipt_sha256 = nonc_receipt_sha256(&receipt)?;
+    Ok(receipt)
+}
+
+fn copy_self_fixture_tree(source: &Path, destination: &Path) -> Result<()> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            fs::create_dir_all(&target)?;
+            copy_self_fixture_tree(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 fn write_self_run(
     paths: VerifyPaths,
     kind: &str,
@@ -2669,6 +3487,7 @@ fn write_self_run(
         parent_commit: parent_commit.clone(),
         run_rs_sha256: manifest.run_rs_sha256.clone(),
         verify_rs_sha256: manifest.verify_rs_sha256.clone(),
+        log_authority_rs_sha256: manifest.log_authority_rs_sha256.clone(),
         guest_set_sha256: guest_set_sha256.clone(),
         input_audit_path: "input-audit.json".to_owned(),
         input_audit_sha256: sha256_file(&experiment.join("input-audit.json"))?,
@@ -2698,6 +3517,7 @@ fn write_self_run(
         parent_commit,
         run_rs_sha256: manifest.run_rs_sha256,
         verify_rs_sha256: manifest.verify_rs_sha256,
+        log_authority_rs_sha256: manifest.log_authority_rs_sha256,
         requested_manifest_sha256: denominator.requested_manifest_sha256.clone(),
         input_audit_sha256: denominator.input_audit_sha256.clone(),
         manifest_sha256,
@@ -2731,12 +3551,35 @@ fn write_self_run(
                     let stdout = artifact_dir.join(format!("run{ordinal}.stdout"));
                     let stderr = artifact_dir.join(format!("run{ordinal}.stderr"));
                     let log = artifact_dir.join(format!("run{ordinal}.info.log"));
+                    let parser_diagnostic =
+                        artifact_dir.join(format!("run{ordinal}.log-inspection.stderr"));
                     fs::write(&stdout, b"")?;
                     fs::write(&stderr, b"")?;
                     fs::write(
                         &log,
                         b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=7\n",
                     )?;
+                    if test.nonc_preparation.is_some() {
+                        let runtime = artifacts
+                            .join("runtime")
+                            .join(kind)
+                            .join(&run_instance)
+                            .join(&binding_sha256)
+                            .join(&cell_id)
+                            .join(format!("run{ordinal}"));
+                        fs::create_dir_all(runtime.join("tmp"))?;
+                        fs::create_dir_all(runtime.join("fixtures"))?;
+                    }
+                    let environment = expected_execution_environment(
+                        &paths,
+                        &denominator,
+                        &binding_sha256,
+                        &cell_id,
+                        ordinal,
+                        test,
+                    )?;
+                    let inspection = log_authority::inspect_file(&paths.binary, &log)?;
+                    fs::write(&parser_diagnostic, &inspection.diagnostic_stderr)?;
                     let mut command = vec![
                         paths.binary.display().to_string(),
                         "--log=info".to_owned(),
@@ -2779,12 +3622,26 @@ fn write_self_run(
                             timed_out: false,
                         },
                         duration_ms: 1,
-                        log_event_count: 1,
+                        log_event_count: inspection.counts.info_messages,
+                        log_parser: inspection.parser_id,
+                        log_level: "INFO".to_owned(),
+                        log_counts: inspection.counts,
+                        log_parser_command_sha256: sha256_bytes(&serde_json::to_vec(
+                            &inspection.command,
+                        )?),
+                        log_parser_command: inspection.command,
+                        log_parser_diagnostic: artifact_fact_for(&paths, &parser_diagnostic)?,
                         stdout: artifact_fact_for(&paths, &stdout)?,
                         stderr: artifact_fact_for(&paths, &stderr)?,
                         ordered_log_stream: artifact_fact_for(&paths, &log)?,
                         command_sha256: sha256_bytes(&serde_json::to_vec(&command)?),
                         command,
+                        environment_sha256: sha256_bytes(&serde_json::to_vec(&environment)?),
+                        environment,
+                        preparation_receipt_sha256: test
+                            .nonc_preparation
+                            .as_ref()
+                            .map(|receipt| receipt.receipt_sha256.clone()),
                         guest_binary_sha256: test.binary_sha256.clone(),
                         error: None,
                     });
@@ -2856,6 +3713,11 @@ fn strict_contract() -> BTreeMap<String, serde_json::Value> {
             "minimum_log_events_per_execution".to_owned(),
             serde_json::json!(1),
         ),
+        (
+            "log_event_parser".to_owned(),
+            serde_json::json!(log_authority::PARSER_ID),
+        ),
+        ("log_event_level".to_owned(), serde_json::json!("INFO")),
     ])
 }
 
