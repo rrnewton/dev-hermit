@@ -1,0 +1,18 @@
+{
+  "experiment": "register-hash-mutation-test_20260806",
+  "question": "Does the register-file hash actually CATCH a planted register divergence at a guest-logical-control point, refuse to fire inside a tool handler, and avoid passing by emitting nothing?",
+  "date_utc": "2026-08-06",
+  "hermit_branch": "feat/detlog-register-hash-at-control-points",
+  "hermit_head": "9f351a2011b40f2a50b0fdd08954f457d656465c",
+  "base": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "host": "devbig014",
+  "comparison_path": "hermit run --strict --detlog-regs --verify --verify-strict (the product's own double-run INFO comparator)",
+  "plant_mechanism": "RDRAND, which Detcore masks in CPUID but never determinizes, parked in a callee-saved register (r13) held across a syscall and never printed",
+  "tiers_run": ["full (cadence=1)", "spot-1/10 (cadence=10)"],
+  "defect_found_and_fixed": "At cadence>=5 a one-control-point guest emitted ZERO register samples and the planted divergence PASSED. Fixed by counting samples per thread (ThreadStats::regs_sample_index) so index 0 is always sampled.",
+  "not_established": [
+    "Cross-backend register parity was NOT measured: only ptrace was exercised. The boundary claim is verified against handler traffic within ptrace, not against an in-guest-handler backend (sabre/liteinst/e9patch).",
+    "Coverage is syscall-exit control points only. Signal delivery to the guest and thread start are plausible guest-logical-control points and are NOT sampled.",
+    "rcx/r11 and the segment selectors are excluded from the hash by design, so a divergence confined to them is invisible."
+  ]
+}
