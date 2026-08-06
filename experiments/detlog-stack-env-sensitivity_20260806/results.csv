@@ -1,0 +1,4 @@
+case,env_condition,detlog_lines,differing,stack_differing,heap_differing,other_differing
+ambient,same shell same env,172,0,0,0,0
+pinned,env -i identical,172,0,0,0,0
+perturbed,one var different length,172,54,54,0,0
