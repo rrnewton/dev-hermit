@@ -156,3 +156,6 @@ ACTIVE.md
 /pr_status*.json
 /prstatus*.err
 /prstatus*.json
+
+# herdr-run run spools + sandbox-crossing audit log (machine-local command OUTPUT, never source)
+.herdr-run/
