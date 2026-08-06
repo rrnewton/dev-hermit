@@ -1,0 +1,18 @@
+id,measurement,population,value,notes
+M1,tasks in the graph,all,4232-4235,"grew by 3 during the audit -- other agents filing concurrently"
+M2,tasks with an empty description,all,603,"tg add makes --description OPTIONAL; --impact/--effort/--tags are REQUIRED"
+M3,tasks with NO verify clause,all,"1443 (34.1%)",structural check; no judgement involved
+M4,tasks with NO verify clause,created 2026-07,"780/3463 (22.5%)",
+M5,tasks with NO verify clause,created 2026-08,"663/769 (86.2%)","the discipline collapsed: 77.5% -> 13.8% coverage"
+M6,tasks with NO verify clause,CLOSED,"1092/3734 (29.2%)",
+M7,tasks with NO verify clause,OPEN+IN_PROGRESS+BACKLOG,"352/501 (70.3%)",the actionable population
+M8,tasks with NO verify clause,IN_PROGRESS,"37/42 (88.1%)",work in flight right now
+M9,tasks dispatched to this agent today with no verify clause,4,3/4,"only the meta-task about verify fields has one"
+M10,regex 'checkability' classifier false-negative rate,hand-audited n=30,"18/30 (60%)","the classifier is itself an unreliable proxy"
+M11,genuine vacuity rate among verify-bearing tasks,hand-audited n=30,"40% (95% CI 22-58%)","=> ~1115 of 2789, band 626-1604"
+M12,VACUOUS-STOCK (curated denylist),all,"73 (1.7%)","0 in the actionable population -- a July artifact"
+G1,guard POSITIVE control,planted real verify line,OK,guard fires nothing
+G2,guard NEGATIVE control 1,planted description with no verify,NO-VERIFY,naive label-grep also catches this
+G3,guard NEGATIVE control 2,planted 'Verify: Pass/fail',VACUOUS-STOCK,"naive label-grep says OK -- the naive guard is itself a fake-green"
+S1,verify column in the tg schema,tasks table + all 20 tables,ABSENT,"'verify field' is a prose convention, not a schema field"
+S2,close-task reads the task description,ci-hub/closure/verified_close.py,NEVER,"closure can certify LANDED, never GOAL-MET"

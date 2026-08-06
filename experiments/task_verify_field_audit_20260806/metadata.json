@@ -1,0 +1,13 @@
+{
+  "question": "How many tasks are filed without a checkable verify criterion, and what filing-time guard would fix it?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "db": "/home/newton/.tg/hermit.db",
+  "db_size_bytes": 123813888,
+  "tasks_at_start": 4232,
+  "tasks_at_end": 4235,
+  "tg_binary": "/home/newton/orc-bin/tg (compiled ELF; no source available locally, so no in-tool guard is possible)",
+  "repos": { "dev_hermit_parent_head": "160425a06528d3297237a84d23ac396512552208" },
+  "command": "./tg-verify-lint --status OPEN --status IN_PROGRESS --status BACKLOG",
+  "seed": "random.seed(11) for the 30-clause hand-adjudication sample; random.seed(7) for the illustrative samples"
+}
