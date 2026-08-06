@@ -1,0 +1,4303 @@
+{
+  "schema": 1,
+  "record_type": "strict_metric_requested_manifest",
+  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "reverie_dependency_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "liteinst2_sha": "8bf704feb06a62e7a05bee3b237d70793e4e2689",
+  "liteinst2_dependency_sha": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
+  "hermit_binary_sha256": "446df90954f4b04cb542c2d820df3b83aa0a99fdd3cf340e731c6b9b861fbdf5",
+  "corpus_c_sha256": "54ed0ed059967a881cc9c0bdc1f24d5253fcd27cec54ca9f1c056e3adbf3c78c",
+  "corpus_nonc_sha256": "3184ff833ac1fd7f84d5f7adba5efbd32fcfc4607a9b8242b24e0087139c9bf6",
+  "denominator_expected_tests": 235,
+  "inputs": [
+    {
+      "id": "applications/example-timed-progress-bar",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 1,
+      "corpus_row": "applications/example-timed-progress-bar|portable|HERMITROOT/examples/timed-progress-bar.py",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/timed-progress-bar.py"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/timed-progress-bar.py",
+          "exists": true,
+          "sha256": "4c9a4ed94ed492021bd04ba236bb625cb60600c088cafcd84b3ec1bdf9f0e094"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "applications/timed-progress-bar",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 2,
+      "corpus_row": "applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/applications/timed-progress-bar.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/applications/timed-progress-bar.sh",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "backend-parity-c/cpuid-probe",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 1,
+      "corpus_row": "backend-parity-c/cpuid-probe|tests/backend-parity/fixtures/cpuid_probe.c|||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/backend-parity/fixtures/cpuid_probe.c",
+          "exists": true,
+          "sha256": "b3af3cedbf2acbb29866789530f3a60032b87cdcd9c29fa02ba386fa159d982c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "backend-parity-c/pid-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 2,
+      "corpus_row": "backend-parity-c/pid-probe|tests/backend-parity/fixtures/pid_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/backend-parity/fixtures/pid_probe.c",
+          "exists": true,
+          "sha256": "72135389d1c2c43ee6ddcf858e25b764401e72bbcfae3b2ec82a7d1811f9c9c8"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "backend-parity-c/pthread-lifecycle",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 3,
+      "corpus_row": "backend-parity-c/pthread-lifecycle|tests/backend-parity/fixtures/pthread_lifecycle.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/backend-parity/fixtures/pthread_lifecycle.c",
+          "exists": true,
+          "sha256": "060e698e06919066bc7c2f2e0aab0563696ad762beabfb6c06c7e74c734667cd"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "bin-c/posix-timer-test",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 4,
+      "corpus_row": "bin-c/posix-timer-test|tests/bin/posix_timer_test.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/bin/posix_timer_test.c",
+          "exists": true,
+          "sha256": "5571a79005d1c376797d56be0d0d103885fdec194347a5a712c03e326a103c72"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "bin-c/robust-futex-test",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 5,
+      "corpus_row": "bin-c/robust-futex-test|tests/bin/robust_futex_test.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/bin/robust_futex_test.c",
+          "exists": true,
+          "sha256": "21967d3434d1cef0814668495eeecbeee0c5b88e8863857a067dfc236b2ed4d8"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/acct-refusal-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 6,
+      "corpus_row": "c-programs/acct-refusal-probe|tests/c/acct_refusal_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/acct_refusal_probe.c",
+          "exists": true,
+          "sha256": "97b1525b3fd4c7e744ff6f416e8f285dd8e4cb91766a65d5e74030fcf132f2c5"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/add-key-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 7,
+      "corpus_row": "c-programs/add-key-enosys|tests/c/add_key_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/add_key_enosys.c",
+          "exists": true,
+          "sha256": "3260ccc5d14ba8133fe0f5da02877c8952827350e8f3ae0629d57903234d0561"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/adjtimex-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 8,
+      "corpus_row": "c-programs/adjtimex-deterministic|tests/c/adjtimex_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/adjtimex_deterministic.c",
+          "exists": true,
+          "sha256": "753541a57506fa168fd47c88b2a409de63bc91f68f8678e1b089209bb8279dad"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/arch-prctl-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 9,
+      "corpus_row": "c-programs/arch-prctl-determinism|tests/c/arch_prctl_determinism.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/arch_prctl_determinism.c",
+          "exists": true,
+          "sha256": "6f330c2c849f88955fc35fe5dfb41240497ed765d505bb331ac07eb3254df01f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/bpf-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 10,
+      "corpus_row": "c-programs/bpf-enosys|tests/c/bpf_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/bpf_enosys.c",
+          "exists": true,
+          "sha256": "514ce1b57f0d989f17d6d2392fe1caead9fc94b729783ca97d15b0646d26329c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/cachestat-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 11,
+      "corpus_row": "c-programs/cachestat-enosys|tests/c/cachestat_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/cachestat_enosys.c",
+          "exists": true,
+          "sha256": "616e1b30c7c76fcca194423d4b969206880ddd14566a06b5db77477145601a60"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/clock-adjtime-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 12,
+      "corpus_row": "c-programs/clock-adjtime-deterministic|tests/c/clock_adjtime_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/clock_adjtime_deterministic.c",
+          "exists": true,
+          "sha256": "a8bc2d43a325efbe3e0b5b826b1c1e62d4897dd7446392bd32c510ea7a2749f5"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/clone",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 13,
+      "corpus_row": "c-programs/clone|tests/c/clone.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/clone.c",
+          "exists": true,
+          "sha256": "7b69bf0a0d23ae0339242047e49999449e360cf285486fcbad3b55e41e632b40"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/copy-file-range-refusal-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 14,
+      "corpus_row": "c-programs/copy-file-range-refusal-probe|tests/c/copy_file_range_refusal_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/copy_file_range_refusal_probe.c",
+          "exists": true,
+          "sha256": "c647d98011816a1022ba62018dfdf9f0729002e28e278820af0b2c99eceaa2bb"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-copied-tiocgpgrp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 15,
+      "corpus_row": "c-programs/dbi-copied-tiocgpgrp|tests/c/dbi_copied_tiocgpgrp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_copied_tiocgpgrp.c",
+          "exists": true,
+          "sha256": "4826ffdb1ea58cd8205d9012b6206e685fb500c1f20beab0189a7737a0f07a2e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-exec-failure",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 16,
+      "corpus_row": "c-programs/dbi-exec-failure|tests/c/dbi_exec_failure.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_exec_failure.c",
+          "exists": true,
+          "sha256": "3d79b338c92ba741cae997c389b2a23542a1b214bf621e01426b2e262c397f1c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-execveat-unsupported",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 17,
+      "corpus_row": "c-programs/dbi-execveat-unsupported|tests/c/dbi_execveat_unsupported.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_execveat_unsupported.c",
+          "exists": true,
+          "sha256": "a83d513d0ef087b2c4c3f4265245c044cf056fda564b41af7eccf24df202e7d9"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-mmap-exec",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 18,
+      "corpus_row": "c-programs/dbi-mmap-exec|tests/c/dbi_mmap_exec.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_mmap_exec.c",
+          "exists": true,
+          "sha256": "d29c0fa1370e1b101a769817ceaec0be8d952155451ec5cd8a4dbf77890c6bab"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-pid-virtualization",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 19,
+      "corpus_row": "c-programs/dbi-pid-virtualization|tests/c/dbi_pid_virtualization.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_pid_virtualization.c",
+          "exists": true,
+          "sha256": "6921c11d93ffbe9194e5127c644360e265cdeea07dc232d020a8ae4258736b67"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-prlimit-self",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 20,
+      "corpus_row": "c-programs/dbi-prlimit-self|tests/c/dbi_prlimit_self.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_prlimit_self.c",
+          "exists": true,
+          "sha256": "d8c8723ebdfa5b89c10e97a4eccde6a2016eca2581943fe26ebb6c671bdb0e49"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-self-sigqueue",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 21,
+      "corpus_row": "c-programs/dbi-self-sigqueue|tests/c/dbi_self_sigqueue.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_self_sigqueue.c",
+          "exists": true,
+          "sha256": "9a0acd03402832af153b8dba5ebcf2d185ba60e66e688063a9e399a9e7f3c927"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-unsupported-syscall",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 22,
+      "corpus_row": "c-programs/dbi-unsupported-syscall|tests/c/dbi_unsupported_syscall.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_unsupported_syscall.c",
+          "exists": true,
+          "sha256": "0c1b534e2b36d3961ad8e2e7fd8a504e4c59380818855feef0756b26f2569003"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/dbi-wait-lifecycle",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 23,
+      "corpus_row": "c-programs/dbi-wait-lifecycle|tests/c/dbi_wait_lifecycle.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/dbi_wait_lifecycle.c",
+          "exists": true,
+          "sha256": "d2461a543c8302fe8033895488c3b3cfd0e9739343ef25d3ade0af9707295059"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/epoll-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 24,
+      "corpus_row": "c-programs/epoll-determinism|tests/c/epoll_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/epoll_determinism.c",
+          "exists": true,
+          "sha256": "a08f6783413ce3a3adb83db0a434628303b9407a53f0e78b7f18b997b09c73a5"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/fp-reduction-nondeterminism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 25,
+      "corpus_row": "c-programs/fp-reduction-nondeterminism|tests/c/fp_reduction_nondeterminism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -fopenmp||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/fp_reduction_nondeterminism.c",
+          "exists": true,
+          "sha256": "7cccfa4c3ddac5d6ad4dd24a2c88bd6b36584d8ea82c9d3c407a56908ec5cf89"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/futex-requeue-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 26,
+      "corpus_row": "c-programs/futex-requeue-enosys|tests/c/futex_requeue_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/futex_requeue_enosys.c",
+          "exists": true,
+          "sha256": "f673de28907a305bdd60fd3e76e0c995843ba426b25abd038aee4ea0ecee35ed"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/futex-waitv-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 27,
+      "corpus_row": "c-programs/futex-waitv-enosys|tests/c/futex_waitv_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/futex_waitv_enosys.c",
+          "exists": true,
+          "sha256": "08526fe4f82b2f37dce36ef46339a9a47bb98e23a6b0aa1b6a66a37332042676"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/futex-wake-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 28,
+      "corpus_row": "c-programs/futex-wake-enosys|tests/c/futex_wake_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/futex_wake_enosys.c",
+          "exists": true,
+          "sha256": "b5ab36e68ff4c25efe66803343ca653d11029f5233880851e56cd781cd10ee04"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/get-robust-list-child",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 30,
+      "corpus_row": "c-programs/get-robust-list-child|tests/c/get_robust_list_child.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/get_robust_list_child.c",
+          "exists": true,
+          "sha256": "c81189ee54384d80bc988c742858095f3288544b33cd50e19180d5cb6b4f5435"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/get-robust-list-self",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 31,
+      "corpus_row": "c-programs/get-robust-list-self|tests/c/get_robust_list_self.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/get_robust_list_self.c",
+          "exists": true,
+          "sha256": "0a32c103336486497789158f3d54df33515521a68a4b07676828080129099d06"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/get-robust-list-thread",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 32,
+      "corpus_row": "c-programs/get-robust-list-thread|tests/c/get_robust_list_thread.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/get_robust_list_thread.c",
+          "exists": true,
+          "sha256": "9d9a642ac49a11ebea6ba7e0ee55e2152b9b988069883bcb9ddfb30f51cb7e52"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/getcpu",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 29,
+      "corpus_row": "c-programs/getcpu|tests/c/getCpu.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/getCpu.c",
+          "exists": true,
+          "sha256": "4586a026d796f1a0e3dd98461af87cbe7e541e54d50ccae919ec81b512b65d93"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/getitimer-determinism-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 33,
+      "corpus_row": "c-programs/getitimer-determinism-probe|tests/c/getitimer_determinism_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/getitimer_determinism_probe.c",
+          "exists": true,
+          "sha256": "405b6274df8382c5711c657018646da4989ac31ee6af78086c6daa1343710933"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/getsockopt-null",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 34,
+      "corpus_row": "c-programs/getsockopt-null|tests/c/getsockopt_null.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/getsockopt_null.c",
+          "exists": true,
+          "sha256": "17921c9edf3e5eb6b3fe9c6754c6711caa5a89193024d6bbc02236531366ab61"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/hello-alarm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 35,
+      "corpus_row": "c-programs/hello-alarm|tests/c/hello_alarm.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/hello_alarm.c",
+          "exists": true,
+          "sha256": "a7895c224d6ddb974e2172d1a7464fd9d7c1371c9a3d6f086f9e15514fbbaedc"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/hello-nostdlib",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 122,
+      "corpus_row": "c-programs/hello-nostdlib|tests/c/simple/hello_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/simple/hello_nostdlib.c",
+          "exists": true,
+          "sha256": "257caefcc97ebb009a286e9ef7a066145b3e32f2bb33457947bf383f20f9d890"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/hello-signals",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 36,
+      "corpus_row": "c-programs/hello-signals|tests/c/hello_signals.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/hello_signals.c",
+          "exists": true,
+          "sha256": "615a3d85835cad5c0113cd49ae5111bb6349bb6370c11065ea24af7b71844071"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/io-uring-fallback",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 37,
+      "corpus_row": "c-programs/io-uring-fallback|tests/c/io_uring_fallback.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/io_uring_fallback.c",
+          "exists": true,
+          "sha256": "83d70bface1e8d4501ff25776f471e7f4d7ebd70144c40cadea1f712ca77ff4c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/io-uring-ring-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 38,
+      "corpus_row": "c-programs/io-uring-ring-determinism|tests/c/io_uring_ring_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/io_uring_ring_determinism.c",
+          "exists": true,
+          "sha256": "62cb7ff15080f28d250ba717529842f007aee48a3b47fc15c92c2677c1dd7ab7"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ioctl-fioclex",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 39,
+      "corpus_row": "c-programs/ioctl-fioclex|tests/c/ioctl_fioclex.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ioctl_fioclex.c",
+          "exists": true,
+          "sha256": "86967a003b2f40da061affa6cb40803386198246b737b252f78947e6b2a1952f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ioctl-siocethtool",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 40,
+      "corpus_row": "c-programs/ioctl-siocethtool|tests/c/ioctl_siocethtool.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ioctl_siocethtool.c",
+          "exists": true,
+          "sha256": "bb4f1bb2165456e36e54cd2e08276ea7a5672600244b8502950e2ea8c8813f10"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ipc-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 41,
+      "corpus_row": "c-programs/ipc-determinism|tests/c/ipc_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ipc_determinism.c",
+          "exists": true,
+          "sha256": "973f1e990860786c9e3fe73a832ea02f7052304d31fa8ae64f0657db0c750ee8"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/just-spin",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 42,
+      "corpus_row": "c-programs/just-spin|tests/c/just_spin.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/just_spin.c",
+          "exists": true,
+          "sha256": "6090da69dd623934edec5ab2b9602116d51b8e72e9d3c70916d86e63063f7b4f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/kcmp-eperm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 43,
+      "corpus_row": "c-programs/kcmp-eperm|tests/c/kcmp_eperm.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/kcmp_eperm.c",
+          "exists": true,
+          "sha256": "5d9f6ad1c844b96326f158bc378fb1bd9c6b01e62cabd89b52360f24b64fe836"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/keyctl-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 44,
+      "corpus_row": "c-programs/keyctl-enosys|tests/c/keyctl_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/keyctl_enosys.c",
+          "exists": true,
+          "sha256": "3a19ee74bc34089a43a9794b8122f951e7b707120566d1ce45c4f70a00f6635b"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/keyctl-passthrough",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 45,
+      "corpus_row": "c-programs/keyctl-passthrough|tests/c/keyctl_passthrough.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/keyctl_passthrough.c",
+          "exists": true,
+          "sha256": "b788fa42c9f8fd5800a57540be778a07dd4ecbe15f7f6d8d67a8f55ba3f46549"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/listmount-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 46,
+      "corpus_row": "c-programs/listmount-enosys|tests/c/listmount_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/listmount_enosys.c",
+          "exists": true,
+          "sha256": "b03d859b8d412d30f40e79f779495da0c273534571d8d4733f832a17046ebde3"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/liteinst-advanced",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 47,
+      "corpus_row": "c-programs/liteinst-advanced|tests/c/liteinst_advanced.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/liteinst_advanced.c",
+          "exists": true,
+          "sha256": "3f964a78d3e4ef0605f34410d02f2b05fc6f64bf67a18cf0ccd5df7c3bbdc841"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/lsm-get-self-attr-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 48,
+      "corpus_row": "c-programs/lsm-get-self-attr-enosys|tests/c/lsm_get_self_attr_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/lsm_get_self_attr_enosys.c",
+          "exists": true,
+          "sha256": "6ad7d47640c70493b536f9f4bb0aa439bf4b46320eb49852b3a2cbc4c4db492b"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/lsm-list-modules-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 49,
+      "corpus_row": "c-programs/lsm-list-modules-enosys|tests/c/lsm_list_modules_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/lsm_list_modules_enosys.c",
+          "exists": true,
+          "sha256": "8b98fd3c4859e00203179f43bbdcaa88683f89c11ebff2de13e1849a422b3ed4"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/lsm-set-self-attr-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 50,
+      "corpus_row": "c-programs/lsm-set-self-attr-enosys|tests/c/lsm_set_self_attr_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/lsm_set_self_attr_enosys.c",
+          "exists": true,
+          "sha256": "015b20d97049fcc42beaf068df022834ccf7449e1f2a7e8fd70e52b02e6dfb33"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/madvise-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 51,
+      "corpus_row": "c-programs/madvise-determinism|tests/c/madvise_determinism.c|||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/madvise_determinism.c",
+          "exists": true,
+          "sha256": "302df75d480162e178dfba723b0648ee66ebdface822345abd23b350eeb7c09e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/map-shadow-stack-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 52,
+      "corpus_row": "c-programs/map-shadow-stack-enosys|tests/c/map_shadow_stack_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/map_shadow_stack_enosys.c",
+          "exists": true,
+          "sha256": "52d90ec175c79cb0f9eaa8d9ed0875cd4755b4d6e21327dbe08850d6ba5d0d2a"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/memfd-secret-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 53,
+      "corpus_row": "c-programs/memfd-secret-enosys|tests/c/memfd_secret_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/memfd_secret_enosys.c",
+          "exists": true,
+          "sha256": "0330ec035f9feeeaed879c1864d8786e5bad1f1253d51fdb9e1cf3749a45e7c0"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/meminfo-available-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 54,
+      "corpus_row": "c-programs/meminfo-available-deterministic|tests/c/meminfo_available_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/meminfo_available_deterministic.c",
+          "exists": true,
+          "sha256": "6d5c8dbe395fb430bf3c6e8d0da84574ac36cf4de3946a99bc8f3ec80549b4ff"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/meminfo-cached-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 55,
+      "corpus_row": "c-programs/meminfo-cached-deterministic|tests/c/meminfo_cached_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/meminfo_cached_deterministic.c",
+          "exists": true,
+          "sha256": "e3ba6e9016544c379aa0d60b616a7d7f777a671c9b329e4e67d76852464615b4"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/meminfo-free-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 56,
+      "corpus_row": "c-programs/meminfo-free-deterministic|tests/c/meminfo_free_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/meminfo_free_deterministic.c",
+          "exists": true,
+          "sha256": "1632498bb1ef22d76a939941b81e1fd0ef3f8b742ee24ea6bb2f3923d4f4488e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/memorypress",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 57,
+      "corpus_row": "c-programs/memorypress|tests/c/memoryPress.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/memoryPress.c",
+          "exists": true,
+          "sha256": "b634e494488c2e60ca0661f005766a876cf8b85bad9e4f4ac29a67b108464613"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/mmap-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 58,
+      "corpus_row": "c-programs/mmap-determinism|tests/c/mmap_determinism.c|||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/mmap_determinism.c",
+          "exists": true,
+          "sha256": "add2a2396ff9d00473484d4e7dedc4cebefd14b4a81f1317ec37e32a5fc515dc"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/mmap-stress-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 59,
+      "corpus_row": "c-programs/mmap-stress-determinism|tests/c/mmap_stress_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/mmap_stress_determinism.c",
+          "exists": true,
+          "sha256": "8f24d137b35bfd1400055b14864f8f3bea2c7c1796b4f72d067faa0523fb8169"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/name-to-handle-at-eopnotsupp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 60,
+      "corpus_row": "c-programs/name-to-handle-at-eopnotsupp|tests/c/name_to_handle_at_eopnotsupp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/name_to_handle_at_eopnotsupp.c",
+          "exists": true,
+          "sha256": "d61761067c99cc2be4b82e64fac176eaeed030983818b6c9a8c60b0ec2c6f4fc"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/name-to-handle-directory-eopnotsupp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 61,
+      "corpus_row": "c-programs/name-to-handle-directory-eopnotsupp|tests/c/name_to_handle_directory_eopnotsupp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/name_to_handle_directory_eopnotsupp.c",
+          "exists": true,
+          "sha256": "d29591726bd609f703dcf175632ecd550229f5efec14b52c4f3e2f059a22f29e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/name-to-handle-empty-path-eopnotsupp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 62,
+      "corpus_row": "c-programs/name-to-handle-empty-path-eopnotsupp|tests/c/name_to_handle_empty_path_eopnotsupp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/name_to_handle_empty_path_eopnotsupp.c",
+          "exists": true,
+          "sha256": "697be61bbdcdf87d54c218780ef9d1a794003a6928895bbab386e98fab50d8f3"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/name-to-handle-regular-eopnotsupp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 63,
+      "corpus_row": "c-programs/name-to-handle-regular-eopnotsupp|tests/c/name_to_handle_regular_eopnotsupp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/name_to_handle_regular_eopnotsupp.c",
+          "exists": true,
+          "sha256": "111e965ec98966fbf84665a16022429a95b9eb816c411cf48824da30eb282b55"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/nanosleep-par",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 64,
+      "corpus_row": "c-programs/nanosleep-par|tests/c/nanosleep-par.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/nanosleep-par.c",
+          "exists": true,
+          "sha256": "87f2369a6e30d81bf4f94d1919fd024ceb1a93f895f02ce792c962dea2b5976b"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/nanosleep-threads-nocrash",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 123,
+      "corpus_row": "c-programs/nanosleep-threads-nocrash|tests/c/simple/nanosleep-threads-nocrash.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/simple/nanosleep-threads-nocrash.c",
+          "exists": true,
+          "sha256": "8888a3245da024e496ff228984b643af37d2bec84bc835d60d6d1a2bf60c2a38"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/nanosleep-threads-simple",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 124,
+      "corpus_row": "c-programs/nanosleep-threads-simple|tests/c/simple/nanosleep-threads-simple.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/simple/nanosleep-threads-simple.c",
+          "exists": true,
+          "sha256": "17a0a80c4655653be991b4b246b20a49e3d89fe9b3fe8e61df13153142206bce"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netlink-autobind-generic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 65,
+      "corpus_row": "c-programs/netlink-autobind-generic|tests/c/netlink_autobind_generic.c|||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netlink_autobind_generic.c",
+          "exists": true,
+          "sha256": "b24154cc6b8254881432bdbb7c125f4a843a039a4621e8afb7efb7daf89e8451"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netlink-autobind-route",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 66,
+      "corpus_row": "c-programs/netlink-autobind-route|tests/c/netlink_autobind_route.c|||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netlink_autobind_route.c",
+          "exists": true,
+          "sha256": "ee3b69a287114b1ae24801850ed82b6d25873bb843080fd23f4e6d00682ffefa"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netlink-autobind-usersock",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 67,
+      "corpus_row": "c-programs/netlink-autobind-usersock|tests/c/netlink_autobind_usersock.c|||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netlink_autobind_usersock.c",
+          "exists": true,
+          "sha256": "cce6b50c908ed44669139700231b42bc8d607d6157d110d9cf6ccd243a978621"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netns-cookie-tcp4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 68,
+      "corpus_row": "c-programs/netns-cookie-tcp4|tests/c/netns_cookie_tcp4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netns_cookie_tcp4.c",
+          "exists": true,
+          "sha256": "b5fdf7d5408e8590e17fbe64ad5ee5328dbe407085ca0aed8d6ece49f44ef9b8"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netns-cookie-tcp6",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 69,
+      "corpus_row": "c-programs/netns-cookie-tcp6|tests/c/netns_cookie_tcp6.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netns_cookie_tcp6.c",
+          "exists": true,
+          "sha256": "1d741f81f93ae50431c5ac7e75eb2648071edbc03b9983afc54e3f8ba49fa490"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/netns-cookie-udp4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 70,
+      "corpus_row": "c-programs/netns-cookie-udp4|tests/c/netns_cookie_udp4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/netns_cookie_udp4.c",
+          "exists": true,
+          "sha256": "8b2342fe98ca8788dc4df6cbf38dd234124255c58c9a7a4db79ebf17b08e3d1a"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/perf-event-hardware-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 71,
+      "corpus_row": "c-programs/perf-event-hardware-enosys|tests/c/perf_event_hardware_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/perf_event_hardware_enosys.c",
+          "exists": true,
+          "sha256": "ed5ce6b90a9de1473b15ed50287563e7f7a5382e143643a396fea1a3a1994058"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/perf-event-open-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 72,
+      "corpus_row": "c-programs/perf-event-open-enosys|tests/c/perf_event_open_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/perf_event_open_enosys.c",
+          "exists": true,
+          "sha256": "fa8550cd5d1053a17f5524d8e93e7225935f8c1a0cf2aa2d515923c2f87defe6"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/perf-event-software-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 73,
+      "corpus_row": "c-programs/perf-event-software-enosys|tests/c/perf_event_software_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/perf_event_software_enosys.c",
+          "exists": true,
+          "sha256": "e7be70aab1c63e1f1c08c287ea75650d0dab8c880552cdf4951d76129fcfceb6"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/perf-event-watchpoint-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 74,
+      "corpus_row": "c-programs/perf-event-watchpoint-enosys|tests/c/perf_event_watchpoint_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/perf_event_watchpoint_enosys.c",
+          "exists": true,
+          "sha256": "539f866c1ab2204329aabafc3e21485d4608b9503bdb3553e1756aff827fceda"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/periodic-setitimer-delivery",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 75,
+      "corpus_row": "c-programs/periodic-setitimer-delivery|tests/c/periodic_setitimer_delivery.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/periodic_setitimer_delivery.c",
+          "exists": true,
+          "sha256": "3690759b131159ca5f547c8fca0cf015ee841654418e2b2d018efaa5ce0a35c5"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pidfd-open-self",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 76,
+      "corpus_row": "c-programs/pidfd-open-self|tests/c/pidfd_open_self.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/pidfd_open_self.c",
+          "exists": true,
+          "sha256": "63933e7653adc2e898cb3ef5460688d57d8053f8545ef69197eecff80d45bb6e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pidfd-poll-self",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 77,
+      "corpus_row": "c-programs/pidfd-poll-self|tests/c/pidfd_poll_self.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/pidfd_poll_self.c",
+          "exists": true,
+          "sha256": "deb70d8b29c2d294dce7276f1c062fc9f2a79b44b14794de6af5742150fabf99"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pidfd-waitid-child",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 78,
+      "corpus_row": "c-programs/pidfd-waitid-child|tests/c/pidfd_waitid_child.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/pidfd_waitid_child.c",
+          "exists": true,
+          "sha256": "2f367cec1276ee1d33434dc2e00c7796eec198aa511f4a52b725ebc046963292"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ppoll-readv",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 79,
+      "corpus_row": "c-programs/ppoll-readv|tests/c/ppoll_readv.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ppoll_readv.c",
+          "exists": true,
+          "sha256": "82d19fdebd88fafe7de1e877c06d1c4ea014fe8dfd6768ca42bf9b1c02ba648f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ppoll-simulation",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 80,
+      "corpus_row": "c-programs/ppoll-simulation|tests/c/ppoll_simulation.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ppoll_simulation.c",
+          "exists": true,
+          "sha256": "6fd22331c598a9711e5ec5211843a2d08756a7998fa5b518d89a6b958e4a44f2"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/prctl-dumpable",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 81,
+      "corpus_row": "c-programs/prctl-dumpable|tests/c/prctl_dumpable.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/prctl_dumpable.c",
+          "exists": true,
+          "sha256": "3d8b91d9682a9800137adfec1bc8bc4a4beeda33336ddd1e98b9b146daa48328"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pread64-nostdlib",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 125,
+      "corpus_row": "c-programs/pread64-nostdlib|tests/c/simple/pread64_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/simple/pread64_nostdlib.c",
+          "exists": true,
+          "sha256": "38c294c2f913bfdeb1b2cae8238d1cc91dccfc2b9b0f3f7df99009f24d7d3c84"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/print-memaddrs",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 82,
+      "corpus_row": "c-programs/print-memaddrs|tests/c/print_memaddrs.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/print_memaddrs.c",
+          "exists": true,
+          "sha256": "96d6a7186888bdb48b5de46ea4532e7f0dcfdbaa69effec809d575bda9c91387"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/printf-with-threads",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 83,
+      "corpus_row": "c-programs/printf-with-threads|tests/c/printf_with_threads.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/printf_with_threads.c",
+          "exists": true,
+          "sha256": "3cf03ec95144b7153c120ffe6b18623edeff1b3ebb6d13425b9206070d87dbc3"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/proc-fd-link-aliases",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 84,
+      "corpus_row": "c-programs/proc-fd-link-aliases|tests/c/proc_fd_link_aliases.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/proc_fd_link_aliases.c",
+          "exists": true,
+          "sha256": "28e209e605630b7f757554199cfb3c201a21328472699bf134a85549a06f5243"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/proc-fdinfo",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 85,
+      "corpus_row": "c-programs/proc-fdinfo|tests/c/proc_fdinfo.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -DFD_SOURCE=1||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/proc_fdinfo.c",
+          "exists": true,
+          "sha256": "cf48ee4aeb511db11c26f3e0edafd6da397b62f76090cf8a3ed5189d7958e7ed"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/proc-locks",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 86,
+      "corpus_row": "c-programs/proc-locks|tests/c/proc_locks.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -DLOCK_API=1||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/proc_locks.c",
+          "exists": true,
+          "sha256": "e91f87044c83c5274a39f36b4e7df6ee7ae99bd091b22bb5d0e6eda3a803d4ee"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/process-mrelease-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 87,
+      "corpus_row": "c-programs/process-mrelease-enosys|tests/c/process_mrelease_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/process_mrelease_enosys.c",
+          "exists": true,
+          "sha256": "23818c789b05976cda2ae0e428b4bf52e059f921cb1d517be0432550e99ed06c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/process-vm-readv-refusal-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 88,
+      "corpus_row": "c-programs/process-vm-readv-refusal-probe|tests/c/process_vm_readv_refusal_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/process_vm_readv_refusal_probe.c",
+          "exists": true,
+          "sha256": "cbddfd5cbe824b69ac07e15e80175fb919ad2800e38c84d6b2b67afad7700fb9"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/process-vm-writev-refusal-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 89,
+      "corpus_row": "c-programs/process-vm-writev-refusal-probe|tests/c/process_vm_writev_refusal_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/process_vm_writev_refusal_probe.c",
+          "exists": true,
+          "sha256": "893bf3ae5a58d94db3f0aa30e08ac09b4e1fc1673172416c5ef971c564dbf479"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/procfs-positioned-probe",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 90,
+      "corpus_row": "c-programs/procfs-positioned-probe|tests/c/procfs_positioned_probe.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/procfs_positioned_probe.c",
+          "exists": true,
+          "sha256": "95cd989c350a7f2ae8f51189439d86db39fc5646ea0aedee4014111488f1f80f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/prodcons-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 91,
+      "corpus_row": "c-programs/prodcons-determinism|tests/c/prodcons_determinism.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/prodcons_determinism.c",
+          "exists": true,
+          "sha256": "d29b3a7dfff52bd0eb55533ffbb11c5bc46e33f5857e21b621b80573ba23fb29"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pselect6-simulation",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 92,
+      "corpus_row": "c-programs/pselect6-simulation|tests/c/pselect6_simulation.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/pselect6_simulation.c",
+          "exists": true,
+          "sha256": "71f1fd9d1f908347bdcae1d8701d6934d175daadaf939ca94efa5f6ef1cb7a67"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ptrace-attach-eperm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 93,
+      "corpus_row": "c-programs/ptrace-attach-eperm|tests/c/ptrace_attach_eperm.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ptrace_attach_eperm.c",
+          "exists": true,
+          "sha256": "8b85f74d5e77828195a3eae70f615501c3c3db6b34da1a24d891b40a5423a21b"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ptrace-eperm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 94,
+      "corpus_row": "c-programs/ptrace-eperm|tests/c/ptrace_eperm.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ptrace_eperm.c",
+          "exists": true,
+          "sha256": "dbb5308d45c8fff4c68ca9104d8efc3dff22832eed776d1b9e10c1d2e1c49ce6"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ptrace-seize-eperm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 95,
+      "corpus_row": "c-programs/ptrace-seize-eperm|tests/c/ptrace_seize_eperm.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ptrace_seize_eperm.c",
+          "exists": true,
+          "sha256": "f69f4521c610015831c118b6ccc165170916c7471853b4274ee0c4f94b7b59cc"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ptrace-traceme-eperm",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 96,
+      "corpus_row": "c-programs/ptrace-traceme-eperm|tests/c/ptrace_traceme_eperm.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ptrace_traceme_eperm.c",
+          "exists": true,
+          "sha256": "aeba1691d94935bb4d83194e2d24b1d12928158aad5619e10b2890d9ff9cb934"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/pty-nr-count",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 97,
+      "corpus_row": "c-programs/pty-nr-count|tests/c/pty_nr_count.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/pty_nr_count.c",
+          "exists": true,
+          "sha256": "9881e1be6eb29d4e470e12cc246f0eb66cf864515e64c07ab6596a36f6d018bb"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/racewrite-nostdlib",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 126,
+      "corpus_row": "c-programs/racewrite-nostdlib|tests/c/simple/racewrite_nostdlib.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/simple/racewrite_nostdlib.c",
+          "exists": true,
+          "sha256": "88f0da64dc373d750d0fe215050191d21ba226154366e012f236e61b447648c4"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/random-sources",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 98,
+      "corpus_row": "c-programs/random-sources|tests/c/random_sources.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/random_sources.c",
+          "exists": true,
+          "sha256": "c0b8604f9b4153b4c8362af1730b0faa18af473c58088f6c2451314dbc9234a0"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/rcx-canonicalization",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 99,
+      "corpus_row": "c-programs/rcx-canonicalization|tests/c/rcx_canonicalization.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/rcx_canonicalization.c",
+          "exists": true,
+          "sha256": "b58a87fab9e85571a1ecc9aacb1107e91c07824cb4d2dbfef4398d1e8f381a7d"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/record-replay-fd-close",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 100,
+      "corpus_row": "c-programs/record-replay-fd-close|tests/c/record_replay_fd_close.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/record_replay_fd_close.c",
+          "exists": true,
+          "sha256": "e25b393f31eac6ae5b59859d8b976de1ae018bc079d5cf76807518bfd1bc0b2f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/record-replay-file-state",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 101,
+      "corpus_row": "c-programs/record-replay-file-state|tests/c/record_replay_file_state.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/record_replay_file_state.c",
+          "exists": true,
+          "sha256": "b3766729d2d3b320e72c72ff2b09e07bbf121a8632e94b7c2088c566d1c884ce"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/record-replay-lseek-seek-cur",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 102,
+      "corpus_row": "c-programs/record-replay-lseek-seek-cur|tests/c/record_replay_lseek_seek_cur.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/record_replay_lseek_seek_cur.c",
+          "exists": true,
+          "sha256": "08e795b3aa118236df53e51e9d89f957d801ff615aea9aea54b3753c215cc0d8"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/record-replay-setsockopt",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 103,
+      "corpus_row": "c-programs/record-replay-setsockopt|tests/c/record_replay_setsockopt.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/record_replay_setsockopt.c",
+          "exists": true,
+          "sha256": "6d597079a49807cb6704c460996e45c5fa3a787d70661705da666701bcd0d752"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/recvmsg-scm-rights-mmap",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 104,
+      "corpus_row": "c-programs/recvmsg-scm-rights-mmap|tests/c/recvmsg_scm_rights_mmap.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/recvmsg_scm_rights_mmap.c",
+          "exists": true,
+          "sha256": "a99037a1b73a652c3034362cdc84b420934e9e80aebe7327076caffbfc0e221c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/remap-file-pages-anonymous-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 105,
+      "corpus_row": "c-programs/remap-file-pages-anonymous-enosys|tests/c/remap_file_pages_anonymous_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/remap_file_pages_anonymous_enosys.c",
+          "exists": true,
+          "sha256": "4d8a64d2ef42cadaff9a1f5bea7efbf45b8fb8156d2b14462258dff117379609"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/remap-file-pages-memfd-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 106,
+      "corpus_row": "c-programs/remap-file-pages-memfd-enosys|tests/c/remap_file_pages_memfd_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/remap_file_pages_memfd_enosys.c",
+          "exists": true,
+          "sha256": "fb7649f552d6380ddbc8971635f604fe19a8b320e2ae5374020dbbe0546c9555"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/remap-file-pages-tmpfile-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 107,
+      "corpus_row": "c-programs/remap-file-pages-tmpfile-enosys|tests/c/remap_file_pages_tmpfile_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/remap_file_pages_tmpfile_enosys.c",
+          "exists": true,
+          "sha256": "8cae265eadf526611a21e8a584ee1a9479f061fa309e56c44e9ba3144e8b6e68"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/request-key-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 108,
+      "corpus_row": "c-programs/request-key-enosys|tests/c/request_key_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/request_key_enosys.c",
+          "exists": true,
+          "sha256": "7347dbfc1639d4db0b135e2f421c9795592ecfce88f10d45ac8850454256ed51"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/resource-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 109,
+      "corpus_row": "c-programs/resource-determinism|tests/c/resource_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/resource_determinism.c",
+          "exists": true,
+          "sha256": "76ad7fc94efe61d33fc21b5b39093ca039c3be60b15b5c32bec3cd0816772d3e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sched-setattr-batch",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 110,
+      "corpus_row": "c-programs/sched-setattr-batch|tests/c/sched_setattr_batch.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sched_setattr_batch.c",
+          "exists": true,
+          "sha256": "8a2e07b443cd0add9786c0d6ebcad297a9fba451036753febd460ea72f9fc97c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sched-setattr-idle",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 111,
+      "corpus_row": "c-programs/sched-setattr-idle|tests/c/sched_setattr_idle.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sched_setattr_idle.c",
+          "exists": true,
+          "sha256": "6961030af7244a4885c47bd14505bdea358bb834ed0a2772bc20ed5ca6a6ffff"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sched-setattr-other",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 112,
+      "corpus_row": "c-programs/sched-setattr-other|tests/c/sched_setattr_other.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sched_setattr_other.c",
+          "exists": true,
+          "sha256": "43241764a9be11a6fcab26d4b70eba41a45ea251fd4c98dbb9df0c098631683f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sched-yield-progress",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 113,
+      "corpus_row": "c-programs/sched-yield-progress|tests/c/sched_yield_progress.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sched_yield_progress.c",
+          "exists": true,
+          "sha256": "2da33a1a486fcdca9fe290f361ceacf2b4420ae3b38695719a8c430c5d4ccb48"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/scheduler-policy-queries",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 114,
+      "corpus_row": "c-programs/scheduler-policy-queries|tests/c/scheduler_policy_queries.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/scheduler_policy_queries.c",
+          "exists": true,
+          "sha256": "56f1127ddaeb66e3cdc0239b9fbd4bed10b0198cbdeb86933a23d457a6266a0f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/setitimer-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 115,
+      "corpus_row": "c-programs/setitimer-determinism|tests/c/setitimer_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/setitimer_determinism.c",
+          "exists": true,
+          "sha256": "5fa0618c557d539f9d694e526c18a59f69ea191487898c21e8d9d8a9b7fe2f76"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sigmask-preemption",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 116,
+      "corpus_row": "c-programs/sigmask-preemption|tests/c/sigmask_preemption.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sigmask_preemption.c",
+          "exists": true,
+          "sha256": "ea67a7a6aba6e3f6c96ce0a113ce4cdf04940448d17d2b482649880e24798f8c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/signal-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 117,
+      "corpus_row": "c-programs/signal-determinism|tests/c/signal_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/signal_determinism.c",
+          "exists": true,
+          "sha256": "f10496dfc29772af0769fe741f6028fd2d54848a6bfac2005bd40f3386d87912"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sigpipe-siginfo",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 118,
+      "corpus_row": "c-programs/sigpipe-siginfo|tests/c/sigpipe_siginfo.c|-pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sigpipe_siginfo.c",
+          "exists": true,
+          "sha256": "6dfce2202e315a6f92faf9a2423453e4e41febb02b1ba3cce83cbca7c17a3679"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sigtimedwait-no-timeout",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 119,
+      "corpus_row": "c-programs/sigtimedwait-no-timeout|tests/c/sigtimedwait-no-timeout.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sigtimedwait-no-timeout.c",
+          "exists": true,
+          "sha256": "e5defe239b1916dafd261e5f6d6e2239756dba984175201b427b8fa35b16e791"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sigtimedwait-timeout-0s",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 120,
+      "corpus_row": "c-programs/sigtimedwait-timeout-0s|tests/c/sigtimedwait-timeout-0s.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sigtimedwait-timeout-0s.c",
+          "exists": true,
+          "sha256": "6a9ab4105fecb68d73a93a77599ec7c934a94a678f23736510b7b134d71b0a99"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sigtimedwait-timeout-1s",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 121,
+      "corpus_row": "c-programs/sigtimedwait-timeout-1s|tests/c/sigtimedwait-timeout-1s.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sigtimedwait-timeout-1s.c",
+          "exists": true,
+          "sha256": "b482e7ee3acaaf27b9756c0d2dc05293e1a898bcc23caddc909ebaedb5d09720"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/so-incoming-cpu-tcp4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 127,
+      "corpus_row": "c-programs/so-incoming-cpu-tcp4|tests/c/so_incoming_cpu_tcp4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/so_incoming_cpu_tcp4.c",
+          "exists": true,
+          "sha256": "ca08c1b863bc74317faf22d506fe261633b705203371d065f48ee6565648ad99"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/so-incoming-cpu-tcp6",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 128,
+      "corpus_row": "c-programs/so-incoming-cpu-tcp6|tests/c/so_incoming_cpu_tcp6.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/so_incoming_cpu_tcp6.c",
+          "exists": true,
+          "sha256": "7613052ef3cbf44ccb27b5970e11ea8c9944858b125dde24dbdcb7babded2f27"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/so-incoming-cpu-udp4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 129,
+      "corpus_row": "c-programs/so-incoming-cpu-udp4|tests/c/so_incoming_cpu_udp4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/so_incoming_cpu_udp4.c",
+          "exists": true,
+          "sha256": "194acc434ab63fa68d58917feba3b7367e8087b7637b48b90589c0e7dbc20227"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-cookie-tcp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 130,
+      "corpus_row": "c-programs/socket-cookie-tcp|tests/c/socket_cookie_tcp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_cookie_tcp.c",
+          "exists": true,
+          "sha256": "1e72dad31f97d63c42c29876f0e302542d0fae455c82fc2c6f9d31a51b2743fd"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-cookie-udp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 131,
+      "corpus_row": "c-programs/socket-cookie-udp|tests/c/socket_cookie_udp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_cookie_udp.c",
+          "exists": true,
+          "sha256": "cd4521d59e481aea7eb4c4580f6af1226a30ce2d05a608380c5483612b965e59"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-cookie-unix",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 132,
+      "corpus_row": "c-programs/socket-cookie-unix|tests/c/socket_cookie_unix.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_cookie_unix.c",
+          "exists": true,
+          "sha256": "ef958191a2c8cf911100d14966ede73f445296f6598bdb2590bd4e6d2ac8ccea"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-ioctl-timestamp",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 133,
+      "corpus_row": "c-programs/socket-ioctl-timestamp|tests/c/socket_ioctl_timestamp.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_ioctl_timestamp.c",
+          "exists": true,
+          "sha256": "2a07cd7882ede0984a0210862a0098dd82d9429ce7138c62092cb59c8e235abb"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-timestamp-edge-cases",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 134,
+      "corpus_row": "c-programs/socket-timestamp-edge-cases|tests/c/socket_timestamp_edge_cases.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_timestamp_edge_cases.c",
+          "exists": true,
+          "sha256": "7da206b8776e00eb9131e3fd7f08da7cc5d661db24fea29d75383394b78b043d"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-timestamp-timespec",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 135,
+      "corpus_row": "c-programs/socket-timestamp-timespec|tests/c/socket_timestamp_timespec.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_timestamp_timespec.c",
+          "exists": true,
+          "sha256": "2438fc36fe98bf02907bf832eda75135d1a6cbf9b3140542c3c83c93fc501bff"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/socket-timestamp-timeval",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 136,
+      "corpus_row": "c-programs/socket-timestamp-timeval|tests/c/socket_timestamp_timeval.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/socket_timestamp_timeval.c",
+          "exists": true,
+          "sha256": "1951e56a52225ea8b13a30cef30a88e24f9835127d2481b66ccf89c7d844a7ed"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/splice-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 137,
+      "corpus_row": "c-programs/splice-enosys|tests/c/splice_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/splice_enosys.c",
+          "exists": true,
+          "sha256": "3c5968da9356f96c5a845542df039ae8d2e681f81b4912d47d470ebedeea8126"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/statmount-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 138,
+      "corpus_row": "c-programs/statmount-enosys|tests/c/statmount_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/statmount_enosys.c",
+          "exists": true,
+          "sha256": "11bc2bb25f060a83427624e42d242f571d8948071ab606999abcdfd21eba0c42"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/syscall-file-io",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 139,
+      "corpus_row": "c-programs/syscall-file-io|tests/c/syscall_file_io.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/syscall_file_io.c",
+          "exists": true,
+          "sha256": "c31af4db213ddd3dfd3423332c602be9207850346a6b90b96e1f684433559d6f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/syscall-file-metadata",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 140,
+      "corpus_row": "c-programs/syscall-file-metadata|tests/c/syscall_file_metadata.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/syscall_file_metadata.c",
+          "exists": true,
+          "sha256": "293c70c15a6d43e6a39159cf00fd1413019697d7e4b0db4988261903917776b0"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/syscall-quick-wins",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 141,
+      "corpus_row": "c-programs/syscall-quick-wins|tests/c/syscall_quick_wins.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/syscall_quick_wins.c",
+          "exists": true,
+          "sha256": "4af93d103b2ce49d0bdaae48aa5680d0ae159e5480858270fd903f3deba68256"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sysfs-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 142,
+      "corpus_row": "c-programs/sysfs-enosys|tests/c/sysfs_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sysfs_enosys.c",
+          "exists": true,
+          "sha256": "fe873f1310f1646586010cdb092b53d2c5b92b339f526d525ead48735b441616"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sysinfo",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 143,
+      "corpus_row": "c-programs/sysinfo|tests/c/sysinfo.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sysinfo.c",
+          "exists": true,
+          "sha256": "815409ff4aa5a632abbafb421bb9299967ab3b6908973c59f0aeb1d9c491e817"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sysinfo-uptime",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 144,
+      "corpus_row": "c-programs/sysinfo-uptime|tests/c/sysinfo_uptime.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sysinfo_uptime.c",
+          "exists": true,
+          "sha256": "3f3f14dc991e1956d9e9d284dc9fc8992e9abda5ce71f50d0f43b14e26ddbe4e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/syslog-deterministic",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 145,
+      "corpus_row": "c-programs/syslog-deterministic|tests/c/syslog_deterministic.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/syslog_deterministic.c",
+          "exists": true,
+          "sha256": "4131de05d821dd996a5d393e8fb79c6f6ba7a3383c529df11c091eb0108a7b18"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sysv-sem-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 146,
+      "corpus_row": "c-programs/sysv-sem-enosys|tests/c/sysv_sem_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sysv_sem_enosys.c",
+          "exists": true,
+          "sha256": "3914b66b78f3015bae1864790e91f71b852bdae394b99694bef870c9176e670d"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/sysv-shm-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 147,
+      "corpus_row": "c-programs/sysv-shm-enosys|tests/c/sysv_shm_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/sysv_shm_enosys.c",
+          "exists": true,
+          "sha256": "d10243f92806a0597a2766e9e2acef2c085a4d87a248694084b79e014091fe56"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/tcp-info-accept4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 148,
+      "corpus_row": "c-programs/tcp-info-accept4|tests/c/tcp_info_accept4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/tcp_info_accept4.c",
+          "exists": true,
+          "sha256": "36f5e964ac1dde953ecce7e63c038a704217db6266af45b5c17c44e58ff57f34"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/tcp-info-accept6",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 149,
+      "corpus_row": "c-programs/tcp-info-accept6|tests/c/tcp_info_accept6.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/tcp_info_accept6.c",
+          "exists": true,
+          "sha256": "3620c7211b97a662bb1cfbaeb288db6b7d5520fb0d82ad0a0610c40ff1e63b22"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/tcp-info-client4",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 150,
+      "corpus_row": "c-programs/tcp-info-client4|tests/c/tcp_info_client4.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/tcp_info_client4.c",
+          "exists": true,
+          "sha256": "f1e7e629048753a57464794acbc55d461dd935239f66fe85f6ff1c5d2f73a248"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/tee-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 151,
+      "corpus_row": "c-programs/tee-enosys|tests/c/tee_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/tee_enosys.c",
+          "exists": true,
+          "sha256": "d72386273951f68aa4242bd9fd9d34ee0a4b3d4a1c2bc7679a30cf679094f438"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/thread-self-procfs-handoff",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 153,
+      "corpus_row": "c-programs/thread-self-procfs-handoff|tests/c/thread_self_procfs_handoff.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/thread_self_procfs_handoff.c",
+          "exists": true,
+          "sha256": "d83d3f8c163fff42727c8bc9188cbd3613208cbfd974f188622270f62e700648"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/thread-sync-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 154,
+      "corpus_row": "c-programs/thread-sync-determinism|tests/c/thread_sync_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|enabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/thread_sync_determinism.c",
+          "exists": true,
+          "sha256": "ae2da666170a4e7e38ab472b3c7cfdf35a5b4072320d84783628423ac2ab7994"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/threadexhaustion",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 152,
+      "corpus_row": "c-programs/threadexhaustion|tests/c/threadExhaustion.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/threadExhaustion.c",
+          "exists": true,
+          "sha256": "6d43803e88a104c388baac81c8f8e96c4b1e9b56a70d71422f806f03df234526"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/timer-create-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 155,
+      "corpus_row": "c-programs/timer-create-determinism|tests/c/timer_create_determinism.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/timer_create_determinism.c",
+          "exists": true,
+          "sha256": "349ae9039ba65937b434ef449194daa91705d78dc28ea0f0d98978083299f672"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/uname",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 156,
+      "corpus_row": "c-programs/uname|tests/c/uname.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/uname.c",
+          "exists": true,
+          "sha256": "9511333618899b7aaed308403a1b10702f455bc1953f504d682b545e9f220c37"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/unix-autobind-dgram",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 157,
+      "corpus_row": "c-programs/unix-autobind-dgram|tests/c/unix_autobind_dgram.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/unix_autobind_dgram.c",
+          "exists": true,
+          "sha256": "6ef2dc510927dc957c165ea7f4d39049689d9c5be3a50eb282dfbd18abad29d4"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/unix-autobind-seqpacket",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 158,
+      "corpus_row": "c-programs/unix-autobind-seqpacket|tests/c/unix_autobind_seqpacket.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/unix_autobind_seqpacket.c",
+          "exists": true,
+          "sha256": "1e36378f6250c1eae6b6b0c94e40d461cb2babef23f1d2ceb891a4ecba546051"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/unix-autobind-stream",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 159,
+      "corpus_row": "c-programs/unix-autobind-stream|tests/c/unix_autobind_stream.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/unix_autobind_stream.c",
+          "exists": true,
+          "sha256": "ea92a730f446a1d5c278869fd70f1ae4238d16e9002de27b9afd084894f15b1f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/ustat-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 160,
+      "corpus_row": "c-programs/ustat-enosys|tests/c/ustat_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/ustat_enosys.c",
+          "exists": true,
+          "sha256": "243258ecdf00ff03d47f73d627d7f8c185ba7e2c73ecb152a55086f7d59afd14"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/vforkexec",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 161,
+      "corpus_row": "c-programs/vforkexec|tests/c/vforkExec.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/vforkExec.c",
+          "exists": true,
+          "sha256": "084f250d23c33b3eadbe129c37d5b84f97702670fe27fe51001ca316cb9baadb"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/vmsplice-enosys",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 162,
+      "corpus_row": "c-programs/vmsplice-enosys|tests/c/vmsplice_enosys.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/vmsplice_enosys.c",
+          "exists": true,
+          "sha256": "134dae6feb69b8607c05b5be2da4d0010daeb77952ec2de3246f91fb821efa8e"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/wait-on-child",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 163,
+      "corpus_row": "c-programs/wait-on-child|tests/c/wait_on_child.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/wait_on_child.c",
+          "exists": true,
+          "sha256": "a5db53c0d6d4376e229b64b67db747bf3e2d8436ed9bc500c8c8b1c9b4a17494"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "c-programs/writev-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 164,
+      "corpus_row": "c-programs/writev-determinism|tests/c/writev_determinism.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/writev_determinism.c",
+          "exists": true,
+          "sha256": "3c0b82fdee9b24892e5cb84b603723736ce48b90403d0a2d3aef53a62059f9d1"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "chaos-c/lock-granularity",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 165,
+      "corpus_row": "chaos-c/lock-granularity|tests/chaos/lock_granularity.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/chaos/lock_granularity.c",
+          "exists": true,
+          "sha256": "87caac14d80dcf982538594c374fce5d7a0f522d66ddedddfc8f724ec3acebdd"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "data-handling/archive-roundtrip",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 3,
+      "corpus_row": "data-handling/archive-roundtrip|portable|HERMITROOT/tests/e2e/data-handling/archive-roundtrip.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/data-handling/archive-roundtrip.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/data-handling/archive-roundtrip.sh",
+          "exists": true,
+          "sha256": "44844aadbff53dc5373b1186dcdb018b74c2ab2d3dc8addeb84f650f3e8004c7"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "data-handling/shell-pipeline",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 4,
+      "corpus_row": "data-handling/shell-pipeline|portable|HERMITROOT/tests/e2e/data-handling/shell-pipeline.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/data-handling/shell-pipeline.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/data-handling/shell-pipeline.sh",
+          "exists": true,
+          "sha256": "5ea01dbb8fdd6ccbc3d6e65aff4d31b6fb9d003c7be23877ca29f0d49d1092a9"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "debugger-c/debuggee",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 166,
+      "corpus_row": "debugger-c/debuggee|tests/debugger/guests/debuggee.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/debugger/guests/debuggee.c",
+          "exists": true,
+          "sha256": "9c58e35c6f87d8ad918464d0442d687e54a9aec55680ba2dde6bef893dbc66ab"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/fork-tree",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 167,
+      "corpus_row": "determinism-stress-c/fork-tree|tests/e2e/determinism-stress/fork_tree.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/fork_tree.c",
+          "exists": true,
+          "sha256": "04cd48f271f152353ca330c0cb703b5e7cc2012397c0c6649db05f9ff176b6c2"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/lock-free",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 168,
+      "corpus_row": "determinism-stress-c/lock-free|tests/e2e/determinism-stress/guests/lock_free.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/guests/lock_free.c",
+          "exists": true,
+          "sha256": "8817ab1adf5143915cac27434f6914b3971a3007bbb162983caca621e67af149"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/mmap-fork-shared",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 171,
+      "corpus_row": "determinism-stress-c/mmap-fork-shared|tests/e2e/determinism-stress/mmap_fork_shared.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/mmap_fork_shared.c",
+          "exists": true,
+          "sha256": "dd3262a82bb7b1bc395d256f7e181f5cfd34ecd39756c498c75fdfbaf1f1399a"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/pid-tid",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 169,
+      "corpus_row": "determinism-stress-c/pid-tid|tests/e2e/determinism-stress/guests/pid_tid.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/guests/pid_tid.c",
+          "exists": true,
+          "sha256": "8a9dae2d5cf98d2bd49b4bc26748f26fe66c090f4cedb4c20ae913c472fc87cd"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/pipe-chain",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 172,
+      "corpus_row": "determinism-stress-c/pipe-chain|tests/e2e/determinism-stress/pipe_chain.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/pipe_chain.c",
+          "exists": true,
+          "sha256": "f2fd221db0dfa4ebe4905417efe52b211a5cc54d83040112bab2b55653c7a9ba"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/pipe-prefill",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 173,
+      "corpus_row": "determinism-stress-c/pipe-prefill|tests/e2e/determinism-stress/pipe_prefill.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/pipe_prefill.c",
+          "exists": true,
+          "sha256": "6c60dded6ac3e5ff83b12929a1d1be217c72343afc8df3ea033f1ff8495651b9"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/producer-consumer",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 176,
+      "corpus_row": "determinism-stress-c/producer-consumer|tests/e2e/determinism-stress/producer_consumer.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/producer_consumer.c",
+          "exists": true,
+          "sha256": "b95bf554a4c4d20368b3bc50886febc3e6c246c31a4a5796ec20bff17c3aad90"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/signal-order",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 170,
+      "corpus_row": "determinism-stress-c/signal-order|tests/e2e/determinism-stress/guests/signal_order.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/guests/signal_order.c",
+          "exists": true,
+          "sha256": "581b37f5f4775b23432a559c4e7b4d075b8ffce2ad8821e5b35572406bed2e2f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/thread-contention",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 174,
+      "corpus_row": "determinism-stress-c/thread-contention|tests/e2e/determinism-stress/thread_contention.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/thread_contention.c",
+          "exists": true,
+          "sha256": "7c2c3b392c93b4a243b81c24b055adaf2573eefcdd7025e539388fa9f6d7d2eb"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress-c/thread-stress",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 175,
+      "corpus_row": "determinism-stress-c/thread-stress|tests/e2e/determinism-stress/thread_stress.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/determinism-stress/thread_stress.c",
+          "exists": true,
+          "sha256": "a197b30579aad038a3b12eb7c73714ecbe37b07202d35df9d026d7d218c03bed"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress/example-race",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 5,
+      "corpus_row": "determinism-stress/example-race|portable|HERMITROOT/examples/race.sh",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/race.sh"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/race.sh",
+          "exists": true,
+          "sha256": "00ba1d05db05f914c990da9dcd45c7b41c300cc2db9c5ad7bf5d1b9766a44fc1"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress/order-violation",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 177,
+      "corpus_row": "determinism-stress/order-violation|tests/chaos/order_violation.c|-pthread -Wno-unused-parameter||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/chaos/order_violation.c",
+          "exists": true,
+          "sha256": "0806c727a2c6fdce1120e7dc39952af1f0f94bcf7eba8394b262b81295732d36"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress/process-chains",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 6,
+      "corpus_row": "determinism-stress/process-chains|portable|HERMITROOT/tests/e2e/determinism-stress/process-chains.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/process-chains.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/process-chains.sh",
+          "exists": true,
+          "sha256": "9e3c25a3153b44a72b28fed61ff6bd3b95985cfe9ec11722f63d5a1fcd8c3595"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress/thread-contention",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 7,
+      "corpus_row": "determinism-stress/thread-contention|portable|HERMITROOT/tests/e2e/determinism-stress/thread-contention.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/thread-contention.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/thread-contention.sh",
+          "exists": true,
+          "sha256": "719321d8c9b6503210b320dc61d5731573844ea832b3c8b89099fc45b6df210f"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "determinism-stress/thread-output",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 8,
+      "corpus_row": "determinism-stress/thread-output|portable|HERMITROOT/tests/e2e/determinism-stress/thread-output.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/thread-output.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/determinism-stress/thread-output.sh",
+          "exists": true,
+          "sha256": "27b8a443c7fcadebc09e9fe50dc6f6b21b3025690e2d5186ca0245d9b62fbf74"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/bash-loop-pipe-time",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 9,
+      "corpus_row": "language-runtimes/bash-loop-pipe-time|portable|HERMITROOT/tests/e2e/language-runtimes/bash-loop-pipe-time.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/bash-loop-pipe-time.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/bash-loop-pipe-time.sh",
+          "exists": true,
+          "sha256": "8e1ebdf8f7f18baa137d695af22560fc23b850e78c7253cdf584a4415ad8f282"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/example-python-random",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 10,
+      "corpus_row": "language-runtimes/example-python-random|portable|HERMITROOT/examples/rand.py",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/rand.py"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/rand.py",
+          "exists": true,
+          "sha256": "e1a32fd938403f394f36555be180f2b17dd497859f28e9aa9ac0dadcd0372343"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/gawk-random",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 11,
+      "corpus_row": "language-runtimes/gawk-random|portable|HERMITROOT/tests/e2e/language-runtimes/gawk-random.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/gawk-random.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/gawk-random.sh",
+          "exists": true,
+          "sha256": "ffd0fde3fe1f81e9ef411075c5c7f8fa2790430ae7b383007cfacee43ced8c6d"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/perl-io-subprocess-time",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 12,
+      "corpus_row": "language-runtimes/perl-io-subprocess-time|portable|HERMITROOT/tests/e2e/language-runtimes/perl-io-subprocess-time.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/perl-io-subprocess-time.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/perl-io-subprocess-time.sh",
+          "exists": true,
+          "sha256": "343697319c2710c42618bfcbb3cad1a91111c233e1513897be788df0882fe8c2"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/python-hash-determinism",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 13,
+      "corpus_row": "language-runtimes/python-hash-determinism|portable|HERMITROOT/tests/e2e/language-runtimes/python-hash-determinism.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-hash-determinism.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-hash-determinism.sh",
+          "exists": true,
+          "sha256": "da66b5aa8e5cfcf7f5b0fa18d17f4f0aed3c386fbf8d083ed6d164bf6e76163d"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/python-io-subprocess-time",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 14,
+      "corpus_row": "language-runtimes/python-io-subprocess-time|portable|HERMITROOT/tests/e2e/language-runtimes/python-io-subprocess-time.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-io-subprocess-time.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-io-subprocess-time.sh",
+          "exists": true,
+          "sha256": "85c9e613ef2077697538db7dc11e5c7c101a838d701f1d3b4b4380b4e8f09c0c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "language-runtimes/python-random",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 15,
+      "corpus_row": "language-runtimes/python-random|portable|HERMITROOT/tests/e2e/language-runtimes/python-random.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-random.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/language-runtimes/python-random.sh",
+          "exists": true,
+          "sha256": "fb3fb07d73685d3fdfe37ff804ffa46dd7db413b0002fd2237b834ecc2f6c2af"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "performance/barrier-rounds",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 178,
+      "corpus_row": "performance/barrier-rounds|tests/e2e/performance/barrier-rounds.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/barrier-rounds.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/barrier-yield-rounds",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 179,
+      "corpus_row": "performance/barrier-yield-rounds|tests/e2e/performance/barrier-yield-rounds.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/barrier-yield-rounds.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/clock-query-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 180,
+      "corpus_row": "performance/clock-query-churn|tests/e2e/performance/clock-query-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/clock-query-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/condvar-baton",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 181,
+      "corpus_row": "performance/condvar-baton|tests/e2e/performance/condvar-baton.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/condvar-baton.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/condvar-signal-baton",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 182,
+      "corpus_row": "performance/condvar-signal-baton|tests/e2e/performance/condvar-signal-baton.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/condvar-signal-baton.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/dup-close-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 183,
+      "corpus_row": "performance/dup-close-churn|tests/e2e/performance/dup-close-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/dup-close-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/epoll-eventfd-ring",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 184,
+      "corpus_row": "performance/epoll-eventfd-ring|tests/e2e/performance/epoll-eventfd-ring.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/epoll-eventfd-ring.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/eventfd-roundtrip",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 185,
+      "corpus_row": "performance/eventfd-roundtrip|tests/e2e/performance/eventfd-roundtrip.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/eventfd-roundtrip.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/fork-wait-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 186,
+      "corpus_row": "performance/fork-wait-churn|tests/e2e/performance/fork-wait-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/fork-wait-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/futex-baton",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 187,
+      "corpus_row": "performance/futex-baton|tests/e2e/performance/futex-baton.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/futex-baton.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/getrandom-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 188,
+      "corpus_row": "performance/getrandom-churn|tests/e2e/performance/getrandom-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/getrandom-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/mmap-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 189,
+      "corpus_row": "performance/mmap-churn|tests/e2e/performance/mmap-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/mmap-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/mutex-contention",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 190,
+      "corpus_row": "performance/mutex-contention|tests/e2e/performance/mutex-contention.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/mutex-contention.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/nanosleep-yield",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 191,
+      "corpus_row": "performance/nanosleep-yield|tests/e2e/performance/nanosleep-yield.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/nanosleep-yield.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/open-read-close-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 192,
+      "corpus_row": "performance/open-read-close-churn|tests/e2e/performance/open-read-close-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/open-read-close-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/pipe-fd-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 193,
+      "corpus_row": "performance/pipe-fd-churn|tests/e2e/performance/pipe-fd-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/pipe-fd-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/pipe-nonblock-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 194,
+      "corpus_row": "performance/pipe-nonblock-churn|tests/e2e/performance/pipe-nonblock-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/pipe-nonblock-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/pipe-roundtrip",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 195,
+      "corpus_row": "performance/pipe-roundtrip|tests/e2e/performance/pipe-roundtrip.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/pipe-roundtrip.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/poll-pipe-ring",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 196,
+      "corpus_row": "performance/poll-pipe-ring|tests/e2e/performance/poll-pipe-ring.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/poll-pipe-ring.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/rwlock-contention",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 197,
+      "corpus_row": "performance/rwlock-contention|tests/e2e/performance/rwlock-contention.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/rwlock-contention.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/rwlock-mixed-contention",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 198,
+      "corpus_row": "performance/rwlock-mixed-contention|tests/e2e/performance/rwlock-mixed-contention.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/rwlock-mixed-contention.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/semaphore-baton",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 199,
+      "corpus_row": "performance/semaphore-baton|tests/e2e/performance/semaphore-baton.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/semaphore-baton.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/sigmask-toggle",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 200,
+      "corpus_row": "performance/sigmask-toggle|tests/e2e/performance/sigmask-toggle.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/sigmask-toggle.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/socketpair-dgram-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 202,
+      "corpus_row": "performance/socketpair-dgram-churn|tests/e2e/performance/socketpair-dgram-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/socketpair-dgram-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/socketpair-roundtrip",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 201,
+      "corpus_row": "performance/socketpair-roundtrip|tests/e2e/performance/socketpair-roundtrip.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/socketpair-roundtrip.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/spin-trylock-contention",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 203,
+      "corpus_row": "performance/spin-trylock-contention|tests/e2e/performance/spin-trylock-contention.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/spin-trylock-contention.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/syscall-mix",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 204,
+      "corpus_row": "performance/syscall-mix|tests/e2e/performance/syscall-mix.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/syscall-mix.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/thread-churn",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 205,
+      "corpus_row": "performance/thread-churn|tests/e2e/performance/thread-churn.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/thread-churn.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/trylock-contention",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 206,
+      "corpus_row": "performance/trylock-contention|tests/e2e/performance/trylock-contention.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/trylock-contention.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "performance/yield-storm",
+      "lane": "privileged",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 207,
+      "corpus_row": "performance/yield-storm|tests/e2e/performance/yield-storm.c|-pthread||privileged|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/e2e/performance/yield-storm.c",
+          "exists": false,
+          "sha256": null
+        }
+      ],
+      "available": false
+    },
+    {
+      "id": "shared-futex-c/qemu-exec-init",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 208,
+      "corpus_row": "shared-futex-c/qemu-exec-init|tests/shared-futex-verify/qemu_exec_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/shared-futex-verify/qemu_exec_init.c",
+          "exists": true,
+          "sha256": "e1274b0b2b066363815a0f62c249bc10071bfda34be152dce6c75f4aa00c77e6"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "shared-futex-c/qemu-hello",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 209,
+      "corpus_row": "shared-futex-c/qemu-hello|tests/shared-futex-verify/qemu_hello.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/shared-futex-verify/qemu_hello.c",
+          "exists": true,
+          "sha256": "7b8af6e13b98783cc7be9da20120d8e5f260219a453ca2487aa6e47f9103c435"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "shared-futex-c/qemu-init",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 210,
+      "corpus_row": "shared-futex-c/qemu-init|tests/shared-futex-verify/qemu_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/shared-futex-verify/qemu_init.c",
+          "exists": true,
+          "sha256": "0a8b1782a4f49d33e723c9d096ab91d64fd447527c9e4eb4ae6e587eda165171"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "shared-futex-c/qemu-net-init",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 211,
+      "corpus_row": "shared-futex-c/qemu-net-init|tests/shared-futex-verify/qemu_net_init.c|-D_GNU_SOURCE -pthread -Wno-error=unused-parameter -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=attributes -Wno-error=unknown-pragmas -Wno-error=sign-compare -std=gnu11 -nostdlib -static -fno-stack-protector -fno-pie -no-pie||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/shared-futex-verify/qemu_net_init.c",
+          "exists": true,
+          "sha256": "d5c44c65b00afe5c77de16786c6cbbc132c00bd059b7b94ede401f0e687766a0"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/clock-determinism",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 212,
+      "corpus_row": "system-utils/clock-determinism|tests/c/clock_determinism.c|-O0 -D_GNU_SOURCE||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/clock_determinism.c",
+          "exists": true,
+          "sha256": "f4583495bd8dcceef783dd175d28c32c91891e6f62c9b24ce7a7c285ab0a1019"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/date-nanoseconds",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 16,
+      "corpus_row": "system-utils/date-nanoseconds|portable|HERMITROOT/tests/e2e/system-utils/date-nanoseconds.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/date-nanoseconds.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/date-nanoseconds.sh",
+          "exists": true,
+          "sha256": "0f3bd1eeb3d13d75b7d11db3ca773bb0dc200b1e201a4b81c8e65a4a58b02b13"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/example-date",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 17,
+      "corpus_row": "system-utils/example-date|portable|HERMITROOT/examples/date.sh",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/date.sh"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/date.sh",
+          "exists": true,
+          "sha256": "1ee206523805af6daaec13126611c237aa9deb9ce02b079dbdd1b1113c65a097"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/example-devrand",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 18,
+      "corpus_row": "system-utils/example-devrand|portable|HERMITROOT/examples/devrand.sh",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/devrand.sh"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/examples/devrand.sh",
+          "exists": true,
+          "sha256": "00b605c8021ff67eb7d1615275b828b970b31f7715316ed363a3bd6ce3500f6c"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/openssl-passwd",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 19,
+      "corpus_row": "system-utils/openssl-passwd|portable|HERMITROOT/tests/e2e/system-utils/openssl-passwd.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/openssl-passwd.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/openssl-passwd.sh",
+          "exists": true,
+          "sha256": "f29c7b5182f720fc36aa25e6dc7d5bb5d153612ecba8d3ba0f0b6364be080397"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/proc-uptime",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 20,
+      "corpus_row": "system-utils/proc-uptime|portable|HERMITROOT/tests/e2e/system-utils/proc-uptime.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/proc-uptime.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/proc-uptime.sh",
+          "exists": true,
+          "sha256": "f3aece004e50e099e07bcd7b39445d83283cfd4cf9eb84a312ee4d10342a8000"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/random-device",
+      "lane": "portable",
+      "kind": "script_or_interpreter",
+      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
+      "corpus_line": 21,
+      "corpus_row": "system-utils/random-device|portable|HERMITROOT/tests/e2e/system-utils/random-device.sh --run",
+      "argv": [
+        "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/random-device.sh",
+        "--run"
+      ],
+      "sources": [
+        {
+          "role": "executable",
+          "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/system-utils/random-device.sh",
+          "exists": true,
+          "sha256": "61321a5e85b9ab248bd3b4d01a8678bff01b0674563c74bce763e51f4b1da4cf"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "system-utils/record-getpid",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 213,
+      "corpus_row": "system-utils/record-getpid|tests/c/getpid.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/c/getpid.c",
+          "exists": true,
+          "sha256": "c3bcd7e831cf8aef8ddb81bbbf6c6d7ba453e0e1dd77e9dc4f68d8768e67bfd5"
+        }
+      ],
+      "available": true
+    },
+    {
+      "id": "util-c/pmu-skid",
+      "lane": "portable",
+      "kind": "compiled_c",
+      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
+      "corpus_line": 214,
+      "corpus_row": "util-c/pmu-skid|tests/util/pmu_skid.c|||portable|disabled",
+      "argv": [],
+      "sources": [
+        {
+          "role": "primary",
+          "path": "tests/util/pmu_skid.c",
+          "exists": true,
+          "sha256": "d3995c134a0f6588837a969b646e012ffaaed0c44321b9a41411a4d11fcd5b95"
+        }
+      ],
+      "available": true
+    }
+  ]
+}
