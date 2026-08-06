@@ -54,14 +54,15 @@ const REFUSED_EXIT_CODE: i32 = 3;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
-/// Exit code reported when admission REFUSES a validate whose base predates a
-/// rebase-base floor. Same 3 as an ownership refusal: a refusal, not a crash.
+/// Exit code reported when admission REFUSES a validate whose head predates a
+/// fixed floor or the freshly fetched origin/main tip. Same 3 as an ownership
+/// refusal: a refusal, not a crash.
 const STALE_BASE_EXIT_CODE: i32 = 3;
-/// Env override for the base-admission predicate command (space-split argv). The
-/// target head is appended as `--head <sha>`. Defaults to the in-tree
-/// `ci-hub/validate/preflight_anchor.py`. Overridable so tests need neither
-/// python nor a hermit checkout, mirroring `PREFLIGHT_CMD` in
-/// `ci-hub/landing/parallel-prevalidate.sh`.
+/// Env override for the composite validation-admission command (space-split
+/// argv). The target head is appended as `--head <sha>`. Defaults to the in-tree
+/// `ci-hub/validate/preflight_validate.py`, which checks both fixed floors and
+/// freshly fetched origin/main. Overridable so Rust tests need neither Python,
+/// egress, nor a Hermit checkout.
 const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
 
 #[derive(Args, Clone, Debug)]
@@ -128,9 +129,9 @@ pub struct AcquireArgs {
     pub hold: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
-    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
-    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
-    /// while offline). Never a default; every use is announced on stderr.
+    /// Retained only to give old callers a named refusal. Qualifying validation
+    /// can no longer bypass base admission. Historical differential debugging
+    /// must run outside the receipt-producing validate path.
     #[arg(long, default_value_t = false)]
     pub skip_base_check: bool,
 }
@@ -171,9 +172,9 @@ pub struct RunArgs {
     pub child_deadline: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
-    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
-    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
-    /// while offline). Never a default; every use is announced on stderr.
+    /// Retained only to give old callers a named refusal. Qualifying validation
+    /// can no longer bypass base admission. Historical differential debugging
+    /// must run outside the receipt-producing validate path.
     #[arg(long, default_value_t = false)]
     pub skip_base_check: bool,
     #[arg(last = true, required = true)]
@@ -376,10 +377,10 @@ pub enum ValidateLockError {
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
-    /// Admission refused a validate whose base predates a rebase-base floor. The
-    /// message is the preflight_anchor refuse line, which NAMES the remedy
-    /// (rebase onto current origin/main >= <floor sha>). This is the mechanical
-    /// enforcement of REBASE-BEFORE-VALIDATE: a stale base never gets a slot.
+    /// Admission refused a validate whose head predates a fixed floor or the
+    /// freshly fetched origin/main tip. The message names the exact base and
+    /// remedy. This is mechanical REBASE-BEFORE-VALIDATE: a stale base never
+    /// gets a slot.
     #[error("{0}")]
     StaleBase(String),
     #[error(
@@ -488,27 +489,27 @@ fn reject_bad_max(max: u64) -> Result<(), ValidateLockError> {
     Ok(())
 }
 
-/// A 40-char lowercase-hex commit SHA — the only target shape the base-floor
-/// check can act on. A ref, a PR number, or a test placeholder (`sha-3`) is not
-/// resolvable here, so it is passed through un-gated rather than refused.
+/// A 40-char lowercase-hex commit SHA — the only target shape that can bind the
+/// admission verdict to the receipt-producing child.
 fn is_full_sha(target: &str) -> bool {
-    target.len() == 40 && target.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    target.len() == 40
+        && target
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` whose base
-/// head predates a rebase-base floor, so the convention we keep restating and
-/// violating is enforced at the ONE admission chokepoint every wrapper path
-/// funnels through. The refusal NAMES the remedy (the preflight_anchor refuse
-/// line: "Rebase onto current origin/main (>= <sha>) ...") — a bare "refused"
-/// gets a gate disabled.
+/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` unless its
+/// exact head contains both every fixed floor and the freshly fetched
+/// origin/main tip. Thus every qualifying receipt describes a state that can
+/// land without another rebase. The refusal names the exact missing base and
+/// remedy — a bare "refused" gets a gate disabled.
 ///
-/// Non-Validate kinds, non-40-hex targets, and an explicit `--skip-base-check`
-/// pass through so the gate never refuses everything (a gate that grants nothing
-/// gets removed). The predicate is shelled out to `preflight_anchor.py` — the
-/// SAME authority `parallel-prevalidate.sh` and `reconcile_receipts.py` use — so
-/// the remedy string and the local-merge-base/gh-compare fallback are not
-/// re-implemented here and cannot drift. Overridable via
-/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither python nor a checkout.
+/// Non-Validate kinds pass through. Validate targets that are not exact SHAs and
+/// the legacy `--skip-base-check` flag are refused: either would sever the
+/// observable binding between the admission verdict and the validated commit.
+/// The predicate is shelled out to `preflight_validate.py`, the same composite
+/// authority used by all other ci-hub validation producers. Overridable via
+/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither Python nor a checkout.
 ///
 /// Fail-CLOSED: preflight exit 2 (REFUSED) and any other non-zero (ERROR: head
 /// unresolved) both become `StaleBase`. An admission gate that admitted on "I
@@ -520,29 +521,29 @@ fn base_admission_check(
     skip: bool,
 ) -> Result<(), ValidateLockError> {
     if kind != Kind::Validate {
-        return Ok(()); // bench is not landed; no rebase-base floor applies
+        return Ok(()); // bench/diagnostic work is not landing evidence
     }
     if skip {
-        eprintln!(
-            "validate-lock: BASE CHECK SKIPPED for {target} via --skip-base-check \
-             — the rebase-base-floor admission gate is DISABLED for this run; a \
-             stale base will validate but cannot land."
-        );
-        return Ok(());
+        return Err(ValidateLockError::StaleBase(format!(
+            "REFUSE: --skip-base-check cannot authorize qualifying validation of \
+             {target}. Rebase onto freshly fetched origin/main before validating. \
+             Historical differential debugging is non-qualifying and must run \
+             outside validate-run so it cannot mint landing evidence."
+        )));
     }
     if !is_full_sha(target) {
-        // A ref/PR/placeholder cannot be floor-checked here; preflight_anchor
-        // gates the resolvable head on the producer paths. Do not block.
-        return Ok(());
+        return Err(ValidateLockError::StaleBase(format!(
+            "REFUSE: validation target {target:?} is not an exact lowercase \
+             40-hex commit SHA, so base ancestry cannot be bound to the child. \
+             Resolve the rebased PR head exactly before validating."
+        )));
     }
 
     let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
-        Ok(cmd) if !cmd.trim().is_empty() => {
-            cmd.split_whitespace().map(OsString::from).collect()
-        }
+        Ok(cmd) if !cmd.trim().is_empty() => cmd.split_whitespace().map(OsString::from).collect(),
         _ => vec![
             OsString::from("python3"),
-            root.join("ci-hub/validate/preflight_anchor.py")
+            root.join("ci-hub/validate/preflight_validate.py")
                 .into_os_string(),
         ],
     };
@@ -554,10 +555,9 @@ fn base_admission_check(
         Ok(o) => o,
         Err(err) => {
             return Err(ValidateLockError::StaleBase(format!(
-                "validate-lock: base-floor admission check could not run \
+                "validate-lock: validation admission check could not run \
                  ({err}); base for {target} is UNRESOLVED. Rebase onto current \
-                 origin/main before validating, or pass --skip-base-check to \
-                 override."
+                 origin/main before validating."
             )));
         }
     };
@@ -590,10 +590,9 @@ fn base_admission_check(
                 format!("exit {other:?}")
             };
             Err(ValidateLockError::StaleBase(format!(
-                "validate-lock: base-floor admission check for {target} did not \
+                "validate-lock: validation admission check for {target} did not \
                  resolve ({detail}); treating the base as STALE. Rebase onto \
-                 current origin/main before validating, or pass \
-                 --skip-base-check to override."
+                 current origin/main before validating."
             )))
         }
     }
@@ -888,7 +887,8 @@ impl ValidateLock {
         // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
         // with STALE_BASE_EXIT_CODE (mirroring the --no-wait Held refusal) so a
         // wrapper reads a distinct, non-crashing exit and can surface the remedy.
-        if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check) {
+        if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check)
+        {
             match err {
                 ValidateLockError::StaleBase(msg) => {
                     eprintln!("{msg}");
@@ -1417,7 +1417,7 @@ mod tests {
         );
     }
 
-    // 2. N=3 sequential validates all admitted, lock ends FREE.
+    // 2. N=3 sequential box-exclusive jobs all admitted, lock ends FREE.
     #[test]
     fn positive_non_starvation_three_sequential() {
         let paths = temp_paths("three-sequential");
@@ -1429,7 +1429,7 @@ mod tests {
                 .run(
                     RunArgs {
                         agent: format!("validate-agent-{i}"),
-                        kind: Kind::Validate,
+                        kind: Kind::Bench,
                         target: format!("sha-{i}"),
                         no_wait: false,
                         wait: 0,
@@ -1464,7 +1464,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "proof-agent".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "proof-sha".into(),
                     no_wait: false,
                     wait: 0,
@@ -1513,7 +1513,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "agent2".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha2".into(),
                     no_wait: true,
                     wait: 0,
@@ -1562,7 +1562,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "stuck-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-stuck".into(),
                     no_wait: false,
                     wait: 0,
@@ -1596,7 +1596,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "greedy".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-greedy".into(),
                     no_wait: false,
                     wait: 0,
@@ -1651,10 +1651,9 @@ mod tests {
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
-    // --- rebase-base-floor admission gate (mechanical REBASE-BEFORE-VALIDATE) ---
+    // --- composite admission gate (mechanical REBASE-BEFORE-VALIDATE) ---
     // These serialize on ENV_LOCK because they mutate a process-global env var.
-    // Non-hex-target tests above never read the env (is_full_sha short-circuits),
-    // so they are unaffected and need no lock.
+    // Bench-kind tests above never read the env, so they are unaffected.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn write_stub(name: &str, body: &str) -> PathBuf {
@@ -1730,11 +1729,10 @@ mod tests {
         }
     }
 
-    // PASS-THROUGH: bench kind, a non-40-hex target, and the explicit escape
-    // hatch must all return Ok WITHOUT invoking the predicate (the stub would
-    // REFUSE if it ran), so the gate never blocks what it cannot floor-check.
+    // PASS-THROUGH: bench work is not landing evidence and does not invoke the
+    // predicate (the stub would REFUSE if it ran).
     #[test]
-    fn base_admission_passes_through_bench_nonhex_and_skip() {
+    fn base_admission_passes_through_bench() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub(
             "pass",
@@ -1746,16 +1744,25 @@ mod tests {
             base_admission_check(r, HEX_SHA, Kind::Bench, false).is_ok(),
             "bench is never floor-gated"
         );
-        assert!(
-            base_admission_check(r, "sha-3", Kind::Validate, false).is_ok(),
-            "a non-40-hex target is not resolvable here and must pass through"
-        );
-        assert!(
-            base_admission_check(r, HEX_SHA, Kind::Validate, true).is_ok(),
-            "--skip-base-check must bypass the gate"
-        );
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         let _ = fs::remove_file(&stub);
+    }
+
+    // BYPASS NEGATIVES: neither an ambiguous target nor the former skip flag can
+    // mint qualifying evidence. Both refuse before invoking the predicate.
+    #[test]
+    fn base_admission_refuses_nonhex_and_skip_bypass() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let r = Path::new("/nonexistent");
+        for result in [
+            base_admission_check(r, "sha-3", Kind::Validate, false),
+            base_admission_check(r, HEX_SHA, Kind::Validate, true),
+        ] {
+            assert!(
+                matches!(result, Err(ValidateLockError::StaleBase(_))),
+                "a validate admission bypass must be refused, got {result:?}"
+            );
+        }
     }
 
     // END-TO-END through run(): a stale base is refused with STALE_BASE_EXIT_CODE

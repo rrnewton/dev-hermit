@@ -31,12 +31,11 @@ specific missing anchor. If all are contained -> exit 0 (OK).
     exit 2  REFUSED   -- head predates >=1 anchor; rebase before validating
     exit 3  ERROR     -- could not resolve the head or the anchors file
 
-WIRING. This guard is called from the drain / solo validate producer path in
-`ci-hub/landing/parallel-prevalidate.sh` (function `run_one`, before admission +
-`./validate.sh`); overridable there via `PREFLIGHT_CMD` for testing. Any other
-launch point OUTSIDE ci-hub (an agent-run bash, an agent-utils wrapper) should
-gate the same way with, e.g.:
-    ci-hub/validate/preflight_anchor.py --pr "$pr" || { echo "$reason"; continue; }
+WIRING. Receipt-producing validation launchers call the composite
+`preflight_validate.py`, which combines this fixed-floor authority with a fresh
+moving-origin/main ancestry check. `reconcile_receipts.py` calls this module
+directly because it is classifying historical receipts against fixed floors,
+not authorizing a new validation run.
 
 Usage:
   preflight_anchor.py [--head <sha-or-ref> | --pr <N>]
