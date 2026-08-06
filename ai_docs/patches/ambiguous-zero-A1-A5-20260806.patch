@@ -2,43 +2,54 @@ Ambiguous-zero fix A1/A2 — compat-envelope/render-scorecard.rs (NOT YET LANDED
 ================================================================================
 Task: execute-ambiguous-zero-fix-order-a3-a4-first
 
+CONTENTS: exactly TWO hunks, and ONLY the A1/A2 delta.
+  A2 — the module doc comment (a never-run cell is not counted as 0).
+  A1 — the empty-denominator refusal.
+An earlier revision of this file wrongly also carried the PR #48 column-rename
+hunks: the shared parent index entry for render-scorecard.rs was reset to HEAD
+mid-session by another agent, so a plain `git diff` silently widened from 2
+hunks to 9. The base is now pinned explicitly to PR #48's blob
+7263e816ad98d26a77bd17da3548e7a21a1d3c90 rather than to whatever the shared
+index happens to hold. If you regenerate this, pin the base blob — do not trust
+`git diff` in the parent checkout.
+
 STATUS OF THE OTHER ITEMS IN THIS SERIES:
   * A3/A4 (ci-hub/parity/prefix_depth.sh) LANDED — carried in by the owning
     agent's re-land commit d53ffbe; regression test at
     ci-hub/parity/tests/test_prefix_depth_zero.sh (14 assertions, green).
-    Its hunks are therefore no longer reproduced here.
   * A5 audited, not changed (documented in place inside prefix_depth.sh).
   * B1/B2 published as rrnewton/hermit PR #1731.
   * B3 consumer audit found coverage already complete; no fix needed.
 
-WHY THIS ONE IS STILL A PATCH AND NOT A COMMIT:
-  compat-envelope/render-scorecard.rs is STAGED IN THE SHARED PARENT INDEX by
-  another agent (the `parity` -> `stdout_parity` column rename). Committing the
-  working-tree file would publish that agent's uncommitted work under this
-  commit, so it is held here instead.
+WHY THIS IS A PATCH AND NOT A COMMIT — AND WHAT CHANGED:
+  render-scorecard.rs is owned by dev-hermit PR #48 ("rename the parity CSV
+  column to stdout_parity", branch compat-envelope/stdout-parity-column-rename,
+  head 737372d2, OPEN draft). The blob staged in the shared parent index is
+  BYTE-IDENTICAL to PR #48's, so that work is already published — the risk was
+  never losing it, only mis-attributing it under this task's commit.
 
-  UPDATE — the earlier "cannot be isolated" finding is now STALE. Against the
-  old origin/main the rebased hunks died at runtime with "CSV missing required
-  column parity". Against current HEAD they apply cleanly (hunk 2 at offset -21)
-  and run correctly: verified on both the negative and positive brackets, and
-  by the 26-assertion suite in
-  compat-envelope/tests/test_render_scorecard_empty_denominator.sh.
-  So this CAN now land independently. It is still not committed here only
-  because the file's index entry belongs to another agent: whoever lands it
-  should `git apply` this patch to HEAD's render-scorecard.rs, not to the
-  working-tree copy.
+  BOTH LANDING ORDERS ARE VERIFIED, so this does not have to wait on PR #48:
+    order 1 — applied to clean HEAD (PR #48 absent): 26/26 PASS
+              (hunk 2 lands at offset -21)
+    order 2 — applied on top of PR #48's renderer:   26/26 PASS
+              (result is byte-identical to the current working tree)
+  Suite: compat-envelope/tests/test_render_scorecard_empty_denominator.sh
+
+  HAZARD FOR WHOEVER LANDS PR #48: its branch does NOT contain this delta. If
+  that file is committed FROM THE SHARED INDEX rather than re-added from the
+  worktree, A1/A2 is silently dropped.
 
 WHAT IT FIXES:
   An EMPTY DENOMINATOR rendered as a confident `TOTAL 0` at exit 0 —
   indistinguishable from "we measured, and nothing passed". Reproduced live on
   two real runs in the committed scorecard.csv, one of which had 24 PASSING
   ptrace cells (in `strict`) and still published 0 under the default `verify`
-  denominator. Now refused with exit 3, carrying rows-considered, ptrace-row
+  denominator. Now refused with exit 3, carrying rows-considered, the ptrace-row
   count, and the modes that would actually yield a denominator.
 
 ================================================================================
 diff --git a/compat-envelope/render-scorecard.rs b/compat-envelope/render-scorecard.rs
-index b005bc7..55d128a 100755
+index 7263e81..55d128a 100755
 --- a/compat-envelope/render-scorecard.rs
 +++ b/compat-envelope/render-scorecard.rs
 @@ -19,9 +19,17 @@
@@ -62,98 +73,7 @@ index b005bc7..55d128a 100755
  //!     Reverie counter CSVs select `--observable tool-count` instead and are
  //!     labeled `tool-count-parity%`; the two observables are never conflated.
  //!
-@@ -45,7 +53,7 @@
- //!                     (default: verify).
- //!   --backends LIST   Comma-separated backend columns, in order
- //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
--//!   --observable O    Observable compared by the legacy CSV `parity` field
-+//!   --observable O    Observable compared by the stdout-parity CSV column
- //!                     (default: stdout; use tool-count for Reverie counters).
- //!   --json | --tsv    Machine-readable output instead of the table.
- //!
-@@ -98,11 +106,24 @@ struct Cell {
-     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
-     outcome: String,   // pass | fail | error | timeout | oom | skip
-     deterministic: Option<bool>,
--    // Legacy CSV field name: this stores stdout-only parity.
--    parity: Option<bool>,
-+    /// Stdout-only parity. Read from `stdout_parity`, or from the legacy `parity`
-+    /// column in scorecards written before the rename (see [`PARITY_COLUMNS`]).
-+    stdout_parity: Option<bool>,
- }
- 
-+/// Accepted names for the stdout-parity column, in preference order.
-+///
-+/// The column was originally called `parity`, which claimed more than it measured: it
-+/// only ever held piped-guest-stdout SHA-256 equality, never the four-signal standard.
-+/// The rendered label was corrected first; this is the raw column catching up. The old
-+/// name stays readable because published scorecards still carry it, and silently
-+/// rendering nothing for them would be a worse failure than the misnomer.
-+const PARITY_COLUMNS: &[&str] = &["stdout_parity", "parity"];
-+
- /// The canonical header this renderer and `collect-envelope.rs` agree on.
-+///
-+/// The stdout-parity column is deliberately absent: it is resolved through
-+/// [`PARITY_COLUMNS`] so either spelling is accepted.
- const HEADER: &[&str] = &[
-     "run_id",
-     "run_utc",
-@@ -118,7 +139,6 @@ const HEADER: &[&str] = &[
-     "cell_state",
-     "outcome",
-     "deterministic",
--    "parity",
-     "output_hash",
-     "duration_ms",
-     "max_rss_kb",
-@@ -234,7 +254,17 @@ fn main() {
-     for h in HEADER {
-         let _ = idx(h);
-     }
--    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
-+    // Resolve stdout-parity under either spelling, preferring the honest one.
-+    let i_par = PARITY_COLUMNS
-+        .iter()
-+        .find_map(|name| header.iter().position(|h| h == name))
-+        .unwrap_or_else(|| {
-+            die(&format!(
-+                "CSV missing the stdout-parity column (looked for {})",
-+                PARITY_COLUMNS.join(" then ")
-+            ))
-+        });
-+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
-         idx("run_id"),
-         idx("bucket"),
-         idx("test_id"),
-@@ -242,7 +272,6 @@ fn main() {
-         idx("backend"),
-         idx("outcome"),
-         idx("deterministic"),
--        idx("parity"),
-     );
- 
-     let mut cells: Vec<Cell> = Vec::new();
-@@ -265,7 +294,7 @@ fn main() {
-             backend: get(i_backend),
-             outcome: get(i_outcome),
-             deterministic: parse_bool(&get(i_det)),
--            parity: parse_bool(&get(i_par)),
-+            stdout_parity: parse_bool(&get(i_par)),
-         });
-     }
-     if cells.is_empty() {
-@@ -363,8 +392,8 @@ fn main() {
-         // for a non-ptrace backend already requires parity.
-         let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
-         // Parity is true only when the collector recorded a bitwise match.
--        let par = c.parity.unwrap_or(false);
--        let par_measured = c.parity.is_some();
-+        let par = c.stdout_parity.unwrap_or(false);
-+        let par_measured = c.stdout_parity.is_some();
-         by_backend
-             .entry(c.backend.clone())
-             .or_default()
-@@ -420,6 +449,82 @@ fn main() {
+@@ -441,6 +449,82 @@ fn main() {
          rows.insert(bucket.clone(), row);
      }
  
