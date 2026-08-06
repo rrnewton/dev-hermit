@@ -113,6 +113,16 @@ fn run_guest(repo: &Path, backend: &str, verify: bool, guest: &[String], timeout
     // Portable profile mirrors collect-envelope.rs::run_and_hash so DBI cells
     // are comparable with the rest of the scorecard.
     cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
+    // Pin the guest environment for the same reason, and it must stay in step with
+    // run_and_hash: `--base-env host` (the default) lets the collector's ambient environment
+    // decide the guest's initial stack address, so any stack-derived observable stops being
+    // comparable between invocations. `minimal` = PATH, HOSTNAME, HOME only.
+    cmd.arg("--base-env").arg("minimal");
+    // Re-add the two variables this harness has always relied on for guest determinism.
+    // `minimal` would otherwise drop them, and an UNSET TZ is worse than an inherited one:
+    // glibc then falls back to /etc/localtime, i.e. host state. Pinned guest env is exactly:
+    // PATH, HOSTNAME, HOME (hermit `minimal`) + LC_ALL=C + TZ=UTC. Nothing else reaches the guest.
+    cmd.arg("-e").arg("LC_ALL=C").arg("-e").arg("TZ=UTC");
     cmd.arg("--");
     for g in guest {
         cmd.arg(g);

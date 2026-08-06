@@ -676,6 +676,22 @@ fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Opt
     let hermit = hermit_bin(repo);
     let mut cmd = Command::new("timeout");
     cmd.arg("120s").arg(&hermit).arg("run").arg("--backend").arg(backend).arg("--strict");
+    // Pin the GUEST environment. `--base-env` defaults to `host`, which passes every one of
+    // hermit's own variables through to the guest. The kernel builds the initial stack from
+    // argv/envp/auxv, so the size of that block decides where the stack sits: a collector run
+    // from a shell with one extra (or longer) variable shifts every guest stack address.
+    // Measured on ptrace/--strict with an otherwise identical guest, changing a single variable's
+    // length moved the stack 16 bytes and changed 110 of 172 DETLOG lines — all 54 [stack] hashes
+    // plus 56 INFO-log syscall arguments that carry stack addresses. Stdout parity does not see
+    // this, but any stack-derived observable does, so pinning here (once, at the env) is what
+    // keeps cells comparable across invocations instead of two downstream exclusions that drift.
+    // `minimal` is hermit's own deterministic base: PATH, HOSTNAME, HOME and nothing else.
+    cmd.arg("--base-env").arg("minimal");
+    // Re-add the two variables this harness has always relied on for guest determinism.
+    // `minimal` would otherwise drop them, and an UNSET TZ is worse than an inherited one:
+    // glibc then falls back to /etc/localtime, i.e. host state. Pinned guest env is exactly:
+    // PATH, HOSTNAME, HOME (hermit `minimal`) + LC_ALL=C + TZ=UTC. Nothing else reaches the guest.
+    cmd.arg("-e").arg("LC_ALL=C").arg("-e").arg("TZ=UTC");
     if lane == "portable" {
         cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
     }
