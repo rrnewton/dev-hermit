@@ -1,49 +1,296 @@
 #!/usr/bin/env bash
+# INERT both-sided bracket of the landing eligibility predicate.
+#
+# `local-validation-eligibility.sh` is the predicate that decides whether a PR's
+# local-validate record authorizes landing. The GitHub `locally-validated` label
+# is a CACHE of that result; the ledger is the truth (#231/#243). This test
+# exercises the predicate DIRECTLY against synthetic ledger fixtures in a temp
+# dir: no PR is read, no label is written, no merge is attempted, and no
+# authorization artifact is ever planted on live state.
+#
+# Both legs are required, and the second is the one usually skipped:
+#   NEGATIVE  an unbacked / stale-SHA / tampered / known-failing record is
+#             REFUSED (proves the guard is not one that never fires), and
+#   POSITIVE  a genuinely ledger-backed exact head is still ADMITTED (proves the
+#             guard is not one that refuses everything).
+# Counts for both sides are printed at the end.
+#
+# The exit-code contract under test (see lib/validate_status.rs Verdict):
+#   0 ELIGIBILITY=VALIDATED      2 ELIGIBILITY=ERROR / usage
+#   3 ELIGIBILITY=KNOWN_FAILED   4 ELIGIBILITY=NOT_VALIDATED
+# The lander must land on 0 only; every other code is a refusal.
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$script_dir/../.." && pwd)
 helper=$script_dir/local-validation-eligibility.sh
 lander=$script_dir/land-pr.sh
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 ledger=$tmp/ledger.jsonl
 
-valid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-missing=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-printf '%s\n' \
-  "{\"schema_version\":5,\"commit\":\"$valid\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[]},\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"real_seconds\":1}" \
-  >"$ledger"
+# Distinct, obviously-synthetic commits. HEAD is the commit under evaluation;
+# OTHER stands for the commit a stale receipt was actually produced for (e.g.
+# the pre-rebase head, whose receipt a SHA-changing rebase invalidates).
+HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+OTHER_SHA=cccccccccccccccccccccccccccccccccccccccc
+THIRD_SHA=dddddddddddddddddddddddddddddddddddddddd
 
-run_case() {
-  local expected_rc=$1 sha=$2 labels=$3 output rc
-  set +e
-  output=$(CI_HUB_VALIDATE_LEDGER="$ledger" "$helper" "$sha" "$labels" 2>&1)
-  rc=$?
-  set -e
-  if [ "$rc" -ne "$expected_rc" ]; then
-    printf 'expected rc=%s, got rc=%s\n%s\n' "$expected_rc" "$rc" "$output" >&2
-    exit 1
-  fi
-  grep '^ELIGIBILITY=' <<<"$output" | tail -1
+neg_refused=0
+neg_total=0
+pos_admitted=0
+pos_total=0
+fail=0
+# Sub-tallies for the label-independence pair reported in the legacy summary
+# line that ci-hub/tests/test_operational_bounds.py asserts on.
+unbacked_refused=0
+backed_admitted=0
+LAST_STATUS=
+
+# A fully qualifying schema-5 clean full-coverage PASS row for $1.
+pass_row() {
+  jq -cn --arg c "$1" '{
+    schema_version: 5, commit: $c, commit_anchored: true, tree_dirty: false,
+    profile: "full", selection_mode: "full", result: "pass",
+    executed_tests: 42, filtered_tests: 0, failures: 0,
+    coverage: {planned_test_nodes: 1, executed_test_nodes: 1,
+               zero_executed_nodes: [], absent_nodes: []},
+    finished_at: "2026-08-04T00:00:00Z", host: "fixture", real_seconds: 600
+  }'
 }
 
-# The same unbacked exact head is rejected with or without the cache label.
-missing_without=$(run_case 4 "$missing" "")
-missing_with=$(run_case 4 "$missing" "locally-validated")
-[ "$missing_without" = "ELIGIBILITY=NOT_VALIDATED" ]
-[ "$missing_with" = "$missing_without" ]
+# A DURABLE failing row for $1: clean+full+anchored, complete five-gate run, a
+# named red gate with bound origin, solo and non-flaky. This is the only shape
+# that reaches KNOWN_FAILED (rc 3) rather than a re-measurement request.
+fail_row() {
+  jq -cn --arg c "$1" '{
+    schema_version: 5, commit: $c, commit_anchored: true, tree_dirty: false,
+    profile: "full", selection_mode: "full", result: "fail",
+    executed_tests: 100, filtered_tests: 0, failures: 1,
+    gates_run: 5, gates_expected: 5,
+    gates: [{name: "detcore", result: "fail", exit_code: 101, real_seconds: 42.0,
+             failure_origin: "outer_gate", failed_substeps: []}],
+    dag_jobs: 4, concurrent_validates: 0, known_flaky_failure: false,
+    exit_code: 1, finished_at: "2026-08-04T00:00:00Z", host: "fixture",
+    real_seconds: 600
+  }'
+}
 
-# The same ledger-backed exact head is admitted with or without the cache label.
-valid_without=$(run_case 0 "$valid" "")
-valid_with=$(run_case 0 "$valid" "locally-validated")
-[ "$valid_without" = "ELIGIBILITY=VALIDATED" ]
-[ "$valid_with" = "$valid_without" ]
+# pass_row for HEAD_SHA with one field tampered, per the jq expression in $1.
+tampered_row() { pass_row "$HEAD_SHA" | jq -c "$1"; }
 
-# The production consumer must use the helper and must not type the label via gh.
-grep -Fq 'local-validation-eligibility.sh' "$lander"
-if grep -Eq 'gh pr edit .*--add-label locally-validated' "$lander"; then
-  echo "land-pr.sh still directly types locally-validated" >&2
-  exit 1
+# check <side> <expected_rc> <expected_verdict|-> <name> -- <helper args...>
+# Runs the predicate against whatever is currently in $ledger (unless the caller
+# exported CI_HUB_VALIDATE_STATUS_BIN) and records the outcome on the right side.
+check() {
+  local side=$1 expected_rc=$2 expected_verdict=$3 name=$4; shift 5
+  local output rc verdict status=OK
+  set +e
+  output=$(CI_HUB_VALIDATE_LEDGER="$ledger" "$helper" "$@" 2>&1)
+  rc=$?
+  set -e
+  verdict=$(grep '^ELIGIBILITY=' <<<"$output" | tail -1 || true)
+  verdict=${verdict:-<none>}
+  [ "$rc" -eq "$expected_rc" ] || status=BAD
+  if [ "$expected_verdict" != "-" ] && [ "$verdict" != "$expected_verdict" ]; then
+    status=BAD
+  fi
+  # A refusal that leaks VALIDATED anywhere in its output is not a refusal.
+  if [ "$side" = NEG ] && { [ "$rc" -eq 0 ] || grep -q 'ELIGIBILITY=VALIDATED' <<<"$output"; }; then
+    status=BAD
+  fi
+  if [ "$side" = NEG ]; then
+    neg_total=$((neg_total + 1))
+    [ "$status" = OK ] && neg_refused=$((neg_refused + 1))
+  else
+    pos_total=$((pos_total + 1))
+    [ "$status" = OK ] && pos_admitted=$((pos_admitted + 1))
+  fi
+  LAST_STATUS=$status
+  printf '%-4s %-4s rc=%-2s %-26s %s\n' "$status" "$side" "$rc" "$verdict" "$name"
+  if [ "$status" = BAD ]; then
+    fail=1
+    printf '     expected rc=%s verdict=%s; full output:\n%s\n' \
+      "$expected_rc" "$expected_verdict" "$output" >&2
+  fi
+}
+
+echo "== NEGATIVE leg: an unbacked, stale, tampered, or failing record is REFUSED =="
+
+# --- unbacked exact head: nothing at all in the ledger --------------------
+: >"$ledger"
+check NEG 4 ELIGIBILITY=NOT_VALIDATED "unbacked head, no label" -- \
+  "$HEAD_SHA" ""
+[ "$LAST_STATUS" = OK ] && unbacked_refused=$((unbacked_refused + 1))
+check NEG 4 ELIGIBILITY=NOT_VALIDATED "unbacked head, locally-validated PLANTED" -- \
+  "$HEAD_SHA" "locally-validated"
+[ "$LAST_STATUS" = OK ] && unbacked_refused=$((unbacked_refused + 1))
+
+# --- STALE-SHA: a real, fully qualifying PASS for a DIFFERENT commit -------
+# This is the #231/#243 hazard in its sharpest form: the receipt is genuine and
+# green, it is simply not for the head being landed (a rebase moved the SHA).
+pass_row "$OTHER_SHA" >"$ledger"
+check NEG 4 ELIGIBILITY=NOT_VALIDATED "STALE-SHA pass for other commit, no label" -- \
+  "$HEAD_SHA" ""
+check NEG 4 ELIGIBILITY=NOT_VALIDATED "STALE-SHA pass + locally-validated PLANTED" -- \
+  "$HEAD_SHA" "locally-validated"
+# ...and the stale receipt is not laundered by piling on more foreign greens.
+{ pass_row "$OTHER_SHA"; pass_row "$THIRD_SHA"; } >"$ledger"
+check NEG 4 ELIGIBILITY=NOT_VALIDATED "STALE-SHA: two foreign passes, none for head" -- \
+  "$HEAD_SHA" "locally-validated"
+
+# --- TAMPERED: a record FOR the head with one qualifying condition broken ---
+# Each is a well-shaped record a careless or hostile producer could write.
+while IFS='|' read -r label expr; do
+  [ -n "$label" ] || continue
+  tampered_row "$expr" >"$ledger"
+  check NEG 4 ELIGIBILITY=NOT_VALIDATED "TAMPERED $label" -- \
+    "$HEAD_SHA" "locally-validated"
+done <<'CASES'
+tree_dirty=true|.tree_dirty = true
+commit_anchored=false|.commit_anchored = false
+profile=fast|.profile = "fast"
+selection_mode=affected|.selection_mode = "affected"
+result=fail (bare)|.result = "fail"
+executed_tests=0|.executed_tests = 0
+executed_tests absent|del(.executed_tests)
+coverage absent|del(.coverage)
+coverage.zero_executed_nodes|.coverage.zero_executed_nodes = ["detcore"]
+coverage.absent_nodes|.coverage.absent_nodes = ["detcore"]
+coverage.planned_test_nodes=0|.coverage.planned_test_nodes = 0
+failures=1|.failures = 1
+schema 3, counts stripped|.schema_version = 3 | del(.executed_tests) | del(.filtered_tests)
+CASES
+
+# --- KNOWN-FAILING: a durable clean full-coverage FAIL for the exact head ---
+fail_row "$HEAD_SHA" >"$ledger"
+check NEG 3 ELIGIBILITY=KNOWN_FAILED "durable FAIL for head + label PLANTED" -- \
+  "$HEAD_SHA" "locally-validated"
+
+# --- malformed input: refused before any ledger is consulted ---------------
+pass_row "$HEAD_SHA" >"$ledger"   # a real green is present; input must still be rejected
+check NEG 2 - "malformed sha: uppercase" -- "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" ""
+check NEG 2 - "malformed sha: 39 hex" -- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ""
+check NEG 2 - "malformed sha: 41 hex" -- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ""
+check NEG 2 - "malformed sha: non-hex" -- "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" ""
+check NEG 2 - "malformed sha: empty" -- "" ""
+check NEG 2 - "usage: no arguments" --
+check NEG 2 - "usage: too many arguments" -- "$HEAD_SHA" "" extra
+
+# --- fail-closed when the authority itself cannot be consulted -------------
+# The verdict comes from ci-hub validate-status; if that cannot be run or
+# answers outside the contract, the predicate must ERROR, never admit.
+printf '#!/bin/sh\nexit 1\n' >"$tmp/rc1"; chmod +x "$tmp/rc1"
+printf '#!/bin/sh\nexit 5\n' >"$tmp/rc5"; chmod +x "$tmp/rc5"
+CI_HUB_VALIDATE_STATUS_BIN=$tmp/does-not-exist \
+  check NEG 2 - "fail-closed: authority binary missing" -- "$HEAD_SHA" "locally-validated"
+CI_HUB_VALIDATE_STATUS_BIN=$tmp/rc1 \
+  check NEG 2 - "fail-closed: authority rc=1" -- "$HEAD_SHA" "locally-validated"
+CI_HUB_VALIDATE_STATUS_BIN=$tmp/rc5 \
+  check NEG 2 - "fail-closed: authority rc=5 (off-contract)" -- "$HEAD_SHA" "locally-validated"
+
+echo
+echo "== POSITIVE leg: a genuinely ledger-backed exact head is still ADMITTED =="
+
+pass_row "$HEAD_SHA" >"$ledger"
+check POS 0 ELIGIBILITY=VALIDATED "backed head, NO label (ledger is the authority)" -- \
+  "$HEAD_SHA" ""
+[ "$LAST_STATUS" = OK ] && backed_admitted=$((backed_admitted + 1))
+check POS 0 ELIGIBILITY=VALIDATED "backed head, label present" -- \
+  "$HEAD_SHA" "locally-validated"
+[ "$LAST_STATUS" = OK ] && backed_admitted=$((backed_admitted + 1))
+check POS 0 ELIGIBILITY=VALIDATED "backed head, unrelated labels only" -- \
+  "$HEAD_SHA" "mechanism:landing,post-facto-human-review"
+# The green must survive being surrounded by foreign and superseded records.
+# NOTE (designed, pinned here so a change is visible): a same-commit durable
+# FAIL does NOT veto a qualifying pass — the ledger does not latch, and the fail
+# is reported as a flake signal instead.
+{ pass_row "$OTHER_SHA"; fail_row "$HEAD_SHA"; pass_row "$HEAD_SHA"; pass_row "$THIRD_SHA"; } >"$ledger"
+check POS 0 ELIGIBILITY=VALIDATED "backed head amid foreign + superseded-fail rows" -- \
+  "$HEAD_SHA" "locally-validated"
+
+echo
+echo "== CONSUMER AUDIT: the lander defers to this predicate, and nothing else merges =="
+
+audit_fail=0
+audit() { # audit <description> <ok|bad>
+  if [ "$2" = ok ]; then printf 'OK   AUDIT %s\n' "$1"
+  else printf 'BAD  AUDIT %s\n' "$1"; audit_fail=1; fi
+}
+
+# 1. Both lander call sites invoke the helper and capture its exit code.
+mapfile -t elig_lines < <(grep -n 'local-validation-eligibility\.sh"' "$lander" || true)
+if [ "${#elig_lines[@]}" -ge 2 ]; then
+  uncaptured=0
+  for line in "${elig_lines[@]}"; do
+    grep -q 'VRC=\$?' <<<"$line" || uncaptured=1
+  done
+  if [ "$uncaptured" -eq 0 ]; then
+    audit "land-pr.sh: ${#elig_lines[@]} helper call sites, all capture rc" ok
+  else
+    audit "land-pr.sh: a helper call site discards its exit code" bad
+  fi
+else
+  audit "land-pr.sh: expected >=2 helper call sites, found ${#elig_lines[@]}" bad
 fi
 
-printf 'PASS: unbacked label rejected 2/2; validated head admitted 2/2; lander uses ledger authority\n'
+# 2. The lander refuses on each non-zero code rather than only on rc 3/4.
+for pat in 'known-failing' 'no clean full-validate PASS record' 'could not evaluate exact-head validation evidence'; do
+  if grep -Fq "$pat" "$lander"; then
+    audit "land-pr.sh abandons on: $pat" ok
+  else
+    audit "land-pr.sh lost its abandon path for: $pat" bad
+  fi
+done
+
+# 3. The lander never types the cache label itself; only the ledger-guarded
+#    applier may materialize it.
+if grep -Eq 'gh pr edit .*--add-label locally-validated' "$lander"; then
+  audit "land-pr.sh directly types locally-validated" bad
+else
+  audit "land-pr.sh does not type the cache label directly" ok
+fi
+if grep -Fq 'apply-local-label' "$lander"; then
+  audit "land-pr.sh derives the label via ledger-guarded apply-local-label" ok
+else
+  audit "land-pr.sh no longer routes the label through apply-local-label" bad
+fi
+
+# 4. COORDINATOR DECISION: no merge path outside land-pr.sh. A bare label can
+#    still authorize at the merge gate, so the hole is closed structurally by
+#    keeping exactly one merge call site behind this predicate. Any other
+#    executable merge invocation in the parent must be reported, not used.
+allowed_merge_files="ci-hub/landing/land-pr.sh ci-hub/tests/test_operational_bounds.py"
+if merge_files=$(git -C "$root" grep -lI -E '^[^#]*gh +pr +merge' -- \
+      '*.sh' '*.py' '*.rs' '*.bash' ':!hermit' ':!reverie' ':!liteinst2' ':!agent-utils' 2>/dev/null); then
+  unexpected=""
+  while read -r f; do
+    [ -n "$f" ] || continue
+    case " $allowed_merge_files " in *" $f "*) ;; *) unexpected="$unexpected $f";; esac
+  done <<<"$merge_files"
+  if [ -z "$unexpected" ]; then
+    audit "sole executable merge path is land-pr.sh (+ its own test)" ok
+  else
+    audit "REPORT: merge invocation outside land-pr.sh:$unexpected" bad
+  fi
+else
+  # A guard that cannot run is not a guard that passed.
+  audit "merge-path audit could not run (git grep failed from $root)" bad
+fi
+
+echo
+# Legacy label-independence summary, kept verbatim so existing consumers keep
+# working; the counts below are the full both-sided tally.
+printf 'unbacked label rejected %d/2; validated head admitted %d/2\n' \
+  "$unbacked_refused" "$backed_admitted"
+printf 'NEGATIVE refusals: %d/%d   POSITIVE admissions: %d/%d\n' \
+  "$neg_refused" "$neg_total" "$pos_admitted" "$pos_total"
+if [ "$unbacked_refused" -ne 2 ] || [ "$backed_admitted" -ne 2 ]; then
+  fail=1
+fi
+if [ "$fail" -ne 0 ] || [ "$audit_fail" -ne 0 ] ||
+   [ "$neg_refused" -ne "$neg_total" ] || [ "$pos_admitted" -ne "$pos_total" ]; then
+  echo "FAIL: local-validation eligibility bracket" >&2
+  exit 1
+fi
+echo "PASS: eligibility predicate refuses every unbacked/stale/tampered/failing head and still admits a ledger-backed one; no merge path outside land-pr.sh"
