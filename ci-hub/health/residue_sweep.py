@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""Find work made ownerless by correct refusals and agent recycling.
+
+This is deliberately a report/router, never a cleaner.  A slot is considered
+held by a dead owner only when both independent facts agree: no registered
+owner is in the live ORC fleet *and* no same-user process has a cwd below the
+slot.  That second condition prevents a live delegated worker without a tmux
+window from being mistaken for residue.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+TASK_ID = "periodic-residue-sweep-correct-refusals-leave-unowned-work"
+OWNER_QUEUE = "owner-decision-queue-2026-08-04"
+ORPHAN_DETECTOR = ROOT / "scripts" / "orphaned-task-detector.sh"
+REGISTRY = ROOT / "worktree-state.json"
+
+NOTE_MARKERS = (
+    "did not commit",
+    "not committed",
+    "untracked",
+    "needs authorization",
+    "left for coordinator",
+    "left for the coordinator",
+    "no reset/clean/force-push done",
+)
+OWNER_MARKERS = (
+    "needs authorization",
+    "owner decision",
+    "owner-decision",
+    "irreversible",
+)
+NO_ACTION_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bnothing (?:is |was )?(?:left )?(?:uncommitted|untracked)\b",
+        r"\bnothing to commit\b",
+        r"\bno (?:files?|changes?|work) (?:are |is |were |was )?(?:left )?(?:uncommitted|untracked)\b",
+        r"\bno (?:code|files?) (?:was |were )?(?:changed|modified)\b",
+        r"\bno (?:follow[- ]?up|action) (?:is )?(?:needed|required)\b",
+    )
+)
+DISPOSITION_RE = re.compile(r"source_note_ids?=([0-9,]+)")
+
+
+class SweepUnavailable(RuntimeError):
+    """An authority could not be read; silence is not a clean result."""
+
+
+@dataclass(frozen=True)
+class NoteRow:
+    note_id: int
+    task: str
+    owner: str
+    content: str
+
+
+@dataclass(frozen=True)
+class Residue:
+    kind: str
+    key: str
+    evidence: str
+    route_task: str
+    route_authority: str
+    disposition: str = "route"
+
+    @property
+    def actionable(self) -> bool:
+        return self.disposition == "route"
+
+
+def run_checked(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def read_live_fleet() -> tuple[set[str], list[Residue]]:
+    result = run_checked((str(ORPHAN_DETECTOR), "--gate"))
+    output = result.stdout + result.stderr
+    if result.returncode not in (0, 1):
+        raise SweepUnavailable(
+            f"orphan detector rc={result.returncode}: {' '.join(output.split())}"
+        )
+
+    live: set[str] = set()
+    orphans: list[Residue] = []
+    in_table = False
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("live agents:"):
+            live.update(stripped.removeprefix("live agents:").split())
+        if stripped.startswith("---"):
+            in_table = not in_table
+            continue
+        if not in_table or not stripped or stripped.startswith("TASK "):
+            continue
+        fields = stripped.split()
+        if len(fields) != 4 or fields[2] not in {"IN_PROGRESS", "OPEN", "BACKLOG"}:
+            continue
+        task, owner, status, age_h = fields
+        orphans.append(
+            Residue(
+                kind="orphaned-task",
+                key=task,
+                evidence=f"owner={owner} status={status} age_h={age_h}",
+                route_task=TASK_ID,
+                route_authority="coordinator",
+            )
+        )
+    if not live:
+        raise SweepUnavailable("orphan detector returned no live-agent identity set")
+    return live, orphans
+
+
+def _sql_rows(query: str) -> list[str]:
+    result = run_checked(("tg", "sql", query))
+    if result.returncode != 0:
+        raise SweepUnavailable(
+            f"TaskGraph query rc={result.returncode}: {' '.join(result.stderr.split())}"
+        )
+    return [line for line in result.stdout.splitlines() if line.startswith("ROW|")]
+
+
+def read_note_rows() -> tuple[list[NoteRow], set[int]]:
+    marker_sql = " OR ".join(
+        "lower(n.content) LIKE '%" + marker.replace("'", "''") + "%'"
+        for marker in NOTE_MARKERS
+    )
+    rows = _sql_rows(
+        "SELECT 'ROW|' || n.id || '|' || t.local_id || '|' || "
+        "coalesce(t.owner,'') || '|' || hex(n.content) "
+        "FROM task_notes n JOIN tasks t ON t.local_id=n.task_id "
+        "WHERE t.status='IN_PROGRESS' AND (" + marker_sql + ") ORDER BY n.id"
+    )
+    notes: list[NoteRow] = []
+    for row in rows:
+        _, raw_id, task, owner, content_hex = row.split("|", 4)
+        try:
+            content = bytes.fromhex(content_hex).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise SweepUnavailable(f"malformed TaskGraph note row {raw_id}: {exc}") from exc
+        notes.append(NoteRow(int(raw_id), task, owner, content))
+
+    disposed: set[int] = set()
+    for row in _sql_rows(
+        "SELECT 'ROW|' || id || '|' || hex(content) FROM task_notes "
+        "WHERE content LIKE '%RESIDUE-DISPOSITION:%'"
+    ):
+        _, _note_id, content_hex = row.split("|", 2)
+        try:
+            content = bytes.fromhex(content_hex).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        for match in DISPOSITION_RE.finditer(content):
+            disposed.update(int(value) for value in match.group(1).split(","))
+    return notes, disposed
+
+
+def classify_notes(notes: Iterable[NoteRow], disposed: set[int]) -> list[Residue]:
+    by_task: dict[tuple[str, str, str, str], list[int]] = {}
+    for note in notes:
+        if note.note_id in disposed:
+            continue
+        no_action = any(pattern.search(note.content) for pattern in NO_ACTION_PATTERNS)
+        needs_owner = any(marker in note.content.lower() for marker in OWNER_MARKERS)
+        disposition = "no-action" if no_action else "route"
+        route_task = OWNER_QUEUE if needs_owner and not no_action else TASK_ID
+        authority = "owner" if needs_owner and not no_action else "coordinator"
+        if no_action:
+            route_task, authority = "none", "none"
+        key = (note.task, route_task, authority, disposition)
+        by_task.setdefault(key, []).append(note.note_id)
+
+    residues: list[Residue] = []
+    for (task, route_task, authority, disposition), note_ids in sorted(by_task.items()):
+        joined = ",".join(str(note_id) for note_id in note_ids)
+        residues.append(
+            Residue(
+                kind="declined-action",
+                key=task,
+                evidence=f"source_note_ids={joined}",
+                route_task=route_task,
+                route_authority=authority,
+                disposition=disposition,
+            )
+        )
+    return residues
+
+
+def process_cwds(proc_root: Path = Path("/proc")) -> set[Path]:
+    cwds: set[Path] = set()
+    uid = os.getuid()
+    try:
+        entries = tuple(proc_root.iterdir())
+    except OSError as exc:
+        raise SweepUnavailable(f"cannot enumerate {proc_root}: {exc}") from exc
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            cwds.add((entry / "cwd").resolve(strict=True))
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+    return cwds
+
+
+def classify_slots(
+    registry: dict[str, object], live_agents: set[str], cwds: set[Path]
+) -> list[Residue]:
+    raw_slots = registry.get("slots", {})
+    if not isinstance(raw_slots, dict):
+        raise SweepUnavailable("worktree-state.json slots is not an object")
+    residues: list[Residue] = []
+    for slot, raw in sorted(raw_slots.items()):
+        if not isinstance(raw, dict) or raw.get("status") not in {"active", "held"}:
+            continue
+        raw_agents = raw.get("agents", [])
+        agents = {
+            str(agent.get("name", ""))
+            for agent in raw_agents
+            if isinstance(agent, dict) and agent.get("name")
+        }
+        if not agents or agents & live_agents:
+            continue
+        slot_path = (ROOT / "worktrees" / slot).resolve()
+        process_bound = any(
+            cwd == slot_path or slot_path in cwd.parents for cwd in cwds
+        )
+        if process_bound:
+            continue
+        tasks = sorted(
+            {
+                str(agent.get("task", ""))
+                for agent in raw_agents
+                if isinstance(agent, dict) and agent.get("task")
+            }
+        )
+        residues.append(
+            Residue(
+                kind="held-slot-dead-owner",
+                key=slot,
+                evidence=(
+                    f"owners={','.join(sorted(agents))} tasks={','.join(tasks) or 'none'} "
+                    "live_owner=0 process_cwd_under_slot=0"
+                ),
+                route_task=TASK_ID,
+                route_authority="coordinator-slot-lifecycle",
+            )
+        )
+    return residues
+
+
+def read_registry() -> dict[str, object]:
+    try:
+        value = json.loads(REGISTRY.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SweepUnavailable(f"cannot read {REGISTRY}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SweepUnavailable("worktree-state.json root is not an object")
+    return value
+
+
+def route(residues: Iterable[Residue]) -> None:
+    grouped: dict[str, list[Residue]] = {}
+    for residue in residues:
+        destination = residue.route_task if residue.actionable else TASK_ID
+        grouped.setdefault(destination, []).append(residue)
+    for route_task, items in sorted(grouped.items()):
+        lines = [
+            "FROM periodic-residue-sweep-correct-refusals-leave-unowned-work: "
+            "RESIDUE-DISPOSITION: routed by the periodic local sweep; no slot was "
+            "cleaned/released and no task was closed/reassigned."
+        ]
+        for item in items:
+            lines.append(
+                f"- kind={item.kind} key={item.key} {item.evidence} "
+                f"disposition={item.disposition} route={item.route_authority}"
+            )
+        result = run_checked(("tg", "note", route_task, "\n".join(lines)))
+        if result.returncode != 0:
+            raise SweepUnavailable(
+                f"failed routing {len(items)} item(s) to {route_task}: "
+                f"{' '.join(result.stderr.split())}"
+            )
+
+
+def build_report() -> tuple[list[Residue], set[str]]:
+    live, orphaned = read_live_fleet()
+    notes, disposed = read_note_rows()
+    slots = classify_slots(read_registry(), live, process_cwds())
+    return orphaned + classify_notes(notes, disposed) + slots, live
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="emit the complete typed report")
+    parser.add_argument("--gate", action="store_true", help="exit 1 when actionable residue exists")
+    parser.add_argument("--route", action="store_true", help="append typed routes to authority tasks")
+    args = parser.parse_args(argv)
+    try:
+        residues, live = build_report()
+        if args.route:
+            route(residues)
+    except SweepUnavailable as exc:
+        print(f"state=unknown\nsummary=residue sweep unavailable: {exc}", file=sys.stderr)
+        return 2
+
+    actionable = [item for item in residues if item.actionable]
+    counts = {
+        kind: sum(1 for item in residues if item.kind == kind and item.actionable)
+        for kind in ("orphaned-task", "declined-action", "held-slot-dead-owner")
+    }
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "state": "actionable" if actionable else "clean",
+                    "live_agents": sorted(live),
+                    "counts": counts,
+                    "actionable_count": len(actionable),
+                    "items": [asdict(item) for item in residues],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(f"state={'actionable' if actionable else 'clean'}")
+        print(
+            "summary="
+            f"actionable={len(actionable)} orphaned_tasks={counts['orphaned-task']} "
+            f"declined_actions={counts['declined-action']} "
+            f"dead_owner_slots={counts['held-slot-dead-owner']} "
+            f"live_agents={len(live)}"
+        )
+        for item in residues:
+            print(
+                f"item={item.kind}:{item.key} disposition={item.disposition} "
+                f"route={item.route_authority}:{item.route_task} evidence={item.evidence}"
+            )
+    return 1 if args.gate and actionable else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
