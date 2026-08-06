@@ -4118,6 +4118,12 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "exit_code": assessment.verdict.exit_code(),
             "qualifying_count": assessment.qualifying.len(),
             "disqualified_count": assessment.disqualified.len(),
+            // Genuine clean full-coverage FAILs on this same commit. When the
+            // verdict is VALIDATED these are SUPERSEDED (the ledger does not
+            // latch) -- a machine consumer must be able to see them rather than
+            // read a bare green.
+            "failed_record_count": assessment.failed_records,
+            "withheld_nonpass_record_count": assessment.withheld_nonpass_records,
             "newest_qualifying": newest.map(describe_record),
             "ledger": path.display().to_string(),
         });
@@ -4136,12 +4142,39 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                     row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
                     row.host.as_deref().unwrap_or("?"),
                 );
+                // The ledger does not latch: this PASS supersedes any earlier
+                // clean full FAIL on the same commit. Surface those loudly --
+                // a green that silently buries a same-commit failure claims
+                // more than it verified, and the pass/fail pair on identical
+                // clean full conditions is a FLAKE SIGNAL, not noise.
+                if assessment.failed_records > 0 {
+                    println!(
+                        "# validate WARNING {} -- {} SUPERSEDED clean full-coverage FAIL record(s) on this same commit; the green above did not disprove them. Same commit passing AND failing a clean full run is a FLAKE SIGNAL: investigate before trusting this green for landing.",
+                        assessment.sha, assessment.failed_records,
+                    );
+                }
+                // Withheld reds are not FAILURES, but neither are they nothing.
+                // Measured on the live ledger: 20 of 105 VALIDATED commits carry
+                // a same-commit `fail` record and EVERY one is withheld, so a
+                // banner reporting only the failure count is silent on all of
+                // them. Report the count and name it as withheld, so the reader
+                // can tell "no adverse record" from "adverse record, not
+                // attributable".
+                if assessment.withheld_nonpass_records > 0 {
+                    println!(
+                        "# validate NOTE {} -- {} same-commit clean full-coverage NON-PASS record(s) exist but are WITHHELD from the failure count (contended, incomplete solo conditions, truncated, or environment fault); they carry no product verdict, but this green is not the only record of this commit.",
+                        assessment.sha, assessment.withheld_nonpass_records,
+                    );
+                }
             }
             validate_status::Verdict::FailedOnRecord => {
                 println!(
                     "# validate FAILED {} -- a clean full-coverage run exists but did NOT pass ({} record(s)); this commit is known-failing",
                     assessment.sha,
-                    assessment.disqualified.len(),
+                    // Was `disqualified.len()`, which counts EVERY non-qualifying
+                    // row -- subset, dirty, truncated, env-fault -- so the number
+                    // overstated how many genuine clean full failures existed.
+                    assessment.failed_records,
                 );
             }
             validate_status::Verdict::Truncated => {

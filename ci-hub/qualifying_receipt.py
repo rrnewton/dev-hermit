@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,13 @@ PREDICATE_ENV = "QUALIFYING_RECEIPT_PREDICATE"
 PREDICATE_REL = "validate/qualifying-receipt.json"
 
 _ACTIVE: dict[str, Any] | None = None
+
+
+# The green CLASS (hard vs inherited/soft) is derived from the row's provenance by
+# ci-hub/validate/green_class.py. It is imported rather than restated: a second copy
+# of the derivation is exactly the drift this shared predicate exists to remove.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "validate"))
+import green_class as _green_class  # noqa: E402
 
 
 def predicate_path() -> Path:
@@ -105,7 +113,7 @@ def coverage_satisfied(cov: Any) -> bool:
     )
 
 
-def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
+def _row_qualifies_without_class(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
     """THE qualifying-receipt predicate, mirroring the Rust `row_qualifies`
     clause for clause. Completeness for a count-capable receipt is decided by
     per-node COVERAGE, not the executed_tests count."""
@@ -150,3 +158,26 @@ def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
         return executed_ok
     # Neither count present: an uncounted receipt is UNVERIFIED, not green.
     return False
+
+
+def green_class_of(row: dict[str, Any]) -> str:
+    """The row's derived green class. Delegates; never re-derives."""
+    return _green_class.derive_class(row)[0]
+
+
+def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
+    """THE qualifying-receipt predicate, plus the green-CLASS clause.
+
+    The class clause is applied LAST and can only NARROW: a row that already
+    failed the value clauses stays refused, and a row that passed them must
+    additionally be of a class the predicate accepts. Ordering matters -- putting
+    it first would let a class check mask a value failure and change which reason
+    a refusal reports.
+
+    Behaviour is unchanged for every row that exists today: `accepts_green_class`
+    defaults to ["hard"], and a row with no `validated_head_sha` derives its class
+    as hard (measured: 585/585 live ledger rows).
+    """
+    if not _row_qualifies_without_class(row, sha, pred):
+        return False
+    return green_class_of(row) in _green_class.accepted_classes(pred)
