@@ -459,9 +459,7 @@ impl LockState {
                 "operation" => operation = Some(value.to_string()),
                 "pending_mutation" => pending_mutation = Some(value.to_string()),
                 "pending_attempt" => pending_attempt = Some(value.to_string()),
-                "pending_call_count" => {
-                    pending_call_count = Some(parse_unsigned(key, value)?)
-                }
+                "pending_call_count" => pending_call_count = Some(parse_unsigned(key, value)?),
                 "pending_call_id" => pending_call_id = Some(value.to_string()),
                 "pr" => pr = Some(value.to_string()),
                 "host" => host = Some(value.to_string()),
