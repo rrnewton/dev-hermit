@@ -232,8 +232,8 @@ denominator is the full frozen ptrace corpus.
   `ca217bf`: backend/RPC architecture and command evidence.
 - [`../experiments/multibackend_compat_20260728/README.md`](../experiments/multibackend_compat_20260728/README.md), parent commit
   `207d611`: harder-program L2 gaps outside the examples scorecard.
-- [`DBI_COMPAT_SWEEP_20260727.md`](DBI_COMPAT_SWEEP_20260727.md): 37-guest DBI diagnostic sweep.
-- [`SABRE_COMPAT_SWEEP_20260727.md`](SABRE_COMPAT_SWEEP_20260727.md): SaBRe diagnostic sweep and preemption gap.
+- [`DBI_COMPAT_SWEEP_20260727.md`](transient/DBI_COMPAT_SWEEP_20260727.md): 37-guest DBI diagnostic sweep.
+- [`SABRE_COMPAT_SWEEP_20260727.md`](transient/SABRE_COMPAT_SWEEP_20260727.md): SaBRe diagnostic sweep and preemption gap.
 
 ## Promotion checklist
 
