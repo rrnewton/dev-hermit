@@ -21,7 +21,7 @@ DEFAULT_SUITES = (
     ("ci-hub/remediation/tests", 87),
     ("ci-hub/runners/tests", 51),
     ("ci-hub/validate/tests", 123),
-    ("ci-hub/tests", 42),
+    ("ci-hub/tests", 66),
 )
 
 
