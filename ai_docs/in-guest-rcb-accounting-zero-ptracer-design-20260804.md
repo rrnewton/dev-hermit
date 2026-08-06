@@ -94,13 +94,23 @@ native primitive is **`rdpmc`** (~10 ns), valid precisely in the `index != 0` ow
   (9.8 ns vs 264.2 ns median, devbig014 EPYC, release, taskset -c 3).
 - Effect on the trap win: 2 reads/handler at rdpmc keeps the ~31× in-guest trap win at ~30×
   (vs ~19–20× if it fell to `read()`). This primitive choice is what makes the design viable.
-- **Visibility gap — VERIFIED LIVE @ `8688189a`:** `mod perf` is private (`reverie-ptrace/src/lib.rs:45`)
-  and `reverie-preload/src/` has **zero** references to `reverie_ptrace`, `PerfCounter`, or `rdpmc`
-  (grep, 00:06Z). So `ctr_value_rdpmc` is unreachable from the shared host today. An **additive**
-  visibility change (pub(crate) hoist or a re-export of `PerfCounter::ctr_value_rdpmc`) is needed —
-  NOT a Tool/Guest/Backend contract change (changes HOW a counter is read, not how time/ordering is
-  observed), so it stays within additive Reverie API policy. **This is the single concrete blocker
-  gating the entire §3 read-side; it is the first commit of any RCB-wiring PR.**
+- **Reachability gap — VERIFIED LIVE (re-confirmed @ `55f6876a`, 2026-08-04):** `mod perf` is private
+  (`reverie-ptrace/src/lib.rs:45`) and `reverie-preload/src/` has **zero** references to
+  `reverie_ptrace`, `PerfCounter`, or `rdpmc`. So `ctr_value_rdpmc` is unreachable from the shared host
+  today.
+- **A2 CORRECTION (supersedes "pub(crate) hoist / re-export"):** `reverie-preload` **does not depend on
+  `reverie-ptrace`** — its only reverie dep is `reverie-core` (deps `libc, serde, bincode, reverie-core`;
+  no `nix`/`perf_event_open_sys`/`tokio`). So `pub(crate)` cannot cross the crate boundary and there is
+  no edge to re-export across; adding `reverie-ptrace` as a preload dep is **rejected** (drags tokio +
+  the ptrace Tool host into the in-guest LD_PRELOAD). The fix is a **ptrace-free extraction** of the
+  offset-correct read into a leaf crate `reverie-pmu` (deps `perf_event_open_sys`+`libc`+`reverie-core`)
+  that both `reverie-ptrace` and `reverie-preload` depend on; `PerfCounter::ctr_value_rdpmc` delegates.
+  The read is cleanly extractable — `ctr_value_rdpmc_loop` (`perf.rs:504`) runs entirely over
+  `NonNull<perf_event_mmap_page>` + `rdpmc`/`read_once`/`smp_rmb` + an `fd` fallback, touching neither
+  `validation` nor `timer`. Still additive (changes HOW a counter is read, not the Tool/Guest/Backend
+  contract). **This is the single concrete blocker gating the entire §3 read-side; it is the first
+  commit of any RCB-wiring PR — a crate extraction, not a one-line `pub`.** (Full evidence:
+  `patching-backends-failclosed-inguest-sigsys-spec-20260805.md` §4 A2 CORRECTION.)
 
 ## 6. Nesting / re-entrancy
 
@@ -126,7 +136,7 @@ problem being ported to a new read site, not an open research question.
 | id | condition | how a third party checks it |
 | --- | --- | --- |
 | C1 | shared host exists | `git -C reverie merge-base --is-ancestor 9a7c0aa701d0d53413aaeb9c351377b0bc481918 origin/main` → rc 0. **PASSES now.** |
-| C2 | rdpmc primitive landed + reachable | #363 **LANDED** (`perf.rs:420`, verified). Reachability **NOT yet**: `mod perf` private (`lib.rs:45`) + zero `reverie_ptrace`/`PerfCounter`/`rdpmc` refs in `reverie-preload` @ `8688189a`. → additive visibility change is the sole open half of C2. |
+| C2 | rdpmc primitive landed + reachable | #363 **LANDED** (`perf.rs:420`, verified). Reachability **NOT yet** (re-confirmed @ `55f6876a`): `mod perf` private (`lib.rs:45`) + zero `reverie_ptrace`/`PerfCounter`/`rdpmc` refs in `reverie-preload`. → the open half of C2 is a **ptrace-free crate extraction into `reverie-pmu`** (NOT a `pub(crate)`/re-export — `reverie-preload` has no dep edge to `reverie-ptrace`; see §5 A2 CORRECTION). |
 | C3 | RCB read+deduct is SHARED, not per-backend | the two reads + `tool_debt` deduction appear in `reverie-preload/src/tool_host.rs` only; grep both `reverie-liteinst` and `reverie-e9patch` hosts → zero private copies. |
 | C4 | no B-class ptrace-on-syscall-path row for the flipped backend | audit predicate: no `TracerBuilder<Detcore>` on its run path; no per-subscribed-syscall trap-to-host fallback. (`hermit-cli/.../run.rs` runtime selection.) |
 | C5 | fail-closed = in-guest SIGSYS, not ptrace | the un-instrumented-syscall fallback in the shared host is a SIGSYS handler; no ptrace trap on the syscall path. |
