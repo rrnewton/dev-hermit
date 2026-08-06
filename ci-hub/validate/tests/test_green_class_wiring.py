@@ -149,6 +149,23 @@ def test_malformed_provenance_is_refused_clause_by_clause() -> None:
             },
         ),
         (
+            "inherited_from.upstream_commits must be a non-negative int",
+            {
+                "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,
+                "branch_commits": 0,
+                "upstream_commits": 1 << 64,
+            },
+        ),
+        (
+            "inherited_from.force_full_paths must be a list of strings",
+            {
+                "delta_kind": gc.DELTA_REBASE_ONLY,
+                "branch_commits": 0,
+                "upstream_commits": 0,
+                "force_full_paths": None,
+            },
+        ),
+        (
             "inherited_from.force_full_paths must be a list of strings",
             {
                 "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,

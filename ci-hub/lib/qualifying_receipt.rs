@@ -493,6 +493,20 @@ mod tests {
         let upstream_bool: HistoryRow = serde_json::from_value(upstream_bool).unwrap();
         assert_eq!(derived_green_class(&upstream_bool), None);
 
+        let mut upstream_too_large = base.clone();
+        upstream_too_large["inherited_from"]["delta_kind"] =
+            serde_json::json!("rebase-plus-upstream");
+        upstream_too_large["inherited_from"]["upstream_commits"] =
+            serde_json::from_str("18446744073709551616").unwrap();
+        upstream_too_large["green_class"] = serde_json::json!("soft-upstream-delta");
+        let upstream_too_large: HistoryRow = serde_json::from_value(upstream_too_large).unwrap();
+        assert_eq!(derived_green_class(&upstream_too_large), None);
+
+        let mut null_path_list = base.clone();
+        null_path_list["inherited_from"]["force_full_paths"] = serde_json::Value::Null;
+        let null_path_list: HistoryRow = serde_json::from_value(null_path_list).unwrap();
+        assert_eq!(derived_green_class(&null_path_list), None);
+
         let mut non_string_path = base;
         non_string_path["inherited_from"] = serde_json::json!({
             "delta_kind": "rebase-plus-upstream",

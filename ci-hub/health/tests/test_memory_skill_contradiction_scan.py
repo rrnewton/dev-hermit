@@ -3,16 +3,22 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SCANNER = ROOT / "scripts" / "memory-skill-contradiction-scan.rs"
+sys.path.insert(0, str(ROOT / "ci-hub" / "health"))
+import operational_health  # noqa: E402
 
 
 class MemorySkillContradictionScanTest(unittest.TestCase):
@@ -48,6 +54,51 @@ class MemorySkillContradictionScanTest(unittest.TestCase):
                 result = self.run_scanner(*args)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("memory dir not found", result.stderr)
+
+    def test_real_repository_contradiction_reaches_operational_gate(self) -> None:
+        """Plant inert repository text, never a label or authorization."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "dev-hermit"
+            (root / ".claude/skills/planted-contradiction").mkdir(parents=True)
+            (root / "ci-hub/health").mkdir(parents=True)
+            (root / "hermit").mkdir()
+            (root / "reverie").mkdir()
+            (root / ".gitmodules").write_text("")
+            (root / ".claude/skills/planted-contradiction/SKILL.md").write_text(
+                "---\n"
+                "name: planted-contradiction\n"
+                "description: Inert contradiction fixture.\n"
+                "---\n\n"
+                "# Fixture\n\nThis stale text says main is unprotected.\n"
+            )
+            (root / "ci-hub/health/skill-contradiction-denylist.txt").write_text(
+                "skill | main+unprotected | planted contradiction\n"
+            )
+            missing_memory = root / "no-claude-memory"
+            env = dict(os.environ, HERMIT_MEMORY_DIR=str(missing_memory))
+
+            scan = subprocess.run(
+                [str(SCANNER), "--gate"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            self.assertEqual(scan.returncode, 1, scan.stdout + scan.stderr)
+            self.assertIn("state=contradiction", scan.stdout)
+            self.assertIn("contradictions=1", scan.stdout)
+            self.assertIn("planted-contradiction", scan.stdout)
+
+            output = io.StringIO()
+            with mock.patch.object(operational_health, "ROOT", root), mock.patch.dict(
+                os.environ, {"HERMIT_MEMORY_DIR": str(missing_memory)}
+            ), contextlib.redirect_stdout(output):
+                status = operational_health.memory_skill_sync_gate()
+            self.assertEqual(status, 1)
+            self.assertIn("state=contradiction", output.getvalue())
+            self.assertIn("contradictions=1", output.getvalue())
+            self.assertIn("planted-contradiction", output.getvalue())
 
 
 if __name__ == "__main__":

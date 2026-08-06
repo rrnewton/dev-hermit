@@ -384,10 +384,22 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             row = _soft_rebase_only_row(SHA)
             row["inherited_from"].update(
                 delta_kind="rebase-plus-upstream",
+                upstream_commits=1 << 64,
+            )
+            row["green_class"] = "soft-upstream-delta"
+            malformed.append(("upstream_commits exceeds u64", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
                 upstream_commits=True,
             )
             row["green_class"] = "soft-upstream-delta"
             malformed.append(("upstream_commits=True", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"]["force_full_paths"] = None
+            malformed.append(("force_full_paths=null", row))
 
             row = _soft_rebase_only_row(SHA)
             row["inherited_from"].update(

@@ -262,9 +262,10 @@ def _classify_inherited(validated: str, inherited) -> tuple[str, str]:
     if not _is_nonnegative_int(branch_commits):
         return REFUSED, "inherited_from.branch_commits must be a non-negative int"
 
-    force_full = inherited.get("force_full_paths")
-    if force_full is None:
+    if "force_full_paths" not in inherited:
         force_full = []
+    else:
+        force_full = inherited["force_full_paths"]
     if not isinstance(force_full, list) or not all(
         isinstance(path, str) for path in force_full
     ):
@@ -323,7 +324,11 @@ def _is_nonnegative_int(value) -> bool:
     receipt verifier refuses it makes the same provenance hard/soft depending
     on which authority reads it.  Keep the contract explicit and fail closed.
     """
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= (1 << 64) - 1
+    )
 
 
 def accepted_classes(predicate: dict) -> list[str]:
