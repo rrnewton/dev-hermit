@@ -170,7 +170,30 @@ line ordering and on `detcore::tool_global: Nondeterministic realtime elapsed`. 
 established for any cell on this host, including the control. (Consistent with the standing
 "L2 unattainable on this box" observation; it is a separate defect, not part of this finding.)
 
-### 7. The existing regression coverage cannot detect the ordering gap
+### 7. A previously-closed task certified this as PASS using the blind test
+
+Task `impl-test-hermit-readdir-order` (closed 2026-07-23, hermit-094) concluded *"readdir
+ordering determinism VERIFIED (PASS) — hermit canonicalizes directory order"*, on the evidence
+that `hermit run --strict --verify -- ls -f /usr/bin` exits 0 and the raw-order hash is identical
+across three runs. That note was careful in one respect (it noticed plain `ls` self-sorts and
+switched to `ls -f`), but the oracle it used is the run-to-run one, which cannot see this class.
+
+Re-running its own example against a global-sortedness oracle, on hermit `f89c69766371`:
+
+```
+/usr/bin: 1451 entries
+getdents64 calls under hermit: 3   (32768-byte result, 13768-byte result, EOF)
+run-to-run hash: 2728c790...241d2 == 2728c790...241d2      <- what the prior task checked: STABLE
+globally sorted: NO -- inversion at emitted position 1021
+    ... zstdgrep  zstdless  zstdmt | activate-global-python-argcomplete  acyclic  attr ...
+```
+
+Two internally-sorted runs concatenated, with the seam exactly at glibc's 32 KiB buffer boundary.
+The enumeration is perfectly reproducible on this host and still not determinized: the seam's
+position, and therefore the whole order, is chosen by the host filesystem. **The prior PASS is a
+false green, and it is a false green produced by the currently-recommended gate.**
+
+### 8. The existing regression coverage cannot detect the ordering gap
 
 `hermit/tests/backend-parity/fixtures/readdir_entries.c` is the only readdir/getdents fixture in
 the repo. It (a) uses **three** entries — always a single buffer, the case that already works —
@@ -253,7 +276,9 @@ hermit run --strict -- ./fixtures/dirls_raw <root>/desc200 1024 | head -4
    between the two. Note the existing `readdir_entries.c` cannot serve: it sorts in-guest.
 4. **Gate gap (dev-hermit):** the double-run `--verify` design is structurally blind to
    host-order leaks. Any future "compat sweep" that relies on double-run parity alone should be
-   understood to be blind to this whole class.
+   understood to be blind to this whole class. Concretely: task
+   `impl-test-hermit-readdir-order` is a closed task whose PASS does not hold (section 7); its
+   conclusion should be marked stale rather than cited.
 5. **Unmeasured, expected worse:** on ext4 with `dir_index`, `d_off` is derived from a
    per-filesystem hash seed, so the raw cookies Hermit passes through are host-specific values,
    and the enumeration order is a name-hash order rather than a creation order. Neither was
