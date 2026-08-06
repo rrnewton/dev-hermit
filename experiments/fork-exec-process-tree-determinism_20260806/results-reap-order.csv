@@ -1,0 +1,7 @@
+config,seed,reap_order
+native,-,"2 0 3 1 4"
+native,-,"0 4 3 2 1"
+hermit --strict,-,"0 1 2 3 4"
+hermit --strict --chaos,1,"0 3 1 2 4"
+hermit --strict --chaos,2,"0 1 3 2 4"
+hermit --strict --chaos,3,"0 1 2 3 4"

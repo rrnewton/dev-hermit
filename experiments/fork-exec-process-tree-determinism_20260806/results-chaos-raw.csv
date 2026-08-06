@@ -1,0 +1,8 @@
+guest,backend,seed_a_run1_rc,same_seed_pev_eq,same_seed_out_eq,distinct_pev_across_seeds,n_seeds,verdict
+forkwait_any,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
+zombie_delay,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
+orphan_reparent,ptrace,0,1,1,2,3,REPRODUCIBLE-AND-PERTURBING
+fork_pipe,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
+exec_chain,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
+sh_bgjobs,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
+proc_shapes,ptrace,0,1,1,3,3,REPRODUCIBLE-AND-PERTURBING
