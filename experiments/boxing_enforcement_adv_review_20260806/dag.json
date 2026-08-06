@@ -1,0 +1,11 @@
+{
+  "default_step_timeout": 600,
+  "steps": [
+    {"group":"plant","job":"mem_breach","cmd":"python3 -c \"a=[]\nfor _ in range(400): a.append(bytearray(1024*1024))\nprint('MEM BREACH SURVIVED')\"","timeout":120,
+     "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":5}},
+    {"group":"plant","job":"wall_breach","cmd":"sleep 120; echo 'WALL BREACH SURVIVED'","timeout":5,
+     "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":1}},
+    {"group":"control","job":"wellbehaved","cmd":"python3 -c \"a=bytearray(8*1024*1024); print('CONTROL OK')\"; sleep 2","timeout":60,
+     "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":3}}
+  ]
+}
