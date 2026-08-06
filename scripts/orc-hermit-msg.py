@@ -61,6 +61,24 @@ class CoordinatorPane:
     pane_id: str
 
 
+@dataclass(frozen=True)
+class LivePane:
+    """One live pane on the tmux socket, before any coordinator filtering."""
+
+    session: str
+    window: str
+    pane_id: str
+    command: str
+    orc_db: str | None
+
+    @property
+    def is_orc(self) -> bool:
+        return self.command == "orc"
+
+    def render(self) -> str:
+        return f"{self.session}:{self.window} ({self.pane_id}, {self.command})"
+
+
 def fail(message: str) -> NoReturn:
     print(f"orc-hermit-msg: error: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -243,6 +261,77 @@ def orc_db_from_start_command(command: str) -> str | None:
     return None
 
 
+def parse_live_panes(panes: str, active_sessions: list[str]) -> list[LivePane]:
+    """Every live pane in an active orc session, with no coordinator filtering.
+
+    Kept separate from coordinator selection so a failure can report what was
+    actually on the socket. A count reported without the panes it was computed
+    from cannot distinguish "no coordinator exists" from "a hint excluded it".
+    """
+    active = set(active_sessions)
+    live: list[LivePane] = []
+    for line in panes.splitlines():
+        fields = line.split("\t", 5)
+        if len(fields) != 6:
+            continue
+        session, window, pane_id, pane_dead, current_command, start_command = fields
+        if session not in active or pane_dead != "0":
+            continue
+        live.append(
+            LivePane(
+                session=session,
+                window=window,
+                pane_id=pane_id,
+                command=Path(current_command).name,
+                orc_db=orc_db_from_start_command(start_command),
+            )
+        )
+    return live
+
+
+def _render_panes(panes: list[LivePane]) -> str:
+    return ", ".join(pane.render() for pane in panes) or "none"
+
+
+def _hint_mismatch_detail(
+    orc_panes: list[LivePane],
+    live_panes: list[LivePane],
+    session_hint: str | None,
+    window_hint: str | None,
+) -> str:
+    """Explain why the hints excluded every coordinator.
+
+    The common mistake is aiming this coordinator-only relay at an *agent*
+    pane's window (`--window hermit-perf`). The window filter and the
+    "current command is orc" test then intersect to nothing, which used to
+    surface as the badly misleading "found 0 (coordinators: none)".
+    """
+    detail = (
+        f"session/window hints excluded every coordinator "
+        f"(session_hint={session_hint!r}, window_hint={window_hint!r}); "
+        f"live coordinators on this socket: {_render_panes(orc_panes)}"
+    )
+    if window_hint is None:
+        return detail
+    named = [
+        pane
+        for pane in live_panes
+        if pane.window == window_hint
+        and (session_hint is None or pane.session == session_hint)
+    ]
+    if not named:
+        return f"{detail}; no live pane has window {window_hint!r}"
+    if any(pane.is_orc for pane in named):
+        return detail
+    return (
+        f"{detail}; window {window_hint!r} is {_render_panes(named)}, an agent "
+        "pane rather than the coordinator. This script only messages the Orc "
+        "coordinator TUI; drop --window (or pass the coordinator's window) and "
+        "ask the coordinator to relay, or use a TaskGraph note for agent-to-"
+        "agent handoff"
+    )
+
+
 def find_coordinator_pane(
     socket: Path,
     active_sessions: list[str],
@@ -264,46 +353,59 @@ def find_coordinator_pane(
         "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_dead}\t"
         "#{pane_current_command}\t#{pane_start_command}",
     )
-    coordinators: list[tuple[CoordinatorPane, str | None]] = []
-    active = set(active_sessions)
-    for line in panes.splitlines():
-        fields = line.split("\t", 5)
-        if len(fields) != 6:
-            continue
-        session, window, pane_id, pane_dead, current_command, start_command = fields
-        if session not in active or pane_dead != "0":
-            continue
-        if session_hint is not None and session != session_hint:
-            continue
-        if window_hint is not None and window != window_hint:
-            continue
-        if Path(current_command).name != "orc":
-            continue
-        coordinators.append(
-            (
-                CoordinatorPane(session=session, window=window, pane_id=pane_id),
-                orc_db_from_start_command(start_command),
-            )
-        )
+    live_panes = parse_live_panes(panes, active_sessions)
+    orc_panes = [pane for pane in live_panes if pane.is_orc]
+    hinted = [
+        pane
+        for pane in orc_panes
+        if (session_hint is None or pane.session == session_hint)
+        and (window_hint is None or pane.window == window_hint)
+    ]
 
-    matching = [pane for pane, db in coordinators if db == orc_db]
+    matching = [pane for pane in hinted if pane.orc_db == orc_db]
     if not matching:
         expected_session = f"orc-{orc_db}"
         matching = [
             pane
-            for pane, db in coordinators
-            if db is None and pane.session == expected_session
+            for pane in hinted
+            if pane.orc_db is None and pane.session == expected_session
         ]
-    if len(matching) != 1:
-        rendered = ", ".join(
-            f"{pane.session}:{pane.window} (db={db or 'unknown'})"
-            for pane, db in coordinators
-        ) or "none"
-        raise OrcMessageError(
-            f"expected exactly one live Orc coordinator for database {orc_db!r}; "
-            f"found {len(matching)} (coordinators: {rendered})"
+
+    if len(matching) == 1:
+        selected = matching[0]
+        return CoordinatorPane(
+            session=selected.session,
+            window=selected.window,
+            pane_id=selected.pane_id,
         )
-    return matching[0]
+
+    # Report the count together with the condition that produced it. Each
+    # branch below is a materially different operator action, so they must not
+    # collapse into one message.
+    if not orc_panes:
+        raise OrcMessageError(
+            f"no live Orc coordinator pane on {socket}: no pane in "
+            f"{active_sessions} is running `orc`. Live panes: "
+            f"{_render_panes(live_panes)}. The coordinator is probably "
+            "restarting; retry shortly"
+        )
+    if not hinted:
+        raise OrcMessageError(
+            _hint_mismatch_detail(orc_panes, live_panes, session_hint, window_hint)
+        )
+    if not matching:
+        raise OrcMessageError(
+            f"no live Orc coordinator is running database {orc_db!r}; "
+            f"candidates: "
+            + ", ".join(
+                f"{pane.render()} db={pane.orc_db or 'unknown'}" for pane in hinted
+            )
+        )
+    raise OrcMessageError(
+        f"expected exactly one live Orc coordinator for database {orc_db!r}; "
+        f"found {len(matching)}: {_render_panes(matching)}. Disambiguate with "
+        "--session/--window"
+    )
 
 
 def verify_empty_orc_composer(socket: Path, pane_id: str) -> None:
@@ -499,8 +601,23 @@ def parse_args() -> argparse.Namespace:
         help=f"append delivery results as JSON lines (default: {DEFAULT_LOG_FILE})",
     )
     parser.add_argument("--orc-db", default=DEFAULT_ORC_DB, help=argparse.SUPPRESS)
-    parser.add_argument("--session", help=argparse.SUPPRESS)
-    parser.add_argument("--window", help=argparse.SUPPRESS)
+    # Disambiguators for the rare multi-coordinator case only. They select
+    # among panes that are already running `orc`; they cannot address an agent
+    # pane, and pointing them at one is the documented way to get a confusing
+    # zero-match failure. Kept visible so that misuse is discouraged up front
+    # rather than only explained after it fails.
+    parser.add_argument(
+        "--session",
+        help="restrict coordinator discovery to this Orc session (an Orc "
+        "coordinator session, not an agent pane)",
+    )
+    parser.add_argument(
+        "--window",
+        help="restrict coordinator discovery to this window of the Orc "
+        "coordinator session. This is NOT how you message another agent: "
+        "agent windows run claude/codex, never `orc`, so naming one matches "
+        "no coordinator. Use a TaskGraph note for agent-to-agent handoff",
+    )
     args = parser.parse_args()
     if args.message_file is not None and args.message is not None:
         parser.error("message and --message-file are mutually exclusive")
