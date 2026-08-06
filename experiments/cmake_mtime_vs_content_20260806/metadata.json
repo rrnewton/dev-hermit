@@ -1,0 +1,27 @@
+{
+  "question": "Does CMake/make decide object freshness by mtime rather than content, so a truncated artifact is trusted permanently -- and can content validation fix it without disabling incremental builds?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "toolchain": {
+    "make": "GNU Make 4.3",
+    "cxx": "c++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "cmake_on_PATH": "ABSENT (see ai_docs note: dynamorio-configure ENOENT is missing cmake)",
+    "ninja_on_PATH": "ABSENT"
+  },
+  "real_build_tree_observed": {
+    "path": "worktrees/226/hermit/target/debug/build/reverie-dbi-89ddd5351296fa25/out/dynamorio-build",
+    "CMAKE_GENERATOR": "Unix Makefiles",
+    "CMAKE_MAKE_PROGRAM": "/usr/bin/gmake",
+    "cmake_version_that_generated_it": "3.31",
+    "objects": 834,
+    "objects_total_mib": 407.4
+  },
+  "repos": {
+    "dev_hermit_parent_head": "aa12eda07231f94b9e3dcf4b286d1302864e19c6",
+    "hermit_origin_main": "b64d893ae9ea6404472eae9cb86102d91ec642ef"
+  },
+  "inputs": ["build.make (replica of the CMake-generated rule shape)", "4 C++ TUs incl. a template instantiation", "cc-atomic", "verify-objects", "slowcc"],
+  "command": "bash repro.sh",
+  "seed": "n/a (deterministic; timing-sensitive kills use a 3s window against a 30s stand-in compile)"
+}
