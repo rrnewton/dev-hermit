@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -41,8 +42,52 @@ class FakeRun:
                 rc=self.admission_rc,
                 stderr="stale base" if self.admission_rc else "",
             )
-        if command[0] == "systemd-run":
+        if command[0] == "systemd-run" and "herdr" in command:
+            herdr = command[command.index("herdr") :]
+            if herdr == ["herdr", "status", "--json"]:
+                return completed(command, stdout=json.dumps({"server": {"running": True}}))
+            if herdr == ["herdr", "workspace", "list"]:
+                return completed(
+                    command,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "workspaces": [
+                                    {
+                                        "workspace_id": "wV",
+                                        "label": "validate-hermit",
+                                    }
+                                ]
+                            }
+                        }
+                    ),
+                )
+            if herdr[:3] == ["herdr", "tab", "create"]:
+                return completed(
+                    command,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "root_pane": {"pane_id": "wV:p2"},
+                                "tab": {"tab_id": "wV:t2"},
+                            }
+                        }
+                    ),
+                )
+            if herdr[:3] == ["herdr", "pane", "rename"]:
+                return completed(command)
+            if herdr[:3] == ["herdr", "pane", "run"]:
+                return completed(command)
+            raise AssertionError(command)
+        if command[0] == "systemd-run" and "validate-lock" in command:
             return completed(command, stdout="Running as unit: validate-test.service\n")
+        if command[:3] == ["systemctl", "--user", "show"]:
+            return completed(
+                command,
+                stdout=(
+                    "ActiveState=inactive\nSubState=dead\nExecMainStatus=0\nResult=success\n"
+                ),
+            )
         raise AssertionError(command)
 
 
@@ -82,6 +127,7 @@ class StartUnitTest(unittest.TestCase):
                 run=self.fake,
                 environment=self.environment,
                 root=self.root,
+                sleep=lambda _seconds: None,
             )
         return rc, out.getvalue(), err.getvalue()
 
@@ -89,7 +135,11 @@ class StartUnitTest(unittest.TestCase):
         rc, output, error = self.invoke(["--pr", "123", "--", "full", "--ignore-cache"])
 
         self.assertEqual(0, rc, error)
-        systemd = next(command for command in self.fake.commands if command[0] == "systemd-run")
+        systemd = next(
+            command
+            for command in self.fake.commands
+            if command[0] == "systemd-run" and "validate-lock" in command
+        )
         self.assertIn(str(self.root / "ci-hub/ci-hub"), systemd)
         lock = systemd.index("validate-lock")
         self.assertEqual(["validate-lock", "run"], systemd[lock : lock + 2])
@@ -97,7 +147,18 @@ class StartUnitTest(unittest.TestCase):
             ["/usr/bin/env", "PR_NUMBER=123", "with-proxy", "./validate.sh", "full", "--ignore-cache"],
             systemd[-6:],
         )
-        self.assertIn("admission=ci-hub validate-lock", output)
+        pane_run = next(command for command in self.fake.commands if "pane_watch.py" in " ".join(command))
+        self.assertIn("herdr", pane_run)
+        self.assertNotIn("validate.sh", pane_run)
+        self.assertFalse(any(command[0] == "herdr" for command in self.fake.commands))
+        self.assertIn("HANDLE", output)
+        self.assertIn("PANE workspace=wV tab=wV:t2 pane=wV:p2", output)
+        self.assertIn("FINISHED", output)
+        record = start_unit.run_registry.read_record(
+            self.root / "ignored/validate/runs/validate-test.json"
+        )
+        self.assertEqual("completed", record["state"])
+        self.assertEqual("observer-only", record["pane_role"])
 
     def test_dry_run_is_non_mutating_but_exposes_exact_command(self) -> None:
         rc, output, error = self.invoke(["--dry-run"])
@@ -105,6 +166,7 @@ class StartUnitTest(unittest.TestCase):
         self.assertEqual(0, rc, error)
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
         self.assertIn("WOULD-START", output)
+        self.assertIn("PANE-PLAN workspace=validate-hermit role=observer-only", output)
         self.assertIn("ci-hub validate-lock run", output)
         self.assertFalse((self.root / "run.log").exists())
 
