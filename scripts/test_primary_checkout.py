@@ -22,7 +22,10 @@ def git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-class PrimaryCheckoutTests(unittest.TestCase):
+class _PrimaryFixture(unittest.TestCase):
+    """Shared parent+products fixture. Holds no tests of its own so that the
+    suites below do not re-run each other's cases."""
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "parent"
@@ -126,6 +129,7 @@ class PrimaryCheckoutTests(unittest.TestCase):
         git(seed, "push", "origin", "main")
         return git(seed, "rev-parse", "HEAD")
 
+class PrimaryCheckoutTests(_PrimaryFixture):
     def test_fresh_updates_clean_repos_and_preserves_dirty_repo(self) -> None:
         hermit_remote = self.advance("hermit")
         git(self.root / "reverie", "checkout", "--detach")
@@ -303,3 +307,138 @@ class PrimaryCheckoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrimaryFreshnessTests(_PrimaryFixture):
+    """The single freshness invariant over every primary.
+
+    Bracketed both ways throughout: a check that only ever reports drift proves
+    nothing, so every negative case is paired with a positive one.
+    """
+
+    def drift_kinds(self, primary: str) -> set[str]:
+        drifts, _ = primary_checkout.primary_freshness_report(self.root)
+        return {d.kind for d in drifts if d.primary == primary}
+
+    def test_clean_primary_reports_no_drift(self) -> None:
+        """POSITIVE bracket: a fresh primary must come back empty."""
+        self.assertEqual(self.drift_kinds("hermit"), set())
+
+    def test_detects_bare_flip_that_a_refs_only_check_cannot_see(self) -> None:
+        """The symptom that recurred four times and was invisible to `check`.
+
+        Under core.bare=true the directory still has .git, `branch
+        --show-current` still answers and `rev-parse HEAD` still answers -- so a
+        refs-only inspection reports a perfectly healthy primary while every
+        work-tree operation fails.
+        """
+        repo = self.root / "hermit"
+        self.assertEqual(self.drift_kinds("hermit"), set())  # fresh beforehand
+        git(repo, "config", "core.bare", "true")
+
+        # The primitives the legacy check relies on still look healthy...
+        self.assertTrue((repo / ".git").exists())
+        self.assertEqual(git(repo, "rev-parse", "--is-bare-repository"), "true")
+        # ...but a real work-tree op fails, which is the actual breakage.
+        broken = subprocess.run(
+            ("git", "-C", str(repo), "status", "--short"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(broken.returncode, 0)
+
+        self.assertIn("bare", self.drift_kinds("hermit"))
+
+    def test_restore_safe_repairs_only_the_bare_flip(self) -> None:
+        repo = self.root / "hermit"
+        git(repo, "config", "core.bare", "true")
+        out, err = StringIO(), StringIO()
+        code = primary_checkout.check_primary_freshness(
+            self.root, restore_safe=True, out=out, err=err
+        )
+        self.assertEqual(git(repo, "rev-parse", "--is-bare-repository"), "false")
+        self.assertIn("RESTORED", out.getvalue())
+        # Repaired, and the repair is verified by re-evaluating rather than
+        # assumed: hermit must no longer report bare.
+        self.assertNotIn("bare", self.drift_kinds("hermit"))
+        self.assertIn(code, (0, 1, 2))
+
+    def test_behind_is_classified_not_merely_reported_as_differing(self) -> None:
+        """`differs from origin/main` is not actionable; behind/ahead/diverged are."""
+        self.advance("hermit")  # move the remote forward
+        repo = self.root / "hermit"
+        subprocess.run(("git", "-C", str(repo), "fetch", "origin", "main"),
+                       check=True, capture_output=True)
+        kinds = self.drift_kinds("hermit")
+        self.assertIn("behind", kinds)
+        self.assertNotIn("ahead", kinds)
+        self.assertNotIn("diverged", kinds)
+
+    def test_ahead_and_diverged_are_distinguished_from_behind(self) -> None:
+        repo = self.root / "hermit"
+        git(repo, "config", "user.email", "test@example.com")
+        git(repo, "config", "user.name", "Test")
+        (repo / "local.txt").write_text("local\n")
+        git(repo, "add", "local.txt")
+        git(repo, "commit", "-m", "local only")
+        self.assertIn("ahead", self.drift_kinds("hermit"))
+
+        self.advance("hermit")  # now both sides have moved
+        subprocess.run(("git", "-C", str(repo), "fetch", "origin", "main"),
+                       check=True, capture_output=True)
+        kinds = self.drift_kinds("hermit")
+        self.assertIn("diverged", kinds)
+        self.assertNotIn("behind", kinds)
+
+    def test_never_fast_forwards_or_resets_on_its_own(self) -> None:
+        """#320: detect and report; do not move a shared integration surface."""
+        self.advance("hermit")
+        repo = self.root / "hermit"
+        subprocess.run(("git", "-C", str(repo), "fetch", "origin", "main"),
+                       check=True, capture_output=True)
+        before = git(repo, "rev-parse", "HEAD")
+        primary_checkout.check_primary_freshness(
+            self.root, restore_safe=True, out=StringIO(), err=StringIO()
+        )
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
+
+    def test_dirty_is_reported_without_proposing_to_discard(self) -> None:
+        repo = self.root / "hermit"
+        (repo / "someone-elses-work.txt").write_text("not mine\n")
+        drifts, _ = primary_checkout.primary_freshness_report(self.root)
+        dirty = [d for d in drifts if d.primary == "hermit" and d.kind == "dirty"]
+        self.assertTrue(dirty)
+        # Invariant 5: never suggest destroying changes we did not create.
+        for drift in dirty:
+            for banned in ("reset", "checkout --", "clean", "stash"):
+                self.assertNotIn(banned, drift.remediation)
+
+    def test_exit_codes_separate_undetermined_from_drift(self) -> None:
+        """An unevaluable primary is exit 2 -- nothing proven is not a pass."""
+        out, err = StringIO(), StringIO()
+        clean = primary_checkout.check_primary_freshness(self.root, out=out, err=err)
+        self.assertEqual(clean, 0)
+        self.assertIn("PRIMARY FRESHNESS OK", out.getvalue())
+
+        git(self.root / "hermit", "remote", "set-url", "origin", str(self.root / "nope.git"))
+        out, err = StringIO(), StringIO()
+        self.assertEqual(
+            primary_checkout.check_primary_freshness(self.root, out=out, err=err), 2
+        )
+        self.assertIn("unknown", err.getvalue())
+
+
+class LegacyCheckBlindSpotTests(_PrimaryFixture):
+    """`check` is advisory and called from the pre-commit hook with `|| true`,
+    so its exit policy is deliberately left alone -- but it must no longer be
+    BLIND to the two classes it could not see."""
+
+    def test_check_now_reports_the_bare_flip(self) -> None:
+        out, err = StringIO(), StringIO()
+        primary_checkout.check_freshness(self.root, out=out, err=err)
+        self.assertNotIn("core.bare", err.getvalue())  # positive bracket
+
+        git(self.root / "hermit", "config", "core.bare", "true")
+        out, err = StringIO(), StringIO()
+        code = primary_checkout.check_freshness(self.root, out=out, err=err)
+        self.assertIn("core.bare=true", err.getvalue())
+        self.assertEqual(code, 0)  # still advisory: must not start blocking commits

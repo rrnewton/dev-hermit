@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
@@ -363,6 +364,302 @@ def checkout_fresh(
     return 1 if failures or (strict and skipped) else 0
 
 
+@dataclass(frozen=True)
+class Drift:
+    """One way a primary checkout is not in its expected clean state.
+
+    ``kind`` is a stable slug so a caller can act on the class rather than
+    parse prose; ``detail`` says what was observed; ``remediation`` is the exact
+    command a human should run. ``safe_fix`` marks the *only* class this tool
+    will repair on its own (see ``restore_safe`` below).
+    """
+
+    primary: str
+    kind: str
+    detail: str
+    remediation: str
+    safe_fix: bool = False
+    # argv for the repair, when one is safe. Kept as a list so the repair never
+    # goes through a shell -- a primary path is attacker-irrelevant but
+    # space-and-metacharacter relevant, and `remediation` is prose for humans.
+    fix_argv: tuple[str, ...] = ()
+
+
+# The freshness invariant applies to the PARENT as well as the products. The
+# parent is a primary checkout too -- "local main diverged" happened there -- and
+# omitting it is why that symptom was never caught by a check.
+def primary_paths(root: Path) -> list[tuple[str, Path]]:
+    return [("parent", root)] + [(p, root / p) for p in PRODUCTS]
+
+
+def _rev(repo: Path, *args: str) -> str | None:
+    result = run_git(repo, *args)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def inspect_primary(
+    root: Path,
+    name: str,
+    repo: Path,
+    *,
+    expected_branch: str = "main",
+    use_proxy: bool = True,
+) -> tuple[list[Drift], str | None]:
+    """Evaluate the freshness invariant for one primary.
+
+    FRESH iff: initialized, not bare-flipped, on ``expected_branch`` (not
+    detached), exactly equal to that branch on origin, and clean.
+
+    Returns (drifts, head). An empty drift list means fresh.
+    """
+    drifts: list[Drift] = []
+    if not (repo / ".git").exists():
+        return (
+            [
+                Drift(
+                    name,
+                    "uninitialized",
+                    f"{repo} has no .git",
+                    "git submodule update --init --recursive",
+                )
+            ],
+            None,
+        )
+
+    # BARE FLIP. This must come first, and it must be asked of the RUNNING repo
+    # rather than inferred from the presence of .git -- under core.bare=true the
+    # directory still has .git, `branch --show-current` still answers, and
+    # `rev-parse HEAD` still answers, so a refs-only check sees a perfectly
+    # healthy primary while every work-tree operation fails. Measured, not
+    # assumed. Note `git -c core.bare=false ...` does NOT override it.
+    is_bare = _rev(repo, "rev-parse", "--is-bare-repository")
+    if is_bare == "true":
+        tracked = run_git(repo, "ls-files")
+        has_worktree_files = any(
+            (repo / line).exists() for line in tracked.stdout.split("\n")[:50] if line
+        )
+        detail = "core.bare=true"
+        if has_worktree_files:
+            detail += " while tracked working-tree files are present (accidental flip)"
+        return (
+            [
+                Drift(
+                    name,
+                    "bare",
+                    detail,
+                    f"git -C {repo} config core.bare false",
+                    # The only auto-repair: it rewrites one config flag, touches
+                    # no ref, no index and no file content, and is exactly
+                    # reversible. Nothing else here is unambiguous enough.
+                    safe_fix=True,
+                    fix_argv=("git", "-C", str(repo), "config", "core.bare", "false"),
+                )
+            ],
+            None,
+        )
+
+    head = _rev(repo, "rev-parse", "HEAD")
+    branch = _rev(repo, "branch", "--show-current")
+    if head is None or branch is None:
+        return (
+            [Drift(name, "unknown", "could not read HEAD/branch", f"git -C {repo} status")],
+            None,
+        )
+
+    if not branch:
+        drifts.append(
+            Drift(
+                name,
+                "detached",
+                f"HEAD detached at {head[:12]}",
+                f"git -C {repo} checkout {expected_branch}",
+            )
+        )
+    elif branch != expected_branch:
+        drifts.append(
+            Drift(
+                name,
+                "wrong-branch",
+                f"on {branch!r}, expected {expected_branch!r}",
+                f"git -C {repo} checkout {expected_branch}",
+            )
+        )
+
+    dirty = run_git(repo, "status", "--porcelain", "--ignore-submodules=all")
+    if dirty.returncode == 0 and dirty.stdout.strip():
+        count = len([line for line in dirty.stdout.split("\n") if line.strip()])
+        drifts.append(
+            Drift(
+                name,
+                "dirty",
+                f"{count} uncommitted path(s)",
+                # Never propose discarding: the changes may be another agent's.
+                f"attribute the changes first: git -C {repo} status --short",
+            )
+        )
+
+    remote_ref = f"refs/heads/{expected_branch}"
+    ls = run_git(repo, "ls-remote", "--exit-code", "origin", remote_ref, network=True, use_proxy=use_proxy)
+    remote = ls.stdout.split(maxsplit=1)[0] if ls.stdout.strip() else ""
+    if ls.returncode != 0 or not remote:
+        drifts.append(
+            Drift(
+                name,
+                "unknown",
+                f"could not query live origin/{expected_branch}",
+                f"with-proxy git -C {repo} ls-remote origin {remote_ref}",
+            )
+        )
+        return drifts, head
+
+    if head == remote:
+        return drifts, head
+
+    # HEAD differs from origin. Classify it: "differs" is not actionable, and
+    # behind / ahead / diverged need three different responses. Classify only if
+    # the remote commit is present locally -- otherwise we cannot prove the
+    # relationship and must say so rather than guess.
+    if run_git(repo, "cat-file", "-e", f"{remote}^{{commit}}").returncode != 0:
+        drifts.append(
+            Drift(
+                name,
+                "unclassified-drift",
+                f"HEAD {head[:12]} != origin/{expected_branch} {remote[:12]}; "
+                "the remote commit is not present locally, so behind/ahead/diverged "
+                "cannot be determined",
+                f"with-proxy git -C {repo} fetch origin {expected_branch}, then re-run",
+            )
+        )
+        return drifts, head
+
+    behind_ahead = _rev(repo, "rev-list", "--left-right", "--count", f"{remote}...{head}")
+    behind, ahead = (0, 0)
+    if behind_ahead:
+        parts = behind_ahead.split()
+        if len(parts) == 2:
+            behind, ahead = int(parts[0]), int(parts[1])
+
+    if behind and not ahead:
+        drifts.append(
+            Drift(
+                name,
+                "behind",
+                f"{behind} commit(s) behind origin/{expected_branch} "
+                f"({head[:12]} is a strict ancestor of {remote[:12]})",
+                # A fast-forward moves the working tree of a shared integration
+                # surface with live sibling processes and dependent worktrees, so
+                # it is reported, never performed here.
+                f"under quiescence: git -C {repo} merge --ff-only origin/{expected_branch}",
+            )
+        )
+    elif ahead and not behind:
+        drifts.append(
+            Drift(
+                name,
+                "ahead",
+                f"{ahead} unpushed local commit(s) on {expected_branch}",
+                f"review then publish: git -C {repo} log origin/{expected_branch}..HEAD",
+            )
+        )
+    else:
+        drifts.append(
+            Drift(
+                name,
+                "diverged",
+                f"{behind} behind / {ahead} ahead of origin/{expected_branch} "
+                "-- histories have forked",
+                # Explicitly not a reset: see the no-auto-reset rule.
+                f"reconcile by merge in a worktree; never reset/force: "
+                f"git -C {repo} log --oneline --left-right origin/{expected_branch}...HEAD",
+            )
+        )
+    return drifts, head
+
+
+def primary_freshness_report(
+    root: Path, *, expected_branch: str = "main", use_proxy: bool = True
+) -> tuple[list[Drift], list[str]]:
+    """The single freshness invariant, evaluated over every primary checkout."""
+    drifts: list[Drift] = []
+    fresh: list[str] = []
+    for name, repo in primary_paths(root):
+        found, head = inspect_primary(
+            root, name, repo, expected_branch=expected_branch, use_proxy=use_proxy
+        )
+        if found:
+            drifts.extend(found)
+        elif head:
+            fresh.append(f"{name}={head[:12]}")
+    return drifts, fresh
+
+
+def check_primary_freshness(
+    root: Path,
+    *,
+    strict: bool = True,
+    restore_safe: bool = False,
+    expected_branch: str = "main",
+    use_proxy: bool = True,
+    out: TextIO = sys.stdout,
+    err: TextIO = sys.stderr,
+) -> int:
+    """Detect (and report) primary-checkout drift.
+
+    Exit codes: 0 every primary fresh; 1 drift detected; 2 at least one primary
+    could not be evaluated -- nothing was proven, which is NOT a pass.
+    """
+    drifts, fresh = primary_freshness_report(
+        root, expected_branch=expected_branch, use_proxy=use_proxy
+    )
+
+    if restore_safe:
+        remaining: list[Drift] = []
+        for drift in drifts:
+            if not drift.safe_fix or not drift.fix_argv:
+                remaining.append(drift)
+                continue
+            repaired = subprocess.run(
+                list(drift.fix_argv), text=True, capture_output=True, check=False
+            )
+            if repaired.returncode == 0:
+                print(f"RESTORED {drift.primary}: {drift.kind} ({drift.detail})", file=out)
+            else:
+                remaining.append(drift)
+                print(f"RESTORE FAILED {drift.primary}: {drift.kind}", file=err)
+        if len(remaining) != len(drifts):
+            # Re-evaluate so the reported state is what is true now, not what
+            # was true before the repair.
+            drifts, fresh = primary_freshness_report(
+                root, expected_branch=expected_branch, use_proxy=use_proxy
+            )
+
+    if not drifts:
+        print(f"PRIMARY FRESHNESS OK ({len(fresh)} primaries): {', '.join(fresh)}", file=out)
+        return 0
+
+    print(
+        f"PRIMARY CHECKOUT DRIFT: {len(drifts)} finding(s) across "
+        f"{len({d.primary for d in drifts})} primary(ies)",
+        file=err,
+    )
+    for drift in drifts:
+        print(f"  [{drift.primary}] {drift.kind}: {drift.detail}", file=err)
+        print(f"      fix: {drift.remediation}", file=err)
+    if fresh:
+        print(f"  fresh: {', '.join(fresh)}", file=err)
+    if any(d.safe_fix for d in drifts):
+        print("  (re-run with --restore-safe to repair the safe_fix classes)", file=err)
+    print(
+        "  No reset, force or fast-forward is performed automatically: these are shared "
+        "integration surfaces with live sibling processes.",
+        file=err,
+    )
+
+    if any(d.kind in ("unknown", "unclassified-drift") for d in drifts):
+        return 2
+    return 1 if strict else 0
+
+
 def check_freshness(
     root: Path,
     *,
@@ -373,6 +670,19 @@ def check_freshness(
 ) -> int:
     warnings: list[str] = []
     current: list[str] = []
+    # A refs-only inspection cannot see a bare flip or a drifted parent, so pull
+    # those two classes in from the shared invariant. Everything below is the
+    # original per-product logic, unchanged.
+    for name, repo in primary_paths(root):
+        if (repo / ".git").exists() and _rev(repo, "rev-parse", "--is-bare-repository") == "true":
+            warnings.append(
+                f"{name}: core.bare=true -- every work-tree op fails; "
+                f"fix: git -C {repo} config core.bare false"
+            )
+    parent_drifts, _ = inspect_primary(root, "parent", root, use_proxy=use_proxy)
+    warnings.extend(
+        f"parent: {d.kind}: {d.detail}" for d in parent_drifts if d.kind != "bare"
+    )
     for product in PRODUCTS:
         repo = root / product
         if not (repo / ".git").exists():
@@ -551,6 +861,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     check = subparsers.add_parser("check", help="warn about detached or stale primaries")
     check.add_argument("--strict", action="store_true", help="return nonzero on warnings")
+    freshness = subparsers.add_parser(
+        "freshness",
+        help="one invariant over every primary (parent included): not bare, on main, "
+        "not detached, equal to origin, clean. Fails loudly by default.",
+    )
+    freshness.add_argument(
+        "--restore-safe",
+        action="store_true",
+        help="repair only the unambiguous classes (core.bare flip); never resets, "
+        "forces or fast-forwards",
+    )
+    freshness.add_argument(
+        "--expected-branch",
+        default="main",
+        help="branch every primary should be on (default: main)",
+    )
+    freshness.add_argument(
+        "--no-strict",
+        action="store_true",
+        help="report drift but exit 0 (for advisory call sites)",
+    )
     subparsers.add_parser(
         "check-pins",
         help="offline: block on Reverie pin drift across manifests and Cargo.lock sources",
@@ -564,6 +895,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "check-pins":
         return check_pins(root)
+    if args.command == "freshness":
+        return check_primary_freshness(
+            root,
+            strict=not args.no_strict,
+            restore_safe=args.restore_safe,
+            expected_branch=args.expected_branch,
+        )
     return check_freshness(root, strict=args.strict)
 
 
