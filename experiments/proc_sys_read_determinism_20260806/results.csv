@@ -1,0 +1,13 @@
+id,measurement,value,note
+E1,enumerated candidate set,27 paths,"/proc/self/* (12), /proc/* (8), /proc/sys/kernel/* (4), /sys/* (3) -- targeted at plausibly host-varying entries, NOT all of /proc+/sys"
+S1,guest stability across SEPARATE hermit invocations,27 of 27 STABLE,"ptrace --strict --no-virtualize-cpuid --max-timeslice=disabled, guest=/bin/cat <path>, sha256 of stdout"
+C1,control -- does the HOST value vary?,"6 of 6 probed VARY (uptime, loadavg, stat, meminfo, self/stat, interrupts)","read twice 1s apart on the host; so guest stability is EARNED, not vacuous"
+C2,non-vacuity -- are guest hashes path-specific?,"6 distinct hashes (1939fceb 035a66ef a2245da4 7b46f6d1 c1e83db6 ddc56b3a)",not a single canned response
+C3,non-vacuity -- are values plausible?,"/proc/uptime -> '121.00 0.00'; /proc/loadavg -> '0.00 0.00 0.00 1/1 1'","deterministic virtualized values, not host values"
+F1,#140 check -- does /proc/uptime ADVANCE within one run?,"124.00 -> 227.00 -> 284.00 across a busy loop then a sleep","YES -- deterministic AND continuously evolving. #140-correct."
+F2,#140 check -- does /proc/self/stat utime/stime advance?,"'0 0' before and after a 200k-iteration shell loop","NO -- frozen at zero. A guest measuring its own CPU consumption always sees 0."
+V1,leaks found in the enumerated set,0,no host-nondeterminism leak detected in these 27
+V2,residual concern,"/proc/self/stat utime/stime frozen","the OPPOSITE failure from a leak: over-freezing, the #140 anti-pattern -- deterministic but evolution destroyed"
+L1,scope limit,ptrace only,a leak could exist on DBI/KVM; not swept
+L2,scope limit,27 of hundreds,"#213 asks for the full set; this is a targeted candidate set, not exhaustive"
+L3,scope limit,single read per file per run,"intra-run repeated-read evolution tested only for uptime and self/stat"
