@@ -159,3 +159,14 @@ ACTIVE.md
 
 # herdr-run run spools + sandbox-crossing audit log (machine-local command OUTPUT, never source)
 .herdr-run/
+
+# Compiled guest executables built by experiments (sources are tracked, binaries are not)
+experiments/*/sig_alarm
+experiments/*/sig_chld
+experiments/*/sig_usr
+experiments/*/vtime_probe
+experiments/*/memaddrs
+experiments/*/pid_tid
+experiments/*/guest_heap
+experiments/*/probe
+experiments/*/pn

@@ -1,0 +1,314 @@
+[
+  {
+    "combo": "sequentialize+virt-cpuid+virt-time+virt-metadata+det-io",
+    "flags": "",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "L1",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+virt-time+virt-metadata",
+    "flags": "--no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+virt-time+det-io",
+    "flags": "--no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+virt-time",
+    "flags": "--no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+virt-metadata+det-io",
+    "flags": "--no-virtualize-time",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+virt-metadata",
+    "flags": "--no-virtualize-time --no-deterministic-io",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "sequentialize+virt-cpuid+det-io",
+    "flags": "--no-virtualize-time --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-cpuid",
+    "flags": "--no-virtualize-time --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-time+virt-metadata+det-io",
+    "flags": "--no-virtualize-cpuid",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-time+virt-metadata",
+    "flags": "--no-virtualize-cpuid --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-time+det-io",
+    "flags": "--no-virtualize-cpuid --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-time",
+    "flags": "--no-virtualize-cpuid --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize+virt-metadata+det-io",
+    "flags": "--no-virtualize-cpuid --no-virtualize-time",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "sequentialize+virt-metadata",
+    "flags": "--no-virtualize-cpuid --no-virtualize-time --no-deterministic-io",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "sequentialize+det-io",
+    "flags": "--no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "sequentialize",
+    "flags": "--no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid+virt-time+virt-metadata+det-io",
+    "flags": "--no-sequentialize-threads",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid+virt-time+virt-metadata",
+    "flags": "--no-sequentialize-threads --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid+virt-time+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid+virt-time",
+    "flags": "--no-sequentialize-threads --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid+virt-metadata+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-time",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "virt-cpuid+virt-metadata",
+    "flags": "--no-sequentialize-threads --no-virtualize-time --no-deterministic-io",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "virt-cpuid+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-time --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-cpuid",
+    "flags": "--no-sequentialize-threads --no-virtualize-time --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-time+virt-metadata+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-time+virt-metadata",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-time+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-time",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "virt-metadata+det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "virt-metadata",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time --no-deterministic-io",
+    "rc": 1,
+    "output_correct": false,
+    "claim": "RELAXED",
+    "detail": "Error: --no-virtualize-time also requires --no-virtualize-metadata; metadata timestamps cannot be virtualized without virtual time"
+  },
+  {
+    "combo": "det-io",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "(all relaxed)",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata --no-deterministic-io",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "RELAXED",
+    "detail": ""
+  },
+  {
+    "combo": "strict",
+    "flags": "--strict",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "L1",
+    "detail": ""
+  },
+  {
+    "combo": "strict+verify",
+    "flags": "--strict --verify",
+    "rc": 124,
+    "output_correct": null,
+    "claim": "L2(strip)",
+    "detail": "TIMEOUT"
+  },
+  {
+    "combo": "strict+verify+detlog",
+    "flags": "--strict --verify --detlog-stack --detlog-heap",
+    "rc": 124,
+    "output_correct": null,
+    "claim": "L2(strip)",
+    "detail": "TIMEOUT"
+  },
+  {
+    "combo": "strict+chaos",
+    "flags": "--strict --chaos",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "L1",
+    "detail": ""
+  },
+  {
+    "combo": "all-on+detlog",
+    "flags": "--detlog-stack --detlog-heap",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "L1",
+    "detail": ""
+  },
+  {
+    "combo": "all-relaxed+verify",
+    "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata --no-deterministic-io --verify",
+    "rc": 124,
+    "output_correct": null,
+    "claim": "RELAXED",
+    "detail": "TIMEOUT"
+  },
+  {
+    "combo": "bare (no flags)",
+    "flags": "(none)",
+    "rc": 0,
+    "output_correct": true,
+    "claim": "L1",
+    "detail": ""
+  }
+]
