@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "record_type": "strict_metric_denominator_decision",
+  "decision": "retire_duplicate_semantic_workload",
+  "prior_named_rows": 235,
+  "corrected_unique_workloads": 234,
+  "removed": {
+    "id": "applications/timed-progress-bar",
+    "corpus_row": "applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run",
+    "wrapper_path": "tests/e2e/applications/timed-progress-bar.sh",
+    "wrapper_last_present_commit": "bb56774c90ae13e63a0a75d6cc1f6c01c69d5734",
+    "wrapper_sha256": "8475285e1c568e81d543c4ebb402fbc4c3d41dadc9c492263115197c80089d15",
+    "wrapper_run_action": "exec examples/timed-progress-bar.py"
+  },
+  "retained": {
+    "id": "applications/example-timed-progress-bar",
+    "corpus_row": "applications/example-timed-progress-bar|portable|HERMITROOT/examples/timed-progress-bar.py",
+    "executable_path": "examples/timed-progress-bar.py",
+    "executable_sha256_at_hermit_head": "4c9a4ed94ed492021bd04ba236bb625cb60600c088cafcd84b3ec1bdf9f0e094"
+  },
+  "deletion_commit": "0c6cda68dbdd76cee3e77ed480f4533c6308486b",
+  "rationale": "The removed wrapper's --run arm execs the already-retained Python workload, so the two rows name one semantic workload. No filler row is introduced."
+}

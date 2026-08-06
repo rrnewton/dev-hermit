@@ -1,5 +1,4 @@
 applications/example-timed-progress-bar|portable|HERMITROOT/examples/timed-progress-bar.py
-applications/timed-progress-bar|portable|HERMITROOT/tests/e2e/applications/timed-progress-bar.sh --run
 data-handling/archive-roundtrip|portable|HERMITROOT/tests/e2e/data-handling/archive-roundtrip.sh --run
 data-handling/shell-pipeline|portable|HERMITROOT/tests/e2e/data-handling/shell-pipeline.sh --run
 determinism-stress/example-race|portable|HERMITROOT/examples/race.sh

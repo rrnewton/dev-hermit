@@ -1,279 +1,30 @@
 {
-  "schema": 1,
+  "schema": 2,
   "record_type": "strict_metric_input_audit",
-  "complete": false,
-  "full_sweep_allowed": false,
-  "denominator_expected_tests": 235,
-  "denominator_observed_rows": 235,
-  "denominator_unique_ids": 235,
-  "denominator_executable_tests": 204,
+  "complete": true,
+  "full_sweep_allowed": true,
+  "denominator_expected_tests": 234,
+  "denominator_observed_rows": 234,
+  "denominator_unique_ids": 234,
+  "denominator_executable_tests": 234,
   "c_rows": 214,
-  "nonc_rows": 21,
-  "missing_test_count": 31,
-  "missing_source_count": 31,
-  "missing_test_ids": [
-    "applications/timed-progress-bar",
-    "performance/barrier-rounds",
-    "performance/barrier-yield-rounds",
-    "performance/clock-query-churn",
-    "performance/condvar-baton",
-    "performance/condvar-signal-baton",
-    "performance/dup-close-churn",
-    "performance/epoll-eventfd-ring",
-    "performance/eventfd-roundtrip",
-    "performance/fork-wait-churn",
-    "performance/futex-baton",
-    "performance/getrandom-churn",
-    "performance/mmap-churn",
-    "performance/mutex-contention",
-    "performance/nanosleep-yield",
-    "performance/open-read-close-churn",
-    "performance/pipe-fd-churn",
-    "performance/pipe-nonblock-churn",
-    "performance/pipe-roundtrip",
-    "performance/poll-pipe-ring",
-    "performance/rwlock-contention",
-    "performance/rwlock-mixed-contention",
-    "performance/semaphore-baton",
-    "performance/sigmask-toggle",
-    "performance/socketpair-dgram-churn",
-    "performance/socketpair-roundtrip",
-    "performance/spin-trylock-contention",
-    "performance/syscall-mix",
-    "performance/thread-churn",
-    "performance/trylock-contention",
-    "performance/yield-storm"
-  ],
-  "missing_sources": [
-    {
-      "test_id": "applications/timed-progress-bar",
-      "corpus_file": "compat-envelope/corpus/corpus-nonc.tsv",
-      "corpus_line": 2,
-      "role": "executable",
-      "path": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/tests/e2e/applications/timed-progress-bar.sh"
-    },
-    {
-      "test_id": "performance/barrier-rounds",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 178,
-      "role": "primary",
-      "path": "tests/e2e/performance/barrier-rounds.c"
-    },
-    {
-      "test_id": "performance/barrier-yield-rounds",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 179,
-      "role": "primary",
-      "path": "tests/e2e/performance/barrier-yield-rounds.c"
-    },
-    {
-      "test_id": "performance/clock-query-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 180,
-      "role": "primary",
-      "path": "tests/e2e/performance/clock-query-churn.c"
-    },
-    {
-      "test_id": "performance/condvar-baton",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 181,
-      "role": "primary",
-      "path": "tests/e2e/performance/condvar-baton.c"
-    },
-    {
-      "test_id": "performance/condvar-signal-baton",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 182,
-      "role": "primary",
-      "path": "tests/e2e/performance/condvar-signal-baton.c"
-    },
-    {
-      "test_id": "performance/dup-close-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 183,
-      "role": "primary",
-      "path": "tests/e2e/performance/dup-close-churn.c"
-    },
-    {
-      "test_id": "performance/epoll-eventfd-ring",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 184,
-      "role": "primary",
-      "path": "tests/e2e/performance/epoll-eventfd-ring.c"
-    },
-    {
-      "test_id": "performance/eventfd-roundtrip",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 185,
-      "role": "primary",
-      "path": "tests/e2e/performance/eventfd-roundtrip.c"
-    },
-    {
-      "test_id": "performance/fork-wait-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 186,
-      "role": "primary",
-      "path": "tests/e2e/performance/fork-wait-churn.c"
-    },
-    {
-      "test_id": "performance/futex-baton",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 187,
-      "role": "primary",
-      "path": "tests/e2e/performance/futex-baton.c"
-    },
-    {
-      "test_id": "performance/getrandom-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 188,
-      "role": "primary",
-      "path": "tests/e2e/performance/getrandom-churn.c"
-    },
-    {
-      "test_id": "performance/mmap-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 189,
-      "role": "primary",
-      "path": "tests/e2e/performance/mmap-churn.c"
-    },
-    {
-      "test_id": "performance/mutex-contention",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 190,
-      "role": "primary",
-      "path": "tests/e2e/performance/mutex-contention.c"
-    },
-    {
-      "test_id": "performance/nanosleep-yield",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 191,
-      "role": "primary",
-      "path": "tests/e2e/performance/nanosleep-yield.c"
-    },
-    {
-      "test_id": "performance/open-read-close-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 192,
-      "role": "primary",
-      "path": "tests/e2e/performance/open-read-close-churn.c"
-    },
-    {
-      "test_id": "performance/pipe-fd-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 193,
-      "role": "primary",
-      "path": "tests/e2e/performance/pipe-fd-churn.c"
-    },
-    {
-      "test_id": "performance/pipe-nonblock-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 194,
-      "role": "primary",
-      "path": "tests/e2e/performance/pipe-nonblock-churn.c"
-    },
-    {
-      "test_id": "performance/pipe-roundtrip",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 195,
-      "role": "primary",
-      "path": "tests/e2e/performance/pipe-roundtrip.c"
-    },
-    {
-      "test_id": "performance/poll-pipe-ring",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 196,
-      "role": "primary",
-      "path": "tests/e2e/performance/poll-pipe-ring.c"
-    },
-    {
-      "test_id": "performance/rwlock-contention",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 197,
-      "role": "primary",
-      "path": "tests/e2e/performance/rwlock-contention.c"
-    },
-    {
-      "test_id": "performance/rwlock-mixed-contention",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 198,
-      "role": "primary",
-      "path": "tests/e2e/performance/rwlock-mixed-contention.c"
-    },
-    {
-      "test_id": "performance/semaphore-baton",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 199,
-      "role": "primary",
-      "path": "tests/e2e/performance/semaphore-baton.c"
-    },
-    {
-      "test_id": "performance/sigmask-toggle",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 200,
-      "role": "primary",
-      "path": "tests/e2e/performance/sigmask-toggle.c"
-    },
-    {
-      "test_id": "performance/socketpair-dgram-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 202,
-      "role": "primary",
-      "path": "tests/e2e/performance/socketpair-dgram-churn.c"
-    },
-    {
-      "test_id": "performance/socketpair-roundtrip",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 201,
-      "role": "primary",
-      "path": "tests/e2e/performance/socketpair-roundtrip.c"
-    },
-    {
-      "test_id": "performance/spin-trylock-contention",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 203,
-      "role": "primary",
-      "path": "tests/e2e/performance/spin-trylock-contention.c"
-    },
-    {
-      "test_id": "performance/syscall-mix",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 204,
-      "role": "primary",
-      "path": "tests/e2e/performance/syscall-mix.c"
-    },
-    {
-      "test_id": "performance/thread-churn",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 205,
-      "role": "primary",
-      "path": "tests/e2e/performance/thread-churn.c"
-    },
-    {
-      "test_id": "performance/trylock-contention",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 206,
-      "role": "primary",
-      "path": "tests/e2e/performance/trylock-contention.c"
-    },
-    {
-      "test_id": "performance/yield-storm",
-      "corpus_file": "compat-envelope/corpus/corpus-c.tsv",
-      "corpus_line": 207,
-      "role": "primary",
-      "path": "tests/e2e/performance/yield-storm.c"
-    }
-  ],
+  "nonc_rows": 20,
+  "missing_test_count": 0,
+  "missing_source_count": 0,
+  "missing_test_ids": [],
+  "missing_sources": [],
   "duplicate_ids": [],
+  "duplicate_workload_identities": [],
   "requested_manifest_path": "requested-manifest.json",
-  "requested_manifest_sha256": "078d5eb81fcac816ea4b58193770b17e0d85f94939b30ce9b79e3e07108615f4",
+  "requested_manifest_sha256": "183e04156294d1d63b26b5e48e1d72772b5a91c663732080ce04702a1055bd9d",
   "executable_manifest_path": null,
   "executable_manifest_sha256": null,
-  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "hermit_sha": "49321e67e6356d3f1f26d897ef8193a21c7e28ef",
   "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
   "reverie_dependency_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
   "liteinst2_sha": "8bf704feb06a62e7a05bee3b237d70793e4e2689",
   "liteinst2_dependency_sha": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
-  "hermit_binary_sha256": "446df90954f4b04cb542c2d820df3b83aa0a99fdd3cf340e731c6b9b861fbdf5",
+  "hermit_binary_sha256": "dbe090eb2a35d430f11e12738305d86d9e493f88c6b805bd600e1edf82f299bb",
   "corpus_c_sha256": "54ed0ed059967a881cc9c0bdc1f24d5253fcd27cec54ca9f1c056e3adbf3c78c",
-  "corpus_nonc_sha256": "3184ff833ac1fd7f84d5f7adba5efbd32fcfc4607a9b8242b24e0087139c9bf6"
+  "corpus_nonc_sha256": "2019803ad14b39f64dfaa2b5b7a52532d3111fd7a4497eaf2fb80fad27f67b97"
 }

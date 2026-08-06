@@ -5,6 +5,7 @@
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
 //! sha2 = "0.10"
+//! shell-words = "1"
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -13,14 +14,17 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
+const FULL_TESTS: usize = 234;
 const BACKENDS: [&str; 6] = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"];
 const CALIBRATION_TEST: &str = "backend-parity-c/pid-probe";
 const SPOT_TESTS: [&str; 2] = ["backend-parity-c/pid-probe", "c-programs/print-memaddrs"];
+const SELF_TESTS: [&str; 2] = ["fixture/one", "fixture/two"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Termination {
@@ -37,11 +41,72 @@ struct ArtifactFact {
     bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EvidenceFile {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SourceFact {
+    role: String,
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ToolchainReceipt {
+    cc_argv: Vec<String>,
+    cc_output_sha256: String,
+    rustc_argv: Vec<String>,
+    rustc_output_sha256: String,
+    cargo_argv: Vec<String>,
+    cargo_output_sha256: String,
+    receipt_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CompileSpecEvidence {
+    source: String,
+    cflags: Vec<String>,
+    extra_sources: Vec<String>,
+    command: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CompileReceiptEvidence {
+    command: Vec<String>,
+    command_sha256: String,
+    inputs: Vec<SourceFact>,
+    toolchain_receipt_sha256: String,
+    exit_code: i32,
+    log: ArtifactFact,
+    output: ArtifactFact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HermitBuildReceiptEvidence {
+    source_sha: String,
+    source_tree: String,
+    cargo_lock_sha256: String,
+    clean_before: bool,
+    clean_after: bool,
+    binary_absent_before: bool,
+    command: Vec<String>,
+    command_sha256: String,
+    toolchain_receipt_sha256: String,
+    exit_code: i32,
+    log: ArtifactFact,
+    output: ArtifactFact,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExecutionRecord {
     schema: u32,
     record_type: String,
     run_kind: String,
+    run_instance: String,
+    run_binding_sha256: String,
     cell_id: String,
     test_id: String,
     backend: String,
@@ -56,6 +121,7 @@ struct ExecutionRecord {
     ordered_log_stream: ArtifactFact,
     command: Vec<String>,
     command_sha256: String,
+    guest_binary_sha256: String,
     error: Option<String>,
 }
 
@@ -64,6 +130,8 @@ struct CellRecord {
     schema: u32,
     record_type: String,
     run_kind: String,
+    run_instance: String,
+    run_binding_sha256: String,
     cell_id: String,
     test_id: String,
     backend: String,
@@ -88,12 +156,17 @@ struct Denominator {
     schema: u32,
     record_type: String,
     run_kind: String,
+    run_instance: String,
     hermit_sha: String,
     reverie_sha: String,
     reverie_dependency_sha: String,
     liteinst2_sha: String,
     liteinst2_dependency_sha: String,
     hermit_binary_sha256: String,
+    parent_commit: String,
+    run_rs_sha256: String,
+    verify_rs_sha256: String,
+    guest_set_sha256: String,
     input_audit_path: String,
     input_audit_sha256: String,
     requested_manifest_path: String,
@@ -108,6 +181,7 @@ struct Denominator {
     run_ordinals: Vec<u8>,
     expected_cells: usize,
     expected_executions: usize,
+    required_spot_completion: Option<EvidenceFile>,
     comparison_contract: BTreeMap<String, serde_json::Value>,
 }
 
@@ -123,6 +197,12 @@ struct FrozenManifestEvidence {
     hermit_binary_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+    parent_commit: String,
+    run_rs_sha256: String,
+    verify_rs_sha256: String,
+    toolchain: ToolchainReceipt,
+    hermit_build: HermitBuildReceiptEvidence,
+    guest_set_sha256: String,
     tests: Vec<FrozenTestEvidence>,
 }
 
@@ -130,8 +210,13 @@ struct FrozenManifestEvidence {
 struct FrozenTestEvidence {
     id: String,
     lane: String,
+    kind: String,
     argv: Vec<String>,
+    source_sha256: String,
     binary_sha256: String,
+    workload_identity_sha256: String,
+    compile: Option<CompileSpecEvidence>,
+    compile_receipt: Option<CompileReceiptEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,11 +229,14 @@ struct InputAuditEvidence {
     denominator_observed_rows: usize,
     denominator_unique_ids: usize,
     denominator_executable_tests: usize,
+    c_rows: usize,
+    nonc_rows: usize,
     missing_test_count: usize,
     missing_source_count: usize,
     missing_test_ids: Vec<String>,
     missing_sources: Vec<serde_json::Value>,
     duplicate_ids: Vec<String>,
+    duplicate_workload_identities: Vec<String>,
     requested_manifest_path: String,
     requested_manifest_sha256: String,
     executable_manifest_path: Option<String>,
@@ -161,6 +249,82 @@ struct InputAuditEvidence {
     hermit_binary_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RequestedSourceEvidence {
+    role: String,
+    path: String,
+    exists: bool,
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RequestedInputEvidence {
+    id: String,
+    lane: String,
+    kind: String,
+    corpus_file: String,
+    corpus_line: usize,
+    corpus_row: String,
+    argv: Vec<String>,
+    compile_command: Vec<String>,
+    workload_identity_sha256: String,
+    sources: Vec<RequestedSourceEvidence>,
+    available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RequestedManifestEvidence {
+    schema: u32,
+    record_type: String,
+    hermit_sha: String,
+    reverie_sha: String,
+    reverie_dependency_sha: String,
+    liteinst2_sha: String,
+    liteinst2_dependency_sha: String,
+    hermit_binary_sha256: String,
+    corpus_c_sha256: String,
+    corpus_nonc_sha256: String,
+    denominator_expected_tests: usize,
+    inputs: Vec<RequestedInputEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RunBinding {
+    schema: u32,
+    record_type: String,
+    run_kind: String,
+    run_instance: String,
+    parent_commit: String,
+    run_rs_sha256: String,
+    verify_rs_sha256: String,
+    requested_manifest_sha256: String,
+    input_audit_sha256: String,
+    manifest_sha256: String,
+    denominator_sha256: String,
+    hermit_binary_sha256: String,
+    guest_set_sha256: String,
+    required_spot_completion: Option<EvidenceFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SpotCompletion {
+    schema: u32,
+    record_type: String,
+    complete: bool,
+    run_instance: String,
+    run_binding_sha256: String,
+    denominator_sha256: String,
+    executions_jsonl_sha256: String,
+    cells_jsonl_sha256: String,
+    tests: Vec<String>,
+    backends: Vec<String>,
+    observation_modes: Vec<String>,
+    run_ordinals: Vec<u8>,
+    expected_cells: usize,
+    expected_executions: usize,
+    completion_digest_sha256: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +341,8 @@ struct VerificationSummary {
     record_type: String,
     verified_epoch_ms: u128,
     run_kind: String,
+    run_instance: String,
+    run_binding_sha256: String,
     denominator_cells: usize,
     expected_executions: usize,
     observed_executions: usize,
@@ -210,16 +376,21 @@ struct VerificationSummary {
     liteinst2_dependency_sha: String,
     hermit_binary_sha256: String,
     strict_contract: BTreeMap<String, serde_json::Value>,
+    required_spot_completion_sha256: Option<String>,
+    verification_complete: bool,
 }
 
 #[derive(Debug, Clone)]
 struct VerifyPaths {
+    parent_repo: PathBuf,
     experiment: PathBuf,
     artifacts: PathBuf,
     binary: PathBuf,
     hermit_repo: PathBuf,
     reverie_repo: PathBuf,
     liteinst_repo: PathBuf,
+    corpus_c: PathBuf,
+    corpus_nonc: PathBuf,
 }
 
 fn main() -> Result<()> {
@@ -229,8 +400,9 @@ fn main() -> Result<()> {
         "verify" => {
             let paths = VerifyPaths::from_args(&args[1..]);
             let kind = value_string(&args[1..], "--kind", "full");
-            let summary = verify(&paths, &kind, true)?;
-            write_outputs(&paths, &kind, &summary)?;
+            let run_instance = required_slug_value(&args[1..], "--run-instance")?;
+            let summary = verify(&paths, &kind, &run_instance, true)?;
+            write_outputs(&paths, &kind, &run_instance, &summary)?;
             println!(
                 "VERIFIED kind={} executions={}/{} cells={} legacy_green={} strict_green={} drop={} ({:.6} pp)",
                 kind,
@@ -246,7 +418,7 @@ fn main() -> Result<()> {
         }
         "self-test" => self_test(&VerifyPaths::from_args(&args[1..])),
         "help" | "--help" | "-h" => {
-            println!("verify --kind full|calibration|spot; self-test");
+            println!("verify --kind full|calibration|spot --run-instance SLUG; self-test");
             Ok(())
         }
         other => bail!("unknown command {other:?}"),
@@ -261,6 +433,7 @@ impl VerifyPaths {
             "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit",
         );
         Self {
+            parent_repo: path_value(args, "--parent", "/home/newton/work/dev-hermit"),
             experiment: path_value(
                 args,
                 "--experiment",
@@ -286,6 +459,16 @@ impl VerifyPaths {
                 "--liteinst2",
                 "/home/newton/work/dev-hermit/worktrees/strict-metric/liteinst2",
             ),
+            corpus_c: path_value(
+                args,
+                "--corpus-c",
+                "/home/newton/work/dev-hermit/compat-envelope/corpus/corpus-c.tsv",
+            ),
+            corpus_nonc: path_value(
+                args,
+                "--corpus-nonc",
+                "/home/newton/work/dev-hermit/compat-envelope/corpus/corpus-nonc.tsv",
+            ),
             hermit_repo,
         }
     }
@@ -294,32 +477,35 @@ impl VerifyPaths {
 fn verify(
     paths: &VerifyPaths,
     kind: &str,
+    run_instance: &str,
     verify_environment: bool,
 ) -> Result<VerificationSummary> {
-    let denominator_path = paths.experiment.join(if kind == "full" {
-        "denominator.json".to_owned()
-    } else {
-        format!("denominator-{kind}.json")
-    });
-    let executions_path = paths.experiment.join(if kind == "full" {
-        "executions.jsonl".to_owned()
-    } else {
-        format!("executions-{kind}.jsonl")
-    });
-    let cells_path = paths.experiment.join(if kind == "full" {
-        "cells.jsonl".to_owned()
-    } else {
-        format!("cells-{kind}.jsonl")
-    });
+    let run_dir = run_dir(paths, kind, run_instance);
+    let denominator_path = run_dir.join("denominator.json");
+    let executions_path = run_dir.join("executions.jsonl");
+    let cells_path = run_dir.join("cells.jsonl");
+    let binding_path = run_dir.join("run-binding.json");
+    let binding: RunBinding = read_json(&binding_path)?;
+    let binding_sha256 = sha256_file(&binding_path)?;
     let denominator: Denominator = read_json(&denominator_path)?;
     if denominator.schema != SCHEMA
         || denominator.record_type != "strict_metric_denominator"
         || denominator.run_kind != kind
+        || denominator.run_instance != run_instance
     {
         bail!("invalid denominator type/schema/kind");
     }
     verify_contract(&denominator)?;
     verify_axes(&denominator, kind)?;
+    verify_run_binding(
+        paths,
+        &denominator,
+        &binding,
+        &binding_sha256,
+        &denominator_path,
+        kind,
+        run_instance,
+    )?;
     if sha256_file(&paths.experiment.join(&denominator.manifest_path))?
         != denominator.manifest_sha256
     {
@@ -330,7 +516,21 @@ fn verify(
     }
     verify_input_audit(paths, &denominator, kind)?;
     let manifest = verify_manifest(paths, &denominator, kind)?;
+    rederive_requested_inputs(paths, &denominator, &manifest, kind)?;
+    let required_spot_completion_sha256 = if kind == "full" {
+        Some(verify_required_spot_completion(
+            paths,
+            &denominator,
+            verify_environment,
+        )?)
+    } else {
+        if denominator.required_spot_completion.is_some() {
+            bail!("only a full run may bind a required spot completion");
+        }
+        None
+    };
     if verify_environment {
+        verify_parent_harness(paths, &denominator)?;
         verify_repo_sha(&paths.hermit_repo, &denominator.hermit_sha, "Hermit")?;
         verify_repo_sha(&paths.reverie_repo, &denominator.reverie_sha, "Reverie")?;
         verify_repo_sha(
@@ -385,17 +585,30 @@ fn verify(
     let mut attempted_executions = 0;
     let mut nonzero_log_executions = 0;
     let mut successful_exit_executions = 0;
+    let mut artifact_paths = BTreeSet::new();
     for (key, execution) in &executions {
+        if execution.run_binding_sha256 != binding_sha256 {
+            bail!("execution run binding mismatch at {key}");
+        }
         if execution.schema != SCHEMA
             || execution.record_type != "strict_metric_execution"
             || execution.run_kind != kind
+            || execution.run_instance != run_instance
         {
             bail!("invalid execution record at {key}");
         }
         if !execution.attempted {
             bail!("execution was recorded but never attempted: {key}");
         }
-        verify_execution_identity(paths, &denominator, &manifest, key, execution, kind)?;
+        verify_execution_identity(
+            paths,
+            &denominator,
+            &manifest,
+            &binding_sha256,
+            key,
+            execution,
+            kind,
+        )?;
         verify_termination(&execution.termination, key)?;
         if execution.error.is_some() {
             bail!("attempted execution unexpectedly carries a spawn error: {key}");
@@ -413,6 +626,9 @@ fn verify(
             &execution.stderr,
             &execution.ordered_log_stream,
         ] {
+            if !artifact_paths.insert(fact.path.clone()) {
+                bail!("ordinal/stream artifact alias detected: {}", fact.path);
+            }
             verify_artifact(paths, fact)?;
             artifact_hashes_verified += 1;
         }
@@ -434,6 +650,8 @@ fn verify(
         if cell.schema != SCHEMA
             || cell.record_type != "strict_metric_cell"
             || cell.run_kind != kind
+            || cell.run_instance != run_instance
+            || cell.run_binding_sha256 != binding_sha256
             || cell.execution_ordinals != vec![1, 2]
         {
             bail!("invalid cell record at {cell_key}");
@@ -446,6 +664,19 @@ fn verify(
         );
         if cell.cell_id != bound_cell_id || cell_key != &bound_cell_id {
             bail!("cell identity is not bound to its typed axes: {cell_key}");
+        }
+        let expected_diagnostic = canonical_artifact_relative(
+            kind,
+            run_instance,
+            &binding_sha256,
+            cell_key,
+            "legacy-log-diff.stderr",
+        );
+        if cell.legacy_diagnostic.path != expected_diagnostic {
+            bail!("legacy diagnostic path is not canonical: {cell_key}");
+        }
+        if !artifact_paths.insert(cell.legacy_diagnostic.path.clone()) {
+            bail!("legacy diagnostic aliases another artifact: {cell_key}");
         }
         verify_artifact(paths, &cell.legacy_diagnostic)?;
         artifact_hashes_verified += 1;
@@ -507,11 +738,11 @@ fn verify(
             legacy_log_match,
             legacy_green,
         );
-        if producer_tuple != verified_tuple {
-            bail!("producer cell verdict disagrees with dereferenced evidence: {cell_key}");
-        }
         if cell.strict_green && !nonzero_log_events {
             bail!("zero-message cell claimed strict green: {cell_key}");
+        }
+        if producer_tuple != verified_tuple {
+            bail!("producer cell verdict disagrees with dereferenced evidence: {cell_key}");
         }
         if !stdout_equal {
             *mismatch_components.entry("stdout".to_owned()).or_default() += 1;
@@ -569,6 +800,8 @@ fn verify(
         record_type: "strict_metric_verified_summary".to_owned(),
         verified_epoch_ms: epoch_ms(),
         run_kind: kind.to_owned(),
+        run_instance: run_instance.to_owned(),
+        run_binding_sha256: binding_sha256,
         denominator_cells,
         expected_executions: expected_executions.len(),
         observed_executions: executions.len(),
@@ -602,6 +835,8 @@ fn verify(
         liteinst2_dependency_sha: denominator.liteinst2_dependency_sha,
         hermit_binary_sha256: denominator.hermit_binary_sha256,
         strict_contract: denominator.comparison_contract,
+        required_spot_completion_sha256,
+        verification_complete: true,
     })
 }
 
@@ -620,11 +855,11 @@ fn verify_axes(denominator: &Denominator, kind: &str) -> Result<()> {
     if denominator.run_ordinals != vec![1, 2] {
         bail!("run ordinals must be exactly [1, 2]");
     }
-    if kind == "selftest" {
-        return Ok(());
-    }
-
-    let expected_backends: Vec<_> = BACKENDS.iter().map(|value| (*value).to_owned()).collect();
+    let expected_backends: Vec<_> = if kind == "selftest" {
+        vec!["ptrace".to_owned()]
+    } else {
+        BACKENDS.iter().map(|value| (*value).to_owned()).collect()
+    };
     if denominator.backends != expected_backends {
         bail!("backend axis is not the exact six-path contract");
     }
@@ -632,8 +867,8 @@ fn verify_axes(denominator: &Denominator, kind: &str) -> Result<()> {
         "full" => (
             None,
             vec!["strict_raw".to_owned()],
-            235usize * 6,
-            235usize * 6 * 2,
+            FULL_TESTS * 6,
+            FULL_TESTS * 6 * 2,
         ),
         "calibration" => (
             Some(BTreeSet::from([CALIBRATION_TEST.to_owned()])),
@@ -651,10 +886,16 @@ fn verify_axes(denominator: &Denominator, kind: &str) -> Result<()> {
             36,
             72,
         ),
+        "selftest" => (
+            Some(SELF_TESTS.iter().map(|value| (*value).to_owned()).collect()),
+            vec!["strict_raw".to_owned()],
+            2,
+            4,
+        ),
         other => bail!("unknown run kind {other:?}"),
     };
-    if kind == "full" && unique_tests.len() != 235 {
-        bail!("full denominator must contain exactly 235 unique tests");
+    if kind == "full" && unique_tests.len() != FULL_TESTS {
+        bail!("full denominator must contain exactly 234 unique semantic workloads");
     }
     if let Some(expected_tests) = expected_tests {
         if unique_tests != expected_tests {
@@ -670,26 +911,238 @@ fn verify_axes(denominator: &Denominator, kind: &str) -> Result<()> {
     Ok(())
 }
 
+fn verify_run_binding(
+    paths: &VerifyPaths,
+    denominator: &Denominator,
+    binding: &RunBinding,
+    _binding_sha256: &str,
+    denominator_path: &Path,
+    kind: &str,
+    run_instance: &str,
+) -> Result<()> {
+    if binding.schema != SCHEMA
+        || binding.record_type != "strict_metric_run_binding"
+        || binding.run_kind != kind
+        || binding.run_instance != run_instance
+        || binding.parent_commit != denominator.parent_commit
+        || binding.run_rs_sha256 != denominator.run_rs_sha256
+        || binding.verify_rs_sha256 != denominator.verify_rs_sha256
+        || binding.requested_manifest_sha256 != denominator.requested_manifest_sha256
+        || binding.input_audit_sha256 != denominator.input_audit_sha256
+        || binding.manifest_sha256 != denominator.manifest_sha256
+        || binding.denominator_sha256 != sha256_file(denominator_path)?
+        || binding.hermit_binary_sha256 != denominator.hermit_binary_sha256
+        || binding.guest_set_sha256 != denominator.guest_set_sha256
+        || binding.required_spot_completion != denominator.required_spot_completion
+    {
+        bail!("run binding is detached from the denominator or run identity");
+    }
+    let manifest_path = paths.experiment.join(&denominator.manifest_path);
+    let audit_path = paths.experiment.join(&denominator.input_audit_path);
+    let requested_path = paths.experiment.join(&denominator.requested_manifest_path);
+    if sha256_file(&manifest_path)? != binding.manifest_sha256
+        || sha256_file(&audit_path)? != binding.input_audit_sha256
+        || sha256_file(&requested_path)? != binding.requested_manifest_sha256
+    {
+        bail!("run binding hashes do not dereference to the frozen evidence");
+    }
+    Ok(())
+}
+
+fn verify_parent_harness(paths: &VerifyPaths, denominator: &Denominator) -> Result<()> {
+    if denominator.parent_commit.len() != 40
+        || !denominator
+            .parent_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("parent harness commit is not a 40-hex object name");
+    }
+    let run_path = paths.experiment.join("run.rs");
+    let verify_path = paths.experiment.join("verify.rs");
+    for (path, expected_hash) in [
+        (&run_path, &denominator.run_rs_sha256),
+        (&verify_path, &denominator.verify_rs_sha256),
+    ] {
+        if sha256_file(path)? != *expected_hash {
+            bail!("harness bytes moved after run binding: {}", path.display());
+        }
+        let relative = path.strip_prefix(&paths.parent_repo)?;
+        let status = Command::new("git")
+            .args(["diff", "--quiet", "HEAD", "--"])
+            .arg(relative)
+            .current_dir(&paths.parent_repo)
+            .status()?;
+        if !status.success() {
+            bail!("harness file is not the version committed at parent HEAD");
+        }
+        let object = format!("{}:{}", denominator.parent_commit, relative.display());
+        let output = Command::new("git")
+            .args(["show", &object])
+            .current_dir(&paths.parent_repo)
+            .output()?;
+        if !output.status.success() || sha256_bytes(&output.stdout) != *expected_hash {
+            bail!("bound parent commit lacks the recorded harness bytes: {object}");
+        }
+    }
+    Ok(())
+}
+
+fn verify_required_spot_completion(
+    paths: &VerifyPaths,
+    denominator: &Denominator,
+    verify_environment: bool,
+) -> Result<String> {
+    let evidence = denominator
+        .required_spot_completion
+        .as_ref()
+        .context("full denominator lacks a required spot completion")?;
+    let relative = Path::new(&evidence.path);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        bail!("spot completion path escapes experiment root");
+    }
+    let path = paths.experiment.join(relative);
+    if sha256_file(&path)? != evidence.sha256 {
+        bail!("spot completion hash does not match full denominator");
+    }
+    let recorded: SpotCompletion = read_json(&path)?;
+    let expected_path = run_dir(paths, "spot", &recorded.run_instance).join("spot-completion.json");
+    if path != expected_path {
+        bail!("spot completion is not in its canonical run-instance path");
+    }
+    let summary = verify(paths, "spot", &recorded.run_instance, verify_environment)?;
+    let computed = make_spot_completion(paths, &summary)?;
+    if recorded != computed {
+        bail!("spot completion does not match independently reverified 72-execution evidence");
+    }
+    Ok(evidence.sha256.clone())
+}
+
+fn make_spot_completion(
+    paths: &VerifyPaths,
+    summary: &VerificationSummary,
+) -> Result<SpotCompletion> {
+    if summary.run_kind != "spot"
+        || !summary.verification_complete
+        || summary.denominator_cells != 36
+        || summary.expected_executions != 72
+        || summary.observed_executions != 72
+    {
+        bail!("spot summary is not the exact completed 36-cell/72-execution profile");
+    }
+    let denominator: Denominator =
+        read_json(&run_dir(paths, "spot", &summary.run_instance).join("denominator.json"))?;
+    let mut completion = SpotCompletion {
+        schema: SCHEMA,
+        record_type: "strict_metric_spot_completion".to_owned(),
+        complete: true,
+        run_instance: summary.run_instance.clone(),
+        run_binding_sha256: summary.run_binding_sha256.clone(),
+        denominator_sha256: summary.denominator_sha256.clone(),
+        executions_jsonl_sha256: summary.executions_jsonl_sha256.clone(),
+        cells_jsonl_sha256: summary.cells_jsonl_sha256.clone(),
+        tests: denominator.tests,
+        backends: denominator.backends,
+        observation_modes: denominator.observation_modes,
+        run_ordinals: denominator.run_ordinals,
+        expected_cells: summary.denominator_cells,
+        expected_executions: summary.expected_executions,
+        completion_digest_sha256: String::new(),
+    };
+    completion.completion_digest_sha256 = spot_completion_digest(&completion)?;
+    Ok(completion)
+}
+
+fn spot_completion_digest(completion: &SpotCompletion) -> Result<String> {
+    let value = serde_json::json!({
+        "schema": completion.schema,
+        "record_type": completion.record_type,
+        "complete": completion.complete,
+        "run_instance": completion.run_instance,
+        "run_binding_sha256": completion.run_binding_sha256,
+        "denominator_sha256": completion.denominator_sha256,
+        "executions_jsonl_sha256": completion.executions_jsonl_sha256,
+        "cells_jsonl_sha256": completion.cells_jsonl_sha256,
+        "tests": completion.tests,
+        "backends": completion.backends,
+        "observation_modes": completion.observation_modes,
+        "run_ordinals": completion.run_ordinals,
+        "expected_cells": completion.expected_cells,
+        "expected_executions": completion.expected_executions,
+    });
+    Ok(sha256_bytes(&serde_json::to_vec(&value)?))
+}
+
 fn verify_input_audit(paths: &VerifyPaths, denominator: &Denominator, kind: &str) -> Result<()> {
     let audit_path = paths.experiment.join(&denominator.input_audit_path);
     if sha256_file(&audit_path)? != denominator.input_audit_sha256 {
         bail!("input audit hash does not match denominator");
     }
     let audit: InputAuditEvidence = read_json(&audit_path)?;
-    let expected_tests = if kind == "selftest" { 1 } else { 235 };
+    let expected_tests = if kind == "selftest" { 2 } else { FULL_TESTS };
+    let derived = derive_requested_inputs(
+        paths,
+        &paths.experiment.join("frozen-corpus-c.tsv"),
+        &paths.experiment.join("frozen-corpus-nonc.tsv"),
+    )?;
+    let mut id_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut workload_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut derived_missing_tests = BTreeSet::new();
+    let mut derived_missing_sources = 0usize;
+    for input in &derived {
+        *id_counts.entry(&input.id).or_default() += 1;
+        *workload_counts
+            .entry(&input.workload_identity_sha256)
+            .or_default() += 1;
+        for source in input.sources.iter().filter(|source| !source.exists) {
+            derived_missing_sources += 1;
+            let _ = source;
+            derived_missing_tests.insert(input.id.clone());
+        }
+    }
+    let derived_duplicate_ids = id_counts.values().filter(|count| **count > 1).count();
+    let derived_duplicate_workloads = workload_counts.values().filter(|count| **count > 1).count();
+    let derived_executable = derived.iter().filter(|input| input.available).count();
+    let derived_c_rows = derived
+        .iter()
+        .filter(|input| input.kind == "compiled_c")
+        .count();
+    let derived_nonc_rows = derived.len() - derived_c_rows;
+    if derived_duplicate_ids != 0 {
+        bail!("duplicate test identity independently rederived from corpus");
+    }
+    if derived_duplicate_workloads != 0 {
+        bail!("duplicate workload identity independently rederived from corpus");
+    }
     if audit.schema != SCHEMA
         || audit.record_type != "strict_metric_input_audit"
         || !audit.complete
         || !audit.full_sweep_allowed
         || audit.denominator_expected_tests != expected_tests
-        || audit.denominator_observed_rows != expected_tests
-        || audit.denominator_unique_ids != expected_tests
-        || audit.denominator_executable_tests != expected_tests
-        || audit.missing_test_count != 0
-        || audit.missing_source_count != 0
-        || !audit.missing_test_ids.is_empty()
-        || !audit.missing_sources.is_empty()
-        || !audit.duplicate_ids.is_empty()
+        || audit.denominator_observed_rows != derived.len()
+        || audit.denominator_unique_ids != id_counts.len()
+        || audit.denominator_executable_tests != derived_executable
+        || audit.c_rows != derived_c_rows
+        || audit.nonc_rows != derived_nonc_rows
+        || audit.missing_test_count != derived_missing_tests.len()
+        || audit.missing_source_count != derived_missing_sources
+        || audit.missing_test_ids != derived_missing_tests.into_iter().collect::<Vec<_>>()
+        || audit.missing_sources.len() != derived_missing_sources
+        || audit.duplicate_ids.len() != derived_duplicate_ids
+        || audit.duplicate_workload_identities.len() != derived_duplicate_workloads
+        || derived.len() != expected_tests
+        || id_counts.len() != expected_tests
+        || derived_executable != expected_tests
+        || derived_missing_sources != 0
+        || derived_duplicate_ids != 0
+        || derived_duplicate_workloads != 0
         || audit.requested_manifest_path != denominator.requested_manifest_path
         || audit.requested_manifest_sha256 != denominator.requested_manifest_sha256
         || audit.executable_manifest_path.as_deref() != Some(denominator.manifest_path.as_str())
@@ -725,25 +1178,256 @@ fn verify_input_audit(paths: &VerifyPaths, denominator: &Denominator, kind: &str
     if sha256_file(&requested_path)? != denominator.requested_manifest_sha256 {
         bail!("requested manifest hash does not match denominator");
     }
-    let requested: serde_json::Value = read_json(&requested_path)?;
-    let inputs = requested
-        .get("inputs")
-        .and_then(serde_json::Value::as_array)
-        .context("requested manifest has no typed inputs array")?;
-    if requested.get("schema").and_then(serde_json::Value::as_u64) != Some(SCHEMA as u64)
-        || requested
-            .get("record_type")
-            .and_then(serde_json::Value::as_str)
-            != Some("strict_metric_requested_manifest")
-        || requested
-            .get("denominator_expected_tests")
-            .and_then(serde_json::Value::as_u64)
-            != Some(expected_tests as u64)
-        || inputs.len() != expected_tests
+    let requested: RequestedManifestEvidence = read_json(&requested_path)?;
+    if requested.schema != SCHEMA
+        || requested.record_type != "strict_metric_requested_manifest"
+        || requested.denominator_expected_tests != expected_tests
+        || requested.inputs.len() != expected_tests
     {
         bail!("requested manifest type/count is invalid");
     }
     Ok(())
+}
+
+fn rederive_requested_inputs(
+    paths: &VerifyPaths,
+    denominator: &Denominator,
+    manifest: &BTreeMap<String, FrozenTestEvidence>,
+    kind: &str,
+) -> Result<()> {
+    let frozen_c = paths.experiment.join("frozen-corpus-c.tsv");
+    let frozen_nonc = paths.experiment.join("frozen-corpus-nonc.tsv");
+    if sha256_file(&frozen_c)? != denominator.corpus_c_sha256
+        || sha256_file(&frozen_nonc)? != denominator.corpus_nonc_sha256
+        || sha256_file(&paths.corpus_c)? != denominator.corpus_c_sha256
+        || sha256_file(&paths.corpus_nonc)? != denominator.corpus_nonc_sha256
+    {
+        bail!("frozen/source corpus bytes are not the bytes bound by the denominator");
+    }
+    let requested_path = paths.experiment.join(&denominator.requested_manifest_path);
+    let requested: RequestedManifestEvidence = read_json(&requested_path)?;
+    let expected_count = if kind == "selftest" { 2 } else { FULL_TESTS };
+    let binding = (
+        &requested.hermit_sha,
+        &requested.reverie_sha,
+        &requested.reverie_dependency_sha,
+        &requested.liteinst2_sha,
+        &requested.liteinst2_dependency_sha,
+        &requested.hermit_binary_sha256,
+        &requested.corpus_c_sha256,
+        &requested.corpus_nonc_sha256,
+    );
+    let expected_binding = (
+        &denominator.hermit_sha,
+        &denominator.reverie_sha,
+        &denominator.reverie_dependency_sha,
+        &denominator.liteinst2_sha,
+        &denominator.liteinst2_dependency_sha,
+        &denominator.hermit_binary_sha256,
+        &denominator.corpus_c_sha256,
+        &denominator.corpus_nonc_sha256,
+    );
+    if requested.schema != SCHEMA
+        || requested.record_type != "strict_metric_requested_manifest"
+        || requested.denominator_expected_tests != expected_count
+        || binding != expected_binding
+    {
+        bail!("requested manifest header is detached from the denominator");
+    }
+    let derived = derive_requested_inputs(paths, &frozen_c, &frozen_nonc)?;
+    if derived.len() != expected_count {
+        bail!(
+            "rederived corpus count is {}, expected {expected_count}",
+            derived.len()
+        );
+    }
+    if serde_json::to_vec(&derived)? != serde_json::to_vec(&requested.inputs)? {
+        bail!("requested manifest rows do not equal independent corpus/repository rederivation");
+    }
+    let mut ids = BTreeSet::new();
+    let mut workload_to_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for input in &derived {
+        if !input.available || !ids.insert(input.id.clone()) {
+            bail!(
+                "rederived input is unavailable or duplicates an ID: {}",
+                input.id
+            );
+        }
+        workload_to_ids
+            .entry(input.workload_identity_sha256.clone())
+            .or_default()
+            .push(input.id.clone());
+        let test = manifest.get(&input.id).with_context(|| {
+            format!("rederived input absent from frozen manifest: {}", input.id)
+        })?;
+        if test.lane != input.lane
+            || test.kind != input.kind
+            || test.workload_identity_sha256 != input.workload_identity_sha256
+        {
+            bail!(
+                "frozen test type/lane/workload differs from corpus: {}",
+                input.id
+            );
+        }
+        if input.kind == "compiled_c" {
+            let compile = test
+                .compile
+                .as_ref()
+                .with_context(|| format!("compiled row lacks compile spec: {}", input.id))?;
+            let primary = &input.sources[0];
+            let expected_source = paths.hermit_repo.join(&primary.path).display().to_string();
+            let expected_extras: Vec<_> = input.sources[1..]
+                .iter()
+                .map(|source| paths.hermit_repo.join(&source.path).display().to_string())
+                .collect();
+            if compile.source != expected_source
+                || compile.extra_sources != expected_extras
+                || compile.command != input.compile_command
+                || test.source_sha256 != primary.sha256.as_deref().unwrap_or("")
+            {
+                bail!(
+                    "compile command/input binding differs from corpus: {}",
+                    input.id
+                );
+            }
+        } else {
+            if test.compile.is_some()
+                || test.argv != input.argv
+                || test.source_sha256 != input.sources[0].sha256.as_deref().unwrap_or("")
+                || test.binary_sha256 != test.source_sha256
+            {
+                bail!(
+                    "non-C argv/source binding differs from corpus: {}",
+                    input.id
+                );
+            }
+        }
+    }
+    let duplicates: Vec<_> = workload_to_ids
+        .into_iter()
+        .filter(|(_, ids)| ids.len() > 1)
+        .collect();
+    if !duplicates.is_empty() {
+        bail!("duplicate workload identity after independent rederivation: {duplicates:?}");
+    }
+    Ok(())
+}
+
+fn derive_requested_inputs(
+    paths: &VerifyPaths,
+    corpus_c: &Path,
+    corpus_nonc: &Path,
+) -> Result<Vec<RequestedInputEvidence>> {
+    let mut inputs = Vec::new();
+    for (line_no, line) in BufReader::new(File::open(corpus_c)?).lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.split('|').collect();
+        if fields.len() != 6 {
+            bail!("{}:{} expected 6 fields", corpus_c.display(), line_no + 1);
+        }
+        let cflags = shell_words::split(fields[2])?;
+        let extras = shell_words::split(fields[3])?;
+        let mut declared = vec![("primary".to_owned(), fields[1].to_owned())];
+        declared.extend(
+            extras
+                .iter()
+                .enumerate()
+                .map(|(index, path)| (format!("extra_source_{}", index + 1), path.clone())),
+        );
+        let mut sources = Vec::new();
+        for (role, relative) in declared {
+            let absolute = paths.hermit_repo.join(&relative);
+            let exists = absolute.is_file();
+            sources.push(RequestedSourceEvidence {
+                role,
+                path: relative,
+                exists,
+                sha256: exists.then(|| sha256_file(&absolute)).transpose()?,
+            });
+        }
+        let output = paths
+            .artifacts
+            .join("guests")
+            .join(slug(fields[0]))
+            .join("guest");
+        let source = paths.hermit_repo.join(fields[1]);
+        let absolute_extras: Vec<_> = extras
+            .iter()
+            .map(|path| paths.hermit_repo.join(path).display().to_string())
+            .collect();
+        let compile_command = c_compile_command(&source, &cflags, &absolute_extras, &output);
+        let semantic_compile = compile_command[..compile_command.len() - 2].to_vec();
+        inputs.push(RequestedInputEvidence {
+            id: fields[0].to_owned(),
+            lane: fields[4].to_owned(),
+            kind: "compiled_c".to_owned(),
+            corpus_file: "compat-envelope/corpus/corpus-c.tsv".to_owned(),
+            corpus_line: line_no + 1,
+            corpus_row: line,
+            argv: Vec::new(),
+            compile_command,
+            workload_identity_sha256: workload_identity(
+                "compiled_c",
+                &[],
+                &sources,
+                &semantic_compile,
+                &paths.hermit_repo,
+            )?,
+            available: sources.iter().all(|source| source.exists),
+            sources,
+        });
+    }
+    for (line_no, line) in BufReader::new(File::open(corpus_nonc)?).lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.splitn(3, '|').collect();
+        if fields.len() != 3 {
+            bail!(
+                "{}:{} expected 3 fields",
+                corpus_nonc.display(),
+                line_no + 1
+            );
+        }
+        let expanded = fields[2].replace("HERMITROOT", &paths.hermit_repo.display().to_string());
+        let argv = shell_words::split(&expanded)?;
+        if argv.is_empty() {
+            bail!("{}:{} empty command", corpus_nonc.display(), line_no + 1);
+        }
+        let executable = PathBuf::from(&argv[0]);
+        let exists = executable.is_file();
+        let sources = vec![RequestedSourceEvidence {
+            role: "executable".to_owned(),
+            path: executable.display().to_string(),
+            exists,
+            sha256: exists.then(|| sha256_file(&executable)).transpose()?,
+        }];
+        inputs.push(RequestedInputEvidence {
+            id: fields[0].to_owned(),
+            lane: fields[1].to_owned(),
+            kind: "script_or_interpreter".to_owned(),
+            corpus_file: "compat-envelope/corpus/corpus-nonc.tsv".to_owned(),
+            corpus_line: line_no + 1,
+            corpus_row: line,
+            argv: argv.clone(),
+            compile_command: Vec::new(),
+            workload_identity_sha256: workload_identity(
+                "script_or_interpreter",
+                &argv,
+                &sources,
+                &[],
+                &paths.hermit_repo,
+            )?,
+            available: sources.iter().all(|source| source.exists),
+            sources,
+        });
+    }
+    inputs.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(inputs)
 }
 
 fn verify_manifest(
@@ -765,6 +1449,10 @@ fn verify_manifest(
         &denominator.hermit_binary_sha256,
         &denominator.corpus_c_sha256,
         &denominator.corpus_nonc_sha256,
+        &denominator.parent_commit,
+        &denominator.run_rs_sha256,
+        &denominator.verify_rs_sha256,
+        &denominator.guest_set_sha256,
     );
     let manifest_binding = (
         &manifest.hermit_sha,
@@ -775,6 +1463,10 @@ fn verify_manifest(
         &manifest.hermit_binary_sha256,
         &manifest.corpus_c_sha256,
         &manifest.corpus_nonc_sha256,
+        &manifest.parent_commit,
+        &manifest.run_rs_sha256,
+        &manifest.verify_rs_sha256,
+        &manifest.guest_set_sha256,
     );
     if denominator_binding != manifest_binding {
         bail!("denominator facts disagree with dereferenced frozen manifest");
@@ -785,8 +1477,31 @@ fn verify_manifest(
     {
         bail!("frozen corpus bytes disagree with manifest hashes");
     }
+    if capture_toolchain()? != manifest.toolchain {
+        bail!("toolchain receipt does not match the executing toolchain");
+    }
+    let expected_build_command = hermit_build_command();
+    if manifest.hermit_build.source_sha != manifest.hermit_sha
+        || manifest.hermit_build.source_tree != git_tree(&paths.hermit_repo)?
+        || manifest.hermit_build.cargo_lock_sha256
+            != sha256_file(&paths.hermit_repo.join("Cargo.lock"))?
+        || !manifest.hermit_build.clean_before
+        || !manifest.hermit_build.clean_after
+        || !manifest.hermit_build.binary_absent_before
+        || manifest.hermit_build.exit_code != 0
+        || manifest.hermit_build.toolchain_receipt_sha256 != manifest.toolchain.receipt_sha256
+        || manifest.hermit_build.command != expected_build_command
+        || manifest.hermit_build.command_sha256
+            != sha256_bytes(&serde_json::to_vec(&manifest.hermit_build.command)?)
+        || manifest.hermit_build.output.sha256 != manifest.hermit_binary_sha256
+    {
+        bail!("Hermit causal build receipt is malformed or detached from its source tuple");
+    }
+    verify_artifact(paths, &manifest.hermit_build.log)?;
+    verify_artifact(paths, &manifest.hermit_build.output)?;
 
     let mut tests = BTreeMap::new();
+    let mut workload_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for test in manifest.tests {
         if test.argv.is_empty() {
             bail!("manifest test has empty argv: {}", test.id);
@@ -795,12 +1510,58 @@ fn verify_manifest(
         if !binary.is_file() || sha256_file(binary)? != test.binary_sha256 {
             bail!("manifest guest binary missing or changed: {}", test.id);
         }
+        workload_ids
+            .entry(test.workload_identity_sha256.clone())
+            .or_default()
+            .push(test.id.clone());
+        match (&test.compile, &test.compile_receipt) {
+            (Some(compile), Some(receipt)) => {
+                if receipt.command != compile.command
+                    || receipt.command_sha256
+                        != sha256_bytes(&serde_json::to_vec(&compile.command)?)
+                    || receipt.toolchain_receipt_sha256 != manifest.toolchain.receipt_sha256
+                    || receipt.exit_code != 0
+                    || receipt.output.sha256 != test.binary_sha256
+                {
+                    bail!("compile receipt is detached from test {}", test.id);
+                }
+                let mut expected_inputs = vec![SourceFact {
+                    role: "primary".to_owned(),
+                    path: compile.source.clone(),
+                    sha256: sha256_file(Path::new(&compile.source))?,
+                }];
+                for (index, source) in compile.extra_sources.iter().enumerate() {
+                    expected_inputs.push(SourceFact {
+                        role: format!("extra_source_{}", index + 1),
+                        path: source.clone(),
+                        sha256: sha256_file(Path::new(source))?,
+                    });
+                }
+                if receipt.inputs != expected_inputs {
+                    bail!("compile input receipt is detached from test {}", test.id);
+                }
+                verify_artifact(paths, &receipt.log)?;
+                verify_artifact(paths, &receipt.output)?;
+            }
+            (None, None) => {}
+            _ => bail!(
+                "compile specification/receipt pairing is invalid: {}",
+                test.id
+            ),
+        }
         if tests.insert(test.id.clone(), test).is_some() {
             bail!("duplicate test identity in frozen manifest");
         }
     }
-    if kind != "selftest" && tests.len() != 235 {
-        bail!("frozen manifest must contain exactly 235 unique tests");
+    let duplicate_workloads: Vec<_> = workload_ids
+        .into_iter()
+        .filter(|(_, ids)| ids.len() > 1)
+        .collect();
+    if !duplicate_workloads.is_empty() {
+        bail!("duplicate workload identity in frozen manifest: {duplicate_workloads:?}");
+    }
+    if kind != "selftest" && tests.len() != FULL_TESTS {
+        bail!("frozen manifest must contain exactly 234 unique semantic workloads");
     }
     let denominator_tests: BTreeSet<_> = denominator.tests.iter().cloned().collect();
     let manifest_tests: BTreeSet<_> = tests.keys().cloned().collect();
@@ -809,6 +1570,13 @@ fn verify_manifest(
     {
         bail!("denominator test axis is not bound to the frozen manifest");
     }
+    let guest_values: Vec<_> = tests
+        .values()
+        .map(|test| (&test.id, &test.binary_sha256))
+        .collect();
+    if sha256_bytes(&serde_json::to_vec(&guest_values)?) != manifest.guest_set_sha256 {
+        bail!("guest-set digest does not match frozen manifest");
+    }
     Ok(tests)
 }
 
@@ -816,6 +1584,7 @@ fn verify_execution_identity(
     paths: &VerifyPaths,
     denominator: &Denominator,
     manifest: &BTreeMap<String, FrozenTestEvidence>,
+    binding_sha256: &str,
     key: &str,
     execution: &ExecutionRecord,
     kind: &str,
@@ -840,13 +1609,47 @@ fn verify_execution_identity(
     if sha256_bytes(&serde_json::to_vec(&execution.command)?) != execution.command_sha256 {
         bail!("execution command hash mismatch: {key}");
     }
-    if kind == "selftest" {
-        return Ok(());
-    }
     let test = manifest
         .get(&execution.test_id)
         .with_context(|| format!("execution test absent from manifest: {key}"))?;
     let log_path = resolve_artifact(paths, &execution.ordered_log_stream.path)?;
+    let expected_paths = [
+        canonical_artifact_relative(
+            kind,
+            &denominator.run_instance,
+            binding_sha256,
+            &bound_cell_id,
+            &format!("run{}.stdout", execution.ordinal),
+        ),
+        canonical_artifact_relative(
+            kind,
+            &denominator.run_instance,
+            binding_sha256,
+            &bound_cell_id,
+            &format!("run{}.stderr", execution.ordinal),
+        ),
+        canonical_artifact_relative(
+            kind,
+            &denominator.run_instance,
+            binding_sha256,
+            &bound_cell_id,
+            &format!("run{}.info.log", execution.ordinal),
+        ),
+    ];
+    if [
+        &execution.stdout.path,
+        &execution.stderr.path,
+        &execution.ordered_log_stream.path,
+    ]
+    .into_iter()
+    .zip(expected_paths.iter())
+    .any(|(actual, expected)| actual != expected)
+    {
+        bail!("execution artifacts are not in canonical ordinal/stream paths: {key}");
+    }
+    if execution.guest_binary_sha256 != test.binary_sha256 {
+        bail!("execution guest binary hash does not match frozen manifest: {key}");
+    }
     let mut expected = vec![
         paths.binary.display().to_string(),
         "--log=info".to_owned(),
@@ -1074,13 +1877,18 @@ fn successful(termination: &Termination) -> bool {
     termination.kind == "exit" && termination.code == Some(0) && !termination.timed_out
 }
 
-fn write_outputs(paths: &VerifyPaths, kind: &str, summary: &VerificationSummary) -> Result<()> {
-    let summary_name = if kind == "full" {
-        "summary.json".to_owned()
-    } else {
-        format!("summary-{kind}.json")
-    };
-    write_json_atomic(&paths.experiment.join(summary_name), summary)?;
+fn write_outputs(
+    paths: &VerifyPaths,
+    kind: &str,
+    run_instance: &str,
+    summary: &VerificationSummary,
+) -> Result<()> {
+    let run_dir = run_dir(paths, kind, run_instance);
+    write_json_atomic(&run_dir.join("summary.json"), summary)?;
+    if kind == "spot" {
+        let completion = make_spot_completion(paths, summary)?;
+        write_json_atomic(&run_dir.join("spot-completion.json"), &completion)?;
+    }
     if kind == "full" {
         write_report(paths, summary)?;
     }
@@ -1130,272 +1938,993 @@ fn write_report(paths: &VerifyPaths, summary: &VerificationSummary) -> Result<()
         summary.cells_jsonl_sha256,
         summary.hermit_binary_sha256
     ));
-    fs::write(paths.experiment.join("REPORT.md"), report)?;
+    fs::write(
+        run_dir(paths, "full", &summary.run_instance).join("REPORT.md"),
+        report,
+    )?;
     Ok(())
+}
+
+fn run_dir(paths: &VerifyPaths, kind: &str, run_instance: &str) -> PathBuf {
+    paths.experiment.join("runs").join(kind).join(run_instance)
+}
+
+fn canonical_artifact_relative(
+    kind: &str,
+    run_instance: &str,
+    binding_sha256: &str,
+    cell_id: &str,
+    filename: &str,
+) -> String {
+    PathBuf::from("artifacts")
+        .join(kind)
+        .join(run_instance)
+        .join(binding_sha256)
+        .join(cell_id)
+        .join(filename)
+        .display()
+        .to_string()
+}
+
+fn c_compile_command(
+    source: &Path,
+    cflags: &[String],
+    extra_sources: &[String],
+    output: &Path,
+) -> Vec<String> {
+    let mut command = vec![
+        "cc".to_owned(),
+        "-std=c11".to_owned(),
+        "-O2".to_owned(),
+        "-g".to_owned(),
+        "-Wall".to_owned(),
+        "-Wextra".to_owned(),
+        "-Werror".to_owned(),
+    ];
+    command.extend(cflags.iter().cloned());
+    command.push(source.display().to_string());
+    command.extend(extra_sources.iter().cloned());
+    command.push("-o".to_owned());
+    command.push(output.display().to_string());
+    command
+}
+
+fn hermit_build_command() -> Vec<String> {
+    vec![
+        "/usr/bin/with-proxy".to_owned(),
+        "cargo".to_owned(),
+        "build".to_owned(),
+        "--release".to_owned(),
+        "-p".to_owned(),
+        "hermit".to_owned(),
+        "--features".to_owned(),
+        "third-party-backends".to_owned(),
+        "--bin".to_owned(),
+        "hermit".to_owned(),
+    ]
+}
+
+fn workload_identity(
+    kind: &str,
+    argv: &[String],
+    sources: &[RequestedSourceEvidence],
+    semantic_compile: &[String],
+    hermit_repo: &Path,
+) -> Result<String> {
+    let normalize =
+        |value: &str| value.replace(&hermit_repo.display().to_string(), "${HERMIT_REPO}");
+    let source_values: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            serde_json::json!({
+                "role": source.role,
+                "path": normalize(&source.path),
+                "sha256": source.sha256,
+            })
+        })
+        .collect();
+    let value = serde_json::json!({
+        "kind": kind,
+        "argv": argv.iter().map(|value| normalize(value)).collect::<Vec<_>>(),
+        "sources": source_values,
+        "semantic_compile": semantic_compile.iter().map(|value| normalize(value)).collect::<Vec<_>>(),
+    });
+    Ok(sha256_bytes(&serde_json::to_vec(&value)?))
+}
+
+fn capture_toolchain() -> Result<ToolchainReceipt> {
+    let cc_argv = vec!["cc".to_owned(), "--version".to_owned()];
+    let rustc_argv = vec!["rustc".to_owned(), "-vV".to_owned()];
+    let cargo_argv = vec!["cargo".to_owned(), "-V".to_owned()];
+    let cc_output_sha256 = command_output_sha256(&cc_argv)?;
+    let rustc_output_sha256 = command_output_sha256(&rustc_argv)?;
+    let cargo_output_sha256 = command_output_sha256(&cargo_argv)?;
+    let receipt_sha256 = sha256_bytes(&serde_json::to_vec(&serde_json::json!({
+        "cc_argv": &cc_argv,
+        "cc_output_sha256": &cc_output_sha256,
+        "rustc_argv": &rustc_argv,
+        "rustc_output_sha256": &rustc_output_sha256,
+        "cargo_argv": &cargo_argv,
+        "cargo_output_sha256": &cargo_output_sha256,
+    }))?);
+    Ok(ToolchainReceipt {
+        cc_argv,
+        cc_output_sha256,
+        rustc_argv,
+        rustc_output_sha256,
+        cargo_argv,
+        cargo_output_sha256,
+        receipt_sha256,
+    })
+}
+
+fn command_output_sha256(argv: &[String]) -> Result<String> {
+    let output = Command::new(&argv[0]).args(&argv[1..]).output()?;
+    if !output.status.success() {
+        bail!("toolchain probe failed: {:?}: {}", argv, output.status);
+    }
+    Ok(sha256_bytes(&serde_json::to_vec(&(
+        output.stdout,
+        output.stderr,
+    ))?))
+}
+
+fn git_head(path: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(path)
+        .output()?;
+    if !output.status.success() {
+        bail!("git rev-parse failed for {}", path.display());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+fn git_tree(path: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD^{tree}"])
+        .current_dir(path)
+        .output()?;
+    if !output.status.success() {
+        bail!("git tree resolution failed for {}", path.display());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+#[derive(Clone)]
+struct SelfFixture {
+    paths: VerifyPaths,
+    kind: String,
+    run_instance: String,
+    executions: Vec<ExecutionRecord>,
+    cells: Vec<CellRecord>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FixtureFault {
+    None,
+    DuplicateWorkload,
+    BuildReceipt,
+    CompileReceipt,
 }
 
 fn self_test(default_paths: &VerifyPaths) -> Result<()> {
     let root = std::env::temp_dir().join(format!(
-        "strict-metric-verifier-selftest-{}",
-        std::process::id()
+        "strict-metric-verifier-selftest-{}-{}",
+        std::process::id(),
+        epoch_ms()
     ));
     if root.exists() {
         bail!("self-test path unexpectedly exists: {}", root.display());
     }
-    let experiment = root.join("experiment");
+    fs::create_dir_all(&root)?;
+
+    let fixture = build_self_fixture(
+        default_paths,
+        &root.join("main"),
+        "selftest",
+        FixtureFault::None,
+    )?;
+    run_verifier_cli(&fixture, true, "")?;
+    let fixture_run_dir = run_dir(&fixture.paths, &fixture.kind, &fixture.run_instance);
+    let executions_path = fixture_run_dir.join("executions.jsonl");
+    let cells_path = fixture_run_dir.join("cells.jsonl");
+    let original_executions = fixture.executions.clone();
+    let original_cells = fixture.cells.clone();
+
+    let write_records = |executions: &[ExecutionRecord], cells: &[CellRecord]| -> Result<()> {
+        write_jsonl_owned(&executions_path, executions)?;
+        write_jsonl_owned(&cells_path, cells)
+    };
+
+    let mut empty_log = original_executions.clone();
+    let empty_log_path = resolve_artifact(&fixture.paths, &empty_log[0].ordered_log_stream.path)?;
+    let original_log = fs::read(&empty_log_path)?;
+    fs::write(&empty_log_path, b"")?;
+    empty_log[0].ordered_log_stream = artifact_fact_for(&fixture.paths, &empty_log_path)?;
+    empty_log[0].log_event_count = 0;
+    write_records(&empty_log, &original_cells)?;
+    run_verifier_cli(&fixture, false, "zero-message")?;
+    fs::write(&empty_log_path, &original_log)?;
+
+    let mut stale = original_executions.clone();
+    stale[0].run_binding_sha256 = "f".repeat(64);
+    write_records(&stale, &original_cells)?;
+    run_verifier_cli(&fixture, false, "binding")?;
+
+    let mut alias = original_executions.clone();
+    alias[1].stdout = alias[0].stdout.clone();
+    write_records(&alias, &original_cells)?;
+    run_verifier_cli(&fixture, false, "canonical")?;
+
+    let mut binary_substitution = original_executions.clone();
+    binary_substitution[0].command[0] = "/bin/true".to_owned();
+    binary_substitution[0].command_sha256 =
+        sha256_bytes(&serde_json::to_vec(&binary_substitution[0].command)?);
+    write_records(&binary_substitution, &original_cells)?;
+    run_verifier_cli(&fixture, false, "command")?;
+
+    let mut command_substitution = original_executions.clone();
+    let backend_index = command_substitution[0]
+        .command
+        .iter()
+        .position(|value| value == "ptrace")
+        .context("self-test command has no ptrace argument")?;
+    command_substitution[0].command[backend_index] = "kvm".to_owned();
+    command_substitution[0].command_sha256 =
+        sha256_bytes(&serde_json::to_vec(&command_substitution[0].command)?);
+    write_records(&command_substitution, &original_cells)?;
+    run_verifier_cli(&fixture, false, "command")?;
+
+    let mut log_path_substitution = original_executions.clone();
+    let other_log = resolve_artifact(
+        &fixture.paths,
+        &log_path_substitution[1].ordered_log_stream.path,
+    )?;
+    let log_arg = log_path_substitution[0]
+        .command
+        .iter()
+        .position(|value| value.starts_with("--log-file="))
+        .context("self-test command has no log-file argument")?;
+    log_path_substitution[0].command[log_arg] = format!("--log-file={}", other_log.display());
+    log_path_substitution[0].command_sha256 =
+        sha256_bytes(&serde_json::to_vec(&log_path_substitution[0].command)?);
+    write_records(&log_path_substitution, &original_cells)?;
+    run_verifier_cli(&fixture, false, "command")?;
+
+    write_records(
+        &original_executions[..original_executions.len() - 1],
+        &original_cells,
+    )?;
+    run_verifier_cli(&fixture, false, "missing_exec")?;
+
+    let mut duplicate_executions = original_executions.clone();
+    duplicate_executions.push(original_executions[0].clone());
+    write_records(&duplicate_executions, &original_cells)?;
+    run_verifier_cli(&fixture, false, "duplicate_exec")?;
+
+    write_records(
+        &original_executions,
+        &original_cells[..original_cells.len() - 1],
+    )?;
+    run_verifier_cli(&fixture, false, "missing_cell")?;
+
+    let mut duplicate_cells = original_cells.clone();
+    duplicate_cells.push(original_cells[0].clone());
+    write_records(&original_executions, &duplicate_cells)?;
+    run_verifier_cli(&fixture, false, "duplicate_cell")?;
+
+    let mut malformed = original_executions.clone();
+    malformed[0].termination.signal = Some(9);
+    write_records(&malformed, &original_cells)?;
+    run_verifier_cli(&fixture, false, "malformed termination")?;
+
+    let mut normalization = original_executions.clone();
+    let second_log = resolve_artifact(&fixture.paths, &normalization[1].ordered_log_stream.path)?;
+    let original_second_log = fs::read(&second_log)?;
+    fs::write(
+        &second_log,
+        b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=999\n",
+    )?;
+    normalization[1].ordered_log_stream = artifact_fact_for(&fixture.paths, &second_log)?;
+    write_records(&normalization, &original_cells)?;
+    run_verifier_cli(&fixture, false, "producer cell verdict")?;
+    fs::write(&second_log, &original_second_log)?;
+    write_records(&original_executions, &original_cells)?;
+
+    let harness_path = fixture.paths.experiment.join("verify.rs");
+    let original_harness = fs::read(&harness_path)?;
+    let mut changed_harness = original_harness.clone();
+    changed_harness.extend_from_slice(b"\n// self-test harness mutation\n");
+    fs::write(&harness_path, changed_harness)?;
+    run_verifier_cli(&fixture, false, "harness bytes moved")?;
+    fs::write(&harness_path, original_harness)?;
+
+    let duplicate = build_self_fixture(
+        default_paths,
+        &root.join("duplicate-workload"),
+        "selftest",
+        FixtureFault::DuplicateWorkload,
+    )?;
+    run_verifier_cli(&duplicate, false, "duplicate workload identity")?;
+
+    let bad_build = build_self_fixture(
+        default_paths,
+        &root.join("bad-build-receipt"),
+        "selftest",
+        FixtureFault::BuildReceipt,
+    )?;
+    run_verifier_cli(&bad_build, false, "causal build receipt")?;
+
+    let bad_compile = build_self_fixture(
+        default_paths,
+        &root.join("bad-compile-receipt"),
+        "selftest",
+        FixtureFault::CompileReceipt,
+    )?;
+    run_verifier_cli(&bad_compile, false, "compile receipt")?;
+
+    let spot = build_self_fixture(
+        default_paths,
+        &root.join("spot"),
+        "spot",
+        FixtureFault::None,
+    )?;
+    run_verifier_cli(&spot, true, "")?;
+    let spot_run_dir = run_dir(&spot.paths, "spot", &spot.run_instance);
+    let spot_completion_path = spot_run_dir.join("spot-completion.json");
+    let spot_evidence = EvidenceFile {
+        path: spot_completion_path
+            .strip_prefix(&spot.paths.experiment)?
+            .display()
+            .to_string(),
+        sha256: sha256_file(&spot_completion_path)?,
+    };
+    let full = write_self_run(spot.paths.clone(), "full", Some(spot_evidence))?;
+    run_verifier_cli(&full, true, "")?;
+
+    let mut malformed_completion: SpotCompletion = read_json(&spot_completion_path)?;
+    malformed_completion.complete = false;
+    malformed_completion.completion_digest_sha256 = spot_completion_digest(&malformed_completion)?;
+    write_json_atomic(&spot_completion_path, &malformed_completion)?;
+    let malformed_evidence = EvidenceFile {
+        path: spot_completion_path
+            .strip_prefix(&spot.paths.experiment)?
+            .display()
+            .to_string(),
+        sha256: sha256_file(&spot_completion_path)?,
+    };
+    let full_run_dir = run_dir(&full.paths, "full", &full.run_instance);
+    let mut full_denominator: Denominator = read_json(&full_run_dir.join("denominator.json"))?;
+    full_denominator.required_spot_completion = Some(malformed_evidence.clone());
+    write_json_atomic(&full_run_dir.join("denominator.json"), &full_denominator)?;
+    let mut full_binding: RunBinding = read_json(&full_run_dir.join("run-binding.json"))?;
+    full_binding.denominator_sha256 = sha256_file(&full_run_dir.join("denominator.json"))?;
+    full_binding.required_spot_completion = Some(malformed_evidence);
+    write_json_atomic(&full_run_dir.join("run-binding.json"), &full_binding)?;
+    run_verifier_cli(&full, false, "spot completion")?;
+
+    let mut spot_denominator: Denominator = read_json(&spot_run_dir.join("denominator.json"))?;
+    spot_denominator.observation_modes = vec!["heap".to_owned(), "stack".to_owned()];
+    write_json_atomic(&spot_run_dir.join("denominator.json"), &spot_denominator)?;
+    run_verifier_cli(&spot, false, "axes")?;
+
+    fs::remove_dir_all(&root)?;
+    println!(
+        "SELF-TEST PASS: normal CLI positive profiles=3 (selftest, exact 72-execution spot, spot-gated 2,808-execution full); negatives=18 refused, including harness/build/compile/workload authority, empty logs, stale binding, ordinal aliases, substitutions, missing/duplicate coverage, malformed termination, normalization, malformed spot axes, and malformed spot completion"
+    );
+    Ok(())
+}
+
+fn build_self_fixture(
+    default_paths: &VerifyPaths,
+    root: &Path,
+    kind: &str,
+    fault: FixtureFault,
+) -> Result<SelfFixture> {
+    let parent_repo = root.join("parent");
+    let experiment = parent_repo.join("experiment");
     let artifacts = root.join("artifacts");
     fs::create_dir_all(&experiment)?;
-    fs::create_dir_all(&artifacts)?;
-    let stdout1 = artifacts.join("run1.stdout");
-    let stdout2 = artifacts.join("run2.stdout");
-    let stderr1 = artifacts.join("run1.stderr");
-    let stderr2 = artifacts.join("run2.stderr");
-    let log1 = artifacts.join("run1.info.log");
-    let log2 = artifacts.join("run2.info.log");
-    let diagnostic = artifacts.join("legacy.stderr");
-    for path in [&stdout1, &stdout2, &stderr1, &stderr2, &diagnostic] {
-        fs::write(path, b"")?;
+    fs::create_dir_all(artifacts.join("preparation"))?;
+    let fixture_binary = root.join("fixture-hermit");
+    fs::write(&fixture_binary, b"#!/bin/sh\nexit 0\n")?;
+    fs::set_permissions(&fixture_binary, fs::Permissions::from_mode(0o755))?;
+    fs::copy(
+        default_paths.experiment.join("run.rs"),
+        experiment.join("run.rs"),
+    )?;
+    fs::copy(
+        default_paths.experiment.join("verify.rs"),
+        experiment.join("verify.rs"),
+    )?;
+    run_checked(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&parent_repo),
+    )?;
+    run_checked(
+        Command::new("git")
+            .args([
+                "config",
+                "user.email",
+                "strict-metric-selftest@example.invalid",
+            ])
+            .current_dir(&parent_repo),
+    )?;
+    run_checked(
+        Command::new("git")
+            .args(["config", "user.name", "strict-metric-selftest"])
+            .current_dir(&parent_repo),
+    )?;
+    run_checked(
+        Command::new("git")
+            .args(["add", "experiment/run.rs", "experiment/verify.rs"])
+            .current_dir(&parent_repo),
+    )?;
+    run_checked(
+        Command::new("git")
+            .args(["commit", "-q", "-m", "Freeze self-test harness"])
+            .current_dir(&parent_repo),
+    )?;
+
+    let corpus_c = experiment.join("frozen-corpus-c.tsv");
+    let corpus_nonc = experiment.join("frozen-corpus-nonc.tsv");
+    let mut test_ids: Vec<String> = if kind == "spot" {
+        let mut ids = vec![SPOT_TESTS[0].to_owned(), SPOT_TESTS[1].to_owned()];
+        ids.extend((0..232).map(|index| format!("fixture/spot-dummy-{index:03}")));
+        ids
+    } else {
+        SELF_TESTS.iter().map(|value| (*value).to_owned()).collect()
+    };
+    test_ids.sort();
+    let compiled_id = if fault == FixtureFault::DuplicateWorkload {
+        None
+    } else if kind == "spot" {
+        Some(SPOT_TESTS[0])
+    } else {
+        Some(SELF_TESTS[0])
+    };
+    let c_corpus = compiled_id
+        .map(|id| format!("{id}|tests/backend-parity/fixtures/pid_probe.c|||portable|disabled\n"))
+        .unwrap_or_default();
+    fs::write(&corpus_c, c_corpus)?;
+    let binary = fixture_binary.display().to_string();
+    let mut corpus = String::new();
+    for (index, test_id) in test_ids.iter().enumerate() {
+        if compiled_id == Some(test_id.as_str()) {
+            continue;
+        }
+        let discriminator = if fault == FixtureFault::DuplicateWorkload {
+            0
+        } else {
+            index
+        };
+        corpus.push_str(&format!(
+            "{test_id}|portable|{binary} --strict-metric-fixture {discriminator}\n"
+        ));
     }
-    let log = b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=7\n";
-    fs::write(&log1, log)?;
-    fs::write(&log2, log)?;
-    let binary_hash = sha256_file(&default_paths.binary)?;
-    fs::write(experiment.join("frozen-corpus-c.tsv"), b"fixture-c\n")?;
-    fs::write(experiment.join("frozen-corpus-nonc.tsv"), b"fixture-nonc\n")?;
+    fs::write(&corpus_nonc, corpus)?;
+    let paths = VerifyPaths {
+        parent_repo: parent_repo.clone(),
+        experiment: experiment.clone(),
+        artifacts: artifacts.clone(),
+        binary: fixture_binary,
+        hermit_repo: default_paths.hermit_repo.clone(),
+        reverie_repo: default_paths.reverie_repo.clone(),
+        liteinst_repo: default_paths.liteinst_repo.clone(),
+        corpus_c: corpus_c.clone(),
+        corpus_nonc: corpus_nonc.clone(),
+    };
+    let inputs = derive_requested_inputs(&paths, &corpus_c, &corpus_nonc)?;
+    let hermit_sha = git_head(&paths.hermit_repo)?;
+    let reverie_sha = git_head(&paths.reverie_repo)?;
+    let liteinst2_sha = git_head(&paths.liteinst_repo)?;
+    let reverie_dependency_sha = cargo_lock_git_rev(&paths.hermit_repo, "rrnewton/reverie")?;
+    let liteinst2_dependency_sha = cargo_lock_git_rev(&paths.hermit_repo, "rrnewton/liteinst2")?;
+    let binary_sha256 = sha256_file(&paths.binary)?;
+    let requested = RequestedManifestEvidence {
+        schema: SCHEMA,
+        record_type: "strict_metric_requested_manifest".to_owned(),
+        hermit_sha: hermit_sha.clone(),
+        reverie_sha: reverie_sha.clone(),
+        reverie_dependency_sha: reverie_dependency_sha.clone(),
+        liteinst2_sha: liteinst2_sha.clone(),
+        liteinst2_dependency_sha: liteinst2_dependency_sha.clone(),
+        hermit_binary_sha256: binary_sha256.clone(),
+        corpus_c_sha256: sha256_file(&corpus_c)?,
+        corpus_nonc_sha256: sha256_file(&corpus_nonc)?,
+        denominator_expected_tests: inputs.len(),
+        inputs: inputs.clone(),
+    };
+    write_json_atomic(&experiment.join("requested-manifest.json"), &requested)?;
+
+    let toolchain = capture_toolchain()?;
+    let build_log = artifacts.join("preparation/hermit-build.log");
+    let build_snapshot = artifacts.join("preparation/hermit.snapshot");
+    fs::write(&build_log, b"self-test inert build receipt\n")?;
+    fs::copy(&paths.binary, &build_snapshot)?;
+    let parent_commit = git_head(&parent_repo)?;
+    let mut tests = Vec::new();
+    for input in &inputs {
+        let source_sha256 = input.sources[0]
+            .sha256
+            .clone()
+            .with_context(|| format!("self-test source lacks a hash: {}", input.id))?;
+        if input.kind == "compiled_c" {
+            let output = PathBuf::from(
+                input
+                    .compile_command
+                    .last()
+                    .context("self-test compile command lacks output")?,
+            );
+            fs::create_dir_all(output.parent().context("self-test guest lacks parent")?)?;
+            fs::write(&output, format!("compiled fixture {}\n", input.id))?;
+            let compile_log = artifacts
+                .join("compile-logs")
+                .join(format!("{}.log", slug(&input.id)));
+            fs::create_dir_all(compile_log.parent().unwrap())?;
+            fs::write(&compile_log, b"self-test inert compile receipt\n")?;
+            let source = paths.hermit_repo.join(&input.sources[0].path);
+            let extra_sources: Vec<_> = input.sources[1..]
+                .iter()
+                .map(|source| paths.hermit_repo.join(&source.path).display().to_string())
+                .collect();
+            let compile = CompileSpecEvidence {
+                source: source.display().to_string(),
+                cflags: Vec::new(),
+                extra_sources: extra_sources.clone(),
+                command: input.compile_command.clone(),
+            };
+            let mut receipt_command = compile.command.clone();
+            if fault == FixtureFault::CompileReceipt {
+                receipt_command[0] = "/bin/true".to_owned();
+            }
+            let mut receipt_inputs = vec![SourceFact {
+                role: "primary".to_owned(),
+                path: source.display().to_string(),
+                sha256: source_sha256.clone(),
+            }];
+            for (index, source) in extra_sources.iter().enumerate() {
+                receipt_inputs.push(SourceFact {
+                    role: format!("extra_source_{}", index + 1),
+                    path: source.clone(),
+                    sha256: sha256_file(Path::new(source))?,
+                });
+            }
+            let binary_sha256 = sha256_file(&output)?;
+            tests.push(FrozenTestEvidence {
+                id: input.id.clone(),
+                lane: input.lane.clone(),
+                kind: input.kind.clone(),
+                argv: vec![output.display().to_string()],
+                source_sha256,
+                binary_sha256,
+                workload_identity_sha256: input.workload_identity_sha256.clone(),
+                compile: Some(compile),
+                compile_receipt: Some(CompileReceiptEvidence {
+                    command_sha256: sha256_bytes(&serde_json::to_vec(&receipt_command)?),
+                    command: receipt_command,
+                    inputs: receipt_inputs,
+                    toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
+                    exit_code: 0,
+                    log: artifact_fact_for(&paths, &compile_log)?,
+                    output: artifact_fact_for(&paths, &output)?,
+                }),
+            });
+        } else {
+            tests.push(FrozenTestEvidence {
+                id: input.id.clone(),
+                lane: input.lane.clone(),
+                kind: input.kind.clone(),
+                argv: input.argv.clone(),
+                source_sha256: source_sha256.clone(),
+                binary_sha256: source_sha256,
+                workload_identity_sha256: input.workload_identity_sha256.clone(),
+                compile: None,
+                compile_receipt: None,
+            });
+        }
+    }
+    tests.sort_by(|left, right| left.id.cmp(&right.id));
+    let guest_values: Vec<_> = tests
+        .iter()
+        .map(|test| (&test.id, &test.binary_sha256))
+        .collect();
+    let guest_set_sha256 = sha256_bytes(&serde_json::to_vec(&guest_values)?);
+    let build_command = if fault == FixtureFault::BuildReceipt {
+        vec!["/bin/true".to_owned()]
+    } else {
+        hermit_build_command()
+    };
     let manifest = FrozenManifestEvidence {
         schema: SCHEMA,
         record_type: "strict_metric_frozen_manifest".to_owned(),
-        hermit_sha: "0".repeat(40),
-        reverie_sha: "1".repeat(40),
-        reverie_dependency_sha: "1".repeat(40),
-        liteinst2_sha: "2".repeat(40),
-        liteinst2_dependency_sha: "6".repeat(40),
-        hermit_binary_sha256: binary_hash.clone(),
-        corpus_c_sha256: sha256_file(&experiment.join("frozen-corpus-c.tsv"))?,
-        corpus_nonc_sha256: sha256_file(&experiment.join("frozen-corpus-nonc.tsv"))?,
-        tests: vec![FrozenTestEvidence {
-            id: "fixture/test".to_owned(),
-            lane: "portable".to_owned(),
-            argv: vec![default_paths.binary.display().to_string()],
-            binary_sha256: binary_hash.clone(),
-        }],
+        hermit_sha: hermit_sha.clone(),
+        reverie_sha: reverie_sha.clone(),
+        reverie_dependency_sha: reverie_dependency_sha.clone(),
+        liteinst2_sha: liteinst2_sha.clone(),
+        liteinst2_dependency_sha: liteinst2_dependency_sha.clone(),
+        hermit_binary_sha256: binary_sha256.clone(),
+        corpus_c_sha256: requested.corpus_c_sha256.clone(),
+        corpus_nonc_sha256: requested.corpus_nonc_sha256.clone(),
+        parent_commit: parent_commit.clone(),
+        run_rs_sha256: sha256_file(&experiment.join("run.rs"))?,
+        verify_rs_sha256: sha256_file(&experiment.join("verify.rs"))?,
+        toolchain: toolchain.clone(),
+        hermit_build: HermitBuildReceiptEvidence {
+            source_sha: hermit_sha.clone(),
+            source_tree: git_tree(&paths.hermit_repo)?,
+            cargo_lock_sha256: sha256_file(&paths.hermit_repo.join("Cargo.lock"))?,
+            clean_before: true,
+            clean_after: true,
+            binary_absent_before: true,
+            command_sha256: sha256_bytes(&serde_json::to_vec(&build_command)?),
+            command: build_command,
+            toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
+            exit_code: 0,
+            log: artifact_fact_for(&paths, &build_log)?,
+            output: artifact_fact_for(&paths, &build_snapshot)?,
+        },
+        guest_set_sha256: guest_set_sha256.clone(),
+        tests: tests.clone(),
     };
     write_json_atomic(&experiment.join("manifest.json"), &manifest)?;
-    let requested = serde_json::json!({
-        "schema": SCHEMA,
-        "record_type": "strict_metric_requested_manifest",
-        "denominator_expected_tests": 1,
-        "inputs": [{"id": "fixture/test"}],
-    });
-    write_json_atomic(&experiment.join("requested-manifest.json"), &requested)?;
     let manifest_sha256 = sha256_file(&experiment.join("manifest.json"))?;
     let requested_manifest_sha256 = sha256_file(&experiment.join("requested-manifest.json"))?;
-    let input_audit = InputAuditEvidence {
+    let audit = InputAuditEvidence {
         schema: SCHEMA,
         record_type: "strict_metric_input_audit".to_owned(),
         complete: true,
         full_sweep_allowed: true,
-        denominator_expected_tests: 1,
-        denominator_observed_rows: 1,
-        denominator_unique_ids: 1,
-        denominator_executable_tests: 1,
+        denominator_expected_tests: inputs.len(),
+        denominator_observed_rows: inputs.len(),
+        denominator_unique_ids: inputs.len(),
+        denominator_executable_tests: inputs.len(),
+        c_rows: inputs
+            .iter()
+            .filter(|input| input.kind == "compiled_c")
+            .count(),
+        nonc_rows: inputs
+            .iter()
+            .filter(|input| input.kind == "script_or_interpreter")
+            .count(),
         missing_test_count: 0,
         missing_source_count: 0,
         missing_test_ids: Vec::new(),
         missing_sources: Vec::new(),
         duplicate_ids: Vec::new(),
+        duplicate_workload_identities: Vec::new(),
         requested_manifest_path: "requested-manifest.json".to_owned(),
         requested_manifest_sha256: requested_manifest_sha256.clone(),
         executable_manifest_path: Some("manifest.json".to_owned()),
         executable_manifest_sha256: Some(manifest_sha256.clone()),
-        hermit_sha: manifest.hermit_sha.clone(),
-        reverie_sha: manifest.reverie_sha.clone(),
-        reverie_dependency_sha: manifest.reverie_dependency_sha.clone(),
-        liteinst2_sha: manifest.liteinst2_sha.clone(),
-        liteinst2_dependency_sha: manifest.liteinst2_dependency_sha.clone(),
-        hermit_binary_sha256: manifest.hermit_binary_sha256.clone(),
-        corpus_c_sha256: manifest.corpus_c_sha256.clone(),
-        corpus_nonc_sha256: manifest.corpus_nonc_sha256.clone(),
+        hermit_sha: hermit_sha.clone(),
+        reverie_sha: reverie_sha.clone(),
+        reverie_dependency_sha: reverie_dependency_sha.clone(),
+        liteinst2_sha: liteinst2_sha.clone(),
+        liteinst2_dependency_sha: liteinst2_dependency_sha.clone(),
+        hermit_binary_sha256: binary_sha256.clone(),
+        corpus_c_sha256: requested.corpus_c_sha256.clone(),
+        corpus_nonc_sha256: requested.corpus_nonc_sha256.clone(),
     };
-    write_json_atomic(&experiment.join("input-audit.json"), &input_audit)?;
-    let mut contract = BTreeMap::new();
-    contract.insert("stdout".to_owned(), serde_json::json!("raw_bytes"));
-    contract.insert("stderr".to_owned(), serde_json::json!("raw_bytes"));
-    contract.insert(
-        "termination".to_owned(),
-        serde_json::json!("exact_exit_code_or_signal"),
-    );
-    contract.insert(
-        "ordered_log_stream".to_owned(),
-        serde_json::json!("complete_raw_log_file_bytes"),
-    );
-    contract.insert("stripped_prefixes".to_owned(), serde_json::json!([]));
-    contract.insert("canonicalizations".to_owned(), serde_json::json!([]));
-    contract.insert("filters".to_owned(), serde_json::json!([]));
-    contract.insert(
-        "minimum_log_events_per_execution".to_owned(),
-        serde_json::json!(1),
-    );
+    write_json_atomic(&experiment.join("input-audit.json"), &audit)?;
+    write_self_run(paths, kind, None)
+}
+
+fn write_self_run(
+    paths: VerifyPaths,
+    kind: &str,
+    required_spot_completion: Option<EvidenceFile>,
+) -> Result<SelfFixture> {
+    let experiment = paths.experiment.clone();
+    let artifacts = paths.artifacts.clone();
+    let manifest: FrozenManifestEvidence = read_json(&experiment.join("manifest.json"))?;
+    let requested: RequestedManifestEvidence =
+        read_json(&experiment.join("requested-manifest.json"))?;
+    let tests = manifest.tests.clone();
+    let hermit_sha = manifest.hermit_sha.clone();
+    let reverie_sha = manifest.reverie_sha.clone();
+    let reverie_dependency_sha = manifest.reverie_dependency_sha.clone();
+    let liteinst2_sha = manifest.liteinst2_sha.clone();
+    let liteinst2_dependency_sha = manifest.liteinst2_dependency_sha.clone();
+    let binary_sha256 = manifest.hermit_binary_sha256.clone();
+    let parent_commit = manifest.parent_commit.clone();
+    let guest_set_sha256 = manifest.guest_set_sha256.clone();
+    let manifest_sha256 = sha256_file(&experiment.join("manifest.json"))?;
+    let requested_manifest_sha256 = sha256_file(&experiment.join("requested-manifest.json"))?;
+    let selected_tests: Vec<String> = match kind {
+        "selftest" => SELF_TESTS.iter().map(|value| (*value).to_owned()).collect(),
+        "spot" => SPOT_TESTS.iter().map(|value| (*value).to_owned()).collect(),
+        "full" => tests.iter().map(|test| test.id.clone()).collect(),
+        other => bail!("unsupported self-test fixture kind {other}"),
+    };
+    let backends: Vec<String> = if kind == "selftest" {
+        vec!["ptrace".to_owned()]
+    } else {
+        BACKENDS.iter().map(|value| (*value).to_owned()).collect()
+    };
+    let modes: Vec<String> = if kind == "spot" {
+        vec![
+            "heap".to_owned(),
+            "heap_stack".to_owned(),
+            "stack".to_owned(),
+        ]
+    } else {
+        vec!["strict_raw".to_owned()]
+    };
+    let expected_cells = selected_tests.len() * backends.len() * modes.len();
+    let run_instance = format!("{kind}-bracket");
     let denominator = Denominator {
         schema: SCHEMA,
         record_type: "strict_metric_denominator".to_owned(),
-        run_kind: "selftest".to_owned(),
-        hermit_sha: "0".repeat(40),
-        reverie_sha: "1".repeat(40),
-        reverie_dependency_sha: "1".repeat(40),
-        liteinst2_sha: "2".repeat(40),
-        liteinst2_dependency_sha: "6".repeat(40),
-        hermit_binary_sha256: binary_hash,
+        run_kind: kind.to_owned(),
+        run_instance: run_instance.clone(),
+        hermit_sha,
+        reverie_sha,
+        reverie_dependency_sha,
+        liteinst2_sha,
+        liteinst2_dependency_sha,
+        hermit_binary_sha256: binary_sha256.clone(),
+        parent_commit: parent_commit.clone(),
+        run_rs_sha256: manifest.run_rs_sha256.clone(),
+        verify_rs_sha256: manifest.verify_rs_sha256.clone(),
+        guest_set_sha256: guest_set_sha256.clone(),
         input_audit_path: "input-audit.json".to_owned(),
         input_audit_sha256: sha256_file(&experiment.join("input-audit.json"))?,
         requested_manifest_path: "requested-manifest.json".to_owned(),
         requested_manifest_sha256,
         manifest_path: "manifest.json".to_owned(),
-        manifest_sha256,
-        corpus_c_sha256: manifest.corpus_c_sha256.clone(),
-        corpus_nonc_sha256: manifest.corpus_nonc_sha256.clone(),
-        tests: vec!["fixture/test".to_owned()],
-        backends: vec!["ptrace".to_owned()],
-        observation_modes: vec!["strict_raw".to_owned()],
+        manifest_sha256: manifest_sha256.clone(),
+        corpus_c_sha256: requested.corpus_c_sha256,
+        corpus_nonc_sha256: requested.corpus_nonc_sha256,
+        tests: selected_tests.clone(),
+        backends: backends.clone(),
+        observation_modes: modes.clone(),
         run_ordinals: vec![1, 2],
-        expected_cells: 1,
-        expected_executions: 2,
-        comparison_contract: contract,
+        expected_cells,
+        expected_executions: expected_cells * 2,
+        required_spot_completion: required_spot_completion.clone(),
+        comparison_contract: strict_contract(),
     };
-    write_json_atomic(&experiment.join("denominator-selftest.json"), &denominator)?;
-    let cell_id = "fixture-test--ptrace--strict-raw";
-    let make_fact = |path: &Path| -> Result<ArtifactFact> {
-        Ok(ArtifactFact {
-            path: path.strip_prefix(&artifacts)?.display().to_string(),
-            sha256: sha256_file(path)?,
-            bytes: fs::metadata(path)?.len(),
-        })
-    };
-    let termination = Termination {
-        kind: "exit".to_owned(),
-        code: Some(0),
-        signal: None,
-        timed_out: false,
-    };
-    let make_execution =
-        |ordinal, stdout: &Path, stderr: &Path, log: &Path| -> Result<ExecutionRecord> {
-            let command = vec!["selftest-command".to_owned()];
-            Ok(ExecutionRecord {
-                schema: SCHEMA,
-                record_type: "strict_metric_execution".to_owned(),
-                run_kind: "selftest".to_owned(),
-                cell_id: cell_id.to_owned(),
-                test_id: "fixture/test".to_owned(),
-                backend: "ptrace".to_owned(),
-                observation_mode: "strict_raw".to_owned(),
-                ordinal,
-                attempted: true,
-                termination: termination.clone(),
-                duration_ms: 1,
-                log_event_count: 1,
-                stdout: make_fact(stdout)?,
-                stderr: make_fact(stderr)?,
-                ordered_log_stream: make_fact(log)?,
-                command_sha256: sha256_bytes(&serde_json::to_vec(&command)?),
-                command,
-                error: None,
-            })
-        };
-    let one = make_execution(1, &stdout1, &stderr1, &log1)?;
-    let two = make_execution(2, &stdout2, &stderr2, &log2)?;
-    let cell = CellRecord {
+    let run_dir = run_dir(&paths, kind, &run_instance);
+    fs::create_dir_all(&run_dir)?;
+    write_json_atomic(&run_dir.join("denominator.json"), &denominator)?;
+    let binding = RunBinding {
         schema: SCHEMA,
-        record_type: "strict_metric_cell".to_owned(),
-        run_kind: "selftest".to_owned(),
-        cell_id: cell_id.to_owned(),
-        test_id: "fixture/test".to_owned(),
-        backend: "ptrace".to_owned(),
-        observation_mode: "strict_raw".to_owned(),
-        execution_ordinals: vec![1, 2],
-        stdout_equal: true,
-        stderr_equal: true,
-        termination_equal: true,
-        ordered_log_stream_equal: true,
-        nonzero_log_events: true,
-        successful_exit_both: true,
-        raw_observations_equal: true,
-        strict_green: true,
-        legacy_log_match: true,
-        legacy_green: true,
-        legacy_comparator: "hermit log-diff --unsafe-strip-lines (deterministic subset)".to_owned(),
-        legacy_diagnostic: make_fact(&diagnostic)?,
+        record_type: "strict_metric_run_binding".to_owned(),
+        run_kind: kind.to_owned(),
+        run_instance: run_instance.clone(),
+        parent_commit,
+        run_rs_sha256: manifest.run_rs_sha256,
+        verify_rs_sha256: manifest.verify_rs_sha256,
+        requested_manifest_sha256: denominator.requested_manifest_sha256.clone(),
+        input_audit_sha256: denominator.input_audit_sha256.clone(),
+        manifest_sha256,
+        denominator_sha256: sha256_file(&run_dir.join("denominator.json"))?,
+        hermit_binary_sha256: binary_sha256,
+        guest_set_sha256,
+        required_spot_completion,
     };
-    write_jsonl(&experiment.join("executions-selftest.jsonl"), &[&one, &two])?;
-    write_jsonl(&experiment.join("cells-selftest.jsonl"), &[&cell])?;
-    let fixture_paths = VerifyPaths {
-        experiment: experiment.clone(),
-        artifacts: artifacts.clone(),
-        binary: default_paths.binary.clone(),
-        hermit_repo: default_paths.hermit_repo.clone(),
-        reverie_repo: default_paths.reverie_repo.clone(),
-        liteinst_repo: default_paths.liteinst_repo.clone(),
-    };
-    verify(&fixture_paths, "selftest", false).context("positive fixture refused")?;
-    let original_exec = fs::read(experiment.join("executions-selftest.jsonl"))?;
-
-    let first_line = original_exec.split(|b| *b == b'\n').next().unwrap();
-    fs::write(
-        experiment.join("executions-selftest.jsonl"),
-        [first_line, b"\n"].concat(),
-    )?;
-    expect_refusal(
-        || verify(&fixture_paths, "selftest", false),
-        "missing execution",
-    )?;
-
-    fs::write(
-        experiment.join("executions-selftest.jsonl"),
-        [original_exec.as_slice(), first_line, b"\n"].concat(),
-    )?;
-    expect_refusal(
-        || verify(&fixture_paths, "selftest", false),
-        "duplicate execution",
-    )?;
-
-    fs::write(experiment.join("executions-selftest.jsonl"), &original_exec)?;
-    fs::write(&stdout1, b"tampered")?;
-    expect_refusal(
-        || verify(&fixture_paths, "selftest", false),
-        "tampered artifact",
-    )?;
-    fs::write(&stdout1, b"")?;
-
-    let mut zero = one.clone();
-    zero.log_event_count = 0;
-    write_jsonl(
-        &experiment.join("executions-selftest.jsonl"),
-        &[&zero, &two],
-    )?;
-    expect_refusal(
-        || verify(&fixture_paths, "selftest", false),
-        "false zero-message fact",
-    )?;
-
-    fs::remove_dir_all(&root)?;
-    println!("SELF-TEST PASS: positive=1 accepted, negatives=4 refused (missing, duplicate, tampered, zero-message)");
-    Ok(())
-}
-
-fn expect_refusal<F>(operation: F, label: &str) -> Result<()>
-where
-    F: FnOnce() -> Result<VerificationSummary>,
-{
-    if operation().is_ok() {
-        bail!("negative fixture was accepted: {label}");
+    write_json_atomic(&run_dir.join("run-binding.json"), &binding)?;
+    let binding_sha256 = sha256_file(&run_dir.join("run-binding.json"))?;
+    let manifest_by_id: BTreeMap<_, _> = tests
+        .into_iter()
+        .map(|test| (test.id.clone(), test))
+        .collect();
+    let mut executions = Vec::new();
+    let mut cells = Vec::new();
+    for test_id in &selected_tests {
+        let test = &manifest_by_id[test_id];
+        for backend in &backends {
+            for mode in &modes {
+                let cell_id = format!("{}--{}--{}", slug(test_id), slug(backend), slug(mode));
+                let mut pair = Vec::new();
+                for ordinal in [1u8, 2u8] {
+                    let artifact_dir = artifacts
+                        .join("artifacts")
+                        .join(kind)
+                        .join(&run_instance)
+                        .join(&binding_sha256)
+                        .join(&cell_id);
+                    fs::create_dir_all(&artifact_dir)?;
+                    let stdout = artifact_dir.join(format!("run{ordinal}.stdout"));
+                    let stderr = artifact_dir.join(format!("run{ordinal}.stderr"));
+                    let log = artifact_dir.join(format!("run{ordinal}.info.log"));
+                    fs::write(&stdout, b"")?;
+                    fs::write(&stderr, b"")?;
+                    fs::write(
+                        &log,
+                        b"2026-08-06T10:00:00.000000Z  INFO detcore: DETLOG fixture value=7\n",
+                    )?;
+                    let mut command = vec![
+                        paths.binary.display().to_string(),
+                        "--log=info".to_owned(),
+                        format!("--log-file={}", log.display()),
+                        "--backend".to_owned(),
+                        backend.clone(),
+                        "run".to_owned(),
+                        "--strict".to_owned(),
+                        "--no-virtualize-cpuid".to_owned(),
+                        "--max-timeslice=disabled".to_owned(),
+                    ];
+                    match mode.as_str() {
+                        "strict_raw" => {}
+                        "heap" => command.push("--detlog-heap".to_owned()),
+                        "stack" => command.push("--detlog-stack".to_owned()),
+                        "heap_stack" => {
+                            command.push("--detlog-heap".to_owned());
+                            command.push("--detlog-stack".to_owned());
+                        }
+                        other => bail!("unsupported self-test mode {other}"),
+                    }
+                    command.push("--".to_owned());
+                    command.extend(test.argv.clone());
+                    pair.push(ExecutionRecord {
+                        schema: SCHEMA,
+                        record_type: "strict_metric_execution".to_owned(),
+                        run_kind: kind.to_owned(),
+                        run_instance: run_instance.clone(),
+                        run_binding_sha256: binding_sha256.clone(),
+                        cell_id: cell_id.clone(),
+                        test_id: test_id.clone(),
+                        backend: backend.clone(),
+                        observation_mode: mode.clone(),
+                        ordinal,
+                        attempted: true,
+                        termination: Termination {
+                            kind: "exit".to_owned(),
+                            code: Some(0),
+                            signal: None,
+                            timed_out: false,
+                        },
+                        duration_ms: 1,
+                        log_event_count: 1,
+                        stdout: artifact_fact_for(&paths, &stdout)?,
+                        stderr: artifact_fact_for(&paths, &stderr)?,
+                        ordered_log_stream: artifact_fact_for(&paths, &log)?,
+                        command_sha256: sha256_bytes(&serde_json::to_vec(&command)?),
+                        command,
+                        guest_binary_sha256: test.binary_sha256.clone(),
+                        error: None,
+                    });
+                }
+                let diagnostic = artifacts
+                    .join("artifacts")
+                    .join(kind)
+                    .join(&run_instance)
+                    .join(&binding_sha256)
+                    .join(&cell_id)
+                    .join("legacy-log-diff.stderr");
+                fs::write(&diagnostic, b"")?;
+                cells.push(CellRecord {
+                    schema: SCHEMA,
+                    record_type: "strict_metric_cell".to_owned(),
+                    run_kind: kind.to_owned(),
+                    run_instance: run_instance.clone(),
+                    run_binding_sha256: binding_sha256.clone(),
+                    cell_id,
+                    test_id: test_id.clone(),
+                    backend: backend.clone(),
+                    observation_mode: mode.clone(),
+                    execution_ordinals: vec![1, 2],
+                    stdout_equal: true,
+                    stderr_equal: true,
+                    termination_equal: true,
+                    ordered_log_stream_equal: true,
+                    nonzero_log_events: true,
+                    successful_exit_both: true,
+                    raw_observations_equal: true,
+                    strict_green: true,
+                    legacy_log_match: true,
+                    legacy_green: true,
+                    legacy_comparator:
+                        "hermit log-diff --unsafe-strip-lines (deterministic subset)".to_owned(),
+                    legacy_diagnostic: artifact_fact_for(&paths, &diagnostic)?,
+                });
+                executions.extend(pair);
+            }
+        }
     }
-    Ok(())
+    write_jsonl_owned(&run_dir.join("executions.jsonl"), &executions)?;
+    write_jsonl_owned(&run_dir.join("cells.jsonl"), &cells)?;
+    Ok(SelfFixture {
+        paths,
+        kind: kind.to_owned(),
+        run_instance,
+        executions,
+        cells,
+    })
 }
 
-fn write_jsonl<T: Serialize>(path: &Path, records: &[&T]) -> Result<()> {
+fn strict_contract() -> BTreeMap<String, serde_json::Value> {
+    BTreeMap::from([
+        ("stdout".to_owned(), serde_json::json!("raw_bytes")),
+        ("stderr".to_owned(), serde_json::json!("raw_bytes")),
+        (
+            "termination".to_owned(),
+            serde_json::json!("exact_exit_code_or_signal"),
+        ),
+        (
+            "ordered_log_stream".to_owned(),
+            serde_json::json!("complete_raw_log_file_bytes"),
+        ),
+        ("stripped_prefixes".to_owned(), serde_json::json!([])),
+        ("canonicalizations".to_owned(), serde_json::json!([])),
+        ("filters".to_owned(), serde_json::json!([])),
+        (
+            "minimum_log_events_per_execution".to_owned(),
+            serde_json::json!(1),
+        ),
+    ])
+}
+
+fn artifact_fact_for(paths: &VerifyPaths, path: &Path) -> Result<ArtifactFact> {
+    let relative = path.strip_prefix(&paths.artifacts)?;
+    Ok(ArtifactFact {
+        path: relative.display().to_string(),
+        sha256: sha256_file(path)?,
+        bytes: fs::metadata(path)?.len(),
+    })
+}
+
+fn write_jsonl_owned<T: Serialize>(path: &Path, records: &[T]) -> Result<()> {
     let mut file = File::create(path)?;
     for record in records {
         serde_json::to_writer(&mut file, record)?;
         file.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+fn run_checked(command: &mut Command) -> Result<()> {
+    let status = command.status()?;
+    if !status.success() {
+        bail!("self-test setup command failed: {status}");
+    }
+    Ok(())
+}
+
+fn run_verifier_cli(fixture: &SelfFixture, should_pass: bool, label: &str) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    let output = Command::new(executable)
+        .arg("verify")
+        .arg("--kind")
+        .arg(&fixture.kind)
+        .arg("--run-instance")
+        .arg(&fixture.run_instance)
+        .arg("--parent")
+        .arg(&fixture.paths.parent_repo)
+        .arg("--experiment")
+        .arg(&fixture.paths.experiment)
+        .arg("--artifacts")
+        .arg(&fixture.paths.artifacts)
+        .arg("--binary")
+        .arg(&fixture.paths.binary)
+        .arg("--hermit")
+        .arg(&fixture.paths.hermit_repo)
+        .arg("--reverie")
+        .arg(&fixture.paths.reverie_repo)
+        .arg("--liteinst2")
+        .arg(&fixture.paths.liteinst_repo)
+        .arg("--corpus-c")
+        .arg(&fixture.paths.corpus_c)
+        .arg("--corpus-nonc")
+        .arg(&fixture.paths.corpus_nonc)
+        .output()?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if should_pass {
+        if !output.status.success() {
+            bail!("positive normal-CLI fixture refused: {combined}");
+        }
+    } else if output.status.success() {
+        bail!("negative normal-CLI fixture was accepted: {label}");
+    } else if !label.is_empty() && !combined.contains(label) {
+        bail!("negative fixture {label:?} refused for the wrong reason: {combined}");
     }
     Ok(())
 }
@@ -1528,4 +3057,23 @@ fn value_string(args: &[String], flag: &str, default: &str) -> String {
         .find(|pair| pair[0] == flag)
         .map(|pair| pair[1].clone())
         .unwrap_or_else(|| default.to_owned())
+}
+
+fn required_slug_value(args: &[String], flag: &str) -> Result<String> {
+    let value = args
+        .windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].clone())
+        .with_context(|| format!("{flag} is required"))?;
+    let valid = !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !value.starts_with('-')
+        && !value.ends_with('-');
+    if !valid {
+        bail!("{flag} must be a lowercase [a-z0-9-] slug, at most 80 bytes");
+    }
+    Ok(value)
 }

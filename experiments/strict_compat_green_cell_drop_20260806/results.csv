@@ -1,2 +1,2 @@
-record_type,complete,denominator_expected_tests,denominator_observed_rows,denominator_executable_tests,missing_test_count,missing_performance_sources,missing_other_sources,legacy_green_cells,strict_green_cells,absolute_drop_cells,note
-strict_metric_preflight,false,235,235,204,31,30,1,,,,"NO RESULT: full sweep refused before execution; resolve fixture recovery and the 235-vs-234 denominator decision"
+record_type,input_preflight_complete,metric_complete,denominator_expected_tests,denominator_observed_rows,denominator_executable_tests,missing_test_count,duplicate_test_ids,duplicate_workload_identities,legacy_green_cells,strict_green_cells,absolute_drop_cells,note
+strict_metric_preflight,true,false,234,234,234,0,0,0,,,,"NO RESULT: input authority passes; real metric execution remains disabled pending two independent harness review passes"
