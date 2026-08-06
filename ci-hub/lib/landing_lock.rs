@@ -124,6 +124,15 @@ impl LandLockCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockState {
     pub agent: String,
+    /// Optional fields added by the exact-head lander while it owns the
+    /// shared lease.  The mutex must preserve these fields on parse/render so
+    /// an annotated holder remains readable by every landing entry point.
+    pub repo: Option<String>,
+    pub operation: Option<String>,
+    pub pending_mutation: Option<String>,
+    pub pending_attempt: Option<String>,
+    pub pending_call_count: Option<u64>,
+    pub pending_call_id: Option<String>,
     pub pr: String,
     pub host: String,
     pub acquired_at: i64,
@@ -425,6 +434,12 @@ enum OwnerLiveness {
 impl LockState {
     fn parse(content: &str) -> Result<Self, LandLockError> {
         let mut agent = None;
+        let mut repo = None;
+        let mut operation = None;
+        let mut pending_mutation = None;
+        let mut pending_attempt = None;
+        let mut pending_call_count = None;
+        let mut pending_call_id = None;
         let mut pr = None;
         let mut host = None;
         let mut acquired_at = None;
@@ -440,6 +455,14 @@ impl LockState {
             })?;
             match key {
                 "agent" => agent = Some(value.to_string()),
+                "repo" => repo = Some(value.to_string()),
+                "operation" => operation = Some(value.to_string()),
+                "pending_mutation" => pending_mutation = Some(value.to_string()),
+                "pending_attempt" => pending_attempt = Some(value.to_string()),
+                "pending_call_count" => {
+                    pending_call_count = Some(parse_unsigned(key, value)?)
+                }
+                "pending_call_id" => pending_call_id = Some(value.to_string()),
                 "pr" => pr = Some(value.to_string()),
                 "host" => host = Some(value.to_string()),
                 "acquired_at" => acquired_at = Some(parse_integer(key, value)?),
@@ -455,6 +478,12 @@ impl LockState {
         }
         Ok(Self {
             agent: required(agent, "agent")?,
+            repo,
+            operation,
+            pending_mutation,
+            pending_attempt,
+            pending_call_count,
+            pending_call_id,
             pr: required(pr, "pr")?,
             host: required(host, "host")?,
             acquired_at: required(acquired_at, "acquired_at")?,
@@ -465,10 +494,27 @@ impl LockState {
     }
 
     fn render(&self) -> String {
-        let mut output = format!(
-            "agent={}\npr={}\nhost={}\nacquired_at={}\nacquired_human={}\nexpires_at={}\n",
-            self.agent, self.pr, self.host, self.acquired_at, self.acquired_human, self.expires_at
-        );
+        let mut output = format!("agent={}\n", self.agent);
+        for (key, value) in [
+            ("repo", self.repo.as_deref()),
+            ("operation", self.operation.as_deref()),
+            ("pending_mutation", self.pending_mutation.as_deref()),
+            ("pending_attempt", self.pending_attempt.as_deref()),
+        ] {
+            if let Some(value) = value {
+                output.push_str(&format!("{key}={value}\n"));
+            }
+        }
+        if let Some(value) = self.pending_call_count {
+            output.push_str(&format!("pending_call_count={value}\n"));
+        }
+        if let Some(value) = &self.pending_call_id {
+            output.push_str(&format!("pending_call_id={value}\n"));
+        }
+        output.push_str(&format!(
+            "pr={}\nhost={}\nacquired_at={}\nacquired_human={}\nexpires_at={}\n",
+            self.pr, self.host, self.acquired_at, self.acquired_human, self.expires_at
+        ));
         if let Some(reclaimed_from) = &self.reclaimed_from {
             output.push_str(&format!("reclaimed_from={reclaimed_from}\n"));
         }
@@ -477,6 +523,17 @@ impl LockState {
 
     fn live_at(&self, now: i64) -> bool {
         now < self.expires_at
+    }
+
+    fn renewed(&self, hold: u64) -> Result<Self, LandLockError> {
+        let mut renewed = new_holder(&self.agent, &self.pr, hold, None)?;
+        renewed.repo = self.repo.clone();
+        renewed.operation = self.operation.clone();
+        renewed.pending_mutation = self.pending_mutation.clone();
+        renewed.pending_attempt = self.pending_attempt.clone();
+        renewed.pending_call_count = self.pending_call_count;
+        renewed.pending_call_id = self.pending_call_id.clone();
+        Ok(renewed)
     }
 }
 
@@ -828,7 +885,7 @@ impl LandingLock {
             }
             self.assert_current_process_owner("run heartbeat")?;
             heartbeat_test_helper_delay();
-            self.write_holder(&new_holder(agent, pr, hold, None)?)
+            self.write_holder(&holder.renewed(hold)?)
         })
     }
 
@@ -963,7 +1020,7 @@ impl LandingLock {
                 });
             }
             self.assert_current_process_owner("renew")?;
-            self.write_holder(&new_holder(agent, &holder.pr, hold, None)?)?;
+            self.write_holder(&holder.renewed(hold)?)?;
             Ok(())
         })?;
         if announce {
@@ -1425,6 +1482,12 @@ fn new_holder(
     let host = current_host();
     Ok(LockState {
         agent: agent.to_string(),
+        repo: None,
+        operation: None,
+        pending_mutation: None,
+        pending_attempt: None,
+        pending_call_count: None,
+        pending_call_id: None,
         pr: pr.to_string(),
         host,
         acquired_at,
@@ -2481,6 +2544,12 @@ mod tests {
     fn holder_format_is_byte_compatible() {
         let holder = LockState {
             agent: "hermit-ci".into(),
+            repo: None,
+            operation: None,
+            pending_mutation: None,
+            pending_attempt: None,
+            pending_call_count: None,
+            pending_call_id: None,
             pr: "1533".into(),
             host: "testhost".into(),
             acquired_at: 100,
@@ -2491,6 +2560,30 @@ mod tests {
         let rendered = "agent=hermit-ci\npr=1533\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-dbi\n";
         assert_eq!(holder.render(), rendered);
         assert_eq!(LockState::parse(rendered).unwrap(), holder);
+    }
+
+    #[test]
+    fn holder_format_preserves_exact_head_lander_extensions() {
+        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=op-1\npending_mutation=op-1\npending_attempt=attempt-1\npending_call_count=1\npending_call_id=call-1\npr=1650\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
+        let holder = LockState::parse(rendered).unwrap();
+        assert_eq!(holder.repo.as_deref(), Some("rrnewton/hermit"));
+        assert_eq!(holder.pending_call_count, Some(1));
+        assert_eq!(holder.render(), rendered);
+
+        let renewed = holder.renewed(60).unwrap();
+        assert_eq!(renewed.repo, holder.repo);
+        assert_eq!(renewed.operation, holder.operation);
+        assert_eq!(renewed.pending_mutation, holder.pending_mutation);
+        assert_eq!(renewed.pending_attempt, holder.pending_attempt);
+        assert_eq!(renewed.pending_call_count, holder.pending_call_count);
+        assert_eq!(renewed.pending_call_id, holder.pending_call_id);
+
+        let unknown = format!("{rendered}unexpected=x\n");
+        assert!(matches!(
+            LockState::parse(&unknown),
+            Err(LandLockError::InvalidState(message))
+                if message.contains("unknown holder field")
+        ));
     }
 
     #[test]
