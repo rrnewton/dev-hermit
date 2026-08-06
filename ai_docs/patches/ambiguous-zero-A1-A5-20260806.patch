@@ -1,82 +1,44 @@
-diff --git a/ci-hub/parity/prefix_depth.sh b/ci-hub/parity/prefix_depth.sh
-index 85ef311..fdb98a4 100755
---- a/ci-hub/parity/prefix_depth.sh
-+++ b/ci-hub/parity/prefix_depth.sh
-@@ -19,6 +19,14 @@ OUT=${OUT:-/home/newton/work/dev-hermit/scratch/prefix}
- mkdir -p "$OUT"
- 
- commits() {  # $1=logfile+errfile prefix -> ordered COMMIT records, normalised
-+  # A5 (audit item, owned by the ratchet task -- documented here, not changed):
-+  # this concatenates .log THEN .err, so if a backend emits COMMIT records on
-+  # BOTH streams the .err records are appended after all .log records rather
-+  # than interleaved in emission order, and the "prefix" is then a prefix of a
-+  # sequence that never occurred. The grep does filter out the KVM/LiteInst-only
-+  # ':: Backend:' banner (it does not match 'COMMIT turn'), so the COUNT is not
-+  # inflated by it -- the exposure is ORDER, not magnitude. Do not "fix" by
-+  # dropping .err without first checking which backends log only to stderr.
-   cat "$1".log "$1".err 2>/dev/null \
-     | grep -o 'COMMIT turn .*' \
-     | sed -E 's/0x[0-9a-f]+/HEX/g'
-@@ -39,23 +47,52 @@ depth() { # $1=golden-prefix $2=cand-prefix -> Y
- 
- GOLDEN_SHA=$(git -C /home/newton/work/dev-hermit/hermit rev-parse HEAD)
- DATE=$(date -u +%Y-%m-%d)
--printf '%-22s %-9s %6s %6s  %-8s %s\n' GUEST BACKEND Y Z RC NOTE
-+# EMIT is the candidate's own comparable-record count. It is printed as its own
-+# column because Y alone cannot distinguish "compared and diverged immediately"
-+# (Y=0, EMIT>0) from "produced nothing to compare" (NO-RUN, EMIT=0). Z is the
-+# denominator for both: a count is self-describing only next to the size of the
-+# thing it counted.
-+printf '%-22s %-9s %6s %6s %6s  %-8s %s\n' GUEST BACKEND Y Z EMIT RC NOTE
-+status=0
- for spec in "$@"; do
-   tag="${spec%%=*}"; cmd="${spec#*=}"
-   # shellcheck disable=SC2086
-   grc=$(run ptrace "$tag" $cmd)
-   Z=$(commits "$OUT/$tag.ptrace" | wc -l)
--  printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "ptrace(golden)" "$Z" "$Z" "$grc" "self-reference"
-+  # A4: Z is the denominator for every row of this guest. If the golden run
-+  # produced no comparable records there is nothing to be a prefix OF, and the
-+  # self-reference row would otherwise print Y=0 Z=0 -- which reads as the golden
-+  # matching itself perfectly, the most reassuring line on the page -- and every
-+  # backend row would be Y/0. A missing golden is fatal for the guest, not a zero.
-+  if [ "$Z" -eq 0 ]; then
-+    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' \
-+      "$tag" "ptrace(golden)" "NO-GOLDEN" "0" "0" "$grc" \
-+      "golden emitted 0 COMMIT records; no denominator, so no rows for this guest"
-+    status=2
-+    continue
-+  fi
-+  printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "ptrace(golden)" "$Z" "$Z" "$Z" "$grc" "self-reference"
-   for be in dbi sabre e9patch; do
-     # shellcheck disable=SC2086
-     rc=$(run "$be" "$tag" $cmd)
--    if [ "$(commits "$OUT/$tag.$be" | wc -l)" -eq 0 ] && [ "$rc" != 0 ]; then
--      printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "NO-RUN" "$Z" "$rc" "backend did not produce a log"
-+    emitted=$(commits "$OUT/$tag.$be" | wc -l)
-+    # A3: NO-RUN is decided by the RECORDS, not by the exit code. The old guard
-+    # was AND-gated (records==0 && rc!=0), so a backend that exits 0 while
-+    # emitting nothing fell through to depth(), whose awk prints 0 for an empty
-+    # candidate file, and Y=0 was published as "diverges at record 0". That is
-+    # sabre's documented failure mode exactly: patched_sites=0, silent ptrace
-+    # fallback, rc=0. Zero comparable records is NOT-EXERCISED whatever the rc.
-+    if [ "$emitted" -eq 0 ]; then
-+      printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' \
-+        "$tag" "$be" "NO-RUN" "$Z" "0" "$rc" "emitted 0 comparable records (not a depth of 0)"
-       continue
-     fi
-     Y=$(depth "$OUT/$tag.ptrace" "$OUT/$tag.$be")
--    printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$rc" ""
-+    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$emitted" "$rc" ""
-   done
- done
- echo
- echo "golden_sha=$GOLDEN_SHA  flags='--log=info --backend <be>'  date=$DATE  metric=COMMIT-record prefix depth (INFO log)"
-+# Distinct exit status so a consumer can tell "measured" from "could not measure":
-+# 0 = every guest had a golden denominator, 2 = at least one guest was NO-GOLDEN.
-+exit "$status"
+Ambiguous-zero fix A1/A2 — compat-envelope/render-scorecard.rs (NOT YET LANDED)
+================================================================================
+Task: execute-ambiguous-zero-fix-order-a3-a4-first
+
+STATUS OF THE OTHER ITEMS IN THIS SERIES:
+  * A3/A4 (ci-hub/parity/prefix_depth.sh) LANDED — carried in by the owning
+    agent's re-land commit d53ffbe; regression test at
+    ci-hub/parity/tests/test_prefix_depth_zero.sh (14 assertions, green).
+    Its hunks are therefore no longer reproduced here.
+  * A5 audited, not changed (documented in place inside prefix_depth.sh).
+  * B1/B2 published as rrnewton/hermit PR #1731.
+  * B3 consumer audit found coverage already complete; no fix needed.
+
+WHY THIS ONE IS STILL A PATCH AND NOT A COMMIT:
+  compat-envelope/render-scorecard.rs is STAGED IN THE SHARED PARENT INDEX by
+  another agent (the `parity` -> `stdout_parity` column rename). Committing the
+  working-tree file would publish that agent's uncommitted work under this
+  commit, so it is held here instead.
+
+  UPDATE — the earlier "cannot be isolated" finding is now STALE. Against the
+  old origin/main the rebased hunks died at runtime with "CSV missing required
+  column parity". Against current HEAD they apply cleanly (hunk 2 at offset -21)
+  and run correctly: verified on both the negative and positive brackets, and
+  by the 26-assertion suite in
+  compat-envelope/tests/test_render_scorecard_empty_denominator.sh.
+  So this CAN now land independently. It is still not committed here only
+  because the file's index entry belongs to another agent: whoever lands it
+  should `git apply` this patch to HEAD's render-scorecard.rs, not to the
+  working-tree copy.
+
+WHAT IT FIXES:
+  An EMPTY DENOMINATOR rendered as a confident `TOTAL 0` at exit 0 —
+  indistinguishable from "we measured, and nothing passed". Reproduced live on
+  two real runs in the committed scorecard.csv, one of which had 24 PASSING
+  ptrace cells (in `strict`) and still published 0 under the default `verify`
+  denominator. Now refused with exit 3, carrying rows-considered, ptrace-row
+  count, and the modes that would actually yield a denominator.
+
+================================================================================
 diff --git a/compat-envelope/render-scorecard.rs b/compat-envelope/render-scorecard.rs
-index 7263e81..33faa4a 100755
+index b005bc7..55d128a 100755
 --- a/compat-envelope/render-scorecard.rs
 +++ b/compat-envelope/render-scorecard.rs
 @@ -19,9 +19,17 @@
@@ -100,7 +62,98 @@ index 7263e81..33faa4a 100755
  //!     Reverie counter CSVs select `--observable tool-count` instead and are
  //!     labeled `tool-count-parity%`; the two observables are never conflated.
  //!
-@@ -441,6 +449,43 @@ fn main() {
+@@ -45,7 +53,7 @@
+ //!                     (default: verify).
+ //!   --backends LIST   Comma-separated backend columns, in order
+ //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
+-//!   --observable O    Observable compared by the legacy CSV `parity` field
++//!   --observable O    Observable compared by the stdout-parity CSV column
+ //!                     (default: stdout; use tool-count for Reverie counters).
+ //!   --json | --tsv    Machine-readable output instead of the table.
+ //!
+@@ -98,11 +106,24 @@ struct Cell {
+     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
+     outcome: String,   // pass | fail | error | timeout | oom | skip
+     deterministic: Option<bool>,
+-    // Legacy CSV field name: this stores stdout-only parity.
+-    parity: Option<bool>,
++    /// Stdout-only parity. Read from `stdout_parity`, or from the legacy `parity`
++    /// column in scorecards written before the rename (see [`PARITY_COLUMNS`]).
++    stdout_parity: Option<bool>,
+ }
+ 
++/// Accepted names for the stdout-parity column, in preference order.
++///
++/// The column was originally called `parity`, which claimed more than it measured: it
++/// only ever held piped-guest-stdout SHA-256 equality, never the four-signal standard.
++/// The rendered label was corrected first; this is the raw column catching up. The old
++/// name stays readable because published scorecards still carry it, and silently
++/// rendering nothing for them would be a worse failure than the misnomer.
++const PARITY_COLUMNS: &[&str] = &["stdout_parity", "parity"];
++
+ /// The canonical header this renderer and `collect-envelope.rs` agree on.
++///
++/// The stdout-parity column is deliberately absent: it is resolved through
++/// [`PARITY_COLUMNS`] so either spelling is accepted.
+ const HEADER: &[&str] = &[
+     "run_id",
+     "run_utc",
+@@ -118,7 +139,6 @@ const HEADER: &[&str] = &[
+     "cell_state",
+     "outcome",
+     "deterministic",
+-    "parity",
+     "output_hash",
+     "duration_ms",
+     "max_rss_kb",
+@@ -234,7 +254,17 @@ fn main() {
+     for h in HEADER {
+         let _ = idx(h);
+     }
+-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
++    // Resolve stdout-parity under either spelling, preferring the honest one.
++    let i_par = PARITY_COLUMNS
++        .iter()
++        .find_map(|name| header.iter().position(|h| h == name))
++        .unwrap_or_else(|| {
++            die(&format!(
++                "CSV missing the stdout-parity column (looked for {})",
++                PARITY_COLUMNS.join(" then ")
++            ))
++        });
++    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
+         idx("run_id"),
+         idx("bucket"),
+         idx("test_id"),
+@@ -242,7 +272,6 @@ fn main() {
+         idx("backend"),
+         idx("outcome"),
+         idx("deterministic"),
+-        idx("parity"),
+     );
+ 
+     let mut cells: Vec<Cell> = Vec::new();
+@@ -265,7 +294,7 @@ fn main() {
+             backend: get(i_backend),
+             outcome: get(i_outcome),
+             deterministic: parse_bool(&get(i_det)),
+-            parity: parse_bool(&get(i_par)),
++            stdout_parity: parse_bool(&get(i_par)),
+         });
+     }
+     if cells.is_empty() {
+@@ -363,8 +392,8 @@ fn main() {
+         // for a non-ptrace backend already requires parity.
+         let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
+         // Parity is true only when the collector recorded a bitwise match.
+-        let par = c.parity.unwrap_or(false);
+-        let par_measured = c.parity.is_some();
++        let par = c.stdout_parity.unwrap_or(false);
++        let par_measured = c.stdout_parity.is_some();
+         by_backend
+             .entry(c.backend.clone())
+             .or_default()
+@@ -420,6 +449,82 @@ fn main() {
          rows.insert(bucket.clone(), row);
      }
  
@@ -117,26 +170,65 @@ index 7263e81..33faa4a 100755
 +    // So refuse to render, and say what IS present so the caller can pick a mode
 +    // or backend that exists. Distinct exit status (3) keeps "could not measure"
 +    // separable from usage errors (2) and from a rendered result (0).
++    //
++    // The remedy line reports the modes that would ACTUALLY yield a denominator --
++    // i.e. modes with a *passing ptrace* row -- not the modes the run merely
++    // contains. Those two differ exactly when the run has no ptrace rows at all
++    // (a dbi-only run "contains" strict, yet `--denominator strict` refuses too),
++    // and naming the wrong set would repeat this very defect one level up:
++    // a remedy is only actionable if it travels with the population it is drawn from.
 +    let denom_total: usize = ptrace_pass.values().map(|s| s.len()).sum();
 +    if denom_total == 0 {
 +        let modes_present: BTreeSet<&str> = cells.iter().map(|c| c.test_mode.as_str()).collect();
 +        let backends_present: BTreeSet<&str> = cells.iter().map(|c| c.backend.as_str()).collect();
++        let ptrace_rows = cells.iter().filter(|c| c.backend == "ptrace").count();
++        // Exactly the `--denominator` values that would produce a non-empty denominator.
++        let usable: BTreeSet<&str> = cells
++            .iter()
++            .filter(|c| c.backend == "ptrace" && c.outcome == "pass")
++            .map(|c| c.test_mode.as_str())
++            .collect();
 +        let run_label = scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into());
++        let remedy = if !usable.is_empty() {
++            format!(
++                "Retry with --denominator <{}> -- those are the modes this run has passing \
++                 ptrace rows in.",
++                usable.iter().copied().collect::<Vec<_>>().join("|")
++            )
++        } else if ptrace_rows == 0 {
++            "This run has NO ptrace rows in any mode, so no denominator can be formed from it \
++             at all; changing --denominator will not help. Use a run that includes the ptrace \
++             reference backend."
++                .to_string()
++        } else {
++            format!(
++                "This run has {ptrace_rows} ptrace rows but none passing in any mode, so no \
++                 --denominator choice yields a population; the reference backend itself failed \
++                 here."
++            )
++        };
 +        eprintln!(
 +            "NO DATA: run {run} has 0 ptrace/{mode} passing cells, so the denominator is empty \
 +             and no percentage is defined (this is NOT a measured zero).\n\
-+             \x20 rows considered: {n}\n\
++             \x20 rows considered:  {n}\n\
++             \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
 +             \x20 modes present:    {modes}\n\
 +             \x20 backends present: {backends}\n\
 +             \x20 csv:              {csv}\n\
-+             Pick a --denominator mode that this run actually contains, or a run that has \
-+             passing ptrace rows.",
++             {remedy}",
 +            run = run_label,
 +            mode = denom_mode,
 +            n = cells.len(),
++            ptrace_rows = ptrace_rows,
++            usable = if usable.is_empty() {
++                "none".to_string()
++            } else {
++                usable.iter().copied().collect::<Vec<_>>().join(",")
++            },
 +            modes = modes_present.iter().copied().collect::<Vec<_>>().join(","),
 +            backends = backends_present.iter().copied().collect::<Vec<_>>().join(","),
 +            csv = csv_path.display(),
++            remedy = remedy,
 +        );
 +        exit(3);
 +    }
