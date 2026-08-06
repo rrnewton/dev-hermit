@@ -25,5 +25,56 @@
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "cores": 316
   },
-  "status": "NOT FIXED; blocker confirmed by measurement. Fix requires detcore-assigned guest mmap addresses (new determinization strategy, owner sign-off)."
+  "status": "NOT FIXED. Session 3 showed no DBI-side change can produce -8. Session 4 shows the target itself is not a constant, so the acceptance criterion is ill-posed as a DBI-side fix. Remaining lever unchanged: detcore-assigned guest mmap addresses (new determinization strategy, post-facto-review trigger 3, guest memory contract) => owner decision, now costed: it moves ptrace away from native at 9 of 9 prefixes.",
+  "sessions": [
+    {
+      "session": "1-3",
+      "agents": [
+        "hermit-oci2",
+        "hermit-w1",
+        "hermit-w3"
+      ],
+      "question": "Can DBI's anonymous-mmap page layout be made to match the ptrace/native reference by a DBI-side change?",
+      "answer": "No. The hole structure that produces ptrace's d23=-8 does not exist anywhere in DBI's address space (0 of 7 gaps), so relocating any DBI mapping cannot reproduce it."
+    },
+    {
+      "session": "4",
+      "agent": "hermit-w4",
+      "question": "Is ptrace's d23=-8 a stable value worth matching, or a single sample of a function of the guest's allocation prefix?",
+      "answer": "A single sample. Sweeping K=0..8 pages of anonymous mmap before the 1+2+3+4 sequence, native/ptrace produce 9 distinct triples and DBI produces 1; at K=7 the two backends are byte-identical. DBI is the stable arm. Native additionally has a 1.3-2% tail (d23 ~= -530) that 2-3 samples cannot detect, while both hermit arms are 20/20 deterministic. The acceptance criterion 'identical layout DBI vs ptrace' is therefore ill-posed as a DBI-side fix target.",
+      "artifacts": [
+        "README-prefix-sweep.md",
+        "prefix-sweep.c",
+        "prefix-sweep.tsv"
+      ],
+      "measurements": {
+        "prefix_sweep_K": "0..8",
+        "native_distinct_triples_over_K": 9,
+        "ptrace_distinct_triples_over_K": 9,
+        "dbi_distinct_triples_over_K": 1,
+        "K_at_which_ptrace_and_dbi_are_identical": 7,
+        "d23_agreement_across_K": "6 of 9 (K=2..7); disagree at K=0,1,8",
+        "native_K0_runs": 300,
+        "native_K0_modal_d23": -8,
+        "native_K0_modal_count": 296,
+        "native_K1_runs": 300,
+        "native_K1_modal_d23": -7,
+        "native_K1_modal_count": 294,
+        "native_tail_outcomes_d23": [
+          -530,
+          -531,
+          -532
+        ],
+        "ptrace_K0_runs": 20,
+        "ptrace_K0_distinct": 1,
+        "dbi_K0_runs": 20,
+        "dbi_K0_distinct": 1,
+        "randomize_va_space": 1
+      },
+      "code_findings": {
+        "hermit-cli/src/replayer/mmap.rs:43": "comment 'anonymous mappings should already be deterministic because ASLR is disabled' states a weaker precondition than the code needs; the real precondition is an identical address space. Not a live bug: replay is ptrace-only per the manifests.",
+        "hermit-cli/src/replayer/mmap.rs:69-80": "address forcing for file-backed maps already exists and is asserted (with_addr(Some(addr)) + assert 'Failed to inject mmap at desired address'), so the injection half of a determinized allocator is shipped in-tree."
+      }
+    }
+  ]
 }
