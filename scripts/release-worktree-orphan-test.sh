@@ -211,10 +211,21 @@ grep -Fq "records noncanonical hermit_path; expected exact path 'worktrees/orpha
   "$output" || fail 'path-alias refusal omitted exact canonical authority'
 assert_retained orphan-path-alias
 
-# NESTED-FILE NEGATIVE: generated directory names do not authorize unknown
-# recursive contents.
+# CARGO ARTIFACT MARKER POSITIVE: Cargo's exact target-local lock marker is
+# generated residue even though it has no conventional artifact extension.
+make_fixture orphan-cargo-artifact-lock
+printf 'cargo artifact lock\n' >"$target/target/debug/.cargo-artifact-lock"
+if ! run_finalize orphan-cargo-artifact-lock; then
+  cat "$output" >&2
+  fail 'exact target-local Cargo artifact marker was refused'
+fi
+test ! -e "$fixture_root/worktrees/orphan-cargo-artifact-lock" \
+  || fail 'Cargo artifact marker positive retained the slot directory'
+
+# ADJACENT UNKNOWN-FILE NEGATIVE: classification is the exact marker name,
+# not a prefix that authorizes neighboring files in the generated directory.
 make_fixture orphan-unknown-file
-printf 'preserve me\n' >"$target/target/debug/manual.source"
+printf 'preserve me\n' >"$target/target/debug/.cargo-artifact-lock.backup"
 if run_finalize orphan-unknown-file; then
   fail 'unrecognized nested file authorized orphan deletion'
 fi
@@ -332,4 +343,4 @@ grep -Fq 'does not match its manifest' "$output" \
   || fail 'evidence tamper refusal omitted manifest binding'
 assert_retained orphan-evidence-tamper
 
-echo 'release-worktree-orphan-test: PASS (exact-root ascent refused; released generated residue copied+hashed+cleaned; idempotent and fence-crash recovery; path-alias/unknown-file/nested-mount/registration/source/live-unit/live-owner/live-lock/evidence-tamper negatives retained)'
+echo 'release-worktree-orphan-test: PASS (exact-root ascent refused; exact Cargo artifact marker and released generated residue cleaned; idempotent and fence-crash recovery; marker-lookalike/path-alias/unknown-file/nested-mount/registration/source/live-unit/live-owner/live-lock/evidence-tamper negatives retained)'

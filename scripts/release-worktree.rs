@@ -2511,6 +2511,7 @@ fn recognized_generated_file(relative: &Path, metadata: &fs::Metadata) -> bool {
         name,
         "CACHEDIR.TAG"
             | ".cargo-lock"
+            | ".cargo-artifact-lock"
             | ".rustc_info.json"
             | "cargo-timings.html"
             | "invoked.timestamp"
