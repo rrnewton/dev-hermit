@@ -244,10 +244,24 @@ struct ReleaseAuditReport {
     owner_matches: usize,
     target_mounts: usize,
     details: Vec<ReleaseAuditDetail>,
+    container_observation: Vec<ReleaseContainerObservation>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseContainerObservation {
+    id: String,
+    name: String,
+    state: String,
+    ps_labels: BTreeMap<String, String>,
+    inspect_labels: BTreeMap<String, String>,
+    registry_ownership: Option<Ownership>,
+    mount_sources: Vec<String>,
+    resolved_mounts: Vec<String>,
 }
 
 struct ReleaseInspection {
     labels: BTreeMap<String, String>,
+    mount_sources: Vec<String>,
     mounts: Vec<PathBuf>,
 }
 
@@ -1100,6 +1114,7 @@ fn inspect_release_container(container: &Container) -> Result<ReleaseInspection>
         ))
     })?;
     let mut sources = Vec::new();
+    let mut mount_sources = Vec::new();
     for (index, mount) in mounts.iter().enumerate() {
         let object = mount.as_object().ok_or_else(|| {
             AppError::Message(format!(
@@ -1107,7 +1122,22 @@ fn inspect_release_container(container: &Container) -> Result<ReleaseInspection>
                 container.id
             ))
         })?;
-        let source = object.get("Source").and_then(Value::as_str).unwrap_or("");
+        let source = object
+            .get("Source")
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "podman inspect mount {index} for {} has no Source field",
+                    container.id
+                ))
+            })?
+            .as_str()
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "podman inspect mount {index} Source for {} is not a string",
+                    container.id
+                ))
+            })?;
+        mount_sources.push(source.to_string());
         if source.is_empty() {
             continue;
         }
@@ -1120,27 +1150,31 @@ fn inspect_release_container(container: &Container) -> Result<ReleaseInspection>
             )));
         }
         // Retain both Podman's lexical source and the resolved filesystem
-        // identity. A bind through a symlink must not evade overlap checks,
-        // while the lexical spelling still binds a source whose target is
-        // renamed by the path fence after the preflight observation.  An
-        // already-mounted source can legitimately stop resolving after that
-        // rename, so the lexical evidence remains authoritative in that case.
-        sources.push(source);
-        if let Ok(canonical) = fs::canonicalize(sources.last().unwrap()) {
-            if !normalized_absolute_path(&canonical) {
-                return Err(AppError::Message(format!(
-                    "podman inspect mount {index} for {} resolves outside normalized absolute path syntax: {}",
-                    container.id,
-                    canonical.display()
-                )));
-            }
-            sources.push(canonical);
+        // identity. Resolution is authority, not enrichment: after a path
+        // fence, a dangling alias could otherwise erase the only observable
+        // binding between a live mount and the moved worktree.
+        let canonical = fs::canonicalize(&source).map_err(|error| {
+            AppError::Message(format!(
+                "podman inspect mount {index} source {} for {} cannot be resolved: {error}",
+                source.display(),
+                container.id
+            ))
+        })?;
+        if !normalized_absolute_path(&canonical) {
+            return Err(AppError::Message(format!(
+                "podman inspect mount {index} for {} resolves outside normalized absolute path syntax: {}",
+                container.id,
+                canonical.display()
+            )));
         }
+        sources.push(source);
+        sources.push(canonical);
     }
     sources.sort();
     sources.dedup();
     Ok(ReleaseInspection {
         labels,
+        mount_sources,
         mounts: sources,
     })
 }
@@ -1221,6 +1255,7 @@ fn release_audit(
     }
 
     let mut details = Vec::new();
+    let mut container_observation = Vec::new();
     let mut owner_matches = 0usize;
     let mut target_mounts = 0usize;
     for container in &containers {
@@ -1283,7 +1318,22 @@ fn release_audit(
                 reasons,
             });
         }
+        container_observation.push(ReleaseContainerObservation {
+            id: container.id.clone(),
+            name: container.name.clone(),
+            state: container.state.clone(),
+            ps_labels: container.labels.clone(),
+            inspect_labels: inspection.labels,
+            registry_ownership: registry_ownership.cloned(),
+            mount_sources: inspection.mount_sources,
+            resolved_mounts: inspection
+                .mounts
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        });
     }
+    container_observation.sort_by(|left, right| left.id.cmp(&right.id));
 
     // Completeness bracket: a disappearing or newly appearing container makes
     // this observation unusable rather than silently shrinking its coverage.
@@ -1309,6 +1359,7 @@ fn release_audit(
         owner_matches,
         target_mounts,
         details,
+        container_observation,
     };
     if json_output {
         println!(

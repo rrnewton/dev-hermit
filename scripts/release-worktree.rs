@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsStr};
 use std::fs;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -477,7 +477,7 @@ fn save_state(root: &Path, state: &mut Value) {
         .unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
 
-fn regen_active_md(root: &Path, state: &Value) {
+fn regen_active_md(root: &Path, state: &Value) -> bool {
     const BEGIN: &str = "<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->";
     const END: &str = "<!-- END worktree-state -->";
 
@@ -534,8 +534,12 @@ fn regen_active_md(root: &Path, state: &Value) {
         };
         format!("{existing}{sep}\n## Machine-managed slot table\n\n{block}")
     };
-    durable_replace(&path, new_content.as_bytes())
-        .unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+    let changed = new_content != existing;
+    if changed {
+        durable_replace(&path, new_content.as_bytes())
+            .unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+    }
+    changed
 }
 
 /// Enumerate the target plus every recursively initialized submodule. Git owns
@@ -818,9 +822,23 @@ struct TmuxPane {
 }
 
 #[derive(Clone, Debug)]
-struct OwnerLease {
+struct OrcOwnerLease {
     pane: String,
     cgroup: String,
+}
+
+#[derive(Clone, Debug)]
+struct SentinelAuthority {
+    lease: Value,
+    revoked: bool,
+    proof: Option<Value>,
+}
+
+#[derive(Clone, Debug)]
+struct OwnerAuthorities {
+    names: BTreeSet<String>,
+    orc: BTreeMap<String, OrcOwnerLease>,
+    sentinel: Option<SentinelAuthority>,
 }
 
 fn normalized_cgroup_path(path: &str) -> bool {
@@ -832,8 +850,115 @@ fn normalized_cgroup_path(path: &str) -> bool {
         .all(|component| matches!(component, Component::Normal(_)))
 }
 
-fn recorded_owner_leases(slot_state: &Value) -> Result<BTreeMap<String, OwnerLease>, String> {
+fn validate_sentinel_slot_binding(root: &Path, slot: &str, lease: &Value) -> Result<(), String> {
+    // Do not canonicalize the slot directory itself: a legitimate recovery
+    // can begin after the physical slot directory was removed but before its
+    // final registry update was made durable. The canonical workspace root
+    // plus the already-validated slot token is still an exact, normalized
+    // identity for the directory this lease must have guarded.
+    let expected = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize workspace for sentinel binding: {error}"))?
+        .join("worktrees")
+        .join(slot);
+    let recorded = lease["working_directory"]
+        .as_str()
+        .ok_or_else(|| format!("slot {slot} coordinator lease has no working_directory"))?;
+    if Path::new(recorded) != expected {
+        return Err(format!(
+            "slot {slot} coordinator lease working_directory {:?} does not bind exact slot path {}",
+            recorded,
+            expected.display()
+        ));
+    }
+    Ok(())
+}
+
+fn recorded_owner_authorities(
+    root: &Path,
+    slot: &str,
+    slot_state: &Value,
+) -> Result<OwnerAuthorities, String> {
+    let mut names = BTreeSet::new();
     let mut leases = BTreeMap::new();
+    for agent in slot_state["agents"].as_array().into_iter().flatten() {
+        let owner = agent["name"]
+            .as_str()
+            .expect("validated owner must have a name");
+        names.insert(owner.to_string());
+    }
+    if names.is_empty() {
+        return Err(format!("slot {slot} has no recorded owners"));
+    }
+    if let Some(sentinel) = slot_state.get("coordinator_lease") {
+        if sentinel["schema_version"].as_u64() != Some(1)
+            || sentinel["source"].as_str() != Some("codex-systemd-sentinel-v1")
+            || sentinel["slot"].as_str() != Some(slot)
+        {
+            return Err(format!(
+                "slot {slot} has malformed Codex coordinator lease authority"
+            ));
+        }
+        validate_sentinel_slot_binding(root, slot, sentinel)?;
+        for agent in slot_state["agents"].as_array().into_iter().flatten() {
+            if agent.get("tmux_pane_id").is_some() || agent.get("cgroup_path").is_some() {
+                return Err(format!(
+                    "slot {slot} mixes Codex sentinel and ORC pane/cgroup authority"
+                ));
+            }
+        }
+        let journal = slot_state.get("coordinator_lease_revocation");
+        if let Some(journal) = journal {
+            let proof = journal.get("proof");
+            if journal["schema_version"].as_u64() != Some(1)
+                || journal["source"].as_str() != Some("codex-systemd-sentinel-v1")
+                || journal.get("lease") != Some(sentinel)
+                || !matches!(
+                    journal["phase"].as_str(),
+                    Some("stop-authorized" | "revoked")
+                )
+                || journal["transaction_nonce"].as_str().is_none_or(|nonce| {
+                    nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+                || (journal["phase"].as_str() == Some("revoked") && !journal["proof"].is_object())
+                || (journal["phase"].as_str() == Some("stop-authorized")
+                    && journal.get("proof").is_some())
+            {
+                return Err(format!(
+                    "slot {slot} has a malformed or mismatched sentinel revocation journal"
+                ));
+            }
+            if let Some(proof) = proof {
+                if proof["unit_id"] != sentinel["unit"]
+                    || proof["recorded_main_pid"] != sentinel["main_pid"]
+                    || proof["recorded_main_pid_starttime"] != sentinel["main_pid_starttime"]
+                    || proof["cgroup_path"] != sentinel["cgroup_path"]
+                    || proof["observed_main_pid_starttime"] == sentinel["main_pid_starttime"]
+                    || proof["cgroup_members"]
+                        .as_array()
+                        .is_none_or(|members| !members.is_empty())
+                    || !matches!(proof["cgroup_populated"].as_bool(), None | Some(false))
+                {
+                    return Err(format!(
+                        "slot {slot} has a sentinel revocation proof that does not prove the recorded identity absent"
+                    ));
+                }
+            }
+        }
+        return Ok(OwnerAuthorities {
+            names,
+            orc: leases,
+            sentinel: Some(SentinelAuthority {
+                lease: sentinel.clone(),
+                revoked: journal.is_some_and(|value| value["phase"].as_str() == Some("revoked")),
+                proof: journal.and_then(|value| value.get("proof")).cloned(),
+            }),
+        });
+    }
+    if slot_state.get("coordinator_lease_revocation").is_some() {
+        return Err(format!(
+            "slot {slot} has a sentinel revocation journal without a coordinator lease"
+        ));
+    }
     for agent in slot_state["agents"].as_array().into_iter().flatten() {
         let owner = agent["name"]
             .as_str()
@@ -860,13 +985,83 @@ fn recorded_owner_leases(slot_state: &Value) -> Result<BTreeMap<String, OwnerLea
         }
         leases.insert(
             owner.to_string(),
-            OwnerLease {
+            OrcOwnerLease {
                 pane: pane.to_string(),
                 cgroup: cgroup.to_string(),
             },
         );
     }
-    Ok(leases)
+    Ok(OwnerAuthorities {
+        names,
+        orc: leases,
+        sentinel: None,
+    })
+}
+
+fn codex_sentinel_tool(root: &Path) -> Result<PathBuf, String> {
+    let tool = root.join("scripts/codex-slot-sentinel.rs");
+    if !tool.is_file() {
+        return Err(format!(
+            "canonical Codex slot sentinel authority is missing: {}",
+            tool.display()
+        ));
+    }
+    Ok(tool)
+}
+
+fn codex_sentinel_command(
+    root: &Path,
+    operation: &str,
+    lease: &Value,
+    recover: bool,
+) -> Result<Value, String> {
+    let lease_json = serde_json::to_string(lease)
+        .map_err(|error| format!("serialize Codex coordinator lease: {error}"))?;
+    let mut command = Command::new(codex_sentinel_tool(root)?);
+    command.args([operation, "--lease-json", &lease_json]);
+    if recover {
+        command.arg("--recover");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("Codex slot sentinel {operation} unavailable: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex slot sentinel {operation} refused: {}{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Codex sentinel {operation} result: {error}"))?;
+    let expected_state = if operation == "verify" {
+        "live"
+    } else {
+        "revoked"
+    };
+    if report["state"].as_str() != Some(expected_state) || report.get("lease") != Some(lease) {
+        return Err(format!(
+            "Codex slot sentinel {operation} result is not bound to the exact lease"
+        ));
+    }
+    if expected_state == "revoked" && !report["proof"].is_object() {
+        return Err(format!(
+            "Codex slot sentinel {operation} omitted its revocation proof"
+        ));
+    }
+    Ok(report)
+}
+
+fn verify_codex_sentinel_live(root: &Path, lease: &Value) -> Result<(), String> {
+    codex_sentinel_command(root, "verify", lease, false).map(|_| ())
+}
+
+fn prove_codex_sentinel_revoked(root: &Path, lease: &Value) -> Result<Value, String> {
+    Ok(codex_sentinel_command(root, "prove-revoked", lease, false)?["proof"].clone())
+}
+
+fn revoke_codex_sentinel(root: &Path, lease: &Value, recover: bool) -> Result<Value, String> {
+    Ok(codex_sentinel_command(root, "revoke", lease, recover)?["proof"].clone())
 }
 
 fn agent_snapshot(root: &Path) -> Result<BTreeMap<String, AgentPresence>, String> {
@@ -1099,7 +1294,7 @@ fn verify_recorded_owners_absent(
     root: &Path,
     proc_root: &Path,
     cgroup_root: &Path,
-    owners: &BTreeMap<String, OwnerLease>,
+    owners: &BTreeMap<String, OrcOwnerLease>,
 ) -> Result<(), String> {
     let agents = agent_snapshot(root)?;
     let panes = tmux_panes(root)?;
@@ -1192,6 +1387,42 @@ fn verify_recorded_owners_absent(
     Ok(())
 }
 
+fn verify_release_authority_absent(
+    root: &Path,
+    proc_root: &Path,
+    cgroup_root: &Path,
+    authorities: &OwnerAuthorities,
+) -> Result<(), String> {
+    if let Some(sentinel) = &authorities.sentinel {
+        if !sentinel.revoked {
+            return Err(
+                "Codex coordinator sentinel remains live; durable revocation is required before global release scans"
+                    .to_string(),
+            );
+        }
+        let current = prove_codex_sentinel_revoked(root, &sentinel.lease)?;
+        let recorded = sentinel
+            .proof
+            .as_ref()
+            .ok_or_else(|| "revoked Codex sentinel has no durable proof".to_string())?;
+        for field in [
+            "unit_id",
+            "recorded_main_pid",
+            "recorded_main_pid_starttime",
+            "cgroup_path",
+        ] {
+            if current.get(field) != recorded.get(field) {
+                return Err(format!(
+                    "Codex sentinel revocation proof changed identity field {field}"
+                ));
+            }
+        }
+        Ok(())
+    } else {
+        verify_recorded_owners_absent(root, proc_root, cgroup_root, &authorities.orc)
+    }
+}
+
 fn process_agent_name(proc_path: &Path) -> Option<String> {
     let raw = fs::read(proc_path.join("environ")).ok()?;
     raw.split(|byte| *byte == 0).find_map(|field| {
@@ -1260,7 +1491,7 @@ fn container_release_audit(
     fence_token: &str,
     owners: &BTreeSet<String>,
     targets: &[PathBuf],
-) -> Result<(), String> {
+) -> Result<Value, String> {
     let tool = root.join("scripts/agent-podman.rs");
     if !tool.is_file() {
         return Err(format!(
@@ -1298,7 +1529,24 @@ fn container_release_audit(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(())
+    let report: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!("canonical container release-audit returned invalid JSON: {error}")
+    })?;
+    if report["state"].as_str() != Some("ok") {
+        return Err(
+            "canonical container release-audit exited successfully without state=ok".to_string(),
+        );
+    }
+    let observation = report["container_observation"].as_array().ok_or_else(|| {
+        "canonical container release-audit omitted its complete container observation".to_string()
+    })?;
+    if report["inspected"].as_u64() != Some(observation.len() as u64) {
+        return Err(format!(
+            "canonical container release-audit observation count does not bind inspected={}",
+            report["inspected"]
+        ));
+    }
+    Ok(report["container_observation"].clone())
 }
 
 /// Refuse every readable same-UID reference into the target. Unreadable links
@@ -1309,12 +1557,12 @@ fn live_process_users(
     proc_root: &Path,
     cgroup_root: &Path,
     container_fence_token: &str,
-    owners: &BTreeMap<String, OwnerLease>,
+    owners: &OwnerAuthorities,
     targets: &[PathBuf],
-) -> Result<Vec<String>, String> {
-    verify_recorded_owners_absent(root, proc_root, cgroup_root, owners)?;
-    let owner_names: BTreeSet<String> = owners.keys().cloned().collect();
-    container_release_audit(root, container_fence_token, &owner_names, targets)?;
+) -> Result<(Vec<String>, Value), String> {
+    verify_release_authority_absent(root, proc_root, cgroup_root, owners)?;
+    let container_observation =
+        container_release_audit(root, container_fence_token, &owners.names, targets)?;
     let own_uid = fs::metadata("/proc/self")
         .map_err(|error| format!("could not inspect /proc/self: {error}"))?
         .uid();
@@ -1347,9 +1595,9 @@ fn live_process_users(
             continue;
         }
         let proc_path = entry.path();
-        if process_agent_name(&proc_path).is_some_and(|name| owners.contains_key(&name)) {
+        if process_agent_name(&proc_path).is_some_and(|name| owners.names.contains(&name)) {
             return Err(format!(
-                "recorded owner process pid {pid} remains despite authoritative ORC absence"
+                "recorded owner process pid {pid} remains despite authoritative release-lease absence"
             ));
         }
         for kind in ["cwd", "exe", "root"] {
@@ -1367,7 +1615,7 @@ fn live_process_users(
     }
     users.sort();
     users.dedup();
-    Ok(users)
+    Ok((users, container_observation))
 }
 
 fn snapshots(inspections: &[RepoInspection]) -> Vec<RepoSnapshot> {
@@ -1385,7 +1633,7 @@ fn final_removal_boundary(
     proc_root: &Path,
     cgroup_root: &Path,
     container_fence_token: &str,
-    owners: &BTreeMap<String, OwnerLease>,
+    owners: &OwnerAuthorities,
     slot: &str,
     expected_slot: &Value,
     expected_target: &CleanTarget,
@@ -1432,7 +1680,7 @@ fn final_removal_boundary(
         }
     }
 
-    let users = live_process_users(
+    let (users, _) = live_process_users(
         root,
         proc_root,
         cgroup_root,
@@ -1774,12 +2022,98 @@ fn restore_force_fence_admin(paths: &SubmoduleAdminPaths) -> Result<bool, String
     }
 }
 
+fn secure_transaction_nonce() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| format!("read coordinator-revocation randomness: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn arm_coordinator_lease_revocation(
+    root: &Path,
+    state: &mut Value,
+    slot: &str,
+    crash_marker: Option<&Path>,
+) -> Result<(), String> {
+    let slot_state = &state["slots"][slot];
+    if slot_state.get("coordinator_lease_revocation").is_some() {
+        return Err("coordinator lease revocation is already journaled".to_string());
+    }
+    let lease = slot_state
+        .get("coordinator_lease")
+        .cloned()
+        .ok_or_else(|| "slot has no Codex coordinator lease to revoke".to_string())?;
+    validate_sentinel_slot_binding(root, slot, &lease)?;
+    // This first exact live check prevents an already-dead/restarted unit from
+    // becoming release authority. The helper repeats the check immediately
+    // before its exact stop operation after the durable journal is written.
+    verify_codex_sentinel_live(root, &lease)?;
+    state["slots"][slot]["status"] = json!("revoking-coordinator-lease");
+    state["slots"][slot]["coordinator_lease_revocation"] = json!({
+        "schema_version": 1,
+        "source": "codex-systemd-sentinel-v1",
+        "phase": "stop-authorized",
+        "transaction_nonce": secure_transaction_nonce()?,
+        "lease": lease,
+        "authorized_at": now_iso(),
+    });
+    state["slots"][slot]["updated"] = json!(now_iso());
+    save_state(root, state);
+    maybe_inject_fixture_crash(
+        crash_marker,
+        "post-coordinator-revocation-journal crash injected",
+    )?;
+    regen_active_md(root, state);
+    Ok(())
+}
+
+fn complete_coordinator_lease_revocation(
+    root: &Path,
+    state: &mut Value,
+    slot: &str,
+    recover: bool,
+    post_stop_crash_marker: Option<&Path>,
+) -> Result<bool, String> {
+    let journal = state["slots"][slot]
+        .get("coordinator_lease_revocation")
+        .cloned()
+        .ok_or_else(|| "slot has no coordinator lease revocation journal".to_string())?;
+    let lease = journal["lease"].clone();
+    validate_sentinel_slot_binding(root, slot, &lease)?;
+    match journal["phase"].as_str() {
+        Some("stop-authorized") => {
+            let proof = revoke_codex_sentinel(root, &lease, recover)?;
+            maybe_inject_fixture_crash(
+                post_stop_crash_marker,
+                "post-coordinator-sentinel-stop crash injected",
+            )?;
+            state["slots"][slot]["coordinator_lease_revocation"]["phase"] = json!("revoked");
+            state["slots"][slot]["coordinator_lease_revocation"]["proof"] = proof;
+            state["slots"][slot]["coordinator_lease_revocation"]["revoked_at"] = json!(now_iso());
+            state["slots"][slot]["status"] = json!("owner-lease-revoked");
+            state["slots"][slot]["updated"] = json!(now_iso());
+            save_state(root, state);
+            regen_active_md(root, state);
+            Ok(true)
+        }
+        Some("revoked") => {
+            prove_codex_sentinel_revoked(root, &lease)?;
+            Ok(false)
+        }
+        other => Err(format!(
+            "coordinator lease revocation has invalid phase {other:?}"
+        )),
+    }
+}
+
 fn arm_release_journal(
     root: &Path,
     state: &mut Value,
     slot: &str,
     target: &CleanTarget,
-) -> PathBuf {
+    crash_marker: Option<&Path>,
+) -> Result<PathBuf, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -1799,22 +2133,48 @@ fn arm_release_journal(
         "label": target.label,
         "original": target.path.to_string_lossy(),
         "fenced": fenced.to_string_lossy(),
+        "phase": "armed",
     });
     state["slots"][slot]["updated"] = json!(now_iso());
     save_state(root, state);
+    maybe_inject_fixture_crash(crash_marker, "post-journal-arm state/ACTIVE split injected")?;
     regen_active_md(root, state);
-    fenced
+    Ok(fenced)
 }
 
-fn clear_release_journal(root: &Path, state: &mut Value, slot: &str) {
-    state["slots"][slot]["status"] = json!("active");
+fn mark_git_removal_complete(root: &Path, state: &mut Value, slot: &str) {
+    state["slots"][slot]["release_journal"]["phase"] = json!("git-removal-complete");
+    state["slots"][slot]["updated"] = json!(now_iso());
+    save_state(root, state);
+    regen_active_md(root, state);
+}
+
+fn clear_release_journal(
+    root: &Path,
+    state: &mut Value,
+    slot: &str,
+    crash_marker: Option<&Path>,
+) -> Result<(), String> {
+    state["slots"][slot]["status"] = json!(if state["slots"][slot]
+        .get("coordinator_lease_revocation")
+        .is_some()
+    {
+        "owner-lease-revoked"
+    } else {
+        "active"
+    });
     state["slots"][slot]["updated"] = json!(now_iso());
     state["slots"][slot]
         .as_object_mut()
         .expect("slot record is an object")
         .remove("release_journal");
     save_state(root, state);
+    maybe_inject_fixture_crash(
+        crash_marker,
+        "post-journal-clear state/ACTIVE split injected",
+    )?;
     regen_active_md(root, state);
+    Ok(())
 }
 
 fn validate_path_fence_marker(
@@ -1944,7 +2304,12 @@ fn journal_target(
     let slot_state = state["slots"]
         .get(slot)
         .ok_or_else(|| format!("slot {slot} is not registered"))?;
-    if slot_state["status"].as_str() != Some("releasing") {
+    if slot_state.get("release_journal").is_none() {
+        if slot_state["status"].as_str() == Some("releasing") {
+            return Err(format!(
+                "slot {slot} is releasing without a release_journal"
+            ));
+        }
         return Ok(None);
     }
     let journal = slot_state["release_journal"]
@@ -2024,6 +2389,32 @@ fn exact_path_present(path: &Path) -> Result<bool, String> {
     }
 }
 
+fn verify_absent_slot_recovery(root: &Path, slot: &str) -> Result<(), String> {
+    let slot_dir = root.join("worktrees").join(slot);
+    if exact_path_present(&slot_dir)? {
+        return Err(format!(
+            "slot {slot} is absent from state but physical path {} remains",
+            slot_dir.display()
+        ));
+    }
+    for product in ["hermit", "reverie", "liteinst2"] {
+        let primary = root.join(product);
+        let listing = git_inspect(&primary, &["worktree", "list", "--porcelain"])?;
+        if let Some(candidate) = listing
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .map(Path::new)
+            .find(|candidate| candidate.starts_with(&slot_dir))
+        {
+            return Err(format!(
+                "slot {slot} is absent from state but {product} still registers {}",
+                candidate.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn verify_completed_git_removal(target: &CleanTarget, fenced: &Path) -> Result<(), String> {
     let original_present = exact_path_present(&target.path)?;
     let fenced_present = exact_path_present(fenced)?;
@@ -2091,10 +2482,18 @@ fn recover_path_fence(root: &Path, state: &Value, slot: &str) -> Result<PathFenc
         }
         (false, false) => {
             // Git may have completed `worktree remove` immediately before the
-            // process crashed.  Accept that terminal transaction state only
-            // when the authoritative worktree registry contains neither the
-            // canonical nor fenced path.  A raw filesystem deletion leaves a
-            // Git registration and remains a refusal.
+            // process crashed. Accept that terminal transaction state only
+            // when this exact release process durably recorded successful Git
+            // removal and its postcondition. Mere absence is not causal proof:
+            // an out-of-band deletion can produce the same proxy state.
+            if state["slots"][slot]["release_journal"]["phase"].as_str()
+                != Some("git-removal-complete")
+            {
+                return Err(format!(
+                    "both release paths are absent without durable git-removal-complete evidence for {}",
+                    target.label
+                ));
+            }
             verify_completed_git_removal(&target, &fenced)?;
             eprintln!(
                 "✓ recovered completed Git removal for {}; registry state will be advanced",
@@ -2139,7 +2538,7 @@ fn remove_target(
     proc_root: &Path,
     cgroup_root: &Path,
     container_fence_token: &str,
-    owners: &BTreeMap<String, OwnerLease>,
+    owners: &OwnerAuthorities,
     allow_dirty: bool,
 ) -> Result<(), String> {
     // Validate the test-only crash hook before creating a transaction marker or
@@ -2148,8 +2547,6 @@ fn remove_target(
     let crash_marker = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_DEINIT")?;
     let fence_crash_marker =
         restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_PATH_FENCE")?;
-    let remove_crash_marker =
-        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_GIT_REMOVE")?;
     ensure_no_submodule_cleanup_artifacts(target)?;
     let submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
         let paths = begin_submodule_cleanup(target)?;
@@ -2184,6 +2581,18 @@ fn remove_target(
         quarantine_force_fence_admin(&paths)?;
     }
 
+    // Bind the post-fence proof to the complete container/config/mount
+    // observation immediately before the pathname moves. The lifecycle lock
+    // excludes supported mutations; an out-of-protocol Podman change must be
+    // observed as a changed authority rather than merely reclassified against
+    // a different pathname.
+    let pre_fence_containers = container_release_audit(
+        root,
+        container_fence_token,
+        &owners.names,
+        &[target.path.clone()],
+    )?;
+
     // Atomically remove the published canonical pathname before the last
     // ownership proof. An acquisition that won the earlier race follows the
     // moved inode and is visible below; a later canonical acquisition receives
@@ -2195,7 +2604,7 @@ fn remove_target(
         "post-path-fence crash injected",
     )?;
     let proof_paths = [target.path.clone(), fenced.to_path_buf()];
-    let users = match live_process_users(
+    let (users, post_fence_containers) = match live_process_users(
         root,
         proc_root,
         cgroup_root,
@@ -2219,6 +2628,22 @@ fn remove_target(
             }
         }
     };
+    if post_fence_containers != pre_fence_containers {
+        let error =
+            "container census/config/mount observation changed across the path fence".to_string();
+        return match rollback_fenced_removal(
+            target,
+            fenced,
+            &fence_paths,
+            submodule_cleanup.as_ref(),
+            force_fence_admin,
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!(
+                "{error}; path-fence rollback failed: {rollback}; use --recover-submodule-cleanup"
+            )),
+        };
+    }
     if !users.is_empty() {
         let error = format!(
             "post-fence live process ownership below {}: {}",
@@ -2296,10 +2721,6 @@ fn remove_target(
             )),
         };
     }
-    maybe_inject_fixture_crash(
-        remove_crash_marker.as_deref(),
-        "post-git-remove crash injected",
-    )?;
     Ok(())
 }
 
@@ -2353,20 +2774,83 @@ fn main() {
     let _registry_lock = lock_registry(&root);
     let mut state = load_state(&root);
 
+    // ACTIVE.md is a durable, human-augmented projection of the JSON
+    // authority, but no filesystem offers an atomic rename spanning both
+    // files. Explicit recovery therefore repairs only its managed block under
+    // the same exclusive registry lock before invoking any verifier.
+    let recovered_active_drift = recover_submodules && regen_active_md(&root, &state);
+
     if state["slots"].get(&slot).is_none() {
+        if recover_submodules && recovered_active_drift {
+            verify_absent_slot_recovery(&root, &slot).unwrap_or_else(|error| {
+                die(&format!("terminal registry recovery failed: {error}"))
+            });
+            verify_registry(&root).unwrap_or_else(|error| {
+                die(&format!(
+                    "terminal registry recovery verification failed: {error}"
+                ))
+            });
+            println!(
+                "✓ recovered completed release metadata for {slot}; state and ACTIVE.md now agree"
+            );
+            return;
+        }
         die(&format!(
             "slot {slot} is not registered in worktree-state.json"
         ));
     }
     validate_owners(&slot, &state["slots"][&slot])
         .unwrap_or_else(|error| die(&format!("invalid slot ownership: {error}")));
-    if state["slots"][&slot]["status"].as_str() == Some("releasing") && !recover_submodules {
+    if state["slots"][&slot]
+        .get("coordinator_lease_intent")
+        .is_some()
+    {
+        die("slot has an unfinished coordinator-sentinel launch intent; complete the exact allocator invocation before release");
+    }
+    if (state["slots"][&slot]["status"].as_str() == Some("releasing")
+        || state["slots"][&slot].get("release_journal").is_some()
+        || state["slots"][&slot]
+            .get("coordinator_lease_revocation")
+            .is_some())
+        && !recover_submodules
+    {
         die(&format!(
-            "slot {slot} has an unfinished release journal; retain it and run --clean --recover-submodule-cleanup"
+            "slot {slot} has an unfinished release journal or coordinator revocation journal; retain it and run --clean --recover-submodule-cleanup"
         ));
     }
     if recover_submodules && agent.is_some() {
         die("--recover-submodule-cleanup cannot be combined with --agent");
+    }
+
+    // Resolve every test-only crash hook before the first release mutation.
+    // A leaked or malformed test path must never surface only after Git has
+    // already removed a worktree.
+    let journal_arm_crash_marker =
+        restricted_fixture_path(&root, "HERMIT_RELEASE_TEST_CRASH_AFTER_JOURNAL_ARM_STATE")
+            .unwrap_or_else(|error| die(&format!("journal-arm crash hook refused: {error}")));
+    let journal_clear_crash_marker =
+        restricted_fixture_path(&root, "HERMIT_RELEASE_TEST_CRASH_AFTER_JOURNAL_CLEAR_STATE")
+            .unwrap_or_else(|error| die(&format!("journal-clear crash hook refused: {error}")));
+    let final_state_crash_marker =
+        restricted_fixture_path(&root, "HERMIT_RELEASE_TEST_CRASH_AFTER_FINAL_STATE")
+            .unwrap_or_else(|error| die(&format!("final-state crash hook refused: {error}")));
+    let git_remove_crash_marker =
+        restricted_fixture_path(&root, "HERMIT_RELEASE_TEST_CRASH_AFTER_GIT_REMOVE")
+            .unwrap_or_else(|error| die(&format!("Git-remove crash hook refused: {error}")));
+    let sentinel_arm_crash_marker = restricted_fixture_path(
+        &root,
+        "HERMIT_RELEASE_TEST_CRASH_AFTER_SENTINEL_REVOCATION_ARM",
+    )
+    .unwrap_or_else(|error| die(&format!("sentinel-arm crash hook refused: {error}")));
+    let sentinel_stop_crash_marker =
+        restricted_fixture_path(&root, "HERMIT_RELEASE_TEST_CRASH_AFTER_SENTINEL_STOP")
+            .unwrap_or_else(|error| die(&format!("sentinel-stop crash hook refused: {error}")));
+
+    if state["slots"][&slot].get("coordinator_lease").is_some() && !clean {
+        die("Codex coordinator leases can only be released with --clean so exact revocation and global absence proofs remain coupled");
+    }
+    if state["slots"][&slot].get("coordinator_lease").is_some() && agent.is_some() {
+        die("cannot drop one recorded agent from a coordinator-leased slot; release the whole slot through exact sentinel revocation");
     }
 
     // If dropping one sharer and others remain, do not tear down the slot.
@@ -2426,15 +2910,46 @@ fn main() {
             .unwrap_or_else(|error| {
                 die(&format!("container lifecycle fence unavailable: {error}"))
             });
-        let owners = recorded_owner_leases(&state["slots"][&slot])
+        let mut owners = recorded_owner_authorities(&root, &slot, &state["slots"][&slot])
             .unwrap_or_else(|error| die(&format!("owner lease refused cleanup: {error}")));
+        let mut recovered_revocation = false;
+        if recover_submodules
+            && state["slots"][&slot]
+                .get("coordinator_lease_revocation")
+                .is_some()
+        {
+            complete_coordinator_lease_revocation(
+                &root,
+                &mut state,
+                &slot,
+                true,
+                sentinel_stop_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| {
+                die(&format!(
+                    "coordinator lease revocation recovery failed: {error}"
+                ))
+            });
+            recovered_revocation = true;
+            owners = recorded_owner_authorities(&root, &slot, &state["slots"][&slot])
+                .unwrap_or_else(|error| die(&format!("revoked owner lease invalid: {error}")));
+        }
+        if recover_submodules
+            && state["slots"][&slot].get("release_journal").is_some()
+            && owners
+                .sentinel
+                .as_ref()
+                .is_some_and(|sentinel| !sentinel.revoked)
+        {
+            die("release journal exists for a live Codex sentinel without its required prior revocation journal");
+        }
         let mut recovered_path_fence = false;
         if recover_submodules {
             if let Some((journaled, fenced)) = journal_target(&root, &state, &slot)
                 .unwrap_or_else(|error| die(&format!("release journal recovery failed: {error}")))
             {
                 let recovery_paths = [journaled.path.clone(), fenced];
-                let users = live_process_users(
+                let (users, _) = live_process_users(
                     &root,
                     &proc_root,
                     &cgroup_root,
@@ -2458,7 +2973,17 @@ fn main() {
                     PathFenceRecovery::Restored => recovered_path_fence = true,
                     PathFenceRecovery::RemovalCompleted(target) => {
                         state["slots"][&slot][target.branch_key] = json!("-");
-                        clear_release_journal(&root, &mut state, &slot);
+                        clear_release_journal(
+                            &root,
+                            &mut state,
+                            &slot,
+                            journal_clear_crash_marker.as_deref(),
+                        )
+                        .unwrap_or_else(|error| {
+                            die(&format!(
+                                "completed-removal registry recovery interrupted: {error}"
+                            ))
+                        });
                         recovered_path_fence = true;
                     }
                 }
@@ -2472,24 +2997,51 @@ fn main() {
             .iter()
             .map(|target| target.path.clone())
             .collect();
-        let preflight_users = live_process_users(
-            &root,
-            &proc_root,
-            &cgroup_root,
-            &container_fence_token,
-            &owners,
-            &preflight_target_paths,
-        )
-        .unwrap_or_else(|error| die(&format!("owner authority refused cleanup: {error}")));
-        if !preflight_users.is_empty() {
-            die(&format!(
-                "refusing --clean while live processes use the slot: {}",
-                preflight_users.join(", ")
-            ));
+        if let Some(sentinel) = &owners.sentinel {
+            if sentinel.revoked {
+                let (preflight_users, _) = live_process_users(
+                    &root,
+                    &proc_root,
+                    &cgroup_root,
+                    &container_fence_token,
+                    &owners,
+                    &preflight_target_paths,
+                )
+                .unwrap_or_else(|error| die(&format!("owner authority refused cleanup: {error}")));
+                if !preflight_users.is_empty() {
+                    die(&format!(
+                        "refusing --clean while live processes use the slot: {}",
+                        preflight_users.join(", ")
+                    ));
+                }
+            } else {
+                verify_codex_sentinel_live(&root, &sentinel.lease).unwrap_or_else(|error| {
+                    die(&format!(
+                        "live Codex coordinator lease refused cleanup: {error}"
+                    ))
+                });
+            }
+        } else {
+            let (preflight_users, _) = live_process_users(
+                &root,
+                &proc_root,
+                &cgroup_root,
+                &container_fence_token,
+                &owners,
+                &preflight_target_paths,
+            )
+            .unwrap_or_else(|error| die(&format!("owner authority refused cleanup: {error}")));
+            if !preflight_users.is_empty() {
+                die(&format!(
+                    "refusing --clean while live processes use the slot: {}",
+                    preflight_users.join(", ")
+                ));
+            }
         }
         let mut proofs: Vec<(&'static str, Vec<RepoSnapshot>)> = Vec::new();
         let mut any_dirty = false;
-        let mut recovered_any = recovered_path_fence;
+        let mut recovered_any =
+            recovered_path_fence || recovered_active_drift || recovered_revocation;
 
         for target in &clean_targets {
             if recover_submodules {
@@ -2530,8 +3082,14 @@ fn main() {
         if recover_submodules && !recovered_any {
             die("--recover-submodule-cleanup found no interrupted transaction marker");
         }
-        if recover_submodules && state["slots"][&slot]["status"].as_str() == Some("releasing") {
-            clear_release_journal(&root, &mut state, &slot);
+        if recover_submodules && state["slots"][&slot].get("release_journal").is_some() {
+            clear_release_journal(
+                &root,
+                &mut state,
+                &slot,
+                journal_clear_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| die(&format!("release journal recovery interrupted: {error}")));
             verify_registry(&root).unwrap_or_else(|error| {
                 die(&format!(
                     "post-recovery registry verification failed: {error}"
@@ -2615,7 +3173,32 @@ fn main() {
             .iter()
             .map(|target| target.path.clone())
             .collect();
-        let users = live_process_users(
+        if owners
+            .sentinel
+            .as_ref()
+            .is_some_and(|sentinel| !sentinel.revoked)
+        {
+            arm_coordinator_lease_revocation(
+                &root,
+                &mut state,
+                &slot,
+                sentinel_arm_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| {
+                die(&format!("coordinator lease revocation arm failed: {error}"))
+            });
+            complete_coordinator_lease_revocation(
+                &root,
+                &mut state,
+                &slot,
+                false,
+                sentinel_stop_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| die(&format!("coordinator lease revocation failed: {error}")));
+            owners = recorded_owner_authorities(&root, &slot, &state["slots"][&slot])
+                .unwrap_or_else(|error| die(&format!("revoked owner lease invalid: {error}")));
+        }
+        let (users, _) = live_process_users(
             &root,
             &proc_root,
             &cgroup_root,
@@ -2656,7 +3239,14 @@ fn main() {
                 ))
             });
 
-            let fenced = arm_release_journal(&root, &mut state, &slot, target);
+            let fenced = arm_release_journal(
+                &root,
+                &mut state,
+                &slot,
+                target,
+                journal_arm_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| die(&format!("release journal arm interrupted: {error}")));
 
             remove_target(
                 &root,
@@ -2670,6 +3260,12 @@ fn main() {
                 force,
             )
             .unwrap_or_else(|error| die(&format!("{error}; registry state retained")));
+            mark_git_removal_complete(&root, &mut state, &slot);
+            maybe_inject_fixture_crash(
+                git_remove_crash_marker.as_deref(),
+                "post-git-remove crash injected",
+            )
+            .unwrap_or_else(|error| die(&format!("Git removal completion interrupted: {error}")));
             println!(
                 "  removed {} worktree {}",
                 target.label,
@@ -2679,7 +3275,13 @@ fn main() {
             // Record each exact product removal before attempting the next one,
             // so a later failure is retryable without lying about physical state.
             state["slots"][&slot][target.branch_key] = json!("-");
-            clear_release_journal(&root, &mut state, &slot);
+            clear_release_journal(
+                &root,
+                &mut state,
+                &slot,
+                journal_clear_crash_marker.as_deref(),
+            )
+            .unwrap_or_else(|error| die(&format!("release journal clear interrupted: {error}")));
         }
 
         if slot_dir.exists() {
@@ -2700,6 +3302,13 @@ fn main() {
     }
 
     save_state(&root, &mut state);
+    if clean {
+        maybe_inject_fixture_crash(
+            final_state_crash_marker.as_deref(),
+            "post-final-state state/ACTIVE split injected",
+        )
+        .unwrap_or_else(|error| die(&format!("final registry update interrupted: {error}")));
+    }
     regen_active_md(&root, &state);
     println!("  state:  {}", state_path(&root).display());
     println!("  active: {}", root.join("worktrees/ACTIVE.md").display());
