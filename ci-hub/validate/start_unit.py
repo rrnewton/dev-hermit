@@ -12,13 +12,19 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+import pane_owner
+import run_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 UNIT_RE = re.compile(r"^validate-[A-Za-z0-9_.@:-]+$")
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+TERMINAL_STATES = frozenset(("failed", "inactive"))
 
 
 def run_command(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -166,6 +172,126 @@ def build_systemd_command(
     ]
 
 
+def service_properties(
+    unit: str, *, run: Runner
+) -> dict[str, str] | None:
+    result = run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            f"{unit}.service",
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=ExecMainStatus",
+            "--property=Result",
+            "--no-pager",
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
+
+def wait_for_unit(
+    unit: str,
+    record: Path,
+    *,
+    run: Runner,
+    poll_seconds: float,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    seen = False
+    missing = 0
+    while True:
+        properties = service_properties(unit, run=run)
+        if properties is None:
+            missing += 1
+            try:
+                durable = run_registry.read_record(record)
+            except RuntimeError:
+                durable = {}
+            if durable.get("state") == "completed":
+                return durable
+            if seen or missing >= 50:
+                raise RuntimeError(
+                    f"{unit}.service disappeared before publishing a terminal result; "
+                    f"inspect {record} and the durable log"
+                )
+            sleep(poll_seconds)
+            continue
+        seen = True
+        if properties.get("ActiveState") in TERMINAL_STATES:
+            try:
+                status = int(properties.get("ExecMainStatus", ""))
+            except ValueError:
+                status = None
+            return {
+                "state": "completed",
+                "result": properties.get("Result", "unknown"),
+                "exit_code": status,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+        sleep(poll_seconds)
+
+
+def emit_report(report: Mapping[str, Any], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(dict(report), sort_keys=True), flush=True)
+        return
+    event = report.get("event", "state").upper()
+    print(
+        f"validate-run: {event} {report['unit']} target={report['target']} "
+        f"state={report.get('state', 'unknown')}",
+        flush=True,
+    )
+    if report.get("pane_id"):
+        print(
+            f"PANE workspace={report['workspace_id']} tab={report['tab_id']} "
+            f"pane={report['pane_id']}",
+            flush=True,
+        )
+    if report.get("log"):
+        print(f"LOG {report['log']}", flush=True)
+
+
+def attach(
+    raw_unit: str,
+    *,
+    root: Path,
+    run: Runner,
+    json_output: bool,
+    poll_seconds: float,
+    sleep: Callable[[float], None],
+) -> int:
+    unit = sanitize_unit(raw_unit)
+    record_path = run_registry.record_path(root, unit)
+    record = run_registry.read_record(record_path)
+    emit_report(
+        {
+            **record,
+            "event": "attached",
+            "unit": f"{unit}.service",
+        },
+        json_output=json_output,
+    )
+    final = wait_for_unit(
+        unit,
+        record_path,
+        run=run,
+        poll_seconds=poll_seconds,
+        sleep=sleep,
+    )
+    updated = run_registry.update_record(record_path, **final)
+    emit_report(
+        {**updated, "event": "finished", "unit": f"{unit}.service"},
+        json_output=json_output,
+    )
+    status = updated.get("exit_code")
+    return status if isinstance(status, int) and 0 <= status <= 125 else 2
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description=(
@@ -173,10 +299,15 @@ def parser() -> argparse.ArgumentParser:
             "path is ci-hub validate-lock."
         )
     )
-    result.add_argument("--checkout", required=True, type=Path)
-    result.add_argument("--agent", required=True)
-    result.add_argument("--target", required=True)
+    result.add_argument("--checkout", type=Path)
+    result.add_argument("--agent")
+    result.add_argument("--target")
     result.add_argument("--pr", type=int)
+    result.add_argument(
+        "--attach",
+        metavar="VALIDATE-UNIT",
+        help="reattach to a durable validate-* handle without launching another run",
+    )
     result.add_argument("--unit", help="validate-* unit name; .service suffix is optional")
     result.add_argument("--log", type=Path, help="durable log (default: ignored/validate/<unit>.log)")
     result.add_argument("--wait", type=int, default=7200, help="validate-lock queue wait bound")
@@ -184,6 +315,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--child-deadline", type=int, default=3600)
     result.add_argument("--dry-run", action="store_true")
     result.add_argument("--json", action="store_true")
+    result.add_argument(
+        "--caller-poll-seconds",
+        type=float,
+        default=1.0,
+        help="poll cadence while the caller blocks on the detached service",
+    )
     result.add_argument(
         "validate_args",
         nargs=argparse.REMAINDER,
@@ -198,8 +335,37 @@ def main(
     run: Runner = run_command,
     environment: Mapping[str, str] | None = None,
     root: Path = ROOT,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     args = parser().parse_args(argv)
+    if args.caller_poll_seconds <= 0:
+        print("validate-run: REFUSED: caller poll seconds must be positive", file=sys.stderr)
+        return 2
+    if args.attach:
+        if any((args.checkout, args.agent, args.target, args.pr, args.unit, args.log, args.dry_run)):
+            print(
+                "validate-run: REFUSED: --attach cannot be combined with launch arguments",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            return attach(
+                args.attach,
+                root=root.resolve(),
+                run=run,
+                json_output=args.json,
+                poll_seconds=args.caller_poll_seconds,
+                sleep=sleep,
+            )
+        except (RuntimeError, ValueError) as error:
+            print(f"validate-run: REFUSED: {error}", file=sys.stderr)
+            return 2
+    if args.checkout is None or not args.agent or not args.target:
+        print(
+            "validate-run: REFUSED: launch requires --checkout, --agent, and --target",
+            file=sys.stderr,
+        )
+        return 2
     validate_args = list(args.validate_args)
     if validate_args[:1] == ["--"]:
         validate_args.pop(0)
@@ -215,6 +381,8 @@ def main(
         preflight(root, checkout, args.target, run=run)
         unit = sanitize_unit(args.unit) if args.unit else default_unit(args.agent, args.target)
         log = (args.log or root / "ignored/validate" / f"{unit}.log").resolve()
+        record_path = run_registry.record_path(root.resolve(), unit)
+        started_at = datetime.now(timezone.utc).isoformat()
         command = build_systemd_command(
             root=root.resolve(),
             checkout=checkout,
@@ -229,39 +397,109 @@ def main(
             child_deadline=args.child_deadline,
             environment=environment or os.environ,
         )
-        if not args.dry_run:
+        if args.dry_run:
+            pane = None
+        else:
             log.parent.mkdir(parents=True, exist_ok=True)
+            run_registry.write_record(
+                record_path,
+                {
+                    "schema_version": 1,
+                    "state": "preparing",
+                    "unit": f"{unit}.service",
+                    "target": args.target,
+                    "checkout": str(checkout),
+                    "log": str(log),
+                    "agent": args.agent,
+                    "pr": args.pr,
+                    "started_at": started_at,
+                    "producer": "systemd-user-v1",
+                    "admission": "ci-hub validate-lock",
+                    "pane_role": "observer-only",
+                },
+            )
+            pane = pane_owner.create_pane(
+                root=root.resolve(),
+                checkout=checkout,
+                unit=unit,
+                target=args.target,
+                log=log,
+                record=record_path,
+                pr=args.pr,
+                started_at=started_at,
+                run=run,
+                environment=environment or os.environ,
+                sleep=sleep,
+            )
+            run_registry.update_record(
+                record_path,
+                state="launching",
+                workspace_id=pane.workspace_id,
+                tab_id=pane.tab_id,
+                pane_id=pane.pane_id,
+                pane_title=pane.title,
+            )
             result = run(command, cwd=root, check=False)
             if result.returncode != 0:
                 detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+                run_registry.update_record(
+                    record_path,
+                    state="refused",
+                    result="systemd-launch-refused",
+                    detail=detail,
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
                 raise RuntimeError(f"systemd-run refused service: {detail}")
+            run_registry.update_record(record_path, state="running")
     except (RuntimeError, ValueError) as error:
         print(f"validate-run: REFUSED: {error}", file=sys.stderr)
         return 2
 
     report = {
         "schema_version": 1,
-        "action": "would-start" if args.dry_run else "started",
+        "event": "would-start" if args.dry_run else "handle",
+        "state": "planned" if args.dry_run else "running",
         "unit": f"{unit}.service",
         "target": args.target,
         "checkout": str(checkout),
         "log": str(log),
+        "record": str(record_path),
         "admission": "ci-hub validate-lock",
         "producer": "systemd-user-v1",
+        "pane_role": "observer-only",
+        "workspace_id": pane.workspace_id if pane else pane_owner.WORKSPACE_LABEL,
+        "tab_id": pane.tab_id if pane else None,
+        "pane_id": pane.pane_id if pane else None,
         "command": command if args.dry_run else None,
     }
-    if args.json:
-        print(json.dumps(report, indent=2))
-    else:
-        print(
-            f"validate-run: {report['action'].upper()} {report['unit']} "
-            f"target={args.target} admission={report['admission']}"
-        )
-        print(f"LOG {log}")
-        print(f"MONITOR systemctl --user show {unit}.service -p ActiveState -p SubState -p ExecMainStatus")
-        if args.dry_run:
+    emit_report(report, json_output=args.json)
+    if args.dry_run:
+        if not args.json:
+            print(f"PANE-PLAN workspace={pane_owner.WORKSPACE_LABEL} role=observer-only")
             print(f"COMMAND {shlex.join(command)}")
-    return 0
+        return 0
+
+    try:
+        final = wait_for_unit(
+            unit,
+            record_path,
+            run=run,
+            poll_seconds=args.caller_poll_seconds,
+            sleep=sleep,
+        )
+        updated = run_registry.update_record(record_path, **final)
+    except RuntimeError as error:
+        print(
+            f"validate-run: WAIT-INTERRUPTED {unit}.service; RUN CONTINUES independently: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    emit_report(
+        {**updated, "event": "finished", "unit": f"{unit}.service"},
+        json_output=args.json,
+    )
+    status = updated.get("exit_code")
+    return status if isinstance(status, int) and 0 <= status <= 125 else 2
 
 
 if __name__ == "__main__":
