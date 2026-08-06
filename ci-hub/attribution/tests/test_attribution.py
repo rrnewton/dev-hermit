@@ -261,6 +261,126 @@ class CaptureRunTest(unittest.TestCase):
             self.assertEqual(res.exit_code, 127)
 
 
+class KillSignatureTest(unittest.TestCase):
+    """The cpu/wall KILL SIGNATURE: livelock (retry-futile) vs contention.
+
+    Every ratio below is a REAL measurement from the local step_profiles store
+    (`ci-hub/history/query.py kill-taxonomy`), not an invented number, so these
+    tests pin the classifier to observed production shapes.
+    """
+
+    def test_detcore_misc_livelock_is_a_real_red(self) -> None:
+        # MEASURED: test.detcore_misc wall_timeout, 600.013s wall / 607.785s cpu.
+        ev = A.Evidence(shape=A.SHAPE_HANG, host=loaded_host(), timed_out=True,
+                        wall_s=600.013, cpu_s=607.785)
+        res = A.attribute(ev)
+        self.assertEqual(res.verdict, A.HERMIT_NONDETERMINISM)
+        self.assertEqual(res.confidence, "high")
+        self.assertEqual(res.signals["kill_verdict"], "livelock")
+        # The whole point for the ledger: retry cannot clear this, so the red is REAL.
+        self.assertIs(res.signals["retry_futile"], True)
+
+    def test_liteinst_strict_livelock(self) -> None:
+        # MEASURED: test.liteinst_strict wall_timeout, 900.013s wall / 901.205s cpu.
+        ev = A.Evidence(shape=A.SHAPE_HANG, timed_out=True,
+                        wall_s=900.013, cpu_s=901.205)
+        self.assertEqual(A.attribute(ev).verdict, A.HERMIT_NONDETERMINISM)
+
+    def test_oom_is_NOT_read_as_livelock(self) -> None:
+        """The bracket that keeps the classifier honest.
+
+        MEASURED: test.strict_compat OOM, 64.462s wall / 8221.18s cpu -> ratio
+        127.5.  A parallel build hitting a memory ceiling has a huge ratio.  If
+        OOM were not excluded BEFORE the ratio test, every OOM in the store
+        (17 of 27 kills) would be mislabelled a livelock and condemn its commit.
+        """
+        ev = A.Evidence(shape=A.SHAPE_HANG, timed_out=True, oom=True,
+                        wall_s=64.462, cpu_s=8221.18)
+        res = A.attribute(ev)
+        self.assertEqual(res.signals["kill_verdict"], "oom")
+        self.assertNotEqual(res.signals["kill_verdict"], "livelock")
+        self.assertEqual(res.verdict, A.INFRASTRUCTURE)
+        self.assertNotEqual(res.verdict, A.HERMIT_NONDETERMINISM)
+        # OOM is not established as retry-futile either way -- must not be True.
+        self.assertIsNone(res.signals["retry_futile"])
+
+    def test_wait_bound_hang_does_NOT_decide_infra(self) -> None:
+        """The ASYMMETRY: a low ratio rules out a livelock but picks no cause.
+
+        A starved process and a futex/deadlock wedge both sit at cpu ~= 0 and
+        are opposite causes, so contention must fall through to the low-load
+        control rather than declaring INFRASTRUCTURE.
+        """
+        ev = A.Evidence(shape=A.SHAPE_HANG, host=loaded_host(), timed_out=True,
+                        wall_s=600.0, cpu_s=1.2)
+        res = A.attribute(ev)
+        self.assertEqual(res.verdict, A.INDETERMINATE)
+        self.assertIn("WAITING, not spinning", " ".join(res.reasons))
+
+    def test_wait_bound_plus_control_still_reaches_infrastructure(self) -> None:
+        # With the decisive control, contention resolves as before.
+        ev = A.Evidence(shape=A.SHAPE_HANG, host=loaded_host(), timed_out=True,
+                        wall_s=600.0, cpu_s=1.2,
+                        low_load=A.LowLoadControl(runs=5, failures=0))
+        self.assertEqual(A.attribute(ev).verdict, A.INFRASTRUCTURE)
+
+    def test_ratio_is_ignored_when_the_run_was_not_killed(self) -> None:
+        """Gate 1: a high ratio on a fast failure is just CPU-bound work."""
+        ev = A.Evidence(shape=A.SHAPE_HANG, timed_out=False, wall_s=3.0, cpu_s=2.9)
+        res = A.attribute(ev)
+        self.assertEqual(res.verdict, A.INDETERMINATE)
+        self.assertNotIn("kill_verdict", res.signals)
+
+    def test_schema1_bundle_without_cpu_degrades_not_guesses(self) -> None:
+        """An old bundle carrying no cpu_s must stay INDETERMINATE, never get a
+        fabricated ratio."""
+        ev = A.Evidence(shape=A.SHAPE_HANG, timed_out=True, wall_s=600.0, cpu_s=None)
+        res = A.attribute(ev)
+        self.assertEqual(res.verdict, A.INDETERMINATE)
+        self.assertNotIn("kill_verdict", res.signals)
+
+    def test_capture_run_records_cpu_seconds(self) -> None:
+        """PRODUCER bracket: the bundle must actually carry cpu_s, else the
+        classifier above can never fire in production."""
+        import json as _json
+        with tempfile.TemporaryDirectory() as directory:
+            res = A.capture_run(
+                ["sh", "-c", "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; exit 7"],
+                label="spin", bundle_root=Path(directory),
+            )
+            self.assertIsNotNone(res.cpu_s)
+            self.assertGreater(res.cpu_s, 0.0)   # it really burned CPU
+            meta = _json.loads((Path(res.bundle_dir) / "meta.json").read_text())
+            self.assertIn("cpu_s", meta)
+            self.assertGreater(meta["cpu_s"], 0.0)
+
+
+class KillSignatureModuleTest(unittest.TestCase):
+    """Unit tests for the shared table itself."""
+
+    def test_ratio_never_divides_by_a_missing_denominator(self) -> None:
+        self.assertIsNone(A.ks.cpu_wall_ratio(10.0, None))
+        self.assertIsNone(A.ks.cpu_wall_ratio(10.0, 0.0))
+        self.assertIsNone(A.ks.cpu_wall_ratio(None, 10.0))
+
+    def test_no_kill_means_unknown(self) -> None:
+        self.assertEqual(A.ks.classify_kill(None, 1.0), A.ks.UNKNOWN)
+
+    def test_threshold_boundaries(self) -> None:
+        k = A.ks.KILL_WALL_TIMEOUT
+        self.assertEqual(A.ks.classify_kill(k, 0.80), A.ks.LIVELOCK)   # inclusive
+        self.assertEqual(A.ks.classify_kill(k, 0.79), A.ks.AMBIGUOUS)
+        self.assertEqual(A.ks.classify_kill(k, 0.30), A.ks.AMBIGUOUS)
+        self.assertEqual(A.ks.classify_kill(k, 0.29), A.ks.CONTENTION)
+
+    def test_retry_futility_axis(self) -> None:
+        self.assertIs(A.ks.retry_futile(A.ks.LIVELOCK), True)
+        self.assertIs(A.ks.retry_futile(A.ks.CONTENTION), False)
+        # Unknown must never read as a confirmed real failure.
+        self.assertIsNone(A.ks.retry_futile(A.ks.UNKNOWN))
+        self.assertIsNone(A.ks.retry_futile(A.ks.AMBIGUOUS))
+
+
 def run_as_selftest() -> int:
     """Entry point for `attribution.py selftest`."""
     suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
