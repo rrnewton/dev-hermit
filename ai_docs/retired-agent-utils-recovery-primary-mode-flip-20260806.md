@@ -114,6 +114,14 @@ worktrees (`codex/cgroups-cap-land` ×2, `codex/cpu-timeout-platform-multiplier`
 `worker-thread-exception-fails-loudly`) — unpushed only because egress is down,
 and correctly *not* a failure.
 
+**Confirmed after the delete** (`./scripts/check-agent-utils-pin.rs --no-fetch`):
+`local_unpushed_commits=4`, `unpushed_in_flight_commits=4`,
+`unpushed_stranded_commits=0`, `unpushed_unattributed_commits=0` — **zero
+unpushed-related errors remain**. Branch count 32 → 31; the three in-flight
+branches verified intact at their original SHAs; primary checkout still clean at
+`570e786`. `git cat-file -t bcb82a6` still reports `commit`, so the restore
+command in §1 works until the object is gc'd.
+
 **Still open and unrelated:** the agent-utils checkout is detached and the parent
 gitlink is 64 behind `origin/main`. That is genuine pin drift needing a deliberate
 bump, and it is what keeps `check-agent-utils-pin` at `state=drift`. Do not read
