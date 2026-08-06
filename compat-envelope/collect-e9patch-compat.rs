@@ -179,6 +179,26 @@ fn hermit_argv(hermit: &Path, e9: bool, verify: bool, guest: &Path) -> Vec<Strin
     }
     v.push("run".into());
     v.push("--strict".into());
+    // Pin the guest environment, in step with collect-envelope.rs::run_and_hash and
+    // collect-dbi-corpus.rs::run_guest. `--base-env` defaults to `host`, which passes every
+    // one of hermit's own variables through to the guest; the kernel builds the initial stack
+    // from argv/envp/auxv, so the collector's ambient environment then decides where the guest
+    // stack sits. Both arms here share one invocation, so today's stdout `output_hash` is
+    // internally consistent -- but it is written into e9patch-scorecard.csv and compared
+    // ACROSS invocations, and any stack-derived observable added later would be incomparable
+    // for a reason that has nothing to do with the AOT rewrite. Pinned once at the env rather
+    // than excluded downstream, so there is no exclusion to drift out of step.
+    // `minimal` is hermit's own deterministic base: PATH, HOSTNAME, HOME and nothing else.
+    v.push("--base-env".into());
+    v.push("minimal".into());
+    // Re-add the two variables this harness relies on for guest determinism. `minimal` would
+    // otherwise drop them, and an UNSET TZ is worse than an inherited one: glibc then falls
+    // back to /etc/localtime, i.e. host state. Pinned guest env is exactly:
+    // PATH, HOSTNAME, HOME (hermit `minimal`) + LC_ALL=C + TZ=UTC. Nothing else reaches the guest.
+    v.push("-e".into());
+    v.push("LC_ALL=C".into());
+    v.push("-e".into());
+    v.push("TZ=UTC".into());
     if verify {
         v.push("--verify".into());
     }
