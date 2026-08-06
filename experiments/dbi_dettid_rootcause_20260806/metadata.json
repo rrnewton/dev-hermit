@@ -1,0 +1,19 @@
+{
+  "question": "Why does DBI emit raw host TIDs as dtid where ptrace emits a constant 3?",
+  "root_cause": "detcore never virtualizes tid -- detcore/src/lib.rs:1150 uses the backend-supplied tid directly, with an in-code TODO(T78538674) saying so. ptrace's determinism is borrowed from container.rs unshare(Namespace::PID); DBI's tool-side tid is not namespace-translated.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "measured": {"dbi_dtid_3_runs": [2179371, 2179454, 2179541], "ptrace_dtid_2_runs": [3, 3]},
+  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30, --features third-party-backends",
+  "guest": "~/.local/hermit-deps/guests/guest_heap (gcc -O1, dynamic)",
+  "flags": "--log=info --strict --no-virtualize-cpuid --max-timeslice=disabled --detlog-stack",
+  "capture": "DBI from stderr (ignores --log-file); ptrace from the log file",
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "3559c19224624e52f33dd13438917f68683c78a8",
+  "fix_implemented": false,
+  "why_not": "hermit product code; the only available build is worktrees/oci/hermit which is owned by hermit-oci",
+  "not_done": [
+    "did not test the non-root (Some(parent)) branch -- single-threaded guest only",
+    "did not identify which layer supplies the tid on the DBI path"
+  ]
+}
