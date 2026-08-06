@@ -1,0 +1,10 @@
+mmap1     0x7ffff78a4000
+mmap2     0x7ffff5870000
+mmap3     0x7ffff78a3000
+mmap2-1   -33767424
+brk0      0x555555571000
+malloc    0x5555555712a0
+stacklocal 0x7fffffffb71c
+static    0x404040
+main      0x401156
+ord m1<m2 0  m2<m3 1
