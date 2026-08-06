@@ -1,0 +1,17 @@
+candidate	verdict	records	wall_s	detail
+python-startup	OK	2514	0.5	
+python-import-json	OK	2760	0.7	
+python-loop-10k	OK	2514	0.6	
+perl-startup	OK	585	0.0	
+gcc-tiny-c	OK	5413	0.3	
+sha256-big	OK	652	0.1	
+sort-big	OK	7770	3.3	
+grep-recursive	OK	30738	3.4	
+find-usr-include	OK	5636	0.2	
+tar-usr-include	OK	12011	0.4	
+fork-100	OK	18040	0.9	
+fork-500	OK	88528	5.7	
+fork-2000	OK	352862	18.9	
+fork-3000	OK	529084	87.8	
+tar-usr-share	OK	35718	1.1	
+gcc-selfhost	OK	2081	0.1	

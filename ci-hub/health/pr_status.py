@@ -3,11 +3,11 @@
 
 Two engines:
 
-* ``gh`` (DEFAULT) — a single proxied ``gh pr list --json`` call per repo.
-  ``gh`` returns ``mergeable`` and ``statusCheckRollup`` inline, so the whole
-  open-PR picture comes back in ONE API round-trip with NO per-PR local
-  ``git fetch``. This is the cheap, fast, robust path and it is what actually
-  works on 3pai hosts.
+* ``gh`` (DEFAULT) — one proxied ``gh pr list --json`` call per repo, followed
+  by a bounded exact-job lookup only for a selected failing Actions check.
+  ``gh`` returns ``mergeable`` and ``statusCheckRollup`` inline, so there is NO
+  per-PR local ``git fetch``. The job lookup is the narrow authority that can
+  distinguish a setup-only runner failure from a product failure.
 
 * ``planner`` (opt-in, ``--engine planner``) — adapts the pinned
   agent-utils/pr-landing-planner and runs REAL ``git merge-tree`` conflict
@@ -50,12 +50,16 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
 
 from check_outcome import CheckOutcome, classify_check, select_latest_checks
+from actions_job_outcome import (
+    GitHubActionsJobAuthority,
+    SetupOnlyVerification,
+)
 from validate.flake_class import failure_tier
 
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
@@ -75,9 +79,9 @@ MAX_FETCH_ATTEMPTS = 3
 #   fetch-once + cheap local merge-tree probes (~36.5ms each; open set vs main
 #   ~4s). The `merge-tree` conflict flip in planner_command adds only those
 #   cheap local probes, not more fetching, so these budgets stay ample.
-#   gh engine — a single `gh pr list` API call per repo returns in a few
-#   seconds regardless of PR count, so the same budgets are comfortably ample
-#   headroom for network variance and leave a stalled call bounded.
+#   gh engine — one `gh pr list` API call per repo returns in a few seconds
+#   regardless of PR count. Selected failed Actions checks can add bounded,
+#   cached exact-job calls, all sharing the same outer per-repo deadline.
 DEFAULT_PER_REPO_TIMEOUT = float(os.environ.get("CI_HUB_PR_STATUS_TIMEOUT", "300"))
 DEFAULT_OVERALL_DEADLINE = float(os.environ.get("CI_HUB_PR_STATUS_DEADLINE", "480"))
 # Seconds to wait for the killed planner child to die before moving on.
@@ -133,8 +137,8 @@ _PASSED_REVIEW_LABELS = {
 }
 _MECHANISM_TAG_PREFIX = "mechanism:"
 HEALTH_VERDICT_RULE = (
-    "ready non-draft PR GitHub check rollups only: UNHEALTHY iff any available "
-    "repo has real_reds>0 or outage_suspected=yes"
+    "ready non-draft PR GitHub check rollups plus bounded exact-job evidence: "
+    "UNHEALTHY iff any available repo has real_reds>0 or outage_suspected=yes"
 )
 HEALTH_VERDICT_EXCLUDES = (
     "local validation receipts",
@@ -182,6 +186,22 @@ class MechanismOverlap:
 
 
 @dataclass(frozen=True)
+class RollupClassification:
+    """One latest-attempt selection and every conclusion derived from it."""
+
+    state: str
+    failing_check_names: tuple[str, ...]
+    setup_only_no_result_checks: tuple[str, ...]
+    setup_only_evidence: tuple[str, ...]
+    prerequisite_no_result_checks: tuple[str, ...]
+    prerequisite_evidence: tuple[str, ...]
+    actions_job_verification_errors: tuple[str, ...]
+
+
+SetupOnlyVerifier = Callable[[str, Mapping[str, object], str], SetupOnlyVerification]
+
+
+@dataclass(frozen=True)
 class RepoStatus:
     repo: str
     open: int
@@ -224,6 +244,14 @@ class RepoStatus:
     # counted here — it stays a real product red.
     ledger_no_result: int = 0
     ledger_needs_rerun: int = 0
+    # Count of exact Actions check attempts whose dereferenced job proved that
+    # only ``Set up job`` ran and failed. These become typed NO_RESULT (pending),
+    # never green, and remain visible in each PR's evidence fields.
+    setup_only_no_result_checks: int = 0
+    # Narrow downstream consequences whose exact registered merge-gate-v4 job
+    # failed only because a same-run prerequisite above was setup-only. These
+    # are independently visible and, like their source, remain pending.
+    prerequisite_no_result_checks: int = 0
     available: bool = True
     reason: str = ""
 
@@ -301,39 +329,145 @@ def resolve_net_wrapper(spec: str | None) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
-    """Reduce a statusCheckRollup list to one of red/pending/green.
+def _classify_rollup(
+    repo: str,
+    rollup: object,
+    *,
+    head_sha: str = "",
+    setup_only_verifier: SetupOnlyVerifier | None = None,
+) -> RollupClassification:
+    """Classify one selected latest attempt per check context exactly once.
 
     Empty rollup (no checks yet) is treated as pending, not green: a PR with no
-    checks has not demonstrated health.
+    checks has not demonstrated health. A failed Actions check is demoted only
+    when the one semantic exact-job verifier proves the setup-only shape. Any
+    verifier failure leaves the original failure intact and visible.
     """
-    rollup = select_latest_checks(rollup, head_sha=head_sha)
-    if not rollup:
-        return "pending"
+    selected = select_latest_checks(rollup, head_sha=head_sha)
+    if not selected:
+        return RollupClassification("pending", (), (), (), (), (), ())
     any_fail = False
     any_pending = False
     any_ok = False
-    for check in rollup:
+    failing_names: list[str] = []
+    setup_only_names: list[str] = []
+    setup_only_evidence: list[str] = []
+    prerequisite_names: list[str] = []
+    prerequisite_evidence: list[str] = []
+    verification_errors: list[str] = []
+
+    failed: list[tuple[int, dict[str, object]]] = []
+    for index, check in enumerate(selected):
         if not isinstance(check, dict):
             continue
+        status = str(check.get("status") or "").upper()
+        outcome = str(check.get("conclusion") or check.get("state") or "").upper()
+        if classify_check(status, outcome) is CheckOutcome.FAILED:
+            failed.append((index, check))
+
+    verifications: dict[int, SetupOnlyVerification] = {}
+    verifier_errors: dict[int, str] = {}
+    if setup_only_verifier is not None and failed:
+        batch_verifier = getattr(setup_only_verifier, "verify_failures", None)
+        if callable(batch_verifier):
+            try:
+                batch_results = tuple(
+                    batch_verifier(
+                        repo,
+                        tuple(check for _, check in failed),
+                        head_sha,
+                    )
+                )
+                if len(batch_results) != len(failed):
+                    raise ValueError(
+                        "batch verifier result count mismatch: "
+                        f"{len(batch_results)} != {len(failed)}"
+                    )
+                for (index, _), verification in zip(failed, batch_results, strict=True):
+                    if not isinstance(verification, SetupOnlyVerification):
+                        raise TypeError(
+                            "batch verifier returned a non-verification result"
+                        )
+                    verifications[index] = verification
+            except Exception as error:  # fail closed on a verifier defect
+                message = f"verifier error: {type(error).__name__}: {error}"
+                for index, _ in failed:
+                    verifier_errors[index] = message
+        else:
+            for index, check in failed:
+                try:
+                    verifications[index] = setup_only_verifier(repo, check, head_sha)
+                except Exception as error:  # fail closed on a verifier defect
+                    verifier_errors[index] = (
+                        f"verifier error: {type(error).__name__}: {error}"
+                    )
+
+    for index, check in enumerate(selected):
+        if not isinstance(check, dict):
+            continue
+        name = str(check.get("name") or check.get("context") or "")
         status = str(check.get("status") or "").upper()
         # CheckRun => conclusion; StatusContext => state.
         outcome = str(check.get("conclusion") or check.get("state") or "").upper()
         classified = classify_check(status, outcome)
         if classified is CheckOutcome.FAILED:
-            any_fail = True
+            verification = verifications.get(index)
+            if index in verifier_errors:
+                verification_errors.append(
+                    f"{name or '<unnamed>'}: {verifier_errors[index]}"
+                )
+            if verification is not None and verification.accepted:
+                # Both the direct source and its narrowly proven registered
+                # consequence are typed NO_RESULT. They block green even if
+                # every other check passed.
+                any_pending = True
+                if verification.kind == "prerequisite-no-result":
+                    prerequisite_names.append(name)
+                    prerequisite_evidence.append(
+                        f"{name or '<unnamed>'}: run={verification.run_id} "
+                        f"job={verification.job_id} "
+                        f"source_job={verification.source_job_id}"
+                    )
+                else:
+                    setup_only_names.append(name)
+                    setup_only_evidence.append(
+                        f"{name or '<unnamed>'}: run={verification.run_id} "
+                        f"job={verification.job_id}"
+                    )
+            else:
+                any_fail = True
+                failing_names.append(name)
+                if verification is not None and not verification.accepted:
+                    verification_errors.append(
+                        f"{name or '<unnamed>'}: {verification.reason}"
+                    )
         elif classified is CheckOutcome.PASSED:
             any_ok = True
         else:
             # A hole in the record blocks admission but never reports a red.
             any_pending = True
     if any_fail:
-        return "red"
-    if any_pending:
-        return "pending"
-    if any_ok:
-        return "green"
-    return "pending"
+        state = "red"
+    elif any_pending:
+        state = "pending"
+    elif any_ok:
+        state = "green"
+    else:
+        state = "pending"
+    return RollupClassification(
+        state=state,
+        failing_check_names=tuple(failing_names),
+        setup_only_no_result_checks=tuple(setup_only_names),
+        setup_only_evidence=tuple(setup_only_evidence),
+        prerequisite_no_result_checks=tuple(prerequisite_names),
+        prerequisite_evidence=tuple(prerequisite_evidence),
+        actions_job_verification_errors=tuple(verification_errors),
+    )
+
+
+def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
+    """Compatibility wrapper for pure rollup tests and downstream imports."""
+    return _classify_rollup("", rollup, head_sha=head_sha).state
 
 
 # Landing-gate / review META-checks. A red on one of these means the PR lacks a
@@ -354,23 +488,6 @@ def _is_gate_meta_check(name: str) -> bool:
     return normalized.startswith(("merge-gate", "merge gate")) or (
         "review-protocol" in normalized
     )
-
-
-def _failing_check_names(rollup: object, *, head_sha: str = "") -> list[str]:
-    """Names of the FAILED checks in the latest-per-context rollup at head.
-
-    Mirrors ``_rollup_ci_state``'s FAILED test so the split cannot disagree with
-    the red verdict it refines.
-    """
-    names: list[str] = []
-    for check in select_latest_checks(rollup, head_sha=head_sha):
-        if not isinstance(check, dict):
-            continue
-        status = str(check.get("status") or "").upper()
-        outcome = str(check.get("conclusion") or check.get("state") or "").upper()
-        if classify_check(status, outcome) is CheckOutcome.FAILED:
-            names.append(str(check.get("name") or check.get("context") or ""))
-    return names
 
 
 def _label_names(entry: dict[str, object]) -> set[str]:
@@ -492,7 +609,8 @@ def banked_green_commits(
     """Full-green commit SHAs for ``repo`` from the LOCAL validate ledger.
 
     This is the second authority the every-tick GitHub view is blind to. GitHub
-    ``statusCheckRollup`` is the ONLY thing that feeds ``green``/``gate``; a PR
+    ``statusCheckRollup`` is the only index that feeds ``green``/``gate``; its
+    selected failed Actions checks may be refined by exact-job evidence. A PR
     head can be red or pending on GitHub (e.g. the blanket self-hosted red) while
     LOCAL ``validate.sh`` proved a complete, nonempty PASS at that exact SHA and
     banked a receipt the merge gate honors. Without this cross-reference the tool
@@ -612,6 +730,8 @@ def _classify_gh_prs(
     raw: list,
     banked_green: frozenset[str] = frozenset(),
     banked_failure: dict[str, str] | None = None,
+    *,
+    setup_only_verifier: SetupOnlyVerifier | None = None,
 ) -> RepoStatus:
     if banked_failure is None:
         banked_failure = {}
@@ -622,6 +742,8 @@ def _classify_gh_prs(
     product_reds = gate_reds = 0
     green_local = 0
     ledger_no_result = ledger_needs_rerun = 0
+    setup_only_no_result_checks = 0
+    prerequisite_no_result_checks = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -632,7 +754,15 @@ def _classify_gh_prs(
             continue
         number = entry.get("number")
         head_sha = str(entry.get("headRefOid") or "")
-        ci = _rollup_ci_state(entry.get("statusCheckRollup"), head_sha=head_sha)
+        rollup = _classify_rollup(
+            repo,
+            entry.get("statusCheckRollup"),
+            head_sha=head_sha,
+            setup_only_verifier=setup_only_verifier,
+        )
+        ci = rollup.state
+        setup_only_no_result_checks += len(rollup.setup_only_no_result_checks)
+        prerequisite_no_result_checks += len(rollup.prerequisite_no_result_checks)
         mergeable = str(entry.get("mergeable") or "").upper()
         merge_state = str(entry.get("mergeStateStatus") or "").upper()
         # Stale-base vs real: a CONFLICTING/DIRTY red is red because its merge
@@ -678,9 +808,7 @@ def _classify_gh_prs(
                 # Refine the real-red: gate-only (lacks receipt/review) vs a
                 # genuine product break. An unnamed/empty failing set falls to
                 # "product" so a red is never hidden by the split.
-                fails = _failing_check_names(
-                    entry.get("statusCheckRollup"), head_sha=head_sha
-                )
+                fails = rollup.failing_check_names
                 if fails and all(_is_gate_meta_check(name) for name in fails):
                     # A landing-gate/review meta-check red is a genuine blocker
                     # regardless of failure evidence (review is missing, receipt is
@@ -727,6 +855,14 @@ def _classify_gh_prs(
                 "real_red_kind": real_red_kind,
                 "ledger_green": ledger_green,
                 "ledger_failure_tier": failure_tier,
+                "failing_checks": rollup.failing_check_names,
+                "setup_only_no_result_checks": (rollup.setup_only_no_result_checks),
+                "setup_only_evidence": rollup.setup_only_evidence,
+                "prerequisite_no_result_checks": (rollup.prerequisite_no_result_checks),
+                "prerequisite_evidence": rollup.prerequisite_evidence,
+                "actions_job_verification_errors": (
+                    rollup.actions_job_verification_errors
+                ),
                 "mergeable": mergeable or "UNKNOWN",
                 "merge_state": merge_state or "UNKNOWN",
                 "title": entry.get("title", ""),
@@ -750,6 +886,8 @@ def _classify_gh_prs(
         green_local=green_local,
         ledger_no_result=ledger_no_result,
         ledger_needs_rerun=ledger_needs_rerun,
+        setup_only_no_result_checks=setup_only_no_result_checks,
+        prerequisite_no_result_checks=prerequisite_no_result_checks,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -783,23 +921,38 @@ def fetch_repo_status_gh(
     gh_cmd: str = "gh",
     timeout: float | None = None,
 ) -> RepoStatus:
-    """Query one repo's open-PR health via a single proxied ``gh pr list`` call.
+    """Query open-PR health via one rollup call plus bounded exact-job lookups.
 
     Raises :class:`RepoUnavailable` on timeout, block, transient-exhaustion, or
     an unparseable/malformed response, so the caller records a partial result
     (UNAVAILABLE) instead of silently reporting zero open PRs.
     """
+    started = time.monotonic()
+    raw = _fetch_open_prs_gh(
+        repo,
+        fields=GH_FIELDS,
+        net_wrapper=net_wrapper,
+        gh_cmd=gh_cmd,
+        timeout=timeout,
+    )
+    if timeout is None:
+        authority_deadline = None
+    else:
+        authority_deadline = time.monotonic() + max(
+            0.0, timeout - (time.monotonic() - started)
+        )
+    setup_only_authority = GitHubActionsJobAuthority(
+        repo,
+        net_wrapper=net_wrapper,
+        gh_cmd=gh_cmd,
+        deadline=authority_deadline,
+    )
     return _classify_gh_prs(
         repo,
-        _fetch_open_prs_gh(
-            repo,
-            fields=GH_FIELDS,
-            net_wrapper=net_wrapper,
-            gh_cmd=gh_cmd,
-            timeout=timeout,
-        ),
+        raw,
         banked_green_commits(repo),
         banked_failure_tier_commits(repo),
+        setup_only_verifier=setup_only_authority,
     )
 
 
@@ -1144,6 +1297,8 @@ def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
                 "undetermined_reds": status.undetermined_reds,
                 "ledger_no_result": status.ledger_no_result,
                 "ledger_needs_rerun": status.ledger_needs_rerun,
+                "setup_only_no_result_checks": (status.setup_only_no_result_checks),
+                "prerequisite_no_result_checks": (status.prerequisite_no_result_checks),
                 "no_result": status.pending,
                 "outage_suspected": status.outage_suspected,
                 "triggers_unhealthy": status.unhealthy,
@@ -1173,8 +1328,8 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         heading = "CI health: HEALTHY"
     source = {
         "gh": (
-            "gh pr list --json (single proxied API call per repo; labels-only "
-            "fallback after a full-query failure)"
+            "gh pr list --json plus bounded exact failed-Action-job lookup "
+            "(labels-only fallback after a full-query failure)"
         ),
         "planner": "pinned agent-utils/pr-landing-planner status (per-PR git fetch)",
     }.get(engine, engine)
@@ -1194,6 +1349,8 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             "stale_base_reds={stale_base_reds} "
             "ledger_no_result={ledger_no_result} "
             "ledger_needs_rerun={ledger_needs_rerun} "
+            "setup_only_no_result_checks={setup_only_no_result_checks} "
+            "prerequisite_no_result_checks={prerequisite_no_result_checks} "
             "undetermined_reds={undetermined_reds} no_result={no_result} "
             "outage={outage_suspected} triggers_unhealthy={triggers_unhealthy}".format(
                 **item
@@ -1262,6 +1419,21 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 "OUT of real_reds; the GitHub product red is uncorroborated by any "
                 "complete local run (named-gate carve-out, see ledger_failure_tier flag)"
             )
+        if status.setup_only_no_result_checks:
+            lines.append(
+                f"    actions jobs: {status.setup_only_no_result_checks} failed "
+                "check attempt(s) dereferenced to an exact completed job whose "
+                "only step was failed `Set up job`; classified NO_RESULT, never "
+                "green (see setup_only_no_result_checks and setup_only_evidence)"
+            )
+        if status.prerequisite_no_result_checks:
+            lines.append(
+                f"    actions jobs: {status.prerequisite_no_result_checks} "
+                "registered merge-gate-v4 consequence(s) were bound to an exact "
+                "same-run setup-only Reverie-pin prerequisite; classified "
+                "NO_RESULT, never green (see prerequisite_no_result_checks and "
+                "prerequisite_evidence)"
+            )
         if status.green_local:
             lines.append(
                 f"    ledger: {status.green_local} open head(s) carry an "
@@ -1284,6 +1456,24 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 f"    #{pr.get('pr', '?'):<5} ci={pr.get('ci', 'unknown'):<7} "
                 f"class={klass:<23} {pr.get('title', '')}"
             )
+            setup_only = pr.get("setup_only_no_result_checks")
+            if setup_only:
+                lines.append(
+                    "      setup-only NO_RESULT: "
+                    + ", ".join(str(v) for v in setup_only)
+                )
+            prerequisite = pr.get("prerequisite_no_result_checks")
+            if prerequisite:
+                lines.append(
+                    "      prerequisite consequence NO_RESULT: "
+                    + ", ".join(str(v) for v in prerequisite)
+                )
+            verification_errors = pr.get("actions_job_verification_errors")
+            if verification_errors:
+                lines.append(
+                    "      exact-job verification retained red: "
+                    + " | ".join(str(v) for v in verification_errors)
+                )
         _render_mechanism_overlaps(lines, status.mechanism_overlaps)
         if status.review_protocol:
             audits = status.review_protocol
@@ -1343,8 +1533,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("gh", "planner"),
         default=os.environ.get("CI_HUB_PR_STATUS_ENGINE", "gh"),
         help=(
-            "status backend: 'gh' (default; single proxied gh API call, no "
-            "per-PR git fetch) or 'planner' (agent-utils, real merge-tree "
+            "status backend: 'gh' (default; one proxied rollup call plus bounded "
+            "failed-job lookups, no per-PR git fetch) or 'planner' (agent-utils, "
+            "real merge-tree "
             "conflict detection over the open set; use on planning runs)"
         ),
     )
