@@ -1,0 +1,9 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat_flags.c:59:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   59 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat_flags.c:95:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   95 |   if (pread(ro, buf, 5, 0) == 5 && memcmp(buf, "hello", 5) == 0)
+      |       ^~~~~
+      |       read
+cc1: all warnings being treated as errors

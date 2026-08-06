@@ -1,0 +1,13 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/msync_writeback.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/msync_writeback.c:27:14: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   27 |     int fd = mkstemp(tmpl);
+      |              ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/msync_writeback.c:32:9: error: implicit declaration of function ‘ftruncate’; did you mean ‘strncat’? [-Werror=implicit-function-declaration]
+   32 |     if (ftruncate(fd, 4096) != 0) {
+      |         ^~~~~~~~~
+      |         strncat
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/msync_writeback.c:53:9: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   53 |     if (pread(fd, buf, 8, 0) == 8 && memcmp(buf, "SYNCDAT1", 8) == 0) ok++;
+      |         ^~~~~
+      |         read
+cc1: all warnings being treated as errors

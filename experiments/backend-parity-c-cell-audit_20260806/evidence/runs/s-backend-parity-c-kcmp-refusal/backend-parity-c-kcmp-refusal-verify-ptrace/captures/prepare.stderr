@@ -1,0 +1,8 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/kcmp_refusal.c: In function ‘refused’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/kcmp_refusal.c:34:9: error: unknown type name ‘pid_t’
+   34 |         pid_t me = getpid();
+      |         ^~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/kcmp_refusal.c:36:18: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   36 |         long r = syscall(SYS_kcmp, me, me, type, idx1, idx2);
+      |                  ^~~~~~~
+cc1: all warnings being treated as errors

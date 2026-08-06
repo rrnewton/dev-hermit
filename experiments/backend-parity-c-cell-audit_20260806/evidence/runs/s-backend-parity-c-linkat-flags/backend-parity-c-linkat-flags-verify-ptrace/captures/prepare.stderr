@@ -1,0 +1,30 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:24:10: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   24 |     if (!mkdtemp(root)) {
+      |          ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:44:9: error: implicit declaration of function ‘linkat’; did you mean ‘link’? [-Werror=implicit-function-declaration]
+   44 |     if (linkat(AT_FDCWD, a, AT_FDCWD, b, 0) == 0 && lstat(b, &st) == 0 &&
+      |         ^~~~~~
+      |         link
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:44:16: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   44 |     if (linkat(AT_FDCWD, a, AT_FDCWD, b, 0) == 0 && lstat(b, &st) == 0 &&
+      |                ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:44:16: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:44:53: error: implicit declaration of function ‘lstat’; did you mean ‘fstat’? [-Werror=implicit-function-declaration]
+   44 |     if (linkat(AT_FDCWD, a, AT_FDCWD, b, 0) == 0 && lstat(b, &st) == 0 &&
+      |                                                     ^~~~~
+      |                                                     fstat
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:48:9: error: implicit declaration of function ‘unlinkat’; did you mean ‘unlink’? [-Werror=implicit-function-declaration]
+   48 |     if (unlinkat(AT_FDCWD, b, 0) == 0 && lstat(a, &st) == 0 &&
+      |         ^~~~~~~~
+      |         unlink
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:52:54: error: ‘AT_REMOVEDIR’ undeclared (first use in this function)
+   52 |     if (mkdir(d, 0755) == 0 && unlinkat(AT_FDCWD, d, AT_REMOVEDIR) == 0 &&
+      |                                                      ^~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:60:9: error: implicit declaration of function ‘symlink’ [-Werror=implicit-function-declaration]
+   60 |     if (symlink(a, s) == 0 &&
+      |         ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/linkat_flags.c:61:42: error: ‘AT_SYMLINK_FOLLOW’ undeclared (first use in this function)
+   61 |         linkat(AT_FDCWD, s, AT_FDCWD, c, AT_SYMLINK_FOLLOW) == 0 &&
+      |                                          ^~~~~~~~~~~~~~~~~
+cc1: all warnings being treated as errors

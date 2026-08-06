@@ -1,0 +1,23 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:48:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   48 |   if (mkdtemp(root) == NULL)
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:48:21: error: comparison between pointer and integer [-Werror]
+   48 |   if (mkdtemp(root) == NULL)
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:59:21: error: ‘S_IFMT’ undeclared (first use in this function)
+   59 |       (st.st_mode & S_IFMT) == S_IFDIR)
+      |                     ^~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:59:21: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:59:32: error: ‘S_IFDIR’ undeclared (first use in this function); did you mean ‘S_ISDIR’?
+   59 |       (st.st_mode & S_IFMT) == S_IFDIR)
+      |                                ^~~~~~~
+      |                                S_ISDIR
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:68:43: error: ‘O_DIRECTORY’ undeclared (first use in this function)
+   68 |   int parent_fd = open(parent, O_RDONLY | O_DIRECTORY);
+      |                                           ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mkdir_rmdir.c:71:7: error: implicit declaration of function ‘mkdirat’; did you mean ‘mkdir’? [-Werror=implicit-function-declaration]
+   71 |   if (mkdirat(parent_fd, "child", 0700) == 0)
+      |       ^~~~~~~
+      |       mkdir
+cc1: all warnings being treated as errors

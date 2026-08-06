@@ -1,0 +1,23 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:33:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   33 |   int fd = mkstemp(path);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:40:7: error: implicit declaration of function ‘fallocate’ [-Werror=implicit-function-declaration]
+   40 |   if (fallocate(fd, 0, 0, 8192) == 0 && fd_size(fd) == 8192) {
+      |       ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:47:7: error: implicit declaration of function ‘pwrite’; did you mean ‘write’? [-Werror=implicit-function-declaration]
+   47 |   if (pwrite(fd, pattern, sizeof pattern, 0) == (ssize_t)sizeof pattern) {
+      |       ^~~~~~
+      |       write
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:52:21: error: ‘FALLOC_FL_PUNCH_HOLE’ undeclared (first use in this function)
+   52 |   if (fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, 4096) == 0 &&
+      |                     ^~~~~~~~~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:52:21: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:52:44: error: ‘FALLOC_FL_KEEP_SIZE’ undeclared (first use in this function)
+   52 |   if (fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, 4096) == 0 &&
+      |                                            ^~~~~~~~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fallocate_extents.c:60:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   60 |   if (pread(fd, readback, sizeof readback, 0) == (ssize_t)sizeof readback) {
+      |       ^~~~~
+      |       read
+cc1: all warnings being treated as errors

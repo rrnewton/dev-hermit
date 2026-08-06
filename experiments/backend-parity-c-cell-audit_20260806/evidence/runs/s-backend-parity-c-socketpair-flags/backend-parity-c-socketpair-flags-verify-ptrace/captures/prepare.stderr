@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/socketpair_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/socketpair_flags.c:53:39: error: ‘SO_DOMAIN’ undeclared (first use in this function)
+   53 |     if (getsockopt(sv[0], SOL_SOCKET, SO_DOMAIN, &domain, &dlen) == 0
+      |                                       ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/socketpair_flags.c:53:39: note: each undeclared identifier is reported only once for each function it appears in

@@ -1,0 +1,42 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:55:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   55 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:62:16: error: storage size of ‘stx’ isn’t known
+   62 |   struct statx stx;
+      |                ^~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:7: error: implicit declaration of function ‘statx’; did you mean ‘stat’? [-Werror=implicit-function-declaration]
+   66 |   if (statx(AT_FDCWD, template, 0, STATX_SIZE | STATX_TYPE | STATX_NLINK,
+      |       ^~~~~
+      |       stat
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:13: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   66 |   if (statx(AT_FDCWD, template, 0, STATX_SIZE | STATX_TYPE | STATX_NLINK,
+      |             ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:13: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:36: error: ‘STATX_SIZE’ undeclared (first use in this function)
+   66 |   if (statx(AT_FDCWD, template, 0, STATX_SIZE | STATX_TYPE | STATX_NLINK,
+      |                                    ^~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:49: error: ‘STATX_TYPE’ undeclared (first use in this function)
+   66 |   if (statx(AT_FDCWD, template, 0, STATX_SIZE | STATX_TYPE | STATX_NLINK,
+      |                                                 ^~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:66:62: error: ‘STATX_NLINK’ undeclared (first use in this function)
+   66 |   if (statx(AT_FDCWD, template, 0, STATX_SIZE | STATX_TYPE | STATX_NLINK,
+      |                                                              ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:72:23: error: ‘S_IFMT’ undeclared (first use in this function)
+   72 |   if ((stx.stx_mode & S_IFMT) == S_IFREG)
+      |                       ^~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:72:34: error: ‘S_IFREG’ undeclared (first use in this function); did you mean ‘S_ISREG’?
+   72 |   if ((stx.stx_mode & S_IFMT) == S_IFREG)
+      |                                  ^~~~~~~
+      |                                  S_ISREG
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:81:21: error: ‘AT_EMPTY_PATH’ undeclared (first use in this function)
+   81 |   if (statx(fd, "", AT_EMPTY_PATH, STATX_SIZE, &stx) == 0 &&
+      |                     ^~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:95:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   95 |   if (pread(fd, buf, PAYLOAD_LEN, 0) != PAYLOAD_LEN)
+      |       ^~~~~
+      |       read
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/statx_metadata.c:62:16: error: unused variable ‘stx’ [-Werror=unused-variable]
+   62 |   struct statx stx;
+      |                ^~~
+cc1: all warnings being treated as errors

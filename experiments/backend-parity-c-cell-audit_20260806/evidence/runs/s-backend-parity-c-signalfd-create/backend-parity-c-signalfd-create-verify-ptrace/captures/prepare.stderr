@@ -1,0 +1,15 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c:27:5: error: implicit declaration of function ‘sigemptyset’ [-Werror=implicit-function-declaration]
+   27 |     sigemptyset(&m1);
+      |     ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c:28:5: error: implicit declaration of function ‘sigaddset’ [-Werror=implicit-function-declaration]
+   28 |     sigaddset(&m1, SIGUSR1);
+      |     ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c:29:9: error: implicit declaration of function ‘sigprocmask’ [-Werror=implicit-function-declaration]
+   29 |     if (sigprocmask(SIG_BLOCK, &m1, NULL) == 0) {
+      |         ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c:29:21: error: ‘SIG_BLOCK’ undeclared (first use in this function)
+   29 |     if (sigprocmask(SIG_BLOCK, &m1, NULL) == 0) {
+      |                     ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/signalfd_create.c:29:21: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

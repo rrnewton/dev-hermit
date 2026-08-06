@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/seccomp_refusal.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/seccomp_refusal.c:51:7: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   51 |   if (syscall(SYS_seccomp, SECCOMP_GET_ACTION_AVAIL, 0, &action) == -1 &&
+      |       ^~~~~~~
+cc1: all warnings being treated as errors

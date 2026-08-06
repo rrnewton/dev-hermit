@@ -1,0 +1,16 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c: In function ‘faccessat2_call’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c:27:17: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   27 |     return (int)syscall(SYS_faccessat2, dirfd, path, mode, flags);
+      |                 ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c:33:14: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   33 |     int fd = mkstemp(tmpl);
+      |              ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c:41:25: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   41 |     if (faccessat2_call(AT_FDCWD, tmpl, F_OK, 0) == 0) ok++;
+      |                         ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c:41:25: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/faccessat2_flags.c:63:41: error: ‘O_DIRECTORY’ undeclared (first use in this function)
+   63 |     int dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
+      |                                         ^~~~~~~~~~~
+cc1: all warnings being treated as errors

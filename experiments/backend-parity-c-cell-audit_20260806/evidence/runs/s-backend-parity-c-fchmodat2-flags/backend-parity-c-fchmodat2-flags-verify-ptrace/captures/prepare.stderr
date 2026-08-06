@@ -1,0 +1,16 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c: In function ‘fchmodat2’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c:27:12: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   27 |     return syscall(452, dfd, p, mode, flags);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c:38:10: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   38 |     if (!mkdtemp(dir)) {
+      |          ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c:50:19: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   50 |     if (fchmodat2(AT_FDCWD, path, 0640, 0) == 0 && mode_of(path) == 0640) ok++;
+      |                   ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c:50:19: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmodat2_flags.c:56:41: error: ‘AT_SYMLINK_NOFOLLOW’ undeclared (first use in this function)
+   56 |     if (fchmodat2(AT_FDCWD, path, 0644, AT_SYMLINK_NOFOLLOW) == 0 &&
+      |                                         ^~~~~~~~~~~~~~~~~~~
+cc1: all warnings being treated as errors

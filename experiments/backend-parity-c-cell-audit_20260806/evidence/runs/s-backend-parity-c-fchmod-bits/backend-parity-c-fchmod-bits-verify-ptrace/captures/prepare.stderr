@@ -1,0 +1,17 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c:41:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   41 |   int fd = mkstemp(path);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c:50:7: error: implicit declaration of function ‘fchmod’; did you mean ‘chmod’? [-Werror=implicit-function-declaration]
+   50 |   if (fchmod(fd, 0640) == 0 && fd_mode(fd) == 0640) {
+      |       ^~~~~~
+      |       chmod
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c:65:7: error: implicit declaration of function ‘fchmodat’; did you mean ‘chmod’? [-Werror=implicit-function-declaration]
+   65 |   if (fchmodat(AT_FDCWD, path, 0640, 0) == 0 && path_mode(path) == 0640) {
+      |       ^~~~~~~~
+      |       chmod
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c:65:16: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   65 |   if (fchmodat(AT_FDCWD, path, 0640, 0) == 0 && path_mode(path) == 0640) {
+      |                ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fchmod_bits.c:65:16: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="hermit-e2e" tests="1" failures="0" errors="1">
+  <testcase classname="backend-parity-c" name="backend-parity-c/linkat-flags/verify/ptrace" time="0.036"><error>fixture preparation failed</error></testcase>
+</testsuite>

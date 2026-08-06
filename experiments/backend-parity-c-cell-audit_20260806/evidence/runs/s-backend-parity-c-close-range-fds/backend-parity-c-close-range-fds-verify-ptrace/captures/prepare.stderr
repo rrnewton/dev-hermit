@@ -1,0 +1,12 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/close_range_fds.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/close_range_fds.c:60:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   60 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/close_range_fds.c:76:7: error: implicit declaration of function ‘close_range’ [-Werror=implicit-function-declaration]
+   76 |   if (close_range(100, 102, 0) == 0)
+      |       ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/close_range_fds.c:94:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   94 |   if (pread(103, buf, PAYLOAD_LEN, 0) == PAYLOAD_LEN) {
+      |       ^~~~~
+      |       read
+cc1: all warnings being treated as errors

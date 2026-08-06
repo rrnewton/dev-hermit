@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pidfd_open_self.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pidfd_open_self.c:26:16: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   26 |     long fd1 = syscall(SYS_pidfd_open, getpid(), 0);
+      |                ^~~~~~~
+cc1: all warnings being treated as errors

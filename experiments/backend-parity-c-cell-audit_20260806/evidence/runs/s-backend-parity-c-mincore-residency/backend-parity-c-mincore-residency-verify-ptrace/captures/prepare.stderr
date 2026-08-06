@@ -1,0 +1,9 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mincore_residency.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mincore_residency.c:29:28: error: ‘MAP_ANONYMOUS’ undeclared (first use in this function)
+   29 |              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+      |                            ^~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mincore_residency.c:29:28: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mincore_residency.c:38:9: error: implicit declaration of function ‘mincore’ [-Werror=implicit-function-declaration]
+   38 |     if (mincore(m, len, v0) == 0) {
+      |         ^~~~~~~
+cc1: all warnings being treated as errors

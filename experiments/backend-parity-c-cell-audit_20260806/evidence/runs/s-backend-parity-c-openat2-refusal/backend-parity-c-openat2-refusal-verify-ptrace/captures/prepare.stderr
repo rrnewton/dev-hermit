@@ -1,0 +1,9 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat2_refusal.c: In function ‘expect_enosys’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat2_refusal.c:46:18: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   46 |         long r = syscall(SYS_openat2, AT_FDCWD, "/", how, sizeof(*how));
+      |                  ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat2_refusal.c:46:39: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   46 |         long r = syscall(SYS_openat2, AT_FDCWD, "/", how, sizeof(*how));
+      |                                       ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/openat2_refusal.c:46:39: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

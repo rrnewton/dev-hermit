@@ -1,0 +1,12 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/copy_file_range_refusal.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/copy_file_range_refusal.c:64:16: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   64 |   int src_fd = mkstemp(src_template);
+      |                ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/copy_file_range_refusal.c:81:7: error: implicit declaration of function ‘copy_file_range’ [-Werror=implicit-function-declaration]
+   81 |       copy_file_range(src_fd, &in_off, dst_fd, &out_off, PAYLOAD_LEN, 0);
+      |       ^~~~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/copy_file_range_refusal.c:95:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   95 |   if (pread(src_fd, buf, PAYLOAD_LEN, 0) != PAYLOAD_LEN)
+      |       ^~~~~
+      |       read
+cc1: all warnings being treated as errors

@@ -1,0 +1,18 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c:40:14: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   40 |     int fd = mkstemp(path);
+      |              ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c:52:9: error: implicit declaration of function ‘pwritev2’; did you mean ‘writev’? [-Werror=implicit-function-declaration]
+   52 |     if (pwritev2(fd, &w0, 1, 0, 0) == (ssize_t)sizeof(c0)) {
+      |         ^~~~~~~~
+      |         writev
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c:62:9: error: implicit declaration of function ‘preadv2’; did you mean ‘readv’? [-Werror=implicit-function-declaration]
+   62 |     if (preadv2(fd, &r0, 1, 0, 0) == (ssize_t)sizeof(r) &&
+      |         ^~~~~~~
+      |         readv
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c:75:34: error: ‘RWF_APPEND’ undeclared (first use in this function); did you mean ‘O_APPEND’?
+   75 |     if (pwritev2(fd, &w2, 1, -1, RWF_APPEND) == (ssize_t)sizeof(c2)) {
+      |                                  ^~~~~~~~~~
+      |                                  O_APPEND
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/preadv2_flags.c:75:34: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

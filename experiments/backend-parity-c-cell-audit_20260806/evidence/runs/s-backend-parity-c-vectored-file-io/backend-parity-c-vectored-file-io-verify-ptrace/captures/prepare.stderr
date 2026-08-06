@@ -1,0 +1,13 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/vectored_file_io.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/vectored_file_io.c:53:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   53 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/vectored_file_io.c:85:7: error: implicit declaration of function ‘pwritev’; did you mean ‘writev’? [-Werror=implicit-function-declaration]
+   85 |   if (pwritev(fd, pw, 2, 4) == 4)
+      |       ^~~~~~~
+      |       writev
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/vectored_file_io.c:94:7: error: implicit declaration of function ‘preadv’; did you mean ‘readv’? [-Werror=implicit-function-declaration]
+   94 |   if (preadv(fd, pr, 2, 0) == 10 && memcmp(p1, "abcdW", 5) == 0 &&
+      |       ^~~~~~
+      |       readv
+cc1: all warnings being treated as errors

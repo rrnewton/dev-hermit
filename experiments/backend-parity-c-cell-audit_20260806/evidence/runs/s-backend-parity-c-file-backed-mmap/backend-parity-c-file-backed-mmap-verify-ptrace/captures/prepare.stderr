@@ -1,0 +1,9 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/file_backed_mmap.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/file_backed_mmap.c:62:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   62 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/file_backed_mmap.c:86:7: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   86 |   if (pread(fd, buf, PAYLOAD_LEN, 0) == PAYLOAD_LEN &&
+      |       ^~~~~
+      |       read
+cc1: all warnings being treated as errors

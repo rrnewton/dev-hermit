@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/flock_lifecycle.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/flock_lifecycle.c:29:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   29 |   int fd = mkstemp(path);
+      |            ^~~~~~~
+cc1: all warnings being treated as errors

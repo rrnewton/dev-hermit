@@ -1,0 +1,36 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:54:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   54 |   if (mkdtemp(root) == NULL)
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:54:21: error: comparison between pointer and integer [-Werror]
+   54 |   if (mkdtemp(root) == NULL)
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:72:39: error: ‘O_DIRECTORY’ undeclared (first use in this function)
+   72 |   int root_fd = open(root, O_RDONLY | O_DIRECTORY);
+      |                                       ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:72:39: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:81:7: error: implicit declaration of function ‘symlinkat’ [-Werror=implicit-function-declaration]
+   81 |   if (symlinkat(target, root_fd, "link") == 0) {
+      |       ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:82:17: error: implicit declaration of function ‘readlinkat’ [-Werror=implicit-function-declaration]
+   82 |     ssize_t n = readlinkat(root_fd, "link", readback, sizeof(readback) - 1);
+      |                 ^~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:93:7: error: implicit declaration of function ‘lstat’; did you mean ‘fstat’? [-Werror=implicit-function-declaration]
+   93 |   if (lstat(link, &st) == 0 && (st.st_mode & S_IFMT) == S_IFLNK &&
+      |       ^~~~~
+      |       fstat
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:93:46: error: ‘S_IFMT’ undeclared (first use in this function)
+   93 |   if (lstat(link, &st) == 0 && (st.st_mode & S_IFMT) == S_IFLNK &&
+      |                                              ^~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:93:57: error: ‘S_IFLNK’ undeclared (first use in this function); did you mean ‘S_ISLNK’?
+   93 |   if (lstat(link, &st) == 0 && (st.st_mode & S_IFMT) == S_IFLNK &&
+      |                                                         ^~~~~~~
+      |                                                         S_ISLNK
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:98:56: error: ‘S_IFREG’ undeclared (first use in this function); did you mean ‘S_ISREG’?
+   98 |   if (stat(link, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG &&
+      |                                                        ^~~~~~~
+      |                                                        S_ISREG
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/symlink_ops.c:117:7: error: implicit declaration of function ‘symlink’ [-Werror=implicit-function-declaration]
+  117 |   if (symlink("/tmp/symlink_ops_absent_target", dangling) != 0)
+      |       ^~~~~~~
+cc1: all warnings being treated as errors

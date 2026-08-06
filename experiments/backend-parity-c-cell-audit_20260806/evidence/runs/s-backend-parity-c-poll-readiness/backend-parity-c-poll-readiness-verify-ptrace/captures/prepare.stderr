@@ -1,0 +1,6 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/poll_readiness.c: In function ‘ppoll_one’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/poll_readiness.c:99:10: error: implicit declaration of function ‘ppoll’; did you mean ‘poll’? [-Werror=implicit-function-declaration]
+   99 |     rc = ppoll(&pfd, 1, &zero, NULL);
+      |          ^~~~~
+      |          poll
+cc1: all warnings being treated as errors

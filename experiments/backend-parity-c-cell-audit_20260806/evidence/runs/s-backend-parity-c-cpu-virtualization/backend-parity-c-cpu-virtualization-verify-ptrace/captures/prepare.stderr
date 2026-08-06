@@ -1,0 +1,14 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cpu_virtualization.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cpu_virtualization.c:29:15: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   29 |     long rc = syscall(SYS_getcpu, &cpu, &node, (void *)0);
+      |               ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cpu_virtualization.c:42:5: error: implicit declaration of function ‘CPU_ZERO’ [-Werror=implicit-function-declaration]
+   42 |     CPU_ZERO(&mask);
+      |     ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cpu_virtualization.c:48:10: error: implicit declaration of function ‘CPU_ISSET’ [-Werror=implicit-function-declaration]
+   48 |     if (!CPU_ISSET(0, &mask)) {
+      |          ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cpu_virtualization.c:52:9: error: implicit declaration of function ‘CPU_COUNT’ [-Werror=implicit-function-declaration]
+   52 |     if (CPU_COUNT(&mask) != 1) {
+      |         ^~~~~~~~~
+cc1: all warnings being treated as errors
