@@ -1,0 +1,19 @@
+RIGOR STATEMENT -- 'swept' is not 'covered'.
+n:        3 runs per (mode x backend). 16 modes x 3 backends = 48 cells = 144 hermit runs, + 16 native baselines.
+hosts:    1 (devbig014). 1 binary, 1 build, 1 kernel. No cross-host replication.
+backends: ptrace, dbi, sabre.  KVM SKIPPED ENTIRELY (livelocks at guest startup on this host).
+strength of a NEGATIVE: N=3 detects gross instability (it caught SaBRe thread_exit) but is a WEAK
+          basis for claiming stability -- the one-sided 95% upper bound on a flake rate after 0/3
+          clean runs is ~63%. 'Stable at N=3' must not be quoted as 'deterministic'.
+SUB-CASES NOT TESTED (each is a real gap, not a rounding of scope):
+  - WCOREDUMP / core-dump flag: I captured only the shell's $?, which encodes the signal but NOT the
+    core-dump bit. The task explicitly lists core-dump flags; they are UNMEASURED.
+  - DETLOG comparison: the task asks for 'identical wait-status AND identical detlog'. I asserted
+    WAIT-STATUS ONLY. Detlog parity is unmeasured here (and separately blocked -- DBI ignores
+    --log-file, see experiments/dbi_detlog_parity_answered_20260806).
+  - Process-tree exit ordering: no fork/multi-process tree was exercised.
+  - C++ static destructor ordering: guest is C; not tested.
+  - SIGBUS, SIGQUIT, SIGPIPE: not tested.
+  - exit() from inside a signal handler: not tested.
+  - Exit under --verify (double-run inside one invocation): not exercised; a signalled guest may
+    interact with --verify's allow-list (--verify-allow defaults to success).

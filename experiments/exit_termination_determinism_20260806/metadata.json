@@ -1,0 +1,14 @@
+{
+  "question": "Is exit status / abnormal termination deterministic and faithful across backends?",
+  "answer": "Self-consistency mostly holds (15/16 stable at N=3). Fidelity fails: DBI collapses signalled death to exit 1 in 7 of 8 cases and hangs twice; SaBRe hangs on SIGFPE, reports the wrong signal for SIGILL, and is NONDETERMINISTIC on thread-exit; ptrace mistranslates SIGTRAP.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014 (devbig014.atn7.facebook.com)",
+  "n_runs_per_cell": 3,
+  "cells": "16 modes x 3 backends = 48 (144 hermit runs + 16 native baselines)",
+  "backends_tested": ["ptrace","dbi","sabre"],
+  "kvm": "SKIPPED -- livelocks at guest startup",
+  "negative_strength": "one-sided 95% upper bound on a flake rate after 0/3 clean runs is ~63%; N=3 stability is NOT a determinism claim",
+  "subcases_not_tested": ["WCOREDUMP/core-dump flag","DETLOG comparison (wait-status only asserted)","process-tree exit ordering","C++ destructor ordering","SIGBUS/SIGQUIT/SIGPIPE","exit() from a signal handler","behaviour under --verify"],
+  "hermit_origin_main": "4b9202c232f529aa7d9831494a2e11b7ec1918a0",
+  "dev_hermit_parent_head": "03374fc659efc5ae059e2535489f3efe50ef3366"
+}

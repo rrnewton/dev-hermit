@@ -1,0 +1,17 @@
+mode,native,ptrace,dbi,sabre,verdict
+exit0,0,0,0,0,all agree
+exit42,42,42,42,42,all agree
+exit256 (truncates),0,0,0,0,all agree
+exitneg (truncates),255,255,255,255,all agree
+_exit9,9,9,9,9,all agree
+atexit (2 handlers),3,3,3,3,all agree
+abort,134,134,1,134,"DBI collapses SIGABRT death to exit status 1"
+segv,139,139,1,139,"DBI collapses SIGSEGV death to exit status 1"
+fpe,136,136,1,124,"DBI -> 1; SABRE HANGS (124 = my 40s timeout)"
+ill (__builtin_trap),132,132,124,143,"DBI HANGS; SABRE reports 143 (SIGTERM) not 132 (SIGILL)"
+raise_term,143,143,1,143,DBI -> 1
+raise_kill,137,137,1,137,DBI -> 1
+raise_trap,133,100,1,133,"*** PTRACE (the golden reference) reports 100, not 133 -- SIGTRAP collides with the ptrace mechanism ***; DBI -> 1"
+stackoverflow,139,139,1,139,DBI -> 1
+thread_exit (exit() from a thread),7,7,124,"1,7","DBI HANGS; *** SABRE IS INTRA-BACKEND NONDETERMINISTIC: 1 and 7 across 3 runs ***"
+thread_join_exit,5,5,5,5,all agree
