@@ -22,12 +22,23 @@ allow:
   - git
   - gh
   - cargo
+  # `ci-hub-cli`, NOT `ci-hub`: herdr-run runs in the parent repo, which has a
+  # `ci-hub/` DIRECTORY. If the PATH shim is ever missing, the bare name
+  # resolves to that directory and exec fails with "Is a directory" -- and in
+  # one observed case produced NO OUTPUT, which reads as a clean empty result
+  # rather than a broken query. A name no directory shares cannot be shadowed.
+  # Install with scripts/install-ci-hub-shim.sh.
+  - ci-hub-cli
   - ci-hub
 
 allow_subcommand:
   # Read-only queries against the landable frontier and the local ledger.
   # Deliberately excludes validate-run, apply-local-label, close-task and every
   # other mutating or process-launching subcommand.
+  ci-hub-cli:
+    - pr-status
+    - newest-green
+    - validate-status
   ci-hub:
     - pr-status
     - newest-green
