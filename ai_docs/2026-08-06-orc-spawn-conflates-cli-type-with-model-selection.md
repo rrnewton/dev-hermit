@@ -265,3 +265,57 @@ if let (Some(model), Some(allowed)) = (&opts.model, cli.allowed_models())
 | a model in `--claude-args` historically | `orc_cli_lib::launch::tmux`, `~/.orc/logs/`, 2026-06-05 / 07-13 / 07-21 / 07-22 |
 | plugin builds `["--model","gpt-5.6-sol"]` as bare `string[]` | `plugins/ml-pipeline/agents.ts:112` |
 | no spawn-effect record names luna/tara/soul | all of `~/.orc/logs/*.log`, 2026-06-05 → 2026-08-06 |
+
+---
+
+## Addendum, 2026-08-06 (hermit-w3): the caller is unattributable in *every* channel
+
+The analysis above closed with one open item — the exact calling code, unfound
+across `~/.orc/logs/`. That search was extended to three further **independent**
+channels. All are clean:
+
+| channel | searched | naming `luna`/`tara`/`soul` in an invocation |
+|---|---|---|
+| ORC logs | `~/.orc/logs/*.log`, 2026-06-05 → 2026-08-06 | **0** |
+| **agent transcripts** | `~/.claude/projects/**/*.jsonl` (46 files mention the names) | **0** |
+| shell history | `~/.bash_history`, `~/.zsh_history` | **0** |
+| ORC state / registries | `~/.orc`, `.orc/` JSON (not logs) | **0** |
+
+The agent-transcript result is worth stating plainly because it **refutes the
+leading hypothesis**: the task supposed "an AGENT transcribed the owner's gchat
+typo into a `spawnCliAgent`". Searching every transcript for an actual
+invocation — `"command"` strings containing the names, and the spawn verbs
+`spawnCliAgent` / `dg spawn` / `orc summon` / `summon` co-occurring with them —
+returns only *later* agents discussing the bug. No agent issued this spawn.
+
+The processes themselves are gone (`ps` for `--model (luna|tara|soul)` and for
+`test-(luna|tara|soul)` is empty), so the `ppid` route — which would have named
+the invoking harness directly — is no longer available.
+
+### What that changes
+
+"I could not find the caller" becomes the stronger and more actionable **"no
+channel records it."** The spawn became unattributable the moment the process
+exited. The only evidence this bug ever existed is the owner's `ps` snapshot: an
+ephemeral, human-caught observation that nothing in ORC, the agent fleet, the
+shell, or any registry retained.
+
+**So the fix ordering above should be amended — logging first, then validation.**
+Not a contradiction of the analysis, a reprioritisation of its own list:
+
+1. **Log the resolved spawn** (one INFO line carrying `(cli, binary, argv)`
+   immediately before `build_spawn_command`). It is the smallest and
+   lowest-risk item on the list; it would have reduced this two-session,
+   multi-agent investigation to a lookup; and it is the **only** proposal that
+   makes *unanticipated* spawn defects diagnosable rather than just this one.
+2. **Then** the typed `model` field + `CliType::allowed_models()`. Validation
+   prevents the *next* mis-spawn — it does nothing for the five agents already
+   dead, and nothing for the next failure arriving through a channel nobody
+   anticipated.
+
+This also independently strengthens the recommendation **against** the
+auto-correct the task proposed (silently forcing `cli:codex` on a GPT model
+name). Auto-correction is a silent rewrite, and a silent rewrite in a system
+that records no spawn argv is unattributable *by construction* — it would have
+turned this bug into one that leaves no trace at all. Fail closed and name both
+the offending model and the allowed set.
