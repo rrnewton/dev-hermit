@@ -114,6 +114,31 @@ def _prepend_path(existing: str, entry: str) -> str:
     return ":".join([entry, *parts])
 
 
+
+# Directories that may hold libunwind's SHARED objects at run time, best first.
+# `ignored/lu-parity/usr/lib64` is deliberately last: it has the .pc and the
+# static `libunwind-ptrace.a`, but no `libunwind-ptrace.so*`.
+RUNTIME_CANDIDATES = (
+    "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib",
+    "~/.local/hermit-deps/lu/usr/lib64",
+)
+
+
+def _libunwind_runtime_dir(root: Path, link_dir: Path) -> Path:
+    """Pick the directory that can actually satisfy the loader.
+
+    Preference order: a candidate carrying `libunwind-ptrace.so.0` (the file the
+    link dir lacks), then any candidate carrying `libunwind.so.8`, then the link
+    dir itself so behaviour is unchanged on a host where neither exists.
+    """
+    candidates = [Path(c).expanduser() for c in RUNTIME_CANDIDATES]
+    for probe in ("libunwind-ptrace.so.0", "libunwind.so.8"):
+        for candidate in candidates:
+            if (candidate / probe).exists():
+                return candidate
+    return link_dir
+
+
 def build_systemd_command(
     *,
     root: Path,
@@ -147,9 +172,10 @@ def build_systemd_command(
     # repo; point the unit at them when they are present. Nothing is
     # substituted or weakened if they are absent -- the unit simply runs as it
     # did before and the build fails loudly, as it should.
-    # THREE variables are required, and they are not interchangeable -- getting
-    # this wrong yields a DIFFERENT failure at a LATER node, which is why the
-    # first two alone still looked broken:
+    #
+    # THREE variables are required, and they are NOT interchangeable -- getting
+    # this wrong yields a DIFFERENT failure at a LATER node, which is why
+    # propagating only the first and third still looked broken:
     #   PKG_CONFIG_PATH  build time. Without it unwind-sys's build.rs panics on
     #                    `pkg-config --libs --cflags libunwind-ptrace`.
     #   LIBRARY_PATH     LINK time. pkg-config emits `-lunwind-ptrace
@@ -159,13 +185,30 @@ def build_systemd_command(
     #                    `rust-lld: error: unable to find library -lunwind`
     #                    while linking reverie-liteinst.
     #   LD_LIBRARY_PATH  RUN time, for the produced binaries. It does NOT help
-    #                    the link -- the loader is not the linker.
+    #                    the link -- the loader is not the linker, and it must
+    #                    NOT be assumed equal to LIBRARY_PATH. See below.
+    #
+    # THE LINK DIR AND THE RUNTIME DIR ARE DIFFERENT DIRECTORIES HERE, which has
+    # bitten twice. `ignored/lu-parity/usr/lib64` carries the .pc and a STATIC
+    # `libunwind-ptrace.a` but NO `libunwind-ptrace.so*`; the fbcode third-party
+    # tree is the only checked location that ships the shared ptrace variant.
+    # Pointing LD_LIBRARY_PATH at lu-parity therefore yields
+    # `libunwind-ptrace.so.0: cannot open shared object file`, which reads as a
+    # broken build and is not one.
+    #
+    # Rather than hardcode a third guess, PROBE: the runtime directory is the
+    # first candidate that actually contains the shared objects, preferring one
+    # that has `libunwind-ptrace.so.0`. A future relocation is then picked up by
+    # adding a path to RUNTIME_CANDIDATES, not by rediscovering this failure.
     lu_env: list[str] = []
     lu_root = root / "ignored/lu-parity/usr/lib64"
     if (lu_root / "pkgconfig/libunwind-ptrace.pc").exists():
-        pkg_config = _prepend_path(environment.get("PKG_CONFIG_PATH", ""), str(lu_root / "pkgconfig"))
+        runtime = _libunwind_runtime_dir(root, lu_root)
+        pkg_config = _prepend_path(
+            environment.get("PKG_CONFIG_PATH", ""), str(lu_root / "pkgconfig")
+        )
         library = _prepend_path(environment.get("LIBRARY_PATH", ""), str(lu_root))
-        ld_library = _prepend_path(environment.get("LD_LIBRARY_PATH", ""), str(lu_root))
+        ld_library = _prepend_path(environment.get("LD_LIBRARY_PATH", ""), str(runtime))
         lu_env = [
             "--setenv",
             f"PKG_CONFIG_PATH={pkg_config}",

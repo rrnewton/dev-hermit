@@ -277,13 +277,52 @@ class LibunwindEnvTest(unittest.TestCase):
             (pc / "libunwind-ptrace.pc").write_text("")
             cmd = self._build(root)
             self.assertIn(f"PKG_CONFIG_PATH={pc}", cmd)
-            self.assertIn(f"LD_LIBRARY_PATH={pc.parent}", cmd)
+            # LINK dir is lu-parity, which carries the .pc and the static
+            # libunwind-ptrace.a.
+            self.assertIn(f"LIBRARY_PATH={pc.parent}", cmd)
+            # RUNTIME dir must NOT be lu-parity: it has no libunwind-ptrace.so*,
+            # so the loader would fail with
+            # `libunwind-ptrace.so.0: cannot open shared object file`.
+            ld = [c for c in cmd if c.startswith("LD_LIBRARY_PATH=")]
+            self.assertEqual(len(ld), 1)
+            self.assertNotIn(str(pc.parent), ld[0])
 
     def test_absent_pc_file_leaves_the_unit_untouched(self):
         with tempfile.TemporaryDirectory() as tmp:
             cmd = self._build(pathlib.Path(tmp))
             self.assertFalse([c for c in cmd if "PKG_CONFIG_PATH=" in c])
             self.assertFalse([c for c in cmd if "LD_LIBRARY_PATH=" in c])
+            self.assertFalse([c for c in cmd if c.startswith("LIBRARY_PATH=")])
+
+    def test_runtime_dir_prefers_a_candidate_carrying_the_shared_ptrace_lib(self):
+        """lu-parity ships libunwind-ptrace.a but no .so; the loader needs the .so."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            link_dir = root / "link"
+            link_dir.mkdir()
+            (link_dir / "libunwind-ptrace.a").write_text("")
+            good = root / "runtime"
+            good.mkdir()
+            (good / "libunwind-ptrace.so.0").write_text("")
+            original = start_unit.RUNTIME_CANDIDATES
+            start_unit.RUNTIME_CANDIDATES = (str(good),)
+            try:
+                self.assertEqual(start_unit._libunwind_runtime_dir(root, link_dir), good)
+            finally:
+                start_unit.RUNTIME_CANDIDATES = original
+
+    def test_runtime_dir_falls_back_to_the_link_dir_when_no_candidate_exists(self):
+        """Unknown host: behave exactly as before rather than inventing a path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            link_dir = root / "link"
+            link_dir.mkdir()
+            original = start_unit.RUNTIME_CANDIDATES
+            start_unit.RUNTIME_CANDIDATES = (str(root / "absent"),)
+            try:
+                self.assertEqual(start_unit._libunwind_runtime_dir(root, link_dir), link_dir)
+            finally:
+                start_unit.RUNTIME_CANDIDATES = original
 
 
 if __name__ == "__main__":
