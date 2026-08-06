@@ -89,7 +89,7 @@ def validate_checkout(checkout: Path, target: str, *, run: Runner) -> Path:
 
 def preflight(root: Path, checkout: Path, target: str, *, run: Runner) -> None:
     command = [
-        str(root / "ci-hub/validate/preflight_anchor.py"),
+        str(root / "ci-hub/validate/preflight_validate.py"),
         "--head",
         target,
         "--repo-checkout",
@@ -98,7 +98,7 @@ def preflight(root: Path, checkout: Path, target: str, *, run: Runner) -> None:
     result = run(command, cwd=root, check=False)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise RuntimeError(f"anchor preflight refused target: {detail}")
+        raise RuntimeError(f"validation admission refused target: {detail}")
 
 
 def build_systemd_command(

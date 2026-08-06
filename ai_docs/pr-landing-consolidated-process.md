@@ -161,6 +161,20 @@ is look-ahead, not a reason by itself to claim a merge-tree conflict.
 
 The planner is shared; only dispatch differs.
 
+Before any receipt-producing validation in either mode, rebase onto the freshly
+fetched target tip and pass `ci-hub/validate/preflight_validate.py`. The
+admission command refreshes `origin/main` itself and mechanically requires:
+
+```text
+git merge-base --is-ancestor <fresh origin/main tip> <exact validation head>
+```
+
+It also retains the fixed producer/merge-gate floor checks. A stale head is
+refused before a validation slot or ledger write; a fetch/identity error fails
+closed. The sole historical exception is differential debugging after the
+rebased head fails. That comparison is not qualifying validation and must not
+mint, copy, or reuse landing evidence.
+
 #### `fresh-flow`
 
 Use for the moving, newly-created pool. Optimize for landing rate at least equal to production rate.
@@ -191,6 +205,11 @@ exact population.
    member; use the DAG's named failing cell, then bounded bisect when attribution is ambiguous.
 6. Prove each constituent independently. A staging merge does not prove a non-ancestral PR head was
    included, and it does not authorize closing that PR.
+7. **Land clusters as they ripen.** As soon as one independently authorized component has a current
+   exact-head green and an executable landing path, land it; do not wait for sibling components or
+   the entire frozen backlog. Fetch the resulting main, invalidate the old plan frontier, and rebuild
+   the remaining components against that new base. Preserve explicit ordering boundaries such as
+   patching-backend-last, but never turn them into a barrier for unrelated ready clusters.
 
 The typed branch-construction, shared-evidence, and constituent-verification contract is specified in
 https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/staging-batch-o1-drain-design-20260805.md.

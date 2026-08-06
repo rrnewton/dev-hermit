@@ -25,7 +25,7 @@ class FakeRun:
         self.checkout = checkout
         self.commands: list[list[str]] = []
         self.dirty = ""
-        self.preflight_rc = 0
+        self.admission_rc = 0
 
     def __call__(self, command: list[str], **_kwargs: object):
         self.commands.append(command)
@@ -35,8 +35,12 @@ class FakeRun:
             return completed(command, stdout=f"{SHA}\n")
         if command[:4] == ["git", "-C", str(self.checkout), "status"]:
             return completed(command, stdout=self.dirty)
-        if command[0].endswith("preflight_anchor.py"):
-            return completed(command, rc=self.preflight_rc, stderr="pre-anchor" if self.preflight_rc else "")
+        if command[0].endswith("preflight_validate.py"):
+            return completed(
+                command,
+                rc=self.admission_rc,
+                stderr="stale base" if self.admission_rc else "",
+            )
         if command[0] == "systemd-run":
             return completed(command, stdout="Running as unit: validate-test.service\n")
         raise AssertionError(command)
@@ -113,13 +117,14 @@ class StartUnitTest(unittest.TestCase):
         self.assertIn("checkout is dirty", error)
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
 
-    def test_pre_anchor_head_is_refused_before_admission(self) -> None:
-        self.fake.preflight_rc = 2
+    def test_stale_head_is_refused_before_systemd_admission(self) -> None:
+        self.fake.admission_rc = 2
 
         rc, _output, error = self.invoke()
 
         self.assertEqual(2, rc)
-        self.assertIn("anchor preflight refused", error)
+        self.assertIn("validation admission refused", error)
+        self.assertIn("stale base", error)
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
 
 

@@ -246,12 +246,15 @@ Preparation can happen speculatively, but the finalization window is serialized:
 2. fetch target `main` and require it still equals `base_sha`;
 3. if it moved, rebuild from the new base and issue a new batch identity;
 4. push the already-final staging head and verify the remote head byte-for-byte;
-5. acquire the validation producer lock and run one boxed full validation at the
-   exact remote staging SHA;
-6. require a counted, full-profile, nonzero-execution receipt bound to that SHA;
-7. re-fetch `main` immediately before landing and require the base is unchanged;
-8. land the staging PR atomically through the approved batch executor; and
-9. fetch `main` again and perform all ancestry proofs before releasing the epoch.
+5. pass the composite validation admission at the exact remote staging SHA; it
+   refreshes `origin/main`, proves that base is an ancestor of staging, and also
+   enforces every fixed producer/merge-gate floor;
+6. acquire the validation producer lock and run one boxed full validation at the
+   exact remote staging SHA (the lock repeats the same moving-base admission);
+7. require a counted, full-profile, nonzero-execution receipt bound to that SHA;
+8. re-fetch `main` immediately before landing and require the base is unchanged;
+9. land the staging PR atomically through the approved batch executor; and
+10. fetch `main` again and perform all ancestry proofs before releasing the epoch.
 
 Holding the landing epoch across final validation intentionally pauses other
 landings for one validation duration. Without that freeze, a main advance would
@@ -321,6 +324,12 @@ batch. Conflict-free stale singletons can also remain on the existing serial
 soft-green path when that is cheaper. Coalescing is most valuable for stable
 conflict components of at least three members, where conflict-resolving serial
 rebases repeatedly void exact-head evidence.
+
+Separate eligible batches land as they ripen. A green, executable component is
+not held for a slower sibling or an all-backlog ceremony. Its landing advances
+main and therefore forces every remaining batch manifest to refresh its base;
+that invalidation cost is preferable to leaving proven work stale. Explicit
+owner ordering such as patching-backend-last remains binding.
 
 The planner archive remains the authority for `conflict_edges`,
 `mechanism_overlap_edges`, look-ahead, assigned agents, and policy classes. The

@@ -57,6 +57,13 @@ CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
   --pr 123 --dry-run -- full
 ```
 
+`validate-run` and the inner `validate-lock` both call the same fail-closed
+admission authority. It refreshes `origin/main`, requires that exact tip to be
+an ancestor of the exact validation SHA, and checks every fixed receipt/merge
+floor before `validate.sh` can start. A stale or unresolvable base is a refusal,
+not a soft warning. Historical differential debugging on an older head is
+non-qualifying and runs outside this receipt-producing path.
+
 Networked commands use `with-proxy` internally.
 
 Detached validations outlive their launching agents. Stop the unit, not the
