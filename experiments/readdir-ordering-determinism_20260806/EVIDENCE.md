@@ -60,3 +60,11 @@ Mismatch at log messages 5 (run 1) and 5 (run 2)
 Mismatch at log messages 6 (run 1) and 6 (run 2)
 reverie_ptrace::vdso: 3 patched __vdso_time@7f60e2feda
 ```
+
+## The previously-closed task's own example, re-tested (see README section 7)
+```
+/usr/bin: 1451 entries; 3 getdents64 calls under hermit (32768-byte, 13768-byte, EOF)
+run-to-run hash STABLE:  2728c79063869655eeca8306d2fadd069fe3057a527d6877f074e8a625b241d2 (x2)
+globally sorted:         NO -- 1 inversion, at emitted position 1021 (the 32 KiB buffer seam):
+    zstdgrep  zstdless  zstdmt | activate-global-python-argcomplete  acyclic  attr
+```
