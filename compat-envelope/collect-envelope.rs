@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -215,20 +215,25 @@ fn main() {
     // not built in this checkout) is recorded as UNAVAILABLE — an honest
     // "not measured", never a confirmed compat/determinism fail. Anti-fakery: a
     // missing backend must not masquerade as a red backend.
-    let mut avail: BTreeMap<String, bool> = BTreeMap::new();
+    let mut avail: BTreeMap<String, Option<String>> = BTreeMap::new();
     for (_, backend) in groups.keys() {
-        avail.entry(backend.clone()).or_insert_with(|| backend_available(&repo, backend));
+        avail
+            .entry(backend.clone())
+            .or_insert_with(|| backend_unavailable_reason(&repo, backend));
     }
-    for (b, ok) in &avail {
-        if !ok {
-            eprintln!("collect-envelope: backend `{b}` UNAVAILABLE here — cells recorded as unavailable (not fail)");
+    for (b, why) in &avail {
+        if let Some(reason) = why {
+            eprintln!(
+                "collect-envelope: backend `{b}` UNAVAILABLE here — cells recorded as unavailable (not fail): {reason}"
+            );
         }
     }
 
     let mut rows_written = 0usize;
     let mut regressions: Vec<String> = Vec::new();
     for ((bucket, backend), group) in &groups {
-        let available = *avail.get(backend).unwrap_or(&true);
+        let unavailable_reason = avail.get(backend).and_then(|r| r.clone());
+        let available = unavailable_reason.is_none();
         let results = if available {
             run_group(&repo, &lane, bucket, backend, &mode)
         } else {
@@ -242,7 +247,13 @@ fn main() {
         for c in group {
             let hr = outcomes.get(&(c.test.clone(), c.mode.clone()));
             let (outcome, duration_ms, reason) = if !available {
-                ("unavailable".to_string(), 0i64, "backend binary not present in this checkout".to_string())
+                (
+                    "unavailable".to_string(),
+                    0i64,
+                    unavailable_reason
+                        .clone()
+                        .unwrap_or_else(|| "backend unavailable (reason not captured)".to_string()),
+                )
             } else {
                 match hr {
                     Some(r) => (r.outcome.clone(), r.duration_ms, r.reason.clone()),
@@ -296,11 +307,20 @@ fn main() {
             } else {
                 ""
             };
-            let (parity, output_hash) = if with_parity && pass {
+            let (parity, output_hash, ref_output_hash) = if with_parity && pass {
                 capture_parity(&repo, &lane, c, backend)
             } else {
-                (None, String::new())
+                (None, String::new(), String::new())
             };
+            // WHICH INVOCATION produced this row. Without it, "pass" is ambiguous across
+            // strictness levels: the same cell id can be run under different harness flags and
+            // the CSV would render both as an identical green. These are the flags
+            // `run_group` actually passes for this (bucket, backend, run mode).
+            let run_flags = format!(
+                "--lane {lane} --category {bucket} --backend {backend} {} | test_mode={}",
+                if mode == "regression" { "--ci-only" } else { "--include-manual" },
+                c.mode
+            );
             let row = [
                 meta.run_id.clone(),
                 meta.run_utc.clone(),
@@ -318,10 +338,12 @@ fn main() {
                 deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 parity.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 output_hash,
+                ref_output_hash,
                 duration_ms.to_string(),
                 String::new(), // max_rss_kb: filled by expansion-dag.rs cgroup path
                 reason,
                 verify_compare.to_string(),
+                run_flags,
             ];
             let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
             writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
@@ -465,15 +487,30 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
 /// Capture guest stdout under ptrace and under `backend`; parity = hashes match.
 /// Only reconstructable guest commands are attempted (`.sh` fixtures run with
 /// `--run`, and `direct` commands); otherwise returns (None, "").
-fn capture_parity(repo: &Path, lane: &str, cell: &PlanCell, backend: &str) -> (Option<bool>, String) {
+/// Returns `(parity, output_hash, ref_output_hash)`.
+///
+/// The reference hash was always computed here and then DISCARDED, which left a `parity=1` row
+/// unable to say what it matched. A comparison result that does not name both sides is not
+/// reproducible evidence: a reader cannot tell a genuine match from a row where both sides were
+/// empty, nor re-check the claim later. Both hashes are now recorded.
+fn capture_parity(
+    repo: &Path,
+    lane: &str,
+    cell: &PlanCell,
+    backend: &str,
+) -> (Option<bool>, String, String) {
     let Some(guest) = guest_command(repo, &cell.test) else {
-        return (None, String::new());
+        return (None, String::new(), String::new());
     };
     let ref_hash = run_and_hash(repo, lane, "ptrace", &guest);
     let this_hash = run_and_hash(repo, lane, backend, &guest);
-    match (ref_hash, this_hash.clone()) {
-        (Some(r), Some(t)) => (Some(r == t), t),
-        _ => (None, this_hash.unwrap_or_default()),
+    match (ref_hash.clone(), this_hash.clone()) {
+        (Some(r), Some(t)) => (Some(r == t), t, r),
+        _ => (
+            None,
+            this_hash.unwrap_or_default(),
+            ref_hash.unwrap_or_default(),
+        ),
     }
 }
 
@@ -524,13 +561,22 @@ fn guest_command(repo: &Path, test_id: &str) -> Option<Vec<String>> {
 /// its cells are recorded UNAVAILABLE rather than as a compat/determinism fail.
 /// ptrace/kvm are in-process; treat them as available (kvm's /dev/kvm gate is a
 /// separate runtime concern surfaced by the actual cell run).
-fn backend_available(repo: &Path, backend: &str) -> bool {
+/// Returns `None` when the backend is usable, or `Some(reason)` naming why it is not.
+///
+/// This previously returned a bare bool and every unavailable cell got the same hardcoded string,
+/// "backend binary not present in this checkout" -- a constant masquerading as a diagnosis. It was
+/// also frequently WRONG: a backend that is built but refuses to load reported "not present". The
+/// reason is now the observed cause, so an unavailable row says which check failed.
+fn backend_unavailable_reason(repo: &Path, backend: &str) -> Option<String> {
     if backend == "ptrace" || backend == "kvm" || backend == "native" {
-        return true;
+        return None;
     }
     let hermit = hermit_bin(repo);
     if !hermit.exists() {
-        return false;
+        return Some(format!(
+            "hermit binary not built at {} (backend `{backend}` never probed)",
+            hermit.display()
+        ));
     }
     let out = Command::new("timeout")
         .arg("60s")
@@ -545,13 +591,31 @@ fn backend_available(repo: &Path, backend: &str) -> bool {
     match out {
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
-            // Explicit unavailability markers from the backend loader.
-            !(err.contains("is unavailable")
-                || err.contains("was not found")
-                || err.contains("HERMIT_SABRE_BINARY")
-                || err.contains("not found in the Hermit installation"))
+            // Explicit unavailability markers from the backend loader. Report the marker that
+            // matched, so the row records the observed evidence rather than a generic phrase.
+            for marker in [
+                "is unavailable",
+                "was not found",
+                "HERMIT_SABRE_BINARY",
+                "not found in the Hermit installation",
+            ] {
+                if err.contains(marker) {
+                    let line = err
+                        .lines()
+                        .find(|l| l.contains(marker))
+                        .unwrap_or(marker)
+                        .trim();
+                    return Some(format!(
+                        "backend `{backend}` probe reported unavailable: {}",
+                        line.chars().take(160).collect::<String>()
+                    ));
+                }
+            }
+            None
         }
-        Err(_) => false,
+        Err(e) => Some(format!(
+            "backend `{backend}` probe could not be executed: {e}"
+        )),
     }
 }
 
