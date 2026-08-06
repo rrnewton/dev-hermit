@@ -3,10 +3,12 @@
 use chrono::{Local, TimeZone};
 use clap::{Args, Subcommand};
 use fs2::FileExt;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
@@ -19,14 +21,16 @@ const DEFAULT_WAIT_SECONDS: u64 = 1_800;
 const DEFAULT_HOLD_SECONDS: u64 = 900;
 const POLL_SECONDS: u64 = 3;
 const GUARD_WAIT_SECONDS: u64 = 30;
-/// Hard ceiling on how long a `run` child may execute before it is killed and the
-/// lock is released. A stuck land holding the lock is a head-of-line block for
-/// every other FIFO waiter (the ~2040-minute starvation this bounds against): an
-/// unbounded wait is unboxed compute. A real land is minutes; this measured
-/// ceiling is far below any starvation.
+/// Hard ceiling on how long a `run` child may execute before it is killed and
+/// cleanup is proved. A complete empty-domain proof releases the lock; otherwise
+/// it stays quarantined. A stuck land holding the lock is a head-of-line block
+/// for every other FIFO waiter (the ~2040-minute starvation this bounds
+/// against): an unbounded wait is unboxed compute. A real land is minutes; this
+/// measured ceiling is far below any starvation.
 // Measured 2026-08-04: 11 successful demo-gate runs had p99/max 864s. The
 // lander gate bound is 1080s (max + 25%); the whole-child ceiling allows two
-// complete gate windows while still guaranteeing release on a wedged child.
+// complete gate windows while still guaranteeing bounded cleanup or quarantine
+// on a wedged child.
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
@@ -34,6 +38,14 @@ const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
+const START_GATE_FD: libc::c_int = 9;
+const START_GATE_SCRIPT: &str = r#"
+if IFS= read -r ci_hub_start_token <&9 && [ "$ci_hub_start_token" = "ci-hub-go" ]; then
+  exec 9<&-
+  exec "$@"
+fi
+exit 125
+"#;
 
 #[derive(Args, Clone, Debug)]
 pub struct LandLockArgs {
@@ -53,7 +65,8 @@ pub enum LandLockCommand {
     Status,
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
-    /// Acquire, run one command with a heartbeat, then release.
+    /// Acquire and run with a heartbeat; release after complete cleanup proof,
+    /// otherwise retain a quarantine.
     Run(RunArgs),
 }
 
@@ -93,10 +106,9 @@ pub struct RunArgs {
     pub wait: u64,
     #[arg(long, default_value_t = DEFAULT_HOLD_SECONDS)]
     pub hold: u64,
-    /// Kill the child and release the lock if it runs longer than this many
-    /// seconds. Bounds the head-of-line block a stuck lander would otherwise
-    /// impose on the FIFO queue. Must be positive: unbounded lock holders are
-    /// forbidden.
+    /// Kill the child if it runs longer than this many seconds. Release follows
+    /// only after complete cleanup proof; otherwise the lock remains
+    /// quarantined. Must be positive: unbounded lock holders are forbidden.
     #[arg(long, default_value_t = DEFAULT_CHILD_DEADLINE_SECONDS)]
     pub child_deadline: u64,
     #[arg(last = true, required = true)]
@@ -112,6 +124,15 @@ impl LandLockCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockState {
     pub agent: String,
+    /// Optional fields added by the exact-head lander while it owns the
+    /// shared lease.  The mutex must preserve these fields on parse/render so
+    /// an annotated holder remains readable by every landing entry point.
+    pub repo: Option<String>,
+    pub operation: Option<String>,
+    pub pending_mutation: Option<String>,
+    pub pending_attempt: Option<String>,
+    pub pending_call_count: Option<u64>,
+    pub pending_call_id: Option<String>,
     pub pr: String,
     pub host: String,
     pub acquired_at: i64,
@@ -126,6 +147,239 @@ struct ProcessOwner {
     boot_id: String,
     pid: u32,
     start_ticks: u64,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ProcessIdentity {
+    pub(crate) pid: u32,
+    pub(crate) start_ticks: u64,
+}
+
+/// Durable state for one supervised payload domain. The `Armed` state is
+/// persisted before spawn, `Published` binds the still-gated child identity,
+/// `CensusPending` durably disables heartbeat renewal before any descendant is
+/// frozen, and `Residual` records the final exact census. Every consumer
+/// must dereference this record through `verify_cleanup_record`; file existence
+/// or a printed marker is not proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CleanupRecord {
+    pub(crate) agent: String,
+    pub(crate) operation: String,
+    pub(crate) host: String,
+    pub(crate) boot_id: String,
+    pub(crate) phase: CleanupPhase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupPhase {
+    Armed,
+    Published {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
+    CensusPending {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
+    Residual {
+        pgid: u32,
+        domain_complete: bool,
+        residuals: Vec<ProcessIdentity>,
+    },
+}
+
+impl CleanupRecord {
+    pub(crate) fn new(
+        agent: impl Into<String>,
+        operation: impl Into<String>,
+        phase: CleanupPhase,
+    ) -> io::Result<Self> {
+        let host = current_host();
+        if host == "unknown" {
+            return Err(io::Error::other(
+                "cannot arm cleanup authority without a host identity",
+            ));
+        }
+        Ok(Self {
+            agent: agent.into(),
+            operation: operation.into(),
+            host,
+            boot_id: read_current_boot_id()?,
+            phase,
+        })
+    }
+
+    pub(crate) fn parse(content: &str) -> Result<Self, String> {
+        let mut version = None;
+        let mut agent = None;
+        let mut operation = None;
+        let mut host = None;
+        let mut boot_id = None;
+        let mut phase = None;
+        let mut leader = None;
+        let mut pgid = None;
+        let mut domain_complete = None;
+        let mut residuals = Vec::new();
+        for (line_number, line) in content.lines().enumerate() {
+            let (key, value) = line
+                .split_once('=')
+                .ok_or_else(|| format!("cleanup line {} is not key=value", line_number + 1))?;
+            match key {
+                "version" => set_once(&mut version, value.to_string(), key)?,
+                "agent" => set_once(&mut agent, value.to_string(), key)?,
+                "operation" => set_once(&mut operation, value.to_string(), key)?,
+                "host" => set_once(&mut host, value.to_string(), key)?,
+                "boot_id" => set_once(&mut boot_id, value.to_string(), key)?,
+                "phase" => set_once(&mut phase, value.to_string(), key)?,
+                "leader" => {
+                    let identity = parse_process_identity(value, "leader")?;
+                    set_once(&mut leader, identity, key)?;
+                }
+                "pgid" => set_once(
+                    &mut pgid,
+                    value
+                        .parse::<u32>()
+                        .map_err(|error| format!("invalid cleanup pgid {value:?}: {error}"))?,
+                    key,
+                )?,
+                "domain_complete" => {
+                    let parsed = match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(format!("invalid domain_complete {value:?}")),
+                    };
+                    set_once(&mut domain_complete, parsed, key)?;
+                }
+                "residual" => residuals.push(parse_process_identity(value, "residual")?),
+                unknown => return Err(format!("unknown cleanup field {unknown:?}")),
+            }
+        }
+        if version.as_deref() != Some("2") {
+            return Err(format!("unsupported cleanup version {version:?}"));
+        }
+        residuals.sort();
+        residuals.dedup();
+        let phase = match phase.as_deref() {
+            Some("armed")
+                if leader.is_none()
+                    && pgid.is_none()
+                    && domain_complete.is_none()
+                    && residuals.is_empty() =>
+            {
+                CleanupPhase::Armed
+            }
+            Some("published") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::Published {
+                    leader: leader
+                        .ok_or_else(|| "published cleanup record has no leader".to_string())?,
+                    pgid: pgid.ok_or_else(|| "published cleanup record has no pgid".to_string())?,
+                }
+            }
+            Some("census-pending") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::CensusPending {
+                    leader: leader
+                        .ok_or_else(|| "census-pending cleanup record has no leader".to_string())?,
+                    pgid: pgid
+                        .ok_or_else(|| "census-pending cleanup record has no pgid".to_string())?,
+                }
+            }
+            Some("residual") if leader.is_none() => CleanupPhase::Residual {
+                pgid: pgid.ok_or_else(|| "residual cleanup record has no pgid".to_string())?,
+                domain_complete: domain_complete
+                    .ok_or_else(|| "residual cleanup record has no domain_complete".to_string())?,
+                residuals,
+            },
+            Some(value) => return Err(format!("cleanup phase {value:?} has incompatible fields")),
+            None => return Err("cleanup record has no phase".to_string()),
+        };
+        Ok(Self {
+            agent: agent.ok_or_else(|| "cleanup record has no agent".to_string())?,
+            operation: operation.ok_or_else(|| "cleanup record has no operation".to_string())?,
+            host: host.ok_or_else(|| "cleanup record has no host".to_string())?,
+            boot_id: boot_id.ok_or_else(|| "cleanup record has no boot_id".to_string())?,
+            phase,
+        })
+    }
+
+    pub(crate) fn render(&self) -> String {
+        let mut output = format!(
+            "version=2\nagent={}\noperation={}\nhost={}\nboot_id={}\n",
+            self.agent, self.operation, self.host, self.boot_id
+        );
+        match &self.phase {
+            CleanupPhase::Armed => output.push_str("phase=armed\n"),
+            CleanupPhase::Published { leader, pgid } => output.push_str(&format!(
+                "phase=published\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
+            CleanupPhase::CensusPending { leader, pgid } => output.push_str(&format!(
+                "phase=census-pending\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
+            CleanupPhase::Residual {
+                pgid,
+                domain_complete,
+                residuals,
+            } => {
+                output.push_str(&format!(
+                    "phase=residual\npgid={pgid}\ndomain_complete={domain_complete}\n"
+                ));
+                for identity in residuals {
+                    output.push_str(&format!(
+                        "residual={}:{}\n",
+                        identity.pid, identity.start_ticks
+                    ));
+                }
+            }
+        }
+        output
+    }
+}
+
+fn set_once<T>(slot: &mut Option<T>, value: T, key: &str) -> Result<(), String> {
+    if slot.replace(value).is_some() {
+        return Err(format!("duplicate cleanup field {key:?}"));
+    }
+    Ok(())
+}
+
+fn parse_process_identity(value: &str, field: &str) -> Result<ProcessIdentity, String> {
+    let (pid, start_ticks) = value
+        .split_once(':')
+        .ok_or_else(|| format!("invalid {field} identity {value:?}"))?;
+    Ok(ProcessIdentity {
+        pid: pid
+            .parse()
+            .map_err(|error| format!("invalid {field} pid {pid:?}: {error}"))?,
+        start_ticks: start_ticks
+            .parse()
+            .map_err(|error| format!("invalid {field} start ticks {start_ticks:?}: {error}"))?,
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupVerification {
+    None,
+    Armed {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Active {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Uncensused {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Recoverable {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Unknown {
+        record: Option<CleanupRecord>,
+        reason: String,
+    },
 }
 
 impl ProcessOwner {
@@ -180,6 +434,12 @@ enum OwnerLiveness {
 impl LockState {
     fn parse(content: &str) -> Result<Self, LandLockError> {
         let mut agent = None;
+        let mut repo = None;
+        let mut operation = None;
+        let mut pending_mutation = None;
+        let mut pending_attempt = None;
+        let mut pending_call_count = None;
+        let mut pending_call_id = None;
         let mut pr = None;
         let mut host = None;
         let mut acquired_at = None;
@@ -195,6 +455,12 @@ impl LockState {
             })?;
             match key {
                 "agent" => agent = Some(value.to_string()),
+                "repo" => repo = Some(value.to_string()),
+                "operation" => operation = Some(value.to_string()),
+                "pending_mutation" => pending_mutation = Some(value.to_string()),
+                "pending_attempt" => pending_attempt = Some(value.to_string()),
+                "pending_call_count" => pending_call_count = Some(parse_unsigned(key, value)?),
+                "pending_call_id" => pending_call_id = Some(value.to_string()),
                 "pr" => pr = Some(value.to_string()),
                 "host" => host = Some(value.to_string()),
                 "acquired_at" => acquired_at = Some(parse_integer(key, value)?),
@@ -210,6 +476,12 @@ impl LockState {
         }
         Ok(Self {
             agent: required(agent, "agent")?,
+            repo,
+            operation,
+            pending_mutation,
+            pending_attempt,
+            pending_call_count,
+            pending_call_id,
             pr: required(pr, "pr")?,
             host: required(host, "host")?,
             acquired_at: required(acquired_at, "acquired_at")?,
@@ -220,10 +492,27 @@ impl LockState {
     }
 
     fn render(&self) -> String {
-        let mut output = format!(
-            "agent={}\npr={}\nhost={}\nacquired_at={}\nacquired_human={}\nexpires_at={}\n",
-            self.agent, self.pr, self.host, self.acquired_at, self.acquired_human, self.expires_at
-        );
+        let mut output = format!("agent={}\n", self.agent);
+        for (key, value) in [
+            ("repo", self.repo.as_deref()),
+            ("operation", self.operation.as_deref()),
+            ("pending_mutation", self.pending_mutation.as_deref()),
+            ("pending_attempt", self.pending_attempt.as_deref()),
+        ] {
+            if let Some(value) = value {
+                output.push_str(&format!("{key}={value}\n"));
+            }
+        }
+        if let Some(value) = self.pending_call_count {
+            output.push_str(&format!("pending_call_count={value}\n"));
+        }
+        if let Some(value) = &self.pending_call_id {
+            output.push_str(&format!("pending_call_id={value}\n"));
+        }
+        output.push_str(&format!(
+            "pr={}\nhost={}\nacquired_at={}\nacquired_human={}\nexpires_at={}\n",
+            self.pr, self.host, self.acquired_at, self.acquired_human, self.expires_at
+        ));
         if let Some(reclaimed_from) = &self.reclaimed_from {
             output.push_str(&format!("reclaimed_from={reclaimed_from}\n"));
         }
@@ -232,6 +521,17 @@ impl LockState {
 
     fn live_at(&self, now: i64) -> bool {
         now < self.expires_at
+    }
+
+    fn renewed(&self, hold: u64) -> Result<Self, LandLockError> {
+        let mut renewed = new_holder(&self.agent, &self.pr, hold, None)?;
+        renewed.repo = self.repo.clone();
+        renewed.operation = self.operation.clone();
+        renewed.pending_mutation = self.pending_mutation.clone();
+        renewed.pending_attempt = self.pending_attempt.clone();
+        renewed.pending_call_count = self.pending_call_count;
+        renewed.pending_call_id = self.pending_call_id.clone();
+        Ok(renewed)
     }
 }
 
@@ -291,6 +591,8 @@ pub enum LandLockError {
     ProcessNotOwner { operation: &'static str, pid: u32 },
     #[error("landing-lock: cannot reclaim lease: {0}")]
     ReclaimNotProven(String),
+    #[error("landing-lock: cleanup quarantine: {0}")]
+    CleanupQuarantined(String),
 }
 
 impl LandLockError {
@@ -300,6 +602,7 @@ impl LandLockError {
             | Self::ReleaseNotOwner { .. }
             | Self::ProcessNotOwner { .. }
             | Self::ReclaimNotProven(_)
+            | Self::CleanupQuarantined(_)
             | Self::GuardTimeout
             | Self::InvalidState(_) => 3,
             Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline => 2,
@@ -313,6 +616,7 @@ struct LockPaths {
     guard: PathBuf,
     queue: PathBuf,
     owner: PathBuf,
+    cleanup: PathBuf,
 }
 
 impl LockPaths {
@@ -324,6 +628,7 @@ impl LockPaths {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
+            cleanup: suffix(&lock, ".cleanup-required"),
             lock,
         }
     }
@@ -364,6 +669,224 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
 }
 
 impl LandingLock {
+    fn cleanup_verification(&self, holder: Option<&LockState>) -> CleanupVerification {
+        let operation = holder.map(|holder| format!("pr:{}", holder.pr));
+        let expected = holder
+            .zip(operation.as_deref())
+            .map(|(holder, operation)| (holder.agent.as_str(), operation));
+        verify_cleanup_record(&self.paths.cleanup, expected)
+    }
+
+    fn require_no_cleanup(&self, holder: Option<&LockState>) -> Result<(), LandLockError> {
+        match self.cleanup_verification(holder) {
+            CleanupVerification::None => Ok(()),
+            CleanupVerification::Armed { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("ARMED: {reason}")),
+            ),
+            CleanupVerification::Active { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("ACTIVE: {reason}")),
+            ),
+            CleanupVerification::Uncensused { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("UNCENSUSED: {reason}")),
+            ),
+            CleanupVerification::Recoverable { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!(
+                    "payload absence is proven but explicit reclaim-dead recovery is required: {reason}"
+                )),
+            ),
+            CleanupVerification::Unknown { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("UNVERIFIABLE: {reason}")),
+            ),
+        }
+    }
+
+    fn arm_run(&self, agent: &str, pr: &str) -> Result<(), LandLockError> {
+        let record = CleanupRecord::new(agent, format!("pr:{pr}"), CleanupPhase::Armed)
+            .map_err(|source| io_error("construct", &self.paths.cleanup, source))?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cannot arm cleanup without a lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "cleanup arm does not match the current operation".into(),
+                ));
+            }
+            self.require_no_cleanup(Some(&holder))?;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn transition_run_cleanup(
+        &self,
+        agent: &str,
+        pr: &str,
+        expected: fn(&CleanupPhase) -> bool,
+        next: CleanupPhase,
+    ) -> Result<(), LandLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cleanup transition has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "cleanup transition does not match the current operation".into(),
+                ));
+            }
+            let verification = self.cleanup_verification(Some(&holder));
+            let mut record = match verification {
+                CleanupVerification::Armed { record, .. }
+                | CleanupVerification::Active { record, .. }
+                | CleanupVerification::Uncensused { record, .. }
+                | CleanupVerification::Recoverable { record, .. } => record,
+                CleanupVerification::None => {
+                    return Err(LandLockError::InvalidState(
+                        "cleanup transition has no durable authority".into(),
+                    ))
+                }
+                CleanupVerification::Unknown { reason, .. } => {
+                    return Err(LandLockError::CleanupQuarantined(format!(
+                        "cannot transition unverifiable authority: {reason}"
+                    )))
+                }
+            };
+            if !expected(&record.phase) {
+                return Err(LandLockError::InvalidState(format!(
+                    "cleanup transition rejected phase {:?}",
+                    record.phase
+                )));
+            }
+            record.phase = next;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn publish_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::Armed),
+            CleanupPhase::Published {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_unstarted_run(&self, agent: &str, pr: &str) -> Result<(), LandLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("unstarted cleanup has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "unstarted cleanup does not match current operation".into(),
+                ));
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { .. } => {
+                    self.assert_current_process_owner("clear unstarted run")?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(LandLockError::InvalidState(format!(
+                    "unstarted cleanup requires armed authority, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn record_residuals(
+        &self,
+        agent: &str,
+        pr: &str,
+        pgid: u32,
+        capture: ResidualCapture,
+    ) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::CensusPending { .. }),
+            CleanupPhase::Residual {
+                pgid,
+                domain_complete: capture.complete,
+                residuals: capture.identities,
+            },
+        )
+    }
+
+    fn begin_run_census(
+        &self,
+        agent: &str,
+        pr: &str,
+        gated: &GatedChild,
+    ) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            CleanupPhase::CensusPending {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_proven_run(&self, agent: &str, pr: &str, pgid: u32) -> Result<(), LandLockError> {
+        self.record_residuals(
+            agent,
+            pr,
+            pgid,
+            ResidualCapture {
+                complete: true,
+                identities: Vec::new(),
+            },
+        )?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cleanup clear has no lock holder".into())
+            })?;
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Recoverable { .. } => {
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(LandLockError::InvalidState(format!(
+                    "cleanup clear requires proven absence, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn renew_run_lease(&self, agent: &str, pr: &str, hold: u64) -> Result<(), LandLockError> {
+        self.with_guard(|| {
+            let holder = self
+                .read_holder()?
+                .ok_or_else(|| LandLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                });
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Active { record, .. }
+                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                other => {
+                    return Err(LandLockError::CleanupQuarantined(format!(
+                        "run heartbeat requires an active published domain, got {other:?}"
+                    )))
+                }
+            }
+            self.assert_current_process_owner("run heartbeat")?;
+            heartbeat_test_helper_delay();
+            self.write_holder(&holder.renewed(hold)?)
+        })
+    }
+
     fn acquire(&self, args: &AcquireArgs) -> Result<i32, LandLockError> {
         let started = Instant::now();
         let mut last = String::new();
@@ -419,6 +942,8 @@ impl LandingLock {
 
     fn try_acquire(&self, args: &AcquireArgs) -> Result<AcquireToken, LandLockError> {
         let now = epoch_seconds()?;
+        let holder = self.read_holder()?;
+        self.require_no_cleanup(holder.as_ref())?;
         let mut queue = self.read_queue()?;
         if !queue.iter().any(|entry| entry.agent == args.agent) {
             queue.push(QueueEntry {
@@ -430,7 +955,6 @@ impl LandingLock {
         let cutoff = now - (2 * DEFAULT_WAIT_SECONDS) as i64;
         queue.retain(|entry| entry.enqueued_at >= cutoff);
 
-        let holder = self.read_holder()?;
         let dead_owner = if holder.as_ref().is_some_and(|holder| holder.live_at(now)) {
             match self.owner_liveness()? {
                 OwnerLiveness::Dead(reason) => Some(reason),
@@ -487,13 +1011,14 @@ impl LandingLock {
                 .ok_or_else(|| LandLockError::RenewNotOwner {
                     agent: agent.to_string(),
                 })?;
+            self.require_no_cleanup(Some(&holder))?;
             if holder.agent != agent {
                 return Err(LandLockError::RenewNotOwner {
                     agent: agent.to_string(),
                 });
             }
             self.assert_current_process_owner("renew")?;
-            self.write_holder(&new_holder(agent, &holder.pr, hold, None)?)?;
+            self.write_holder(&holder.renewed(hold)?)?;
             Ok(())
         })?;
         if announce {
@@ -504,7 +1029,9 @@ impl LandingLock {
 
     fn release(&self, agent: &str, announce: bool) -> Result<(), LandLockError> {
         let (released, next) = self.with_guard(|| {
-            let Some(holder) = self.read_holder()? else {
+            let holder = self.read_holder()?;
+            self.require_no_cleanup(holder.as_ref())?;
+            let Some(holder) = holder else {
                 remove_if_exists(&self.paths.owner)?;
                 return Ok((false, None));
             };
@@ -541,31 +1068,66 @@ impl LandingLock {
         let now = epoch_seconds()?;
         let holder = self.read_holder()?;
         let liveness = self.owner_liveness()?;
-        match holder {
-            Some(holder) if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) => {
-                println!("ORPHANED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  secs_left={}", holder.expires_at - now);
+        let cleanup = self.cleanup_verification(holder.as_ref());
+        let quarantined = !matches!(cleanup, CleanupVerification::None);
+        match cleanup {
+            CleanupVerification::None => {}
+            CleanupVerification::Armed { record, reason } => {
+                println!("QUARANTINED (pre-spawn barrier armed):");
+                print_cleanup_record(&record, &reason);
             }
-            Some(holder) if holder.live_at(now) => {
-                println!("HELD:");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  secs_left={}", holder.expires_at - now);
+            CleanupVerification::Active { record, reason } => {
+                println!("QUARANTINED (cleanup active):");
+                print_cleanup_record(&record, &reason);
             }
-            Some(holder) => {
-                println!("LAPSED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                println!("  owner_process={}", render_liveness(&liveness));
+            CleanupVerification::Recoverable { record, reason } => {
+                println!("QUARANTINED (absence proven; run reclaim-dead):");
+                print_cleanup_record(&record, &reason);
             }
-            None => println!("FREE"),
+            CleanupVerification::Uncensused { record, reason } => {
+                println!("QUARANTINED (published domain lacks final census):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Unknown { record, reason } => {
+                println!("QUARANTINED (cleanup unverifiable):");
+                if let Some(record) = record {
+                    print_cleanup_record(&record, &reason);
+                } else {
+                    println!("  reason={reason}");
+                }
+            }
+        }
+        if quarantined {
+            println!("  owner_process={}", render_liveness(&liveness));
+        } else {
+            match holder {
+                Some(holder)
+                    if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) =>
+                {
+                    println!("ORPHANED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
+                }
+                Some(holder) if holder.live_at(now) => {
+                    println!("HELD:");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
+                }
+                Some(holder) => {
+                    println!("LAPSED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
+                }
+                None => println!("FREE"),
+            }
         }
         let queue = self.read_queue()?;
         if !queue.is_empty() {
@@ -580,13 +1142,39 @@ impl LandingLock {
     fn reclaim_dead(&self) -> Result<i32, LandLockError> {
         let reclaimed = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
-                remove_if_exists(&self.paths.owner)?;
-                return Ok(None);
+                return match self.cleanup_verification(None) {
+                    CleanupVerification::None => {
+                        remove_if_exists(&self.paths.owner)?;
+                        Ok(None)
+                    }
+                    CleanupVerification::Armed { reason, .. }
+                    | CleanupVerification::Active { reason, .. }
+                    | CleanupVerification::Uncensused { reason, .. }
+                    | CleanupVerification::Unknown { reason, .. } => {
+                        Err(LandLockError::ReclaimNotProven(reason))
+                    }
+                    CleanupVerification::Recoverable { .. } => {
+                        Err(LandLockError::ReclaimNotProven(
+                            "cleanup authority is not bound to a lock holder".into(),
+                        ))
+                    }
+                };
             };
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { reason, .. }
+                | CleanupVerification::Active { reason, .. }
+                | CleanupVerification::Uncensused { reason, .. }
+                | CleanupVerification::Unknown { reason, .. } => {
+                    return Err(LandLockError::ReclaimNotProven(reason));
+                }
+                CleanupVerification::Recoverable { .. } | CleanupVerification::None => {}
+            }
             match self.owner_liveness()? {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.pr, reason)))
                 }
                 OwnerLiveness::Alive => Err(LandLockError::ReclaimNotProven(
@@ -611,6 +1199,9 @@ impl LandingLock {
         if args.child_deadline == 0 {
             return Err(LandLockError::UnboundedChildDeadline);
         }
+        enable_child_subreaper().map_err(|source| {
+            io_error("enable child subreaper at", Path::new("/proc/self"), source)
+        })?;
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
             pr: args.pr.clone(),
@@ -626,9 +1217,49 @@ impl LandingLock {
             return Err(error);
         }
 
+        // Persist the fail-closed authority before any child exists. The start
+        // gate below cannot run the guest until its exact identity has replaced
+        // this armed record durably.
+        self.arm_run(&args.agent, &args.pr)?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterArm) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after arm".into(),
+            ));
+        }
+        let mut gated = match spawn_gated_child(&args.child[0], &args.child[1..], |_| {}) {
+            Ok(gated) => gated,
+            Err(source) => {
+                self.clear_unstarted_run(&args.agent, &args.pr)?;
+                self.release(&args.agent, true)?;
+                return Err(LandLockError::Io {
+                    action: "launch start-gated child from",
+                    path: PathBuf::from(&args.child[0]),
+                    source,
+                });
+            }
+        };
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterSpawn) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after spawn".into(),
+            ));
+        }
+        self.publish_run(&args.agent, &args.pr, &gated)?;
+        gated.release().map_err(|source| {
+            io_error("release child start gate at", &self.paths.cleanup, source)
+        })?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterPublish) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after publication".into(),
+            ));
+        }
+
         let (stop_tx, stop_rx) = mpsc::channel();
         let heartbeat_paths = self.paths.clone();
         let heartbeat_agent = args.agent.clone();
+        let heartbeat_pr = args.pr.clone();
         let heartbeat_hold = args.hold;
         let heartbeat = thread::spawn(move || {
             let heartbeat_lock = LandingLock {
@@ -637,7 +1268,7 @@ impl LandingLock {
             let interval = Duration::from_secs((heartbeat_hold / 3).max(1));
             while stop_rx.recv_timeout(interval).is_err() {
                 if heartbeat_lock
-                    .renew(&heartbeat_agent, heartbeat_hold, false)
+                    .renew_run_lease(&heartbeat_agent, &heartbeat_pr, heartbeat_hold)
                     .is_err()
                 {
                     break;
@@ -645,30 +1276,34 @@ impl LandingLock {
             }
         });
 
-        // Run the child in its own process group so a deadline kill reaches the
-        // whole land subtree (gh / git / cargo), not just the wrapper shell.
-        let spawn_result = Command::new(&args.child[0])
-            .args(&args.child[1..])
-            .process_group(0)
-            .spawn();
-        let outcome = match spawn_result {
-            Ok(mut child) => Ok(supervise_child(&mut child, args.child_deadline, &args.pr)),
-            Err(source) => Err(source),
-        };
+        let outcome = supervise_child(&mut gated.child, args.child_deadline, &args.pr);
+        // Atomically disable heartbeat renewal before stopping it. A heartbeat
+        // already holding the guard finishes first; after this durable phase
+        // transition no stale renewal can race cleanup or authorize reclaim.
+        self.begin_run_census(&args.agent, &args.pr, &gated)?;
         let _ = stop_tx.send(());
         let _ = heartbeat.join();
-        let release_result = self.release(&args.agent, true);
-
+        reap_exited_children();
+        let pgid = outcome.pgid();
+        let capture = capture_and_freeze_residuals(std::process::id());
+        let domain_empty =
+            !process_group_exists(pgid) && capture.complete && capture.identities.is_empty();
+        if !domain_empty {
+            let residual_count = capture.identities.len();
+            self.record_residuals(&args.agent, &args.pr, pgid, capture)?;
+            return Err(LandLockError::CleanupQuarantined(format!(
+                "completed process group {pgid} did not yield an empty payload domain; {residual_count} exact residual identities recorded and lock retained"
+            )));
+        }
+        self.clear_proven_run(&args.agent, &args.pr, pgid)?;
+        self.release(&args.agent, true)?;
         match outcome {
-            Ok(ChildOutcome::Exited(status)) => {
-                release_result?;
+            ChildOutcome::Exited { status, pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
                 Ok(exit_status_code(status))
             }
-            Ok(ChildOutcome::TimedOut) => {
-                // The lock was just released above so the next FIFO waiter can
-                // proceed. Emit a loud, single-line ABANDON signal so the stuck
-                // land does not silently languish (the #244 pattern).
-                release_result?;
+            ChildOutcome::TimedOut { pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
                 eprintln!(
                     "landing-lock: ABANDON PR #{}: child exceeded --child-deadline {}s; \
                      killed the land subtree and RELEASED the lock so the FIFO can proceed. \
@@ -677,14 +1312,9 @@ impl LandingLock {
                 );
                 Ok(CHILD_DEADLINE_EXIT_CODE)
             }
-            Err(source) => {
-                release_result?;
-                Err(LandLockError::Io {
-                    action: "launch child from",
-                    path: PathBuf::from(&args.child[0]),
-                    source,
-                })
-            }
+            ChildOutcome::Uncertain { reason, .. } => Err(LandLockError::InvalidState(format!(
+                "child supervision failed after payload domain was proven empty: {reason}"
+            ))),
         }
     }
 
@@ -850,6 +1480,12 @@ fn new_holder(
     let host = current_host();
     Ok(LockState {
         agent: agent.to_string(),
+        repo: None,
+        operation: None,
+        pending_mutation: None,
+        pending_attempt: None,
+        pending_call_count: None,
+        pending_call_id: None,
         pr: pr.to_string(),
         host,
         acquired_at,
@@ -902,6 +1538,10 @@ fn current_boot_id() -> Result<String, LandLockError> {
 }
 
 pub(crate) fn process_start_ticks(pid: u32) -> io::Result<u64> {
+    process_stat_fields(pid).map(|(_, _, start_ticks)| start_ticks)
+}
+
+fn process_stat_fields(pid: u32) -> io::Result<(char, u32, u64)> {
     let path = PathBuf::from(format!("/proc/{pid}/stat"));
     let stat = fs::read_to_string(path)?;
     let close = stat.rfind(')').ok_or_else(|| {
@@ -911,18 +1551,637 @@ pub(crate) fn process_start_ticks(pid: u32) -> io::Result<u64> {
         )
     })?;
     let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
-    let value = fields.get(19).ok_or_else(|| {
+    let state = fields
+        .first()
+        .and_then(|value| value.chars().next())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "process stat has no state field",
+            )
+        })?;
+    let parent = fields.get(1).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no parent field",
+        )
+    })?;
+    let start_ticks = fields.get(19).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "process stat has no starttime field",
         )
     })?;
-    value.parse().map_err(|error| {
+    let parent = parent.parse().map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid process starttime {value:?}: {error}"),
+            format!("invalid process parent {parent:?}: {error}"),
         )
+    })?;
+    let start_ticks = start_ticks.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid process starttime {start_ticks:?}: {error}"),
+        )
+    })?;
+    Ok((state, parent, start_ticks))
+}
+
+pub(crate) fn read_current_boot_id() -> io::Result<String> {
+    fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|value| value.trim().to_string())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProcessGroupLiveness {
+    Active,
+    Absent,
+    Unknown(String),
+}
+
+fn process_group_liveness(pgid: u32) -> ProcessGroupLiveness {
+    let Some(target) = process_group_target(pgid) else {
+        return ProcessGroupLiveness::Unknown(format!("invalid process group {pgid}"));
+    };
+    // SAFETY: `process_group_target` excludes zero and the special -1 broadcast
+    // target. Signal zero probes existence without delivering a signal.
+    if unsafe { libc::kill(target, 0) } == 0 {
+        return ProcessGroupLiveness::Active;
+    }
+    let source = io::Error::last_os_error();
+    if source.raw_os_error() == Some(libc::ESRCH) {
+        ProcessGroupLiveness::Absent
+    } else {
+        ProcessGroupLiveness::Unknown(source.to_string())
+    }
+}
+
+pub(crate) fn exact_process_liveness(identity: &ProcessIdentity) -> Result<bool, String> {
+    match process_start_ticks(identity.pid) {
+        Ok(start_ticks) => Ok(start_ticks == identity.start_ticks),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(format!(
+            "cannot verify pid {}@{}: {source}",
+            identity.pid, identity.start_ticks
+        )),
+    }
+}
+
+pub(crate) fn verify_cleanup_record(
+    path: &Path,
+    expected: Option<(&str, &str)>,
+) -> CleanupVerification {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return CleanupVerification::None
+        }
+        Err(source) => {
+            return CleanupVerification::Unknown {
+                record: None,
+                reason: format!("cannot read {}: {source}", path.display()),
+            }
+        }
+    };
+    let record = match CleanupRecord::parse(&content) {
+        Ok(record) => record,
+        Err(reason) => {
+            return CleanupVerification::Unknown {
+                record: None,
+                reason: format!("malformed {}: {reason}", path.display()),
+            }
+        }
+    };
+    let Some((agent, operation)) = expected else {
+        return CleanupVerification::Unknown {
+            record: Some(record),
+            reason: "cleanup authority has no matching lock holder".into(),
+        };
+    };
+    if record.agent != agent || record.operation != operation {
+        return CleanupVerification::Unknown {
+            reason: format!(
+                "cleanup authority binds agent={:?} operation={:?}, not agent={agent:?} operation={operation:?}",
+                record.agent, record.operation
+            ),
+            record: Some(record),
+        };
+    }
+    let host = current_host();
+    if host == "unknown" || record.host != host {
+        return CleanupVerification::Unknown {
+            reason: format!(
+                "cleanup authority host {:?} does not match current host {host:?}",
+                record.host
+            ),
+            record: Some(record),
+        };
+    }
+    let boot_id = match read_current_boot_id() {
+        Ok(boot_id) => boot_id,
+        Err(source) => {
+            return CleanupVerification::Unknown {
+                reason: format!("cannot read current boot identity: {source}"),
+                record: Some(record),
+            }
+        }
+    };
+    if record.boot_id != boot_id {
+        return CleanupVerification::Recoverable {
+            reason: "recorded payload domain is from an earlier host boot".into(),
+            record,
+        };
+    }
+    match &record.phase {
+        CleanupPhase::Armed => CleanupVerification::Armed {
+            reason: "pre-spawn barrier is armed; no payload identity was durably published".into(),
+            record,
+        },
+        CleanupPhase::Published { leader, pgid } | CleanupPhase::CensusPending { leader, pgid } => {
+            let mut active = Vec::new();
+            let mut unknown = Vec::new();
+            match exact_process_liveness(leader) {
+                Ok(true) => active.push(format!("{}@{}", leader.pid, leader.start_ticks)),
+                Ok(false) => {}
+                Err(reason) => unknown.push(reason),
+            }
+            match process_group_liveness(*pgid) {
+                ProcessGroupLiveness::Active => active.push(format!("pgid {pgid}")),
+                ProcessGroupLiveness::Absent => {}
+                ProcessGroupLiveness::Unknown(reason) => {
+                    unknown.push(format!("cannot verify pgid {pgid}: {reason}"))
+                }
+            }
+            if !active.is_empty() {
+                CleanupVerification::Active {
+                    reason: format!(
+                        "published payload identities remain active: {}",
+                        active.join(", ")
+                    ),
+                    record,
+                }
+            } else {
+                let mut reason = unknown;
+                reason.push(
+                    "published payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
+                        .into(),
+                );
+                CleanupVerification::Uncensused {
+                    reason: reason.join("; "),
+                    record,
+                }
+            }
+        }
+        CleanupPhase::Residual {
+            pgid,
+            domain_complete,
+            residuals,
+        } => {
+            if !domain_complete {
+                return CleanupVerification::Unknown {
+                    reason: "residual process-domain capture was incomplete".into(),
+                    record: Some(record),
+                };
+            }
+            let mut active = Vec::new();
+            let mut unknown = Vec::new();
+            for identity in residuals {
+                match exact_process_liveness(identity) {
+                    Ok(true) => active.push(format!("{}@{}", identity.pid, identity.start_ticks)),
+                    Ok(false) => {}
+                    Err(reason) => unknown.push(reason),
+                }
+            }
+            match process_group_liveness(*pgid) {
+                ProcessGroupLiveness::Active => active.push(format!("pgid {pgid}")),
+                ProcessGroupLiveness::Absent => {}
+                ProcessGroupLiveness::Unknown(reason) => {
+                    unknown.push(format!("cannot verify pgid {pgid}: {reason}"))
+                }
+            }
+            if !active.is_empty() {
+                CleanupVerification::Active {
+                    reason: format!("payload identities remain active: {}", active.join(", ")),
+                    record,
+                }
+            } else if !unknown.is_empty() {
+                CleanupVerification::Unknown {
+                    reason: unknown.join("; "),
+                    record: Some(record),
+                }
+            } else {
+                CleanupVerification::Recoverable {
+                    reason:
+                        "all recorded residual identities and the captured process group are absent"
+                            .into(),
+                    record,
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn write_cleanup_record(path: &Path, record: &CleanupRecord) -> io::Result<()> {
+    let temporary = PathBuf::from(format!("{}.tmp-{}", path.display(), std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(record.render().as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_cleanup_record(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(source),
+    }
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// A child whose wrapper has execed into its own process group but whose guest
+/// command cannot start until `release` writes the one valid token. The pipe is
+/// close-on-exec everywhere except the wrapper's fixed read descriptor, and
+/// EOF/error is a fail-closed exit. Thus supervisor death before publication
+/// cannot accidentally start the guest.
+pub(crate) struct GatedChild {
+    pub(crate) child: Child,
+    pub(crate) leader: ProcessIdentity,
+    pub(crate) pgid: u32,
+    release: Option<File>,
+}
+
+impl GatedChild {
+    pub(crate) fn release(&mut self) -> io::Result<()> {
+        let mut release = self
+            .release
+            .take()
+            .ok_or_else(|| io::Error::other("child start gate was already released"))?;
+        release.write_all(b"ci-hub-go\n")?;
+        release.flush()
+    }
+}
+
+pub(crate) fn spawn_gated_child(
+    program: &OsString,
+    args: &[OsString],
+    configure: impl FnOnce(&mut Command),
+) -> io::Result<GatedChild> {
+    let mut pipe_fds = [-1; 2];
+    // SAFETY: `pipe_fds` names two writable c_int slots. Both returned
+    // descriptors are immediately owned below.
+    if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful pipe2 returned two new owned descriptors.
+    let read_gate = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+    // SAFETY: successful pipe2 returned two new owned descriptors.
+    let release_gate = unsafe { File::from_raw_fd(pipe_fds[1]) };
+    let read_fd = read_gate.as_raw_fd();
+
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(START_GATE_SCRIPT)
+        .arg("ci-hub-start-gate")
+        .arg(program)
+        .args(args)
+        .process_group(0);
+    configure(&mut command);
+    // SAFETY: the callback uses only async-signal-safe descriptor syscalls.
+    // It never waits: the execed shell performs the blocking read, so
+    // `Command::spawn` can return to publish the exact identity.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(read_fd, START_GATE_FD) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::fcntl(START_GATE_FD, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn()?;
+    drop(read_gate);
+    let pid = child.id();
+    let pid_t = libc::pid_t::try_from(pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "child pid exceeds pid_t"))?;
+    // SAFETY: getpgid only reads kernel state for this positive child PID.
+    let observed_pgid = unsafe { libc::getpgid(pid_t) };
+    if observed_pgid != pid_t {
+        drop(release_gate);
+        let _ = child.wait();
+        let detail = if observed_pgid < 0 {
+            io::Error::last_os_error().to_string()
+        } else {
+            format!("observed process group {observed_pgid}")
+        };
+        return Err(io::Error::other(format!(
+            "start-gated child {pid} was not group leader: {detail}"
+        )));
+    }
+    let leader = ProcessIdentity {
+        pid,
+        start_ticks: process_start_ticks(pid)?,
+    };
+    Ok(GatedChild {
+        child,
+        leader,
+        pgid: pid,
+        release: Some(release_gate),
     })
+}
+
+pub(crate) fn enable_child_subreaper() -> io::Result<()> {
+    // SAFETY: PR_SET_CHILD_SUBREAPER changes only this process attribute.
+    if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut enabled: libc::c_int = 0;
+    // SAFETY: PR_GET_CHILD_SUBREAPER writes one c_int to the provided pointer.
+    if unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, &mut enabled) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if enabled != 1 {
+        return Err(io::Error::other("kernel did not enable child subreaper"));
+    }
+    Ok(())
+}
+
+fn scan_descendants(root_pid: u32) -> io::Result<Vec<ProcessIdentity>> {
+    let mut processes = BTreeMap::new();
+    for entry in fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(pid) = name.parse::<u32>() else {
+            continue;
+        };
+        match scan_process_stat_fields(pid) {
+            Ok((_, parent, start_ticks)) => {
+                processes.insert(pid, (parent, start_ticks));
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => return Err(source),
+        }
+    }
+    let mut domain = BTreeSet::from([root_pid]);
+    loop {
+        let before = domain.len();
+        for (&pid, &(parent, _)) in &processes {
+            if domain.contains(&parent) {
+                domain.insert(pid);
+            }
+        }
+        if domain.len() == before {
+            break;
+        }
+    }
+    domain.remove(&root_pid);
+    Ok(domain
+        .into_iter()
+        .filter_map(|pid| {
+            processes.get(&pid).map(|(_, start_ticks)| ProcessIdentity {
+                pid,
+                start_ticks: *start_ticks,
+            })
+        })
+        .collect())
+}
+
+fn scan_process_stat_fields(pid: u32) -> io::Result<(char, u32, u64)> {
+    #[cfg(test)]
+    if SCAN_UNREADABLE_PID.load(std::sync::atomic::Ordering::SeqCst) == pid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "test-injected unreadable process identity",
+        ));
+    }
+    process_stat_fields(pid)
+}
+
+#[cfg(test)]
+static SCAN_UNREADABLE_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(test)]
+fn inject_unreadable_scan_pid(pid: u32) {
+    SCAN_UNREADABLE_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub(crate) fn signal_exact_process(
+    identity: &ProcessIdentity,
+    signal: libc::c_int,
+) -> io::Result<bool> {
+    let pid = libc::pid_t::try_from(identity.pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "pid exceeds pid_t"))?;
+    // Open a stable kernel reference before checking start_ticks. If the PID was
+    // already reused, the identity check rejects it; if it exits afterward,
+    // pidfd_send_signal returns ESRCH rather than targeting a future occupant.
+    // SAFETY: pidfd_open takes a positive PID and zero flags.
+    let raw_pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if raw_pidfd < 0 {
+        let source = io::Error::last_os_error();
+        return if source.raw_os_error() == Some(libc::ESRCH) {
+            Ok(false)
+        } else {
+            Err(source)
+        };
+    }
+    // SAFETY: successful pidfd_open returned one new owned descriptor.
+    let pidfd = unsafe { OwnedFd::from_raw_fd(raw_pidfd as libc::c_int) };
+    if !exact_process_liveness(identity).map_err(io::Error::other)? {
+        return Ok(false);
+    }
+    // SAFETY: pidfd_send_signal targets only the process referenced by pidfd;
+    // a null siginfo and zero flags are the documented simple-signal form.
+    let sent = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            signal,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    if sent == 0 {
+        Ok(true)
+    } else {
+        let source = io::Error::last_os_error();
+        if source.raw_os_error() == Some(libc::ESRCH) {
+            Ok(false)
+        } else {
+            Err(source)
+        }
+    }
+}
+
+pub(crate) struct ResidualCapture {
+    pub(crate) complete: bool,
+    pub(crate) identities: Vec<ProcessIdentity>,
+}
+
+pub(crate) fn capture_and_freeze_residuals(supervisor_pid: u32) -> ResidualCapture {
+    let mut prior = Vec::new();
+    for _ in 0..4 {
+        let identities = match scan_descendants(supervisor_pid) {
+            Ok(identities) => identities,
+            Err(_) => {
+                return ResidualCapture {
+                    complete: false,
+                    identities: prior,
+                }
+            }
+        };
+        let mut all_stopped = true;
+        for identity in &identities {
+            if signal_exact_process(identity, libc::SIGSTOP).is_err() {
+                all_stopped = false;
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+        for identity in &identities {
+            match process_stat_fields(identity.pid) {
+                Ok((state, _, start_ticks)) if start_ticks == identity.start_ticks => {
+                    all_stopped &= state == 'T' || state == 't' || state == 'Z';
+                }
+                Ok(_) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => all_stopped = false,
+            }
+        }
+        if identities == prior && all_stopped {
+            return ResidualCapture {
+                complete: true,
+                identities,
+            };
+        }
+        prior = identities;
+    }
+    ResidualCapture {
+        complete: false,
+        identities: prior,
+    }
+}
+
+pub(crate) fn reap_exited_children() {
+    loop {
+        let mut status = 0;
+        // SAFETY: waitpid with WNOHANG reaps only exited children of this
+        // dedicated supervisor process and never blocks.
+        let result = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if result <= 0 {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn process_domain_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+static HEARTBEAT_HELPER_DELAY_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+pub(crate) fn set_heartbeat_helper_delay(milliseconds: u64) {
+    HEARTBEAT_HELPER_DELAY_MS.store(milliseconds, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn heartbeat_test_helper_delay() {
+    let milliseconds = HEARTBEAT_HELPER_DELAY_MS.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if milliseconds > 0 {
+        Command::new("/bin/sleep")
+            .arg(format!("{:.3}", milliseconds as f64 / 1_000.0))
+            .status()
+            .expect("delayed heartbeat helper must complete");
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn heartbeat_test_helper_delay() {}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunCrashPoint {
+    AfterArm,
+    AfterSpawn,
+    AfterPublish,
+}
+
+#[cfg(test)]
+enum RunCrashAction {
+    ReturnError,
+    StopSupervisor { ready: PathBuf },
+}
+
+#[cfg(test)]
+static RUN_CRASH_HOOK: std::sync::Mutex<Option<(String, RunCrashPoint, RunCrashAction)>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn install_run_crash_hook(operation: &str, point: RunCrashPoint) {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(hook.is_none(), "a run crash hook is already installed");
+    *hook = Some((operation.to_string(), point, RunCrashAction::ReturnError));
+}
+
+#[cfg(test)]
+pub(crate) fn install_run_hard_death_hook(operation: &str, point: RunCrashPoint, ready: PathBuf) {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(hook.is_none(), "a run crash hook is already installed");
+    *hook = Some((
+        operation.to_string(),
+        point,
+        RunCrashAction::StopSupervisor { ready },
+    ));
+}
+
+#[cfg(test)]
+pub(crate) fn take_run_crash_hook(operation: &str, point: RunCrashPoint) -> bool {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let action = if hook
+        .as_ref()
+        .is_some_and(|(expected_operation, expected_point, _)| {
+            expected_operation == operation && *expected_point == point
+        }) {
+        hook.take().map(|(_, _, action)| action)
+    } else {
+        None
+    };
+    drop(hook);
+    match action {
+        Some(RunCrashAction::ReturnError) => true,
+        Some(RunCrashAction::StopSupervisor { ready }) => {
+            fs::write(&ready, b"ready\n").unwrap_or_else(|source| {
+                panic!("write hard-death readiness marker at {ready:?}: {source}")
+            });
+            let raised = unsafe { libc::raise(libc::SIGSTOP) };
+            assert_eq!(raised, 0, "SIGSTOP hard-death supervisor hook failed");
+            true
+        }
+        None => false,
+    }
 }
 
 fn current_process_owner() -> Result<ProcessOwner, LandLockError> {
@@ -946,6 +2205,13 @@ fn render_liveness(liveness: &OwnerLiveness) -> String {
         OwnerLiveness::Dead(reason) => format!("dead:{reason}"),
         OwnerLiveness::Unknown(reason) => format!("unknown:{reason}"),
     }
+}
+
+pub(crate) fn print_cleanup_record(record: &CleanupRecord, reason: &str) {
+    for line in record.render().lines() {
+        println!("  {line}");
+    }
+    println!("  verification={reason}");
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T, LandLockError> {
@@ -997,9 +2263,28 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> LandLockErr
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     /// The child exited on its own with this status.
-    Exited(ExitStatus),
+    Exited {
+        status: ExitStatus,
+        pgid: u32,
+    },
     /// The child exceeded its deadline and was killed.
-    TimedOut,
+    TimedOut {
+        pgid: u32,
+    },
+    Uncertain {
+        pgid: u32,
+        reason: String,
+    },
+}
+
+impl ChildOutcome {
+    fn pgid(&self) -> u32 {
+        match self {
+            Self::Exited { pgid, .. } | Self::TimedOut { pgid } | Self::Uncertain { pgid, .. } => {
+                *pgid
+            }
+        }
+    }
 }
 
 /// Wait for `child`, killing it if it runs longer than `deadline_secs`.
@@ -1012,23 +2297,37 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutc
     let deadline = Instant::now() + Duration::from_secs(deadline_secs);
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return ChildOutcome::Exited(status),
+            Ok(Some(status)) => {
+                return ChildOutcome::Exited {
+                    status,
+                    pgid: child.id(),
+                }
+            }
             Ok(None) => {}
             Err(source) => {
                 // Cannot supervise a child we can't wait on; block on it so we do
                 // not spin, and report whatever status it finally yields.
                 match child.wait() {
-                    Ok(status) => return ChildOutcome::Exited(status),
+                    Ok(status) => {
+                        return ChildOutcome::Exited {
+                            status,
+                            pgid: child.id(),
+                        }
+                    }
                     Err(_) => {
                         eprintln!("landing-lock: cannot wait on child: {source}");
-                        return ChildOutcome::TimedOut;
+                        return ChildOutcome::Uncertain {
+                            pgid: child.id(),
+                            reason: source.to_string(),
+                        };
                     }
                 }
             }
         }
         if Instant::now() >= deadline {
+            let pgid = child.id();
             terminate_child_group(child, pr);
-            return ChildOutcome::TimedOut;
+            return ChildOutcome::TimedOut { pgid };
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
@@ -1037,31 +2336,72 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutc
 /// SIGTERM then (after a grace period) SIGKILL the child's process group, and
 /// reap the direct child. The child was spawned with `process_group(0)`, so its
 /// pid equals its pgid and signalling `-pid` reaches the whole land subtree
-/// (gh / git / cargo), not just the wrapper shell. Uses `/bin/kill`, whose
-/// negative-pid convention targets a process group, to avoid a libc dependency
-/// in the shared cargo manifest.
+/// (gh / git / cargo), not just the wrapper shell.
 fn terminate_child_group(child: &mut Child, pr: &str) {
-    let group = format!("-{}", child.id());
+    // Capture the protected domain before TERM can reap its leader. Descendants
+    // retain this pgid even after the direct child exits.
+    let pgid = child.id();
+    let group = format!("-{pgid}");
     eprintln!("landing-lock: child-deadline reached for PR #{pr}; SIGTERM process group {group}");
-    signal_group("TERM", &group);
+    signal_group(libc::SIGTERM, pgid);
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
+        // Do not reap the leader yet: its exact PID keeps the captured process
+        // group identity from disappearing or being reused before final KILL.
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
-        if let Ok(Some(_)) = child.try_wait() {
-            return;
-        }
     }
     eprintln!("landing-lock: grace expired for PR #{pr}; SIGKILL process group {group}");
-    signal_group("KILL", &group);
-    let _ = child.wait();
+    let kill_sent = signal_group(libc::SIGKILL, pgid);
+    let child_reaped = if kill_sent {
+        child.wait().is_ok()
+    } else {
+        matches!(child.try_wait(), Ok(Some(_)))
+    };
+    let killed_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
+    while Instant::now() < killed_deadline {
+        if child_reaped && !process_group_exists(pgid) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
+    }
+    if child_reaped {
+        reap_exited_children();
+    }
 }
 
-/// Send `signal` to the process `group` (a negative pid string) via `/bin/kill`.
-pub(crate) fn signal_group(signal: &str, group: &str) {
-    let _ = Command::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(group)
-        .status();
+/// Send `signal` to the positive process-group ID without delegating negative
+/// PID parsing to a host-specific `kill(1)` implementation.
+pub(crate) fn signal_group(signal: libc::c_int, pgid: u32) -> bool {
+    signal_group_succeeds(signal, pgid)
+}
+
+fn signal_group_succeeds(signal: libc::c_int, pgid: u32) -> bool {
+    signal_group_with(signal, pgid, |target, signal| {
+        // SAFETY: `signal_group_with` admits only a negative group target below
+        // -1, and every signal is a libc constant at the production call sites.
+        unsafe { libc::kill(target, signal) == 0 }
+    })
+}
+
+fn signal_group_with(
+    signal: libc::c_int,
+    pgid: u32,
+    send: impl FnOnce(libc::pid_t, libc::c_int) -> bool,
+) -> bool {
+    process_group_target(pgid).is_some_and(|target| send(target, signal))
+}
+
+fn process_group_target(pgid: u32) -> Option<libc::pid_t> {
+    let pgid = libc::pid_t::try_from(pgid).ok()?;
+    // `kill(-1, signal)` is the Linux broadcast form, not process group 1.
+    // Refuse both non-group values before entering the syscall boundary.
+    (pgid > 1).then_some(-pgid)
+}
+
+/// Probe the captured process group, treating every error except ESRCH as live
+/// so cleanup fails closed on permission or transient kernel errors.
+pub(crate) fn process_group_exists(pgid: u32) -> bool {
+    !matches!(process_group_liveness(pgid), ProcessGroupLiveness::Absent)
 }
 
 pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
@@ -1075,6 +2415,20 @@ pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::*;
 
+    const HARD_DEATH_ROOT_ENV: &str = "CI_HUB_LANDING_HARD_DEATH_ROOT";
+    const HARD_DEATH_POINT_ENV: &str = "CI_HUB_LANDING_HARD_DEATH_POINT";
+
+    fn paths_at(root: &Path) -> LockPaths {
+        let lock = root.join(".landing-lock");
+        LockPaths {
+            guard: suffix(&lock, ".guard"),
+            queue: suffix(&lock, ".queue"),
+            owner: suffix(&lock, ".owner"),
+            cleanup: suffix(&lock, ".cleanup-required"),
+            lock,
+        }
+    }
+
     fn temp_paths(name: &str) -> LockPaths {
         let root = env::temp_dir().join(format!(
             "ci-hub-landing-lock-{name}-{}-{}",
@@ -1082,19 +2436,118 @@ mod tests {
             epoch_seconds().unwrap()
         ));
         fs::create_dir_all(&root).unwrap();
-        let lock = root.join(".landing-lock");
-        LockPaths {
-            guard: suffix(&lock, ".guard"),
-            queue: suffix(&lock, ".queue"),
-            owner: suffix(&lock, ".owner"),
-            lock,
+        paths_at(&root)
+    }
+
+    #[test]
+    fn process_group_signal_is_typed_and_target_scoped() {
+        let mut target = Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut control = Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+
+        let invalid_syscalls = std::cell::Cell::new(0);
+        let zero_refused = !signal_group_with(libc::SIGTERM, 0, |_, _| {
+            invalid_syscalls.set(invalid_syscalls.get() + 1);
+            true
+        });
+        let one_refused = !signal_group_with(libc::SIGTERM, 1, |_, _| {
+            invalid_syscalls.set(invalid_syscalls.get() + 1);
+            true
+        });
+        let target_signaled = signal_group_succeeds(libc::SIGTERM, target.id());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let target_exited = loop {
+            if target.try_wait().unwrap().is_some() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let control_survived = control.try_wait().unwrap().is_none();
+
+        if !target_exited {
+            let _ = target.kill();
+            let _ = target.wait();
         }
+        signal_group(libc::SIGKILL, control.id());
+        let _ = control.wait();
+
+        assert!(zero_refused, "pgid 0 must never target the caller's group");
+        assert!(one_refused, "pgid 1 must never become kill(-1) broadcast");
+        assert_eq!(
+            invalid_syscalls.get(),
+            0,
+            "invalid pgids must be rejected before signal delivery"
+        );
+        assert!(target_signaled, "typed process-group signal was refused");
+        assert!(target_exited, "target group did not terminate within 2s");
+        assert!(control_survived, "unrelated process group was signalled");
+    }
+
+    #[test]
+    fn unreadable_descendant_identity_makes_census_incomplete_then_recovers() {
+        let _domain_guard = process_domain_test_guard();
+        let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity {
+            pid: child.id(),
+            start_ticks: process_start_ticks(child.id()).unwrap(),
+        };
+        inject_unreadable_scan_pid(identity.pid);
+        let incomplete = capture_and_freeze_residuals(std::process::id());
+        assert!(!incomplete.complete);
+
+        inject_unreadable_scan_pid(0);
+        let visible = capture_and_freeze_residuals(std::process::id());
+        assert!(visible.complete);
+        assert!(visible.identities.contains(&identity));
+        signal_exact_process(&identity, libc::SIGKILL).unwrap();
+        child.wait().unwrap();
+        reap_exited_children();
+        let recovered = capture_and_freeze_residuals(std::process::id());
+        assert!(recovered.complete);
+        assert!(recovered.identities.is_empty());
+    }
+
+    #[test]
+    fn pidfd_signal_rejects_stale_identity_and_targets_exact_process() {
+        let mut target = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let mut control = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity {
+            pid: target.id(),
+            start_ticks: process_start_ticks(target.id()).unwrap(),
+        };
+        let stale = ProcessIdentity {
+            pid: identity.pid,
+            start_ticks: identity.start_ticks.saturating_add(1),
+        };
+        assert!(!signal_exact_process(&stale, libc::SIGKILL).unwrap());
+        assert!(target.try_wait().unwrap().is_none());
+        assert!(signal_exact_process(&identity, libc::SIGKILL).unwrap());
+        target.wait().unwrap();
+        assert!(control.try_wait().unwrap().is_none());
+        control.kill().unwrap();
+        control.wait().unwrap();
     }
 
     #[test]
     fn holder_format_is_byte_compatible() {
         let holder = LockState {
             agent: "hermit-ci".into(),
+            repo: None,
+            operation: None,
+            pending_mutation: None,
+            pending_attempt: None,
+            pending_call_count: None,
+            pending_call_id: None,
             pr: "1533".into(),
             host: "testhost".into(),
             acquired_at: 100,
@@ -1105,6 +2558,30 @@ mod tests {
         let rendered = "agent=hermit-ci\npr=1533\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\nreclaimed_from=hermit-dbi\n";
         assert_eq!(holder.render(), rendered);
         assert_eq!(LockState::parse(rendered).unwrap(), holder);
+    }
+
+    #[test]
+    fn holder_format_preserves_exact_head_lander_extensions() {
+        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=op-1\npending_mutation=op-1\npending_attempt=attempt-1\npending_call_count=1\npending_call_id=call-1\npr=1650\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
+        let holder = LockState::parse(rendered).unwrap();
+        assert_eq!(holder.repo.as_deref(), Some("rrnewton/hermit"));
+        assert_eq!(holder.pending_call_count, Some(1));
+        assert_eq!(holder.render(), rendered);
+
+        let renewed = holder.renewed(60).unwrap();
+        assert_eq!(renewed.repo, holder.repo);
+        assert_eq!(renewed.operation, holder.operation);
+        assert_eq!(renewed.pending_mutation, holder.pending_mutation);
+        assert_eq!(renewed.pending_attempt, holder.pending_attempt);
+        assert_eq!(renewed.pending_call_count, holder.pending_call_count);
+        assert_eq!(renewed.pending_call_id, holder.pending_call_id);
+
+        let unknown = format!("{rendered}unexpected=x\n");
+        assert!(matches!(
+            LockState::parse(&unknown),
+            Err(LandLockError::InvalidState(message))
+                if message.contains("unknown holder field")
+        ));
     }
 
     #[test]
@@ -1159,6 +2636,7 @@ mod tests {
 
     #[test]
     fn full_protocol_acquire_renew_status_release_and_run() {
+        let _domain_guard = process_domain_test_guard();
         let paths = temp_paths("full-protocol");
         let lock = LandingLock {
             paths: paths.clone(),
@@ -1198,7 +2676,43 @@ mod tests {
     }
 
     #[test]
+    fn census_waits_for_delayed_heartbeat_helper_before_freezing_descendants() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("delayed-heartbeat-helper");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        set_heartbeat_helper_delay(1_200);
+        let started = Instant::now();
+        let code = lock
+            .run(RunArgs {
+                agent: "delayed-heartbeat".into(),
+                pr: "delayed-helper".into(),
+                wait: 0,
+                hold: 3,
+                child_deadline: 10,
+                child: vec![OsString::from("/bin/sleep"), OsString::from("1.4")],
+            })
+            .unwrap();
+        assert_eq!(code, 0);
+        assert!(
+            started.elapsed() >= Duration::from_secs(2),
+            "heartbeat delay was not exercised: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "census froze the heartbeat helper: {:?}",
+            started.elapsed()
+        );
+        assert!(!paths.cleanup.exists());
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
     fn run_child_deadline_kills_child_and_releases_the_lock() {
+        let _domain_guard = process_domain_test_guard();
         let paths = temp_paths("child-deadline");
         let lock = LandingLock {
             paths: paths.clone(),
@@ -1225,6 +2739,501 @@ mod tests {
         );
         // Head-of-line block is cleared: the lock is free for the next waiter.
         assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn run_kills_stubborn_descendant_before_releasing_lock() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("stubborn-descendant");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("descendant.identity");
+        let script = r#"
+trap 'exit 0' TERM
+(
+  trap '' TERM HUP
+  pid=$BASHPID
+  start=$(awk '{print $22}' "/proc/$pid/stat")
+  printf '%s %s %s\n' "$pid" "$start" "$$" > "$1"
+  while :; do sleep 60; done
+) &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let started = Instant::now();
+        let code = lock
+            .run(RunArgs {
+                agent: "stubborn-lander".into(),
+                pr: "9997".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 1,
+                child: vec![
+                    OsString::from("/bin/bash"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("stubborn-descendant"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap();
+        assert_eq!(code, CHILD_DEADLINE_EXIT_CODE);
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        assert_eq!(fields.len(), 3, "unexpected identity record {identity:?}");
+        let pid: u32 = fields[0].parse().unwrap();
+        let start_ticks: u64 = fields[1].parse().unwrap();
+        let pgid: u32 = fields[2].parse().unwrap();
+        let descendant_survived_release =
+            matches!(process_start_ticks(pid), Ok(current) if current == start_ticks);
+        if descendant_survived_release {
+            signal_group(libc::SIGKILL, pgid);
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_secs(CHILD_TERM_GRACE_SECONDS),
+            "stubborn descendant did not survive TERM grace"
+        );
+        assert!(
+            !descendant_survived_release,
+            "exact descendant {pid}@{start_ticks} survived lock release"
+        );
+        assert!(!process_group_exists(pgid));
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn escaped_payload_quarantine_refuses_consumers_until_exact_recovery() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("escaped-quarantine");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+trap 'exit 0' TERM
+setsid /bin/bash -c '
+  trap "" TERM HUP
+  pid=$BASHPID
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let run_error = lock
+            .run(RunArgs {
+                agent: "escaped-lander".into(),
+                pr: "9996".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 1,
+                child: vec![
+                    OsString::from("/bin/bash"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("escaped-leader"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap_err();
+        assert!(matches!(run_error, LandLockError::CleanupQuarantined(_)));
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match &record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals.clone(),
+            phase => panic!("expected complete residual phase, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(matches!(exact_process_liveness(&escaped), Ok(true)));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Active { .. }
+        ));
+
+        let second = AcquireArgs {
+            agent: "replacement-lander".into(),
+            pr: "10000".into(),
+            wait: 0,
+            hold: 30,
+        };
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.renew("escaped-lander", 30, false),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.release("escaped-lander", false),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.reclaim_dead(),
+            Err(LandLockError::ReclaimNotProven(_))
+        ));
+        lock.status().unwrap();
+
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(residuals
+            .iter()
+            .all(|identity| matches!(exact_process_liveness(identity), Ok(false))));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Recoverable { .. }
+        ));
+        // Proven absence alone does not let an ordinary acquire erase the
+        // quarantine; explicit recovery is still required.
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        assert!(!paths.cleanup.exists());
+        assert_eq!(lock.acquire(&second).unwrap(), 0);
+        lock.release(&second.agent, false).unwrap();
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn hard_death_run_subprocess_entry() {
+        let Some(root) = env::var_os(HARD_DEATH_ROOT_ENV).map(PathBuf::from) else {
+            return;
+        };
+        let point = match env::var(HARD_DEATH_POINT_ENV).as_deref() {
+            Ok("after-arm") => RunCrashPoint::AfterArm,
+            Ok("after-spawn") => RunCrashPoint::AfterSpawn,
+            other => panic!("invalid hard-death point {other:?}"),
+        };
+        let paths = paths_at(&root);
+        let ready = root.join("supervisor-ready");
+        let marker = root.join("payload-started");
+        let pr = "hard-death";
+        install_run_hard_death_hook(&format!("pr:{pr}"), point, ready);
+        let result = LandingLock { paths }.run(RunArgs {
+            agent: "hard-death-lander".into(),
+            pr: pr.into(),
+            wait: 0,
+            hold: 30,
+            child_deadline: 30,
+            child: vec![
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                OsString::from("payload"),
+                marker.into_os_string(),
+            ],
+        });
+        panic!("hard-death subprocess resumed instead of being SIGKILLed: {result:?}");
+    }
+
+    #[test]
+    fn hard_death_before_publication_retains_armed_barrier() {
+        let _domain_guard = process_domain_test_guard();
+        for point_name in ["after-arm", "after-spawn"] {
+            let paths = temp_paths(&format!("hard-death-{point_name}"));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let ready = root.join("supervisor-ready");
+            let marker = root.join("payload-started");
+            let mut supervisor = Command::new(env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("landing_lock::tests::hard_death_run_subprocess_entry")
+                .arg("--nocapture")
+                .env(HARD_DEATH_ROOT_ENV, &root)
+                .env(HARD_DEATH_POINT_ENV, point_name)
+                .spawn()
+                .unwrap();
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !ready.exists() {
+                if let Some(status) = supervisor.try_wait().unwrap() {
+                    panic!("hard-death supervisor exited before readiness: {status}");
+                }
+                if Instant::now() >= deadline {
+                    let _ = supervisor.kill();
+                    let _ = supervisor.wait();
+                    panic!("hard-death supervisor did not reach {point_name}");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let lock = LandingLock {
+                paths: paths.clone(),
+            };
+            let owner = lock.read_process_owner().unwrap().unwrap();
+            assert_eq!(owner.pid, supervisor.id());
+            assert_eq!(
+                owner.start_ticks,
+                process_start_ticks(supervisor.id()).unwrap(),
+                "owner record was not bound to the stopped supervisor"
+            );
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(record.phase, CleanupPhase::Armed));
+            assert!(!marker.exists(), "guest ran before identity publication");
+
+            assert_eq!(
+                unsafe { libc::kill(supervisor.id() as libc::pid_t, libc::SIGKILL) },
+                0
+            );
+            let status = supervisor.wait().unwrap();
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+            let owner_identity = ProcessIdentity {
+                pid: owner.pid,
+                start_ticks: owner.start_ticks,
+            };
+            assert!(matches!(exact_process_liveness(&owner_identity), Ok(false)));
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !marker.exists(),
+                "start-gated guest ran after supervisor death"
+            );
+            let persisted =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(persisted.phase, CleanupPhase::Armed));
+
+            let second = AcquireArgs {
+                agent: "replacement-lander".into(),
+                pr: "replacement".into(),
+                wait: 0,
+                hold: 30,
+            };
+            assert!(matches!(
+                lock.acquire(&second),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(LandLockError::ReclaimNotProven(_))
+            ));
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn crash_windows_retain_armed_or_uncensused_barrier_after_owner_death() {
+        let _domain_guard = process_domain_test_guard();
+        for (index, point) in [
+            RunCrashPoint::AfterArm,
+            RunCrashPoint::AfterSpawn,
+            RunCrashPoint::AfterPublish,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let paths = temp_paths(&format!("crash-window-{index}"));
+            let lock = LandingLock {
+                paths: paths.clone(),
+            };
+            let marker = paths.lock.parent().unwrap().join("payload-started");
+            let pr = format!("crash-{index}");
+            install_run_crash_hook(&format!("pr:{pr}"), point);
+            let error = lock
+                .run(RunArgs {
+                    agent: "crash-lander".into(),
+                    pr: pr.clone(),
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    child: vec![
+                        OsString::from("/bin/sh"),
+                        OsString::from("-c"),
+                        OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                        OsString::from("payload"),
+                        marker.clone().into_os_string(),
+                    ],
+                })
+                .unwrap_err();
+            assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            let published = match (&point, &record.phase) {
+                (RunCrashPoint::AfterArm | RunCrashPoint::AfterSpawn, CleanupPhase::Armed) => None,
+                (RunCrashPoint::AfterPublish, CleanupPhase::Published { leader, pgid }) => {
+                    Some((leader.clone(), *pgid))
+                }
+                (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
+            };
+
+            if let Some((leader, _)) = &published {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline && !marker.exists() {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(marker.exists(), "published guest never started");
+                assert!(matches!(exact_process_liveness(leader), Ok(true)));
+            } else {
+                thread::sleep(Duration::from_millis(100));
+                reap_exited_children();
+                assert!(
+                    !marker.exists(),
+                    "guest payload ran before exact identity publication"
+                );
+            }
+
+            let mut owner = lock.read_process_owner().unwrap().unwrap();
+            owner.pid = u32::MAX;
+            write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+            let second = AcquireArgs {
+                agent: "replacement-lander".into(),
+                pr: "replacement".into(),
+                wait: 0,
+                hold: 30,
+            };
+            assert!(matches!(
+                lock.acquire(&second),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.renew("crash-lander", 30, false),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.release("crash-lander", false),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(LandLockError::ReclaimNotProven(_))
+            ));
+            lock.status().unwrap();
+
+            if let Some((leader, pgid)) = published {
+                signal_group(libc::SIGKILL, pgid);
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    reap_exited_children();
+                    if matches!(exact_process_liveness(&leader), Ok(false))
+                        && !process_group_exists(pgid)
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(matches!(exact_process_liveness(&leader), Ok(false)));
+                assert!(!process_group_exists(pgid));
+                assert!(matches!(
+                    lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+                    CleanupVerification::Uncensused { .. }
+                ));
+                assert!(matches!(
+                    lock.reclaim_dead(),
+                    Err(LandLockError::ReclaimNotProven(_))
+                ));
+            }
+            let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn normal_leader_exit_cannot_clear_an_escaped_payload_barrier() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("normal-exit-escaped");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+setsid /bin/sh -c '
+  trap "" TERM HUP
+  pid=$$
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+exit 0
+"#;
+        let error = lock
+            .run(RunArgs {
+                agent: "normal-exit-lander".into(),
+                pr: "normal-exit".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 30,
+                child: vec![
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("normal-leader"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap_err();
+        assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals,
+            phase => panic!("expected complete residual census, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(lock.read_holder().unwrap().is_some());
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 

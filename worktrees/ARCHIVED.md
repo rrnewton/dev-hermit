@@ -671,3 +671,9 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/detwait4` | detwait4 / detcore-wait4-nondelivery-sigkilled-child | Hermit `14332cb783aecd7b9682366fa6402353dbfe9902`; no Reverie or LiteInst2 child | The closed task left one clean Hermit commit unreachable from any remote. The existing feature ref had diverged, so the commit was preserved without rewriting history at `origin/recovery/detwait4-14332cb7`; the recovery is also recorded on the task. | Original Reverie fix landed separately as Reverie #355. The stale slot had no live process and was reclaimed only after the Hermit recovery ref existed. |
+
+### SCM_RIGHTS Reverie successor release (2026-08-06)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/reverie-343` | reverie-343 / fix_reverie_352_scm | Hermit detached `d386c965f3b13bee9ae788066ae91ae1e6bc8807`; Reverie branch `fix/scm-rights-translation-current` at `7732af2c4660fbf0dba787f438016586fc8762dd`; LiteInst2 detached `8bf704feb06a62e7a05bee3b237d70793e4e2689` | All children were clean and origin-durable. Reverie PR https://github.com/rrnewton/reverie/pull/385 merged as `dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6`; task `fix_reverie_352_scm` was closure-verified. No live owner, pane, cgroup, or process CWD remained; a binding-only sentinel was restored for canonical release. | Release is pending: `scripts/release-worktree.rs --slot reverie-343 --clean` safely refused because of unrelated pre-existing `pinbump` registry drift. The slot remains clean and intact; no bypass or quarantined-state repair was attempted. |

@@ -58,6 +58,10 @@ BIN_NAME="${WORKLOAD%%:*}"; TEST_PATH="${WORKLOAD#*:}"
 [ "$BIN_NAME" != "$WORKLOAD" ] || die "workload must be BIN:TESTPATH"
 
 emit() { if [ -n "$OUT" ]; then echo "$1" >>"$OUT"; else echo "$1"; fi; }
+detcore_package_name() {
+  grep -m1 -E '^name = "(hermit-)?detcore"$' "$1/detcore/Cargo.toml" |
+    cut -d '"' -f 2
+}
 
 # --- resolve the checkout + test binary --------------------------------------
 BUILD_S=0
@@ -78,7 +82,12 @@ else
   [ ! -d "$CO/target" ] && cp -a --reflink=auto "$HERMIT/target" "$CO/target" 2>/dev/null
   SHA="$(git -C "$CO" rev-parse HEAD 2>/dev/null || echo "$SHA_REQ")"
   bstart=$(date +%s)
-  ( cd "$CO" && cargo test -p detcore --test "$BIN_NAME" --no-run ) >/dev/null 2>&1 \
+  DETCOR_PACKAGE="$(detcore_package_name "$CO")"
+  case "$DETCOR_PACKAGE" in
+    detcore | hermit-detcore) ;;
+    *) SHORT="$(git -C "$CO" rev-parse --short HEAD 2>/dev/null)"; emit "$SHA,$SHORT,$(( $(date +%s)-bstart )),$WIDTH,,,,,BUILD_FAIL"; exit 0 ;;
+  esac
+  ( cd "$CO" && cargo test -p "$DETCOR_PACKAGE" --test "$BIN_NAME" --no-run ) >/dev/null 2>&1 \
     || { SHORT="$(git -C "$CO" rev-parse --short HEAD 2>/dev/null)"; emit "$SHA,$SHORT,$(( $(date +%s)-bstart )),$WIDTH,,,,,BUILD_FAIL"; exit 0; }
   BUILD_S=$(( $(date +%s)-bstart ))
 fi

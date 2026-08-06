@@ -53,7 +53,8 @@ is_excluded() {
         */.git/* | */ignored/* | */experiments/* | */scratch/* | */target/* \
             | */ai_docs/* | */docs/progress-reports/* \
             | */third-party/* | */vendor/* | */worktrees/* \
-            | */scripts/check-portable-paths.sh/)
+            | */scripts/check-portable-paths.sh/ \
+            | */dev_transcripts/test_sanitization.py/)
             return 0 ;;
         *) return 1 ;;
     esac

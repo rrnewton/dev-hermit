@@ -44,6 +44,22 @@ for tool in "$BUSYBOX" gcc cpio gzip; do
 done
 file "$BUSYBOX" | grep -q "statically linked" || fail "$BUSYBOX is not static"
 
+busybox_applet_list=$("$BUSYBOX" --list-full) || \
+  fail "$BUSYBOX could not enumerate its applets"
+mapfile -t busybox_applets <<< "$busybox_applet_list"
+for required_applet in sh setsid cttyhack; do
+  required_path=
+  for app in "${busybox_applets[@]}"; do
+    if [[ ${app##*/} == "$required_applet" ]]; then
+      required_path=$app
+      break
+    fi
+  done
+  [[ -n $required_path ]] || \
+    fail "$BUSYBOX is missing required applet: $required_applet"
+  printf 'busybox applet: %s -> /%s\n' "$required_applet" "$required_path"
+done
+
 mkdir -p "$ARTIFACT_DIR"
 
 # --- 1. Kernel -------------------------------------------------------------
@@ -57,7 +73,7 @@ trap 'rm -rf "$root"' EXIT
 mkdir -p "$root"/{bin,sbin,etc,proc,sys,dev,tmp}
 cp "$BUSYBOX" "$root/bin/busybox"; chmod +x "$root/bin/busybox"
 ( cd "$root"
-  for app in $(./bin/busybox --list-full); do
+  for app in "${busybox_applets[@]}"; do
     mkdir -p "$(dirname "$app")"
     [[ $app == bin/busybox ]] || ln -sf /bin/busybox "$app"
   done )
@@ -74,7 +90,7 @@ if [ "${HERMIT_AUTOTEST:-}" = "1" ] || grep -q hermit_autotest /proc/cmdline 2>/
     echo "HERMIT-QEMU-AUTOTEST-DONE"; poweroff -f
 fi
 echo "Interactive busybox shell. Type 'poweroff -f' to exit."
-exec /bin/sh
+exec setsid cttyhack sh
 INIT
 chmod +x "$root/init"
 printf 'root:x:0:0:root:/:/bin/sh\n' > "$root/etc/passwd"

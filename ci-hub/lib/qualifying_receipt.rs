@@ -99,7 +99,8 @@ pub struct QualifyingPredicate {
 impl QualifyingPredicate {
     /// Parse from JSON text, mapping errors to a message that names the source.
     pub fn parse(text: &str, origin: &str) -> Result<Self, String> {
-        serde_json::from_str(text).map_err(|e| format!("{origin}: malformed qualifying predicate: {e}"))
+        serde_json::from_str(text)
+            .map_err(|e| format!("{origin}: malformed qualifying predicate: {e}"))
     }
 }
 
@@ -280,7 +281,10 @@ mod tests {
         let tightened = write(
             &dir,
             "tight.json",
-            &EMBEDDED.replace("\"executed_tests_min\": 1", "\"executed_tests_min\": 999999"),
+            &EMBEDDED.replace(
+                "\"executed_tests_min\": 1",
+                "\"executed_tests_min\": 999999",
+            ),
         );
         let sha = "a".repeat(40);
         // Build the row the way the rest of the crate's tests do (HistoryRow has
@@ -293,11 +297,19 @@ mod tests {
                     "zero_executed_nodes":[],"absent_nodes":[]}}}}"#
         ))
         .unwrap();
-        let live_pred = QualifyingPredicate::parse(&std::fs::read_to_string(&live).unwrap(), "live").unwrap();
+        let live_pred =
+            QualifyingPredicate::parse(&std::fs::read_to_string(&live).unwrap(), "live").unwrap();
         let tight_pred =
-            QualifyingPredicate::parse(&std::fs::read_to_string(&tightened).unwrap(), "tight").unwrap();
-        assert!(row_qualifies(&row, &sha, &live_pred), "live must accept the genuine green");
-        assert!(!row_qualifies(&row, &sha, &tight_pred), "tightened must reject it");
+            QualifyingPredicate::parse(&std::fs::read_to_string(&tightened).unwrap(), "tight")
+                .unwrap();
+        assert!(
+            row_qualifies(&row, &sha, &live_pred),
+            "live must accept the genuine green"
+        );
+        assert!(
+            !row_qualifies(&row, &sha, &tight_pred),
+            "tightened must reject it"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

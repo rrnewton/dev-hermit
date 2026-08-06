@@ -16,7 +16,7 @@ make_receipt() {
       schema_version: 1,
       repository: "rrnewton/hermit",
       commit: $sha,
-      run_id: ($sha + "@2026-08-04T12:00:00Z"),
+      run_id: ($sha + "@2026-08-04T12:00:00Z@test-host"),
       source_log_file: "/tmp/validate.log",
       durable_log_file: "/durable/validate.log",
       log_sha256: ("c" * 64),
@@ -24,6 +24,7 @@ make_receipt() {
         schema_version: 1,
         started_at: "2026-08-04T12:00:00Z",
         finished_at: "2026-08-04T12:01:00Z",
+        host: "test-host",
         commit: $sha,
         profile: "full",
         selection_mode: "full",
@@ -110,6 +111,17 @@ if "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
     exit 1
 fi
 
+# Host-in-identity negative: a receipt whose run_id host segment disagrees with
+# the ledger_record.host it embeds is refused (the host cannot be swapped without
+# breaking the tamper-evident run_id).
+make_receipt 12 "$tmp/host-good.json"
+jq -cS '.run_id = (.commit + "@" + .ledger_record.started_at + "@other-host")' \
+    "$tmp/host-good.json" >"$tmp/host-mismatch.json"
+verify_file "$tmp/host-mismatch.json" fail "run_id host disagrees with ledger host"
+# A receipt whose ledger_record omits host entirely is likewise refused.
+jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent.json"
+verify_file "$tmp/host-absent.json" fail "ledger host absent"
+
 # Count-capable receipts additionally bind the per-node coverage obligation.
 # Use a second exact head so the two positive controls represent two distinct
 # legitimate landing authorizations rather than repeated parsing of one row.
@@ -141,4 +153,4 @@ if [[ -e $plant_root ]]; then
 fi
 trap - EXIT
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; stale-head, forged, tampered, zero-executed, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
