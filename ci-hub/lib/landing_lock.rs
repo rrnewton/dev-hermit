@@ -34,17 +34,11 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
-/// Exit code reported when the lease heartbeat fails and the child domain is
-/// terminated before it can outlive the serialized authority.
-const HEARTBEAT_FAILURE_EXIT_CODE: i32 = 125;
 /// Grace period between SIGTERM and SIGKILL when terminating a timed-out child.
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
 const START_GATE_FD: libc::c_int = 9;
-/// Maximum launcher layers accepted on either side of the selected Python
-/// landing child. Normal measured topology is two edges or fewer.
-const MAX_ASSERT_CHILD_ANCESTRY_DEPTH: usize = 8;
 const START_GATE_SCRIPT: &str = r#"
 if IFS= read -r ci_hub_start_token <&9 && [ "$ci_hub_start_token" = "ci-hub-go" ]; then
   exec 9<&-
@@ -71,14 +65,6 @@ pub enum LandLockCommand {
     Status,
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
-    /// Prove this process is the supervised child of the exact held lease.
-    AssertChild(AssertChildArgs),
-    /// Persist a barrier before the supervised child starts an external mutation.
-    ArmMutation(MutationArgs),
-    /// Advance the exact external-call high-water before invoking GitHub.
-    BindMutationCall(MutationCallArgs),
-    /// Clear a barrier after proving the external mutation cannot still occur.
-    ClearMutation(MutationArgs),
     /// Acquire and run with a heartbeat; release after complete cleanup proof,
     /// otherwise retain a quarantine.
     Run(RunArgs),
@@ -111,71 +97,11 @@ pub struct ReleaseArgs {
 }
 
 #[derive(Args, Clone, Debug)]
-pub struct AssertChildArgs {
-    #[arg(long)]
-    pub agent: String,
-    #[arg(long)]
-    pub repo: String,
-    #[arg(long)]
-    pub pr: String,
-    /// Exact operation identity (the authorized head for safe landings).
-    #[arg(long)]
-    pub operation: Option<String>,
-    /// PID of the Python landing child. This selector is checked against both
-    /// the published cleanup authority and this verifier's kernel ancestry.
-    #[arg(long)]
-    pub child_pid: u32,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct MutationArgs {
-    #[arg(long)]
-    pub agent: String,
-    #[arg(long)]
-    pub repo: String,
-    #[arg(long)]
-    pub pr: String,
-    #[arg(long)]
-    pub operation: String,
-    /// Durable landing-attempt identity bound to this exact mutation.
-    #[arg(long)]
-    pub attempt_id: String,
-    #[arg(long)]
-    pub child_pid: u32,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct MutationCallArgs {
-    #[arg(long)]
-    pub agent: String,
-    #[arg(long)]
-    pub repo: String,
-    #[arg(long)]
-    pub pr: String,
-    #[arg(long)]
-    pub operation: String,
-    #[arg(long)]
-    pub attempt_id: String,
-    #[arg(long)]
-    pub call_id: String,
-    #[arg(long)]
-    pub call_count: u64,
-    #[arg(long)]
-    pub child_pid: u32,
-}
-
-#[derive(Args, Clone, Debug)]
 pub struct RunArgs {
     #[arg(long)]
     pub agent: String,
     #[arg(long)]
     pub pr: String,
-    /// Repository identity carried by supervised exact-head landing children.
-    #[arg(long)]
-    pub repo: Option<String>,
-    /// Exact operation identity used to recover a retained external mutation.
-    #[arg(long)]
-    pub operation: Option<String>,
     #[arg(long, default_value_t = DEFAULT_WAIT_SECONDS)]
     pub wait: u64,
     #[arg(long, default_value_t = DEFAULT_HOLD_SECONDS)]
@@ -548,7 +474,7 @@ impl LockState {
                 }
             }
         }
-        let state = Self {
+        Ok(Self {
             agent: required(agent, "agent")?,
             repo,
             operation,
@@ -562,32 +488,7 @@ impl LockState {
             acquired_human: required(acquired_human, "acquired_human")?,
             expires_at: required(expires_at, "expires_at")?,
             reclaimed_from,
-        };
-        match (
-            state.pending_mutation.as_deref(),
-            state.pending_attempt.as_deref(),
-            state.pending_call_count,
-            state.pending_call_id.as_deref(),
-        ) {
-            (None, None, None, None) => {}
-            (Some(mutation), Some(attempt), Some(0), None)
-                if state.repo.is_some()
-                    && state.operation.as_deref() == Some(mutation)
-                    && valid_lower_hex32(attempt) => {}
-            (Some(mutation), Some(attempt), Some(count), Some(call_id))
-                if count > 0
-                    && state.repo.is_some()
-                    && state.operation.as_deref() == Some(mutation)
-                    && valid_lower_hex32(attempt)
-                    && valid_lower_hex32(call_id) => {}
-            _ => {
-                return Err(LandLockError::InvalidState(
-                    "pending mutation must bind exact operation, repository, attempt, and call high-water"
-                        .into(),
-                ))
-            }
-        }
-        Ok(state)
+        })
     }
 
     fn render(&self) -> String {
@@ -688,10 +589,6 @@ pub enum LandLockError {
         "landing-lock: {operation}: process {pid} owns the supervised lease, not this process"
     )]
     ProcessNotOwner { operation: &'static str, pid: u32 },
-    #[error("landing-lock: assert-child refused: {0}")]
-    ChildAssertion(String),
-    #[error("landing-lock: external mutation remains pending: {0}")]
-    MutationPending(String),
     #[error("landing-lock: cannot reclaim lease: {0}")]
     ReclaimNotProven(String),
     #[error("landing-lock: cleanup quarantine: {0}")]
@@ -704,8 +601,6 @@ impl LandLockError {
             Self::RenewNotOwner { .. }
             | Self::ReleaseNotOwner { .. }
             | Self::ProcessNotOwner { .. }
-            | Self::ChildAssertion(_)
-            | Self::MutationPending(_)
             | Self::ReclaimNotProven(_)
             | Self::CleanupQuarantined(_)
             | Self::GuardTimeout
@@ -769,10 +664,6 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
             Ok(0)
         }
         LandLockCommand::ReclaimDead => lock.reclaim_dead(),
-        LandLockCommand::AssertChild(args) => lock.assert_child(&args),
-        LandLockCommand::ArmMutation(args) => lock.set_mutation_barrier(&args, true),
-        LandLockCommand::BindMutationCall(args) => lock.bind_mutation_call(&args),
-        LandLockCommand::ClearMutation(args) => lock.set_mutation_barrier(&args, false),
         LandLockCommand::Run(args) => lock.run(args),
     }
 }
@@ -807,13 +698,6 @@ impl LandingLock {
                 LandLockError::CleanupQuarantined(format!("UNVERIFIABLE: {reason}")),
             ),
         }
-    }
-
-    fn require_no_pending_mutation(&self, holder: Option<&LockState>) -> Result<(), LandLockError> {
-        if let Some(operation) = holder.and_then(|state| state.pending_mutation.as_deref()) {
-            return Err(LandLockError::MutationPending(operation.to_string()));
-        }
-        Ok(())
     }
 
     fn arm_run(&self, agent: &str, pr: &str) -> Result<(), LandLockError> {
@@ -977,12 +861,6 @@ impl LandingLock {
     }
 
     fn renew_run_lease(&self, agent: &str, pr: &str, hold: u64) -> Result<(), LandLockError> {
-        #[cfg(test)]
-        if FAIL_NEXT_RUN_HEARTBEAT.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            return Err(LandLockError::InvalidState(
-                "test-injected run heartbeat failure".into(),
-            ));
-        }
         self.with_guard(|| {
             let holder = self
                 .read_holder()?
@@ -1010,18 +888,10 @@ impl LandingLock {
     }
 
     fn acquire(&self, args: &AcquireArgs) -> Result<i32, LandLockError> {
-        self.acquire_with_binding(args, None)
-    }
-
-    fn acquire_with_binding(
-        &self,
-        args: &AcquireArgs,
-        binding: Option<(Option<&str>, Option<&str>)>,
-    ) -> Result<i32, LandLockError> {
         let started = Instant::now();
         let mut last = String::new();
         loop {
-            let token = self.with_guard(|| self.try_acquire(args, binding))?;
+            let token = self.with_guard(|| self.try_acquire(args))?;
             match token {
                 AcquireToken::Acquired => {
                     eprintln!(
@@ -1070,14 +940,9 @@ impl LandingLock {
         }
     }
 
-    fn try_acquire(
-        &self,
-        args: &AcquireArgs,
-        binding: Option<(Option<&str>, Option<&str>)>,
-    ) -> Result<AcquireToken, LandLockError> {
+    fn try_acquire(&self, args: &AcquireArgs) -> Result<AcquireToken, LandLockError> {
         let now = epoch_seconds()?;
         let holder = self.read_holder()?;
-        self.require_no_pending_mutation(holder.as_ref())?;
         self.require_no_cleanup(holder.as_ref())?;
         let mut queue = self.read_queue()?;
         if !queue.iter().any(|entry| entry.agent == args.agent) {
@@ -1124,16 +989,13 @@ impl LandingLock {
                 holder.agent
             }
         });
-        let mut acquired = new_holder(&args.agent, &args.pr, args.hold, reclaimed.clone())?;
-        if let Some((repo, operation)) = binding {
-            acquired.repo = repo.map(str::to_string);
-            acquired.operation = operation.map(str::to_string);
-        }
-        self.write_holder(&acquired)?;
+        self.write_holder(&new_holder(
+            &args.agent,
+            &args.pr,
+            args.hold,
+            reclaimed.clone(),
+        )?)?;
         remove_if_exists(&self.paths.owner)?;
-        if binding.is_some() {
-            self.write_current_process_owner()?;
-        }
         queue.retain(|entry| entry.agent != args.agent);
         self.write_queue(&queue)?;
         Ok(match reclaimed {
@@ -1168,7 +1030,6 @@ impl LandingLock {
     fn release(&self, agent: &str, announce: bool) -> Result<(), LandLockError> {
         let (released, next) = self.with_guard(|| {
             let holder = self.read_holder()?;
-            self.require_no_pending_mutation(holder.as_ref())?;
             self.require_no_cleanup(holder.as_ref())?;
             let Some(holder) = holder else {
                 remove_if_exists(&self.paths.owner)?;
@@ -1299,11 +1160,6 @@ impl LandingLock {
                     }
                 };
             };
-            if let Some(operation) = &holder.pending_mutation {
-                return Err(LandLockError::ReclaimNotProven(format!(
-                    "external mutation {operation:?} requires exact-operation recovery"
-                )));
-            }
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Armed { reason, .. }
                 | CleanupVerification::Active { reason, .. }
@@ -1336,58 +1192,6 @@ impl LandingLock {
         Ok(0)
     }
 
-    /// Adopt only a retained external mutation whose complete authority tuple
-    /// exactly matches this run. Cleanup must either be absent or already carry
-    /// a complete absence proof; generic acquisition is never allowed to cross
-    /// this barrier.
-    fn try_adopt_retained_mutation(&self, args: &RunArgs) -> Result<bool, LandLockError> {
-        let Some(holder) = self.read_holder()? else {
-            return Ok(false);
-        };
-        let Some(pending) = holder.pending_mutation.as_deref() else {
-            return Ok(false);
-        };
-        if holder.agent != args.agent
-            || holder.pr != args.pr
-            || holder.repo != args.repo
-            || holder.operation != args.operation
-            || args.operation.as_deref() != Some(pending)
-        {
-            return Ok(false);
-        }
-        let cleanup_recoverable = match self.cleanup_verification(Some(&holder)) {
-            CleanupVerification::None => false,
-            CleanupVerification::Recoverable { .. } => true,
-            CleanupVerification::Armed { .. }
-            | CleanupVerification::Active { .. }
-            | CleanupVerification::Uncensused { .. }
-            | CleanupVerification::Unknown { .. } => return Ok(false),
-        };
-        if !cleanup_recoverable
-            && self.read_process_owner()?.is_some()
-            && !matches!(self.owner_liveness()?, OwnerLiveness::Dead(_))
-        {
-            return Ok(false);
-        }
-
-        let mut adopted = new_holder(&args.agent, &args.pr, args.hold, None)?;
-        adopted.repo = args.repo.clone();
-        adopted.operation = args.operation.clone();
-        adopted.pending_mutation = holder.pending_mutation;
-        adopted.pending_attempt = holder.pending_attempt;
-        adopted.pending_call_count = holder.pending_call_count;
-        adopted.pending_call_id = holder.pending_call_id;
-        self.write_holder(&adopted)?;
-        remove_if_exists(&self.paths.owner)?;
-        if cleanup_recoverable {
-            remove_cleanup_record(&self.paths.cleanup)
-                .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
-        }
-        self.write_current_process_owner()?;
-        self.remove_from_queue(&args.agent)?;
-        Ok(true)
-    }
-
     fn run(&self, args: RunArgs) -> Result<i32, LandLockError> {
         if args.child.is_empty() {
             return Err(LandLockError::EmptyChild);
@@ -1404,18 +1208,13 @@ impl LandingLock {
             wait: args.wait,
             hold: args.hold,
         };
-        let adopted = self.with_guard(|| self.try_adopt_retained_mutation(&args))?;
-        if adopted {
-            eprintln!(
-                "landing-lock: ADOPTED retained mutation by {} for PR #{} operation={:?}",
-                args.agent, args.pr, args.operation
-            );
-        } else {
-            let binding = Some((args.repo.as_deref(), args.operation.as_deref()));
-            let acquire_status = self.acquire_with_binding(&acquire, binding)?;
-            if acquire_status != 0 {
-                return Ok(acquire_status);
-            }
+        let acquire_status = self.acquire(&acquire)?;
+        if acquire_status != 0 {
+            return Ok(acquire_status);
+        }
+        if let Err(error) = self.with_guard(|| self.write_current_process_owner()) {
+            let _ = self.release(&args.agent, true);
+            return Err(error);
         }
 
         // Persist the fail-closed authority before any child exists. The start
@@ -1458,7 +1257,6 @@ impl LandingLock {
         }
 
         let (stop_tx, stop_rx) = mpsc::channel();
-        let (heartbeat_failed_tx, heartbeat_failed_rx) = mpsc::channel();
         let heartbeat_paths = self.paths.clone();
         let heartbeat_agent = args.agent.clone();
         let heartbeat_pr = args.pr.clone();
@@ -1473,18 +1271,12 @@ impl LandingLock {
                     .renew_run_lease(&heartbeat_agent, &heartbeat_pr, heartbeat_hold)
                     .is_err()
                 {
-                    let _ = heartbeat_failed_tx.send(());
                     break;
                 }
             }
         });
 
-        let outcome = supervise_child(
-            &mut gated.child,
-            args.child_deadline,
-            &args.pr,
-            &heartbeat_failed_rx,
-        );
+        let outcome = supervise_child(&mut gated.child, args.child_deadline, &args.pr);
         // Atomically disable heartbeat renewal before stopping it. A heartbeat
         // already holding the guard finishes first; after this durable phase
         // transition no stale renewal can race cleanup or authorize reclaim.
@@ -1504,10 +1296,11 @@ impl LandingLock {
             )));
         }
         self.clear_proven_run(&args.agent, &args.pr, pgid)?;
-        let (result_code, terminal_error) = match outcome {
+        self.release(&args.agent, true)?;
+        match outcome {
             ChildOutcome::Exited { status, pgid } => {
                 debug_assert_eq!(pgid, gated.pgid);
-                (exit_status_code(status), None)
+                Ok(exit_status_code(status))
             }
             ChildOutcome::TimedOut { pgid } => {
                 debug_assert_eq!(pgid, gated.pgid);
@@ -1517,390 +1310,12 @@ impl LandingLock {
                      PR left open for retry.",
                     args.pr, args.child_deadline
                 );
-                (CHILD_DEADLINE_EXIT_CODE, None)
+                Ok(CHILD_DEADLINE_EXIT_CODE)
             }
-            ChildOutcome::HeartbeatFailed { pgid } => {
-                debug_assert_eq!(pgid, gated.pgid);
-                eprintln!(
-                    "landing-lock: ABANDON PR #{}: lease heartbeat failed; verified the land subtree empty",
-                    args.pr
-                );
-                (HEARTBEAT_FAILURE_EXIT_CODE, None)
-            }
-            ChildOutcome::Uncertain { reason, .. } => {
-                let error = LandLockError::InvalidState(format!(
-                    "child supervision failed after payload domain was proven empty: {reason}"
-                ));
-                (error.exit_code(), Some(error))
-            }
-        };
-        let retained = self.with_guard(|| {
-            let Some(holder) = self.read_holder()? else {
-                return Ok(false);
-            };
-            if holder.pending_mutation.is_none() {
-                return Ok(false);
-            }
-            self.assert_current_process_owner("retain mutation")?;
-            remove_if_exists(&self.paths.owner)?;
-            Ok(true)
-        })?;
-        if retained {
-            eprintln!(
-                "landing-lock: RETAINED external mutation for PR #{} operation={:?}; exact-operation recovery required",
-                args.pr, args.operation
-            );
-            if result_code == 0 {
-                return Err(LandLockError::MutationPending(
-                    args.operation.unwrap_or_else(|| "unknown operation".into()),
-                ));
-            }
-            if let Some(error) = terminal_error {
-                return Err(error);
-            }
-            return Ok(result_code);
+            ChildOutcome::Uncertain { reason, .. } => Err(LandLockError::InvalidState(format!(
+                "child supervision failed after payload domain was proven empty: {reason}"
+            ))),
         }
-        self.release(&args.agent, true)?;
-        match terminal_error {
-            Some(error) => Err(error),
-            None => Ok(result_code),
-        }
-    }
-
-    fn assert_child(&self, args: &AssertChildArgs) -> Result<i32, LandLockError> {
-        let verifier_pid = std::process::id();
-        let (
-            supervisor_pid,
-            child_depth,
-            verifier_depth,
-            pending_mutation,
-            pending_attempt,
-            pending_call_count,
-            pending_call_id,
-        ) = self.with_guard(|| self.assert_child_process(args, verifier_pid))?;
-        println!(
-            "LOCK_CHILD_VERIFIED agent={} repo={} pr={} operation={} child_pid={} verifier_pid={} supervisor_pid={} child_depth={} verifier_depth={} pending_mutation={} pending_attempt={} pending_call_count={} pending_call_id={}",
-            args.agent,
-            args.repo,
-            args.pr,
-            args.operation.as_deref().unwrap_or("-"),
-            args.child_pid,
-            verifier_pid,
-            supervisor_pid,
-            child_depth,
-            verifier_depth,
-            pending_mutation.as_deref().unwrap_or("-"),
-            pending_attempt.as_deref().unwrap_or("-"),
-            pending_call_count.map_or_else(|| "-".into(), |count| count.to_string()),
-            pending_call_id.as_deref().unwrap_or("-"),
-        );
-        Ok(0)
-    }
-
-    fn set_mutation_barrier(&self, args: &MutationArgs, armed: bool) -> Result<i32, LandLockError> {
-        if !valid_lower_hex32(&args.attempt_id) {
-            return Err(LandLockError::ChildAssertion(
-                "mutation barrier attempt id must be lowercase 32-hex".into(),
-            ));
-        }
-        let verifier_pid = std::process::id();
-        let assertion = AssertChildArgs {
-            agent: args.agent.clone(),
-            repo: args.repo.clone(),
-            pr: args.pr.clone(),
-            operation: Some(args.operation.clone()),
-            child_pid: args.child_pid,
-        };
-        self.with_guard(|| {
-            self.assert_child_process(&assertion, verifier_pid)?;
-            let mut holder = self
-                .read_holder()?
-                .ok_or_else(|| LandLockError::ChildAssertion("no landing lease is held".into()))?;
-            let existing = (
-                holder.pending_mutation.as_deref(),
-                holder.pending_attempt.as_deref(),
-            );
-            let expected = (
-                Some(args.operation.as_str()),
-                Some(args.attempt_id.as_str()),
-            );
-            match (armed, existing) {
-                (true, (None, None)) => {
-                    holder.pending_mutation = Some(args.operation.clone());
-                    holder.pending_attempt = Some(args.attempt_id.clone());
-                    holder.pending_call_count = Some(0);
-                    holder.pending_call_id = None;
-                }
-                (true, observed) if observed == expected => {}
-                (true, observed) => {
-                    return Err(LandLockError::ChildAssertion(format!(
-                        "another mutation barrier is already armed: {observed:?}"
-                    )))
-                }
-                (false, (None, None)) => {}
-                (false, observed) if observed == expected => {
-                    holder.pending_mutation = None;
-                    holder.pending_attempt = None;
-                    holder.pending_call_count = None;
-                    holder.pending_call_id = None;
-                }
-                (false, observed) => {
-                    return Err(LandLockError::ChildAssertion(format!(
-                        "mutation barrier is {observed:?}, not {expected:?}"
-                    )))
-                }
-            }
-            self.write_holder(&holder)
-        })?;
-        println!(
-            "MUTATION_BARRIER_{} agent={} repo={} pr={} operation={} attempt_id={}",
-            if armed { "ARMED" } else { "CLEARED" },
-            args.agent,
-            args.repo,
-            args.pr,
-            args.operation,
-            args.attempt_id,
-        );
-        Ok(0)
-    }
-
-    fn bind_mutation_call(&self, args: &MutationCallArgs) -> Result<i32, LandLockError> {
-        if !valid_lower_hex32(&args.attempt_id)
-            || !valid_lower_hex32(&args.call_id)
-            || args.call_count == 0
-        {
-            return Err(LandLockError::ChildAssertion(
-                "mutation call requires lowercase 32-hex attempt/call ids and positive count"
-                    .into(),
-            ));
-        }
-        let verifier_pid = std::process::id();
-        let assertion = AssertChildArgs {
-            agent: args.agent.clone(),
-            repo: args.repo.clone(),
-            pr: args.pr.clone(),
-            operation: Some(args.operation.clone()),
-            child_pid: args.child_pid,
-        };
-        self.with_guard(|| {
-            self.assert_child_process(&assertion, verifier_pid)?;
-            let mut holder = self
-                .read_holder()?
-                .ok_or_else(|| LandLockError::ChildAssertion("no landing lease is held".into()))?;
-            if holder.pending_mutation.as_deref() != Some(args.operation.as_str())
-                || holder.pending_attempt.as_deref() != Some(args.attempt_id.as_str())
-            {
-                return Err(LandLockError::ChildAssertion(
-                    "mutation call does not match the armed operation and attempt".into(),
-                ));
-            }
-            let prior_count = holder.pending_call_count.ok_or_else(|| {
-                LandLockError::ChildAssertion("mutation barrier has no call high-water".into())
-            })?;
-            let expected_count = prior_count.checked_add(1).ok_or_else(|| {
-                LandLockError::ChildAssertion("mutation call count overflow".into())
-            })?;
-            if args.call_count != expected_count {
-                return Err(LandLockError::ChildAssertion(format!(
-                    "mutation call count {} does not advance prior count {prior_count} by one",
-                    args.call_count
-                )));
-            }
-            if holder.pending_call_id.as_deref() == Some(args.call_id.as_str()) {
-                return Err(LandLockError::ChildAssertion(
-                    "mutation call id repeats the prior high-water".into(),
-                ));
-            }
-            holder.pending_call_count = Some(args.call_count);
-            holder.pending_call_id = Some(args.call_id.clone());
-            self.write_holder(&holder)
-        })?;
-        println!(
-            "MUTATION_CALL_BOUND agent={} repo={} pr={} operation={} attempt_id={} call_count={} call_id={}",
-            args.agent,
-            args.repo,
-            args.pr,
-            args.operation,
-            args.attempt_id,
-            args.call_count,
-            args.call_id,
-        );
-        Ok(0)
-    }
-
-    /// Canonical child-ownership predicate. The selected landing child must be
-    /// inside the exact still-published process group, and this verifier must
-    /// descend from that child through a bounded kernel-observed ancestry walk.
-    fn assert_child_process(
-        &self,
-        args: &AssertChildArgs,
-        verifier_pid: u32,
-    ) -> Result<
-        (
-            u32,
-            usize,
-            usize,
-            Option<String>,
-            Option<String>,
-            Option<u64>,
-            Option<String>,
-        ),
-        LandLockError,
-    > {
-        let now = epoch_seconds()?;
-        let holder = self
-            .read_holder()?
-            .ok_or_else(|| LandLockError::ChildAssertion("no landing lease is held".into()))?;
-        if !holder.live_at(now) {
-            return Err(LandLockError::ChildAssertion(
-                "landing lease is expired".into(),
-            ));
-        }
-        if holder.agent != args.agent {
-            return Err(LandLockError::ChildAssertion(format!(
-                "holder agent is {:?}, not {:?}",
-                holder.agent, args.agent
-            )));
-        }
-        if holder.repo.as_deref() != Some(args.repo.as_str()) {
-            return Err(LandLockError::ChildAssertion(format!(
-                "holder repository is {:?}, not {:?}",
-                holder.repo, args.repo
-            )));
-        }
-        if holder.operation != args.operation {
-            return Err(LandLockError::ChildAssertion(format!(
-                "holder operation is {:?}, not {:?}",
-                holder.operation, args.operation
-            )));
-        }
-        if holder.pr != args.pr {
-            return Err(LandLockError::ChildAssertion(format!(
-                "holder PR is {:?}, not {:?}",
-                holder.pr, args.pr
-            )));
-        }
-        let local_host = current_host();
-        if local_host == "unknown" || holder.host != local_host {
-            return Err(LandLockError::ChildAssertion(format!(
-                "holder host is {:?}, not current host {:?}",
-                holder.host, local_host
-            )));
-        }
-        let owner = self.read_process_owner()?.ok_or_else(|| {
-            LandLockError::ChildAssertion("lease has no supervised process identity".into())
-        })?;
-        match self.owner_liveness()? {
-            OwnerLiveness::Alive => {}
-            OwnerLiveness::Dead(reason) => {
-                return Err(LandLockError::ChildAssertion(format!(
-                    "recorded supervisor is dead: {reason}"
-                )))
-            }
-            OwnerLiveness::Unknown(reason) => {
-                return Err(LandLockError::ChildAssertion(format!(
-                    "recorded supervisor cannot be verified: {reason}"
-                )))
-            }
-        }
-        let (leader, pgid) = match self.cleanup_verification(Some(&holder)) {
-            CleanupVerification::Active { record, .. } => match record.phase {
-                CleanupPhase::Published { leader, pgid } => (leader, pgid),
-                phase => {
-                    return Err(LandLockError::ChildAssertion(format!(
-                        "cleanup authority is not in Published phase: {phase:?}"
-                    )))
-                }
-            },
-            other => {
-                return Err(LandLockError::ChildAssertion(format!(
-                    "cleanup authority is not an active published domain: {other:?}"
-                )))
-            }
-        };
-        if !exact_process_liveness(&leader).map_err(LandLockError::ChildAssertion)?
-            || process_group_id(leader.pid).map_err(|source| LandLockError::Io {
-                action: "read published child process group from",
-                path: PathBuf::from(format!("/proc/{}/stat", leader.pid)),
-                source,
-            })? != pgid
-        {
-            return Err(LandLockError::ChildAssertion(
-                "published cleanup leader identity changed".into(),
-            ));
-        }
-        if process_parent_pid(leader.pid).map_err(|source| LandLockError::Io {
-            action: "read published child parent from",
-            path: PathBuf::from(format!("/proc/{}/stat", leader.pid)),
-            source,
-        })? != owner.pid
-        {
-            return Err(LandLockError::ChildAssertion(format!(
-                "published leader {} is not a direct child of owner {}",
-                leader.pid, owner.pid
-            )));
-        }
-        if process_relation_depth(args.child_pid, leader.pid)
-            .map_err(|source| LandLockError::Io {
-                action: "read selected landing child ancestry from",
-                path: PathBuf::from(format!("/proc/{}/stat", args.child_pid)),
-                source,
-            })?
-            .is_none()
-        {
-            return Err(LandLockError::ChildAssertion(format!(
-                "selected landing child {} is outside published leader {}",
-                args.child_pid, leader.pid
-            )));
-        }
-        for (role, pid) in [
-            ("selected landing child", args.child_pid),
-            ("landing verifier", verifier_pid),
-        ] {
-            let observed = process_group_id(pid).map_err(|source| LandLockError::Io {
-                action: "read supervised process group from",
-                path: PathBuf::from(format!("/proc/{pid}/stat")),
-                source,
-            })?;
-            if observed != pgid {
-                return Err(LandLockError::ChildAssertion(format!(
-                    "{role} {pid} escaped published process group {pgid} into {observed}"
-                )));
-            }
-        }
-        let child_depth = process_ancestry_depth(args.child_pid, owner.pid)
-            .map_err(|source| LandLockError::Io {
-                action: "read landing child ancestry from",
-                path: PathBuf::from(format!("/proc/{}/stat", args.child_pid)),
-                source,
-            })?
-            .ok_or_else(|| {
-                LandLockError::ChildAssertion(format!(
-                    "landing child {} is not a bounded descendant of recorded supervisor {}",
-                    args.child_pid, owner.pid
-                ))
-            })?;
-        let verifier_depth = process_ancestry_depth(verifier_pid, args.child_pid)
-            .map_err(|source| LandLockError::Io {
-                action: "read landing verifier ancestry from",
-                path: PathBuf::from(format!("/proc/{verifier_pid}/stat")),
-                source,
-            })?
-            .ok_or_else(|| {
-                LandLockError::ChildAssertion(format!(
-                    "verifier {verifier_pid} is not a bounded descendant of landing child {}",
-                    args.child_pid
-                ))
-            })?;
-        Ok((
-            owner.pid,
-            child_depth,
-            verifier_depth,
-            holder.pending_mutation,
-            holder.pending_attempt,
-            holder.pending_call_count,
-            holder.pending_call_id,
-        ))
     }
 
     fn with_guard<T>(
@@ -2103,13 +1518,6 @@ fn parse_unsigned(name: &str, value: &str) -> Result<u64, LandLockError> {
     })
 }
 
-fn valid_lower_hex32(value: &str) -> bool {
-    value.len() == 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 pub(crate) fn current_host() -> String {
     Command::new("hostname")
         .arg("-s")
@@ -2177,56 +1585,6 @@ fn process_stat_fields(pid: u32) -> io::Result<(char, u32, u64)> {
         )
     })?;
     Ok((state, parent, start_ticks))
-}
-
-fn process_parent_pid(pid: u32) -> io::Result<u32> {
-    process_stat_fields(pid).map(|(_, parent, _)| parent)
-}
-
-fn process_group_id(pid: u32) -> io::Result<u32> {
-    let path = PathBuf::from(format!("/proc/{pid}/stat"));
-    let stat = fs::read_to_string(path)?;
-    let close = stat.rfind(')').ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "process stat has no closing comm",
-        )
-    })?;
-    let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
-    let value = fields.get(2).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "process stat has no process-group field",
-        )
-    })?;
-    value.parse().map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid process group {value:?}: {error}"),
-        )
-    })
-}
-
-fn process_relation_depth(descendant_pid: u32, ancestor_pid: u32) -> io::Result<Option<usize>> {
-    if descendant_pid == ancestor_pid {
-        return Ok(Some(0));
-    }
-    process_ancestry_depth(descendant_pid, ancestor_pid)
-}
-
-fn process_ancestry_depth(descendant_pid: u32, ancestor_pid: u32) -> io::Result<Option<usize>> {
-    let mut current = descendant_pid;
-    for depth in 1..=MAX_ASSERT_CHILD_ANCESTRY_DEPTH {
-        let parent = process_parent_pid(current)?;
-        if parent == ancestor_pid {
-            return Ok(Some(depth));
-        }
-        if parent == 0 || parent == current {
-            return Ok(None);
-        }
-        current = parent;
-    }
-    Ok(None)
 }
 
 pub(crate) fn read_current_boot_id() -> io::Result<String> {
@@ -2674,13 +2032,6 @@ pub(crate) struct ResidualCapture {
 }
 
 pub(crate) fn capture_and_freeze_residuals(supervisor_pid: u32) -> ResidualCapture {
-    #[cfg(test)]
-    if FORCE_INCOMPLETE_CENSUS.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        return ResidualCapture {
-            complete: false,
-            identities: Vec::new(),
-        };
-    }
     let mut prior = Vec::new();
     for _ in 0..4 {
         let identities = match scan_descendants(supervisor_pid) {
@@ -2744,24 +2095,6 @@ pub(crate) fn process_domain_test_guard() -> std::sync::MutexGuard<'static, ()> 
 #[cfg(test)]
 static HEARTBEAT_HELPER_DELAY_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
-
-#[cfg(test)]
-static FAIL_NEXT_RUN_HEARTBEAT: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(test)]
-static FORCE_INCOMPLETE_CENSUS: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(test)]
-fn inject_run_heartbeat_failure() {
-    FAIL_NEXT_RUN_HEARTBEAT.store(true, std::sync::atomic::Ordering::SeqCst);
-}
-
-#[cfg(test)]
-fn inject_incomplete_census() {
-    FORCE_INCOMPLETE_CENSUS.store(true, std::sync::atomic::Ordering::SeqCst);
-}
 
 #[cfg(test)]
 pub(crate) fn set_heartbeat_helper_delay(milliseconds: u64) {
@@ -2908,22 +2241,12 @@ fn write_truncated(path: &Path, bytes: &[u8]) -> Result<(), LandLockError> {
         .map_err(|source| io_error("write", path, source))?;
     file.flush()
         .map_err(|source| io_error("flush", path, source))?;
-    file.sync_all()
-        .map_err(|source| io_error("sync", path, source))?;
-    sync_parent_directory(path)?;
     Ok(())
-}
-
-fn sync_parent_directory(path: &Path) -> Result<(), LandLockError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|source| io_error("sync parent directory for", path, source))
 }
 
 fn remove_if_exists(path: &Path) -> Result<(), LandLockError> {
     match fs::remove_file(path) {
-        Ok(()) => sync_parent_directory(path),
+        Ok(()) => Ok(()),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(io_error("remove", path, source)),
     }
@@ -2948,10 +2271,6 @@ enum ChildOutcome {
     TimedOut {
         pgid: u32,
     },
-    /// The lease heartbeat failed; the child domain was terminated.
-    HeartbeatFailed {
-        pgid: u32,
-    },
     Uncertain {
         pgid: u32,
         reason: String,
@@ -2961,10 +2280,9 @@ enum ChildOutcome {
 impl ChildOutcome {
     fn pgid(&self) -> u32 {
         match self {
-            Self::Exited { pgid, .. }
-            | Self::TimedOut { pgid }
-            | Self::HeartbeatFailed { pgid }
-            | Self::Uncertain { pgid, .. } => *pgid,
+            Self::Exited { pgid, .. } | Self::TimedOut { pgid } | Self::Uncertain { pgid, .. } => {
+                *pgid
+            }
         }
     }
 }
@@ -2975,25 +2293,9 @@ impl ChildOutcome {
 /// SIGKILLed, and the child is reaped so no zombie is left behind. Callers reject
 /// zero before acquiring the lock so the pre-guardrail unbounded behavior cannot
 /// be re-enabled.
-fn supervise_child(
-    child: &mut Child,
-    deadline_secs: u64,
-    pr: &str,
-    heartbeat_failed: &mpsc::Receiver<()>,
-) -> ChildOutcome {
+fn supervise_child(child: &mut Child, deadline_secs: u64, pr: &str) -> ChildOutcome {
     let deadline = Instant::now() + Duration::from_secs(deadline_secs);
     loop {
-        match heartbeat_failed.try_recv() {
-            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
-                let pgid = child.id();
-                eprintln!(
-                    "landing-lock: lease heartbeat failed for PR #{pr}; terminating process group -{pgid}"
-                );
-                terminate_child_group(child, pr);
-                return ChildOutcome::HeartbeatFailed { pgid };
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 return ChildOutcome::Exited {
@@ -3260,7 +2562,7 @@ mod tests {
 
     #[test]
     fn holder_format_preserves_exact_head_lander_extensions() {
-        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=0123456789abcdef0123456789abcdef01234567\npending_mutation=0123456789abcdef0123456789abcdef01234567\npending_attempt=0123456789abcdef0123456789abcdef\npending_call_count=1\npending_call_id=fedcba9876543210fedcba9876543210\npr=1650\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
+        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=op-1\npending_mutation=op-1\npending_attempt=attempt-1\npending_call_count=1\npending_call_id=call-1\npr=1650\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
         let holder = LockState::parse(rendered).unwrap();
         assert_eq!(holder.repo.as_deref(), Some("rrnewton/hermit"));
         assert_eq!(holder.pending_call_count, Some(1));
@@ -3280,162 +2582,6 @@ mod tests {
             Err(LandLockError::InvalidState(message))
                 if message.contains("unknown holder field")
         ));
-    }
-
-    fn retained_holder(agent: &str, pr: &str, operation: &str) -> LockState {
-        let mut holder = new_holder(agent, pr, 60, None).unwrap();
-        holder.repo = Some("rrnewton/hermit".into());
-        holder.operation = Some(operation.into());
-        holder.pending_mutation = Some(operation.into());
-        holder.pending_attempt = Some("0123456789abcdef0123456789abcdef".into());
-        holder.pending_call_count = Some(0);
-        holder
-    }
-
-    #[test]
-    fn retained_mutation_refuses_generic_acquire_release_and_reclaim() {
-        let paths = temp_paths("retained-refusals");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let operation = "0123456789abcdef0123456789abcdef01234567";
-        lock.write_holder(&retained_holder("exact-agent", "1650", operation))
-            .unwrap();
-
-        let acquire = lock.acquire(&AcquireArgs {
-            agent: "other-agent".into(),
-            pr: "1651".into(),
-            wait: 0,
-            hold: 60,
-        });
-        assert!(
-            matches!(acquire, Err(LandLockError::MutationPending(value)) if value == operation)
-        );
-        assert!(matches!(
-            lock.release("exact-agent", false),
-            Err(LandLockError::MutationPending(value)) if value == operation
-        ));
-        assert!(matches!(
-            lock.reclaim_dead(),
-            Err(LandLockError::ReclaimNotProven(message))
-                if message.contains("exact-operation recovery")
-        ));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn retained_mutation_adoption_requires_the_exact_tuple() {
-        let paths = temp_paths("retained-exact-tuple");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let operation = "0123456789abcdef0123456789abcdef01234567";
-        lock.write_holder(&retained_holder("exact-agent", "1650", operation))
-            .unwrap();
-        let exact = RunArgs {
-            agent: "exact-agent".into(),
-            pr: "1650".into(),
-            repo: Some("rrnewton/hermit".into()),
-            operation: Some(operation.into()),
-            wait: 0,
-            hold: 60,
-            child_deadline: 30,
-            child: vec![OsString::from("/bin/true")],
-        };
-        let mut wrong = exact.clone();
-        wrong.operation = Some("fedcba9876543210fedcba9876543210fedcba98".into());
-        assert!(!lock.try_adopt_retained_mutation(&wrong).unwrap());
-        assert!(lock.try_adopt_retained_mutation(&exact).unwrap());
-        let adopted = lock.read_holder().unwrap().unwrap();
-        assert_eq!(adopted.agent, exact.agent);
-        assert_eq!(adopted.repo, exact.repo);
-        assert_eq!(adopted.operation, exact.operation);
-        assert_eq!(adopted.pending_mutation.as_deref(), Some(operation));
-        assert!(lock.read_process_owner().unwrap().is_some());
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn assert_child_refuses_armed_non_published_cleanup_phase() {
-        let paths = temp_paths("assert-child-non-published");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let operation = "0123456789abcdef0123456789abcdef01234567";
-        let mut holder = new_holder("exact-agent", "1650", 60, None).unwrap();
-        holder.repo = Some("rrnewton/hermit".into());
-        holder.operation = Some(operation.into());
-        lock.write_holder(&holder).unwrap();
-        lock.write_current_process_owner().unwrap();
-        let record = CleanupRecord::new("exact-agent", "pr:1650", CleanupPhase::Armed).unwrap();
-        write_cleanup_record(&paths.cleanup, &record).unwrap();
-        let args = AssertChildArgs {
-            agent: "exact-agent".into(),
-            repo: "rrnewton/hermit".into(),
-            pr: "1650".into(),
-            operation: Some(operation.into()),
-            child_pid: std::process::id(),
-        };
-        assert!(matches!(
-            lock.assert_child_process(&args, std::process::id()),
-            Err(LandLockError::ChildAssertion(message))
-                if message.contains("not an active published domain")
-        ));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn heartbeat_failure_releases_only_after_complete_empty_census() {
-        let _domain_guard = process_domain_test_guard();
-        let paths = temp_paths("heartbeat-empty-release");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        inject_run_heartbeat_failure();
-        let code = lock
-            .run(RunArgs {
-                agent: "heartbeat-agent".into(),
-                pr: "1650".into(),
-                repo: Some("rrnewton/hermit".into()),
-                operation: Some("0123456789abcdef0123456789abcdef01234567".into()),
-                wait: 0,
-                hold: 3,
-                child_deadline: 30,
-                child: vec![OsString::from("/bin/sleep"), OsString::from("30")],
-            })
-            .unwrap();
-        assert_eq!(code, HEARTBEAT_FAILURE_EXIT_CODE);
-        assert!(!paths.lock.exists());
-        assert!(!paths.owner.exists());
-        assert!(!paths.cleanup.exists());
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn heartbeat_failure_quarantines_an_incomplete_census() {
-        let _domain_guard = process_domain_test_guard();
-        let paths = temp_paths("heartbeat-incomplete-quarantine");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        inject_run_heartbeat_failure();
-        inject_incomplete_census();
-        let error = lock
-            .run(RunArgs {
-                agent: "heartbeat-agent".into(),
-                pr: "1650".into(),
-                repo: Some("rrnewton/hermit".into()),
-                operation: Some("0123456789abcdef0123456789abcdef01234567".into()),
-                wait: 0,
-                hold: 3,
-                child_deadline: 30,
-                child: vec![OsString::from("/bin/sleep"), OsString::from("30")],
-            })
-            .unwrap_err();
-        assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
-        assert!(paths.lock.exists());
-        assert!(paths.cleanup.exists());
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
     #[test]
@@ -3517,8 +2663,6 @@ mod tests {
             lock.run(RunArgs {
                 agent: "ci-shard-run".into(),
                 pr: "test-run".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 30,
@@ -3544,8 +2688,6 @@ mod tests {
             .run(RunArgs {
                 agent: "delayed-heartbeat".into(),
                 pr: "delayed-helper".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 3,
                 child_deadline: 10,
@@ -3582,8 +2724,6 @@ mod tests {
             .run(RunArgs {
                 agent: "stuck-lander".into(),
                 pr: "9999".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 1,
@@ -3627,8 +2767,6 @@ wait
             .run(RunArgs {
                 agent: "stubborn-lander".into(),
                 pr: "9997".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 1,
@@ -3692,8 +2830,6 @@ wait
             .run(RunArgs {
                 agent: "escaped-lander".into(),
                 pr: "9996".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 1,
@@ -3814,8 +2950,6 @@ wait
         let result = LandingLock { paths }.run(RunArgs {
             agent: "hard-death-lander".into(),
             pr: pr.into(),
-            repo: None,
-            operation: None,
             wait: 0,
             hold: 30,
             child_deadline: 30,
@@ -3935,8 +3069,6 @@ wait
                 .run(RunArgs {
                     agent: "crash-lander".into(),
                     pr: pr.clone(),
-                    repo: None,
-                    operation: None,
                     wait: 0,
                     hold: 30,
                     child_deadline: 30,
@@ -4054,8 +3186,6 @@ exit 0
             .run(RunArgs {
                 agent: "normal-exit-lander".into(),
                 pr: "normal-exit".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 30,
@@ -4117,8 +3247,6 @@ exit 0
             .run(RunArgs {
                 agent: "unbounded-lander".into(),
                 pr: "9998".into(),
-                repo: None,
-                operation: None,
                 wait: 0,
                 hold: 30,
                 child_deadline: 0,

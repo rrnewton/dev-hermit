@@ -27,8 +27,11 @@ are:
 # Summarize current-main plus open-PR health.
 ./ci-hub/ci-hub health
 
-# Canonical Hermit lands use ci-hub/bin/safe-exact-head-land with an explicit
-# authorized PR and 40-hex head; its syntax appears below this executable block.
+# Parse the canonical landing command without mutating a PR. Real lands use the
+# same entrypoint without CI_HUB_DOCS_PARSE_ONLY; it verifies the final pushed
+# head's immutable validation receipt before a head-matched rebase merge.
+CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
+  123 example/feature-branch --foreground
 
 # Inspect or recover polling for obligations that are still open.
 ./ci-hub/ci-hub obligations
@@ -59,13 +62,6 @@ are:
 ./ci-hub/ci-hub validate-run --attach validate-hermit-example-aaaaaaaaaaaa
 ```
 
-The landing syntax is shown as non-executable text because the real command is
-a mutation, not a documentation probe:
-
-```text
-ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr PR \
-  --expected-head 40_HEX_HEAD --actor REGISTERED_AGENT --json
-```
 `validate-run` and the inner `validate-lock` both call the same fail-closed
 admission authority. It refreshes `origin/main`, requires that exact tip to be
 an ancestor of the exact validation SHA, and checks every fixed receipt/merge
@@ -155,8 +151,8 @@ step after every rebase wave, BEFORE queueing any new ~500s validate:
 
 ```bash
 ./ci-hub/bin/reconcile-receipts            # 1. sweep the moved frontier
-# 2. for each VALID row: give the purpose-fixed lander the PR and exact head;
-#    it invokes ci-hub/bin/safe-exact-head-land. The label is not authority.
+# 2. for each VALID row: apply-local-label from the receipt, then land it
+#    (ci-hub apply-local-label --pr <N> ; ci-hub/landing/land-pr.sh ...).
 # 3. for each FLOOR-BLOCKED row: it needs REBASE, not a new validate.
 ```
 
@@ -223,7 +219,7 @@ policy requires this gateway and forbids raw terminal-status updates.
 | `remediation/` | Mandatory post-land dual verification, exact-SHA local execution, watcher, and remediation recommendation. | CI-history ingestion or automatic source-code reverts. |
 | `validate/` | Legacy/local `validate.sh` ledger aggregation and linkage to retained profiles. | The generic DAG runner/profile format. |
 | `runners/` | Self-hosted runner image, lifecycle, and host status tooling. | Generic CI scheduling. |
-| `landing/` | The shared-file **landing mutex** (`land-lock`) plus Hermit's no-rewrite exact-head landing executor, replay proof, and recovery log. | PR planning or authority inferred from labels/branch names. |
+| `landing/` | Shared-file **landing mutex** (`land-lock`) that serializes PR landings touching the shared manifest registries. | The land sequence itself (re-union/push/stamp/merge). |
 | `closure/` | Verification and evidence recording required before TaskGraph closure. | Task implementation or coordinator judgement that a goal is complete. |
 
 Runtime data is untracked under `ignored/ci-hub/`; versioned code and schemas
@@ -280,40 +276,18 @@ startup scan recover from a lost wake.
 
 ## Speculative-land obligation contract
 
-The canonical Hermit entrypoint is `bin/safe-exact-head-land`. It records and
-fsyncs an exact-head write-ahead intent before its bounded, serialized child can
-merge; raw `gh pr merge` is not the protocol. It dereferences the counted local
-receipt immediately before a synchronous REST rebase merge carrying the atomic
-`sha=X` guard, never rewrites the PR branch, and proves the actual replay tree
-from freshly fetched main. Before that REST call it fsyncs an exact-operation
-mutation barrier; only replay verification plus a durable exact-landed-SHA arm
-may clear it. Serialization is process-bound: the safe entrypoint strips
-alternate-lock, landing-store, obligation-store, and docs-parse environment
-overrides, while canonical `land-lock assert-child`
-dereferences the exact agent/repository/PR/operation holder, live
-boot/start-time-bound supervisor, persisted child process group, and bounded
-supervisor→Python→verifier kernel ancestry. A hidden
-flag or manual/repository-less lease is not authority. Once GitHub exposes and
-the executor verifies the merged SHA, it calls
-`arm-land`; a crash in that interval resumes the same append-only attempt
-without another successful merge submission. Supervisor death, lease expiry,
-heartbeat failure, and missing holder metadata cannot admit another land while
-the recorded child domain is live or the mutation barrier remains armed. An
-exact-parent pidfd watchdog carries acknowledged monotonic bounds from the
-first guard through final release, so canonical-run SIGSTOP/deadlock cannot
-retain the flock indefinitely. The barrier binds `X` to exact attempt id plus
-call-count/last-call high-water; truncated or cross-attempt history stays
-quarantined. Every REST response retains a size-bounded `--include` envelope,
-and only a first unambiguous, fully paired 200/404/405/409/422 negative may
-clear. Postmerge proof mismatch is nonterminal `landing_quarantined`, and even
-a recorded `obligation_armed` is live-reverified in the canonical obligation
-store before clear. The write-ahead intent and
-initial OPEN obligation carry the versioned repository/workflow/job policy; an
-unsupported repository or a `--source` checkout whose `origin` names another
-repository is refused before merge instead of creating an obligation no
-verifier can satisfy. Omitting `--source` from the obligation command selects
-the canonical `hermit/` or `reverie/` checkout from `--repo`; Reverie never
-inherits Hermit's default. Arming appends that OPEN event to
+The canonical `landing/land-pr.sh` entrypoint prepares the speculative-land
+obligation before its bounded child can merge; raw `gh pr merge` is not the
+protocol. It also dereferences the final pushed head's immutable validation
+receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
+the merged SHA it completes the prepared intent and calls `arm-land`. If the
+wrapper dies in that interval, the restartable ORC workflow recovers the intent
+and arms it. The write-ahead intent and initial OPEN event both carry the
+versioned repository/workflow/job policy; an unsupported repository or a
+`--source` checkout whose `origin` names another repository is refused before
+merge instead of creating an obligation no verifier can satisfy. Omitting
+`--source` selects the canonical `hermit/` or `reverie/` checkout from `--repo`;
+Reverie never inherits Hermit's default. Arming appends that OPEN event to
 `ignored/ci-hub/obligations.jsonl`, then concurrently:
 
 1. clones the obligation's registered source repository into
@@ -362,12 +336,6 @@ recoverers from starting duplicate producers. A merge can complete before
 arming; the machine-local intent lets ORC recover that window when the same
 workspace returns. Raw merges bypass the intent, and loss of the workspace/disk
 loses its machine-local recovery state.
-
-Scope warning: `landing/land-pr.sh` remains executable and
-`landing/parallel-prevalidate.sh` still defaults to it. That active legacy
-caller is an unresolved migration blocker outside this change. It is not
-canonical authority or a permitted fallback, but it has not yet been
-mechanically disabled.
 
 A local `validate.sh` exit code is never green authority by itself. Local green
 requires the persisted canonical `validate-status --sha ... --repo ... --json`

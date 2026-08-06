@@ -11,7 +11,7 @@ ledger=$tmp/ledger.jsonl
 valid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 missing=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 printf '%s\n' \
-  "{\"schema_version\":5,\"commit\":\"$valid\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[]},\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"real_seconds\":1}" \
+  "{\"schema_version\":5,\"repo\":\"hermit\",\"commit\":\"$valid\",\"tree\":\"cccccccccccccccccccccccccccccccccccccccc\",\"commit_anchored\":true,\"tree_dirty\":false,\"profile\":\"full\",\"selection_mode\":\"full\",\"result\":\"pass\",\"raw_result\":\"pass\",\"exit_code\":0,\"checks\":1,\"failures\":0,\"gates_run\":1,\"gates_expected\":1,\"gates\":[{\"name\":\"fixture\",\"result\":\"pass\",\"exit_code\":0}],\"executed_tests\":42,\"filtered_tests\":0,\"coverage\":{\"planned_test_nodes\":1,\"executed_test_nodes\":1,\"zero_executed_nodes\":[],\"absent_nodes\":[]},\"started_at\":\"2026-08-03T23:59:59Z\",\"finished_at\":\"2026-08-04T00:00:00Z\",\"host\":\"fixture\",\"slot\":\"fixture-slot\",\"log_file\":\"/durable/fixture.log\",\"real_seconds\":1}" \
   >"$ledger"
 
 run_case() {

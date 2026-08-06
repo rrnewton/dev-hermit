@@ -171,14 +171,9 @@ green, land the authorized change without waiting for a human.
 - Reverie requires its repository-defined exact-head validation authority.
 - When one of the four triggers applies, add `post-facto-human-review`, verify
   every required PR section, verify both exact-head reviews, post role-tagged
-  evidence, and land an authorized Hermit PR only through
-  `ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr <PR>
-  --expected-head <40-hex-head> --actor <registered-agent> --json`. Record the
-  exact landed SHA and rebase dependents in dependency order. Do not add the
-  label to a routine non-triggering PR. Never use
-  `ci-hub/landing/land-pr.sh` as a fallback for a refusal or pending result. It
-  remains executable through an unresolved legacy caller; policy prohibition
-  is not mechanical disablement.
+  evidence, land through `ci-hub/landing/land-pr.sh` using the repository's
+  current merge mode, record the exact landed SHA, and rebase dependents in
+  dependency order. Do not add the label to a routine non-triggering PR.
 
 ## 8. Human reviews after landing
 

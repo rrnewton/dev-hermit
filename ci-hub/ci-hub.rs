@@ -95,7 +95,7 @@ PR & RUNNER HEALTH
 
 LANDING & BATCH CONTROL
   Serialize landings and manage the explicit policy state that gates them.
-  land-lock               Serialize fleet lands and verify supervised landing children
+  land-lock               Acquire, renew, inspect, or release the fleet landing mutex
   validate-lock            Box-exclusive gate: one validate/bench at a time (GRANT/QUEUE/REFUSE)
   apply-local-label       Label PR heads backed by a clean full-validation receipt
   ci-mode                 Inspect or change constrained CI admission mode
@@ -154,7 +154,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
 
 5. Serialize fleet landings through the evidence-based mutex:
      ./ci-hub/ci-hub land-lock status
-     ./ci-hub/ci-hub land-lock run --agent AGENT --repo REPO --pr PR --operation SHA -- COMMAND...
+     ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
    Serialize box-exclusive compute (one validate OR bench, so load cannot forge FAILEDs):
      ./ci-hub/ci-hub validate-run --checkout WORKTREE --agent A --target SHA --pr N -- full
    Never force-release another owner. Dead-owner reclamation requires process
@@ -234,7 +234,7 @@ enum HubCommand {
     FirstBad(FirstBadArgs),
     /// Apply `locally-validated` to PRs whose head has a clean full-validate record.
     ApplyLocalLabel(ApplyLocalLabelArgs),
-    /// Serialize fleet lands and verify supervised landing children.
+    /// Operate the shared-file landing mutex.
     LandLock(landing_lock::LandLockArgs),
     /// Operate the box-exclusive-compute admission gate (one validate/bench at a time).
     ValidateLock(validate_lock::ValidateLockArgs),

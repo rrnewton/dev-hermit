@@ -20,7 +20,7 @@ the planner's CLI reference or the lander's implementation details.
 | `agent-utils/skills/pr-landing-planner/SKILL.md` | Agent trigger and planner evidence contract | Workspace dispatch or landing mutations |
 | `pr-landing-planner --userguide` | CLI flags and emitted JSON schema | Authorization to merge |
 | This document | Fetch-to-closure sequence, lane selection, required evidence, and metrics | Planner implementation or merge mechanics |
-| `ci-hub/bin/safe-exact-head-land` | Locking, expected-head and receipt verification, durable mutation intent, SHA-guarded no-rewrite merge, replay/ancestry proof, and obligation handoff | Batch selection |
+| `ci-hub/landing/land-pr.sh` | Locking, fresh-head checks, receipt verification, `--rebase` merge, ancestry verification | Batch selection |
 | `AGENTS.md` | Review, publication, task closure, and repository policy | Tool-specific CLI syntax |
 
 The discoverable `hermit-lander` role and the historical landing-mechanics alias are pointers only.
@@ -54,10 +54,8 @@ then reconcile this document.
    its rationale date with current policy; a stale rationale requires coordinator review.
 8. **Adversarial review is the default.** Missing review evidence is not approval. Resolve findings
    before landing unless a documented policy exemption applies.
-9. **Execute only through the tracked lander.** Use `ci-hub/bin/safe-exact-head-land` with the
-   task-authorized exact head. Never rewrite the head, use `--admin`, invoke the legacy
-   `ci-hub/landing/land-pr.sh`, or fall back to a raw `gh pr merge`. Serialize landings under the
-   landing lock.
+9. **Execute only through the tracked lander.** Merge with `--rebase`, never `--admin`. Serialize
+   landings under the landing lock.
 10. **Landing is an ancestry fact.** After a fresh destination fetch, prove the merge commit is an
     ancestor of the named target branch. An API `MERGED` flag, a successful merge command, a label,
     or a PR-head SHA is not landing evidence.
@@ -216,7 +214,7 @@ exact population.
 The typed branch-construction, shared-evidence, and constituent-verification contract is specified in
 https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/staging-batch-o1-drain-design-20260805.md.
 It requires a batch manifest and an atomic topology-preserving landing (or an equivalent typed replay
-verifier). The current single-PR no-rewrite executor does not supply that constituent proof; do not
+verifier). The current single-PR rebase-only executor does not supply that constituent proof; do not
 execute a staging landing until the batch executor and closure authority are explicitly approved.
 
 Known common-cause infrastructure failures gate both modes. Fix or explicitly hold the common cause
@@ -239,12 +237,9 @@ any head or the base changes; do not patch the old JSON by hand.
 
 ### 6. Execute and verify
 
-Use `ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr <PR>
---expected-head <40-hex> --actor <registered-agent> --json` for an approved Hermit landing. The
-executor owns lock acquisition, exact-head and receipt verification, durable intent and mutation
-barriers, the SHA-guarded no-rewrite merge, replay/ancestry proof, and exact-landed-SHA obligation
-handoff. Do not reproduce those steps in an ad-hoc shell sequence or use the legacy lander as a
-fallback.
+Use `ci-hub/landing/land-pr.sh` for an approved Hermit landing. The executor owns lock acquisition,
+fresh-head verification, receipt dereferencing, rebase merge, and ancestry proof. Do not reproduce
+those steps in an ad-hoc shell sequence.
 
 After the executor reports success:
 
@@ -285,7 +280,7 @@ Stop and write a task note when any of these occurs:
 - a merge conflict changes reviewed content without renewed review/validation;
 - the plan cannot be archived;
 - the adjacent fetched base-SHA record is missing or ambiguous;
-- the exact-head executor still requires stale merge-gate state despite qualifying exact-head evidence
+- the tracked executor still requires stale merge-gate state despite qualifying exact-head evidence
   (file an implementation mismatch; never bypass it with `--admin`);
 - ancestry proof fails.
 

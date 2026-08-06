@@ -21,20 +21,9 @@ Before landing, require all of the following:
 
 1. The task authorizes landing and required adversarial review is resolved at
    the exact current head.
-2. `ci-hub validate-status --repo rrnewton/hermit --sha <40-hex-head>` accepts
-   that head's receipt.
-3. The purpose-fixed lander invokes
-   `ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr <PR>
-   --expected-head <40-hex-head> --actor <registered-agent> --json`. That
-   executor owns the supervised process-domain lock, fsynced exact-operation
-   mutation barrier, synchronous no-rewrite REST merge guarded by `sha=X`,
-   replay proof, recovery, and exact-landed-SHA obligation handoff.
-
-`ci-hub/landing/land-pr.sh` is not landing authority or a permitted fallback.
-It nevertheless remains executable, and `parallel-prevalidate.sh` still
-defaults to it; that active caller is an unresolved migration blocker. A
-refusal or pending result from the safe executor must be resumed, not bypassed
-with that script, raw `gh pr merge`, or a branch rewrite.
+2. `ci-hub validate-status --sha <40-hex-head>` accepts that head's receipt.
+3. `ci-hub/landing/land-pr.sh` owns fresh-base preparation, the serialized land
+   lock, merge mode, and post-merge ancestry check.
 
 `locally-validated` is only a cache derived from the receipt. Never type it by
 hand or treat its presence, a command exit, a comment, or a copied status as

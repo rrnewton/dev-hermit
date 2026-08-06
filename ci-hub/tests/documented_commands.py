@@ -22,10 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-# The consolidated landing guide deliberately removes the executable legacy
-# land-pr examples; the canonical exact-head mutator is shown in a non-shell
-# fence so this harness can never exercise a real landing from documentation.
-EXPECTED_COMMANDS = 45
+EXPECTED_COMMANDS = 49
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",

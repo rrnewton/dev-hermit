@@ -22,15 +22,13 @@ SERIALIZE" failure mode). This mutex turns that scrum into an orderly queue:
 Every lander MUST hold the lock around its entire land sequence:
 
 ```
-acquire  ->  bind exact PR head + counted receipt  ->  durable intent
-         ->  fsynced mutation barrier  ->  synchronous sha-guarded rebase merge
-         ->  replay/tree proof  ->  exact-landed-SHA obligation handoff
-         ->  clear mutation barrier  ->  release
+acquire  ->  re-union onto fresh origin/main  ->  push  ->  stamp
+         ->  merge --rebase  ->  ancestry-verify  ->  release
 ```
 
-Acquire **before** fetching fresh main so every proof sees the final state of the
-previous land. Release only after the safe executor has freshly proven the
-landed replay and durably handed off its exact merge commit.
+Acquire **before** fetching fresh main (so your re-union sees the final state of
+the previous land); release **only after** `git merge-base --is-ancestor <sha>
+origin/main` confirms your commit actually landed.
 
 ## Design (small + deterministic)
 
@@ -42,18 +40,11 @@ landed replay and durably handed off its exact merge commit.
 - The held state is a **lease with an expiry**, not a held fd — so acquire in one
   shell and release in another Just Work, and **(a) a dead holder cannot wedge
   the pack**. Supervised `run` leases record host, boot ID, PID, and process
-  start time in a sidecar. It also persists the child leader identity and
-  process group. A waiter can reclaim only when the owner is proven gone, that
-  group is empty, and no mutation barrier is armed; legacy/manual leases remain
-  protected until their lease lapses (`--hold` seconds, default 900).
-- Canonical `run` starts an isolated exact-parent pidfd watchdog before its
-  first guard attempt. Acknowledged monotonic phase bounds cover acquisition,
-  startup, the persisted child deadline plus cleanup graces, and final release;
-  SIGSTOP/deadlock can therefore break a flock by killing only the exact
-  supervisor. Generic diagnostic/legacy subcommands do not inherit this claim.
-- **(b)** The lockfile records holder **agent + optional repository + operation
-  + pending mutation + PR + host + timestamps** for debuggability; `status`
-  prints them. Supervised exact-head renewal preserves every binding.
+  start time in a sidecar. A waiter can reclaim immediately when that exact
+  process is proven gone; legacy/manual leases remain protected until their
+  lease lapses (`--hold` seconds, default 900).
+- **(b)** The lockfile records holder **agent + PR + host + timestamps** for
+  debuggability; `status` prints them.
 - **(c)** Waiters enqueue in a **FIFO**, so ordering is deterministic and each
   waiter sees who is ahead of it; `release` frees the lock immediately and names
   the next agent, which then acquires on its next short (3s) poll rather than
@@ -65,7 +56,6 @@ Runtime state (all machine-local, gitignored):
 | --- | --- |
 | `~/work/dev-hermit/.landing-lock`        | holder metadata — the lock |
 | `~/work/dev-hermit/.landing-lock.owner`  | supervised owner identity; does not alter the legacy holder format |
-| `~/work/dev-hermit/.landing-lock.domain` | supervised child leader/process-group, sibling watchdog identity, and deadline |
 | `~/work/dev-hermit/.landing-lock.guard`  | `flock` target (impl detail) |
 | `~/work/dev-hermit/.landing-lock.queue`  | FIFO waiter list |
 | `~/work/dev-hermit/.landing-lock.cleanup-required` | fsynced armed/published/residual process-domain authority; blocks ordinary acquisition and reclaim |
@@ -82,26 +72,20 @@ cd ~/work/dev-hermit
 # Inspect
 ci-hub/ci-hub land-lock status
 
-# Canonical exact-head lander syntax appears below this executable block
+# Canonical land: detached by default; prints the durable log path and PID
+ci-hub/landing/land-pr.sh 1533 codex/my-branch
 
-# Lock diagnostics only; production Hermit lands use safe-exact-head-land
+# Manual acquire / release around your land sequence
 ci-hub/ci-hub land-lock acquire --agent hermit-ci --pr 1533   # blocks until yours
-#   ... diagnostic operation only ...
+#   ... re-union -> push -> stamp -> merge --rebase -> ancestry-verify ...
 ci-hub/ci-hub land-lock release --agent hermit-ci
 
 # Crash-contained wrapper (RECOMMENDED): acquire, run, and release only after
-# proving the payload domain empty and the exact mutation barrier cleared. A
-# background heartbeat renews the lease; a HARD --child-deadline kills a
-# wedged subtree, then releases on complete cleanup proof or retains quarantine.
-ci-hub/ci-hub land-lock run --agent hermit-ci --repo rrnewton/hermit --pr 1533 \
-  --operation 40_HEX_HEAD --child-deadline 2160 -- ./my-land-sequence.sh
-```
-
-The real landing command is deliberately a non-executable documentation block:
-
-```text
-ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr PR \
-  --expected-head 40_HEX_HEAD --actor REGISTERED_AGENT --json
+# proving the payload domain empty. A background heartbeat renews the lease so
+# a long land keeps the lock; a HARD --child-deadline kills a wedged subtree,
+# then releases on complete cleanup proof or retains a quarantine otherwise.
+ci-hub/ci-hub land-lock run --agent hermit-ci --pr 1533 \
+  --child-deadline 2160 -- ./my-land-sequence.sh
 ```
 
 ### Subcommands
@@ -110,12 +94,10 @@ ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr PR \
 | --- | --- |
 | `acquire --agent NAME --pr N [--wait S] [--hold S]` | block until acquired (FIFO); reclaims a lapsed lease |
 | `renew --agent NAME [--hold S]` | heartbeat — extend your lease during a long land |
-| `release --agent NAME` | free an unarmed lock (owner only); an armed mutation refuses manual release |
+| `release --agent NAME` | free the lock (owner only); signals the next waiter |
 | `status` | print holder metadata, process liveness, seconds left, and the FIFO queue |
-| `reclaim-dead` | release only when owner death and cleanup `Recoverable`/`None` are proven and no mutation is pending |
-| `assert-child --agent NAME --repo REPO --pr N --operation X --child-pid PID` | internal verifier only: dereference the exact live holder, operation, process domain, and bounded kernel ancestry; never operator-granted authorization |
-| `arm-mutation` / `bind-mutation-call` / `clear-mutation` with the exact assertion tuple | internal safe-executor boundary; bind `X` to exact attempt plus call-count/last-call high-water before invocation, or clear only that attempt |
-| `run --agent NAME [--repo REPO] --pr N [--operation X] [--child-deadline S] [...] -- CMD...` | exact binding → gated spawn → auto-heartbeat → cleanup census → release only when cleanup is empty and no mutation remains; otherwise quarantine/retain |
+| `reclaim-dead` | release only when the supervised owner process is proven gone |
+| `run --agent NAME --pr N [--child-deadline S] [...] -- CMD...` | acquire → run CMD (auto-heartbeat, hard child-deadline) → release after complete cleanup proof, otherwise quarantine |
 
 Defaults: `--wait 1800` (give up after 30 min), `--hold 900` (lease lapses after
 15 min so a dead holder self-clears), `--child-deadline 2160` (kill a wedged
@@ -123,9 +105,8 @@ land subtree after 36 min). Poll interval 3s.
 
 Exit codes: `0` ok · `1` wait-timeout · `2` usage · `3` not-owner / internal ·
 `124` child-deadline breach with the land subtree proven gone and the lock
-released · `125` heartbeat failure with the subtree likewise proven gone and
-released. An incomplete cleanup proof returns an error and retains a
-`QUARANTINED` lock; a pending mutation retains exact-operation recovery.
+released. An incomplete cleanup proof instead returns an error and retains a
+`QUARANTINED` lock.
 
 ### `--child-deadline`: no unbounded wait may hold the queue
 
@@ -138,23 +119,14 @@ complete descendant census. Only a proven-empty payload domain **releases the
 lock**, prints a loud `ABANDON PR #N` line, and exits `124`; an incomplete or
 nonempty census retains a `QUARANTINED` lock and returns an error. The PR is left
 open for retry. A zero deadline is rejected: an unbounded wait is unboxed
-compute and every wait here is bounded. The canonical safe exact-head executor
-reports the bounded refusal/pending result for recovery.
-
-`safe-exact-head-land` always supplies `--repo rrnewton/hermit` and strips
-generic lock, landing-store, obligation-store, and docs-parse overrides
-before entering the lock. Its hidden inner flag carries no authority. The inner
-process must pass `assert-child`, which binds exact agent/repository/PR/operation and
-holder host to the live supervisor's boot ID/PID/start time, then proves the
-selected Python child and assertion verifier lie on the same bounded kernel
-process chain and in the recorded process group. A legacy/manual,
-repository-less, or operation-less lease cannot authorize it.
+compute and every wait here is bounded. `land-pr.sh`'s surviving outer
+supervisor also posts a durable PR comment when the killed inner process cannot
+do so itself.
 
 **Never hand-roll a renewer.** A bare `acquire` plus an external `renewer.sh`
 loop that outlives a dead agent defeats the lease-lapse safety net and is exactly
 what produced the zombie-held lock. Always land under `land-lock run` (directly,
-or via `safe-exact-head-land`, which self-wraps) so the lease is bound to a
-bounded child.
+or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
 
 ### Abnormal termination and evidence-based recovery
 
@@ -182,43 +154,21 @@ The owner sidecar still reports `owner_process=alive`, `dead:...`, or
 `unknown:...`. A proven-dead supervised lease with **no** cleanup authority is
 shown as `ORPHANED (reclaimable)` for backward-compatible/manual cases.
 
-Before the synchronous GitHub REST mutation, the safe child fsyncs
-`pending_mutation=X` with the exact durable attempt and advances a fsynced
-`{call_count,last_call_id}` high-water before each invocation. Nonzero exit or
-supervisor death retains it after the process-domain cleanup completes. Only
-the exact same agent/repository/PR/operation may adopt that state; manual
-`release`, generic `reclaim-dead`, a different operation, and a nominally
-successful child that did not clear the barrier all refuse. The safe executor
-clears the barrier only after replay verification and durable exact-landed-SHA
-obligation arming.
-
 The holder file format is byte-compatible with pre-sidecar landers. A legacy
 bare `acquire` has no process evidence and therefore remains lease-only: it is
 never declared dead merely because a PID was not recorded.
 
-## Exact-head executor and active legacy migration gap
+## Shared landers (`land-pr.sh`, `union-rebase.sh`)
 
-Hermit's live land sequence and the retained helper history live here:
+The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr <PR> --expected-head <X> --actor <agent> --json` | **Canonical Hermit lander:** no branch rewrite; binds the counted exact-head receipt, fsynced intent and mutation barrier, synchronous REST `sha=X` merge, actual replay/tree proof, recovery, and exact-landed-SHA obligation handoff. |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires exact-head ledger evidence before and after rebase, derives `locally-validated` only through `apply-local-label`, polls merge-gate, dereferences the final head's immutable validation receipt, performs a head-matched rebase merge, then verifies ancestry |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
-| `ci-hub/landing/land-pr.sh` | **Active legacy executable, not canonical authority:** still mode 755 and still the default `LAND_CMD` in `parallel-prevalidate.sh`; removing that caller is an unresolved fleet-wide migration blocker outside this change. |
 
-The safe executor's complete proof and recovery contract is in
-[`SAFE_EXACT_HEAD_LANDING.md`](SAFE_EXACT_HEAD_LANDING.md). If it refuses or
-returns pending, preserve and resume that attempt; never bypass it with raw
-`gh pr merge`, a branch rewrite, or the legacy script.
-
-The repository has not yet mechanically disabled the legacy caller. Do not
-interpret “not canonical authority” as “not executable”: it can still mutate
-GitHub today, which is precisely why its remaining caller must be migrated.
-
-### Historical legacy behavior (non-authoritative)
-
-The policy-prohibited legacy `land-pr.sh` attempted the following race-tolerance measures.
-This material explains old logs and tests; it is not a procedure to run:
+`land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
+never wedges a land:
 
 1. **Race-tolerant exact-head gate poll** — query the Actions workflow runs for
    the rebased head and evaluate the latest `pull_request` or
@@ -244,9 +194,22 @@ This material explains old logs and tests; it is not a procedure to run:
    call. The merge itself uses `--match-head-commit` so a concurrent push cannot
    inherit that authorization.
 
-The legacy launcher used `nohup` plus a new session and emitted an ABANDON
-comment on terminal bailout. Those behaviors are historical observations, not
-authorization to invoke it.
+Every terminal bail emits a visible ABANDON signal — stderr **and** a role-tagged
+PR comment — so an abandoned PR never silently languishes (the #244 pattern).
+Before taking the lock, the shared lander persists a post-land intent. Only after
+the merged SHA is ancestry-confirmed does it arm concurrent exact-SHA local and
+GitHub verification; ORC recovery closes the merge-before-arm crash window.
+
+```bash
+cd ~/work/dev-hermit
+ci-hub/landing/land-pr.sh 1470 codex/backend-parity-contract --union
+# DETACHED LAND: pid=... log=.../land-pr1470-<UTC timestamp>-<pid>.log
+```
+
+The default launcher uses `nohup` plus a new session and returns immediately,
+before lock acquisition. The printed timestamped log is the durable observation
+surface across the agent shell's 120-second cap and agent recycling. Use
+`--foreground` only for short diagnostics; it does not change any deadline.
 
 ### Deadline basis and scope
 
@@ -264,7 +227,7 @@ Every wait in one landing attempt has an explicit scope:
 | lock acquisition | 1800s | FIFO wait before this landing owns the lock |
 | lock lease | 900s, renewed every 300s | dead-holder safety; not a land duration |
 | merge-gate | 1080s by default | exact-head Actions runs; caller may override |
-| whole child | 2160s by default | entire lock-held subtree; the quarantined legacy script derived twice an overridden gate deadline unless explicitly set |
+| whole child | 2160s by default | entire lock-held subtree; `land-pr.sh` derives twice an overridden gate deadline unless explicitly set |
 | merge retry | 12 attempts, 15s sleeps | at most 180s of explicit retry sleep |
 | gate poll | 15s interval | included in the gate deadline |
 | label / ready settling | 4s each | fixed sleeps before polling |
@@ -275,10 +238,9 @@ inside the whole-child process-group deadline, so a stalled call cannot hold the
 landing lock beyond that ceiling. The child deadline must be greater than the
 gate deadline; zero is rejected rather than meaning unbounded.
 
-## Observing a completed land (not release authority)
+## Verifying your land (before you release)
 
-These read-only queries are useful diagnostics after the safe executor returns
-`LANDED_AND_ARMED`:
+Release only after the commit is on `origin/main`:
 
 ```bash
 with-proxy gh pr view PR_NUMBER -R rrnewton/hermit --json state,mergeCommit \
@@ -287,11 +249,6 @@ with-proxy gh api \
   "repos/rrnewton/hermit/compare/$(with-proxy gh pr view PR_NUMBER -R rrnewton/hermit --json mergeCommit -q .mergeCommit.oid)...main" \
   --jq 'select(.status == "ahead" or .status == "identical") | "LANDED"'
 ```
-
-They do not authorize `land-lock release`. PR state plus main ancestry omits the
-replay-tree proof, exact actual-base receipt when required, durable remediation
-arm, and the pending-mutation barrier. Only the supervised safe executor clears
-that barrier and releases after its complete proof.
 
 **Do not poll `mergeStateStatus` to decide you've landed.** If auto-merge is
 armed (REBASE), the PR merges the instant merge-gate goes green, and
@@ -414,10 +371,10 @@ the default hot path.
 
 ## Notes
 
-- `run` is preferred over bare `acquire`/`release`: it owns the heartbeat,
-  persisted process domain, whole-group cleanup, and retained-mutation recovery.
-  Supervisor death never clears a live domain or armed operation merely because
-  the owner PID disappeared.
+- `run` is preferred over bare `acquire`/`release`: it releases on every observed
+  child termination, and evidence-based recovery clears a lease if the
+  supervisor itself is killed. Its heartbeat prevents a genuinely long (but
+  live) land from having its lease reclaimed out from under it.
 - The lease is a **safety net**, not a schedule: keep `--hold` comfortably above
   your real land time, and prefer `run` so releases happen promptly.
 - Disjoint footprints don't strictly need the lock, but taking it is cheap and

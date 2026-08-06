@@ -27,6 +27,12 @@ Claude, Codex, and `.llms` consumers read the same `SKILL.md` and bundled
 resources. Do not replace package links with generated pointer files or with a
 link to `SKILL.md` alone.
 
+`pr-landing-planner` is the deliberate external-package exception. The checker
+accepts only the fixed `.claude/skills/pr-landing-planner` link to
+`agent-utils/skills/pr-landing-planner` and rejects a duplicate `.agents`
+entry. Codex uses the registered agent-utils package named by `AGENTS.md`;
+absence here is intentional, not an instruction to skip the mandatory planner.
+
 Run `scripts/check-codex-setup.py` after an intentional skill change. The
 checker is read-only and rejects wrong, dangling, escaping, root-level, and
 file-only links.
@@ -436,8 +442,8 @@ def planner_source(root: Path, problems: list[str]) -> bool:
         problems.append(f"{source}: points to {actual!r}, expected {PLANNER_LINK!r}")
     if path_exists(target):
         problems.append(
-            f"{target}: planner entry is quarantined until the agent-utils pin "
-            "is semantically reviewed"
+            f"{target}: planner is an external agent-utils package; "
+            "do not add a duplicate Codex entry"
         )
     return True
 
