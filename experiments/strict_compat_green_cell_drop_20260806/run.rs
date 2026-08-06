@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -31,12 +31,13 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wait_timeout::ChildExt;
 
-const SCHEMA: u32 = 3;
+const SCHEMA: u32 = 4;
 const FULL_TESTS: usize = 231;
 const BACKENDS: [&str; 6] = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"];
 const MAIN_MODE: &str = "strict_raw";
 const CALIBRATION_TEST: &str = "backend-parity-c/pid-probe";
 const SPOT_TESTS: [&str; 2] = ["backend-parity-c/pid-probe", "c-programs/print-memaddrs"];
+const HERMETIC_PATH: &str = "/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin";
 
 #[derive(Debug, Clone)]
 struct Paths {
@@ -66,6 +67,8 @@ struct ToolchainReceipt {
     rustc_output_sha256: String,
     cargo_argv: Vec<String>,
     cargo_output_sha256: String,
+    environment: BTreeMap<String, String>,
+    environment_sha256: String,
     receipt_sha256: String,
 }
 
@@ -75,6 +78,8 @@ struct CompileReceipt {
     command_sha256: String,
     inputs: Vec<SourceFact>,
     toolchain_receipt_sha256: String,
+    environment: BTreeMap<String, String>,
+    environment_sha256: String,
     exit_code: i32,
     log: ArtifactFact,
     output: ArtifactFact,
@@ -91,6 +96,8 @@ struct HermitBuildReceipt {
     command: Vec<String>,
     command_sha256: String,
     toolchain_receipt_sha256: String,
+    environment: BTreeMap<String, String>,
+    environment_sha256: String,
     exit_code: i32,
     log: ArtifactFact,
     output: ArtifactFact,
@@ -112,6 +119,21 @@ struct PreparedArtifact {
     mode: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct TreeEntry {
+    relative_path: String,
+    kind: String,
+    bytes: u64,
+    mode: u32,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct TreeManifest {
+    entries: Vec<TreeEntry>,
+    digest_sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NoncPreparationReceipt {
     protocol: String,
@@ -126,6 +148,8 @@ struct NoncPreparationReceipt {
     log: ArtifactFact,
     prepared_artifacts: Vec<PreparedArtifact>,
     prepared_artifacts_sha256: String,
+    prepared_input_manifests: BTreeMap<String, TreeManifest>,
+    prepared_input_manifests_sha256: String,
     canonical_argv: Vec<String>,
     canonical_argv_sha256: String,
     receipt_sha256: String,
@@ -157,6 +181,8 @@ struct FrozenManifest {
     hermit_binary_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+    denominator_decision_sha256: String,
+    denominator_decision_semantic_sha256: String,
     parent_commit: String,
     run_rs_sha256: String,
     verify_rs_sha256: String,
@@ -211,9 +237,26 @@ struct ExecutionRecord {
     command_sha256: String,
     environment: BTreeMap<String, String>,
     environment_sha256: String,
+    input_receipt: ExecutionInputReceipt,
     preparation_receipt_sha256: Option<String>,
     guest_binary_sha256: String,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ExecutionInputReceipt {
+    schema: u32,
+    record_type: String,
+    run_kind: String,
+    run_instance: String,
+    run_binding_sha256: String,
+    cell_id: String,
+    ordinal: u8,
+    preparation_receipt_sha256: Option<String>,
+    root_paths: BTreeMap<String, String>,
+    execution_root_paths: BTreeMap<String, String>,
+    root_manifests: BTreeMap<String, TreeManifest>,
+    receipt_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +310,9 @@ struct Denominator {
     manifest_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+    denominator_decision_path: String,
+    denominator_decision_sha256: String,
+    denominator_decision_semantic_sha256: String,
     tests: Vec<String>,
     backends: Vec<String>,
     observation_modes: Vec<String>,
@@ -318,6 +364,8 @@ struct RunBinding {
     verify_rs_sha256: String,
     log_authority_rs_sha256: String,
     requested_manifest_sha256: String,
+    denominator_decision_sha256: String,
+    denominator_decision_semantic_sha256: String,
     input_audit_sha256: String,
     manifest_sha256: String,
     denominator_sha256: String,
@@ -363,6 +411,9 @@ struct RequestedManifest {
     hermit_binary_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+    denominator_decision_path: String,
+    denominator_decision_sha256: String,
+    denominator_decision_semantic_sha256: String,
     denominator_expected_tests: usize,
     inputs: Vec<RequestedInput>,
 }
@@ -406,6 +457,37 @@ struct InputAudit {
     hermit_binary_sha256: String,
     corpus_c_sha256: String,
     corpus_nonc_sha256: String,
+    denominator_decision_path: String,
+    denominator_decision_sha256: String,
+    denominator_decision_semantic_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AliasDecision {
+    id: String,
+    corpus_row: String,
+    wrapper_path: String,
+    wrapper_commit: String,
+    wrapper_sha256: String,
+    wrapper_prepare_action: String,
+    wrapper_run_action: String,
+    retained_id: String,
+    retained_path: String,
+    retained_commit: String,
+    retained_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DenominatorDecision {
+    schema: u32,
+    record_type: String,
+    decision: String,
+    prior_named_rows: usize,
+    corrected_unique_workloads: usize,
+    retired_aliases: Vec<AliasDecision>,
+    retained_corpus_rows: Vec<String>,
+    launcher_decision: String,
+    rationale: String,
 }
 
 #[derive(Debug, Clone)]
@@ -640,12 +722,17 @@ fn freeze_requested_inputs(paths: &Paths) -> Result<InputAudit> {
         hermit_binary_sha256: manifest.hermit_binary_sha256,
         corpus_c_sha256: manifest.corpus_c_sha256,
         corpus_nonc_sha256: manifest.corpus_nonc_sha256,
+        denominator_decision_path: manifest.denominator_decision_path,
+        denominator_decision_sha256: manifest.denominator_decision_sha256,
+        denominator_decision_semantic_sha256: manifest.denominator_decision_semantic_sha256,
     };
     write_json_atomic(&paths.experiment.join("input-audit.json"), &audit)?;
     Ok(audit)
 }
 
 fn build_requested_manifest(paths: &Paths, execute_preparation: bool) -> Result<RequestedManifest> {
+    let (denominator_decision_sha256, denominator_decision_semantic_sha256) =
+        validate_denominator_decision(paths, None)?;
     let mut inputs = Vec::new();
     let c_file = File::open(&paths.corpus_c)?;
     for (line_no, line) in BufReader::new(c_file).lines().enumerate() {
@@ -774,6 +861,7 @@ fn build_requested_manifest(paths: &Paths, execute_preparation: bool) -> Result<
         });
     }
     inputs.sort_by(|a, b| a.id.cmp(&b.id));
+    validate_denominator_decision(paths, Some(&inputs))?;
 
     Ok(RequestedManifest {
         schema: SCHEMA,
@@ -786,9 +874,217 @@ fn build_requested_manifest(paths: &Paths, execute_preparation: bool) -> Result<
         hermit_binary_sha256: sha256_file(&paths.binary)?,
         corpus_c_sha256: sha256_file(&paths.corpus_c)?,
         corpus_nonc_sha256: sha256_file(&paths.corpus_nonc)?,
+        denominator_decision_path: "denominator-decision.json".to_owned(),
+        denominator_decision_sha256,
+        denominator_decision_semantic_sha256,
         denominator_expected_tests: FULL_TESTS,
         inputs,
     })
+}
+
+fn validate_denominator_decision(
+    paths: &Paths,
+    inputs: Option<&[RequestedInput]>,
+) -> Result<(String, String)> {
+    let path = paths.experiment.join("denominator-decision.json");
+    let decision: DenominatorDecision = read_json(&path)?;
+    let exact = [
+        (
+            "applications/timed-progress-bar",
+            "applications/example-timed-progress-bar",
+            "tests/e2e/applications/timed-progress-bar.sh",
+            "bb56774c90ae13e63a0a75d6cc1f6c01c69d5734",
+            "8475285e1c568e81d543c4ebb402fbc4c3d41dadc9c492263115197c80089d15",
+            "test -x /usr/bin/python3",
+            "exec \"${BASH_SOURCE[0]%/*}/../../../examples/timed-progress-bar.py\"",
+            "examples/timed-progress-bar.py",
+            "4c9a4ed94ed492021bd04ba236bb625cb60600c088cafcd84b3ec1bdf9f0e094",
+        ),
+        (
+            "determinism-stress/thread-output",
+            "determinism-stress/example-race",
+            "tests/e2e/determinism-stress/thread-output.sh",
+            "49321e67e6356d3f1f26d897ef8193a21c7e28ef",
+            "27b8a443c7fcadebc09e9fe50dc6f6b21b3025690e2d5186ca0245d9b62fbf74",
+            "test -x /bin/bash",
+            "exec \"${BASH_SOURCE[0]%/*}/../../../examples/race.sh\"",
+            "examples/race.sh",
+            "00ba1d05db05f914c990da9dcd45c7b41c300cc2db9c5ad7bf5d1b9766a44fc1",
+        ),
+        (
+            "language-runtimes/python-random",
+            "language-runtimes/example-python-random",
+            "tests/e2e/language-runtimes/python-random.sh",
+            "49321e67e6356d3f1f26d897ef8193a21c7e28ef",
+            "fb3fb07d73685d3fdfe37ff804ffa46dd7db413b0002fd2237b834ecc2f6c2af",
+            "test -x /usr/bin/python3",
+            "exec \"${BASH_SOURCE[0]%/*}/../../../examples/rand.py\"",
+            "examples/rand.py",
+            "e1a32fd938403f394f36555be180f2b17dd497859f28e9aa9ac0dadcd0372343",
+        ),
+        (
+            "system-utils/random-device",
+            "system-utils/example-devrand",
+            "tests/e2e/system-utils/random-device.sh",
+            "49321e67e6356d3f1f26d897ef8193a21c7e28ef",
+            "61321a5e85b9ab248bd3b4d01a8678bff01b0674563c74bce763e51f4b1da4cf",
+            "command -v hexdump >/dev/null",
+            "exec \"${BASH_SOURCE[0]%/*}/../../../examples/devrand.sh\"",
+            "examples/devrand.sh",
+            "00b605c8021ff67eb7d1615275b828b970b31f7715316ed363a3bd6ce3500f6c",
+        ),
+    ];
+    if decision.schema != SCHEMA
+        || decision.record_type != "strict_metric_denominator_decision"
+        || decision.decision != "retire_trivial_exec_aliases"
+        || decision.prior_named_rows != 235
+        || decision.corrected_unique_workloads != FULL_TESTS
+        || decision.retired_aliases.len() != exact.len()
+        || decision.prior_named_rows - decision.retired_aliases.len()
+            != decision.corrected_unique_workloads
+        || decision.retained_corpus_rows.len() != exact.len()
+        || decision.launcher_decision.trim().is_empty()
+        || decision.rationale.trim().is_empty()
+    {
+        bail!("denominator decision header/arithmetic is malformed");
+    }
+    let expected: BTreeMap<_, _> = exact.into_iter().map(|entry| (entry.0, entry)).collect();
+    let mut alias_ids = BTreeSet::new();
+    let mut retained_ids = BTreeSet::new();
+    let mut wrapper_paths = BTreeSet::new();
+    let mut corpus_rows = BTreeSet::new();
+    let mut alias_graph = BTreeMap::new();
+    for alias in &decision.retired_aliases {
+        let expected = expected
+            .get(alias.id.as_str())
+            .with_context(|| format!("unexpected retired alias {}", alias.id))?;
+        if !alias_ids.insert(alias.id.clone())
+            || !retained_ids.insert(alias.retained_id.clone())
+            || !wrapper_paths.insert(alias.wrapper_path.clone())
+            || !corpus_rows.insert(alias.corpus_row.clone())
+        {
+            bail!("denominator decision contains duplicate aliases");
+        }
+        if alias.retained_id != expected.1
+            || alias.wrapper_path != expected.2
+            || alias.wrapper_commit != expected.3
+            || alias.wrapper_sha256 != expected.4
+            || alias.wrapper_prepare_action != expected.5
+            || alias.wrapper_run_action != expected.6
+            || alias.retained_path != expected.7
+            || alias.retained_commit != expected.3
+            || alias.retained_sha256 != expected.8
+            || !alias
+                .corpus_row
+                .starts_with(&format!("{}|portable|", alias.id))
+        {
+            bail!(
+                "denominator alias decision differs from the exact reviewed mapping: {}",
+                alias.id
+            );
+        }
+        let wrapper = git_blob(
+            &paths.hermit_repo,
+            &alias.wrapper_commit,
+            &alias.wrapper_path,
+        )?;
+        if sha256_bytes(&wrapper) != alias.wrapper_sha256 {
+            bail!("historical wrapper blob hash mismatch: {}", alias.id);
+        }
+        validate_side_effect_free_wrapper(
+            &wrapper,
+            &alias.wrapper_prepare_action,
+            &alias.wrapper_run_action,
+        )?;
+        let retained = git_blob(
+            &paths.hermit_repo,
+            &alias.retained_commit,
+            &alias.retained_path,
+        )?;
+        if sha256_bytes(&retained) != alias.retained_sha256 {
+            bail!(
+                "historical retained payload hash mismatch: {}",
+                alias.retained_id
+            );
+        }
+        alias_graph.insert(alias.id.clone(), alias.retained_id.clone());
+    }
+    for start in alias_graph.keys() {
+        let mut seen = BTreeSet::new();
+        let mut current = start;
+        while let Some(next) = alias_graph.get(current) {
+            if !seen.insert(current.clone()) {
+                bail!("denominator alias graph contains a cycle at {start}");
+            }
+            current = next;
+        }
+    }
+    if let Some(inputs) = inputs.filter(|inputs| inputs.len() == FULL_TESTS) {
+        let by_id: BTreeMap<_, _> = inputs
+            .iter()
+            .map(|input| (input.id.as_str(), input))
+            .collect();
+        if by_id.len() != FULL_TESTS {
+            bail!("denominator decision does not resolve to 231 unique requested identities");
+        }
+        for alias in &decision.retired_aliases {
+            if by_id.contains_key(alias.id.as_str()) {
+                bail!("retired alias remains in requested manifest: {}", alias.id);
+            }
+            let retained = by_id.get(alias.retained_id.as_str()).with_context(|| {
+                format!(
+                    "retained payload missing from corpus: {}",
+                    alias.retained_id
+                )
+            })?;
+            if !decision.retained_corpus_rows.contains(&retained.corpus_row) {
+                bail!(
+                    "retained corpus row is not bound by denominator decision: {}",
+                    alias.retained_id
+                );
+            }
+        }
+    }
+    let semantic_sha256 = sha256_bytes(&serde_json::to_vec(&decision)?);
+    Ok((sha256_file(&path)?, semantic_sha256))
+}
+
+fn git_blob(repo: &Path, commit: &str, path: &str) -> Result<Vec<u8>> {
+    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("historical blob commit is not 40-hex: {commit}");
+    }
+    let object = format!("{commit}:{path}");
+    let output = Command::new("/usr/bin/git")
+        .args(["show", &object])
+        .current_dir(repo)
+        .env_clear()
+        .envs(hermetic_environment())
+        .output()?;
+    if !output.status.success() {
+        bail!("historical decision blob is missing: {object}");
+    }
+    Ok(output.stdout)
+}
+
+fn validate_side_effect_free_wrapper(bytes: &[u8], prepare: &str, run: &str) -> Result<()> {
+    let text = std::str::from_utf8(bytes).context("historical wrapper is not UTF-8")?;
+    let operational: Vec<_> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let expected = vec![
+        "set -euo pipefail".to_owned(),
+        "case ${1:-} in".to_owned(),
+        format!("--prepare) {prepare} ;;"),
+        format!("--run) {run} ;;"),
+        "*) echo \"usage: $0 --prepare|--run\" >&2; exit 2 ;;".to_owned(),
+        "esac".to_owned(),
+    ];
+    if operational != expected {
+        bail!("historical wrapper has side effects or unsupported control flow");
+    }
+    Ok(())
 }
 
 struct PreparedNoncInput {
@@ -844,19 +1140,22 @@ fn prepare_nonc_input(
         }
     }
 
-    let prepare_environment = BTreeMap::from([
-        ("LC_ALL".to_owned(), "C".to_owned()),
-        ("TZ".to_owned(), "UTC".to_owned()),
+    let mut prepare_environment = hermetic_environment();
+    prepare_environment.extend([
         ("HOME".to_owned(), home.display().to_string()),
         ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+        ("TMPDIR".to_owned(), tmp.display().to_string()),
         ("E2E_TMPDIR".to_owned(), tmp.display().to_string()),
         ("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string()),
     ]);
-    let run_environment_template = BTreeMap::from([
-        ("LC_ALL".to_owned(), "C".to_owned()),
-        ("TZ".to_owned(), "UTC".to_owned()),
-        ("HOME".to_owned(), home.display().to_string()),
-        ("XDG_CONFIG_HOME".to_owned(), xdg.display().to_string()),
+    let mut run_environment_template = hermetic_environment();
+    run_environment_template.extend([
+        ("HOME".to_owned(), "${EXECUTION_HOME}".to_owned()),
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            "${EXECUTION_XDG_CONFIG_HOME}".to_owned(),
+        ),
+        ("TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
         ("E2E_TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
         (
             "E2E_FIXTURE_DIR".to_owned(),
@@ -884,14 +1183,15 @@ fn prepare_nonc_input(
     let log_path = cell.join("prepare.log");
     let exit_code = if execute {
         let log = File::create(&log_path)?;
-        match Command::new(&prepare_command[0])
+        let mut command = Command::new(&prepare_command[0]);
+        command
             .args(&prepare_command[1..])
             .current_dir(&paths.hermit_repo)
+            .env_clear()
             .envs(&prepare_environment)
             .stdout(Stdio::from(log.try_clone()?))
-            .stderr(Stdio::from(log))
-            .status()
-        {
+            .stderr(Stdio::from(log));
+        match command.status() {
             Ok(status) => status.code().unwrap_or(128),
             Err(error) => {
                 fs::write(&log_path, format!("prepare spawn failed: {error}\n"))?;
@@ -905,6 +1205,10 @@ fn prepare_nonc_input(
         0
     };
     let prepared_artifacts = collect_prepared_artifacts(paths, &cell, &log_path)?;
+    let prepared_input_manifests = prepared_input_roots(&cell)
+        .into_iter()
+        .map(|(name, root)| Ok((name, snapshot_tree(&root)?)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let mut receipt = NoncPreparationReceipt {
         protocol: if wrapper_protocol {
             "e2e-shell-prepare-run-v1".to_owned()
@@ -924,6 +1228,10 @@ fn prepare_nonc_input(
         log: artifact_fact(paths, &log_path)?,
         prepared_artifacts_sha256: sha256_bytes(&serde_json::to_vec(&prepared_artifacts)?),
         prepared_artifacts,
+        prepared_input_manifests_sha256: sha256_bytes(&serde_json::to_vec(
+            &prepared_input_manifests,
+        )?),
+        prepared_input_manifests,
         canonical_argv_sha256: sha256_bytes(&serde_json::to_vec(&canonical_argv)?),
         canonical_argv: canonical_argv.clone(),
         receipt_sha256: String::new(),
@@ -953,6 +1261,8 @@ fn nonc_receipt_sha256(receipt: &NoncPreparationReceipt) -> Result<String> {
         "log": receipt.log,
         "prepared_artifacts": receipt.prepared_artifacts,
         "prepared_artifacts_sha256": receipt.prepared_artifacts_sha256,
+        "prepared_input_manifests": receipt.prepared_input_manifests,
+        "prepared_input_manifests_sha256": receipt.prepared_input_manifests_sha256,
         "canonical_argv": receipt.canonical_argv,
         "canonical_argv_sha256": receipt.canonical_argv_sha256,
     }))?))
@@ -1038,14 +1348,13 @@ fn resolve_program(paths: &Paths, value: &str) -> Result<PathBuf> {
     if value.contains('/') {
         return Ok(paths.hermit_repo.join(declared));
     }
-    let search = std::env::var_os("PATH").context("PATH is unset")?;
-    for directory in std::env::split_paths(&search) {
+    for directory in std::env::split_paths(HERMETIC_PATH) {
         let candidate = directory.join(value);
         if candidate.is_file() && fs::metadata(&candidate)?.permissions().mode() & 0o111 != 0 {
             return Ok(candidate.canonicalize().unwrap_or(candidate));
         }
     }
-    Ok(PathBuf::from(value))
+    bail!("program {value:?} is absent from the exact hermetic PATH {HERMETIC_PATH}")
 }
 
 fn shebang_interpreter(paths: &Paths, script: &Path) -> Result<Option<PathBuf>> {
@@ -1124,6 +1433,21 @@ fn self_test(default_paths: &Paths) -> Result<()> {
     fs::create_dir_all(paths.artifacts.join("compile-logs"))?;
     fs::create_dir_all(paths.artifacts.join("guests/tiny"))?;
     fs::create_dir_all(&paths.experiment)?;
+    fs::copy(
+        default_paths.experiment.join("denominator-decision.json"),
+        paths.experiment.join("denominator-decision.json"),
+    )?;
+    validate_denominator_decision(&paths, None)?;
+    let decision_path = paths.experiment.join("denominator-decision.json");
+    let original_decision = fs::read(&decision_path)?;
+    let mut malformed_decision: DenominatorDecision = read_json(&decision_path)?;
+    malformed_decision.prior_named_rows += 1;
+    write_json_atomic(&decision_path, &malformed_decision)?;
+    require_refusal(
+        "rehashed semantically malformed denominator decision",
+        validate_denominator_decision(&paths, None).map(|_| ()),
+    )?;
+    fs::write(&decision_path, original_decision)?;
 
     let mut healthy_spot = SpotCompletion {
         schema: SCHEMA,
@@ -1167,8 +1491,11 @@ fn self_test(default_paths: &Paths) -> Result<()> {
     let compile_log = paths.artifacts.join("compile-logs/tiny.log");
     let compile_command = c_compile_command(&source, &[], &[], &output);
     let log = File::create(&compile_log)?;
+    let compile_environment = hermetic_environment();
     let status = Command::new(&compile_command[0])
         .args(&compile_command[1..])
+        .env_clear()
+        .envs(&compile_environment)
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log))
         .status()?;
@@ -1191,6 +1518,8 @@ fn self_test(default_paths: &Paths) -> Result<()> {
             sha256: sha256_file(&source)?,
         }],
         toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
+        environment_sha256: sha256_bytes(&serde_json::to_vec(&compile_environment)?),
+        environment: compile_environment,
         exit_code: status.code().context("tiny compiler exited without code")?,
         log: artifact_fact(&paths, &compile_log)?,
         output: artifact_fact(&paths, &output)?,
@@ -1234,6 +1563,52 @@ fn self_test(default_paths: &Paths) -> Result<()> {
         validate_test_preparation(&paths, &partial, &toolchain.receipt_sha256),
     )?;
 
+    let nonc_id = "fixture/nonc-inputs";
+    let nonc_argv = vec!["/usr/bin/true".to_owned()];
+    let mut prepared = prepare_nonc_input(&paths, nonc_id, &nonc_argv, true)?;
+    let preparation_cell = paths
+        .artifacts
+        .join("preparation")
+        .join("nonc")
+        .join(slug(nonc_id));
+    for (name, value) in [
+        ("home", b"home-sentinel\n".as_slice()),
+        ("xdg_config", b"xdg-sentinel\n".as_slice()),
+        ("tmp", b"tmp-sentinel\n".as_slice()),
+        ("fixtures", b"fixture-sentinel\n".as_slice()),
+    ] {
+        let root = prepared_input_roots(&preparation_cell)[name].clone();
+        let sentinel = root.join("authority-sentinel");
+        fs::write(&sentinel, value)?;
+        fs::set_permissions(&sentinel, fs::Permissions::from_mode(0o640))?;
+    }
+    let preparation_log = preparation_cell.join("prepare.log");
+    prepared.receipt.prepared_artifacts =
+        collect_prepared_artifacts(&paths, &preparation_cell, &preparation_log)?;
+    prepared.receipt.prepared_artifacts_sha256 =
+        sha256_bytes(&serde_json::to_vec(&prepared.receipt.prepared_artifacts)?);
+    prepared.receipt.prepared_input_manifests = prepared_input_roots(&preparation_cell)
+        .into_iter()
+        .map(|(name, root)| Ok((name, snapshot_tree(&root)?)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    prepared.receipt.prepared_input_manifests_sha256 = sha256_bytes(&serde_json::to_vec(
+        &prepared.receipt.prepared_input_manifests,
+    )?);
+    prepared.receipt.receipt_sha256 = nonc_receipt_sha256(&prepared.receipt)?;
+    let nonc_test = TestSpec {
+        id: nonc_id.to_owned(),
+        lane: "portable".to_owned(),
+        kind: "script_or_interpreter".to_owned(),
+        argv: nonc_argv,
+        source_sha256: sha256_bytes(&serde_json::to_vec(&prepared.receipt.source_chain)?),
+        binary_sha256: sha256_file(Path::new("/usr/bin/true"))?,
+        workload_identity_sha256: sha256_bytes(b"fixture/nonc-inputs"),
+        compile: None,
+        compile_receipt: None,
+        nonc_preparation: Some(prepared.receipt),
+    };
+    validate_test_preparation(&paths, &nonc_test, &toolchain.receipt_sha256)?;
+
     let binding = RunBinding {
         schema: SCHEMA,
         record_type: "strict_metric_run_binding".to_owned(),
@@ -1244,6 +1619,8 @@ fn self_test(default_paths: &Paths) -> Result<()> {
         verify_rs_sha256: "c".repeat(64),
         log_authority_rs_sha256: "d".repeat(64),
         requested_manifest_sha256: "e".repeat(64),
+        denominator_decision_sha256: "5".repeat(64),
+        denominator_decision_semantic_sha256: "6".repeat(64),
         input_audit_sha256: "1".repeat(64),
         manifest_sha256: "2".repeat(64),
         denominator_sha256: "3".repeat(64),
@@ -1254,7 +1631,7 @@ fn self_test(default_paths: &Paths) -> Result<()> {
     let binding_sha256 = sha256_bytes(b"producer-selftest-binding");
     let job = Job {
         run_kind: binding.run_kind.clone(),
-        test: test.clone(),
+        test: nonc_test.clone(),
         backend: "ptrace".to_owned(),
         observation_mode: MAIN_MODE.to_owned(),
     };
@@ -1296,6 +1673,191 @@ fn self_test(default_paths: &Paths) -> Result<()> {
         legacy_diagnostic: artifact_fact(&paths, &diagnostic)?,
     };
     validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell)?;
+
+    let environment_output = Command::new("/usr/bin/env")
+        .env("PYTHONPATH", "hostile-ambient-value")
+        .env("RUST_LOG", "hostile-ambient-value")
+        .env_clear()
+        .envs(&one.environment)
+        .output()?;
+    let observed_environment = String::from_utf8(environment_output.stdout)?;
+    if !environment_output.status.success()
+        || observed_environment.contains("PYTHONPATH=")
+        || observed_environment.contains("RUST_LOG=")
+        || !observed_environment.contains(&format!("PATH={HERMETIC_PATH}\n"))
+    {
+        bail!("hermetic process positive sentinel leaked hostile ambient environment");
+    }
+
+    let home = paths.artifacts.join(&one.input_receipt.root_paths["home"]);
+    let sentinel = home.join("authority-sentinel");
+    let sentinel_bytes = fs::read(&sentinel)?;
+    let sentinel_mode = fs::metadata(&sentinel)?.permissions().mode() & 0o7777;
+    let added = home.join("planted-addition");
+    fs::write(&added, b"added")?;
+    require_refusal(
+        "execution input tree addition",
+        validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell),
+    )?;
+    fs::remove_file(&added)?;
+    fs::remove_file(&sentinel)?;
+    require_refusal(
+        "execution input tree removal",
+        validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell),
+    )?;
+    fs::write(&sentinel, &sentinel_bytes)?;
+    fs::set_permissions(&sentinel, fs::Permissions::from_mode(sentinel_mode))?;
+    fs::write(&sentinel, b"wrong bytes")?;
+    require_refusal(
+        "execution input tree byte change",
+        validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell),
+    )?;
+    fs::write(&sentinel, &sentinel_bytes)?;
+    fs::set_permissions(&sentinel, fs::Permissions::from_mode(sentinel_mode ^ 0o100))?;
+    require_refusal(
+        "execution input tree mode change",
+        validate_cached_pair(&paths, &job, &binding, &binding_sha256, &one, &two, &cell),
+    )?;
+    fs::set_permissions(&sentinel, fs::Permissions::from_mode(sentinel_mode))?;
+
+    let mut wrong_seed = one.clone();
+    wrong_seed.input_receipt.root_manifests.insert(
+        "home".to_owned(),
+        wrong_seed.input_receipt.root_manifests["fixtures"].clone(),
+    );
+    wrong_seed.input_receipt.receipt_sha256 =
+        execution_input_receipt_sha256(&wrong_seed.input_receipt)?;
+    require_refusal(
+        "rehashed semantically wrong input seed",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &wrong_seed,
+            &two,
+            &cell,
+        ),
+    )?;
+    let mut missing_manifest = one.clone();
+    missing_manifest.input_receipt.root_manifests.remove("home");
+    missing_manifest.input_receipt.receipt_sha256 =
+        execution_input_receipt_sha256(&missing_manifest.input_receipt)?;
+    require_refusal(
+        "missing execution input manifest",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &missing_manifest,
+            &two,
+            &cell,
+        ),
+    )?;
+    let mut swapped_home_xdg = one.clone();
+    let home = swapped_home_xdg
+        .input_receipt
+        .root_paths
+        .remove("home")
+        .context("self-test HOME seed missing")?;
+    let xdg = swapped_home_xdg
+        .input_receipt
+        .root_paths
+        .remove("xdg_config")
+        .context("self-test XDG seed missing")?;
+    swapped_home_xdg
+        .input_receipt
+        .root_paths
+        .insert("home".to_owned(), xdg);
+    swapped_home_xdg
+        .input_receipt
+        .root_paths
+        .insert("xdg_config".to_owned(), home);
+    let home = swapped_home_xdg
+        .input_receipt
+        .execution_root_paths
+        .remove("home")
+        .context("self-test HOME execution root missing")?;
+    let xdg = swapped_home_xdg
+        .input_receipt
+        .execution_root_paths
+        .remove("xdg_config")
+        .context("self-test XDG execution root missing")?;
+    swapped_home_xdg
+        .input_receipt
+        .execution_root_paths
+        .insert("home".to_owned(), xdg);
+    swapped_home_xdg
+        .input_receipt
+        .execution_root_paths
+        .insert("xdg_config".to_owned(), home);
+    swapped_home_xdg.input_receipt.receipt_sha256 =
+        execution_input_receipt_sha256(&swapped_home_xdg.input_receipt)?;
+    require_refusal(
+        "swapped HOME/XDG input roots",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &swapped_home_xdg,
+            &two,
+            &cell,
+        ),
+    )?;
+    let mut cross_cell = one.clone();
+    cross_cell.input_receipt.cell_id = "different-cell".to_owned();
+    cross_cell.input_receipt.receipt_sha256 =
+        execution_input_receipt_sha256(&cross_cell.input_receipt)?;
+    require_refusal(
+        "cross-cell input receipt swap",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &cross_cell,
+            &two,
+            &cell,
+        ),
+    )?;
+    let mut shared_ordinal = two.clone();
+    shared_ordinal.input_receipt.root_paths = one.input_receipt.root_paths.clone();
+    shared_ordinal.input_receipt.execution_root_paths =
+        one.input_receipt.execution_root_paths.clone();
+    shared_ordinal.input_receipt.receipt_sha256 =
+        execution_input_receipt_sha256(&shared_ordinal.input_receipt)?;
+    require_refusal(
+        "shared ordinal HOME/XDG/TMP/fixture roots",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &one,
+            &shared_ordinal,
+            &cell,
+        ),
+    )?;
+    let mut hostile_environment = one.clone();
+    hostile_environment
+        .environment
+        .insert("PYTHONPATH".to_owned(), "hostile".to_owned());
+    hostile_environment.environment_sha256 =
+        sha256_bytes(&serde_json::to_vec(&hostile_environment.environment)?);
+    require_refusal(
+        "rehashed hostile ambient execution environment",
+        validate_cached_pair(
+            &paths,
+            &job,
+            &binding,
+            &binding_sha256,
+            &hostile_environment,
+            &two,
+            &cell,
+        ),
+    )?;
 
     let state = state_root(&paths, &binding, &binding_sha256);
     let execution_dir = state.join("executions");
@@ -1343,7 +1905,7 @@ fn self_test(default_paths: &Paths) -> Result<()> {
 
     fs::remove_dir_all(&root)?;
     println!(
-        "PRODUCER SELF-TEST PASS: real tiny compiler receipt positive; 4 compile-receipt and 4 run-consumer cached-resume negatives refused; canonical parser brackets passed; digest-valid unhealthy spot completion refused"
+        "PRODUCER SELF-TEST PASS: positive real compiler, hermetic-environment, isolated-input-tree, canonical-parser, and healthy-spot sentinels; negatives=20 refused, including compile/cache gaps, hostile ambient env, input add/remove/byte/mode changes, wrong/missing/swapped/shared/cross-cell input receipts, malformed denominator decision, and unhealthy spot evidence"
     );
     Ok(())
 }
@@ -1369,7 +1931,8 @@ fn make_self_test_execution(
     let inspection = log_authority::inspect_file(&paths.binary, &log)?;
     fs::write(&parser_diagnostic, &inspection.diagnostic_stderr)?;
     let command = command_argv(paths, job, &log);
-    let environment = execution_environment(paths, job, binding, binding_sha256, ordinal, true)?;
+    let (environment, input_receipt) =
+        execution_inputs(paths, job, binding, binding_sha256, ordinal, true)?;
     Ok(ExecutionRecord {
         schema: SCHEMA,
         record_type: "strict_metric_execution".to_owned(),
@@ -1403,7 +1966,12 @@ fn make_self_test_execution(
         command,
         environment_sha256: sha256_bytes(&serde_json::to_vec(&environment)?),
         environment,
-        preparation_receipt_sha256: None,
+        input_receipt,
+        preparation_receipt_sha256: job
+            .test
+            .nonc_preparation
+            .as_ref()
+            .map(|receipt| receipt.receipt_sha256.clone()),
         guest_binary_sha256: job.test.binary_sha256.clone(),
         error: None,
     })
@@ -1471,18 +2039,196 @@ fn trivial_exec_run(script: &Path) -> Result<Option<Vec<String>>> {
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
+    let source_metadata = fs::symlink_metadata(source)?;
+    if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
+        bail!("tree root is not a real directory: {}", source.display());
+    }
+    fs::create_dir_all(destination)?;
+    fs::set_permissions(
+        destination,
+        fs::Permissions::from_mode(source_metadata.permissions().mode() & 0o7777),
+    )?;
+    let mut entries = fs::read_dir(source)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let metadata = fs::symlink_metadata(entry.path())?;
+        let file_type = metadata.file_type();
         let target = destination.join(entry.file_name());
         if file_type.is_dir() {
-            fs::create_dir_all(&target)?;
             copy_tree(&entry.path(), &target)?;
         } else if file_type.is_file() {
-            fs::copy(entry.path(), target)?;
+            fs::copy(entry.path(), &target)?;
+            fs::set_permissions(
+                &target,
+                fs::Permissions::from_mode(metadata.permissions().mode() & 0o7777),
+            )?;
         } else {
-            bail!("unsupported xdg-config entry: {}", entry.path().display());
+            bail!(
+                "tree contains a symlink or special entry: {}",
+                entry.path().display()
+            );
         }
+    }
+    Ok(())
+}
+
+fn hermetic_environment() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("LANG".to_owned(), "C".to_owned()),
+        ("LC_ALL".to_owned(), "C".to_owned()),
+        ("PATH".to_owned(), HERMETIC_PATH.to_owned()),
+        ("TZ".to_owned(), "UTC".to_owned()),
+    ])
+}
+
+fn tool_environment() -> BTreeMap<String, String> {
+    let mut environment = hermetic_environment();
+    environment.extend([
+        ("CARGO_HOME".to_owned(), "/home/newton/.cargo".to_owned()),
+        ("HOME".to_owned(), "/home/newton".to_owned()),
+        ("RUSTUP_HOME".to_owned(), "/home/newton/.rustup".to_owned()),
+    ]);
+    environment
+}
+
+fn prepared_input_roots(cell: &Path) -> BTreeMap<String, PathBuf> {
+    BTreeMap::from([
+        ("fixtures".to_owned(), cell.join("fixtures")),
+        ("home".to_owned(), cell.join("home")),
+        ("tmp".to_owned(), cell.join("tmp")),
+        ("xdg_config".to_owned(), cell.join("xdg-config")),
+    ])
+}
+
+fn snapshot_tree(root: &Path) -> Result<TreeManifest> {
+    let mut entries = Vec::new();
+    snapshot_tree_entry(root, root, Path::new("."), &mut entries)?;
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    let digest_sha256 = sha256_bytes(&serde_json::to_vec(&entries)?);
+    Ok(TreeManifest {
+        entries,
+        digest_sha256,
+    })
+}
+
+fn snapshot_tree_entry(
+    root: &Path,
+    path: &Path,
+    relative: &Path,
+    entries: &mut Vec<TreeEntry>,
+) -> Result<String> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("walking input tree {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("input tree contains a symlink: {}", path.display());
+    }
+    let relative_path = if relative == Path::new(".") {
+        ".".to_owned()
+    } else {
+        relative
+            .to_str()
+            .with_context(|| format!("non-UTF8 input path under {}", root.display()))?
+            .to_owned()
+    };
+    let mode = metadata.permissions().mode() & 0o7777;
+    if metadata.is_file() {
+        let sha256 = sha256_file(path)?;
+        entries.push(TreeEntry {
+            relative_path,
+            kind: "file".to_owned(),
+            bytes: metadata.len(),
+            mode,
+            sha256: sha256.clone(),
+        });
+        return Ok(sha256);
+    }
+    if !metadata.is_dir() {
+        bail!("input tree contains a special entry: {}", path.display());
+    }
+    let mut children = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
+    children.sort_by_key(|entry| entry.file_name());
+    let mut child_material = Vec::new();
+    for child in children {
+        let name = child
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("non-UTF8 input path under {}", root.display()))?;
+        let child_relative = if relative == Path::new(".") {
+            PathBuf::from(&name)
+        } else {
+            relative.join(&name)
+        };
+        let child_metadata = fs::symlink_metadata(child.path())?;
+        let child_kind = if child_metadata.is_dir() {
+            "directory"
+        } else if child_metadata.is_file() {
+            "file"
+        } else {
+            bail!(
+                "input tree contains a symlink or special entry: {}",
+                child.path().display()
+            );
+        };
+        let child_hash = snapshot_tree_entry(root, &child.path(), &child_relative, entries)?;
+        child_material.push((
+            name,
+            child_kind,
+            if child_metadata.is_file() {
+                child_metadata.len()
+            } else {
+                0
+            },
+            child_metadata.permissions().mode() & 0o7777,
+            child_hash,
+        ));
+    }
+    let sha256 = sha256_bytes(&serde_json::to_vec(&child_material)?);
+    entries.push(TreeEntry {
+        relative_path,
+        kind: "directory".to_owned(),
+        bytes: 0,
+        mode,
+        sha256: sha256.clone(),
+    });
+    Ok(sha256)
+}
+
+fn verify_tree_manifest(root: &Path, expected: &TreeManifest) -> Result<()> {
+    let actual = snapshot_tree(root)?;
+    if actual != *expected {
+        bail!("input tree manifest mismatch: {}", root.display());
+    }
+    Ok(())
+}
+
+fn tree_inodes(root: &Path) -> Result<BTreeSet<(u64, u64)>> {
+    let manifest = snapshot_tree(root)?;
+    let mut result = BTreeSet::new();
+    for entry in manifest.entries {
+        let path = if entry.relative_path == "." {
+            root.to_path_buf()
+        } else {
+            root.join(entry.relative_path)
+        };
+        let metadata = fs::symlink_metadata(path)?;
+        result.insert((metadata.dev(), metadata.ino()));
+    }
+    Ok(result)
+}
+
+fn require_disjoint_trees(left: &Path, right: &Path) -> Result<()> {
+    let left_path = left.canonicalize()?;
+    let right_path = right.canonicalize()?;
+    if left_path == right_path
+        || left_path.starts_with(&right_path)
+        || right_path.starts_with(&left_path)
+        || !tree_inodes(left)?.is_disjoint(&tree_inodes(right)?)
+    {
+        bail!(
+            "input trees alias by path or inode: {} and {}",
+            left.display(),
+            right.display()
+        );
     }
     Ok(())
 }
@@ -1520,7 +2266,25 @@ fn collect_prepared_artifacts(
     Ok(result)
 }
 
-fn validate_nonc_preparation(paths: &Paths, receipt: &NoncPreparationReceipt) -> Result<()> {
+fn validate_nonc_preparation(
+    paths: &Paths,
+    id: &str,
+    receipt: &NoncPreparationReceipt,
+) -> Result<()> {
+    let mut expected_template = hermetic_environment();
+    expected_template.extend([
+        ("HOME".to_owned(), "${EXECUTION_HOME}".to_owned()),
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            "${EXECUTION_XDG_CONFIG_HOME}".to_owned(),
+        ),
+        ("TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
+        ("E2E_TMPDIR".to_owned(), "${EXECUTION_TMPDIR}".to_owned()),
+        (
+            "E2E_FIXTURE_DIR".to_owned(),
+            "${EXECUTION_FIXTURE_DIR}".to_owned(),
+        ),
+    ]);
     if receipt.exit_code != 0
         || receipt.prepare_command.is_empty()
         || receipt.prepare_command_sha256
@@ -1534,17 +2298,10 @@ fn validate_nonc_preparation(paths: &Paths, receipt: &NoncPreparationReceipt) ->
             != sha256_bytes(&serde_json::to_vec(&receipt.canonical_argv)?)
         || receipt.prepared_artifacts_sha256
             != sha256_bytes(&serde_json::to_vec(&receipt.prepared_artifacts)?)
+        || receipt.prepared_input_manifests_sha256
+            != sha256_bytes(&serde_json::to_vec(&receipt.prepared_input_manifests)?)
         || receipt.receipt_sha256 != nonc_receipt_sha256(receipt)?
-        || receipt
-            .run_environment_template
-            .get("E2E_TMPDIR")
-            .map(String::as_str)
-            != Some("${EXECUTION_TMPDIR}")
-        || receipt
-            .run_environment_template
-            .get("E2E_FIXTURE_DIR")
-            .map(String::as_str)
-            != Some("${EXECUTION_FIXTURE_DIR}")
+        || receipt.run_environment_template != expected_template
     {
         bail!("non-C preparation receipt is internally inconsistent");
     }
@@ -1572,6 +2329,28 @@ fn validate_nonc_preparation(paths: &Paths, receipt: &NoncPreparationReceipt) ->
         let path = Path::new(&source.path);
         if !path.is_file() || sha256_file(path)? != source.sha256 {
             bail!("non-C preparation source changed: {}", source.path);
+        }
+    }
+    let cell = paths
+        .artifacts
+        .join("preparation")
+        .join("nonc")
+        .join(slug(id));
+    let expected_roots = prepared_input_roots(&cell);
+    if receipt.prepared_input_manifests.len() != expected_roots.len() {
+        bail!("non-C preparation input manifest set is incomplete for {id}");
+    }
+    for (name, root) in expected_roots {
+        let manifest = receipt
+            .prepared_input_manifests
+            .get(&name)
+            .with_context(|| format!("non-C preparation lacks {name} input manifest for {id}"))?;
+        verify_tree_manifest(&root, manifest)?;
+    }
+    let roots: Vec<_> = prepared_input_roots(&cell).into_values().collect();
+    for left in 0..roots.len() {
+        for right in left + 1..roots.len() {
+            require_disjoint_trees(&roots[left], &roots[right])?;
         }
     }
     Ok(())
@@ -1662,6 +2441,10 @@ fn prepare(paths: &Paths, jobs: usize) -> Result<()> {
         hermit_binary_sha256: sha256_file(&paths.binary)?,
         corpus_c_sha256: corpus_c_sha256.clone(),
         corpus_nonc_sha256: corpus_nonc_sha256.clone(),
+        denominator_decision_sha256: input_audit.denominator_decision_sha256.clone(),
+        denominator_decision_semantic_sha256: input_audit
+            .denominator_decision_semantic_sha256
+            .clone(),
         parent_commit,
         run_rs_sha256,
         verify_rs_sha256,
@@ -1893,6 +2676,7 @@ fn run_pair(
         timeout_seconds,
         &artifact_dir,
     )?;
+    validate_pair_input_disjoint(paths, job, &one, &two)?;
     write_json_atomic(
         &state.join("executions").join(format!("{cell_id}--1.json")),
         &one,
@@ -1975,7 +2759,8 @@ fn run_one(
     File::create(&log_path)?;
     let command = command_argv(paths, job, &log_path);
     let command_sha256 = sha256_bytes(&serde_json::to_vec(&command)?);
-    let environment = execution_environment(paths, job, binding, binding_sha256, ordinal, true)?;
+    let (environment, input_receipt) =
+        execution_inputs(paths, job, binding, binding_sha256, ordinal, true)?;
     let environment_sha256 = sha256_bytes(&serde_json::to_vec(&environment)?);
     let stdout = File::create(&stdout_path)?;
     let stderr = File::create(&stderr_path)?;
@@ -1983,8 +2768,8 @@ fn run_one(
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..])
         .current_dir(&paths.hermit_repo)
+        .env_clear()
         .envs(&environment)
-        .env_remove("RUST_LOG")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     unsafe {
@@ -2062,6 +2847,7 @@ fn run_one(
         command_sha256,
         environment,
         environment_sha256,
+        input_receipt,
         preparation_receipt_sha256: job
             .test
             .nonc_preparation
@@ -2101,21 +2887,26 @@ fn command_argv(paths: &Paths, job: &Job, log_path: &Path) -> Vec<String> {
     command
 }
 
-fn execution_environment(
+fn execution_input_roots(runtime: &Path) -> BTreeMap<String, PathBuf> {
+    BTreeMap::from([
+        ("fixtures".to_owned(), runtime.join("fixtures")),
+        ("home".to_owned(), runtime.join("home")),
+        ("tmp".to_owned(), runtime.join("tmp")),
+        ("xdg_config".to_owned(), runtime.join("xdg-config")),
+    ])
+}
+
+fn execution_inputs(
     paths: &Paths,
     job: &Job,
     binding: &RunBinding,
     binding_sha256: &str,
     ordinal: u8,
     reset_tmp: bool,
-) -> Result<BTreeMap<String, String>> {
-    let Some(receipt) = &job.test.nonc_preparation else {
-        return Ok(BTreeMap::from([
-            ("LC_ALL".to_owned(), "C".to_owned()),
-            ("TZ".to_owned(), "UTC".to_owned()),
-        ]));
-    };
-    validate_nonc_preparation(paths, receipt)?;
+) -> Result<(BTreeMap<String, String>, ExecutionInputReceipt)> {
+    if let Some(receipt) = &job.test.nonc_preparation {
+        validate_nonc_preparation(paths, &job.test.id, receipt)?;
+    }
     let runtime = paths
         .artifacts
         .join("runtime")
@@ -2124,8 +2915,8 @@ fn execution_environment(
         .join(binding_sha256)
         .join(job_cell_id(job))
         .join(format!("run{ordinal}"));
-    let tmp = runtime.join("tmp");
-    let fixtures = runtime.join("fixtures");
+    let roots = execution_input_roots(&runtime.join("inputs"));
+    let execution_roots = execution_input_roots(&runtime.join("execution"));
     if reset_tmp && runtime.exists() {
         fs::remove_dir_all(&runtime).with_context(|| {
             format!(
@@ -2135,43 +2926,172 @@ fn execution_environment(
         })?;
     }
     if reset_tmp {
-        fs::create_dir_all(&tmp)?;
-        fs::create_dir_all(&fixtures)?;
-        let prepared_fixtures = receipt
-            .prepare_environment
-            .get("E2E_FIXTURE_DIR")
-            .context("non-C preparation lacks E2E_FIXTURE_DIR")?;
-        let prepared_fixtures = Path::new(prepared_fixtures);
-        if !prepared_fixtures.is_dir() {
-            bail!(
-                "prepared fixture directory is missing: {}",
-                prepared_fixtures.display()
-            );
+        if let Some(receipt) = &job.test.nonc_preparation {
+            let preparation_cell = paths
+                .artifacts
+                .join("preparation")
+                .join("nonc")
+                .join(slug(&job.test.id));
+            let prepared_roots = prepared_input_roots(&preparation_cell);
+            for (name, destination) in &roots {
+                let source = prepared_roots
+                    .get(name)
+                    .with_context(|| format!("missing prepared input root {name}"))?;
+                copy_tree(source, destination)?;
+                require_disjoint_trees(source, destination)?;
+                verify_tree_manifest(
+                    destination,
+                    receipt
+                        .prepared_input_manifests
+                        .get(name)
+                        .with_context(|| format!("missing prepared input manifest {name}"))?,
+                )?;
+                let execution = &execution_roots[name];
+                copy_tree(destination, execution)?;
+                require_disjoint_trees(source, execution)?;
+                require_disjoint_trees(destination, execution)?;
+                verify_tree_manifest(execution, &receipt.prepared_input_manifests[name])?;
+            }
+        } else {
+            for root in roots.values().chain(execution_roots.values()) {
+                fs::create_dir_all(root)?;
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
+            }
         }
-        copy_tree(prepared_fixtures, &fixtures)?;
-    } else if !tmp.is_dir() || !fixtures.is_dir() {
+    } else if roots
+        .values()
+        .chain(execution_roots.values())
+        .any(|root| !root.is_dir())
+    {
         bail!(
-            "cached execution tmp/fixture directory is missing: {}",
+            "cached execution input root is missing: {}",
             runtime.display()
         );
     }
-    let mut environment = receipt.run_environment_template.clone();
-    if environment.insert("E2E_TMPDIR".to_owned(), tmp.display().to_string())
-        != Some("${EXECUTION_TMPDIR}".to_owned())
-    {
-        bail!("non-C run environment lacks the execution tmpdir placeholder");
+    let root_paths = roots
+        .iter()
+        .map(|(name, root)| {
+            Ok((
+                name.clone(),
+                root.strip_prefix(&paths.artifacts)?
+                    .to_str()
+                    .context("execution input root path is not UTF-8")?
+                    .to_owned(),
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let root_manifests = roots
+        .iter()
+        .map(|(name, root)| Ok((name.clone(), snapshot_tree(root)?)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    if let Some(receipt) = &job.test.nonc_preparation {
+        for name in ["fixtures", "home", "tmp", "xdg_config"] {
+            if root_manifests[name] != receipt.prepared_input_manifests[name] {
+                bail!(
+                    "execution input seed differs from preparation for {}::{ordinal}:{name}",
+                    job_cell_id(job)
+                );
+            }
+        }
+    } else {
+        let empty = empty_tree_manifest(0o700)?;
+        if root_manifests.values().any(|manifest| manifest != &empty) {
+            bail!("compiled guest execution input roots must be exact empty trees");
+        }
     }
-    if environment.insert("E2E_FIXTURE_DIR".to_owned(), fixtures.display().to_string())
-        != Some("${EXECUTION_FIXTURE_DIR}".to_owned())
-    {
-        bail!("non-C run environment lacks the execution fixture placeholder");
-    }
-    Ok(environment)
+    let execution_root_paths = execution_roots
+        .iter()
+        .map(|(name, root)| {
+            Ok((
+                name.clone(),
+                root.strip_prefix(&paths.artifacts)?
+                    .to_str()
+                    .context("execution root path is not UTF-8")?
+                    .to_owned(),
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut input_receipt = ExecutionInputReceipt {
+        schema: SCHEMA,
+        record_type: "strict_metric_execution_inputs".to_owned(),
+        run_kind: binding.run_kind.clone(),
+        run_instance: binding.run_instance.clone(),
+        run_binding_sha256: binding_sha256.to_owned(),
+        cell_id: job_cell_id(job),
+        ordinal,
+        preparation_receipt_sha256: job
+            .test
+            .nonc_preparation
+            .as_ref()
+            .map(|receipt| receipt.receipt_sha256.clone()),
+        root_paths,
+        execution_root_paths,
+        root_manifests,
+        receipt_sha256: String::new(),
+    };
+    input_receipt.receipt_sha256 = execution_input_receipt_sha256(&input_receipt)?;
+
+    let mut environment = hermetic_environment();
+    environment.extend([
+        (
+            "HOME".to_owned(),
+            execution_roots["home"].display().to_string(),
+        ),
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            execution_roots["xdg_config"].display().to_string(),
+        ),
+        (
+            "TMPDIR".to_owned(),
+            execution_roots["tmp"].display().to_string(),
+        ),
+        (
+            "E2E_TMPDIR".to_owned(),
+            execution_roots["tmp"].display().to_string(),
+        ),
+        (
+            "E2E_FIXTURE_DIR".to_owned(),
+            execution_roots["fixtures"].display().to_string(),
+        ),
+    ]);
+    Ok((environment, input_receipt))
+}
+
+fn execution_input_receipt_sha256(receipt: &ExecutionInputReceipt) -> Result<String> {
+    Ok(sha256_bytes(&serde_json::to_vec(&serde_json::json!({
+        "schema": receipt.schema,
+        "record_type": receipt.record_type,
+        "run_kind": receipt.run_kind,
+        "run_instance": receipt.run_instance,
+        "run_binding_sha256": receipt.run_binding_sha256,
+        "cell_id": receipt.cell_id,
+        "ordinal": receipt.ordinal,
+        "preparation_receipt_sha256": receipt.preparation_receipt_sha256,
+        "root_paths": receipt.root_paths,
+        "execution_root_paths": receipt.execution_root_paths,
+        "root_manifests": receipt.root_manifests,
+    }))?))
+}
+
+fn empty_tree_manifest(mode: u32) -> Result<TreeManifest> {
+    let directory_sha256 = sha256_bytes(&serde_json::to_vec(&Vec::<serde_json::Value>::new())?);
+    let entries = vec![TreeEntry {
+        relative_path: ".".to_owned(),
+        kind: "directory".to_owned(),
+        bytes: 0,
+        mode,
+        sha256: directory_sha256,
+    }];
+    Ok(TreeManifest {
+        digest_sha256: sha256_bytes(&serde_json::to_vec(&entries)?),
+        entries,
+    })
 }
 
 fn run_legacy_logdiff(paths: &Paths, left: &Path, right: &Path, diagnostic: &Path) -> Result<bool> {
     let stderr = File::create(diagnostic)?;
-    let status = Command::new(&paths.binary)
+    let mut command = Command::new(&paths.binary);
+    let status = command
         .arg("log-diff")
         .arg(left)
         .arg(right)
@@ -2179,6 +3099,8 @@ fn run_legacy_logdiff(paths: &Paths, left: &Path, right: &Path, diagnostic: &Pat
         .arg("--no-color")
         .arg("--limit=1")
         .current_dir(&paths.hermit_repo)
+        .env_clear()
+        .envs(hermetic_environment())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr))
         .status()
@@ -2226,6 +3148,10 @@ fn write_denominator(
         || !input_audit.duplicate_workload_identities.is_empty()
         || input_audit.executable_manifest_path.as_deref() != Some("manifest.json")
         || input_audit.executable_manifest_sha256.as_deref() != Some(&manifest_sha256)
+        || input_audit.denominator_decision_path != "denominator-decision.json"
+        || input_audit.denominator_decision_sha256 != manifest.denominator_decision_sha256
+        || input_audit.denominator_decision_semantic_sha256
+            != manifest.denominator_decision_semantic_sha256
     {
         bail!("input audit does not authorize the complete 231-workload denominator");
     }
@@ -2300,6 +3226,11 @@ fn write_denominator(
         manifest_sha256,
         corpus_c_sha256: manifest.corpus_c_sha256.clone(),
         corpus_nonc_sha256: manifest.corpus_nonc_sha256.clone(),
+        denominator_decision_path: input_audit.denominator_decision_path.clone(),
+        denominator_decision_sha256: input_audit.denominator_decision_sha256.clone(),
+        denominator_decision_semantic_sha256: input_audit
+            .denominator_decision_semantic_sha256
+            .clone(),
         tests: tests.into_iter().collect(),
         backends: BACKENDS.iter().map(|s| (*s).to_owned()).collect(),
         observation_modes: modes.into_iter().collect(),
@@ -2331,6 +3262,10 @@ fn write_denominator(
         verify_rs_sha256: manifest.verify_rs_sha256.clone(),
         log_authority_rs_sha256: manifest.log_authority_rs_sha256.clone(),
         requested_manifest_sha256: input_audit.requested_manifest_sha256.clone(),
+        denominator_decision_sha256: input_audit.denominator_decision_sha256.clone(),
+        denominator_decision_semantic_sha256: input_audit
+            .denominator_decision_semantic_sha256
+            .clone(),
         input_audit_sha256: sha256_file(&input_audit_path)?,
         manifest_sha256: sha256_file(&paths.experiment.join("manifest.json"))?,
         denominator_sha256,
@@ -2380,6 +3315,8 @@ fn reverify_spot_before_full(paths: &Paths, instance: &str) -> Result<()> {
     ];
     let output = Command::new(&verifier)
         .args(&arguments)
+        .env_clear()
+        .envs(tool_environment())
         .output()
         .with_context(|| format!("launching exact spot verifier {}", verifier.display()))?;
     if !output.status.success() {
@@ -2457,6 +3394,7 @@ fn validate_frozen_inputs(paths: &Paths, manifest: &FrozenManifest) -> Result<()
         &manifest.run_rs_sha256,
         &manifest.verify_rs_sha256,
         &manifest.log_authority_rs_sha256,
+        &manifest.denominator_decision_sha256,
     )?;
     let checks = [
         (
@@ -2512,6 +3450,19 @@ fn validate_frozen_inputs(paths: &Paths, manifest: &FrozenManifest) -> Result<()
         || manifest.hermit_build.command_sha256
             != sha256_bytes(&serde_json::to_vec(&manifest.hermit_build.command)?)
         || manifest.hermit_build.toolchain_receipt_sha256 != manifest.toolchain.receipt_sha256
+        || manifest.hermit_build.environment_sha256
+            != sha256_bytes(&serde_json::to_vec(&manifest.hermit_build.environment)?)
+        || manifest
+            .hermit_build
+            .environment
+            .get("PATH")
+            .map(String::as_str)
+            != Some(HERMETIC_PATH)
+        || manifest
+            .hermit_build
+            .environment
+            .keys()
+            .any(|key| key == "PYTHONPATH")
         || manifest.hermit_build.output.sha256 != manifest.hermit_binary_sha256
     {
         bail!("Hermit causal build receipt no longer binds the source tuple and binary");
@@ -2564,13 +3515,16 @@ fn validate_test_preparation(
                 || receipt.output.sha256 != test.binary_sha256
                 || receipt.exit_code != 0
                 || receipt.toolchain_receipt_sha256 != toolchain_receipt_sha256
+                || receipt.environment != hermetic_environment()
+                || receipt.environment_sha256
+                    != sha256_bytes(&serde_json::to_vec(&receipt.environment)?)
             {
                 bail!("compile receipt no longer binds guest {}", test.id);
             }
             verify_artifact_fact(paths, &receipt.log)?;
             verify_artifact_fact(paths, &receipt.output)?;
         }
-        (None, None, Some(receipt)) => validate_nonc_preparation(paths, receipt)?,
+        (None, None, Some(receipt)) => validate_nonc_preparation(paths, &test.id, receipt)?,
         _ => bail!(
             "compile/non-C preparation receipt pairing is invalid: {}",
             test.id
@@ -2583,6 +3537,8 @@ fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<
     let requested_path = paths.experiment.join("requested-manifest.json");
     let recorded: RequestedManifest = read_json(&requested_path)?;
     let derived = build_requested_manifest(paths, false)?;
+    let (decision_file_sha256, decision_semantic_sha256) =
+        validate_denominator_decision(paths, Some(&derived.inputs))?;
     if serde_json::to_vec(&recorded)? != serde_json::to_vec(&derived)? {
         bail!("requested manifest differs from independent corpus/source rederivation");
     }
@@ -2605,7 +3561,9 @@ fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<
             missing_test_ids.insert(input.id.clone());
         }
         match (&input.kind[..], &input.nonc_preparation) {
-            ("script_or_interpreter", Some(receipt)) => validate_nonc_preparation(paths, receipt)?,
+            ("script_or_interpreter", Some(receipt)) => {
+                validate_nonc_preparation(paths, &input.id, receipt)?
+            }
             ("compiled_c", None) => {}
             _ => bail!("requested input preparation type mismatch: {}", input.id),
         }
@@ -2673,6 +3631,16 @@ fn validate_input_authority(paths: &Paths, manifest: &FrozenManifest) -> Result<
         || audit.duplicate_workload_identities != duplicate_workloads
         || audit.requested_manifest_path != "requested-manifest.json"
         || audit.requested_manifest_sha256 != sha256_file(&requested_path)?
+        || audit.denominator_decision_path != "denominator-decision.json"
+        || audit.denominator_decision_sha256 != decision_file_sha256
+        || audit.denominator_decision_semantic_sha256 != decision_semantic_sha256
+        || recorded.denominator_decision_path != audit.denominator_decision_path
+        || recorded.denominator_decision_sha256 != audit.denominator_decision_sha256
+        || recorded.denominator_decision_semantic_sha256
+            != audit.denominator_decision_semantic_sha256
+        || manifest.denominator_decision_sha256 != audit.denominator_decision_sha256
+        || manifest.denominator_decision_semantic_sha256
+            != audit.denominator_decision_semantic_sha256
         || audit.executable_manifest_path.as_deref() != Some("manifest.json")
         || audit.executable_manifest_sha256.as_deref() != Some(manifest_hash.as_str())
         || audit_binding != manifest_binding
@@ -2810,7 +3778,7 @@ fn parse_nonc_tests(paths: &Paths) -> Result<Vec<TestSpec>> {
             .nonc_preparation
             .clone()
             .with_context(|| format!("non-C preparation receipt missing for {}", fields[0]))?;
-        validate_nonc_preparation(paths, &preparation)?;
+        validate_nonc_preparation(paths, fields[0], &preparation)?;
         let launcher = resolve_program(paths, &argv[0])?;
         result.push(TestSpec {
             id: fields[0].to_owned(),
@@ -2868,9 +3836,12 @@ fn compile_c_guests(
                 .join(format!("{}.log", slug(&test.id)));
             let result = (|| -> Result<CompileReceipt> {
                 let log_file = File::create(&log)?;
+                let environment = hermetic_environment();
                 let status = Command::new(&compile.command[0])
                     .args(&compile.command[1..])
                     .current_dir(&paths.hermit_repo)
+                    .env_clear()
+                    .envs(&environment)
                     .stdout(Stdio::from(log_file.try_clone()?))
                     .stderr(Stdio::from(log_file))
                     .status()?;
@@ -2897,6 +3868,8 @@ fn compile_c_guests(
                     command_sha256: sha256_bytes(&serde_json::to_vec(&compile.command)?),
                     inputs,
                     toolchain_receipt_sha256: toolchain_hash.clone(),
+                    environment_sha256: sha256_bytes(&serde_json::to_vec(&environment)?),
+                    environment,
                     exit_code,
                     log: artifact_fact(&paths, &log)?,
                     output: artifact_fact(&paths, &output)?,
@@ -2952,7 +3925,7 @@ fn c_compile_command(
     output: &Path,
 ) -> Vec<String> {
     let mut command = vec![
-        "cc".to_owned(),
+        "/usr/bin/cc".to_owned(),
         "-std=c11".to_owned(),
         "-O2".to_owned(),
         "-g".to_owned(),
@@ -2971,7 +3944,7 @@ fn c_compile_command(
 fn hermit_build_command() -> Vec<String> {
     vec![
         "/usr/bin/with-proxy".to_owned(),
-        "cargo".to_owned(),
+        "/home/newton/.cargo/bin/cargo".to_owned(),
         "build".to_owned(),
         "--release".to_owned(),
         "-p".to_owned(),
@@ -3012,12 +3985,14 @@ fn workload_identity(
 }
 
 fn capture_toolchain() -> Result<ToolchainReceipt> {
-    let cc_argv = vec!["cc".to_owned(), "--version".to_owned()];
-    let rustc_argv = vec!["rustc".to_owned(), "-vV".to_owned()];
-    let cargo_argv = vec!["cargo".to_owned(), "-V".to_owned()];
-    let cc_output_sha256 = command_output_sha256(&cc_argv)?;
-    let rustc_output_sha256 = command_output_sha256(&rustc_argv)?;
-    let cargo_output_sha256 = command_output_sha256(&cargo_argv)?;
+    let cc_argv = vec!["/usr/bin/cc".to_owned(), "--version".to_owned()];
+    let rustc_argv = vec!["/home/newton/.cargo/bin/rustc".to_owned(), "-vV".to_owned()];
+    let cargo_argv = vec!["/home/newton/.cargo/bin/cargo".to_owned(), "-V".to_owned()];
+    let environment = tool_environment();
+    let cc_output_sha256 = command_output_sha256(&cc_argv, &environment)?;
+    let rustc_output_sha256 = command_output_sha256(&rustc_argv, &environment)?;
+    let cargo_output_sha256 = command_output_sha256(&cargo_argv, &environment)?;
+    let environment_sha256 = sha256_bytes(&serde_json::to_vec(&environment)?);
     let receipt_sha256 = sha256_bytes(&serde_json::to_vec(&serde_json::json!({
         "cc_argv": cc_argv,
         "cc_output_sha256": cc_output_sha256,
@@ -3025,6 +4000,8 @@ fn capture_toolchain() -> Result<ToolchainReceipt> {
         "rustc_output_sha256": rustc_output_sha256,
         "cargo_argv": cargo_argv,
         "cargo_output_sha256": cargo_output_sha256,
+        "environment": environment,
+        "environment_sha256": environment_sha256,
     }))?);
     Ok(ToolchainReceipt {
         cc_argv,
@@ -3033,12 +4010,21 @@ fn capture_toolchain() -> Result<ToolchainReceipt> {
         rustc_output_sha256,
         cargo_argv,
         cargo_output_sha256,
+        environment,
+        environment_sha256,
         receipt_sha256,
     })
 }
 
-fn command_output_sha256(argv: &[String]) -> Result<String> {
-    let output = Command::new(&argv[0]).args(&argv[1..]).output()?;
+fn command_output_sha256(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+) -> Result<String> {
+    let output = Command::new(&argv[0])
+        .args(&argv[1..])
+        .env_clear()
+        .envs(environment)
+        .output()?;
     if !output.status.success() {
         bail!("toolchain probe failed: {:?}: {}", argv, output.status);
     }
@@ -3069,9 +4055,12 @@ fn build_hermit(
     let command = hermit_build_command();
     let log_path = paths.artifacts.join("preparation/hermit-build.log");
     let log = File::create(&log_path)?;
+    let mut environment = tool_environment();
+    environment.insert("CARGO_BUILD_JOBS".to_owned(), jobs.max(1).to_string());
     let status = Command::new(&command[0])
         .args(&command[1..])
-        .env("CARGO_BUILD_JOBS", jobs.max(1).to_string())
+        .env_clear()
+        .envs(&environment)
         .current_dir(&paths.hermit_repo)
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log))
@@ -3104,6 +4093,8 @@ fn build_hermit(
         command_sha256: sha256_bytes(&serde_json::to_vec(&command)?),
         command,
         toolchain_receipt_sha256: toolchain.receipt_sha256.clone(),
+        environment_sha256: sha256_bytes(&serde_json::to_vec(&environment)?),
+        environment,
         exit_code,
         log: artifact_fact(paths, &log_path)?,
         output: artifact_fact(paths, &binary_snapshot)?,
@@ -3114,6 +4105,7 @@ fn harness_binding(paths: &Paths) -> Result<(String, String, String, String)> {
     let run_path = paths.experiment.join("run.rs");
     let verify_path = paths.experiment.join("verify.rs");
     let log_authority_path = paths.experiment.join("log_authority.rs");
+    let denominator_decision_path = paths.experiment.join("denominator-decision.json");
     let parent_commit = git_head(&paths.parent_repo)?;
     let run_rs_sha256 = sha256_file(&run_path)?;
     let verify_rs_sha256 = sha256_file(&verify_path)?;
@@ -3124,6 +4116,7 @@ fn harness_binding(paths: &Paths) -> Result<(String, String, String, String)> {
         &run_rs_sha256,
         &verify_rs_sha256,
         &log_authority_rs_sha256,
+        &sha256_file(&denominator_decision_path)?,
     )?;
     Ok((
         parent_commit,
@@ -3139,6 +4132,7 @@ fn verify_harness_commit(
     run_rs_sha256: &str,
     verify_rs_sha256: &str,
     log_authority_rs_sha256: &str,
+    denominator_decision_sha256: &str,
 ) -> Result<()> {
     if parent_commit.len() != 40 || !parent_commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("parent harness commit is not a 40-hex object name");
@@ -3146,10 +4140,12 @@ fn verify_harness_commit(
     let run_path = paths.experiment.join("run.rs");
     let verify_path = paths.experiment.join("verify.rs");
     let log_authority_path = paths.experiment.join("log_authority.rs");
+    let denominator_decision_path = paths.experiment.join("denominator-decision.json");
     for (path, expected_hash) in [
         (&run_path, run_rs_sha256),
         (&verify_path, verify_rs_sha256),
         (&log_authority_path, log_authority_rs_sha256),
+        (&denominator_decision_path, denominator_decision_sha256),
     ] {
         let relative = path
             .strip_prefix(&paths.parent_repo)
@@ -3160,10 +4156,12 @@ fn verify_harness_commit(
                 path.display()
             );
         }
-        let status = Command::new("git")
+        let status = Command::new("/usr/bin/git")
             .args(["diff", "--quiet", "HEAD", "--"])
             .arg(relative)
             .current_dir(&paths.parent_repo)
+            .env_clear()
+            .envs(tool_environment())
             .status()?;
         if !status.success() {
             bail!(
@@ -3172,9 +4170,11 @@ fn verify_harness_commit(
             );
         }
         let object = format!("{parent_commit}:{}", relative.display());
-        let output = Command::new("git")
+        let output = Command::new("/usr/bin/git")
             .args(["show", &object])
             .current_dir(&paths.parent_repo)
+            .env_clear()
+            .envs(tool_environment())
             .output()?;
         if !output.status.success() || sha256_bytes(&output.stdout) != expected_hash {
             bail!("bound parent commit does not contain the recorded harness bytes: {object}");
@@ -3219,9 +4219,11 @@ fn require_repo_at_head(path: &Path) -> Result<()> {
 }
 
 fn repo_clean(path: &Path) -> Result<bool> {
-    let status = Command::new("git")
+    let status = Command::new("/usr/bin/git")
         .args(["status", "--porcelain"])
         .current_dir(path)
+        .env_clear()
+        .envs(tool_environment())
         .output()?;
     if !status.status.success() {
         bail!("git status failed for {}", path.display());
@@ -3230,9 +4232,11 @@ fn repo_clean(path: &Path) -> Result<bool> {
 }
 
 fn git_head(path: &Path) -> Result<String> {
-    let output = Command::new("git")
+    let output = Command::new("/usr/bin/git")
         .args(["rev-parse", "HEAD"])
         .current_dir(path)
+        .env_clear()
+        .envs(tool_environment())
         .output()?;
     if !output.status.success() {
         bail!("git rev-parse failed for {}", path.display());
@@ -3241,9 +4245,11 @@ fn git_head(path: &Path) -> Result<String> {
 }
 
 fn git_tree(path: &Path) -> Result<String> {
-    let output = Command::new("git")
+    let output = Command::new("/usr/bin/git")
         .args(["rev-parse", "HEAD^{tree}"])
         .current_dir(path)
+        .env_clear()
+        .envs(tool_environment())
         .output()?;
     if !output.status.success() {
         bail!("git tree resolution failed for {}", path.display());
@@ -3408,8 +4414,8 @@ fn validate_cached_pair(
         }
         let log_path = paths.artifacts.join(&execution.ordered_log_stream.path);
         let expected_command = command_argv(paths, job, &log_path);
-        let expected_environment =
-            execution_environment(paths, job, binding, binding_sha256, ordinal, false)?;
+        let (expected_environment, expected_input_receipt) =
+            execution_inputs(paths, job, binding, binding_sha256, ordinal, false)?;
         let inspection = log_authority::inspect_file(&paths.binary, &log_path)?;
         let diagnostic_path = paths.artifacts.join(&execution.log_parser_diagnostic.path);
         if execution.command != expected_command
@@ -3417,6 +4423,9 @@ fn validate_cached_pair(
             || execution.environment != expected_environment
             || execution.environment_sha256
                 != sha256_bytes(&serde_json::to_vec(&expected_environment)?)
+            || execution.input_receipt != expected_input_receipt
+            || execution.input_receipt.receipt_sha256
+                != execution_input_receipt_sha256(&execution.input_receipt)?
             || execution.preparation_receipt_sha256
                 != job
                     .test
@@ -3435,6 +4444,7 @@ fn validate_cached_pair(
             bail!("cached command/environment/log binding mismatch for {cell_id}::{ordinal}");
         }
     }
+    validate_pair_input_disjoint(paths, job, one, two)?;
     let all_paths = BTreeSet::from([
         one.stdout.path.as_str(),
         one.stderr.path.as_str(),
@@ -3489,6 +4499,41 @@ fn validate_cached_pair(
         bail!("cached cell verdict/binding mismatch for {cell_id}");
     }
     verify_artifact_fact(paths, &cell.legacy_diagnostic)?;
+    Ok(())
+}
+
+fn validate_pair_input_disjoint(
+    paths: &Paths,
+    job: &Job,
+    one: &ExecutionRecord,
+    two: &ExecutionRecord,
+) -> Result<()> {
+    for name in ["fixtures", "home", "tmp", "xdg_config"] {
+        let left = paths.artifacts.join(&one.input_receipt.root_paths[name]);
+        let right = paths.artifacts.join(&two.input_receipt.root_paths[name]);
+        let left_execution = paths
+            .artifacts
+            .join(&one.input_receipt.execution_root_paths[name]);
+        let right_execution = paths
+            .artifacts
+            .join(&two.input_receipt.execution_root_paths[name]);
+        require_disjoint_trees(&left, &right)?;
+        require_disjoint_trees(&left_execution, &right_execution)?;
+        require_disjoint_trees(&left, &left_execution)?;
+        require_disjoint_trees(&right, &right_execution)?;
+        if let Some(receipt) = &job.test.nonc_preparation {
+            let prepared = prepared_input_roots(
+                &paths
+                    .artifacts
+                    .join("preparation")
+                    .join("nonc")
+                    .join(slug(&job.test.id)),
+            );
+            require_disjoint_trees(&left, &prepared[name])?;
+            require_disjoint_trees(&right, &prepared[name])?;
+            verify_tree_manifest(&prepared[name], &receipt.prepared_input_manifests[name])?;
+        }
+    }
     Ok(())
 }
 

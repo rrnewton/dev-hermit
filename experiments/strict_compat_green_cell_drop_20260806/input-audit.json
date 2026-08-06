@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "record_type": "strict_metric_input_audit",
   "complete": true,
   "full_sweep_allowed": true,
@@ -16,7 +16,7 @@
   "duplicate_ids": [],
   "duplicate_workload_identities": [],
   "requested_manifest_path": "requested-manifest.json",
-  "requested_manifest_sha256": "228d236041fea5aa598c8de941b3bea3f0ba4dc2009e34d80c16624ddcff610f",
+  "requested_manifest_sha256": "46b48a6c6761e223ed08e58cae3df9eec1433eb2adcf19b4d0aa59c5f3432e0d",
   "executable_manifest_path": null,
   "executable_manifest_sha256": null,
   "hermit_sha": "49321e67e6356d3f1f26d897ef8193a21c7e28ef",
@@ -26,5 +26,8 @@
   "liteinst2_dependency_sha": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
   "hermit_binary_sha256": "dbe090eb2a35d430f11e12738305d86d9e493f88c6b805bd600e1edf82f299bb",
   "corpus_c_sha256": "54ed0ed059967a881cc9c0bdc1f24d5253fcd27cec54ca9f1c056e3adbf3c78c",
-  "corpus_nonc_sha256": "d4dc8ec15b6ca474e88438abdd1dce49b5439133d2fc81314793a021434105c0"
+  "corpus_nonc_sha256": "d4dc8ec15b6ca474e88438abdd1dce49b5439133d2fc81314793a021434105c0",
+  "denominator_decision_path": "denominator-decision.json",
+  "denominator_decision_sha256": "1b4707148413c583d26602b2c7586445a851dcff9043f1dc0bc755bca323fc42",
+  "denominator_decision_semantic_sha256": "23c94ec1762cc686d6299299f5d7580c8a03a5a1686d105edde3198fbe1f5a4f"
 }

@@ -9,10 +9,12 @@
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
 pub const PARSER_ID: &str = "hermit-log-diff-canonical-counts-v1";
+const HERMETIC_PATH: &str = "/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CanonicalLogCounts {
@@ -42,6 +44,13 @@ pub fn inspect_file(binary: &Path, path: &Path) -> Result<CanonicalLogInspection
     ];
     let output = Command::new(&command[0])
         .args(&command[1..])
+        .env_clear()
+        .envs(BTreeMap::from([
+            ("LANG", "C"),
+            ("LC_ALL", "C"),
+            ("PATH", HERMETIC_PATH),
+            ("TZ", "UTC"),
+        ]))
         .output()
         .with_context(|| format!("running canonical Hermit log parser for {}", path.display()))?;
     if !output.status.success() {

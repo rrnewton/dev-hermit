@@ -40,9 +40,13 @@ cached aggregate counts are not evidence.
 - C corpus: 214 rows
 - non-C corpus: 17 rows
 - requested manifest:
-  `228d236041fea5aa598c8de941b3bea3f0ba4dc2009e34d80c16624ddcff610f`
+  `46b48a6c6761e223ed08e58cae3df9eec1433eb2adcf19b4d0aa59c5f3432e0d`
 - input audit:
-  `95dd314cc751b861679fe72040b4ecaa5ea31103ec1797092922d014ea10e78e`
+  `cbeff9765d187d9a07a79d4802f9a34c6b625fae2e91ad50833266c19fcbf67a`
+- denominator decision bytes:
+  `1b4707148413c583d26602b2c7586445a851dcff9043f1dc0bc755bca323fc42`
+- denominator decision semantics:
+  `23c94ec1762cc686d6299299f5d7580c8a03a5a1686d105edde3198fbe1f5a4f`
 
 `input-audit.json` independently records 231 observed rows, 231 unique IDs,
 231 executable workloads, zero missing sources, zero duplicate IDs, and zero
@@ -57,10 +61,14 @@ filler: the formerly deleted `applications/timed-progress-bar`, plus
 `determinism-stress/thread-output`, `language-runtimes/python-random`, and
 `system-utils/random-device`. Their run arms only exec the retained example
 workloads. `denominator-decision.json` records each wrapper and retained
-payload hash. The direct shell examples use the same `bash -c` launcher as the
-production portable-CI command builder; workload identity canonicalizes that
-launcher and the trivial wrappers to the underlying payload. The prior 235
-named rows were therefore 231 semantic workloads.
+payload hash. Producer and verifier independently dereference every declared
+wrapper and retained payload at its historical Git commit, verify its exact
+path and bytes, reject alias cycles or duplicate targets, and permit only the
+declared side-effect-free wrapper syntax. The direct shell examples use the
+same `bash -c` launcher as the production portable-CI command builder;
+workload identity canonicalizes that launcher and the trivial wrappers to the
+underlying payload. The prior 235 named rows were therefore 231 semantic
+workloads.
 
 The six execution paths are ptrace, KVM, DBI, SaBRe, e9patch preprocessing
 with ptrace lifecycle, and LiteInst. The e9patch column is an execution-path
@@ -75,10 +83,21 @@ hash. Every compiled C guest has an equivalent source/command/toolchain/log/
 output receipt. Each retained non-C e2e wrapper runs its real `--prepare`
 protocol in an isolated HOME/XDG/E2E fixture directory; direct scripts receive
 an executable probe. Receipts bind the command, environment, recursive source
-chain, preparation log, and every prepared artifact. Each ordinal then gets
-fresh E2E temporary and fixture directories; the latter is seeded from the
-hashed prepared fixture tree. The frozen manifest also binds the committed
-parent harness bytes and the unique guest-set digest.
+chain, preparation log, and every prepared artifact. Every preparation and
+measured process starts with `env_clear` and an exact recorded environment,
+including a fixed executable `PATH`; ambient Python, Rust, logging, HOME, XDG,
+and temporary-directory state cannot leak into the run.
+
+Each ordinal receives four path- and inode-disjoint input trees: HOME, XDG
+configuration, temporary storage, and fixtures. A preserved seed copy is
+content-matched to preparation, then copied to a separate writable execution
+tree. Canonical recursive manifests bind every directory and regular file by
+relative path, type, mode, byte count, content hash, and aggregate tree hash;
+symlinks and special files are refused. Producer cache validation and the
+independent verifier both rewalk and rehash the trees, check ordinal/cell
+identity and preparation ancestry, and reject missing, added, changed,
+mode-changed, swapped, shared, or aliased roots. The frozen manifest also binds
+the committed parent harness bytes and the unique guest-set digest.
 
 Each run requires an explicit lowercase run-instance slug. Denominator,
 run-binding, state, and artifact paths include the run kind, instance, and
@@ -100,9 +119,12 @@ successful, and nonzero-INFO, and all
 36 cells raw-equal and strict-green (2 tests × 6 paths × 3 observation modes ×
 2 executions). Before launching full work, the producer invokes the exact
 committed verifier to dereference the spot JSONL and recreate that completion;
-the receipt alone is not trusted. The normal-CLI self-test brackets qualifying
-selftest, spot, and synthetic full profiles plus 19 refusal cases. Synthetic
-fixtures do not execute the real 231-workload metric.
+the receipt alone is not trusted. The producer self-test brackets its real
+compiler, hermetic environment, isolated-tree, cache, parser, and spot
+authorities with 20 planted refusals. The normal-CLI verifier self-test
+brackets qualifying selftest, exact 72-execution spot, and spot-gated synthetic
+2,772-execution full profiles with 31 planted refusals. Synthetic fixtures do
+not execute the real 231-workload metric.
 
 ## Reproduction after review authorization
 
@@ -110,6 +132,7 @@ From this directory:
 
 ```bash
 ./run.rs audit-inputs
+./run.rs self-test
 ./verify.rs self-test
 ./run.rs prepare --jobs 32
 

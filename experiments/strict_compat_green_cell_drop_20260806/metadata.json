@@ -1,7 +1,7 @@
 {
-  "schema": 3,
+  "schema": 4,
   "record_type": "strict_metric_preflight_metadata",
-  "recorded_at": "2026-08-06T13:13:22-04:00",
+  "recorded_at": "2026-08-06T14:43:33-04:00",
   "timezone": "America/New_York",
   "host": "devbig030.atn3.facebook.com",
   "logical_cpus": 316,
@@ -20,11 +20,14 @@
   "hermit_binary_sha256": "dbe090eb2a35d430f11e12738305d86d9e493f88c6b805bd600e1edf82f299bb",
   "corpus_c_sha256": "54ed0ed059967a881cc9c0bdc1f24d5253fcd27cec54ca9f1c056e3adbf3c78c",
   "corpus_nonc_sha256": "d4dc8ec15b6ca474e88438abdd1dce49b5439133d2fc81314793a021434105c0",
-  "requested_manifest_sha256": "228d236041fea5aa598c8de941b3bea3f0ba4dc2009e34d80c16624ddcff610f",
-  "input_audit_sha256": "95dd314cc751b861679fe72040b4ecaa5ea31103ec1797092922d014ea10e78e",
+  "requested_manifest_sha256": "46b48a6c6761e223ed08e58cae3df9eec1433eb2adcf19b4d0aa59c5f3432e0d",
+  "input_audit_sha256": "cbeff9765d187d9a07a79d4802f9a34c6b625fae2e91ad50833266c19fcbf67a",
+  "denominator_decision_sha256": "1b4707148413c583d26602b2c7586445a851dcff9043f1dc0bc755bca323fc42",
+  "denominator_decision_semantic_sha256": "23c94ec1762cc686d6299299f5d7580c8a03a5a1686d105edde3198fbe1f5a4f",
   "artifact_root": "/home/newton/work/dev-hermit/worktrees/strict-metric/hermit/ignored/strict-metric/raw",
   "preflight_command": "./run.rs audit-inputs",
-  "self_test_command": "./verify.rs self-test",
+  "producer_self_test_command": "./run.rs self-test",
+  "verifier_self_test_command": "./verify.rs self-test",
   "requested_sweep_command": "./run.rs run --kind full --run-instance reviewed-full --spot-run-instance reviewed-spot --jobs 16 --timeout-seconds 120",
   "expected_tests": 231,
   "expected_execution_paths": 6,
@@ -54,5 +57,19 @@
     "log_event_parser": "hermit-log-diff-canonical-counts-v1",
     "log_event_level": "INFO",
     "spot_authorization": "72/72 attempted, successful, nonzero INFO; 36/36 raw-equal and strict-green"
+  },
+  "execution_input_contract": {
+    "environment": "env_clear plus exact recorded variables and fixed PATH",
+    "per_ordinal_roots": [
+      "home",
+      "xdg_config",
+      "tmp",
+      "fixtures"
+    ],
+    "tree_manifest": "canonical relative paths, type, mode, byte count, content SHA-256, aggregate SHA-256",
+    "writable_execution_copy": true,
+    "symlinks_allowed": false,
+    "special_files_allowed": false,
+    "cross_ordinal_or_cell_aliasing_allowed": false
   }
 }
