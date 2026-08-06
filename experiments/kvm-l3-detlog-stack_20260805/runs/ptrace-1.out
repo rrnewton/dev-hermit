@@ -1,0 +1,6 @@
+[safe-ci] CPU cap: shared safe-ci.slice CPUQuota=28440% (~90% of 316 cores, AGGREGATE across concurrent runs).
+[safe-ci] outer scope memory cap: MemoryMax=517.4 GiB (hard-cap-only, swap=0).
+[safe-ci] re-exec inside transient systemd scope safe-ci-3959992.scope (two-level cgroup; full-descendant cleanup on exit)…
+[safe-ci] outer cgroup audit: memory.max=555511902208 (bound), memory.swap.max=0 (disabled), memory.oom.group=1 (enabled), cpu.max=max 100000 (bound)
+[box.ptrace-l3-1] ▶ START  hermit-box-run: env LD_LIBRARY_PATH=/tmp/lu/usr/lib64 /home/newton/work/dev-hermit/worktrees/devscope/hermit/target/debug/hermit --log=info --log-file=/home/newton/work/dev-hermit/experiments/kvm-l3-detlog-stack_20260805/runs/ptrace-1.log run --strict --detlog-stack -- /bin/echo hello
+[box.ptrace-l3-1] ✓ PASS   hermit-box-run: env LD_LIBRARY_PATH=/tmp/lu/usr/lib64 /home/newton/work/dev-hermit/worktrees/devscope/hermit/target/debug/hermit --log=info --log-file=/home/newton/work/dev-hermit/experiments/kvm-l3-detlog-stack_20260805/runs/ptrace-1.log run --strict --detlog-stack -- /bin/echo hello (1s)  [hello]

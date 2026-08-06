@@ -1,0 +1,21 @@
+{
+  "experiment": "oom-group-confinement",
+  "date_utc": "2026-08-05",
+  "question": "Does memory.oom.group=1 kill the OFFENDING step's cgroup only, sparing neighbour steps, in a REAL boxed run?",
+  "runner": "agent-utils/py/bin/safe-ci-dag-runner",
+  "runner_version": "safe-ci-dag-runner 0.11.0",
+  "engine": "python (default; Rust parity engine NOT exercised)",
+  "host": "devbig014",
+  "cpu": "AMD_EPYC_9D85_158-Core_Processor",
+  "boxing": "cgroup-v2, two-level systemd user scope, reported ACTIVE by the runner header",
+  "per_step_cap": {"hint": "hard_mem_max_bytes", "bytes": 268435456, "swap": "disabled"},
+  "outer_scope_memory_max_bytes_observed": 562863624192,
+  "step_cgroup_attrs_read_from_inside": {"memory.max": 268435456, "memory.swap.max": 0, "memory.oom.group": 1, "parent_oom_group": 1},
+  "runs": {
+    "confinement_confounded": "runner.log (no -k; neighbours ABORTED by eager-exit -> NOT valid evidence)",
+    "confinement_valid": "runner-keepgoing.log (-k; 3 passed, 1 failed, 0 aborted)",
+    "group_kill_semantics": "groupkill.log (same-cgroup innocent sibling)",
+    "cgroup_attr_probe": "out/probe-cgattrs.txt"
+  },
+  "verdict": "CONFIRMED both directions: offender-only kill (neighbours oom_kills=0, completed) AND group-kill within the offending cgroup (sibling died; 1.3s wall vs ~20s alternative)"
+}

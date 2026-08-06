@@ -1,0 +1,14 @@
+{
+  "steps": [
+    {"group":"offender","job":"oomer","desc":"allocate past a 256MiB per-step cap",
+     "hint":{"hard_mem_max_bytes":268435456},
+     "cmd":"echo \"offender cgroup=$(cat /proc/self/cgroup)\"; echo \"offender memory.max=$(cat /sys/fs/cgroup$(awk -F: '/^0::/{print $3}' /proc/self/cgroup)/memory.max 2>/dev/null)\"; echo \"offender memory.swap.max=$(cat /sys/fs/cgroup$(awk -F: '/^0::/{print $3}' /proc/self/cgroup)/memory.swap.max 2>/dev/null)\"; echo START > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/offender.started; python3 -c \"a=[]\nimport sys\nfor i in range(64):\n    a.append(bytearray(64*1024*1024))\n    sys.stderr.write('alloc %d MiB\\n'%((i+1)*64)); sys.stderr.flush()\"; echo REACHED_END > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/offender.completed"},
+
+    {"group":"neighbour","job":"n1","desc":"must survive",
+     "cmd":"for i in $(seq 1 12); do echo n1 tick $i; sleep 1; done; echo OK > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/n1.completed"},
+    {"group":"neighbour","job":"n2","desc":"must survive",
+     "cmd":"for i in $(seq 1 12); do echo n2 tick $i; sleep 1; done; echo OK > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/n2.completed"},
+    {"group":"neighbour","job":"n3","desc":"must survive (also allocates, but WITHIN its means)",
+     "cmd":"python3 -c \"a=bytearray(128*1024*1024)\nimport time\nfor i in range(12):\n    time.sleep(1)\n    print('n3 tick',i,flush=True)\"; echo OK > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/n3.completed"}
+  ]
+}
