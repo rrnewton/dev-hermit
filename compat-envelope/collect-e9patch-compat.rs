@@ -49,7 +49,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // Shared 19-column contract. Keep in sync with the other collectors/renderer.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,candidate_sites,mapped_sites,reach_state";
 const RUN_MODE: &str = "e9patch";
 const BUCKET: &str = "e9patch-corpus";
 // Single mode token: "run the freestanding raw-syscall guest under strict verify".
@@ -87,6 +87,12 @@ struct Run {
     stdout: Vec<u8>,
     /// "Determinism verified" seen on stderr (only meaningful for --verify runs).
     l2_verified: bool,
+    /// e9patch AOT reach, parsed from the backend banner. `None` for a run with
+    /// no banner at all -- which is UNKNOWN, deliberately not zero: "the tool
+    /// said nothing" and "the tool said it patched nothing" are different
+    /// facts and collapsing them would rebuild the ambiguous zero this gate
+    /// exists to remove.
+    reach: Option<(u64, u64)>,
     duration_ms: i64,
 }
 
@@ -117,7 +123,7 @@ fn run_timed(cmd_argv: &[String], timeout: Duration) -> Run {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => {
-            return Run { exit: 127, wedged: false, stdout: Vec::new(), l2_verified: false, duration_ms: 0 }
+            return Run { exit: 127, wedged: false, stdout: Vec::new(), l2_verified: false, reach: None, duration_ms: 0 }
         }
     };
     let pid = child.id() as i32;
@@ -143,8 +149,63 @@ fn run_timed(cmd_argv: &[String], timeout: Duration) -> Run {
     let stderr = fs::read(&err_tmp).unwrap_or_default();
     let _ = fs::remove_file(&out_tmp);
     let _ = fs::remove_file(&err_tmp);
-    let l2_verified = String::from_utf8_lossy(&stderr).contains(L2_NEEDLE);
-    Run { exit, wedged, stdout, l2_verified, duration_ms: dur }
+    let err_text = String::from_utf8_lossy(&stderr);
+    let l2_verified = err_text.contains(L2_NEEDLE);
+    let reach = parse_reach(&err_text);
+    Run { exit, wedged, stdout, l2_verified, reach, duration_ms: dur }
+}
+
+/// Parse `candidate_sites=N; mapped_sites=M` out of the e9patch backend banner.
+/// Returns None when there is no banner, which callers must treat as UNKNOWN
+/// rather than as zero.
+fn parse_reach(text: &str) -> Option<(u64, u64)> {
+    let cand_at = text.find("candidate_sites=")? + "candidate_sites=".len();
+    let cand: u64 = text[cand_at..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    let map_at = text.find("mapped_sites=")? + "mapped_sites=".len();
+    let mapped: u64 = text[map_at..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    Some((cand, mapped))
+}
+
+/// THE GATE. An e9patch cell that rewrote nothing ran under the plain ptrace
+/// runtime, so its parity verdict compares the reference with itself. That is
+/// not a pass and not a failure -- it is a MEASUREMENT THAT DID NOT HAPPEN, so
+/// it gets its own bucket and can never be counted as a pass.
+///
+/// Applies only to e9patch; every other backend is returned untouched.
+fn apply_reach_gate<'a>(
+    backend: &str,
+    reach: Option<(u64, u64)>,
+    outcome: &'a str,
+    reason: &'a str,
+) -> (String, String) {
+    if backend != "e9patch" {
+        return (outcome.to_string(), reason.to_string());
+    }
+    match reach {
+        Some((_, mapped)) if mapped > 0 => (outcome.to_string(), reason.to_string()),
+        Some((cand, _)) => (
+            "not-exercised".to_string(),
+            format!(
+                "guest has no main-ELF sites (candidate_sites={cand}, mapped_sites=0): \
+                 the AOT pass rewrote nothing, so this ran as plain ptrace and any \
+                 parity here compares the reference with itself"
+            ),
+        ),
+        None => (
+            "unknown".to_string(),
+            "no e9patch banner: cannot tell whether the backend did anything, and an \
+             unanswerable question is not a pass"
+                .to_string(),
+        ),
+    }
 }
 
 /// sha256 of bytes via the sha256sum coreutil (dependency-free hashing).
@@ -204,6 +265,8 @@ struct Arm {
     strict_exit: i32,
     strict_stdout: Vec<u8>,
     duration_ms: i64,
+    /// AOT reach observed on the strict leg; see `apply_reach_gate`.
+    reach: Option<(u64, u64)>,
 }
 
 fn measure_arm(
@@ -269,6 +332,7 @@ fn measure_arm(
         verify_wedged,
         strict_wedged,
         strict_exit: s.exit,
+        reach: s.reach,
         strict_stdout: s.stdout,
         duration_ms: total,
     }
@@ -416,7 +480,7 @@ fn main() {
         if !compiled {
             for backend in ["ptrace", "e9patch"] {
                 rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-                    backend, "enabled", "fail", None, None, "", 0, "compile failed"));
+                    backend, "enabled", "fail", None, None, "", 0, "compile failed", None));
             }
             *tally.entry("compile-fail").or_default() += 1;
             eprintln!("[{}/{}] {g}: COMPILE-FAIL", i + 1, guests.len());
@@ -438,12 +502,21 @@ fn main() {
         // ---- ptrace (golden reference) cell ----
         let (g_out, g_det, g_reason) = arm_cell(&golden, None);
         rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-            "ptrace", "enabled", g_out, g_det, None, &gref_hash, golden.duration_ms, &g_reason));
+            "ptrace", "enabled", g_out, g_det, None, &gref_hash, golden.duration_ms, &g_reason,
+            None));
 
         // ---- e9patch (rewritten variant) cell ----
-        let (e_out, e_det, e_reason) = arm_cell(&e9, Some(parity));
+        let (e_out_raw, e_det, e_reason_raw) = arm_cell(&e9, Some(parity));
+        // THE GATE. A cell that rewrote nothing cannot be a pass, however
+        // perfect its parity looks -- that parity is the reference compared
+        // with itself.
+        let (e_out, e_reason) = apply_reach_gate("e9patch", e9.reach, e_out_raw, &e_reason_raw);
+        // Parity is withheld too: reporting stdout_parity=1 beside
+        // outcome=not-exercised would re-manufacture the score the gate removes.
+        let e_parity = if matches!(e9.reach, Some((_, m)) if m > 0) { Some(parity) } else { None };
         rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-            "e9patch", "enabled", e_out, e_det, Some(parity), &e9_hash, e9.duration_ms, &e_reason));
+            "e9patch", "enabled", &e_out, e_det, e_parity, &e9_hash, e9.duration_ms, &e_reason,
+            e9.reach));
 
         // Tally by the honest per-guest outcome (e9 arm is the interesting one).
         // Order matters: real defects are only reachable once BOTH arms cleared
@@ -584,6 +657,7 @@ fn row(
     output_hash: &str,
     duration_ms: i64,
     reason: &str,
+    reach: Option<(u64, u64)>,
 ) -> String {
     let det = deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("");
     let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
@@ -608,6 +682,14 @@ fn row(
         duration_ms.to_string(),
         String::new(), // max_rss_kb
         reason_q,
+        reach.map(|(c, _)| c.to_string()).unwrap_or_default(),
+        reach.map(|(_, m)| m.to_string()).unwrap_or_default(),
+        match reach {
+            Some((_, m)) if m > 0 => "e9patch-exercised",
+            Some(_) => "not-exercised-no-main-elf-sites",
+            None => "unknown-no-banner",
+        }
+        .to_string(),
     ]
     .join(",")
 }
