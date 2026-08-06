@@ -7,10 +7,9 @@
 # can outlive a dead agent and wedge the FIFO (the 2040-minute starvation bug).
 #
 # Sequence (while holding the land-lock):
-#   fetch fresh main -> GitHub-free eligibility gate (clean full-validate record
-#   for the exact pre-rebase head; the label is non-authoritative) -> rebase
-#   (union|plain) + push -> require a clean record for the exact pushed head ->
-#   derive locally-validated through apply-local-label -> bounded merge-gate poll
+#   fetch fresh main -> exact-head local-OR-hosted authority -> rebase
+#   (union|plain) + push -> recheck the exact pushed head -> derive the optional
+#   locally-validated cache only for a local receipt -> bounded merge-gate poll
 #   -> gh pr merge --rebase (NEVER --admin) -> ancestry-verify.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
@@ -168,20 +167,18 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. GITHUB-FREE LANDING GATE (owner P0 lander-lands-on-local-validate-only).
-# The label is only a cache. It never authorizes landing independently of the
-# source ledger, including when shared credentials applied it. The exact PR head
-# must have a clean full-coverage PASS record. The same predicate is checked
-# again after rebase because a SHA-changing rebase invalidates the old receipt.
+# 1b. Owner-authorized exact-head OR gate. A counted local receipt and the
+# registered hosted job set are interchangeable positive authorities; a
+# genuine red from either blocks. Missing/partial/stale evidence is NO_RESULT,
+# never a green. The same predicate is checked again after a SHA-changing rebase.
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
-PRELABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$ORIG" "$PRELABELS" 2>&1); VRC=$?
-say "local-validation eligibility(head=$ORIG) rc=$VRC: $VS"
+VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
+say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
 case "$VRC" in
-  0) say "landing eligibility: clean full-validate record for $ORIG" ;;
-  3) abandon "GitHub-free landing gate: PR head $ORIG has a clean full-validate record that FAILED (known-failing); refusing to land" 4 ;;
-  4) abandon "GitHub-free landing gate: PR head $ORIG has no clean full-validate PASS record; observed labels are non-authoritative" 4 ;;
-  *) abandon "GitHub-free landing gate: could not evaluate exact-head validation evidence (rc=$VRC)" 4 ;;
+  0) say "landing eligibility: exact-head authority green for $ORIG" ;;
+  3) abandon "exact-head authority reported a genuine red for PR head $ORIG" 4 ;;
+  4) abandon "neither exact-head authority produced green for PR head $ORIG" 4 ;;
+  *) abandon "could not evaluate exact-head validation authority (rc=$VRC)" 4 ;;
 esac
 
 # 2. rebase onto latest main + push
@@ -210,9 +207,9 @@ with-proxy git -C "$WT" fetch -q origin "$BR"
 HEAD=$(git -C "$WT" rev-parse "origin/$BR")
 say "pushed head=$HEAD"
 
-# 4. The pushed exact head needs its own ledger receipt. A rebase that changed
-# the SHA cannot inherit the old authorization. Only the ledger-guarded applier
-# may materialize the cache label; the lander never types it directly.
+# 4. The pushed exact head needs a fresh positive from either registered
+# authority. A rebase that changed the SHA cannot inherit the old authorization.
+# Only the ledger-guarded applier may materialize the optional local cache label.
 #
 # 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
 # ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
@@ -231,16 +228,19 @@ say "pushed head=$HEAD"
 # writes, this is what makes a red attributable to which BUG (not just which gate)
 # after the log is gone.
 python3 "$ROOT/ci-hub/validate/attribute_reds.py" --last 0 --persist >/dev/null 2>&1 || true
-PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
-say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"
-[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no clean exact-head full-validate PASS record; validate it before stamping" 4
-"$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
-  || abandon "ledger-guarded apply-local-label failed" 4
-sleep 4
-LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
-grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
-say "ledger-derived label present; labels=$LB"
+VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$HEAD" 2>&1); VRC=$?
+say "post-push exact-head validation(head=$HEAD) rc=$VRC: $VS"
+[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no accepted exact-head validation authority (rc=$VRC)" 4
+if grep -q 'LOCAL=green' <<<"$VS"; then
+  "$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
+    || abandon "ledger-guarded apply-local-label failed" 4
+  sleep 4
+  LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
+  grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
+  say "ledger-derived label present; labels=$LB"
+else
+  say "hosted exact-head authority selected; no local-receipt cache label required"
+fi
 
 # 4b. a draft PR cannot be merged; marking ready fires a fresh (label-present)
 # merge-gate run, which the poll below waits on.
@@ -305,10 +305,9 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. The exact pushed head must carry a dereferenceable validation receipt at
-# the final authorization boundary. A label or well-shaped comment is only a
-# pointer; the parent-pinned verifier resolves the immutable receipt and checks
-# its digest, repository, head, counted ledger row, and coverage obligations.
+# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
+# local positive now additionally dereferences its immutable receipt comment;
+# a hosted positive remains independently sufficient. Any genuine red blocks.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
@@ -317,17 +316,16 @@ receipt_comments=$(mktemp) \
   || abandon "could not allocate the receipt-comment observation file" 5
 if ! with-proxy gh api --paginate --slurp \
     "repos/$R/issues/$PR/comments?per_page=100" >"$receipt_comments"; then
-  rm -f -- "$receipt_comments"
-  abandon "could not fetch comments for exact-head receipt authorization" 5
+  printf '[]\n' >"$receipt_comments"
 fi
-receipt_detail=$("$ROOT/ci-hub/validation/verify_receipt.sh" \
+receipt_detail=$("$SCRIPT_DIR/exact-head-validation-authority.sh" \
   --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
 receipt_rc=$?
 rm -f -- "$receipt_comments"
 if [ "$receipt_rc" -ne 0 ]; then
-  abandon "exact-head validation receipt REFUSED for $HEAD: ${receipt_detail:-no receipt}" 5
+  abandon "exact-head validation authority REFUSED for $HEAD: ${receipt_detail:-no result}" 5
 fi
-say "exact-head validation receipt authorized: $receipt_detail"
+say "exact-head validation authority authorized: $receipt_detail"
 
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to

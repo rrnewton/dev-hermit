@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 verifier=$script_dir/verify_receipt.sh
 publisher=$script_dir/publish_receipt.py
+receipt_digest=$script_dir/../ci-hub
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 
@@ -13,6 +14,7 @@ mkdir -p "$tmp/receipts/$receipt_commit"
 
 make_receipt() {
     local executed=$1 output=$2
+    local raw=$tmp/receipt-build.json selected
     jq -cnS --arg sha "$sha" --argjson executed "$executed" '{
       schema_version: 1,
       repository: "rrnewton/hermit",
@@ -24,7 +26,7 @@ make_receipt() {
       selected_receipt_identity: {
         digest_algorithm: "sha256",
         canonicalization: "serde_json::to_vec(HistoryRow)-v1",
-        digest: ("d" * 64)
+        digest: "pending"
       },
       ledger_record: {
         schema_version: 4,
@@ -54,7 +56,19 @@ make_receipt() {
         filtered_tests: 0,
         log_file: "/tmp/validate.log"
       }
-    }' >"$output"
+    }' >"$raw"
+    selected=$(jq -c '.ledger_record' "$raw" | \
+        "$receipt_digest" receipt-digest --sha "$sha")
+    jq --arg selected "$selected" \
+        '.selected_receipt_identity.digest = $selected' "$raw" >"$output"
+}
+
+refresh_selected_identity() {
+    local input=$1 output=$2 selected
+    selected=$(jq -c '.ledger_record' "$input" | \
+        "$receipt_digest" receipt-digest --sha "$sha")
+    jq --arg selected "$selected" \
+        '.selected_receipt_identity.digest = $selected' "$input" >"$output"
 }
 
 write_comments() {
@@ -102,6 +116,15 @@ write_comments "$path" "$digest"
 "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
     --fixture-receipts "$tmp/receipts" >/dev/null
 
+# The wrapper's digest-addressed path is not permission to forge the selected
+# row identity. Change only that inner digest; verify_file recomputes the outer
+# artifact digest/path, and the final verifier must still refuse it.
+jq '.selected_receipt_identity.digest = ("f" * 64)' \
+    "$tmp/receipt.json" >"$tmp/tampered-selected-digest.json"
+verify_file "$tmp/tampered-selected-digest.json" fail \
+    "tampered selected digest with recomputed outer artifact identity" \
+    '[coordinator, gpt-5.6-sol]'
+
 # Only the explicitly documented historical service-actor tag may consume an
 # older artifact that predates the canonical selected-row identity.
 jq '
@@ -127,7 +150,8 @@ jq '
   .ledger_record.checks = 0
   | .ledger_record.gates_run = 0
   | .ledger_record.gates = []
-' "$tmp/receipt.json" >"$tmp/current-weak-row.json"
+' "$tmp/receipt.json" >"$tmp/current-weak-row-raw.json"
+refresh_selected_identity "$tmp/current-weak-row-raw.json" "$tmp/current-weak-row.json"
 verify_file "$tmp/current-weak-row.json" fail "current role artifact with weak selected row" \
     '[coordinator, gpt-5.6-sol]'
 
@@ -197,7 +221,8 @@ make_receipt 12 "$tmp/host-good.json"
 jq -cS '.run_id = (.commit + "@" + .ledger_record.started_at + "@other-host")' \
     "$tmp/host-good.json" >"$tmp/host-mismatch.json"
 verify_file "$tmp/host-mismatch.json" fail "run_id host disagrees with ledger host"
-jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent.json"
+jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent-raw.json"
+refresh_selected_identity "$tmp/host-absent-raw.json" "$tmp/host-absent.json"
 verify_file "$tmp/host-absent.json" fail "ledger host absent"
 
 # End-to-end current producer contract: one strong verifier-selected row is
@@ -234,14 +259,16 @@ jq -cn --arg sha "$sha" --arg log "$strong_log" '{
     {name: "test", result: "pass", exit_code: 0}
   ]
 }' | tr -d '\n' >"$tmp/strong-row.json"
-selected_digest=$(sha256sum "$tmp/strong-row.json" | awk '{print $1}')
+"$receipt_digest" receipt-digest --sha "$sha" --canonical-row \
+    <"$tmp/strong-row.json" >"$tmp/strong-canonical-row.json"
+selected_digest=$(sha256sum "$tmp/strong-canonical-row.json" | awk '{print $1}')
 strong_report=$(python3 "$publisher" \
     --repo rrnewton/hermit \
     --sha "$sha" \
     --ledger "$tmp/strong-ledger.jsonl" \
     --selected-receipt-sha256 "$selected_digest" \
     --canonicalization 'serde_json::to_vec(HistoryRow)-v1' \
-    --dry-run <"$tmp/strong-row.json")
+    --dry-run <"$tmp/strong-canonical-row.json")
 artifact_digest=$(jq -r '.artifact_sha256' <<<"$strong_report")
 artifact_path=$(jq -r '.path' <<<"$strong_report")
 jq -jr '.artifact_body' <<<"$strong_report" >"$tmp/strong-artifact.json"
@@ -275,22 +302,26 @@ fi
 # legitimate landing authorizations rather than repeated parsing of one row.
 sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 make_receipt 12 "$tmp/schema5-base.json"
-jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing.json"
+jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
+refresh_selected_identity "$tmp/schema5-missing-raw.json" "$tmp/schema5-missing.json"
 verify_file "$tmp/schema5-missing.json" fail "schema5 missing coverage"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 0, executed_test_nodes: 0,
       zero_executed_nodes: [], absent_nodes: []
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-zero-planned.json"
+    }' "$tmp/schema5-missing.json" >"$tmp/schema5-zero-planned-raw.json"
+refresh_selected_identity "$tmp/schema5-zero-planned-raw.json" "$tmp/schema5-zero-planned.json"
 verify_file "$tmp/schema5-zero-planned.json" fail "schema5 zero planned nodes"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 2, executed_test_nodes: 1,
       zero_executed_nodes: [], absent_nodes: ["test.missing"]
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-absent.json"
+    }' "$tmp/schema5-missing.json" >"$tmp/schema5-absent-raw.json"
+refresh_selected_identity "$tmp/schema5-absent-raw.json" "$tmp/schema5-absent.json"
 verify_file "$tmp/schema5-absent.json" fail "schema5 absent node"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 2, executed_test_nodes: 2,
       zero_executed_nodes: [], absent_nodes: []
-    }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid.json"
+    }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid-raw.json"
+refresh_selected_identity "$tmp/schema5-valid-raw.json" "$tmp/schema5-valid.json"
 verify_file "$tmp/schema5-valid.json" pass "schema5 complete coverage"
 
 plant_root=$tmp
@@ -301,4 +332,4 @@ if [[ -e $plant_root ]]; then
 fi
 trap - EXIT
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"

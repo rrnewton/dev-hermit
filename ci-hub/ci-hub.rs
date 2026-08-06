@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
@@ -78,6 +78,8 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  hosted-status           Check the registered exact-head GitHub job authority
+  receipt-digest          Recompute a HistoryRow's canonical exact-row digest
   validate-run            Launch detached validation through ci-hub admission
   validate-stop           Stop detached validate-* user units and verify termination
   ledger                  Read canonical qualified views of the validate ledger
@@ -222,6 +224,10 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Query the registered exact-head hosted job authority.
+    HostedStatus(HostedStatusArgs),
+    /// Recompute the canonical digest of one HistoryRow read from stdin.
+    ReceiptDigest(ReceiptDigestArgs),
     /// Launch a detached validation whose service enters through validate-lock.
     ValidateRun(PassthroughArgs),
     /// Stop detached validate-* user units and verify they terminated.
@@ -432,6 +438,8 @@ struct ResolveObligationArgs {
     #[arg(long)]
     started_at: Option<String>,
     #[arg(long)]
+    source: Option<PathBuf>,
+    #[arg(long)]
     store: Option<PathBuf>,
 }
 
@@ -528,6 +536,29 @@ struct ValidateStatusArgs {
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// Emit the machine-readable verdict report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ReceiptDigestArgs {
+    /// Exact commit the row must describe.
+    #[arg(long)]
+    sha: String,
+    /// Emit a typed JSON report rather than the digest alone.
+    #[arg(long)]
+    json: bool,
+    /// Emit the exact canonical HistoryRow bytes instead of their digest.
+    #[arg(long, conflicts_with = "json")]
+    canonical_row: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct HostedStatusArgs {
+    #[arg(long, default_value = "rrnewton/hermit")]
+    repo: String,
+    #[arg(long)]
+    sha: String,
     #[arg(long)]
     json: bool,
 }
@@ -1030,6 +1061,11 @@ impl HubCommand {
                     if args.repos.is_empty() { 3 } else { args.repos.len() }
                 ),
             },
+            Self::HostedStatus(_) => CostSpec {
+                tool: "ci-hub/hosted-status",
+                basis: "not measured: exact-SHA workflow and complete job-set GitHub queries"
+                    .into(),
+            },
             Self::PrStatus(args) => CostSpec {
                 tool: "ci-hub/pr-status",
                 basis: format!(
@@ -1056,6 +1092,11 @@ impl HubCommand {
                     "not measured: one GitHub PR query plus one target fetch and ancestry check"
                         .into()
                 },
+            },
+            Self::ResolveObligation(_) => CostSpec {
+                tool: "ci-hub/resolve-obligation",
+                basis: "not measured: one repository-bound main fetch plus exact repair-object and ancestry checks"
+                    .into(),
             },
             Self::WatchObligations(args) => CostSpec {
                 tool: "ci-hub/watch-obligations",
@@ -1120,13 +1161,13 @@ impl HubCommand {
             Self::Obligations(_)
             | Self::InheritObligations(_)
             | Self::RecordObligationWake(_)
-            | Self::ResolveObligation(_)
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
             | Self::Ledger(_)
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
+            | Self::ReceiptDigest(_)
             | Self::ValidateRun(_)
             | Self::ValidateStop(_)
             | Self::ApplyLocalLabel(_)
@@ -1564,6 +1605,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             if let Some(started_at) = args.started_at {
                 push_option(&mut protocol_args, "--started-at", started_at);
             }
+            if let Some(source) = args.source {
+                push_option(&mut protocol_args, "--source", source);
+            }
             if let Some(store) = args.store {
                 push_option(&mut protocol_args, "--store", store);
             }
@@ -1592,6 +1636,16 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             }
         }
         HubCommand::LocalHistory(args) => run_local_history(root, args),
+        HubCommand::ReceiptDigest(args) => run_receipt_digest(args),
+        HubCommand::HostedStatus(args) => {
+            let mut forwarded = vec![OsString::from("hosted-status")];
+            push_option(&mut forwarded, "--repo", args.repo);
+            push_option(&mut forwarded, "--sha", args.sha);
+            if args.json {
+                forwarded.push("--json".into());
+            }
+            run_python(root, "ci-hub/remediation/protocol.py", forwarded)
+        }
         HubCommand::ValidateWorktrees(args) => {
             let mut forwarded = Vec::new();
             push_option(&mut forwarded, "--runs", args.runs.to_string());
@@ -3429,6 +3483,46 @@ fn canonical_row_json_and_sha256(row: &HistoryRow) -> Option<(String, String)> {
     Some((canonical_row_json, digest))
 }
 
+fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
+    if !is_oid(&args.sha) || args.sha.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(CiHubError::ValidateStatus(
+            "receipt-digest --sha must be exactly 40 lowercase hex characters".into(),
+        ));
+    }
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| CiHubError::ValidateStatus(format!("cannot read HistoryRow: {error}")))?;
+    let row: HistoryRow = serde_json::from_str(&input).map_err(|error| {
+        CiHubError::ValidateStatus(format!("receipt-digest input is not a HistoryRow: {error}"))
+    })?;
+    if row.commit.as_deref() != Some(args.sha.as_str()) {
+        return Err(CiHubError::ValidateStatus(
+            "receipt-digest HistoryRow is not bound to --sha".into(),
+        ));
+    }
+    let (canonical_row, digest) = canonical_row_json_and_sha256(&row).ok_or_else(|| {
+        CiHubError::ValidateStatus("cannot canonicalize receipt HistoryRow".into())
+    })?;
+    if args.canonical_row {
+        print!("{canonical_row}");
+    } else if args.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": 1,
+                "sha": args.sha,
+                "digest_algorithm": "sha256",
+                "canonicalization": RECEIPT_CANONICALIZATION,
+                "digest": digest,
+            })
+        );
+    } else {
+        println!("{digest}");
+    }
+    Ok(0)
+}
+
 fn declared_coverage_satisfied(row: &HistoryRow) -> bool {
     row.coverage.as_ref().is_some_and(|coverage| {
         coverage.planned_test_nodes > 0
@@ -3632,7 +3726,12 @@ fn describe_receipt(receipt: &QualifyingReceipt) -> serde_json::Value {
         "discovered_tests": receipt.discovered_tests,
         "count_derivation": receipt.count_derivation,
         "coverage": row.coverage,
-        "coverage_satisfied": true,
+        "coverage_satisfied": row.coverage.as_ref().map(|_| true),
+        "coverage_status": if row.coverage.is_some() {
+            "satisfied"
+        } else {
+            "grandfathered-unknown"
+        },
         "coverage_basis": receipt.coverage_basis,
         "real_seconds": row.real_seconds,
         "user_seconds": row.user_seconds,
@@ -4348,8 +4447,9 @@ fn run_first_bad(root: &Path, args: FirstBadArgs) -> Result<i32, CiHubError> {
     }
 }
 
-/// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable landing /
-/// cache predicate. Exit 0 VALIDATED, 3 FAILED (known-bad), 4 for every
+/// `ci-hub validate-status --sha <SHA> | --pr <N>` — the SHA-queryable local
+/// receipt/cache authority (the landing combiner also queries hosted authority).
+/// Exit 0 VALIDATED, 3 FAILED (known-bad), 4 for every
 /// re-measurement state (TRUNCATED, NEEDS-RERUN, NO-RESULT, or NOT-VALIDATED).
 fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiHubError> {
     let path = ledger_path(root, &args.ledger);
@@ -4373,6 +4473,8 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
     let newest = newest_canonical_receipt(&assessment.qualifying);
 
     if args.json {
+        let qualifying_receipts: Vec<_> =
+            assessment.qualifying.iter().map(describe_receipt).collect();
         let report = serde_json::json!({
             "schema_version": 1,
             "repo": args.repo,
@@ -4388,6 +4490,7 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "failed_record_count": assessment.failed_records,
             "withheld_nonpass_record_count": assessment.withheld_nonpass_records,
             "newest_qualifying": newest.map(describe_receipt),
+            "qualifying_receipts": qualifying_receipts,
             "ledger": path.display().to_string(),
         });
         println!(
@@ -5190,6 +5293,9 @@ mod tests {
             report["coverage_basis"],
             "legacy-schema4-full-gates-and-aggregate-counts"
         );
+        assert_eq!(report["coverage"], serde_json::Value::Null);
+        assert_eq!(report["coverage_satisfied"], serde_json::Value::Null);
+        assert_eq!(report["coverage_status"], "grandfathered-unknown");
         assert_eq!(report["receipt_identity"]["digest_algorithm"], "sha256");
         assert_eq!(report["receipt_identity"]["tuple"]["sha"], RECEIPT_SHA);
     }

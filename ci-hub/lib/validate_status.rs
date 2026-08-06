@@ -1,10 +1,11 @@
-//! The SHA-queryable landing / cache predicate over the validate-run ledger.
+//! The SHA-queryable local-receipt/cache authority over the validate-run ledger.
 //!
-//! This is the ONE shared artifact behind two owner P0s (2026-08-03):
+//! This is the ONE shared local artifact behind two owner P0s (2026-08-03):
 //!   * `validate-result-cache-by-sha` CHECKS it (skip a validate whose clean
 //!     HEAD already has a pass record), and
-//!   * `lander-lands-on-local-validate-only` READS it (land iff a clean-validate
-//!     record exists for the exact PR head, GitHub-free).
+//!   * the landing authority combiner READS it as the counted-local positive.
+//!     The independently dereferenced hosted job set is the peer positive; this
+//!     module makes no GitHub calls and does not define the total landing rule.
 //!
 //! One store, one predicate: hermit/reverie `validate.sh` WRITE the JSONL ledger
 //! (`append_validation_ledger`), this module READS it. There is deliberately no

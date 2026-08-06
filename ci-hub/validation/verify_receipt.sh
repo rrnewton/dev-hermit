@@ -66,9 +66,9 @@ fi
 
 # Resolve the single shared qualifying-receipt predicate from this immutable
 # parent commit. An override is used only by the cross-consumer mutation test.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 predicate_file=${QUALIFYING_RECEIPT_PREDICATE:-}
 if [[ -z $predicate_file ]]; then
-    script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     predicate_file="$script_dir/../validate/qualifying-receipt.json"
 fi
 if [[ ! -r $predicate_file ]]; then
@@ -131,6 +131,38 @@ for candidate in "${candidates[@]}"; do
         rm -f -- "$receipt_file"
         continue
     fi
+
+    # The artifact digest binds the wrapper bytes, not the claimed selected
+    # ledger row. Re-run the shared semantic predicate on that embedded row and
+    # recompute its named Rust canonicalization before trusting the identity.
+    # A writer cannot repair a forged selected digest merely by recomputing the
+    # outer artifact digest/path.
+    row_file=$(mktemp)
+    if ! jq -c '.ledger_record' "$receipt_file" >"$row_file" 2>/dev/null || \
+       ! python3 "$script_dir/../qualifying_receipt.py" --sha "$sha" \
+           <"$row_file" >/dev/null 2>&1; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    identity_present=$(jq -r 'has("selected_receipt_identity")' "$receipt_file" 2>/dev/null)
+    if [[ $identity_present == true ]]; then
+        identity_algorithm=$(jq -r '.selected_receipt_identity.digest_algorithm // ""' "$receipt_file")
+        identity_canonicalization=$(jq -r '.selected_receipt_identity.canonicalization // ""' "$receipt_file")
+        identity_digest=$(jq -r '.selected_receipt_identity.digest // ""' "$receipt_file")
+        computed_digest=$("$script_dir/../ci-hub" receipt-digest --sha "$sha" \
+            <"$row_file" 2>/dev/null) || computed_digest=
+        if [[ $identity_algorithm != sha256 ]] || \
+           [[ $identity_canonicalization != 'serde_json::to_vec(HistoryRow)-v1' ]] || \
+           [[ ! $identity_digest =~ ^[0-9a-f]{64}$ ]] || \
+           [[ $computed_digest != "$identity_digest" ]]; then
+            rm -f -- "$row_file" "$receipt_file"
+            continue
+        fi
+    elif [[ $role_class != legacy-service ]]; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    rm -f -- "$row_file"
 
     if jq -e \
         --arg sha "$sha" --arg repo "$repo" --arg role_class "$role_class" \

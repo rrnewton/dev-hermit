@@ -29,7 +29,8 @@ are:
 
 # Parse the canonical landing command without mutating a PR. Real lands use the
 # same entrypoint without CI_HUB_DOCS_PARSE_ONLY; it verifies the final pushed
-# head's immutable validation receipt before a head-matched rebase merge.
+# head through the owner-authorized counted-local OR versioned-hosted authority
+# before a head-matched rebase merge.
 CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
   123 example/feature-branch --foreground
 
@@ -278,8 +279,9 @@ startup scan recover from a lost wake.
 
 The canonical `landing/land-pr.sh` entrypoint prepares the speculative-land
 obligation before its bounded child can merge; raw `gh pr merge` is not the
-protocol. It also dereferences the final pushed head's immutable validation
-receipt immediately before a `--match-head-commit` merge. Once GitHub exposes
+protocol. It also dereferences the final pushed head through the owner-authorized
+counted-local OR versioned-hosted authority immediately before a
+`--match-head-commit` merge. Once GitHub exposes
 the merged SHA it completes the prepared intent and calls `arm-land`. If the
 wrapper dies in that interval, the restartable ORC workflow recovers the intent
 and arms it. The write-ahead intent and initial OPEN event both carry the
@@ -306,16 +308,25 @@ default:
 | Repository | Workflow file | Workflow name | Required job |
 |---|---|---|---|
 | `rrnewton/hermit` | `.github/workflows/ci-portable.yml` | `CI (GitHub-managed portable)` | `Regular tests (GitHub-managed portable)` |
-| `rrnewton/hermit` | `.github/workflows/ci-privileged.yml` | `CI (privileged)` | `Privileged capability and E2E tests` |
 | `rrnewton/reverie` | `.github/workflows/ci.yml` | `Rust` | `Regular tests (GitHub-hosted)` |
 | `rrnewton/reverie` | `.github/workflows/ci.yml` | `Rust` | `Host-dependent tests (self-hosted)` |
 
-Verification-policy schema v2 freezes each repository's two job tuples and an
-exact positive count of two. A workflow conclusion alone is not authority: the
+Current verification-policy schema v3 freezes Hermit's one portable job tuple
+and exact positive count of one; Reverie remains on schema v2 with two required
+job tuples and an exact count of two. Historical Hermit schema-v2 obligations
+retain their frozen two-job policy, but new landing authority does not silently
+add the privileged workflow. A workflow conclusion alone is not authority: the
 consumer dereferences the exact-SHA jobs and refuses a green for a missing,
 skipped, duplicate, truncated, or otherwise vacuous required set. The schema
 does not snapshot the cross-source OR evaluator truth table; a future change to
 those semantics therefore requires its own explicit migration and review.
+
+This parent implementation precedes its Hermit consumer deployment. Until the
+versioned `hermit-merge-gate-authority-deployment` obligation in
+[`landing/README.md`](landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+lands as a Hermit PR, Hermit's required merge-gate remains stricter
+(portable+privileged) and pins the older receipt verifier. Portable-only hosted
+authority must not be reported as live end to end during that transition.
 
 The event log is append-only and locked. Every transition retains timestamps,
 verification scope (`total` here), GitHub run IDs, local log path, and failure
@@ -342,9 +353,10 @@ requires the persisted canonical `validate-status --sha ... --repo ... --json`
 report and its digest: `VALIDATED`, a nonzero qualifying count, full profile and
 selection, a passing dereferenced receipt, and exact landed-SHA provenance.
 Legacy bare greens are rechecked and become `no_result` when that authority
-refuses them. The current direct-SHA report does not expose repository identity,
-so Reverie's local leg remains conservatively `no_result`; its exact hosted 2/2
-job set can still satisfy the OR policy.
+refuses them. Reverie's versioned policy does not enable the local leg because
+its retained local evidence is not repository-bound; that leg remains
+conservatively `no_result`, while its exact hosted 2/2 job set can satisfy the OR
+policy.
 
 Either exact-SHA green satisfies the obligation immediately; a pending,
 running, absent, or cancelled/no-result peer is supplemental and never becomes
@@ -364,7 +376,14 @@ after main has advanced. Outstanding work is enumerable from state alone with
 `obligations --actionable`. A replacement lander acknowledges inherited work at
 startup with `inherit-obligations`; no notification delivery is required. The
 obligation remains visible and unhealthy even after acknowledgment, until the
-repair lands and is closed with:
+repair lands and is closed with a full SHA. Resolution requires `--kind` to
+match the durable triggered recommendation, freshly fetches the obligation's
+repository-bound `main`, and refuses a nonexistent, wrong-repository, off-main,
+or pre-failure repair. Its compare-and-append binds the event identity and full
+remediation action, so a concurrent same-state change cannot inherit the proof.
+A `revert` must be the failed land's direct child and restore its sole parent's
+exact tree; other repairs are reviewed fix-forwards. The completed event records
+the exact failed-land/repair/main ancestry and kind proof:
 
 ```bash
 ./ci-hub/ci-hub resolve-obligation OBLIGATION_ID --kind fix-forward --ref REPAIR_SHA

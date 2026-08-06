@@ -115,6 +115,23 @@ def _zero_exec_row(sha: str) -> dict:
     return row
 
 
+def _soft_rebase_only_row(sha: str) -> dict:
+    """A fully shaped inherited receipt that the hard-only policy refuses."""
+    row = _green_row(sha)
+    row.update(
+        validated_head_sha="c" * 40,
+        inherited_from={
+            "delta_kind": "rebase-only",
+            "upstream_commits": 0,
+            "branch_commits": 0,
+            "patch_identical": True,
+            "force_full_paths": [],
+        },
+        green_class="soft-rebase-only",
+    )
+    return row
+
+
 def _tightened_predicate(dst: Path) -> Path:
     """A copy of the live predicate with executed_tests_min raised so far that
     the genuine green (executed=740) can no longer clear it. NEVER touches the
@@ -287,6 +304,28 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
         panel = self._panel(_zero_exec_row(SHA), predicate=None)
         self.assertFalse(any(panel.values()),
                          f"a zero-execution run must be rejected by every consumer: {panel}")
+
+    def test_live_accepts_hard_and_rejects_soft_rebase_only_unanimously(self) -> None:
+        """The class policy moves every consumer, including the Rust authority."""
+        hard = self._panel(_green_row(SHA), predicate=None)
+        soft = self._panel(_soft_rebase_only_row(SHA), predicate=None)
+        self.assertTrue(all(hard.values()), f"hard exact-head row must pass: {hard}")
+        self.assertFalse(
+            any(soft.values()),
+            f"hard-only policy must refuse soft-rebase-only everywhere: {soft}",
+        )
+
+    def test_explicit_null_provenance_is_refused_unanimously(self) -> None:
+        """Absent legacy fields default hard; present null carries no fact."""
+        for field in ("validated_head_sha", "inherited_from", "green_class"):
+            with self.subTest(field=field):
+                row = _green_row(SHA)
+                row[field] = None
+                panel = self._panel(row, predicate=None)
+                self.assertFalse(
+                    any(panel.values()),
+                    f"explicit-null {field} must be refused everywhere: {panel}",
+                )
 
 
 if __name__ == "__main__":

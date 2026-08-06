@@ -30,12 +30,18 @@ infrastructure flakes, and improve the CI configuration and validation harness.
   review, exact-head validation, serialized landing, and ancestry verification.
   Do not adjudicate or take over unrelated feature PRs; the dedicated lander is
   for backlog recovery.
-- **Know the real gate.** Hermit landing requires `ci-hub validate-status` to
-  accept the exact current head's clean, counted, full-profile local receipt.
-  GitHub results are supplemental and must not be awaited, but a genuine
-  product failure they expose still blocks. Reverie uses its repository-defined
-  exact-head validation authority. Use the ci-hub quickstart for the current
-  consolidated workflow; do not infer authority from a label or copied status.
+- **Know the real gate.** Hermit landing accepts either `ci-hub validate-status`
+  for the exact current head's clean, counted local receipt or `ci-hub
+  hosted-status` for the versioned hosted job set. Missing/partial evidence is
+  no-result and a genuine product failure from either path blocks. Reverie uses
+  its repository-defined exact-head validation authority. Use the ci-hub
+  quickstart for the current consolidated workflow; do not infer authority from
+  a label or copied status.
+- **Honor the deployment transition.** Until
+  [`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+  lands in Hermit, its required merge-gate still requires portable+privileged
+  and pins the older verifier. Obey that gate and do not report portable-only
+  hosted authority as deployed end to end.
 - Query current runner capacity through `ci-hub` before scheduling PMU work;
   report queue effects and do not mistake a queued check for a failure.
 - Report infrastructure failures explicitly; never weaken a hardware-sensitive

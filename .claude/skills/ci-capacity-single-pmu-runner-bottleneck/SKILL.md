@@ -15,8 +15,14 @@ entrypoints. Verify the running mechanism and exact head; do not infer current
 capacity from this note. PMU/KVM work may still require scarce host facilities,
 so derive safe concurrency from live capacity before dispatch.
 
-Hermit landing does not wait for GitHub. It requires `ci-hub validate-status` to
-accept a clean, counted, full-profile receipt for the exact current head. A
-`locally-validated` label is only a cache and never authority by itself. Any
-genuine product failure observed locally or by supplemental GitHub checks still
-blocks.
+Hermit landing accepts either owner-authorized exact-head authority:
+`ci-hub validate-status` for a clean, counted local receipt or `ci-hub
+hosted-status` for the versioned hosted job set. A `locally-validated` label is
+only a cache and never authority by itself. Missing/partial evidence is no-result;
+any genuine product failure from either authority blocks.
+
+**Deployment transition.** This parent rule is not yet live end to end. Until
+[`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+lands in Hermit, its required merge-gate still requires portable+privileged and
+pins the older verifier. Obey that gate and do not report portable-only hosted
+authority as deployed.

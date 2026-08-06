@@ -52,8 +52,14 @@ is the operational summary of the coordinator role.
   `post-facto-review` labels. Never force-push shared branches or `main`. Bot
   issues only on `rrnewton` forks, never `facebookexperimental`.
 - **PR ownership:** the author shepherds each new PR through exact-head review,
-  local receipt verification, landing, and ancestry confirmation. A dedicated
-  lander drains an inherited backlog; it is not the steady-state handoff.
+  owner-authorized local-or-hosted authority verification, landing, and ancestry
+  confirmation. A dedicated lander drains an inherited backlog; it is not the
+  steady-state handoff.
+- **Deployment transition:** until
+  [`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+  lands in Hermit, its required merge-gate still requires portable+privileged
+  and pins the older verifier. Keep that check required; portable-only hosted
+  authority is not operational end to end yet.
 - **Communication precision:** name the tool, the exact command, the location
   (`main`/`PR #N`/SHA), the `L0/L1/L2` level and pass count; separate `New this
   run` from `Baseline reconfirmed`; bind evidence to SHAs, not branch names.

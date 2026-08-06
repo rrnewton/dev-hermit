@@ -1,14 +1,21 @@
 ---
 name: manual-ci-mode
-description: "Current GitHub-independent Hermit landing protocol: ci-hub-admitted full local validation, exact-head counted receipts, and semantic verification before landing."
+description: "Hermit exact-head local validation path within the owner-authorized local-or-hosted landing policy."
 ---
 
 # Exact-head local validation mode
 
-Hermit landing does not wait for delayed GitHub workflows. The authority is the
-full local validation receipt for the exact current PR head, dereferenced by
-`ci-hub validate-status`. GitHub is supplemental signal: a queued or missing
-workflow does not block, while a genuine product failure it reveals still does.
+This skill operates the local half of Hermit's owner-authorized exact-head OR
+policy. A full local receipt dereferenced by `ci-hub validate-status` and the
+registered hosted result dereferenced by `ci-hub hosted-status` are
+interchangeable positives. Missing hosted evidence does not block a local green;
+a genuine product red from either authority does block.
+
+**Deployment transition.** Until
+[`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+lands in Hermit, its required merge-gate still requires portable+privileged and
+pins the older verifier. Obey that gate and do not report portable-only hosted
+authority as deployed end to end.
 
 Use `ci-hub/ci-hub quickstart` for the live command sequence. Admit the run
 through ci-hub and launch its full profile by the tracked `systemd-run --user`
@@ -21,7 +28,8 @@ Before landing, require all of the following:
 
 1. The task authorizes landing and required adversarial review is resolved at
    the exact current head.
-2. `ci-hub validate-status --sha <40-hex-head>` accepts that head's receipt.
+2. `ci-hub validate-status --sha <40-hex-head>` accepts that head's receipt (or
+   the canonical lander observes a hosted green through `ci-hub hosted-status`).
 3. `ci-hub/landing/land-pr.sh` owns fresh-base preparation, the serialized land
    lock, merge mode, and post-merge ancestry check.
 

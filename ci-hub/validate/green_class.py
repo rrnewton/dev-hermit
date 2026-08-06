@@ -190,6 +190,13 @@ def derive_class(row: dict) -> tuple[str, str]:
     if not commit or commit == "unknown":
         return REFUSED, "no commit on the row: nothing to bind a class to"
 
+    # Absence is the only version-aware default. An explicit JSON null is a
+    # producer statement with no usable value, not an older-schema omission;
+    # refusing it keeps Python aligned with Rust's present-Value checks.
+    for field in ("validated_head_sha", "inherited_from", "green_class"):
+        if field in row and row[field] is None:
+            return REFUSED, f"{field} is explicitly null; omit legacy fields or carry a value"
+
     validated = row.get("validated_head_sha")
     inherited = row.get("inherited_from")
     label = row.get("green_class")

@@ -43,9 +43,11 @@ def hosted_evidence(
     repo: str,
     *,
     sha: str = SHA,
-    job_states: tuple[str, str] = ("green", "green"),
+    job_states: tuple[str, ...] | None = None,
 ) -> list[dict]:
     policy = protocol.verification_policy_for_repo(repo)
+    if job_states is None:
+        job_states = ("green",) * len(policy["github"]["required_jobs"])
     runs: dict[tuple[str, str], dict] = {}
     for index, (required, state) in enumerate(
         zip(policy["github"]["required_jobs"], job_states, strict=True), 1
@@ -98,7 +100,7 @@ def counted_receipt_report(sha: str = SHA) -> dict:
     host = "test-host"
     slot = "test"
     log_file = "/durable/validate.log"
-    return {
+    report = {
         "schema_version": 1,
         "repo": "rrnewton/hermit",
         "sha": sha,
@@ -135,7 +137,8 @@ def counted_receipt_report(sha: str = SHA) -> dict:
             "discovered_tests": 13,
             "count_derivation": protocol.LOCAL_RECEIPT_COUNT_DERIVATION,
             "coverage": None,
-            "coverage_satisfied": True,
+            "coverage_satisfied": None,
+            "coverage_status": protocol.LOCAL_SCHEMA4_COVERAGE_STATUS,
             "coverage_basis": protocol.LOCAL_SCHEMA4_COVERAGE_BASIS,
             "real_seconds": 10.0,
             "user_seconds": 8.0,
@@ -159,6 +162,10 @@ def counted_receipt_report(sha: str = SHA) -> dict:
         },
         "ledger": "/durable/validate-run-ledger.jsonl",
     }
+    report["qualifying_receipts"] = [
+        json.loads(json.dumps(report["newest_qualifying"]))
+    ]
+    return report
 
 
 def ledger_receipt(sha: str = SHA) -> dict:
@@ -291,6 +298,16 @@ class ProtocolTest(unittest.TestCase):
             actor="test",
             obligation_id="test-obligation",
             path=self.store,
+        )
+
+    def resolve_args(self, *, source: Path | None = None) -> argparse.Namespace:
+        return argparse.Namespace(
+            id="test-obligation",
+            kind="fix-forward",
+            ref=NEXT_SHA,
+            started_at=None,
+            source=source,
+            store=self.store,
         )
 
     def test_rebase_merged_pr_resolves_to_replayed_main_sha(self) -> None:
@@ -527,6 +544,15 @@ class ProtocolTest(unittest.TestCase):
             "test-obligation", "test-transition", patch, self.store
         )
 
+    def require_remediation(self, kind: str = "fix-forward") -> dict:
+        return self.transition(
+            {
+                "overall_state": "remediation_required",
+                "recommendation": {"action": kind},
+                "remediation": {"state": "triggered", "kind": kind},
+            }
+        )
+
     def test_github_parser_requires_exact_sha_and_workflow(self) -> None:
         policy = protocol.verification_policy_for_repo("rrnewton/hermit")
         payload = {
@@ -556,7 +582,7 @@ class ProtocolTest(unittest.TestCase):
             ],
         }
         runs = protocol._parse_github_runs(json.dumps(payload), SHA, policy)
-        self.assertEqual([run["databaseId"] for run in runs], [1, 2])
+        self.assertEqual([run["databaseId"] for run in runs], [1])
 
         payload["workflow_runs"][0]["head_sha"] = NEXT_SHA
         with self.assertRaisesRegex(protocol.ProtocolError, "expected exact SHA"):
@@ -722,15 +748,58 @@ class ProtocolTest(unittest.TestCase):
         )
         self.assertEqual(runs[0]["databaseId"], 11)
 
-    def test_hosted_authority_requires_exact_two_job_positive_set(self) -> None:
-        for repo in ("rrnewton/hermit", "rrnewton/reverie"):
+    def test_hosted_authority_requires_registered_nonvacuous_positive_set(self) -> None:
+        for repo, expected_count in (("rrnewton/hermit", 1), ("rrnewton/reverie", 2)):
             with self.subTest(repo=repo):
                 policy = protocol.verification_policy_for_repo(repo)
-                self.assertEqual(policy["github"]["required_positive_count"], 2)
-                self.assertEqual(len(policy["github"]["required_jobs"]), 2)
+                self.assertEqual(
+                    policy["github"]["required_positive_count"], expected_count
+                )
+                self.assertEqual(
+                    len(policy["github"]["required_jobs"]), expected_count
+                )
                 patch = protocol._github_patch(hosted_evidence(repo), SHA, policy)
                 self.assertEqual(patch["github"]["state"], "green")
-                self.assertEqual(patch["github"]["positive_count"], 2)
+                self.assertEqual(patch["github"]["positive_count"], expected_count)
+
+    def test_hosted_status_brackets_green_no_result_partial_red_and_stale(self) -> None:
+        def observe(repo: str, runs: list[dict]) -> tuple[int, dict]:
+            args = argparse.Namespace(repo=repo, sha=SHA, json=True)
+            with (
+                mock.patch.object(protocol, "github_runs", return_value=runs),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                rc = protocol.hosted_status(args)
+            return rc, json.loads(output.getvalue())
+
+        rc, report = observe("rrnewton/hermit", hosted_evidence("rrnewton/hermit"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["state"], "green")
+        self.assertEqual(report["positive_count"], 1)
+        self.assertEqual(report["required_positive_count"], 1)
+
+        rc, report = observe("rrnewton/hermit", [])
+        self.assertEqual(rc, 4)
+        self.assertEqual(report["state"], "no_result")
+
+        partial = hosted_evidence(
+            "rrnewton/reverie", job_states=("green", "no_result")
+        )
+        rc, report = observe("rrnewton/reverie", partial)
+        self.assertEqual(rc, 4)
+        self.assertEqual(report["positive_count"], 1)
+        self.assertEqual(report["required_positive_count"], 2)
+
+        rc, report = observe(
+            "rrnewton/hermit",
+            hosted_evidence("rrnewton/hermit", job_states=("red",)),
+        )
+        self.assertEqual(rc, 3)
+        self.assertEqual(report["state"], "red")
+
+        stale = hosted_evidence("rrnewton/hermit", sha=NEXT_SHA)
+        with self.assertRaisesRegex(protocol.ProtocolError, "expected exact SHA"):
+            observe("rrnewton/hermit", stale)
 
     def test_only_a_dereferenced_producer_can_be_pending_or_running(self) -> None:
         policy = protocol.verification_policy_for_repo("rrnewton/reverie")
@@ -856,14 +925,12 @@ class ProtocolTest(unittest.TestCase):
         )
         self.assertEqual(missing_updated_patch["github"]["state"], "green")
         self.assertIsNone(missing_updated_patch["github"]["finished_at"])
-        reused_run = hosted_evidence("rrnewton/hermit")
-        reused_run[1]["databaseId"] = reused_run[0]["databaseId"]
-        with self.assertRaisesRegex(protocol.ProtocolError, "reused for workflow"):
-            protocol._github_patch(
-                reused_run,
-                SHA,
-                protocol.verification_policy_for_repo("rrnewton/hermit"),
-            )
+        hermit_policy = protocol.verification_policy_for_repo("rrnewton/hermit")
+        self.assertEqual(hermit_policy["schema_version"], 3)
+        self.assertEqual(
+            [job["workflow_file"] for job in hermit_policy["github"]["required_jobs"]],
+            [protocol.DEFAULT_WORKFLOW_FILE],
+        )
         invalid = json.loads(json.dumps(policy))
         invalid["github"]["required_positive_count"] = 0
         with self.assertRaisesRegex(protocol.ProtocolError, "invalid verification"):
@@ -1288,6 +1355,29 @@ class ProtocolTest(unittest.TestCase):
         self.assertTrue(protocol._local_launch_durable(record))
         self.current_local_receipt.assert_called_once_with("rrnewton/hermit", SHA)
 
+    def test_unrelated_newer_valid_receipt_does_not_invalidate_persisted_green(self) -> None:
+        persisted = verified_local_receipt()
+        current = verified_local_receipt()
+        old = current["report"]["newest_qualifying"]
+        newer = json.loads(json.dumps(old))
+        newer["finished_at"] = "2026-08-05T00:12:00Z"
+        newer["receipt_identity"]["digest"] = "e" * 64
+        newer["receipt_identity"]["tuple"]["finished_at"] = newer["finished_at"]
+        current["report"]["newest_qualifying"] = newer
+        current["report"]["qualifying_count"] = 2
+        current["report"]["qualifying_receipts"] = [old, newer]
+        canonical = json.dumps(
+            current["report"], sort_keys=True, separators=(",", ":")
+        ).encode()
+        current["report_sha256"] = hashlib.sha256(canonical).hexdigest()
+        self.current_local_receipt.return_value = (True, current)
+
+        self.assertTrue(
+            protocol._persisted_local_receipt_valid(
+                persisted, repo="rrnewton/hermit", sha=SHA
+            )
+        )
+
     def test_recomputed_outer_hash_cannot_authorize_tampered_receipt(self) -> None:
         tampered = verified_local_receipt()
         selected = tampered["report"]["newest_qualifying"]
@@ -1339,7 +1429,7 @@ class ProtocolTest(unittest.TestCase):
         rebound = protocol.bind_local_receipt_authority("test-obligation", self.store)
         self.assertEqual(rebound["local"]["state"], "no_result")
         self.assertIn(
-            "persisted selected receipt does not exactly match",
+            "canonical verifier did not carry its complete qualifying receipt set",
             rebound["local"]["classification_reason"],
         )
 
@@ -1803,15 +1893,13 @@ class ProtocolTest(unittest.TestCase):
     def test_poll_observes_late_red_after_nonblocking_satisfaction(self) -> None:
         self.create()
         self.transition({"local": {"state": "green"}})
-        running_output = hosted_evidence(
-            "rrnewton/hermit", job_states=("running", "green")
-        )
+        running_output = hosted_evidence("rrnewton/hermit", job_states=("running",))
         with mock.patch.object(protocol, "github_runs", return_value=running_output):
             satisfied = protocol.poll_obligation("test-obligation", self.store)
         self.assertEqual(satisfied["overall_state"], "satisfied")
         self.assertEqual(satisfied["github"]["state"], "running")
         self.assertFalse(protocol._watch_complete(satisfied))
-        late_red = hosted_evidence("rrnewton/hermit", job_states=("red", "green"))
+        late_red = hosted_evidence("rrnewton/hermit", job_states=("red",))
         with (
             mock.patch.object(protocol, "github_runs", return_value=late_red) as runs,
             mock.patch.object(protocol, "trigger_remediation") as actuator,
@@ -1997,6 +2085,400 @@ class ProtocolTest(unittest.TestCase):
             )
         self.assertEqual(record["recommendation"]["action"], "fix-forward")
         self.assertEqual(record["remediation"]["state"], "triggered")
+
+    def test_resolve_refuses_wrong_state_before_repository_queries(self) -> None:
+        self.create()
+        before = self.store.read_text()
+        with (
+            mock.patch.object(protocol, "resolve_repo_source") as repo_source,
+            self.assertRaisesRegex(protocol.ProtocolError, "remediation_required"),
+        ):
+            protocol.resolve_obligation(self.resolve_args())
+        repo_source.assert_not_called()
+        self.assertEqual(self.store.read_text(), before)
+
+    def test_resolve_refuses_kind_that_contradicts_durable_recommendation(
+        self,
+    ) -> None:
+        self.create()
+        self.require_remediation("revert")
+        before = self.store.read_text()
+        with (
+            mock.patch.object(protocol, "resolve_repo_source") as repo_source,
+            self.assertRaisesRegex(protocol.ProtocolError, "contradicts durable"),
+        ):
+            protocol.resolve_obligation(self.resolve_args())
+        repo_source.assert_not_called()
+        self.assertEqual(self.store.read_text(), before)
+
+    def test_resolve_refuses_nonexistent_repair(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol,
+                "_resolve_raw_sha",
+                side_effect=(
+                    TREE,
+                    protocol.ProtocolError("repair object does not exist"),
+                ),
+            ),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not exist"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=source))
+        self.assertEqual(
+            obligations.get_record("test-obligation", self.store)["overall_state"],
+            "remediation_required",
+        )
+
+    def test_resolve_refuses_source_from_wrong_repository(self) -> None:
+        self.create()
+        self.require_remediation()
+        wrong_source = self.repo_source("rrnewton/reverie", "wrong-repo")
+        with (
+            mock.patch.object(protocol, "_fetch_target") as fetch_target,
+            self.assertRaisesRegex(protocol.ProtocolError, "not required repository"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=wrong_source))
+        fetch_target.assert_not_called()
+        self.assertEqual(
+            obligations.get_record("test-obligation", self.store)["overall_state"],
+            "remediation_required",
+        )
+
+    def test_resolve_refuses_repair_not_reachable_from_fresh_main(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol, "_resolve_raw_sha", side_effect=(TREE, NEXT_SHA)
+            ),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=False),
+            self.assertRaisesRegex(protocol.ProtocolError, "not reachable"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=source))
+        self.assertEqual(
+            obligations.get_record("test-obligation", self.store)["overall_state"],
+            "remediation_required",
+        )
+
+    def test_resolve_records_fresh_repository_main_ancestry_proof(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol, "_resolve_raw_sha", side_effect=(TREE, NEXT_SHA)
+            ),
+            mock.patch.object(
+                protocol, "_is_target_ancestor", side_effect=(True, True)
+            ),
+        ):
+            self.assertEqual(
+                protocol.resolve_obligation(self.resolve_args(source=source)), 0
+            )
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["overall_state"], "remediated")
+        self.assertEqual(record["remediation"]["ref"], NEXT_SHA)
+        proof = record["remediation"]["landing_verification"]
+        self.assertEqual(proof["authority"], "fresh-repository-main-ancestry-v1")
+        self.assertEqual(proof["repo"], "rrnewton/hermit")
+        self.assertEqual(proof["repair_sha"], NEXT_SHA)
+        self.assertEqual(proof["target_ref"], "origin/main")
+        self.assertEqual(proof["target_tip_sha"], TREE)
+        self.assertIs(proof["repair_is_ancestor_of_target_tip"], True)
+        self.assertEqual(proof["failed_land_sha"], SHA)
+        self.assertIs(proof["failed_land_is_ancestor_of_repair"], True)
+        self.assertEqual(
+            proof["kind_verification"],
+            {
+                "kind": "fix-forward",
+                "durable_recommendation_matches": True,
+            },
+        )
+
+    def test_resolve_refuses_pre_failure_main_ancestor_as_repair(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol, "_resolve_raw_sha", side_effect=(TREE, NEXT_SHA)
+            ),
+            mock.patch.object(
+                protocol, "_is_target_ancestor", side_effect=(True, False)
+            ),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not descend"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=source))
+        self.assertEqual(
+            obligations.get_record("test-obligation", self.store)["overall_state"],
+            "remediation_required",
+        )
+
+    def test_resolve_cas_refuses_concurrent_state_change(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol, "_resolve_raw_sha", side_effect=(TREE, NEXT_SHA)
+            ),
+            mock.patch.object(
+                protocol, "_is_target_ancestor", side_effect=(True, True)
+            ),
+            mock.patch.object(
+                obligations, "transition_if_matches", return_value=None
+            ),
+            self.assertRaisesRegex(protocol.ProtocolError, "changed while"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=source))
+
+    def test_resolve_cas_refuses_concurrent_same_state_action_change(self) -> None:
+        self.create()
+        self.require_remediation()
+        source = self.repo_source("rrnewton/hermit")
+        original_transition = obligations.transition_if_matches
+
+        def race_then_compare(*args, **kwargs):
+            obligations.transition(
+                "test-obligation",
+                "remediation-action-raced",
+                {
+                    "overall_state": "remediation_required",
+                    "recommendation": {"action": "revert"},
+                    "remediation": {"state": "triggered", "kind": "revert"},
+                },
+                self.store,
+            )
+            return original_transition(*args, **kwargs)
+
+        with (
+            mock.patch.object(protocol, "_fetch_target", return_value="origin/main"),
+            mock.patch.object(
+                protocol, "_resolve_raw_sha", side_effect=(TREE, NEXT_SHA)
+            ),
+            mock.patch.object(
+                protocol, "_is_target_ancestor", side_effect=(True, True)
+            ),
+            mock.patch.object(
+                obligations,
+                "transition_if_matches",
+                side_effect=race_then_compare,
+            ),
+            self.assertRaisesRegex(protocol.ProtocolError, "changed while"),
+        ):
+            protocol.resolve_obligation(self.resolve_args(source=source))
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["overall_state"], "remediation_required")
+        self.assertEqual(record["recommendation"]["action"], "revert")
+
+    def test_revert_resolution_requires_exact_failed_tree_restoration(self) -> None:
+        source = self.root / "revert-history"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+        subprocess.run(
+            ["git", "-C", str(source), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(source), "config", "user.name", "Test"],
+            check=True,
+        )
+
+        tracked = source / "tracked"
+        tracked.write_text("healthy\n")
+        subprocess.run(["git", "-C", str(source), "add", "tracked"], check=True)
+        subprocess.run(
+            ["git", "-C", str(source), "commit", "-q", "-m", "base"],
+            check=True,
+        )
+        base = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        tracked.write_text("broken\n")
+        subprocess.run(["git", "-C", str(source), "add", "tracked"], check=True)
+        subprocess.run(
+            ["git", "-C", str(source), "commit", "-q", "-m", "failed land"],
+            check=True,
+        )
+        failed_land = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        subprocess.run(
+            ["git", "-C", str(source), "switch", "-q", "-c", "fake-revert"],
+            check=True,
+        )
+        (source / "unrelated").write_text("not a revert\n")
+        subprocess.run(["git", "-C", str(source), "add", "unrelated"], check=True)
+        subprocess.run(
+            ["git", "-C", str(source), "commit", "-q", "-m", "fake revert"],
+            check=True,
+        )
+        fake_revert = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(source), "switch", "-q", "main"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(source), "revert", "--no-edit", failed_land],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        real_revert = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        obligations.create_obligation(
+            repo="rrnewton/hermit",
+            landed_sha=failed_land,
+            land_mode="speculative",
+            actor="test",
+            obligation_id="revert-authority",
+            path=self.store,
+        )
+        obligations.transition(
+            "revert-authority",
+            "remediation-triggered",
+            {
+                "overall_state": "remediation_required",
+                "recommendation": {"action": "revert"},
+                "remediation": {"state": "triggered", "kind": "revert"},
+            },
+            self.store,
+        )
+        args = argparse.Namespace(
+            id="revert-authority",
+            kind="revert",
+            ref=fake_revert,
+            started_at=None,
+            source=source,
+            store=self.store,
+        )
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="fake-revert"),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not restore"),
+        ):
+            protocol.resolve_obligation(args)
+        self.assertEqual(
+            obligations.get_record("revert-authority", self.store)["overall_state"],
+            "remediation_required",
+        )
+
+        args.ref = real_revert
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+        ):
+            self.assertEqual(protocol.resolve_obligation(args), 0)
+        proof = obligations.get_record("revert-authority", self.store)[
+            "remediation"
+        ]["landing_verification"]
+        kind_proof = proof["kind_verification"]
+        self.assertEqual(kind_proof["failed_land_parent_sha"], base)
+        self.assertEqual(kind_proof["repair_parent_sha"], failed_land)
+        self.assertIs(kind_proof["tree_restored"], True)
+        self.assertEqual(
+            kind_proof["repair_tree_sha"], kind_proof["failed_land_parent_tree_sha"]
+        )
+
+    def test_resolve_uses_real_git_object_and_lineage_authority(self) -> None:
+        source = self.root / "repair-history"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+        subprocess.run(
+            ["git", "-C", str(source), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(source), "config", "user.name", "Test"],
+            check=True,
+        )
+
+        def commit(name: str, body: str) -> str:
+            path = source / name
+            path.write_text(body)
+            subprocess.run(["git", "-C", str(source), "add", name], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "commit", "-q", "-m", name],
+                check=True,
+            )
+            return subprocess.run(
+                ["git", "-C", str(source), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        pre_failure = commit("base", "base")
+        failed_land = commit("failed", "failed")
+        repair = commit("repair", "repair")
+        obligations.create_obligation(
+            repo="rrnewton/hermit",
+            landed_sha=failed_land,
+            land_mode="speculative",
+            actor="test",
+            obligation_id="git-authority",
+            path=self.store,
+        )
+        obligations.transition(
+            "git-authority",
+            "remediation-triggered",
+            {
+                "overall_state": "remediation_required",
+                "recommendation": {"action": "fix-forward"},
+                "remediation": {"state": "triggered", "kind": "fix-forward"},
+            },
+            self.store,
+        )
+
+        args = argparse.Namespace(
+            id="git-authority",
+            kind="fix-forward",
+            ref=pre_failure,
+            started_at=None,
+            source=source,
+            store=self.store,
+        )
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not descend"),
+        ):
+            protocol.resolve_obligation(args)
+
+        args.ref = repair
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+        ):
+            self.assertEqual(protocol.resolve_obligation(args), 0)
+        record = obligations.get_record("git-authority", self.store)
+        proof = record["remediation"]["landing_verification"]
+        self.assertEqual(proof["repair_sha"], repair)
+        self.assertEqual(proof["target_tip_sha"], repair)
+        self.assertEqual(proof["failed_land_sha"], failed_land)
 
     def test_remediation_trigger_is_idempotent(self) -> None:
         self.create()
@@ -2212,6 +2694,16 @@ class ProtocolTest(unittest.TestCase):
                     "newest_qualifying": {
                         **valid["newest_qualifying"],
                         "profile": "quick",
+                    },
+                }
+            ),
+            "schema4-fabricated-coverage": json.dumps(
+                {
+                    **valid,
+                    "newest_qualifying": {
+                        **valid["newest_qualifying"],
+                        "coverage_satisfied": True,
+                        "coverage_status": "satisfied",
                     },
                 }
             ),

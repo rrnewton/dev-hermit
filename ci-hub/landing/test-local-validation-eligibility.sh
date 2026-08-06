@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 helper=$script_dir/local-validation-eligibility.sh
 lander=$script_dir/land-pr.sh
+authority=$script_dir/exact-head-validation-authority.sh
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 ledger=$tmp/ledger.jsonl
@@ -39,11 +40,16 @@ valid_with=$(run_case 0 "$valid" "locally-validated")
 [ "$valid_without" = "ELIGIBILITY=VALIDATED" ]
 [ "$valid_with" = "$valid_without" ]
 
-# The production consumer must use the helper and must not type the label via gh.
-grep -Fq 'local-validation-eligibility.sh' "$lander"
+# The legacy local helper remains correctly fail-closed, while the production
+# consumer must use the owner-authorized local-or-hosted combiner.
+grep -Fq 'exact-head-validation-authority.sh' "$lander"
+grep -Fq 'local-validation-eligibility.sh' "$authority" && {
+  echo "exact-head authority must dereference semantic status, not the legacy label helper" >&2
+  exit 1
+}
 if grep -Eq 'gh pr edit .*--add-label locally-validated' "$lander"; then
   echo "land-pr.sh still directly types locally-validated" >&2
   exit 1
 fi
 
-printf 'PASS: unbacked label rejected 2/2; validated head admitted 2/2; lander uses ledger authority\n'
+printf 'PASS: unbacked label rejected 2/2; validated head admitted 2/2; lander uses exact-head OR authority\n'

@@ -39,7 +39,9 @@ REVERIE_WORKFLOW = "Rust"
 REVERIE_WORKFLOW_FILE = ".github/workflows/ci.yml"
 VERIFICATION_POLICY_SCHEMA_VERSION = 2
 _CURRENT_VERIFICATION_POLICY_VERSION = {
-    DEFAULT_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
+    # v3 makes the owner-authorized Hermit hosted authority the portable job;
+    # retain v2 below so already-open obligations keep their frozen 2-job policy.
+    DEFAULT_REPO: 3,
     REVERIE_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
 }
 # Each tuple is (exact workflow path, exact workflow name, exact job name).
@@ -57,6 +59,13 @@ _VERSIONED_REPO_GITHUB_JOBS = {
             PRIVILEGED_WORKFLOW_FILE,
             PRIVILEGED_WORKFLOW,
             "Privileged capability and E2E tests",
+        ),
+    ),
+    (DEFAULT_REPO, 3): (
+        (
+            DEFAULT_WORKFLOW_FILE,
+            DEFAULT_WORKFLOW,
+            "Regular tests (GitHub-managed portable)",
         ),
     ),
     (REVERIE_REPO, 2): (
@@ -108,6 +117,8 @@ LOCAL_RECEIPT_COUNT_DERIVATION = (
 )
 LOCAL_SCHEMA4_COVERAGE_BASIS = "legacy-schema4-full-gates-and-aggregate-counts"
 LOCAL_DECLARED_COVERAGE_BASIS = "declared-per-node"
+LOCAL_SCHEMA4_COVERAGE_STATUS = "grandfathered-unknown"
+LOCAL_DECLARED_COVERAGE_STATUS = "satisfied"
 LOCAL_POLICY_SKIP_AUTHORITY = "ci-hub-local-receipt-policy-v1"
 
 # A clean nonzero exit is NOT automatically a failing answer. Tonight three
@@ -400,6 +411,13 @@ def _local_receipt_problem(
     newest = report.get("newest_qualifying")
     if not isinstance(newest, Mapping) or not newest:
         return "canonical verifier did not dereference a qualifying receipt"
+    qualifying_receipts = report.get("qualifying_receipts")
+    if (
+        not isinstance(qualifying_receipts, list)
+        or len(qualifying_receipts) != qualifying_count
+        or newest not in qualifying_receipts
+    ):
+        return "canonical verifier did not carry its complete qualifying receipt set"
     if newest.get("repo") != repo:
         return "qualifying receipt is not repository-bound"
     if newest.get("sha") != sha or newest.get("commit") != sha:
@@ -470,15 +488,22 @@ def _local_receipt_problem(
     ):
         return "qualifying receipt has invalid or unbound test counts"
 
-    if newest.get("coverage_satisfied") is not True:
-        return "qualifying receipt has unsatisfied coverage"
     coverage = newest.get("coverage")
     coverage_basis = newest.get("coverage_basis")
     if coverage_basis == LOCAL_SCHEMA4_COVERAGE_BASIS:
-        if schema_version != 4 or coverage is not None:
+        if (
+            schema_version != 4
+            or coverage is not None
+            or newest.get("coverage_satisfied") is not None
+            or newest.get("coverage_status") != LOCAL_SCHEMA4_COVERAGE_STATUS
+        ):
             return "legacy coverage basis is not bound to a schema-4 receipt"
     elif coverage_basis == LOCAL_DECLARED_COVERAGE_BASIS:
-        if not isinstance(coverage, Mapping):
+        if (
+            newest.get("coverage_satisfied") is not True
+            or newest.get("coverage_status") != LOCAL_DECLARED_COVERAGE_STATUS
+            or not isinstance(coverage, Mapping)
+        ):
             return "declared coverage basis has no coverage record"
         if (
             type(coverage.get("planned_test_nodes")) is not int
@@ -598,18 +623,26 @@ def _compare_persisted_local_receipt(
     assert isinstance(persisted_report, Mapping)
     assert isinstance(current_report, Mapping)
     persisted_selected = persisted_report.get("newest_qualifying")
-    current_selected = current_report.get("newest_qualifying")
-    if persisted_selected != current_selected:
+    current_receipts = current_report.get("qualifying_receipts")
+    if not isinstance(persisted_selected, Mapping) or not isinstance(
+        current_receipts, list
+    ):
+        return False, current, "selected receipt comparison has no receipt object"
+    current_selected = next(
+        (
+            candidate
+            for candidate in current_receipts
+            if isinstance(candidate, Mapping) and candidate == persisted_selected
+        ),
+        None,
+    )
+    if current_selected is None:
         return (
             False,
             current,
-            "persisted selected receipt does not exactly match the fresh "
-            "canonical selected receipt",
+            "persisted selected receipt is absent from the fresh canonical "
+            "qualifying receipt set",
         )
-    if not isinstance(persisted_selected, Mapping) or not isinstance(
-        current_selected, Mapping
-    ):
-        return False, current, "selected receipt comparison has no receipt object"
     persisted_identity = persisted_selected.get("receipt_identity")
     current_identity = current_selected.get("receipt_identity")
     if not isinstance(persisted_identity, Mapping) or not isinstance(
@@ -1244,6 +1277,49 @@ def _resolve_raw_sha(source: Path, reference: str) -> str:
     if not obligations.SHA_RE.fullmatch(commit):
         raise ProtocolError(f"cannot resolve full commit SHA from {reference!r}")
     return commit
+
+
+def _commit_parents(source: Path, commit: str) -> list[str]:
+    """Return the exact commit's parents from the local object database."""
+    result = _run(
+        (
+            "git",
+            "-C",
+            str(source),
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            commit,
+        ),
+        check=True,
+    )
+    fields = result.stdout.strip().lower().split()
+    if not fields or fields[0] != commit:
+        raise ProtocolError(f"cannot inspect commit parents for {commit}")
+    parents = fields[1:]
+    if any(not obligations.SHA_RE.fullmatch(parent) for parent in parents):
+        raise ProtocolError(f"commit {commit} has malformed parent identity")
+    return parents
+
+
+def _commit_tree(source: Path, commit: str) -> str:
+    """Return the exact tree identity carried by ``commit``."""
+    result = _run(
+        (
+            "git",
+            "-C",
+            str(source),
+            "rev-parse",
+            "--verify",
+            f"{commit}^{{tree}}",
+        ),
+        check=True,
+    )
+    tree = result.stdout.strip().lower()
+    if not obligations.SHA_RE.fullmatch(tree):
+        raise ProtocolError(f"cannot inspect tree identity for {commit}")
+    return tree
 
 
 def _resolve_claimed_oid(
@@ -1883,6 +1959,33 @@ def _github_patch(
             "last_poll_error": "; ".join(reasons) or None,
         }
     }
+
+
+def hosted_status(args: argparse.Namespace) -> int:
+    """Dereference the repository's exact-head hosted landing authority."""
+    sha = args.sha.lower()
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError("--sha must be a full 40-character commit SHA")
+    policy = verification_policy_for_repo(args.repo)
+    runs = github_runs(args.repo, sha, policy=policy)
+    evidence = _github_patch(runs, sha, policy)["github"]
+    report = {
+        "schema_version": 1,
+        "authority": "github-actions-exact-head-jobs",
+        "repo": args.repo,
+        "sha": sha,
+        "policy_schema_version": policy["schema_version"],
+        **evidence,
+    }
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print(
+            f"HOSTED {str(evidence['state']).upper()} {args.repo}@{sha} "
+            f"positive={evidence['positive_count']}/"
+            f"{evidence['required_positive_count']}"
+        )
+    return {"green": 0, "red": 3}.get(str(evidence["state"]), 4)
 
 
 def ensure_github_verification(
@@ -3682,8 +3785,100 @@ def resolve_obligation(args: argparse.Namespace) -> int:
     ref = args.ref.lower()
     if not obligations.SHA_RE.fullmatch(ref):
         raise ProtocolError("--ref must be a full 40-character commit SHA")
+    store_path = args.store.expanduser().resolve()
+    record = obligations.get_record(args.id, store_path)
+    if record.get("overall_state") != "remediation_required":
+        raise ProtocolError(
+            f"obligation {args.id!r} is not in remediation_required state"
+        )
+    event_id = record.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        raise ProtocolError(f"obligation {args.id!r} has no durable event identity")
+    recommendation = record.get("recommendation")
+    durable_action = (
+        recommendation.get("action")
+        if isinstance(recommendation, Mapping)
+        else None
+    )
+    if durable_action not in {"fix-forward", "revert"}:
+        raise ProtocolError(
+            f"obligation {args.id!r} has no concrete remediation recommendation"
+        )
+    remediation = record.get("remediation")
+    if not isinstance(remediation, Mapping) or remediation.get("state") != "triggered":
+        raise ProtocolError(f"obligation {args.id!r} remediation is not triggered")
+    if remediation.get("kind") != durable_action:
+        raise ProtocolError(
+            f"obligation {args.id!r} durable remediation kind does not match its "
+            "recommendation"
+        )
+    if args.kind != durable_action:
+        raise ProtocolError(
+            f"--kind {args.kind!r} contradicts durable recommendation "
+            f"{durable_action!r}"
+        )
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError(f"obligation {args.id!r} has no repository identity")
+    if ref == record.get("landed_sha"):
+        raise ProtocolError("--ref must identify a repair commit, not the failed land")
+
+    # Resolution is itself a load-bearing authority. Freshly fetch this
+    # obligation's repository-bound main ref, prove the exact repair object
+    # exists there, and carry that proof into the append-only transition.
+    source = resolve_repo_source(repo, args.source)
+    target_ref = _fetch_target(source, "main")
+    target_tip = _resolve_raw_sha(source, target_ref)
+    resolved = _resolve_raw_sha(source, ref)
+    if resolved != ref:
+        raise ProtocolError(f"--ref resolved to {resolved}, not exact repair SHA {ref}")
+    if not _is_target_ancestor(source, resolved, target_tip):
+        raise ProtocolError(
+            f"repair {resolved} is not reachable from freshly fetched {repo}:main"
+        )
+    landed_sha = record.get("landed_sha")
+    if not isinstance(landed_sha, str) or not obligations.SHA_RE.fullmatch(landed_sha):
+        raise ProtocolError(f"obligation {args.id!r} has no exact landed SHA")
+    if not _is_target_ancestor(source, landed_sha, resolved):
+        raise ProtocolError(
+            f"repair {resolved} does not descend from failed land {landed_sha}"
+        )
+    kind_verification: dict[str, object] = {
+        "kind": durable_action,
+        "durable_recommendation_matches": True,
+    }
+    if durable_action == "revert":
+        repair_parents = _commit_parents(source, resolved)
+        if repair_parents != [landed_sha]:
+            raise ProtocolError(
+                "revert repair must be the direct single-parent child of the "
+                f"failed land {landed_sha}"
+            )
+        failed_land_parents = _commit_parents(source, landed_sha)
+        if len(failed_land_parents) != 1:
+            raise ProtocolError(
+                f"failed land {landed_sha} is not a single-parent commit; "
+                "resolve it as a reviewed fix-forward"
+            )
+        failed_land_parent = failed_land_parents[0]
+        repair_tree = _commit_tree(source, resolved)
+        restored_tree = _commit_tree(source, failed_land_parent)
+        if repair_tree != restored_tree:
+            raise ProtocolError(
+                f"revert repair {resolved} does not restore failed land parent "
+                f"tree {restored_tree}"
+            )
+        kind_verification.update(
+            {
+                "repair_parent_sha": landed_sha,
+                "failed_land_parent_sha": failed_land_parent,
+                "repair_tree_sha": repair_tree,
+                "failed_land_parent_tree_sha": restored_tree,
+                "tree_restored": True,
+            }
+        )
     now = obligations.utc_now()
-    obligations.transition(
+    updated = obligations.transition_if_matches(
         args.id,
         "remediated",
         {
@@ -3694,10 +3889,33 @@ def resolve_obligation(args: argparse.Namespace) -> int:
                 "ref": ref,
                 "started_at": args.started_at or now,
                 "completed_at": now,
+                "landing_verification": {
+                    "authority": "fresh-repository-main-ancestry-v1",
+                    "repo": repo,
+                    "repair_sha": resolved,
+                    "target_ref": target_ref,
+                    "target_tip_sha": target_tip,
+                    "repair_is_ancestor_of_target_tip": True,
+                    "failed_land_sha": landed_sha,
+                    "failed_land_is_ancestor_of_repair": True,
+                    "kind_verification": kind_verification,
+                    "source": str(source),
+                    "checked_at": now,
+                },
             },
         },
-        args.store,
+        {
+            "event_id": event_id,
+            "overall_state": "remediation_required",
+            "recommendation": {"action": durable_action},
+            "remediation": {"state": "triggered", "kind": durable_action},
+        },
+        store_path,
     )
+    if updated is None:
+        raise ProtocolError(
+            f"obligation {args.id!r} changed while repair ancestry was verified"
+        )
     return 0
 
 
@@ -3765,6 +3983,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_landing_parser.add_argument("--target", default="main")
     verify_landing_parser.add_argument("--json", action="store_true")
 
+    hosted_status_parser = subparsers.add_parser(
+        "hosted-status",
+        help="verify the registered exact-head GitHub job authority",
+    )
+    hosted_status_parser.add_argument("--repo", default=DEFAULT_REPO)
+    hosted_status_parser.add_argument("--sha", required=True)
+    hosted_status_parser.add_argument("--json", action="store_true")
+
     watch_parser = subparsers.add_parser(
         "watch", help="poll open obligations and record transitions"
     )
@@ -3818,6 +4044,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     resolve_parser.add_argument("--ref", required=True)
     resolve_parser.add_argument("--started-at")
     resolve_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches the obligation repository",
+    )
+    resolve_parser.add_argument(
         "--store", type=Path, default=obligations.default_store_path()
     )
 
@@ -3840,6 +4072,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return arm(args)
         if args.command in ("verify-landing", "verify-landed-pr"):
             return verify_landing(args)
+        if args.command == "hosted-status":
+            return hosted_status(args)
         if args.command == "watch":
             if args.poll_seconds <= 0:
                 raise ProtocolError("--poll-seconds must be positive")

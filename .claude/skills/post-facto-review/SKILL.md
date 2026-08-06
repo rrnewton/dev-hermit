@@ -165,13 +165,21 @@ them only at the smallest new-syscall regions, not across untouched code.
 Once required adversarial review is resolved and the authoritative gate is
 green, land the authorized change without waiting for a human.
 
-- Hermit requires `ci-hub validate-status` to accept the exact current head's
-  clean, counted, full-profile local receipt. GitHub checks are supplemental;
-  do not wait for them, but never ignore a genuine product failure they expose.
+- Hermit accepts either exact-head authority: `ci-hub validate-status` for the
+  clean, counted local receipt, or `ci-hub hosted-status` for the versioned
+  GitHub job policy. The parent policy requires the portable `Regular tests
+  (GitHub-managed portable)` job, not an implicit portable+privileged 2/2.
+  Missing, partial, stale, cancelled, and skipped evidence is NO_RESULT; a
+  genuine red from either authority blocks even if the peer is green.
+  This is not end-to-end deployed until
+  [`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
+  lands in Hermit; meanwhile its required merge-gate still requires
+  portable+privileged and pins the older verifier. Obey that gate.
 - Reverie requires its repository-defined exact-head validation authority.
 - When one of the four triggers applies, add `post-facto-human-review`, verify
   every required PR section, verify both exact-head reviews, post role-tagged
-  evidence, land through `ci-hub/landing/land-pr.sh` using the repository's
+  evidence, land through `ci-hub/landing/land-pr.sh` (which re-dereferences the
+  local-or-hosted policy at the final exact head) using the repository's
   current merge mode, record the exact landed SHA, and rebase dependents in
   dependency order. Do not add the label to a routine non-triggering PR.
 

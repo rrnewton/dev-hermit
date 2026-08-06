@@ -25,5 +25,8 @@
 
 skill | main+unprotected | main IS protected since 2026-08-03: two rulesets (history=non_fast_forward+deletion, ZERO bypass; check-gating=admin-bypass). `--admin` bypasses FAILING CHECKS only, never rewinds history. "main unprotected" as a landing rationale is now false. Current truth: memory [[main-forcepush-lockdown-dual-layer]].
 
+skill | hermit landing requires+local receipt | Hermit landing is not local-receipt-only: owner-authorized exact-head counted-local OR versioned-hosted green is sufficient, while any genuine red blocks.
+skill | hermit landing+github results are supplemental | GitHub exact-head results are an interchangeable positive Hermit landing authority, not merely supplemental to local validation.
+
 # The compatibility slug `validate-sh-cannot-be-green-on-devserver` now contains
 # an explicit retraction. Do not denylist a filename as a proxy for its content.
