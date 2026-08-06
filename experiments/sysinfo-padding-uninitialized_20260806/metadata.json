@@ -1,0 +1,59 @@
+{
+  "experiment": "sysinfo-padding-uninitialized",
+  "date": "2026-08-06",
+  "task": "sysinfo_2_writes_uninitialized",
+  "agent": "hermit-det2",
+  "question": "Does detcore's sysinfo(2) handler write uninitialized padding into guest memory, and which sibling handlers share the pattern?",
+  "repos": {
+    "dev-hermit": { "remote": "rrnewton/dev-hermit", "head": "e23c8413f3ce84b4228e30898f094aed53b711bc" },
+    "hermit": {
+      "remote": "rrnewton/hermit",
+      "before_binary": "hermit 0.2.0 (gf89c69766371), clean-tree debug build at hermit main tip f89c69766371806d3c9b2c3003531df2d59d6118",
+      "after_binary": "built in worktrees/det2/hermit at detached f89c69766371 with a LOCAL-ONLY [patch] redirecting the pinned Reverie git source to worktrees/det2/reverie; the patch was reverted after the build and neither hermit file was committed",
+      "code_under_test": [
+        "detcore/src/syscalls/sysinfo.rs:273 handle_sysinfo -> memory.write_value(info_addr, &sys_info.into())",
+        "detcore/src/syscalls/sysinfo.rs:287 collect_sysinfo (builds a struct literal)"
+      ]
+    },
+    "reverie": {
+      "remote": "rrnewton/reverie",
+      "base": "025d37800d347c32711038bd0a3889e8e4774c2b",
+      "branch": "fix/sysinfo-zero-padding-on-conversion",
+      "fix_commit": "23970b972871447059873ff0cc86800f76e5e571",
+      "slot": "worktrees/det2/reverie",
+      "code_changed": ["reverie-syscalls/src/args/sysinfo.rs"]
+    }
+  },
+  "backend": "ptrace",
+  "hermit_flags": "run --strict (virtualize_metadata default on)",
+  "relaxations": "none",
+  "assurance": "L0 for the Reverie change (reverie workspace suite green). The before/after guest measurements are single-run observations under --strict, not an L2 claim.",
+  "host": {
+    "hostname": "devbig014", "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "gcc": "GCC 11.5.0", "glibc": "2.34",
+    "libunwind": "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind (not installed system-wide; PKG_CONFIG_PATH/LD_LIBRARY_PATH required to build and run)"
+  },
+  "seed": "n/a (no randomized input)",
+  "commands": [
+    "gcc -O1 -Wall -Wextra -o fixtures/sysinfo_padding fixtures/sysinfo_padding.c",
+    "gcc -O1 -Wall -Wextra -o fixtures/pad_audit fixtures/pad_audit.c -lrt",
+    "./fixtures/sysinfo_padding --hex --repeat 3",
+    "<hermit> run --strict -- ./fixtures/sysinfo_padding --hex --repeat 3",
+    "./fixtures/pad_audit --trials 12",
+    "<hermit> run --strict -- ./fixtures/pad_audit --trials 12",
+    "<hermit> run --strict --verify -- ./fixtures/sysinfo_padding --repeat 3"
+  ],
+  "outputs": {
+    "results_csv": "results.csv",
+    "native": "results/native.txt",
+    "hermit_pre_fix": "results/hermit.txt",
+    "hermit_post_fix": "results/hermit-fixed.txt"
+  },
+  "limitations": [
+    "The black-box audit covers 23 struct-writing syscalls; absence of a flag is weaker evidence than presence, because a leak is only visible when the residue happens to differ between the paired calls. It is complemented by a source-level classification of all 70 write_value/write_values sites in hermit.",
+    "Four probes (getrusage_self, clock_gettime, gettimeofday, adjtimex) are indeterminate natively as well -- they carry genuinely time-varying fields -- so the discriminator cannot rule on them. waitid is likewise not discriminable: the raw syscall leaves most of siginfo_t untouched on native Linux.",
+    "x86_64 only. The padding windows (82..88, 108..112) are x86_64 layout; aarch64 was not measured.",
+    "The Reverie fix is not pushed and has no PR: egress to github.com returns proxy 403 and the task was scoped local, no egress."
+  ]
+}
