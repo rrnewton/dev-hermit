@@ -1,0 +1,17 @@
+CURRENT STANDING (snapshot 13c791e, 2026-08-05) -- enabled cells only
+backend    enabled  pass  parity=1  stdout-parity%  verify-backed  BITWISE
+dbi             87    86        86     99% (86/87)              8        0
+kvm              7     3         3       75% (3/4)              3        0
+ptrace          79    79        75    100% (75/75)             52        0
+sabre            7     0         0 n/a (0 measured)              0        0
+TOTAL          180   168       164             99%             63        0
+
+buckets present: 8
+  backend-parity              127
+  c-programs                   26
+  system-utils                 10
+  language-runtimes             6
+  determinism-stress            5
+  data-handling                 3
+  applications                  2
+  determinism-stress-c          1
