@@ -1,0 +1,3 @@
+{"steps":[{"group":"probe","job":"cgattrs","desc":"read own step-cgroup attrs",
+ "hint":{"hard_mem_max_bytes":268435456},
+ "cmd":"C=/sys/fs/cgroup$(awk -F: '/^0::/{print $3}' /proc/self/cgroup); { echo \"PATH=$C\"; for f in memory.max memory.swap.max memory.oom.group; do echo \"$f=$(cat $C/$f 2>&1)\"; done; echo \"PARENT_oom_group=$(cat $(dirname $C)/memory.oom.group 2>&1)\"; } > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/probe-cgattrs.txt 2>&1; echo done"}]}

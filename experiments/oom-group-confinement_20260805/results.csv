@@ -1,0 +1,10 @@
+experiment,step,role,ok,oom_kills,peak_bytes,elapsed_s,verdict
+oom-group-confinement,offender.oomer,offender,False,4,268435456,1.074,OOM-killed (expected)
+oom-group-confinement,neighbour.n2,neighbour cgroup,False,0,1056768,1.123,OOM-killed (expected)
+oom-group-confinement,neighbour.n1,neighbour cgroup,False,0,1081344,1.123,OOM-killed (expected)
+oom-group-confinement,neighbour.n3,neighbour cgroup,False,0,150695936,1.123,OOM-killed (expected)
+oom-group-confinement,offender.oomer,offender,False,4,268435456,0.683,OOM-killed (expected)
+oom-group-confinement,neighbour.n1,neighbour cgroup,True,0,1245184,12.036,survived+completed (expected)
+oom-group-confinement,neighbour.n2,neighbour cgroup,True,0,1318912,12.086,survived+completed (expected)
+oom-group-confinement,neighbour.n3,neighbour cgroup,True,0,150429696,12.137,survived+completed (expected)
+oom-group-confinement,groupkill.sibling,same-cgroup sibling,False,6,268435456,1.299,OOM-killed (expected)

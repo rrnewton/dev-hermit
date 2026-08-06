@@ -1,0 +1,23 @@
+{
+  "experiment": "kvm-l3-detlog-stack-real-or-artifact",
+  "date_utc": "2026-08-05",
+  "question": "Is the claimed KVM L3 --detlog-stack variance (3 runs -> 3 distinct hashes) REAL or a measurement artifact?",
+  "hermit_binary": "worktrees/devscope/hermit/target/debug/hermit",
+  "hermit_binary_slot_head": "",
+  "hermit_binary_mtime": "2026-08-05T21:03",
+  "hermit_primary_head_at_analysis": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "reverie_primary_head_at_analysis": "025d37800d347c32711038bd0a3889e8e4774c2b",
+  "guest": "/bin/echo hello",
+  "hermit_flags": "--log=info --log-file=<per-run> run --strict --detlog-stack",
+  "backend_tested": "ptrace",
+  "backend_NOT_tested": "kvm (startup livelock, see README)",
+  "boxing": "scripts/hermit-box-run --cpu-budget 120 --wall 180 (cgroup-v2 scope)",
+  "libunwind": "/tmp/lu/usr/lib64",
+  "host": "devbig014",
+  "kvm_device_present": true,
+  "kvm_livelock_probe": {
+    "command": "hermit --backend kvm run /bin/true",
+    "result": "CPU-TIMEOUT >30s cpu in 31s wall (dCPU/dWall ~1.0, burned core, never completes)",
+    "at_binary_head": "b64d893ae"
+  }
+}

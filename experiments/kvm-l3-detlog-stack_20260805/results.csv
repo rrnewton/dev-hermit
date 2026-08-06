@@ -1,0 +1,6 @@
+run,env_mode,backend,records,stack_record_hash_sha256,exit
+1,unpinned,ptrace,130,7553e9a41d194b6a141e43d8362b816daa9a20e431f20b9c29ec155e57abffef,0
+2,unpinned,ptrace,130,9fe062476fdc715e06715b37b30e1cce61dd6b0ec475f08ddf9f4294d3c8f57a,0
+3,unpinned,ptrace,130,3b4b1f1ca02cbfd0e073b601156631a8089460e59b6a9ad095751690c3f1ecb7,0
+4,pinned,ptrace,56,bdd39ed35218fbb8777a291b406a7dad87342f3857416c930f3251e6f0105dad,0
+5,pinned,ptrace,56,bdd39ed35218fbb8777a291b406a7dad87342f3857416c930f3251e6f0105dad,0
