@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
-from run_registry import update_record
+from run_registry import read_record, update_record
 
 
 TERMINAL_STATES = frozenset(("failed", "inactive"))
@@ -144,7 +144,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     offset = emit_log(args.log, offset)
     finished_at = datetime.now(timezone.utc).isoformat()
     if final is None:
-        state, result, status = "unknown", "unit-disappeared", None
+        try:
+            durable = read_record(args.record)
+        except RuntimeError:
+            durable = {}
+        if durable.get("state") == "refused":
+            state = "refused"
+            result = str(durable.get("result", "launch-refused"))
+            status = durable.get("exit_code")
+        else:
+            state, result, status = "unknown", "unit-disappeared", None
     else:
         state = "completed"
         result = final.get("Result", "unknown")

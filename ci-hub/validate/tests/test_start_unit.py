@@ -27,6 +27,7 @@ class FakeRun:
         self.commands: list[list[str]] = []
         self.dirty = ""
         self.admission_rc = 0
+        self.herdr_status_rc = 0
 
     def __call__(self, command: list[str], **_kwargs: object):
         self.commands.append(command)
@@ -45,7 +46,14 @@ class FakeRun:
         if command[0] == "systemd-run" and "herdr" in command:
             herdr = command[command.index("herdr") :]
             if herdr == ["herdr", "status", "--json"]:
-                return completed(command, stdout=json.dumps({"server": {"running": True}}))
+                return completed(
+                    command,
+                    rc=self.herdr_status_rc,
+                    stdout=json.dumps({"server": {"running": True}}),
+                    stderr="jail denied" if self.herdr_status_rc else "",
+                )
+            if herdr == ["herdr", "server"]:
+                return completed(command, stdout="Running as unit: ci-hub-herdr.service\n")
             if herdr == ["herdr", "workspace", "list"]:
                 return completed(
                     command,
@@ -187,6 +195,52 @@ class StartUnitTest(unittest.TestCase):
         self.assertEqual(2, rc)
         self.assertIn("validation admission refused", error)
         self.assertIn("stale base", error)
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+    def test_visibility_failure_refuses_before_validation_service(self) -> None:
+        self.fake.herdr_status_rc = 1
+
+        rc, _output, error = self.invoke()
+
+        self.assertEqual(2, rc)
+        self.assertIn("Herdr server did not become ready", error)
+        self.assertFalse(
+            any(
+                command[0] == "systemd-run" and "validate-lock" in command
+                for command in self.fake.commands
+            )
+        )
+
+    def test_attach_waits_on_existing_handle_without_relaunching(self) -> None:
+        record = self.root / "ignored/validate/runs/validate-test.json"
+        start_unit.run_registry.write_record(
+            record,
+            {
+                "schema_version": 1,
+                "state": "running",
+                "unit": "validate-test.service",
+                "target": SHA,
+                "checkout": str(self.checkout),
+                "log": str(self.root / "run.log"),
+                "workspace_id": "wV",
+                "tab_id": "wV:t2",
+                "pane_id": "wV:p2",
+            },
+        )
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = start_unit.main(
+                ["--attach", "validate-test"],
+                run=self.fake,
+                environment=self.environment,
+                root=self.root,
+                sleep=lambda _seconds: None,
+            )
+
+        self.assertEqual(0, rc, err.getvalue())
+        self.assertIn("ATTACHED", out.getvalue())
+        self.assertIn("FINISHED", out.getvalue())
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
 
 
