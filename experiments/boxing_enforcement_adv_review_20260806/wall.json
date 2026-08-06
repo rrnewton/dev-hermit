@@ -1,0 +1,3 @@
+{"default_step_timeout":600,"steps":[
+ {"group":"plant","job":"wall_breach","cmd":"sleep 120; echo 'WALL BREACH SURVIVED'","timeout":5,
+  "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":1}}]}
