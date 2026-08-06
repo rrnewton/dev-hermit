@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import pathlib
 import unittest
 from pathlib import Path
 
@@ -242,6 +243,47 @@ class StartUnitTest(unittest.TestCase):
         self.assertIn("ATTACHED", out.getvalue())
         self.assertIn("FINISHED", out.getvalue())
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+
+
+class LibunwindEnvTest(unittest.TestCase):
+    """The unit must carry libunwind's pkg-config path when it exists in-repo.
+
+    Without it `unwind-sys`'s build.rs panics and every workspace-building DAG
+    lane fails with an environment fault that reads exactly like a product red.
+    """
+
+    def _build(self, root):
+        return start_unit.build_systemd_command(
+            root=root,
+            checkout=root,
+            target="0" * 40,
+            agent="a",
+            unit="validate-a",
+            log=pathlib.Path("/tmp/x.log"),
+            pr=None,
+            validate_args=["full"],
+            wait=1,
+            hold=1,
+            child_deadline=1,
+            environment={"HOME": "/h", "PATH": "/usr/bin"},
+        )
+
+    def test_sets_pkg_config_path_when_the_pc_file_is_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            pc = root / "ignored/lu-parity/usr/lib64/pkgconfig"
+            pc.mkdir(parents=True)
+            (pc / "libunwind-ptrace.pc").write_text("")
+            cmd = self._build(root)
+            self.assertIn(f"PKG_CONFIG_PATH={pc}", cmd)
+            self.assertIn(f"LD_LIBRARY_PATH={pc.parent}", cmd)
+
+    def test_absent_pc_file_leaves_the_unit_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd = self._build(pathlib.Path(tmp))
+            self.assertFalse([c for c in cmd if "PKG_CONFIG_PATH=" in c])
+            self.assertFalse([c for c in cmd if "LD_LIBRARY_PATH=" in c])
 
 
 if __name__ == "__main__":

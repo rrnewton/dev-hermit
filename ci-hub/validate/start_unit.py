@@ -107,6 +107,13 @@ def preflight(root: Path, checkout: Path, target: str, *, run: Runner) -> None:
         raise RuntimeError(f"validation admission refused target: {detail}")
 
 
+
+def _prepend_path(existing: str, entry: str) -> str:
+    """Put `entry` first in a colon-separated search path, without duplicating it."""
+    parts = [p for p in existing.split(":") if p and p != entry]
+    return ":".join([entry, *parts])
+
+
 def build_systemd_command(
     *,
     root: Path,
@@ -132,6 +139,42 @@ def build_systemd_command(
         child.append(f"PR_NUMBER={pr}")
     child.extend(["with-proxy", "./validate.sh", *(validate_args or ["full"])])
 
+    # libunwind is not installed system-wide on this host class, so
+    # `unwind-sys`'s build.rs panics on
+    #   pkg-config --libs --cflags libunwind-ptrace
+    # and every DAG lane that builds the workspace fails with an environment
+    # fault that looks exactly like a product red. The .pc and .so live in the
+    # repo; point the unit at them when they are present. Nothing is
+    # substituted or weakened if they are absent -- the unit simply runs as it
+    # did before and the build fails loudly, as it should.
+    # THREE variables are required, and they are not interchangeable -- getting
+    # this wrong yields a DIFFERENT failure at a LATER node, which is why the
+    # first two alone still looked broken:
+    #   PKG_CONFIG_PATH  build time. Without it unwind-sys's build.rs panics on
+    #                    `pkg-config --libs --cflags libunwind-ptrace`.
+    #   LIBRARY_PATH     LINK time. pkg-config emits `-lunwind-ptrace
+    #                    -lunwind-generic -lunwind`, and the linker still has to
+    #                    FIND those .so files. Without it the build gets past
+    #                    build.rs and then dies with
+    #                    `rust-lld: error: unable to find library -lunwind`
+    #                    while linking reverie-liteinst.
+    #   LD_LIBRARY_PATH  RUN time, for the produced binaries. It does NOT help
+    #                    the link -- the loader is not the linker.
+    lu_env: list[str] = []
+    lu_root = root / "ignored/lu-parity/usr/lib64"
+    if (lu_root / "pkgconfig/libunwind-ptrace.pc").exists():
+        pkg_config = _prepend_path(environment.get("PKG_CONFIG_PATH", ""), str(lu_root / "pkgconfig"))
+        library = _prepend_path(environment.get("LIBRARY_PATH", ""), str(lu_root))
+        ld_library = _prepend_path(environment.get("LD_LIBRARY_PATH", ""), str(lu_root))
+        lu_env = [
+            "--setenv",
+            f"PKG_CONFIG_PATH={pkg_config}",
+            "--setenv",
+            f"LIBRARY_PATH={library}",
+            "--setenv",
+            f"LD_LIBRARY_PATH={ld_library}",
+        ]
+
     return [
         "systemd-run",
         "--user",
@@ -148,6 +191,7 @@ def build_systemd_command(
         f"PATH={path}",
         "--setenv",
         "CI_HUB_VALIDATE_PRODUCER=systemd-user-v1",
+        *lu_env,
         "--property",
         f"StandardOutput=append:{log}",
         "--property",
