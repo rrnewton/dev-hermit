@@ -71,6 +71,13 @@ DECLARED_READERS: dict[str, str] = {
     "health/tests/test_pr_status.py": "test fixture",
     "history/tests/test_history.py": "test fixture",
     "validate/tests/test_ledger_reader_allowlist.py": "this lint",
+    "validate/mutation_suite.py": (
+        "POPULATION CONTROL for the guard mutation suite: reads the raw ledger only "
+        "to count how many rows `qualified_rows.is_qualified` still accepts, which is "
+        "the check that the guard is not a kill-everything. It derives no view, does "
+        "no bucketing or timing, and orders nothing -- the raw file is the correct "
+        "input precisely because the control must see rows the accessor REJECTS."
+    ),
     "validate/tests/test_green_class_wiring.py": (
         "population invariant for the green-class wiring: asserts the new clause "
         "in qualified_rows refuses no EXISTING producer (every real row derives "
