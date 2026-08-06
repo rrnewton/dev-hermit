@@ -756,8 +756,8 @@ mod tests {
         CoverageRow {
             planned_test_nodes: planned,
             executed_test_nodes: planned,
-            zero_executed_nodes: vec![],
-            absent_nodes: vec![],
+            zero_executed_nodes: Some(vec![]),
+            absent_nodes: Some(vec![]),
         }
     }
 
@@ -1270,8 +1270,8 @@ mod tests {
         absent.coverage = Some(CoverageRow {
             planned_test_nodes: 13,
             executed_test_nodes: 12,
-            zero_executed_nodes: vec![],
-            absent_nodes: vec!["test.detcore_unit".into()],
+            zero_executed_nodes: Some(vec![]),
+            absent_nodes: Some(vec!["test.detcore_unit".into()]),
         });
         let a = assess(&[absent], PASS_SHA);
         assert_eq!(a.verdict, Verdict::NotValidated);
@@ -1286,8 +1286,8 @@ mod tests {
         inert.coverage = Some(CoverageRow {
             planned_test_nodes: 13,
             executed_test_nodes: 12,
-            zero_executed_nodes: vec!["test.cli".into()],
-            absent_nodes: vec![],
+            zero_executed_nodes: Some(vec!["test.cli".into()]),
+            absent_nodes: Some(vec![]),
         });
         assert_eq!(assess(&[inert], PASS_SHA).verdict, Verdict::NotValidated);
 

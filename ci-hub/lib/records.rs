@@ -215,12 +215,24 @@ pub struct CoverageRow {
     /// NAMES of planned test nodes that RAN and emitted libtest banner(s) whose
     /// passed-sum was 0 — an inert green (every crate filtered-to-empty or
     /// compiled-out). A banner-less node (legit shell/e2e) is NOT listed here.
+    ///
+    /// `None` = THE PRODUCER DID NOT REPORT THIS LIST, which is not the same as
+    /// reporting an empty one. It must never satisfy the obligation: an absent
+    /// list is unknown, and unknown is refused. This was `Vec<String>` with
+    /// `#[serde(default)]`, so a receipt that simply omitted the field
+    /// deserialized to `[]` and read as "no inert nodes" — a pass. Python's
+    /// `cov.get("zero_executed_nodes") == []` is `False` for a missing key and
+    /// therefore already refused it, so the two verifiers disagreed on exactly
+    /// this input, with Rust the permissive one.
     #[serde(default)]
-    pub zero_executed_nodes: Vec<String>,
+    pub zero_executed_nodes: Option<Vec<String>>,
     /// NAMES of planned test nodes that produced NO terminal PASS/FAIL line at all
     /// — never ran / skipped / absent from the run.
+    ///
+    /// `None` = not reported; see [`Self::zero_executed_nodes`]. Refused, never
+    /// treated as "no absent nodes".
     #[serde(default)]
-    pub absent_nodes: Vec<String>,
+    pub absent_nodes: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

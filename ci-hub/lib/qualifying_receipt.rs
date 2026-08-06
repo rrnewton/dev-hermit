@@ -108,8 +108,82 @@ impl QualifyingPredicate {
 /// test-bearing DAG node AND no planned test node was inert or absent. Carrying
 /// the node NAMES in the receipt lets this be re-derived without re-reading a log
 /// (Proxy Binding: the condition travels with the value).
+/// A coverage obligation's outcome, carrying WHY rather than collapsing to a
+/// bool. `Unavailable` is the case this type exists for: a receipt that did not
+/// report enough to decide must be distinguishable from one that reported a
+/// clean result, and must never be counted as the latter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CoverageVerdict {
+    /// Planned > 0 and both failure lists were REPORTED and empty.
+    Satisfied,
+    /// Reported, and something was inert or absent.
+    Unsatisfied,
+    /// Not decidable from this receipt. Refused, never a pass.
+    Unavailable(&'static str),
+}
+
+/// Decide a per-node coverage obligation, fail-closed on anything unreported.
+pub fn coverage_verdict(cov: &CoverageRow) -> CoverageVerdict {
+    // Absence is UNKNOWN, not "none". Checked before the emptiness tests so a
+    // missing list can never be read as a clean one.
+    let (Some(zero), Some(absent)) = (&cov.zero_executed_nodes, &cov.absent_nodes) else {
+        return CoverageVerdict::Unavailable(
+            "coverage omitted zero_executed_nodes and/or absent_nodes; \
+             an unreported list is unknown, not empty",
+        );
+    };
+    if cov.planned_test_nodes == 0 {
+        // The producer could not determine a planned set; never a satisfied
+        // obligation (unchanged, and already fail-closed).
+        return CoverageVerdict::Unavailable("planned_test_nodes == 0: no planned set to cover");
+    }
+    if zero.is_empty() && absent.is_empty() {
+        CoverageVerdict::Satisfied
+    } else {
+        CoverageVerdict::Unsatisfied
+    }
+}
+
+/// Bool view. Only [`CoverageVerdict::Satisfied`] counts; both `Unsatisfied`
+/// and `Unavailable` are refusals.
+///
+/// Retained though the Rust callers now use [`coverage_verdict`] directly: this
+/// is the name the Python verifier documents itself as mirroring
+/// (`ci-hub/qualifying_receipt.py::coverage_satisfied`), so keeping it makes the
+/// cross-language correspondence checkable by name.
+#[allow(dead_code)]
 pub fn coverage_satisfied(cov: &CoverageRow) -> bool {
-    cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
+    coverage_verdict(cov) == CoverageVerdict::Satisfied
+}
+
+/// How a row qualified — or why it did not. `row_qualifies` collapses this to a
+/// bool for existing consumers, but the distinction is the point: a receipt
+/// grandfathered through the count-only fallback carries NO coverage evidence
+/// and is not the same fact as a full green, even though both are "true" today.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Qualification {
+    /// Count-capable receipt whose per-node coverage obligation is satisfied.
+    FullCoverage,
+    /// Pre-coverage-schema receipt carrying counts. Proves nonzero execution and
+    /// NOTHING about per-node completeness. Accepted for backward compatibility;
+    /// a consumer that needs completeness must refuse this variant rather than
+    /// read it as a full green.
+    CountsOnlyGrandfathered { schema: u32 },
+    /// Refused, with the clause that refused it.
+    Refused(&'static str),
+}
+
+impl Qualification {
+    /// Today's boolean acceptance. Deliberately unchanged so this typing is not
+    /// also a silent floor change.
+    pub fn accepted(&self) -> bool {
+        !matches!(self, Qualification::Refused(_))
+    }
+    /// Whether per-node completeness was actually DEMONSTRATED, as opposed to
+    /// merely not contradicted.
+    pub fn coverage_demonstrated(&self) -> bool {
+        matches!(self, Qualification::FullCoverage)
+    }
 }
 
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
@@ -135,6 +209,17 @@ pub fn coverage_satisfied(cov: &CoverageRow) -> bool {
 ///   * a receipt carrying NEITHER count proves nothing and is rejected
 ///     (NotValidated / re-dispatch), never treated as green.
 pub fn row_qualifies(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) -> bool {
+    row_qualification(row, sha, pred).accepted()
+}
+
+/// The typed form of [`row_qualifies`]. Same decisions, but the outcome carries
+/// its condition so a caller can tell a demonstrated full green from one
+/// grandfathered through the count-only fallback with no coverage evidence.
+pub fn row_qualification(
+    row: &HistoryRow,
+    sha: &str,
+    pred: &QualifyingPredicate,
+) -> Qualification {
     let req = &pred.require;
     if !(row.commit.as_deref() == Some(sha)
         && row.commit_anchored == Some(req.commit_anchored)
@@ -143,36 +228,61 @@ pub fn row_qualifies(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) ->
         && row.profile.as_deref() == Some(req.profile.as_str())
         && row.result.as_deref() == Some(req.result.as_str()))
     {
-        return false;
+        return Qualification::Refused("identity/result clause");
     }
     // `pass` with a positive failure count is malformed; an absent count on a
     // pass row is treated as zero (old rows predate the field).
     if row.failures.unwrap_or(0) > req.failures_max {
-        return false;
+        return Qualification::Refused("failures > failures_max");
     }
     // A demonstrated zero-test run is never a full green, at any schema.
     if row.executed_tests == Some(0) {
-        return false;
+        return Qualification::Refused("executed_tests == 0");
     }
     if pred.gate_filtered_tests && row.filtered_tests != Some(0) {
-        return false;
+        return Qualification::Refused("filtered_tests != 0");
     }
     let schema = row.schema_version.unwrap_or(0);
     let count_capable = schema >= pred.counts_schema;
     let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
     let executed_ok = matches!(row.executed_tests, Some(n) if n >= req.executed_tests_min);
     if count_capable {
-        let coverage_ok = !pred.coverage.per_node
-            || schema < pred.coverage.applies_at_schema_min
-            || row.coverage.as_ref().is_some_and(coverage_satisfied);
-        executed_ok && coverage_ok
+        if !executed_ok {
+            return Qualification::Refused("executed_tests below executed_tests_min");
+        }
+        // Coverage is not required when the predicate turns it off or the row
+        // predates it; otherwise it must be present AND satisfied. `None` here
+        // is a writer defect, and is refused rather than skipped.
+        if !pred.coverage.per_node || schema < pred.coverage.applies_at_schema_min {
+            return Qualification::FullCoverage;
+        }
+        match row.coverage.as_ref().map(coverage_verdict) {
+            Some(CoverageVerdict::Satisfied) => Qualification::FullCoverage,
+            Some(CoverageVerdict::Unsatisfied) => {
+                Qualification::Refused("coverage reported inert or absent nodes")
+            }
+            Some(CoverageVerdict::Unavailable(why)) => Qualification::Refused(why),
+            None => Qualification::Refused(
+                "count-capable receipt carries no coverage object; unavailable coverage \
+                 is refused, never accepted",
+            ),
+        }
     } else if counts_present {
         // Old-schema writer that carried counts but predates per-node coverage:
         // hold it to the strongest thing it can prove — nonzero execution.
-        executed_ok
+        //
+        // This is the count-based fallback. It stays accepted so the tightening
+        // is not also a silent floor change, but it is now TYPED: coverage here
+        // is UNAVAILABLE, not clean, and `coverage_demonstrated()` says so. A
+        // consumer that needs completeness must not read this as a full green.
+        if executed_ok {
+            Qualification::CountsOnlyGrandfathered { schema }
+        } else {
+            Qualification::Refused("pre-coverage receipt below executed_tests_min")
+        }
     } else {
         // Neither count present: an uncounted receipt is UNVERIFIED, not green.
-        false
+        Qualification::Refused("no counts: receipt proves nothing")
     }
 }
 
@@ -249,6 +359,112 @@ fn resolve_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a schema-5 full-green row whose `coverage` object is supplied
+    /// verbatim, so a test can OMIT a field rather than set it empty.
+    fn row_with_coverage(sha: &str, coverage: &str) -> HistoryRow {
+        serde_json::from_str(&format!(
+            r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
+                "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
+                "executed_tests":427,"filtered_tests":0,"coverage":{coverage}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// NEGATIVE (mutation): a coverage object that OMITS a failure list must be
+    /// REFUSED. Before this was typed, `#[serde(default)]` turned the missing
+    /// field into `[]` and the row read as fully covered — while the Python
+    /// verifier, whose `cov.get("absent_nodes") == []` is False for a missing
+    /// key, refused the very same input. Rust was the permissive half.
+    #[test]
+    fn coverage_missing_a_failure_list_is_refused_not_defaulted_to_clean() {
+        let sha = "b".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+
+        for (label, coverage) in [
+            ("absent_nodes omitted", r#"{"planned_test_nodes":19,"zero_executed_nodes":[]}"#),
+            ("zero_executed_nodes omitted", r#"{"planned_test_nodes":19,"absent_nodes":[]}"#),
+            ("both omitted", r#"{"planned_test_nodes":19}"#),
+        ] {
+            let row = row_with_coverage(&sha, coverage);
+            let verdict = row_qualification(&row, &sha, &pred);
+            assert!(
+                matches!(verdict, Qualification::Refused(_)),
+                "{label}: unreported coverage must be refused, got {verdict:?}"
+            );
+            assert!(!row_qualifies(&row, &sha, &pred), "{label}: bool view must agree");
+        }
+    }
+
+    /// POSITIVE CONTROL: the same row with both lists REPORTED and empty still
+    /// qualifies, and is typed as demonstrated full coverage. Without this, a
+    /// verifier that refused everything would pass the negative test above.
+    #[test]
+    fn complete_coverage_still_qualifies_as_full() {
+        let sha = "c".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        let row = row_with_coverage(
+            &sha,
+            r#"{"planned_test_nodes":19,"executed_test_nodes":19,
+                "zero_executed_nodes":[],"absent_nodes":[]}"#,
+        );
+        assert_eq!(row_qualification(&row, &sha, &pred), Qualification::FullCoverage);
+        assert!(row_qualifies(&row, &sha, &pred));
+    }
+
+    /// A REPORTED non-empty list is Unsatisfied, distinct from Unavailable —
+    /// the two refusals must not be collapsed, because only one of them is a
+    /// producer defect.
+    #[test]
+    fn reported_inert_nodes_are_unsatisfied_not_unavailable() {
+        let cov: CoverageRow = serde_json::from_str(
+            r#"{"planned_test_nodes":19,"zero_executed_nodes":["test.cli"],"absent_nodes":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(coverage_verdict(&cov), CoverageVerdict::Unsatisfied);
+        let missing: CoverageRow =
+            serde_json::from_str(r#"{"planned_test_nodes":19,"absent_nodes":[]}"#).unwrap();
+        assert!(matches!(coverage_verdict(&missing), CoverageVerdict::Unavailable(_)));
+    }
+
+    /// The count-only fallback stays ACCEPTED (this typing is not a silent floor
+    /// change) but is no longer indistinguishable from a full green: coverage is
+    /// UNAVAILABLE on such a row and `coverage_demonstrated()` says so.
+    /// Measured on the live ledger: 72 of 109 currently-qualifying rows are this
+    /// class, with no coverage object at all.
+    #[test]
+    fn count_only_grandfather_is_accepted_but_typed_as_not_demonstrated() {
+        let sha = "d".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        let row: HistoryRow = serde_json::from_str(&format!(
+            r#"{{"schema_version":3,"profile":"full","selection_mode":"full","commit":"{sha}",
+                "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
+                "executed_tests":427,"filtered_tests":0}}"#
+        ))
+        .unwrap();
+        let verdict = row_qualification(&row, &sha, &pred);
+        assert_eq!(verdict, Qualification::CountsOnlyGrandfathered { schema: 3 });
+        assert!(verdict.accepted(), "behaviour must be unchanged for existing rows");
+        assert!(
+            !verdict.coverage_demonstrated(),
+            "a receipt with no coverage evidence must not read as demonstrated coverage"
+        );
+    }
+
+    /// A count-CAPABLE receipt with no coverage object at all is a writer defect
+    /// and is refused — it must not fall through to the count-only fallback.
+    #[test]
+    fn count_capable_row_without_coverage_is_refused() {
+        let sha = "e".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        let row: HistoryRow = serde_json::from_str(&format!(
+            r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
+                "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
+                "executed_tests":427,"filtered_tests":0}}"#
+        ))
+        .unwrap();
+        assert!(matches!(row_qualification(&row, &sha, &pred), Qualification::Refused(_)));
+    }
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);
