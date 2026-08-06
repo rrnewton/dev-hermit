@@ -1,0 +1,9 @@
+case,expect_flagged,default_mode,unsafe_strip_lines,evidence
+clean-pair,False,tolerated(control),n/a,"rc=0 Done processing logs, no substantive differences found (172 | 172 DETLOG messages com"
+heap-record-hash,True,KILLED,KILLED,rc=1 (DETLOG) Mismatch at log messages 166 (run 1) and 166 (run 2): [1mDiff[0m [31m< le
+stack-record-hash,True,KILLED,KILLED,rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): [1mDiff[0m [31m< left
+drop-one-memory-record,True,KILLED,KILLED,rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): [1mDiff[0m [31m< left
+syscall-numeric-result,True,KILLED,SURVIVED,rc=1 (DETLOG) Mismatch at log messages 13 (run 1) and 13 (run 2): [1mDiff[0m [31m< left
+syscall-hex-argument,True,KILLED,SURVIVED,rc=1 (DETLOG) Mismatch at log messages 15 (run 1) and 15 (run 2): [1mDiff[0m [31m< left
+swap-two-memory-records,True,KILLED,KILLED,rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): [1mDiff[0m [31m< left
+wall-clock-prefix-only,False,tolerated(control),tolerated(control),"rc=0 Done processing logs, no substantive differences found (172 | 172 DETLOG messages com"
