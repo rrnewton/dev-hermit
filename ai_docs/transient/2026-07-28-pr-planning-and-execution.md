@@ -1,5 +1,10 @@
 # PR Planning & Execution — Synthesis
 
+> **SUPERSEDED — DO NOT EXECUTE THIS PROCEDURE.** It contains historical `--admin` and stale-gate
+> instructions that violate current policy. The canonical workspace procedure is
+> [`ai_docs/pr-landing-consolidated-process.md`](../pr-landing-consolidated-process.md); the canonical
+> planner contract is `agent-utils/skills/pr-landing-planner/SKILL.md`.
+
 **Purpose.** One place that captures how PRs move from creation to landed on the
 `rrnewton/hermit` and `rrnewton/reverie` forks, how `ci-hub/bin/pr-status` feeds
 planning, how a multi-agent harness babysits PRs to green, the landing-sprint /

@@ -5,9 +5,10 @@ description: "Compatibility role pointer for the Hermit landing agent. Load when
 
 # Hermit lander
 
-This role has no independent landing protocol.
+This role has no independent landing protocol. The workspace's single end-to-end procedure is
+[`ai_docs/pr-landing-consolidated-process.md`](../../ai_docs/pr-landing-consolidated-process.md).
 
-1. Load [pr-landing-planner](pr-landing-planner.md) and follow its canonical agent-utils skill before
+1. Load [pr-landing-planner](pr-landing-planner/SKILL.md) and follow its canonical agent-utils skill before
    choosing, ordering, or assigning a landing batch.
    Publish each PR-to-agent assignment on the assigned work's TaskGraph task.
    Task notes are durable but pull-based; for a time-sensitive ready-to-land
@@ -18,5 +19,5 @@ This role has no independent landing protocol.
    land lock, exact-head validation predicate, fresh-base handling, merge mode, and ancestry check.
 3. Follow `AGENTS.md` for review, publication, and task-closure policy.
 
-Do not add substantive landing rules here. Update the canonical planner skill or the executable that
-enforces the rule, then keep this file as a thin role pointer.
+Do not add substantive landing rules here. Update the owning authority named by the consolidated
+process, then keep this file as a thin role pointer.

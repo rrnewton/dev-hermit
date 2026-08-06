@@ -8,6 +8,8 @@ description: "Deprecated compatibility alias for historical PR-landing mechanics
 The July 2026 instructions formerly stored here are obsolete. They described a stale-gate refire
 loop and standalone `--admin --squash` escape that conflict with the current landing contract.
 
-Load [pr-landing-planner](pr-landing-planner.md) for planning. For Hermit execution, use
-`ci-hub/landing/land-pr.sh` under `AGENTS.md`. This file remains only so old references resolve to the
-canonical skill instead of silently loading historical rules.
+Use the single
+[`ai_docs/pr-landing-consolidated-process.md`](../../ai_docs/pr-landing-consolidated-process.md)
+procedure. Load [pr-landing-planner](pr-landing-planner/SKILL.md) for the planner contract; for Hermit
+execution, use `ci-hub/landing/land-pr.sh` under `AGENTS.md`. This file remains only so old references
+resolve to current authorities instead of silently loading historical rules.
