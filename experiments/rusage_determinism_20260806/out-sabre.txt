@@ -1,0 +1,7 @@
+rlimit NOFILE soft=1048576 hard=1048576
+rlimit STACK  soft=8388608 hard=-1
+BEFORE rusage utime=0.000000 stime=0.000000 maxrss=38068 minflt=0 majflt=0 nvcsw=0 nivcsw=0
+BEFORE times  ret=12002 utime=0 stime=2
+AFTER  rusage utime=0.000000 stime=0.000000 maxrss=38144 minflt=0 majflt=0 nvcsw=0 nivcsw=0
+AFTER  times  ret=12002 utime=0 stime=2
+sink 224999992500000.000000
