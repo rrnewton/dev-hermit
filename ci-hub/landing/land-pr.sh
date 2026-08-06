@@ -351,6 +351,23 @@ MC=$(with-proxy gh pr view "$PR" -R "$R" --json mergeCommit -q .mergeCommit.oid)
 GITDIR="$ROOT/hermit"; git -C "$GITDIR" cat-file -e "$MC" 2>/dev/null || GITDIR="$WT"
 if git -C "$GITDIR" merge-base --is-ancestor "$MC" origin/main 2>/dev/null; then
   if "$ROOT/ci-hub/remediation/land_and_arm.py" complete --repo "$R" --pr "$PR"; then
+    # Wave-level pile reconciliation. The ancestry-verify above proves THIS PR
+    # landed; it says nothing about the task pile, which is closed on ancestry
+    # only and therefore grows monotonically until something re-checks it. A
+    # one-off check on 2026-08-06 found 163 of 302 already on main.
+    #
+    # Detached and single-flight: a serial wave lands many PRs, and this must
+    # neither delay a land nor spawn one audit per PR. Wrapped so a defect in
+    # the audit can never fail a landing that already succeeded.
+    if [ "${CI_HUB_POST_LAND_AUDIT:-1}" = 1 ]; then
+      (
+        exec 9>"$ROOT/ignored/.ancestry-audit.lock" 2>/dev/null || exit 0
+        flock -n 9 || exit 0   # an audit is already running; it will see this land too
+        setsid "$ROOT/ci-hub/bin/ancestry-audit" --herdr-agent "${AGENT:-hermit-lander}" \
+          --json "$ROOT/ignored/ancestry/post-land-audit.json" \
+          >"$ROOT/ignored/ancestry/post-land-audit.log" 2>&1
+      ) >/dev/null 2>&1 &
+    fi
     say "LANDED:$MC"; exit 0
   fi
   say "POST-LAND ARM PENDING: $MC is landed; durable recovery will retry"
