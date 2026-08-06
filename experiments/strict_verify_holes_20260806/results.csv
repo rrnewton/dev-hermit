@@ -1,0 +1,14 @@
+id,measurement,value,evidence
+T1,enabled+passing cells in scorecard.csv,168,cell_state=enabled AND outcome=pass
+T2,cells that ran test_mode=verify,63 (37.5%),the only mode with a run1-vs-run2 comparison
+T3,cells that never ran verify but claim deterministic=1,105 (62.5%),"strict 102, chaos 1, custom 1, replay 1"
+T4,cells claiming deterministic=1,168 (100% of passing),"collect-envelope.rs:260-265 sets it from `pass` with NO mode check"
+T5,dbi earned,8 of 86 (9.3%),78 unearned -- the largest enabled backend
+T6,ptrace earned,52 of 79 (65.8%),27 unearned
+T7,kvm earned,3 of 3 (100%),the only fully-earned column; also the least-covered backend
+S1,does strict mode run --verify,NO,"collect-envelope.rs:581 builds `hermit run --backend <b> --strict` with no --verify"
+S2,does the module doc name the restriction,YES,"lines 22-25: 'for verify, hermit's internal --strict --verify double-run already proved run1==run2' -- the code does not enforce the 'for verify' condition"
+S3,comparator used by a plain --verify,Stripped (lossy),"run.rs:2783-2787 and :3117-3121; Canonical requires --verify-strict or --verify-verbose, neither of which the collector passes"
+S4,bitwise-verified cells in the envelope,0,no --verify-strict anywhere in this path
+L1,did I re-run any cell,NO,audit of the recorded artifact only
+L2,is any of the 105 shown to be non-deterministic,NO,"the claim is UNEARNED, not shown false; most would likely pass a verify run"
