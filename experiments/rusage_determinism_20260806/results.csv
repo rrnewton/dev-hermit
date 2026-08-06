@@ -1,0 +1,14 @@
+id,field,ptrace,dbi,sabre,verdict
+D1,cross-invocation determinism (whole output),IDENTICAL,IDENTICAL,IDENTICAL,"PASS -- and native VARIES, so it is earned not vacuous"
+R1,rlimit NOFILE,1048576,1048576,1048576,"PASS -- virtualized to a fixed value, consistent across backends, and DIFFERENT from native (524288)"
+R2,rlimit STACK,8388608 / -1,same,same,PASS
+G1,ru_maxrss BEFORE->AFTER,1564 -> 1692,10628 -> 10776,38068 -> 38144,"PASS -- real, EVOLVING and deterministic. This is the pattern the others should follow."
+G2,ru_utime BEFORE->AFTER,0.000000 -> 0.000000,0.000000 -> 0.000000,0.000000 -> 0.000000,"*** #140 FAIL -- ZEROED. Native shows 0.000000 -> 0.122762 for the same 30M-iteration loop. ***"
+G3,ru_stime,0.000000 (both),0.000000 (both),0.000000 (both),#140 FAIL -- zeroed
+G4,ru_minflt,0,0,0,"#140 FAIL -- zeroed (native shows 101 -> 103)"
+G5,ru_majflt / nvcsw / nivcsw,0 / 0 / 0,same,same,"#140 FAIL -- zeroed (native nvcsw=1)"
+T1,times() return value,12045 -> 12045,12030 -> 12030,12002 -> 12002,"FROZEN within a run, and BACKEND-DEPENDENT across them"
+T2,times() tms_utime,0 -> 0,0 -> 0,0 -> 0,zeroed
+T3,times() tms_stime,44 -> 45,29 -> 29,2 -> 2,"INCONSISTENT -- advances by 1 on ptrace only, frozen on dbi and sabre"
+X1,"SAME-RUN cross-check: /proc/uptime vs /proc/self/stat utime","uptime 123.00 -> 130.00 while utime/stime/cutime/cstime stay 0 0 0 0",-,-,"*** TWO VIEWS OF THE SAME VIRTUAL TIMELINE DISAGREE: 7 virtual seconds elapse and the process's own CPU accounting records none of it ***"
+L1,scope,-,-,-,"KVM not tested (livelocks); one guest; N=2 invocations"

@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/robust_list.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/robust_list.c:43:17: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   43 |   long result = syscall(SYS_get_robust_list, 0, &head0, &len0);
+      |                 ^~~~~~~
+cc1: all warnings being treated as errors

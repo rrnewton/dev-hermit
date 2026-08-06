@@ -2152,7 +2152,7 @@ def test_public_lock_cli_authorizes_real_chain_and_refuses_too_deep_chain(
     probe = (
         "import os,pathlib,subprocess,sys\n"
         "hub=sys.argv[1]\n"
-        "if not pathlib.Path(sys.argv[3]+'.domain').is_file(): raise SystemExit(99)\n"
+        "if not pathlib.Path(sys.argv[3]+'.cleanup-required').is_file(): raise SystemExit(99)\n"
         "pid=str(os.getpid())\n"
         "base=[hub,'land-lock','assert-child','--agent','fixture-lander',"
         "'--repo','rrnewton/hermit','--pr','1628','--operation',sys.argv[2],'--child-pid',pid]\n"
@@ -2327,6 +2327,9 @@ def _public_lock_command(
     ]
 
 
+@pytest.mark.skip(
+    reason="retired .domain watchdog model; current CleanupRecord crash windows are bracketed in landing_lock Rust tests"
+)
 def test_supervisor_watchdog_bootstrap_deadline_kills_exact_unarmed_parent_only(
     tmp_path: Path,
 ) -> None:
@@ -2494,6 +2497,9 @@ def test_supervisor_watchdog_bootstrap_deadline_kills_exact_unarmed_parent_only(
                     )
 
 
+@pytest.mark.skip(
+    reason="retired .domain watchdog model; current CleanupRecord residual census is bracketed in landing_lock Rust tests"
+)
 def test_supervisor_sigkill_watchdog_empties_grandchild_and_allows_recovery(
     tmp_path: Path,
 ) -> None:
@@ -2595,6 +2601,9 @@ def test_supervisor_sigkill_watchdog_empties_grandchild_and_allows_recovery(
             os.kill(grandchild_pid, signal.SIGKILL)
 
 
+@pytest.mark.skip(
+    reason="retired hidden watchdog command; typed cleanup signaling is bracketed in landing_lock Rust tests"
+)
 def test_direct_watchdog_without_canonical_domain_cannot_signal_group(
     tmp_path: Path,
 ) -> None:
@@ -2637,6 +2646,9 @@ def test_direct_watchdog_without_canonical_domain_cannot_signal_group(
         target.wait(timeout=10)
 
 
+@pytest.mark.skip(
+    reason="retired .domain watchdog model; current cleanup quarantine/recovery is bracketed in landing_lock Rust tests"
+)
 def test_stopped_live_supervisor_is_fenced_after_persisted_deadline(
     tmp_path: Path,
 ) -> None:
@@ -2773,6 +2785,9 @@ def test_deadline_kills_term_ignoring_grandchild_before_release(
     assert not Path(f"{lock_path}.domain").exists()
 
 
+@pytest.mark.skip(
+    reason="retired .domain watchdog model; heartbeat empty-release and incomplete-census quarantine have Rust brackets"
+)
 def test_missing_holder_blocks_until_heartbeat_empties_domain(
     tmp_path: Path,
 ) -> None:
@@ -2916,7 +2931,8 @@ def test_pending_mutation_requires_exact_operation_recovery(
         timeout=30,
         check=False,
     )
-    assert wrong.returncode == 1
+    assert wrong.returncode == 3
+    assert "external mutation remains pending" in wrong.stderr
 
     wrong_attempt = subprocess.run(
         _public_lock_command(

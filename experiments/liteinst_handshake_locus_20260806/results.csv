@@ -1,0 +1,9 @@
+id,question,evidence,result
+H1,"does hermit chroot the guest on a plain `run --backend liteinst`?","every chroot site in hermit-cli/src/bin/hermit/run.rs is --image-gated: L232 'Incompatible with --image, which chroots the guest into a materialized...', L279, L1947 '--image chroots the guest into a materialized OCI rootfs', L2882 'with a chroot into the pinned image root'",NO -- chroot is --image only
+H2,"what does the ordinary run path remap?","run.rs mounts(): only /tmp is replaced by a tmpfs; its own comment says 'files outside /tmp are already visible unless another mount hides them'",ONLY /tmp
+H3,"where is the liteinst DSO staged?","scripts/stage-liteinst-runtime.sh: liteinst_target_dir=$(realpath -m -- \"$3-${reverie_pin:0:8}\"), i.e. under target/, not /tmp",UNDER target/
+H4,"so does the guest see the DSO at the host-canonicalized path?","H1+H2+H3: no chroot, /tmp not involved, path outside the only overmount",YES -- path is NOT remapped
+V1,"LEADING HYPOTHESIS of the prior note: container filesystem view makes guest maps path != config.preload, so preload_code() is false","refuted by H1-H4 for the default (non---image) path",*** REFUTED ***
+V2,"the validator's path check","reverie/reverie-ptrace/src/task.rs:2131-2137: mapping.executable && mapping.path.as_ref() == Some(&config.preload) && mapping.contains(address)","exact equality confirmed as described, but its input is not remapped"
+L1,"remaining rejection conditions in validate_liteinst_handshake (task.rs:2106-2160)","frame.version != 4 | frame.helper_stack_top < 8 | helper_stack_top & 0xf != 0 | trap_rip != frame.begin_rip (or ready_rip) | frame_readable | helper_stack_map | install_result_writable",THE LOCUS MOVES HERE
+S1,cells closed by this work,none,0

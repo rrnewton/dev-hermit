@@ -21,11 +21,16 @@
 //!
 //! ```cargo
 //! [dependencies]
+//! fs2 = "0.4"
 //! serde_json = "1"
 //! ```
+use fs2::FileExt;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::io::{self, ErrorKind, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Workspace homeostasis caps. Disk is the primary advisory (expressed in GB);
 /// the slot count is a secondary advisory against the active-worktree policy
@@ -79,6 +84,18 @@ Options:
   --i-promise-this-agent-is-read-mostly
                       Join an already-owned slot as an ADDITIONAL read-only
                       agent instead of failing the collision check.
+  --codex-systemd-sentinel
+                      Create or verify the coordinator-held per-slot Codex
+                      sentinel lease. This is slot coordination authority, not
+                      evidence that a Codex thread is live.
+  --recover-legacy-unbound-owner
+                      With --codex-systemd-sentinel, preserve an existing
+                      lease-less slot's historical owner evidence and bind a
+                      new coordinator recovery generation. Never rebinds the
+                      current thread as the historical owner.
+  --recovery-note TEXT
+                      Required with --recover-legacy-unbound-owner; durable
+                      coordinator reason for the binding-only migration.
   --check-only        Run registry branch/content consistency plus workspace
                       homeostasis, then exit WITHOUT allocating anything.
   -h, --help          Show this help.
@@ -95,6 +112,11 @@ Policy:
   * One mutating owner per slot; a second mutating agent is refused.
   * One slot per agent; if the agent already owns a different slot, refused.
   * Read-mostly agents may share and are recorded as such.
+  * After an owner starts or is replaced, re-run the same allocation to adopt
+    its exact pane/cgroup lease; release refuses legacy or unbound ownership.
+  * Codex coordination uses an explicit per-slot systemd sentinel instead of
+    shared thread/pane identity. Re-adoption verifies the same generation and
+    never silently replaces it.
 
 Examples:
   ./scripts/allocate-worktree.rs --agent hermit-kvm --task impl-kvm-ratchet
@@ -125,6 +147,21 @@ fn find_root() -> PathBuf {
             die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/ + liteinst2/)");
         }
     }
+}
+
+/// Hold the single registry-writer authority across physical worktree and
+/// state/ACTIVE mutations. The releaser takes this same lock.
+fn lock_registry(root: &Path) -> fs::File {
+    let path = root.join("worktree-state.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|error| die(&format!("open registry lock {}: {error}", path.display())));
+    FileExt::lock_exclusive(&file)
+        .unwrap_or_else(|error| die(&format!("lock registry {}: {error}", path.display())));
+    file
 }
 
 fn now_iso() -> String {
@@ -391,13 +428,45 @@ fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
     state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
-    std::fs::write(state_path(root), txt + "\n")
+    durable_replace(&state_path(root), (txt + "\n").as_bytes())
         .unwrap_or_else(|e| die(&format!("write state: {e}")));
+}
+
+fn durable_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "path has no parent"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "path has no UTF-8 name"))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".{name}.allocate-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 /// Rewrite the managed table block inside worktrees/ACTIVE.md from state.
 /// Human-authored content outside the markers is preserved verbatim.
-fn regen_active_md(root: &Path, state: &Value) {
+fn regen_active_md(root: &Path, state: &Value) -> bool {
     const BEGIN: &str = "<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->";
     const END: &str = "<!-- END worktree-state -->";
 
@@ -462,18 +531,48 @@ fn regen_active_md(root: &Path, state: &Value) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+    let changed = new_content != existing;
+    if changed {
+        durable_replace(&path, new_content.as_bytes())
+            .unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+    }
+    changed
 }
 
 /// Physical checkout of a product worktree, read from git porcelain. Mirrors the
 /// canonical verifier scripts/check-worktree-registry.rs::actual_checkout so the
 /// repair mode and the verifier agree on what "the actual branch" means.
+fn exact_checkout_root(path: &Path) -> Result<PathBuf, String> {
+    let requested = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize requested checkout: {error}"))?;
+    let (ok, top, error) = git(
+        path,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+    );
+    if !ok || top.is_empty() {
+        return Err(if error.is_empty() {
+            "not a git worktree".to_string()
+        } else {
+            error
+        });
+    }
+    let observed =
+        fs::canonicalize(&top).map_err(|error| format!("canonicalize git top-level: {error}"))?;
+    if observed != requested {
+        return Err(format!(
+            "git top-level {} does not equal requested checkout {}",
+            observed.display(),
+            requested.display()
+        ));
+    }
+    Ok(requested)
+}
+
 fn actual_checkout(path: &Path) -> Option<String> {
     if !path.exists() {
         return Some("-".to_string()); // Absent -> recorded as "-"
     }
-    let (inside, _, _) = git(path, &["rev-parse", "--is-inside-work-tree"]);
-    if !inside {
+    if exact_checkout_root(path).is_err() {
         return None; // Unreadable: do NOT rewrite the recorded value; skip + warn.
     }
     let (on_branch, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
@@ -487,6 +586,19 @@ fn actual_checkout(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+fn validate_canonical_slot_paths(slot: &str, record: &Value) -> Result<(), String> {
+    for product in ["hermit", "reverie", "liteinst2"] {
+        let key = format!("{product}_path");
+        let expected = format!("worktrees/{slot}/{product}");
+        if record[key.as_str()].as_str() != Some(expected.as_str()) {
+            return Err(format!(
+                "slot {slot} records noncanonical {key}; expected exact path '{expected}'"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// SINGLE-WRITER REPAIR/SYNC: reconcile the recorded {product}_branch cells in
@@ -517,23 +629,52 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
     run_checker("BEFORE");
 
     let mut state = load_state(root);
+    let active_reconciled = !dry_run && regen_active_md(root, &state);
+    if active_reconciled {
+        println!("repair: regenerated the managed ACTIVE.md block from authoritative JSON state.");
+    }
     let slot_names: Vec<String> = state["slots"]
         .as_object()
         .map(|s| s.keys().cloned().collect())
         .unwrap_or_default();
 
+    let releasing: Vec<&String> = slot_names
+        .iter()
+        .filter(|slot| {
+            let record = &state["slots"][*slot];
+            record["status"].as_str() == Some("releasing")
+                || record.get("release_journal").is_some()
+                || record.get("orphan_residue_journal").is_some()
+                || record.get("coordinator_lease_intent").is_some()
+                || record.get("coordinator_lease_revocation").is_some()
+        })
+        .collect();
+    if !releasing.is_empty() {
+        eprintln!(
+            "REFUSING repair while slot release transaction(s) require guarded recovery: {}",
+            releasing
+                .iter()
+                .map(|slot| slot.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        exit(1);
+    }
+
     let mut changed = 0usize;
     let mut skipped = 0usize;
     for slot in &slot_names {
+        if let Err(error) = validate_canonical_slot_paths(slot, &state["slots"][slot]) {
+            skipped += 3;
+            eprintln!("  skip {slot}: {error}; all branch cells left as-is");
+            continue;
+        }
         for product in ["hermit", "reverie", "liteinst2"] {
             let recorded = state["slots"][slot][format!("{product}_branch")]
                 .as_str()
                 .unwrap_or("-")
                 .to_string();
-            let rel = state["slots"][slot][format!("{product}_path")]
-                .as_str()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("worktrees/{slot}/{product}")));
+            let rel = PathBuf::from(format!("worktrees/{slot}/{product}"));
             match actual_checkout(&root.join(&rel)) {
                 None => {
                     skipped += 1;
@@ -571,6 +712,9 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
         println!("  state:  {}", state_path(root).display());
         println!("  active: {}", root.join("worktrees/ACTIVE.md").display());
     } else {
+        // ACTIVE is derived independently from branch-cell drift. The
+        // preflight regeneration above must still run when changed == 0 so a
+        // crash between the two durable files cannot remain self-deadlocking.
         println!("repair: 0 branch cells needed reconciliation ({skipped} skipped unreadable).");
     }
 
@@ -591,6 +735,355 @@ fn valid_slot(name: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// Capture the exact live pane and unified cgroup that own an agent name.  A
+/// newly provisioned slot may precede agent startup; in that case allocation
+/// succeeds but release remains fail-closed until the coordinator re-runs this
+/// allocator adoption after the owner is live.
+fn observe_owner_lease(root: &Path, agent: &str) -> Result<(String, String), String> {
+    let snapshot_path = root.join("ignored/ci-hub/agent-snapshot.json");
+    let raw = fs::read_to_string(&snapshot_path)
+        .map_err(|error| format!("read {}: {error}", snapshot_path.display()))?;
+    let snapshot: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("parse {}: {error}", snapshot_path.display()))?;
+    if snapshot["schema_version"].as_u64() != Some(1) {
+        return Err("owner snapshot has unsupported schema".to_string());
+    }
+    let captured = snapshot["captured_at"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| "owner snapshot has invalid captured_at".to_string())?;
+    let age = epoch_now() as f64 - captured;
+    if !(0.0..=600.0).contains(&age) {
+        return Err(format!(
+            "owner snapshot is not fresh (age={}s)",
+            age.max(0.0) as i64
+        ));
+    }
+    let agents = snapshot["agents"]
+        .as_array()
+        .ok_or_else(|| "owner snapshot agents is not an array".to_string())?;
+    let matches: Vec<&Value> = agents
+        .iter()
+        .filter(|entry| entry["name"].as_str() == Some(agent))
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "owner snapshot resolves agent '{agent}' {} times",
+            matches.len()
+        ));
+    }
+    let entry = matches[0];
+    let status = entry["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "closed"
+            | "crashed"
+            | "dead"
+            | "disconnected"
+            | "error"
+            | "exited"
+            | "failed"
+            | "retired"
+            | "terminated"
+            | "unreachable"
+            | "unresponsive"
+    ) {
+        return Err(format!("owner '{agent}' is terminal in the fresh snapshot"));
+    }
+    let pane = entry["tmux_pane_id"]
+        .as_str()
+        .filter(|pane| pane.starts_with('%') && !pane.chars().any(char::is_whitespace))
+        .ok_or_else(|| format!("owner '{agent}' has no valid tmux pane identity"))?;
+    let output = Command::new("tmux")
+        .args(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}"])
+        .output()
+        .map_err(|error| format!("tmux pane query unavailable: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tmux pane query failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(candidate, _)| *candidate == pane)
+        .map(|(_, pid)| {
+            pid.parse::<u32>()
+                .map_err(|_| format!("tmux pane {pane} has invalid pid '{pid}'"))
+        })
+        .collect::<Result<_, _>>()?;
+    if pids.len() != 1 {
+        return Err(format!("tmux pane {pane} resolves {} times", pids.len()));
+    }
+    let cgroup_text = fs::read_to_string(format!("/proc/{}/cgroup", pids[0]))
+        .map_err(|error| format!("read pane {pane} cgroup: {error}"))?;
+    let groups: Vec<&str> = cgroup_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("0::"))
+        .collect();
+    if groups.len() != 1 || groups[0] == "/" || !groups[0].starts_with('/') {
+        return Err(format!("pane {pane} has no non-root unified cgroup"));
+    }
+    let relative = Path::new(groups[0].trim_start_matches('/'));
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("pane {pane} cgroup is not normalized"));
+    }
+    Ok((pane.to_string(), groups[0].to_string()))
+}
+
+fn apply_observed_owner_lease(owner: &mut Value, observed: &Result<(String, String), String>) {
+    match observed {
+        Ok((pane, cgroup)) => {
+            owner["tmux_pane_id"] = json!(pane);
+            owner["cgroup_path"] = json!(cgroup);
+        }
+        Err(_) => {
+            // An adoption attempt that cannot bind the current exact owner
+            // invalidates any prior incarnation's lease.
+            if let Some(owner) = owner.as_object_mut() {
+                owner.remove("tmux_pane_id");
+                owner.remove("cgroup_path");
+            }
+        }
+    }
+}
+
+fn sentinel_tool(root: &Path) -> Result<PathBuf, String> {
+    let tool = root.join("scripts/codex-slot-sentinel.rs");
+    if !tool.is_file() {
+        return Err(format!(
+            "canonical Codex slot sentinel authority is missing: {}",
+            tool.display()
+        ));
+    }
+    Ok(tool)
+}
+
+fn sentinel_result(output: std::process::Output, expected_state: &str) -> Result<Value, String> {
+    if !output.status.success() {
+        return Err(format!(
+            "Codex slot sentinel refused: {}{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Codex slot sentinel result: {error}"))?;
+    if value["state"].as_str() != Some(expected_state)
+        || value["lease"]["schema_version"].as_u64() != Some(1)
+        || value["lease"]["source"].as_str() != Some("codex-systemd-sentinel-v1")
+    {
+        return Err("Codex slot sentinel returned an unbound result".to_string());
+    }
+    Ok(value["lease"].clone())
+}
+
+fn plan_codex_sentinel(root: &Path, slot: &str, slot_dir: &Path) -> Result<Value, String> {
+    let output = Command::new(sentinel_tool(root)?)
+        .args(["plan", "--slot", slot, "--working-directory"])
+        .arg(slot_dir)
+        .output()
+        .map_err(|error| format!("plan Codex slot sentinel: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex slot sentinel planning refused: {}{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Codex sentinel plan: {error}"))?;
+    let plan = value["plan"].clone();
+    if value["state"].as_str() != Some("planned")
+        || plan["schema_version"].as_u64() != Some(1)
+        || plan["source"].as_str() != Some("codex-systemd-sentinel-v1")
+        || plan["slot"].as_str() != Some(slot)
+        || plan["working_directory"].as_str() != slot_dir.to_str()
+    {
+        return Err("planned Codex sentinel does not bind the exact slot".to_string());
+    }
+    Ok(plan)
+}
+
+fn launch_codex_sentinel(root: &Path, plan: &Value) -> Result<Value, String> {
+    let plan_json = serde_json::to_string(plan)
+        .map_err(|error| format!("serialize Codex sentinel plan: {error}"))?;
+    let output = Command::new(sentinel_tool(root)?)
+        .args(["launch", "--plan-json", &plan_json])
+        .output()
+        .map_err(|error| format!("launch Codex slot sentinel: {error}"))?;
+    let lease = sentinel_result(output, "live")?;
+    for field in [
+        "schema_version",
+        "source",
+        "slot",
+        "generation",
+        "nonce",
+        "unit",
+        "working_directory",
+    ] {
+        if lease.get(field) != plan.get(field) {
+            return Err(format!(
+                "launched Codex sentinel changed planned field {field}"
+            ));
+        }
+    }
+    Ok(lease)
+}
+
+fn verify_codex_sentinel(root: &Path, lease: &Value) -> Result<Value, String> {
+    let lease_json = serde_json::to_string(lease)
+        .map_err(|error| format!("serialize Codex sentinel lease: {error}"))?;
+    let output = Command::new(sentinel_tool(root)?)
+        .args(["verify", "--lease-json", &lease_json])
+        .output()
+        .map_err(|error| format!("verify Codex slot sentinel: {error}"))?;
+    let verified = sentinel_result(output, "live")?;
+    if &verified != lease {
+        return Err("Codex sentinel verification changed the exact recorded lease".to_string());
+    }
+    Ok(verified)
+}
+
+fn validate_codex_slot_binding(
+    slot: &str,
+    canonical_slot: &Path,
+    value: &Value,
+) -> Result<(), String> {
+    if value["schema_version"].as_u64() != Some(1)
+        || value["source"].as_str() != Some("codex-systemd-sentinel-v1")
+        || value["slot"].as_str() != Some(slot)
+        || value["working_directory"].as_str() != canonical_slot.to_str()
+    {
+        return Err(format!(
+            "Codex sentinel identity does not bind exact canonical slot {}",
+            canonical_slot.display()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_codex_intent_replay(slot_record: &Value, intent: &Value) -> Result<(), String> {
+    let object = intent
+        .as_object()
+        .ok_or_else(|| "Codex sentinel launch intent is not an object".to_string())?;
+    let expected_fields: std::collections::BTreeSet<&str> = [
+        "schema_version",
+        "source",
+        "phase",
+        "plan",
+        "legacy_recovery",
+        "recovery_note",
+        "requested_agent",
+        "recorded_at",
+        "historical_slot",
+        "slot_snapshot",
+    ]
+    .into_iter()
+    .collect();
+    if object
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>()
+        != expected_fields
+    {
+        return Err("Codex sentinel launch intent has an inexact field set".to_string());
+    }
+    let legacy = intent["legacy_recovery"]
+        .as_bool()
+        .ok_or_else(|| "Codex sentinel launch intent has no legacy mode".to_string())?;
+    let snapshot = intent["slot_snapshot"]
+        .as_object()
+        .map(|_| intent["slot_snapshot"].clone())
+        .ok_or_else(|| "Codex sentinel launch intent has no exact slot snapshot".to_string())?;
+    if snapshot.get("coordinator_lease").is_some()
+        || snapshot.get("coordinator_lease_intent").is_some()
+        || snapshot.get("coordinator_lease_revocation").is_some()
+        || snapshot.get("release_journal").is_some()
+        || snapshot.get("orphan_residue_journal").is_some()
+    {
+        return Err(
+            "Codex sentinel slot snapshot already contains transaction authority".to_string(),
+        );
+    }
+    if legacy && intent.get("historical_slot") != Some(&snapshot) {
+        return Err(
+            "legacy Codex sentinel intent does not preserve the exact historical slot".to_string(),
+        );
+    }
+    if intent["recorded_at"]
+        .as_str()
+        .is_none_or(|recorded| recorded.is_empty())
+    {
+        return Err("Codex sentinel launch intent has no transaction timestamp".to_string());
+    }
+    let mut expected_inflight = snapshot;
+    expected_inflight["status"] = json!("binding-coordinator-lease");
+    expected_inflight["updated"] = intent["recorded_at"].clone();
+    expected_inflight["coordinator_lease_intent"] = intent.clone();
+    if &expected_inflight != slot_record {
+        return Err(
+            "current slot record drifted from the durable Codex launch snapshot".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn assert_unique_sentinel_identity(
+    state: &Value,
+    candidate_slot: &str,
+    candidate: &Value,
+) -> Result<(), String> {
+    let candidate_object = candidate
+        .as_object()
+        .ok_or_else(|| "Codex sentinel identity is not an object".to_string())?;
+    let identity_fields = [
+        "generation",
+        "nonce",
+        "unit",
+        "invocation_id",
+        "main_pid",
+        "cgroup_path",
+        "working_directory",
+    ];
+    for (other_slot, record) in state["slots"].as_object().into_iter().flatten() {
+        if other_slot == candidate_slot {
+            continue;
+        }
+        let mut identities = Vec::new();
+        if let Some(lease) = record.get("coordinator_lease") {
+            identities.push(("lease", lease));
+        }
+        if let Some(plan) = record
+            .get("coordinator_lease_intent")
+            .and_then(|intent| intent.get("plan"))
+        {
+            identities.push(("launch intent", plan));
+        }
+        for (kind, other) in identities {
+            for field in identity_fields {
+                let Some(value) = candidate_object.get(field) else {
+                    continue;
+                };
+                if !value.is_null() && other.get(field) == Some(value) {
+                    return Err(format!(
+                        "Codex sentinel {field} collides with {kind} for slot {other_slot}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn next_free_slot(root: &Path, state: &Value) -> String {
     let slots = state["slots"].as_object();
     for n in 1..=999 {
@@ -605,13 +1098,31 @@ fn next_free_slot(root: &Path, state: &Value) -> String {
 
 fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
     if dst.exists() {
-        let (ok, _, _) = git(dst, &["rev-parse", "--is-inside-work-tree"]);
-        if ok {
+        let canonical = exact_checkout_root(dst).unwrap_or_else(|error| {
+            die(&format!(
+                "path exists but is not the exact requested git worktree {}: {error}",
+                dst.display()
+            ))
+        });
+        let (listed, porcelain, error) = git(primary, &["worktree", "list", "--porcelain"]);
+        if !listed {
+            die(&format!(
+                "could not inspect physical worktree registry for {}: {error}",
+                primary.display()
+            ));
+        }
+        let registrations = porcelain
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter(|candidate| Path::new(candidate) == canonical)
+            .count();
+        if registrations == 1 {
             println!("  adopt existing worktree {}", dst.display());
             return;
         }
         die(&format!(
-            "path exists but is not a git worktree: {}",
+            "path exists but has {registrations} matching registrations in {}: {}",
+            primary.display(),
             dst.display()
         ));
     }
@@ -626,6 +1137,31 @@ fn add_worktree(primary: &Path, dst: &Path, branch: Option<&str>, start: &str) {
     if !ok {
         die(&format!(
             "git worktree add failed for {}: {err}",
+            dst.display()
+        ));
+    }
+    let canonical = exact_checkout_root(dst).unwrap_or_else(|error| {
+        die(&format!(
+            "new worktree {} failed exact-root verification: {error}",
+            dst.display()
+        ))
+    });
+    let (listed, porcelain, error) = git(primary, &["worktree", "list", "--porcelain"]);
+    let registrations = if listed {
+        porcelain
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter(|candidate| Path::new(candidate) == canonical)
+            .count()
+    } else {
+        die(&format!(
+            "could not verify physical worktree registry for {}: {error}",
+            primary.display()
+        ));
+    };
+    if registrations != 1 {
+        die(&format!(
+            "new worktree {} has {registrations} matching physical registrations",
             dst.display()
         ));
     }
@@ -665,6 +1201,9 @@ fn main() {
     let mut check_only = false;
     let mut repair = false;
     let mut dry_run = false;
+    let mut codex_systemd_sentinel = false;
+    let mut recover_legacy_unbound_owner = false;
+    let mut recovery_note = String::new();
 
     let mut i = 0;
     let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
@@ -688,6 +1227,9 @@ fn main() {
             "--start-point" => start_point = Some(take(&mut i, &argv, "--start-point")),
             "--purpose" => purpose = take(&mut i, &argv, "--purpose"),
             "--i-promise-this-agent-is-read-mostly" => read_mostly = true,
+            "--codex-systemd-sentinel" => codex_systemd_sentinel = true,
+            "--recover-legacy-unbound-owner" => recover_legacy_unbound_owner = true,
+            "--recovery-note" => recovery_note = take(&mut i, &argv, "--recovery-note"),
             "--check-only" => check_only = true,
             "--repair" | "--sync" => repair = true,
             "--dry-run" => dry_run = true,
@@ -705,12 +1247,14 @@ fn main() {
     // allocation path so it cannot be confused with a slot request.
     if repair {
         let root = find_root();
+        let _registry_lock = lock_registry(&root);
         repair_registry(&root, dry_run);
     }
 
     // Health check only: report homeostasis and exit without allocating.
     if check_only {
         let root = find_root();
+        let _registry_lock = lock_registry(&root);
         homeostasis_check(&root);
         let checker = root.join("scripts/check-worktree-registry.rs");
         let root_arg = root.to_string_lossy().into_owned();
@@ -726,6 +1270,15 @@ fn main() {
 
     if agent.is_empty() {
         die(&format!("--agent is required\n\n{USAGE}"));
+    }
+    if recover_legacy_unbound_owner && !codex_systemd_sentinel {
+        die("--recover-legacy-unbound-owner requires --codex-systemd-sentinel");
+    }
+    if recover_legacy_unbound_owner && recovery_note.trim().is_empty() {
+        die("--recover-legacy-unbound-owner requires a non-empty --recovery-note");
+    }
+    if !recover_legacy_unbound_owner && !recovery_note.is_empty() {
+        die("--recovery-note is valid only with --recover-legacy-unbound-owner");
     }
     if !matches!(
         product.as_str(),
@@ -748,6 +1301,7 @@ fn main() {
     }
 
     let root = find_root();
+    let _registry_lock = lock_registry(&root);
     let mut state = load_state(&root);
 
     // Default slot name: agent name with a leading 'hermit-' stripped.
@@ -764,6 +1318,104 @@ fn main() {
         die(&format!(
             "invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"
         ));
+    }
+    if let Some(existing) = state["slots"].get(&slot) {
+        validate_canonical_slot_paths(&slot, existing).unwrap_or_else(|error| die(&error));
+        if existing["status"].as_str() == Some("releasing")
+            || existing.get("release_journal").is_some()
+            || existing.get("orphan_residue_journal").is_some()
+            || existing.get("coordinator_lease_revocation").is_some()
+        {
+            die(&format!(
+                "slot {slot} has an unfinished release transaction; run release-worktree.rs --clean --recover-submodule-cleanup before allocation or re-adoption"
+            ));
+        }
+    }
+
+    let existing_slot = state["slots"].get(&slot).cloned();
+    let existing_sentinel = existing_slot
+        .as_ref()
+        .and_then(|record| record.get("coordinator_lease"))
+        .cloned();
+    let existing_sentinel_intent = existing_slot
+        .as_ref()
+        .and_then(|record| record.get("coordinator_lease_intent"))
+        .cloned();
+    let existing_agents = existing_slot
+        .as_ref()
+        .and_then(|record| record["agents"].as_array());
+    let existing_has_orc_lease = existing_agents.is_some_and(|agents| {
+        agents
+            .iter()
+            .any(|owner| owner.get("tmux_pane_id").is_some() || owner.get("cgroup_path").is_some())
+    });
+    let existing_needs_binding = existing_slot.is_some() && existing_sentinel.is_none();
+    if codex_systemd_sentinel {
+        if existing_sentinel.is_some() && existing_sentinel_intent.is_some() {
+            die("slot mixes a finalized Codex coordinator lease with an unfinished launch intent");
+        }
+        if existing_sentinel.is_some() && existing_has_orc_lease {
+            die("slot mixes a finalized Codex coordinator lease with ORC pane/cgroup authority");
+        }
+        if recover_legacy_unbound_owner && !existing_needs_binding {
+            die("legacy-unbound recovery requires an existing slot with no coordinator lease");
+        }
+        if existing_needs_binding
+            && existing_sentinel_intent.is_none()
+            && !recover_legacy_unbound_owner
+        {
+            die("existing slot without a coordinator lease requires explicit --recover-legacy-unbound-owner; refusing to imply that the current Codex thread is its historical owner");
+        }
+        if recover_legacy_unbound_owner {
+            if read_mostly
+                || !task.is_empty()
+                || !purpose.is_empty()
+                || hermit_branch.is_some()
+                || reverie_branch.is_some()
+                || liteinst2_branch.is_some()
+                || start_point.is_some()
+            {
+                die("legacy coordinator binding is identity-only; do not combine it with task/purpose/branch/start/read-mostly changes");
+            }
+            let recorded = existing_agents
+                .into_iter()
+                .flatten()
+                .filter(|owner| owner["name"].as_str() == Some(&agent))
+                .count();
+            if recorded != 1 {
+                die("legacy coordinator binding requires --agent to name exactly one recorded historical owner");
+            }
+        }
+        if let Some(intent) = &existing_sentinel_intent {
+            let intent_recovery = intent["legacy_recovery"].as_bool();
+            if intent["schema_version"].as_u64() != Some(1)
+                || intent["source"].as_str() != Some("codex-systemd-sentinel-v1")
+                || intent["phase"].as_str() != Some("launch-planned")
+                || existing_slot
+                    .as_ref()
+                    .and_then(|slot| slot["status"].as_str())
+                    != Some("binding-coordinator-lease")
+                || intent["requested_agent"].as_str() != Some(&agent)
+                || intent_recovery.is_none()
+                || intent_recovery != Some(recover_legacy_unbound_owner)
+                || (recover_legacy_unbound_owner
+                    && intent["recovery_note"].as_str() != Some(recovery_note.as_str()))
+                || (recover_legacy_unbound_owner && !intent["historical_slot"].is_object())
+                || (!recover_legacy_unbound_owner
+                    && (!intent["recovery_note"].is_null() || !intent["historical_slot"].is_null()))
+            {
+                die("existing Codex sentinel launch intent does not match this exact binding request");
+            }
+            validate_codex_intent_replay(
+                existing_slot
+                    .as_ref()
+                    .expect("a launch intent has an existing slot"),
+                intent,
+            )
+            .unwrap_or_else(|error| die(&error));
+        }
+    } else if existing_sentinel.is_some() || existing_sentinel_intent.is_some() {
+        die("slot has a coordinator-held Codex sentinel; re-run with --codex-systemd-sentinel to verify the same generation");
     }
 
     // 1-1 mapping: refuse if this mutating agent already owns a different slot.
@@ -814,13 +1466,37 @@ fn main() {
         }
     }
 
+    let slot_dir = root.join("worktrees").join(&slot);
+
+    // An existing finalized sentinel is the authority for every later
+    // allocation mutation. Verify its exact live identity and cross-slot
+    // uniqueness before creating or adopting even one product worktree, so a
+    // dead/restarted/colliding lease cannot leave physical registry drift.
+    let verified_codex_lease = if codex_systemd_sentinel {
+        existing_sentinel.as_ref().map(|lease| {
+            let canonical_slot = fs::canonicalize(&slot_dir).unwrap_or_else(|error| {
+                die(&format!(
+                    "canonicalize existing Codex sentinel slot before allocation: {error}"
+                ))
+            });
+            validate_codex_slot_binding(&slot, &canonical_slot, lease)
+                .unwrap_or_else(|error| die(&error));
+            verify_codex_sentinel(&root, lease)
+                .unwrap_or_else(|error| die(&format!("existing Codex sentinel refused: {error}")))
+        })
+    } else {
+        None
+    };
+    if let Some(lease) = &verified_codex_lease {
+        assert_unique_sentinel_identity(&state, &slot, lease).unwrap_or_else(|error| die(&error));
+    }
+
     println!(
         "Allocating worktrees/{slot} for agent '{agent}' (product={product}, start={})",
         start_point.as_deref().unwrap_or("each primary HEAD")
     );
 
-    let slot_dir = root.join("worktrees").join(&slot);
-    if include_hermit {
+    if include_hermit && !recover_legacy_unbound_owner && existing_sentinel_intent.is_none() {
         let start = primary_start(&root, "hermit", start_point.as_deref());
         add_worktree(
             &root.join("hermit"),
@@ -829,7 +1505,7 @@ fn main() {
             &start,
         );
     }
-    if include_reverie {
+    if include_reverie && !recover_legacy_unbound_owner && existing_sentinel_intent.is_none() {
         let rstart = primary_start(&root, "reverie", start_point.as_deref());
         add_worktree(
             &root.join("reverie"),
@@ -838,7 +1514,7 @@ fn main() {
             &rstart,
         );
     }
-    if include_liteinst2 {
+    if include_liteinst2 && !recover_legacy_unbound_owner && existing_sentinel_intent.is_none() {
         let lstart = primary_start(&root, "liteinst2", start_point.as_deref());
         add_worktree(
             &root.join("liteinst2"),
@@ -848,68 +1524,180 @@ fn main() {
         );
     }
 
-    // Merge/append this agent into the slot record.
-    let now = now_iso();
-    let entry = state["slots"]
-        .as_object_mut()
-        .unwrap()
-        .entry(slot.clone())
-        .or_insert_with(|| {
-            json!({
-                "agents": [],
-                "allocated": now.clone(),
-                "hermit_path": format!("worktrees/{slot}/hermit"),
-                "reverie_path": format!("worktrees/{slot}/reverie"),
-                "liteinst2_path": format!("worktrees/{slot}/liteinst2"),
-            })
-        });
-    entry["hermit_path"] = json!(format!("worktrees/{slot}/hermit"));
-    entry["reverie_path"] = json!(format!("worktrees/{slot}/reverie"));
-    entry["liteinst2_path"] = json!(format!("worktrees/{slot}/liteinst2"));
-    entry["status"] = json!("active");
-    entry["updated"] = json!(now);
-    // Slot-level task/purpose/branches describe the mutating OWNER. A read-mostly
-    // sharer records its own task per-agent (below) but must not clobber these.
-    if !read_mostly {
-        if !task.is_empty() {
-            entry["task"] = json!(task);
-        }
-        if !purpose.is_empty() {
-            entry["purpose"] = json!(purpose);
-        }
-        if let Some(b) = &hermit_branch {
-            entry["hermit_branch"] = json!(b);
-        }
-        if let Some(b) = &reverie_branch {
-            entry["reverie_branch"] = json!(b);
-        }
-        if let Some(b) = &liteinst2_branch {
-            entry["liteinst2_branch"] = json!(b);
-        }
-    }
-    if entry.get("hermit_branch").is_none() || (include_hermit && entry["hermit_branch"] == "-") {
-        entry["hermit_branch"] = json!(if include_hermit { "detached" } else { "-" });
-    }
-    if entry.get("reverie_branch").is_none() || (include_reverie && entry["reverie_branch"] == "-")
-    {
-        entry["reverie_branch"] = json!(if include_reverie { "detached" } else { "-" });
-    }
-    if entry.get("liteinst2_branch").is_none()
-        || (include_liteinst2 && entry["liteinst2_branch"] == "-")
-    {
-        entry["liteinst2_branch"] = json!(if include_liteinst2 { "detached" } else { "-" });
-    }
-    let agents = entry["agents"].as_array_mut().unwrap();
-    if let Some(a) = agents
-        .iter_mut()
-        .find(|a| a["name"].as_str() == Some(&agent))
-    {
-        a["read_only"] = json!(read_mostly);
-        if !task.is_empty() {
-            a["task"] = json!(task.clone());
-        }
+    // ORC agents retain the existing exact pane/cgroup adoption. Codex uses a
+    // separate slot-level coordinator sentinel because logical Codex threads
+    // share process/pane/cgroup identity. A new sentinel is always preceded by
+    // a durable exact launch intent, so a crash cannot leave an unowned unit.
+    let codex_plan = if codex_systemd_sentinel && verified_codex_lease.is_none() {
+        let canonical_slot = fs::canonicalize(&slot_dir)
+            .unwrap_or_else(|error| die(&format!("canonicalize Codex sentinel slot: {error}")));
+        let plan = existing_sentinel_intent
+            .as_ref()
+            .and_then(|intent| intent.get("plan"))
+            .cloned()
+            .unwrap_or_else(|| {
+                plan_codex_sentinel(&root, &slot, &canonical_slot)
+                    .unwrap_or_else(|error| die(&format!("plan Codex slot sentinel: {error}")))
+            });
+        validate_codex_slot_binding(&slot, &canonical_slot, &plan)
+            .unwrap_or_else(|error| die(&error));
+        assert_unique_sentinel_identity(&state, &slot, &plan).unwrap_or_else(|error| die(&error));
+        Some(plan)
     } else {
-        agents.push(json!({ "name": agent, "read_only": read_mostly, "task": task }));
+        None
+    };
+    let observed_owner_lease =
+        (!codex_systemd_sentinel).then(|| observe_owner_lease(&root, &agent));
+    if let Some(Err(error)) = &observed_owner_lease {
+        eprintln!(
+            "⚠  owner lease for '{agent}' was not refreshed: {error}. Re-run this exact allocation/adoption after the owner is live; release will refuse legacy/unbound ownership."
+        );
+    }
+
+    // Merge/append this agent into the slot record. Resuming a durable launch
+    // intent is deliberately non-mutating: the exact pre-crash allocation or
+    // binding-only migration is completed before accepting any later changes.
+    let now = now_iso();
+    if existing_sentinel_intent.is_none() {
+        let entry = state["slots"]
+            .as_object_mut()
+            .unwrap()
+            .entry(slot.clone())
+            .or_insert_with(|| {
+                json!({
+                    "agents": [],
+                    "allocated": now.clone(),
+                    "hermit_path": format!("worktrees/{slot}/hermit"),
+                    "reverie_path": format!("worktrees/{slot}/reverie"),
+                    "liteinst2_path": format!("worktrees/{slot}/liteinst2"),
+                })
+            });
+        if !recover_legacy_unbound_owner {
+            entry["hermit_path"] = json!(format!("worktrees/{slot}/hermit"));
+            entry["reverie_path"] = json!(format!("worktrees/{slot}/reverie"));
+            entry["liteinst2_path"] = json!(format!("worktrees/{slot}/liteinst2"));
+            entry["status"] = json!("active");
+            entry["updated"] = json!(now.clone());
+            if let Some(lease) = &verified_codex_lease {
+                entry["coordinator_lease"] = lease.clone();
+            }
+            // Slot-level task/purpose/branches describe the mutating OWNER. A
+            // read-mostly sharer records its own task but cannot clobber these.
+            if !read_mostly {
+                if !task.is_empty() {
+                    entry["task"] = json!(task.clone());
+                }
+                if !purpose.is_empty() {
+                    entry["purpose"] = json!(purpose.clone());
+                }
+                if let Some(b) = &hermit_branch {
+                    entry["hermit_branch"] = json!(b);
+                }
+                if let Some(b) = &reverie_branch {
+                    entry["reverie_branch"] = json!(b);
+                }
+                if let Some(b) = &liteinst2_branch {
+                    entry["liteinst2_branch"] = json!(b);
+                }
+            }
+            if entry.get("hermit_branch").is_none()
+                || (include_hermit && entry["hermit_branch"] == "-")
+            {
+                entry["hermit_branch"] = json!(if include_hermit { "detached" } else { "-" });
+            }
+            if entry.get("reverie_branch").is_none()
+                || (include_reverie && entry["reverie_branch"] == "-")
+            {
+                entry["reverie_branch"] = json!(if include_reverie { "detached" } else { "-" });
+            }
+            if entry.get("liteinst2_branch").is_none()
+                || (include_liteinst2 && entry["liteinst2_branch"] == "-")
+            {
+                entry["liteinst2_branch"] = json!(if include_liteinst2 { "detached" } else { "-" });
+            }
+            let agents = entry["agents"].as_array_mut().unwrap();
+            if let Some(a) = agents
+                .iter_mut()
+                .find(|a| a["name"].as_str() == Some(&agent))
+            {
+                a["read_only"] = json!(read_mostly);
+                if !task.is_empty() {
+                    a["task"] = json!(task.clone());
+                }
+                if let Some(observed) = &observed_owner_lease {
+                    apply_observed_owner_lease(a, observed);
+                }
+            } else {
+                let mut owner = json!({ "name": agent, "read_only": read_mostly, "task": task });
+                if let Some(observed) = &observed_owner_lease {
+                    apply_observed_owner_lease(&mut owner, observed);
+                }
+                agents.push(owner);
+            }
+        }
+
+        if let Some(plan) = &codex_plan {
+            let slot_snapshot = entry.clone();
+            entry["status"] = json!("binding-coordinator-lease");
+            entry["updated"] = json!(now.clone());
+            entry["coordinator_lease_intent"] = json!({
+                "schema_version": 1,
+                "source": "codex-systemd-sentinel-v1",
+                "phase": "launch-planned",
+                "plan": plan,
+                "legacy_recovery": recover_legacy_unbound_owner,
+                "recovery_note": if recover_legacy_unbound_owner { Value::String(recovery_note.clone()) } else { Value::Null },
+                "requested_agent": agent,
+                "recorded_at": now.clone(),
+                "historical_slot": if recover_legacy_unbound_owner { existing_slot.clone().unwrap_or(Value::Null) } else { Value::Null },
+                "slot_snapshot": slot_snapshot,
+            });
+        }
+    }
+
+    if let Some(plan) = &codex_plan {
+        // First durable boundary: the exact generation/nonce/unit plan and, for
+        // legacy migration, the untouched historical slot record are stored
+        // before systemd-run can create anything.
+        save_state(&root, &mut state);
+        regen_active_md(&root, &state);
+        let lease = launch_codex_sentinel(&root, plan)
+            .unwrap_or_else(|error| die(&format!("create/recover Codex slot sentinel: {error}")));
+        assert_unique_sentinel_identity(&state, &slot, &lease).unwrap_or_else(|error| die(&error));
+        let entry = &mut state["slots"][&slot];
+        let intent = entry["coordinator_lease_intent"].clone();
+        entry["coordinator_lease"] = lease;
+        entry["status"] = json!("active");
+        entry["updated"] = json!(now_iso());
+        entry
+            .as_object_mut()
+            .expect("slot record is an object")
+            .remove("coordinator_lease_intent");
+        if intent["legacy_recovery"].as_bool() == Some(true) {
+            let history = entry
+                .as_object_mut()
+                .expect("slot record is an object")
+                .entry("coordinator_lease_history")
+                .or_insert_with(|| json!([]));
+            let history = history
+                .as_array_mut()
+                .unwrap_or_else(|| die("coordinator_lease_history is not an array"));
+            history.push(json!({
+                "schema_version": 1,
+                "mode": "binding-only-legacy-recovery",
+                "recorded_at": now_iso(),
+                "recovery_note": intent["recovery_note"].clone(),
+                "historical_slot": intent["historical_slot"].clone(),
+            }));
+            // ORC fields remain preserved in historical_slot, but no second
+            // active authority may coexist with the coordinator sentinel.
+            for owner in entry["agents"].as_array_mut().into_iter().flatten() {
+                if let Some(owner) = owner.as_object_mut() {
+                    owner.remove("tmux_pane_id");
+                    owner.remove("cgroup_path");
+                }
+            }
+        }
     }
 
     save_state(&root, &mut state);
@@ -926,5 +1714,39 @@ fn main() {
             "  note: hermit worktree is DETACHED. Create a feature branch before editing:\n\
              \r        git -C worktrees/{slot}/hermit switch -c <branch> origin/main"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_adoption_invalidates_prior_incarnation_lease() {
+        let mut owner = json!({
+            "name": "hermit-kvm",
+            "read_only": false,
+            "tmux_pane_id": "%old",
+            "cgroup_path": "/agent.slice/old.scope"
+        });
+        apply_observed_owner_lease(&mut owner, &Err("snapshot unavailable".to_string()));
+        assert!(owner.get("tmux_pane_id").is_none());
+        assert!(owner.get("cgroup_path").is_none());
+    }
+
+    #[test]
+    fn successful_adoption_replaces_prior_incarnation_lease() {
+        let mut owner = json!({
+            "name": "hermit-kvm",
+            "read_only": false,
+            "tmux_pane_id": "%old",
+            "cgroup_path": "/agent.slice/old.scope"
+        });
+        apply_observed_owner_lease(
+            &mut owner,
+            &Ok(("%new".to_string(), "/agent.slice/new.scope".to_string())),
+        );
+        assert_eq!(owner["tmux_pane_id"], "%new");
+        assert_eq!(owner["cgroup_path"], "/agent.slice/new.scope");
     }
 }

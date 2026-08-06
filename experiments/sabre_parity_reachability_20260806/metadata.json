@@ -1,0 +1,20 @@
+{
+  "question": "Does hermit --backend sabre reach detlog parity with ptrace, or only stdout/exit parity?",
+  "date": "2026-08-06",
+  "host": "devbig014 AMD EPYC 9D85, nproc=316",
+  "hermit_version": "0.2.0 (2026-08-04, g0f891e432a75-dirty)",
+  "hermit_binary": "hermit/target/debug/hermit (release builds lack the `sabre` cargo feature)",
+  "env_required": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64 (libunwind-x86_64.so.8 absent from standard paths)",
+  "guest_fixture": "t_dyn.c - dynamically linked; main() issues exactly openat, read, close, write",
+  "command": "$H --log=info --log-file=$be.log run --backend $be -- $G",
+  "result_summary": {
+    "ptrace_syscalls_determinized": 49,
+    "sabre_syscalls_determinized": 4,
+    "sabre_catches": "exactly the 4 issued by main(); zero loader/startup syscalls",
+    "sabre_extra_own_activity": {"clock_gettime": 27, "madvise": 13},
+    "detlog_routing": "sabre writes 92/93 records to GUEST STDERR, not --log-file",
+    "verify_verdict_both_backends": "Determinism verified (rc=0)",
+    "stdout_both_backends": "hi"
+  },
+  "interpretation": "SaBRe rewrites the main ELF only; ld.so runs uninstrumented. --verify passes because self-consistency is not parity."
+}

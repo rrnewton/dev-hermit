@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/getcpu_identity.c: In function ‘query’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/getcpu_identity.c:43:15: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   43 |   return (int)syscall(SYS_getcpu, cpu_out, node_out, NULL);
+      |               ^~~~~~~
+cc1: all warnings being treated as errors

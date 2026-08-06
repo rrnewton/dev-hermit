@@ -1,0 +1,16 @@
+{
+  "question": "What is the current compat standing after the ratchet/parity wave, and what changed vs the last snapshot?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "method": "diff of two COMMITTED snapshots of compat-envelope/scorecard.csv (the file is tracked), plus a read of the current one -- no cell re-run",
+  "snapshot_a": "d83a34b (2026-08-03), 534 rows, 101 enabled",
+  "snapshot_b": "13c791e (2026-08-05, HEAD), 618 rows, 180 enabled",
+  "hermit_origin_main_at_audit": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "1fd8443388bcfe6b6ef0ce55224a5ff69111c064",
+  "regeneration_blocked_by": [
+    "only built binary is target/release/hermit from 2026-08-03; main is ~300 commits later",
+    "KVM livelocks at guest startup (reverie 640c5bc)",
+    "SaBRe returns unavailable on all 7 of its cells"
+  ],
+  "not_done": ["no cell re-run", "no new measurement generated"]
+}

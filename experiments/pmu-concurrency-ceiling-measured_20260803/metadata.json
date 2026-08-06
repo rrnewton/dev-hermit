@@ -1,25 +1,66 @@
 {
-  "date": "2026-08-03",
-  "host": "devbig014",
+  "agent": "hermit-250",
   "cpu": "AMD EPYC 9D85 158-Core (316 threads)",
+  "date": "2026-08-03",
+  "hermit_sha": "9e85f02f",
+  "host": "devbig014",
+  "nmi_watchdog": 1,
   "nproc": 316,
   "perf_event_paranoid": 1,
-  "nmi_watchdog": 1,
-  "hermit_sha": "9e85f02f",
-  "reverie_sha": "e376686",
-  "agent": "hermit-250",
   "results": {
-    "usable_pinned_pmcs_per_core": 5,
-    "generic_hw_pmcs_per_core": 6,
-    "nmi_watchdog_reserved": 1,
     "counters_per_guest_thread": 2,
-    "k_sweep_single_core": {
-      "1": {"verified": 1, "failed": 0, "pmu_panics": 0},
-      "8": {"verified": 8, "failed": 0, "pmu_panics": 0},
-      "16": {"verified": 16, "failed": 0, "pmu_panics": 0},
-      "32": {"verified": 32, "failed": 0, "pmu_panics": 0}
-    },
     "exhaustion_behavior": "hard-fail panic, never silent multiplexing",
-    "pmu_concurrency_ceiling": "not bound near 1; effectively CPU/core budget"
-  }
+    "generic_hw_pmcs_per_core": 6,
+    "k_sweep_single_core": {
+      "1": {
+        "failed": 0,
+        "pmu_panics": 0,
+        "verified": 1
+      },
+      "16": {
+        "failed": 0,
+        "pmu_panics": 0,
+        "verified": 16
+      },
+      "32": {
+        "failed": 0,
+        "pmu_panics": 0,
+        "verified": 32
+      },
+      "8": {
+        "failed": 0,
+        "pmu_panics": 0,
+        "verified": 8
+      }
+    },
+    "nmi_watchdog_reserved": 1,
+    "pmu_concurrency_ceiling": "not bound near 1; effectively CPU/core budget",
+    "usable_pinned_pmcs_per_core": 5
+  },
+  "reverie_sha": "e376686",
+  "reverifications": [
+    {
+      "agent": "egress-recheck",
+      "boundary": {
+        "N=5": "5/5 resident",
+        "N=6": "5/6 resident (first failure)"
+      },
+      "command": "cc -O2 -o /tmp/pmc_probe pmc_probe.c && taskset -c 7 /tmp/pmc_probe N  for N in 4..8",
+      "date": "2026-08-05",
+      "derived_parallel_backend_limit_threads_per_core": 2,
+      "host": "devbig014 AMD EPYC 9D85 158-Core, nproc=316, perf_event_paranoid=1, nmi_watchdog=1",
+      "per_core_usable_pinned_pmcs": 5,
+      "read_paths_with_abort_guard": [
+        "slow perf.rs:353",
+        "fast perf.rs:492",
+        "rdpmc perf.rs:575 (new since original)"
+      ],
+      "remediation_landed": {
+        "flock": "no live use",
+        "pmu_serial_label": "no live use",
+        "resource_caps": "{kvm:1}"
+      },
+      "reverie_sha": "025d37800d347c32711038bd0a3889e8e4774c2b"
+    }
+  ]
 }

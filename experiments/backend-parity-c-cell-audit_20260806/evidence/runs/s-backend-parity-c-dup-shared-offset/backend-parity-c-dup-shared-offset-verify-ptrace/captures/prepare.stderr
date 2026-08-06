@@ -1,0 +1,10 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/dup_shared_offset.c: In function ‘pread_exact’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/dup_shared_offset.c:73:17: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   73 |     ssize_t r = pread(fd, buf + got, n - got, off + (off_t)got);
+      |                 ^~~~~
+      |                 read
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/dup_shared_offset.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/dup_shared_offset.c:87:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   87 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+cc1: all warnings being treated as errors

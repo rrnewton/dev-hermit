@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/sched_getaffinity_identity.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/sched_getaffinity_identity.c:51:16: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   51 |     long ret = syscall(SYS_sched_getaffinity, 0, (size_t)VIRTUAL_CPUSET_BYTES, mask);
+      |                ^~~~~~~
+cc1: all warnings being treated as errors

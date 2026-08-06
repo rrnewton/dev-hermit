@@ -1,0 +1,10 @@
+SIGUSR1
+work 0
+SIGUSR2
+work 1
+SIGUSR1
+work 2
+SIGUSR2
+work 3
+SIGUSR1
+work 4

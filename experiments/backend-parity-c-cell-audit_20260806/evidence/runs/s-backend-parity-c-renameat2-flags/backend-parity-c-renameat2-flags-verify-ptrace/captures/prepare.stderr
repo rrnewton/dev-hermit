@@ -1,0 +1,13 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/renameat2_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/renameat2_flags.c:52:10: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   52 |     if (!mkdtemp(root)) {
+      |          ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/renameat2_flags.c:65:9: error: implicit declaration of function ‘renameat2’; did you mean ‘rename’? [-Werror=implicit-function-declaration]
+   65 |     if (renameat2(AT_FDCWD, a, AT_FDCWD, b, RENAME_NOREPLACE) == -1 &&
+      |         ^~~~~~~~~
+      |         rename
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/renameat2_flags.c:65:19: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   65 |     if (renameat2(AT_FDCWD, a, AT_FDCWD, b, RENAME_NOREPLACE) == -1 &&
+      |                   ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/renameat2_flags.c:65:19: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

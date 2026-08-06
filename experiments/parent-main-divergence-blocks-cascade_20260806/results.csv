@@ -1,0 +1,10 @@
+file,base_to_local,base_to_remote,remote_to_local_ws_insensitive,class
+ci-hub/health/pr_status.py,136+/4-,133+/4-,33+/30-,TWO-SIDED-needs-adjudication
+ci-hub/health/tests/test_pr_status.py,181+/2-,208+/2-,29+/56-,TWO-SIDED-needs-adjudication
+ci-hub/lib/qualifying_receipt.rs,add/add,add/add,6+/18-,rustfmt-wrapping-only
+ci-hub/lib/validate_status.rs,249+/152-,48+/54-,216+/113-,TWO-SIDED-needs-adjudication
+ci-hub/qualifying_receipt.py,add/add,add/add,32+/1-,TWO-SIDED-needs-adjudication
+ci-hub/tests/documented_commands.py,2+/1-,7+/1-,2+/7-,TWO-SIDED-needs-adjudication
+ci-hub/validate/qualifying-receipt.json,add/add,add/add,4+/0-,TWO-SIDED-needs-adjudication
+ci-hub/validate/tests/test_qualifying_receipt_mutation.py,add/add,add/add,1+/2-,TWO-SIDED-needs-adjudication
+ci-hub/validation/publish_receipt.py,15+/21-,20+/23-,2+/5-,TWO-SIDED-needs-adjudication

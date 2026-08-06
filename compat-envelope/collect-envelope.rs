@@ -20,9 +20,12 @@
 //!     `timeout(1)`; use `expansion-dag.rs` for the cgroup-boxed parallel run.
 //!
 //! Determinism vs parity:
-//!   * determinism = the cell passed under its own backend (for `verify`, hermit's
-//!     internal --strict --verify double-run already proved run1==run2, so a
-//!     passing verify cell is deterministic by construction);
+//!   * determinism = a TWO-RUN comparison observed run1==run2. Only `verify`
+//!     executes a second run, so only a passing `verify` cell earns a value;
+//!     `strict`/`chaos`/`custom`/`replay` are single runs and are recorded BLANK
+//!     (unmeasured), never 1. `verify_compare` records what the two runs were
+//!     compared BY -- `stripped` normalises addresses/tmp paths and does not
+//!     compare the detlog, so it is weaker than bitwise and must stay legible;
 //!   * parity = the backend's guest output is bitwise-identical to the ptrace
 //!     reference. We compute it by capturing guest stdout under ptrace and under
 //!     the backend and comparing SHA-256 (only for reconstructable guest commands
@@ -74,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -212,20 +215,25 @@ fn main() {
     // not built in this checkout) is recorded as UNAVAILABLE — an honest
     // "not measured", never a confirmed compat/determinism fail. Anti-fakery: a
     // missing backend must not masquerade as a red backend.
-    let mut avail: BTreeMap<String, bool> = BTreeMap::new();
+    let mut avail: BTreeMap<String, Option<String>> = BTreeMap::new();
     for (_, backend) in groups.keys() {
-        avail.entry(backend.clone()).or_insert_with(|| backend_available(&repo, backend));
+        avail
+            .entry(backend.clone())
+            .or_insert_with(|| backend_unavailable_reason(&repo, backend));
     }
-    for (b, ok) in &avail {
-        if !ok {
-            eprintln!("collect-envelope: backend `{b}` UNAVAILABLE here — cells recorded as unavailable (not fail)");
+    for (b, why) in &avail {
+        if let Some(reason) = why {
+            eprintln!(
+                "collect-envelope: backend `{b}` UNAVAILABLE here — cells recorded as unavailable (not fail): {reason}"
+            );
         }
     }
 
     let mut rows_written = 0usize;
     let mut regressions: Vec<String> = Vec::new();
     for ((bucket, backend), group) in &groups {
-        let available = *avail.get(backend).unwrap_or(&true);
+        let unavailable_reason = avail.get(backend).and_then(|r| r.clone());
+        let available = unavailable_reason.is_none();
         let results = if available {
             run_group(&repo, &lane, bucket, backend, &mode)
         } else {
@@ -239,7 +247,13 @@ fn main() {
         for c in group {
             let hr = outcomes.get(&(c.test.clone(), c.mode.clone()));
             let (outcome, duration_ms, reason) = if !available {
-                ("unavailable".to_string(), 0i64, "backend binary not present in this checkout".to_string())
+                (
+                    "unavailable".to_string(),
+                    0i64,
+                    unavailable_reason
+                        .clone()
+                        .unwrap_or_else(|| "backend unavailable (reason not captured)".to_string()),
+                )
             } else {
                 match hr {
                     Some(r) => (r.outcome.clone(), r.duration_ms, r.reason.clone()),
@@ -255,20 +269,69 @@ fn main() {
                     c.test, c.mode
                 ));
             }
-            // Determinism is BLANK (unmeasured) for an unavailable backend or a
-            // skipped cell; a run that completed non-pass is confirmed false.
+            // DETERMINISM MUST BE EARNED BY A TWO-RUN COMPARISON, never inferred
+            // from a single passing run.
+            //
+            // The previous rule was `pass => deterministic=1` for EVERY mode. Only
+            // `verify` actually executes a second run and compares it; `strict`,
+            // `chaos`, `custom` and `replay` are single runs that cannot observe
+            // run1==run2 at all. On the live scorecard that rule minted
+            // deterministic=1 for 105 single-run cells (strict 102, chaos 1,
+            // custom 1, replay 1) against 63 that genuinely compared — i.e. most
+            // of the determinism evidence was an artifact of the rule, not a
+            // measurement. A single run passing says the program worked once; it
+            // is silent about reproducibility.
+            //
+            // BLANK means UNMEASURED and is the honest answer for a single run.
+            // It is deliberately NOT `0`: `0` asserts observed nondeterminism,
+            // which a single run cannot establish either.
+            let ran_two_run_comparison = c.mode == "verify";
             let deterministic = if !available || outcome == "skip" {
                 None
-            } else if pass {
+            } else if !pass {
+                // A completed non-pass IS confirmed: the cell did not reproduce
+                // its expected behaviour under its own backend.
+                Some(false)
+            } else if ran_two_run_comparison {
                 Some(true)
             } else {
-                Some(false)
+                None
             };
-            let (parity, output_hash) = if with_parity && pass {
-                capture_parity(&repo, &lane, c, backend)
+            // WHAT the two runs were compared BY. hermit's `--verify` defaults to
+            // the STRIPPED comparison (this harness passes no compare-mode flag),
+            // which normalises addresses and tmp paths and does NOT compare the
+            // detlog. So `stripped` is a weaker claim than bitwise determinism and
+            // must be legible as such in the row rather than hidden behind a `1`.
+            let verify_compare = if deterministic == Some(true) && ran_two_run_comparison {
+                "stripped"
             } else {
-                (None, String::new())
+                ""
             };
+            let (parity, parity_exercised, native_output_hash, output_hash, ref_output_hash) =
+                if with_parity && pass {
+                    capture_parity(&repo, &lane, c, backend)
+                } else {
+                    (None, None, String::new(), String::new(), String::new())
+                };
+            // NOT-EXERCISED is a THIRD bucket, not a downgrade of pass/fail. A cell whose guest
+            // produces the same bytes with and without hermit did not exercise the property the
+            // cell claims to measure, so reporting it as parity asserts coverage that does not
+            // exist. The verdict is RECLASSIFIED, never dropped: `parity` keeps its measured
+            // value so the row stays auditable, and `outcome` names the vacuity.
+            let outcome = if parity_exercised == Some(false) {
+                "not-exercised".to_string()
+            } else {
+                outcome
+            };
+            // WHICH INVOCATION produced this row. Without it, "pass" is ambiguous across
+            // strictness levels: the same cell id can be run under different harness flags and
+            // the CSV would render both as an identical green. These are the flags
+            // `run_group` actually passes for this (bucket, backend, run mode).
+            let run_flags = format!(
+                "--lane {lane} --category {bucket} --backend {backend} {} | test_mode={}",
+                if mode == "regression" { "--ci-only" } else { "--include-manual" },
+                c.mode
+            );
             let row = [
                 meta.run_id.clone(),
                 meta.run_utc.clone(),
@@ -285,10 +348,15 @@ fn main() {
                 outcome,
                 deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 parity.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
+                parity_exercised.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
+                native_output_hash,
                 output_hash,
+                ref_output_hash,
                 duration_ms.to_string(),
                 String::new(), // max_rss_kb: filled by expansion-dag.rs cgroup path
                 reason,
+                verify_compare.to_string(),
+                run_flags,
             ];
             let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
             writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
@@ -432,16 +500,83 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
 /// Capture guest stdout under ptrace and under `backend`; parity = hashes match.
 /// Only reconstructable guest commands are attempted (`.sh` fixtures run with
 /// `--run`, and `direct` commands); otherwise returns (None, "").
-fn capture_parity(repo: &Path, lane: &str, cell: &PlanCell, backend: &str) -> (Option<bool>, String) {
+/// Returns `(parity, exercised, native_hash, output_hash, ref_output_hash)`.
+///
+/// `parity` alone is a POSITIVE-ONLY comparison: it asks "does the candidate match the ptrace
+/// golden" and nothing else, so it passes whenever both sides agree -- INCLUDING when they agree
+/// because the guest never exercised the determinization under test. A test whose output is the
+/// same with and without hermit cannot distinguish a determinizing backend from an inert one, so
+/// it scores parity on EVERY backend and the whole row reads green. That is the same shape as an
+/// e9patch cell scoring byte-identical parity while reporting `candidate_sites=0`.
+///
+/// `exercised` supplies the missing negative side by running the guest with NO hermit at all and
+/// comparing that host answer to the golden. If the bare host already produces the golden output,
+/// hermit changed nothing observable and the cell is NOT-EXERCISED -- a distinct bucket from pass
+/// and fail, because the cell is neither evidence of parity nor evidence of a defect.
+///
+/// The negative control is a BARE EXEC, not `--backend native`: hermit has no `native` backend
+/// (`--backend` accepts only ptrace/dbi/liteinst/sabre/kvm/e9patch), so the do-nothing run has to
+/// bypass hermit entirely.
+///
+/// The reference hash was always computed here and then DISCARDED, which left a `parity=1` row
+/// unable to say what it matched. A comparison result that does not name both sides is not
+/// reproducible evidence: a reader cannot tell a genuine match from a row where both sides were
+/// empty, nor re-check the claim later. Both hashes are now recorded.
+fn capture_parity(
+    repo: &Path,
+    lane: &str,
+    cell: &PlanCell,
+    backend: &str,
+) -> (Option<bool>, Option<bool>, String, String, String) {
     let Some(guest) = guest_command(repo, &cell.test) else {
-        return (None, String::new());
+        return (None, None, String::new(), String::new(), String::new());
     };
     let ref_hash = run_and_hash(repo, lane, "ptrace", &guest);
     let this_hash = run_and_hash(repo, lane, backend, &guest);
-    match (ref_hash, this_hash.clone()) {
-        (Some(r), Some(t)) => (Some(r == t), t),
-        _ => (None, this_hash.unwrap_or_default()),
+    let native_hash = run_native_and_hash(repo, &guest);
+    // A cell is EXERCISED when the determinized answer differs from the bare host answer. If they
+    // are equal the guest observed nothing hermit virtualizes, so no backend could ever fail it.
+    let exercised = match (ref_hash.clone(), native_hash.clone()) {
+        (Some(r), Some(n)) => Some(r != n),
+        // The bare run failing is not evidence either way (the guest may need the container), so
+        // exercise stays UNKNOWN rather than being silently asserted.
+        _ => None,
+    };
+    let native = native_hash.unwrap_or_default();
+    match (ref_hash.clone(), this_hash.clone()) {
+        (Some(r), Some(t)) => (Some(r == t), exercised, native, t, r),
+        _ => (
+            None,
+            exercised,
+            native,
+            this_hash.unwrap_or_default(),
+            ref_hash.unwrap_or_default(),
+        ),
     }
+}
+
+/// Run the guest with NO hermit -- the do-nothing control that gives parity its negative side.
+/// Mirrors `run_and_hash`'s pinned guest environment so the only difference between the two runs
+/// is hermit itself; otherwise an env delta, not determinization, would explain any divergence.
+fn run_native_and_hash(repo: &Path, guest: &[String]) -> Option<String> {
+    let (prog, args) = guest.split_first()?;
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120s").arg(prog);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .current_dir(repo);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut h = Sha256::new();
+    h.update(&out.stdout);
+    Some(format!("{:x}", h.finalize()))
 }
 
 /// Resolve a test-id to a runnable guest argv from the harness manifest docs.
@@ -491,13 +626,22 @@ fn guest_command(repo: &Path, test_id: &str) -> Option<Vec<String>> {
 /// its cells are recorded UNAVAILABLE rather than as a compat/determinism fail.
 /// ptrace/kvm are in-process; treat them as available (kvm's /dev/kvm gate is a
 /// separate runtime concern surfaced by the actual cell run).
-fn backend_available(repo: &Path, backend: &str) -> bool {
+/// Returns `None` when the backend is usable, or `Some(reason)` naming why it is not.
+///
+/// This previously returned a bare bool and every unavailable cell got the same hardcoded string,
+/// "backend binary not present in this checkout" -- a constant masquerading as a diagnosis. It was
+/// also frequently WRONG: a backend that is built but refuses to load reported "not present". The
+/// reason is now the observed cause, so an unavailable row says which check failed.
+fn backend_unavailable_reason(repo: &Path, backend: &str) -> Option<String> {
     if backend == "ptrace" || backend == "kvm" || backend == "native" {
-        return true;
+        return None;
     }
     let hermit = hermit_bin(repo);
     if !hermit.exists() {
-        return false;
+        return Some(format!(
+            "hermit binary not built at {} (backend `{backend}` never probed)",
+            hermit.display()
+        ));
     }
     let out = Command::new("timeout")
         .arg("60s")
@@ -512,13 +656,31 @@ fn backend_available(repo: &Path, backend: &str) -> bool {
     match out {
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
-            // Explicit unavailability markers from the backend loader.
-            !(err.contains("is unavailable")
-                || err.contains("was not found")
-                || err.contains("HERMIT_SABRE_BINARY")
-                || err.contains("not found in the Hermit installation"))
+            // Explicit unavailability markers from the backend loader. Report the marker that
+            // matched, so the row records the observed evidence rather than a generic phrase.
+            for marker in [
+                "is unavailable",
+                "was not found",
+                "HERMIT_SABRE_BINARY",
+                "not found in the Hermit installation",
+            ] {
+                if err.contains(marker) {
+                    let line = err
+                        .lines()
+                        .find(|l| l.contains(marker))
+                        .unwrap_or(marker)
+                        .trim();
+                    return Some(format!(
+                        "backend `{backend}` probe reported unavailable: {}",
+                        line.chars().take(160).collect::<String>()
+                    ));
+                }
+            }
+            None
         }
-        Err(_) => false,
+        Err(e) => Some(format!(
+            "backend `{backend}` probe could not be executed: {e}"
+        )),
     }
 }
 
@@ -579,6 +741,22 @@ fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Opt
     let hermit = hermit_bin(repo);
     let mut cmd = Command::new("timeout");
     cmd.arg("120s").arg(&hermit).arg("run").arg("--backend").arg(backend).arg("--strict");
+    // Pin the GUEST environment. `--base-env` defaults to `host`, which passes every one of
+    // hermit's own variables through to the guest. The kernel builds the initial stack from
+    // argv/envp/auxv, so the size of that block decides where the stack sits: a collector run
+    // from a shell with one extra (or longer) variable shifts every guest stack address.
+    // Measured on ptrace/--strict with an otherwise identical guest, changing a single variable's
+    // length moved the stack 16 bytes and changed 110 of 172 DETLOG lines — all 54 [stack] hashes
+    // plus 56 INFO-log syscall arguments that carry stack addresses. Stdout parity does not see
+    // this, but any stack-derived observable does, so pinning here (once, at the env) is what
+    // keeps cells comparable across invocations instead of two downstream exclusions that drift.
+    // `minimal` is hermit's own deterministic base: PATH, HOSTNAME, HOME and nothing else.
+    cmd.arg("--base-env").arg("minimal");
+    // Re-add the two variables this harness has always relied on for guest determinism.
+    // `minimal` would otherwise drop them, and an UNSET TZ is worse than an inherited one:
+    // glibc then falls back to /etc/localtime, i.e. host state. Pinned guest env is exactly:
+    // PATH, HOSTNAME, HOME (hermit `minimal`) + LC_ALL=C + TZ=UTC. Nothing else reaches the guest.
+    cmd.arg("-e").arg("LC_ALL=C").arg("-e").arg("TZ=UTC");
     if lane == "portable" {
         cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
     }

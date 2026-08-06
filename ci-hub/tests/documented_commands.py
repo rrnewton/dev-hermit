@@ -22,7 +22,10 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 40
+# The consolidated landing guide deliberately removes the executable legacy
+# land-pr examples; the canonical exact-head mutator is shown in a non-shell
+# fence so this harness can never exercise a real landing from documentation.
+EXPECTED_COMMANDS = 45
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -103,10 +106,17 @@ def _classify(text: str) -> str:
             "refresh-history",
             "resolve-obligation",
             "verify-landing",
+            "validate-run",
         }:
             return "parse"
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
     if normalized.startswith("./ci-hub/bin/close-task "):
+        return "parse"
+    if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
+        return "live-read"
+    # The landing preflight is illustrated with <placeholder> arguments, so it is
+    # parse-only: the snippet documents the three checks, it is not run verbatim.
+    if normalized.startswith("python3 ci-hub/landing/preflight.py"):
         return "parse"
     if normalized == "./ci-hub/directives/check.py --quickstart":
         return "local-read"
@@ -209,6 +219,10 @@ def _parse_probe(command: str) -> str:
         return "systemctl --help"
     if normalized.startswith("./ci-hub/bin/close-task "):
         return "./ci-hub/bin/close-task --help"
+    if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
+        return "./ci-hub/bin/reconcile-receipts --help"
+    if normalized.startswith("python3 ci-hub/landing/preflight.py"):
+        return "python3 ci-hub/landing/preflight.py --help"
     return command
 
 
@@ -276,6 +290,8 @@ def _run_one(
             executed = _parse_probe(rendered)
         elif rendered.startswith("with-proxy gh "):
             executed = _external_help(rendered)
+        else:
+            executed = _parse_probe(rendered)
     elif command.mode == "live-read":
         allowed = {0, 1, 2} if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered) else {0}
 

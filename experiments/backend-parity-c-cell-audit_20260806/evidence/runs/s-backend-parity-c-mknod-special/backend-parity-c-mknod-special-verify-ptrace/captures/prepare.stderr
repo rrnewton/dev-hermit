@@ -1,0 +1,31 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c: In function ‘lmode’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:24:7: error: implicit declaration of function ‘lstat’; did you mean ‘fstat’? [-Werror=implicit-function-declaration]
+   24 |   if (lstat(path, &st) != 0) {
+      |       ^~~~~
+      |       fstat
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:34:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   34 |   if (mkdtemp(root) == NULL) {
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:34:21: error: comparison between pointer and integer [-Werror]
+   34 |   if (mkdtemp(root) == NULL) {
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:39:39: error: ‘O_DIRECTORY’ undeclared (first use in this function)
+   39 |   int root_fd = open(root, O_RDONLY | O_DIRECTORY);
+      |                                       ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:39:39: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:57:23: error: implicit declaration of function ‘mknodat’ [-Werror=implicit-function-declaration]
+   57 |   if (root_fd >= 0 && mknodat(root_fd, "f2", S_IFIFO | 0600, 0) == 0) {
+      |                       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:57:46: error: ‘S_IFIFO’ undeclared (first use in this function); did you mean ‘S_ISFIFO’?
+   57 |   if (root_fd >= 0 && mknodat(root_fd, "f2", S_IFIFO | 0600, 0) == 0) {
+      |                                              ^~~~~~~
+      |                                              S_ISFIFO
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:65:7: error: implicit declaration of function ‘mknod’ [-Werror=implicit-function-declaration]
+   65 |   if (mknod(reg, S_IFREG | 0644, 0) == 0) {
+      |       ^~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mknod_special.c:65:18: error: ‘S_IFREG’ undeclared (first use in this function); did you mean ‘S_ISREG’?
+   65 |   if (mknod(reg, S_IFREG | 0644, 0) == 0) {
+      |                  ^~~~~~~
+      |                  S_ISREG
+cc1: all warnings being treated as errors

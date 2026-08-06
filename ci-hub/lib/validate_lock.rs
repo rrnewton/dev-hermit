@@ -17,7 +17,6 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
 use std::sync::mpsc;
@@ -29,7 +28,11 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    current_host, exit_status_code, process_start_ticks, signal_group, suffix,
+    capture_and_freeze_residuals, current_host, enable_child_subreaper, exit_status_code,
+    heartbeat_test_helper_delay, print_cleanup_record, process_group_exists, process_start_ticks,
+    reap_exited_children, remove_cleanup_record, signal_group, spawn_gated_child, suffix,
+    verify_cleanup_record, write_cleanup_record, CleanupPhase, CleanupRecord, CleanupVerification,
+    GatedChild, ResidualCapture,
 };
 
 const DEFAULT_WAIT_SECONDS: u64 = 1_800;
@@ -40,10 +43,11 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 /// residual is monotonic in load (`experiments/multisect_detcore_misc_20260803`),
 /// so >1 requires hermit-250 evidence, not a config pick.
 const BOX_EXCLUSIVE_CAP: u64 = 1;
-/// Hard ceiling on how long a `run` child may execute before it is killed and the
-/// lock is released. A warm validate runs ~8-16 min; this default (3600s) allows
-/// generous headroom while still guaranteeing the box is freed for the next FIFO
-/// waiter — an unbounded holder is unboxed compute and a head-of-line block.
+/// Hard ceiling on how long a `run` child may execute before it is killed and
+/// cleanup is proved. A complete empty-domain proof releases the box; otherwise
+/// it stays quarantined. A warm validate runs ~8-16 min; this default (3600s)
+/// allows generous headroom while still bounding cleanup or quarantine — an
+/// unbounded holder is unboxed compute and a head-of-line block.
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 3_600;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
@@ -54,14 +58,15 @@ const REFUSED_EXIT_CODE: i32 = 3;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
-/// Exit code reported when admission REFUSES a validate whose base predates a
-/// rebase-base floor. Same 3 as an ownership refusal: a refusal, not a crash.
+/// Exit code reported when admission REFUSES a validate whose head predates a
+/// fixed floor or the freshly fetched origin/main tip. Same 3 as an ownership
+/// refusal: a refusal, not a crash.
 const STALE_BASE_EXIT_CODE: i32 = 3;
-/// Env override for the base-admission predicate command (space-split argv). The
-/// target head is appended as `--head <sha>`. Defaults to the in-tree
-/// `ci-hub/validate/preflight_anchor.py`. Overridable so tests need neither
-/// python nor a hermit checkout, mirroring `PREFLIGHT_CMD` in
-/// `ci-hub/landing/parallel-prevalidate.sh`.
+/// Env override for the composite validation-admission command (space-split
+/// argv). The target head is appended as `--head <sha>`. Defaults to the in-tree
+/// `ci-hub/validate/preflight_validate.py`, which checks both fixed floors and
+/// freshly fetched origin/main. Overridable so Rust tests need neither Python,
+/// egress, nor a Hermit checkout.
 const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
 
 #[derive(Args, Clone, Debug)]
@@ -82,7 +87,8 @@ pub enum ValidateLockCommand {
     Status,
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
-    /// Acquire, run one command with a heartbeat + child-deadline, then release.
+    /// Acquire and run with a heartbeat + child-deadline; release after complete
+    /// cleanup proof, otherwise retain a quarantine.
     Run(RunArgs),
 }
 
@@ -128,9 +134,9 @@ pub struct AcquireArgs {
     pub hold: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
-    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
-    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
-    /// while offline). Never a default; every use is announced on stderr.
+    /// Retained only to give old callers a named refusal. Qualifying validation
+    /// can no longer bypass base admission. Historical differential debugging
+    /// must run outside the receipt-producing validate path.
     #[arg(long, default_value_t = false)]
     pub skip_base_check: bool,
 }
@@ -165,15 +171,16 @@ pub struct RunArgs {
     pub wait: u64,
     #[arg(long, default_value_t = DEFAULT_HOLD_SECONDS)]
     pub hold: u64,
-    /// Kill the child and release the box if it runs longer than this many
-    /// seconds. Must be positive: unbounded box-exclusive holders are forbidden.
+    /// Kill the child if it runs longer than this many seconds. Release follows
+    /// only after complete cleanup proof; otherwise the box remains quarantined.
+    /// Must be positive: unbounded box-exclusive holders are forbidden.
     #[arg(long, default_value_t = DEFAULT_CHILD_DEADLINE_SECONDS)]
     pub child_deadline: u64,
     #[arg(long, default_value_t = BOX_EXCLUSIVE_CAP)]
     pub max: u64,
-    /// Explicit, LOUD escape hatch: skip the rebase-base-floor admission check.
-    /// Only for a legitimately unresolvable base (e.g. a brand-new local commit
-    /// while offline). Never a default; every use is announced on stderr.
+    /// Retained only to give old callers a named refusal. Qualifying validation
+    /// can no longer bypass base admission. Historical differential debugging
+    /// must run outside the receipt-producing validate path.
     #[arg(long, default_value_t = false)]
     pub skip_base_check: bool,
     #[arg(last = true, required = true)]
@@ -376,10 +383,10 @@ pub enum ValidateLockError {
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
-    /// Admission refused a validate whose base predates a rebase-base floor. The
-    /// message is the preflight_anchor refuse line, which NAMES the remedy
-    /// (rebase onto current origin/main >= <floor sha>). This is the mechanical
-    /// enforcement of REBASE-BEFORE-VALIDATE: a stale base never gets a slot.
+    /// Admission refused a validate whose head predates a fixed floor or the
+    /// freshly fetched origin/main tip. The message names the exact base and
+    /// remedy. This is mechanical REBASE-BEFORE-VALIDATE: a stale base never
+    /// gets a slot.
     #[error("{0}")]
     StaleBase(String),
     #[error(
@@ -388,6 +395,8 @@ pub enum ValidateLockError {
     ProcessNotOwner { operation: &'static str, pid: u32 },
     #[error("validate-lock: cannot reclaim lease: {0}")]
     ReclaimNotProven(String),
+    #[error("validate-lock: cleanup quarantine: {0}")]
+    CleanupQuarantined(String),
 }
 
 impl ValidateLockError {
@@ -397,6 +406,7 @@ impl ValidateLockError {
             | Self::ReleaseNotOwner { .. }
             | Self::ProcessNotOwner { .. }
             | Self::ReclaimNotProven(_)
+            | Self::CleanupQuarantined(_)
             | Self::GuardTimeout
             | Self::StaleBase(_)
             | Self::InvalidState(_) => 3,
@@ -411,6 +421,7 @@ struct LockPaths {
     guard: PathBuf,
     queue: PathBuf,
     owner: PathBuf,
+    cleanup: PathBuf,
 }
 
 impl LockPaths {
@@ -424,6 +435,7 @@ impl LockPaths {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
+            cleanup: suffix(&lock, ".cleanup-required"),
             lock,
         }
     }
@@ -488,9 +500,8 @@ fn reject_bad_max(max: u64) -> Result<(), ValidateLockError> {
     Ok(())
 }
 
-/// A 40-char lowercase-hex commit SHA — the only target shape the base-floor
-/// check can act on. A ref, a PR number, or a test placeholder (`sha-3`) is not
-/// resolvable here, so it is passed through un-gated rather than refused.
+/// A 40-char lowercase-hex commit SHA — the only target shape that can bind the
+/// admission verdict to the receipt-producing child.
 fn is_full_sha(target: &str) -> bool {
     target.len() == 40
         && target
@@ -498,20 +509,18 @@ fn is_full_sha(target: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` whose base
-/// head predates a rebase-base floor, so the convention we keep restating and
-/// violating is enforced at the ONE admission chokepoint every wrapper path
-/// funnels through. The refusal NAMES the remedy (the preflight_anchor refuse
-/// line: "Rebase onto current origin/main (>= <sha>) ...") — a bare "refused"
-/// gets a gate disabled.
+/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` unless its
+/// exact head contains both every fixed floor and the freshly fetched
+/// origin/main tip. Thus every qualifying receipt describes a state that can
+/// land without another rebase. The refusal names the exact missing base and
+/// remedy — a bare "refused" gets a gate disabled.
 ///
-/// Non-Validate kinds, non-40-hex targets, and an explicit `--skip-base-check`
-/// pass through so the gate never refuses everything (a gate that grants nothing
-/// gets removed). The predicate is shelled out to `preflight_anchor.py` — the
-/// SAME authority `parallel-prevalidate.sh` and `reconcile_receipts.py` use — so
-/// the remedy string and the local-merge-base/gh-compare fallback are not
-/// re-implemented here and cannot drift. Overridable via
-/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither python nor a checkout.
+/// Non-Validate kinds pass through. Validate targets that are not exact SHAs and
+/// the legacy `--skip-base-check` flag are refused: either would sever the
+/// observable binding between the admission verdict and the validated commit.
+/// The predicate is shelled out to `preflight_validate.py`, the same composite
+/// authority used by all other ci-hub validation producers. Overridable via
+/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither Python nor a checkout.
 ///
 /// Fail-CLOSED: preflight exit 2 (REFUSED) and any other non-zero (ERROR: head
 /// unresolved) both become `StaleBase`. An admission gate that admitted on "I
@@ -523,27 +532,29 @@ fn base_admission_check(
     skip: bool,
 ) -> Result<(), ValidateLockError> {
     if kind != Kind::Validate {
-        return Ok(()); // bench is not landed; no rebase-base floor applies
+        return Ok(()); // bench/diagnostic work is not landing evidence
     }
     if skip {
-        eprintln!(
-            "validate-lock: BASE CHECK SKIPPED for {target} via --skip-base-check \
-             — the rebase-base-floor admission gate is DISABLED for this run; a \
-             stale base will validate but cannot land."
-        );
-        return Ok(());
+        return Err(ValidateLockError::StaleBase(format!(
+            "REFUSE: --skip-base-check cannot authorize qualifying validation of \
+             {target}. Rebase onto freshly fetched origin/main before validating. \
+             Historical differential debugging is non-qualifying and must run \
+             outside validate-run so it cannot mint landing evidence."
+        )));
     }
     if !is_full_sha(target) {
-        // A ref/PR/placeholder cannot be floor-checked here; preflight_anchor
-        // gates the resolvable head on the producer paths. Do not block.
-        return Ok(());
+        return Err(ValidateLockError::StaleBase(format!(
+            "REFUSE: validation target {target:?} is not an exact lowercase \
+             40-hex commit SHA, so base ancestry cannot be bound to the child. \
+             Resolve the rebased PR head exactly before validating."
+        )));
     }
 
     let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
         Ok(cmd) if !cmd.trim().is_empty() => cmd.split_whitespace().map(OsString::from).collect(),
         _ => vec![
             OsString::from("python3"),
-            root.join("ci-hub/validate/preflight_anchor.py")
+            root.join("ci-hub/validate/preflight_validate.py")
                 .into_os_string(),
         ],
     };
@@ -555,10 +566,9 @@ fn base_admission_check(
         Ok(o) => o,
         Err(err) => {
             return Err(ValidateLockError::StaleBase(format!(
-                "validate-lock: base-floor admission check could not run \
+                "validate-lock: validation admission check could not run \
                  ({err}); base for {target} is UNRESOLVED. Rebase onto current \
-                 origin/main before validating, or pass --skip-base-check to \
-                 override."
+                 origin/main before validating."
             )));
         }
     };
@@ -591,16 +601,269 @@ fn base_admission_check(
                 format!("exit {other:?}")
             };
             Err(ValidateLockError::StaleBase(format!(
-                "validate-lock: base-floor admission check for {target} did not \
+                "validate-lock: validation admission check for {target} did not \
                  resolve ({detail}); treating the base as STALE. Rebase onto \
-                 current origin/main before validating, or pass \
-                 --skip-base-check to override."
+                 current origin/main before validating."
             )))
         }
     }
 }
 
 impl ValidateLock {
+    fn cleanup_verification(&self, holder: Option<&ValidateLockState>) -> CleanupVerification {
+        let operation = holder.map(|holder| format!("{}:{}", holder.kind, holder.target));
+        let expected = holder
+            .zip(operation.as_deref())
+            .map(|(holder, operation)| (holder.agent.as_str(), operation));
+        verify_cleanup_record(&self.paths.cleanup, expected)
+    }
+
+    fn require_no_cleanup(
+        &self,
+        holder: Option<&ValidateLockState>,
+    ) -> Result<(), ValidateLockError> {
+        match self.cleanup_verification(holder) {
+            CleanupVerification::None => Ok(()),
+            CleanupVerification::Armed { reason, .. } => Err(
+                ValidateLockError::CleanupQuarantined(format!("ARMED: {reason}")),
+            ),
+            CleanupVerification::Active { reason, .. } => Err(
+                ValidateLockError::CleanupQuarantined(format!("ACTIVE: {reason}")),
+            ),
+            CleanupVerification::Uncensused { reason, .. } => Err(
+                ValidateLockError::CleanupQuarantined(format!("UNCENSUSED: {reason}")),
+            ),
+            CleanupVerification::Recoverable { reason, .. } => Err(
+                ValidateLockError::CleanupQuarantined(format!(
+                    "payload absence is proven but explicit reclaim-dead recovery is required: {reason}"
+                )),
+            ),
+            CleanupVerification::Unknown { reason, .. } => Err(
+                ValidateLockError::CleanupQuarantined(format!("UNVERIFIABLE: {reason}")),
+            ),
+        }
+    }
+
+    fn arm_run(&self, agent: &str, kind: Kind, target: &str) -> Result<(), ValidateLockError> {
+        let record = CleanupRecord::new(
+            agent,
+            format!("{}:{target}", kind.as_str()),
+            CleanupPhase::Armed,
+        )
+        .map_err(|source| io_error("construct", &self.paths.cleanup, source))?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                ValidateLockError::InvalidState("cannot arm cleanup without a lock holder".into())
+            })?;
+            if holder.agent != agent || holder.kind != kind.as_str() || holder.target != target {
+                return Err(ValidateLockError::InvalidState(
+                    "cleanup arm does not match the current operation".into(),
+                ));
+            }
+            self.require_no_cleanup(Some(&holder))?;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn transition_run_cleanup(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        expected: fn(&CleanupPhase) -> bool,
+        next: CleanupPhase,
+    ) -> Result<(), ValidateLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                ValidateLockError::InvalidState("cleanup transition has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.kind != kind.as_str() || holder.target != target {
+                return Err(ValidateLockError::InvalidState(
+                    "cleanup transition does not match the current operation".into(),
+                ));
+            }
+            let mut record = match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { record, .. }
+                | CleanupVerification::Active { record, .. }
+                | CleanupVerification::Uncensused { record, .. }
+                | CleanupVerification::Recoverable { record, .. } => record,
+                CleanupVerification::None => {
+                    return Err(ValidateLockError::InvalidState(
+                        "cleanup transition has no durable authority".into(),
+                    ))
+                }
+                CleanupVerification::Unknown { reason, .. } => {
+                    return Err(ValidateLockError::CleanupQuarantined(format!(
+                        "cannot transition unverifiable authority: {reason}"
+                    )))
+                }
+            };
+            if !expected(&record.phase) {
+                return Err(ValidateLockError::InvalidState(format!(
+                    "cleanup transition rejected phase {:?}",
+                    record.phase
+                )));
+            }
+            record.phase = next;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn publish_run(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        gated: &GatedChild,
+    ) -> Result<(), ValidateLockError> {
+        self.transition_run_cleanup(
+            agent,
+            kind,
+            target,
+            |phase| matches!(phase, CleanupPhase::Armed),
+            CleanupPhase::Published {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_unstarted_run(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+    ) -> Result<(), ValidateLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                ValidateLockError::InvalidState("unstarted cleanup has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.kind != kind.as_str() || holder.target != target {
+                return Err(ValidateLockError::InvalidState(
+                    "unstarted cleanup does not match current operation".into(),
+                ));
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { .. } => {
+                    self.assert_current_process_owner("clear unstarted run")?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(ValidateLockError::InvalidState(format!(
+                    "unstarted cleanup requires armed authority, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn record_residuals(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        pgid: u32,
+        capture: ResidualCapture,
+    ) -> Result<(), ValidateLockError> {
+        self.transition_run_cleanup(
+            agent,
+            kind,
+            target,
+            |phase| matches!(phase, CleanupPhase::CensusPending { .. }),
+            CleanupPhase::Residual {
+                pgid,
+                domain_complete: capture.complete,
+                residuals: capture.identities,
+            },
+        )
+    }
+
+    fn begin_run_census(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        gated: &GatedChild,
+    ) -> Result<(), ValidateLockError> {
+        self.transition_run_cleanup(
+            agent,
+            kind,
+            target,
+            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            CleanupPhase::CensusPending {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_proven_run(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        pgid: u32,
+    ) -> Result<(), ValidateLockError> {
+        self.record_residuals(
+            agent,
+            kind,
+            target,
+            pgid,
+            ResidualCapture {
+                complete: true,
+                identities: Vec::new(),
+            },
+        )?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                ValidateLockError::InvalidState("cleanup clear has no lock holder".into())
+            })?;
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Recoverable { .. } => {
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(ValidateLockError::InvalidState(format!(
+                    "cleanup clear requires proven absence, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn renew_run_lease(
+        &self,
+        agent: &str,
+        kind: Kind,
+        target: &str,
+        hold: u64,
+    ) -> Result<(), ValidateLockError> {
+        self.with_guard(|| {
+            let holder = self
+                .read_holder()?
+                .ok_or_else(|| ValidateLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                })?;
+            if holder.agent != agent || holder.kind != kind.as_str() || holder.target != target {
+                return Err(ValidateLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                });
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Active { record, .. }
+                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                other => {
+                    return Err(ValidateLockError::CleanupQuarantined(format!(
+                        "run heartbeat requires an active published domain, got {other:?}"
+                    )))
+                }
+            }
+            self.assert_current_process_owner("run heartbeat")?;
+            heartbeat_test_helper_delay();
+            self.write_holder(&new_holder(agent, kind, target, hold, None)?)
+        })
+    }
+
     fn acquire(
         &self,
         agent: &str,
@@ -674,6 +937,8 @@ impl ValidateLock {
         hold: u64,
     ) -> Result<AcquireToken, ValidateLockError> {
         let now = epoch_seconds()?;
+        let holder = self.read_holder()?;
+        self.require_no_cleanup(holder.as_ref())?;
         let mut queue = self.read_queue()?;
         if !queue.iter().any(|entry| entry.agent == agent) {
             queue.push(QueueEntry {
@@ -689,7 +954,6 @@ impl ValidateLock {
             .position(|entry| entry.agent == agent)
             .unwrap_or(0);
 
-        let holder = self.read_holder()?;
         let dead_owner = if holder.as_ref().is_some_and(|holder| holder.live_at(now)) {
             match self.owner_liveness()? {
                 OwnerLiveness::Dead(reason) => Some(reason),
@@ -747,6 +1011,7 @@ impl ValidateLock {
                 .ok_or_else(|| ValidateLockError::RenewNotOwner {
                     agent: agent.to_string(),
                 })?;
+            self.require_no_cleanup(Some(&holder))?;
             if holder.agent != agent {
                 return Err(ValidateLockError::RenewNotOwner {
                     agent: agent.to_string(),
@@ -765,7 +1030,9 @@ impl ValidateLock {
 
     fn release(&self, agent: &str, announce: bool) -> Result<(), ValidateLockError> {
         let (released, next) = self.with_guard(|| {
-            let Some(holder) = self.read_holder()? else {
+            let holder = self.read_holder()?;
+            self.require_no_cleanup(holder.as_ref())?;
+            let Some(holder) = holder else {
                 remove_if_exists(&self.paths.owner)?;
                 return Ok((false, None));
             };
@@ -810,34 +1077,70 @@ impl ValidateLock {
         // var or an agent-writable file, because only a real acquisition writes
         // this record. boot_id defeats reboots; start_ticks defeats PID reuse.
         let process_owner = self.read_process_owner()?;
-        match holder {
-            Some(holder) if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) => {
-                println!("ORPHANED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                print_owner_identity(process_owner.as_ref());
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  secs_left={}", holder.expires_at - now);
+        let cleanup = self.cleanup_verification(holder.as_ref());
+        let quarantined = !matches!(cleanup, CleanupVerification::None);
+        match cleanup {
+            CleanupVerification::None => {}
+            CleanupVerification::Armed { record, reason } => {
+                println!("QUARANTINED (pre-spawn barrier armed):");
+                print_cleanup_record(&record, &reason);
             }
-            Some(holder) if holder.live_at(now) => {
-                println!("HELD:");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                print_owner_identity(process_owner.as_ref());
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  secs_left={}", holder.expires_at - now);
+            CleanupVerification::Active { record, reason } => {
+                println!("QUARANTINED (cleanup active):");
+                print_cleanup_record(&record, &reason);
             }
-            Some(holder) => {
-                println!("LAPSED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                print_owner_identity(process_owner.as_ref());
-                println!("  owner_process={}", render_liveness(&liveness));
+            CleanupVerification::Recoverable { record, reason } => {
+                println!("QUARANTINED (absence proven; run reclaim-dead):");
+                print_cleanup_record(&record, &reason);
             }
-            None => println!("FREE"),
+            CleanupVerification::Uncensused { record, reason } => {
+                println!("QUARANTINED (published domain lacks final census):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Unknown { record, reason } => {
+                println!("QUARANTINED (cleanup unverifiable):");
+                if let Some(record) = record {
+                    print_cleanup_record(&record, &reason);
+                } else {
+                    println!("  reason={reason}");
+                }
+            }
+        }
+        if quarantined {
+            print_owner_identity(process_owner.as_ref());
+            println!("  owner_process={}", render_liveness(&liveness));
+        } else {
+            match holder {
+                Some(holder)
+                    if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) =>
+                {
+                    println!("ORPHANED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    print_owner_identity(process_owner.as_ref());
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
+                }
+                Some(holder) if holder.live_at(now) => {
+                    println!("HELD:");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    print_owner_identity(process_owner.as_ref());
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
+                }
+                Some(holder) => {
+                    println!("LAPSED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    print_owner_identity(process_owner.as_ref());
+                    println!("  owner_process={}", render_liveness(&liveness));
+                }
+                None => println!("FREE"),
+            }
         }
         let queue = self.read_queue()?;
         if !queue.is_empty() {
@@ -852,13 +1155,39 @@ impl ValidateLock {
     fn reclaim_dead(&self) -> Result<i32, ValidateLockError> {
         let reclaimed = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
-                remove_if_exists(&self.paths.owner)?;
-                return Ok(None);
+                return match self.cleanup_verification(None) {
+                    CleanupVerification::None => {
+                        remove_if_exists(&self.paths.owner)?;
+                        Ok(None)
+                    }
+                    CleanupVerification::Armed { reason, .. }
+                    | CleanupVerification::Active { reason, .. }
+                    | CleanupVerification::Uncensused { reason, .. }
+                    | CleanupVerification::Unknown { reason, .. } => {
+                        Err(ValidateLockError::ReclaimNotProven(reason))
+                    }
+                    CleanupVerification::Recoverable { .. } => {
+                        Err(ValidateLockError::ReclaimNotProven(
+                            "cleanup authority is not bound to a lock holder".into(),
+                        ))
+                    }
+                };
             };
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { reason, .. }
+                | CleanupVerification::Active { reason, .. }
+                | CleanupVerification::Uncensused { reason, .. }
+                | CleanupVerification::Unknown { reason, .. } => {
+                    return Err(ValidateLockError::ReclaimNotProven(reason));
+                }
+                CleanupVerification::Recoverable { .. } | CleanupVerification::None => {}
+            }
             match self.owner_liveness()? {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.kind, holder.target, reason)))
                 }
                 OwnerLiveness::Alive => Err(ValidateLockError::ReclaimNotProven(
@@ -884,6 +1213,9 @@ impl ValidateLock {
             return Err(ValidateLockError::UnboundedChildDeadline);
         }
         reject_bad_max(args.max)?;
+        enable_child_subreaper().map_err(|source| {
+            io_error("enable child subreaper at", Path::new("/proc/self"), source)
+        })?;
 
         // MECHANICAL rebase-before-validate at the admission chokepoint: refuse a
         // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
@@ -952,9 +1284,66 @@ impl ValidateLock {
             return Err(error);
         }
 
+        self.arm_run(&args.agent, args.kind, &args.target)?;
+        #[cfg(test)]
+        if crate::landing_lock::take_run_crash_hook(
+            &format!("{}:{}", args.kind.as_str(), args.target),
+            crate::landing_lock::RunCrashPoint::AfterArm,
+        ) {
+            return Err(ValidateLockError::CleanupQuarantined(
+                "test-injected supervisor crash after arm".into(),
+            ));
+        }
+        let owner_file = self.paths.owner.clone();
+        let mut gated = match spawn_gated_child(&args.child[0], &args.child[1..], |command| {
+            // The child may record `concurrent_validates=0` only when it can
+            // prove it is descended from this live, process-bound lock owner.
+            command
+                .env(
+                    "CI_HUB_VALIDATE_LOCK_OWNER_PID",
+                    std::process::id().to_string(),
+                )
+                .env("CI_HUB_VALIDATE_LOCK_OWNER_FILE", &owner_file);
+        }) {
+            Ok(gated) => gated,
+            Err(source) => {
+                self.clear_unstarted_run(&args.agent, args.kind, &args.target)?;
+                self.release(&args.agent, true)?;
+                return Err(ValidateLockError::Io {
+                    action: "launch start-gated child from",
+                    path: PathBuf::from(&args.child[0]),
+                    source,
+                });
+            }
+        };
+        #[cfg(test)]
+        if crate::landing_lock::take_run_crash_hook(
+            &format!("{}:{}", args.kind.as_str(), args.target),
+            crate::landing_lock::RunCrashPoint::AfterSpawn,
+        ) {
+            return Err(ValidateLockError::CleanupQuarantined(
+                "test-injected supervisor crash after spawn".into(),
+            ));
+        }
+        self.publish_run(&args.agent, args.kind, &args.target, &gated)?;
+        gated.release().map_err(|source| {
+            io_error("release child start gate at", &self.paths.cleanup, source)
+        })?;
+        #[cfg(test)]
+        if crate::landing_lock::take_run_crash_hook(
+            &format!("{}:{}", args.kind.as_str(), args.target),
+            crate::landing_lock::RunCrashPoint::AfterPublish,
+        ) {
+            return Err(ValidateLockError::CleanupQuarantined(
+                "test-injected supervisor crash after publication".into(),
+            ));
+        }
+
         let (stop_tx, stop_rx) = mpsc::channel();
         let heartbeat_paths = self.paths.clone();
         let heartbeat_agent = args.agent.clone();
+        let heartbeat_kind = args.kind;
+        let heartbeat_target = args.target.clone();
         let heartbeat_hold = args.hold;
         let heartbeat = thread::spawn(move || {
             let heartbeat_lock = ValidateLock {
@@ -963,7 +1352,12 @@ impl ValidateLock {
             let interval = Duration::from_secs((heartbeat_hold / 3).max(1));
             while stop_rx.recv_timeout(interval).is_err() {
                 if heartbeat_lock
-                    .renew(&heartbeat_agent, heartbeat_hold, false)
+                    .renew_run_lease(
+                        &heartbeat_agent,
+                        heartbeat_kind,
+                        &heartbeat_target,
+                        heartbeat_hold,
+                    )
                     .is_err()
                 {
                     break;
@@ -971,40 +1365,31 @@ impl ValidateLock {
             }
         });
 
-        // Run the child in its own process group so a deadline kill reaches the
-        // whole validate subtree (bash / cargo / hermit), not just the wrapper.
-        let spawn_result = Command::new(&args.child[0])
-            .args(&args.child[1..])
-            // The child may record `concurrent_validates=0` only when it can
-            // prove it is descended from this live, process-bound lock owner.
-            // Bare validate.sh runs receive neither value and must record
-            // concurrency as unknown rather than guessing zero.
-            .env(
-                "CI_HUB_VALIDATE_LOCK_OWNER_PID",
-                std::process::id().to_string(),
-            )
-            .env("CI_HUB_VALIDATE_LOCK_OWNER_FILE", &self.paths.owner)
-            .process_group(0)
-            .spawn();
-        let outcome = match spawn_result {
-            Ok(mut child) => Ok(supervise_child(
-                &mut child,
-                args.child_deadline,
-                &args.target,
-            )),
-            Err(source) => Err(source),
-        };
+        let outcome = supervise_child(&mut gated.child, args.child_deadline, &args.target);
+        self.begin_run_census(&args.agent, args.kind, &args.target, &gated)?;
         let _ = stop_tx.send(());
         let _ = heartbeat.join();
-        let release_result = self.release(&args.agent, true);
-
+        reap_exited_children();
+        let pgid = outcome.pgid();
+        let capture = capture_and_freeze_residuals(std::process::id());
+        let domain_empty =
+            !process_group_exists(pgid) && capture.complete && capture.identities.is_empty();
+        if !domain_empty {
+            let residual_count = capture.identities.len();
+            self.record_residuals(&args.agent, args.kind, &args.target, pgid, capture)?;
+            return Err(ValidateLockError::CleanupQuarantined(format!(
+                "completed process group {pgid} did not yield an empty payload domain; {residual_count} exact residual identities recorded and lock retained"
+            )));
+        }
+        self.clear_proven_run(&args.agent, args.kind, &args.target, pgid)?;
+        self.release(&args.agent, true)?;
         match outcome {
-            Ok(ChildOutcome::Exited(status)) => {
-                release_result?;
+            ChildOutcome::Exited { status, pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
                 Ok(exit_status_code(status))
             }
-            Ok(ChildOutcome::TimedOut) => {
-                release_result?;
+            ChildOutcome::TimedOut { pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
                 eprintln!(
                     "validate-lock: ABANDON {}: child exceeded --child-deadline {}s; \
                      killed the subtree and RELEASED the box so the FIFO can proceed.",
@@ -1012,14 +1397,9 @@ impl ValidateLock {
                 );
                 Ok(CHILD_DEADLINE_EXIT_CODE)
             }
-            Err(source) => {
-                release_result?;
-                Err(ValidateLockError::Io {
-                    action: "launch child from",
-                    path: PathBuf::from(&args.child[0]),
-                    source,
-                })
-            }
+            ChildOutcome::Uncertain { reason, .. } => Err(ValidateLockError::InvalidState(
+                format!("child supervision failed after payload domain was proven empty: {reason}"),
+            )),
         }
     }
 
@@ -1320,8 +1700,19 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> ValidateLoc
 
 /// How a supervised `run` child ended.
 enum ChildOutcome {
-    Exited(ExitStatus),
-    TimedOut,
+    Exited { status: ExitStatus, pgid: u32 },
+    TimedOut { pgid: u32 },
+    Uncertain { pgid: u32, reason: String },
+}
+
+impl ChildOutcome {
+    fn pgid(&self) -> u32 {
+        match self {
+            Self::Exited { pgid, .. } | Self::TimedOut { pgid } | Self::Uncertain { pgid, .. } => {
+                *pgid
+            }
+        }
+    }
 }
 
 /// Wait for `child`, killing its process group if it runs longer than
@@ -1331,19 +1722,33 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
     let deadline = Instant::now() + Duration::from_secs(deadline_secs);
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return ChildOutcome::Exited(status),
+            Ok(Some(status)) => {
+                return ChildOutcome::Exited {
+                    status,
+                    pgid: child.id(),
+                }
+            }
             Ok(None) => {}
             Err(source) => match child.wait() {
-                Ok(status) => return ChildOutcome::Exited(status),
+                Ok(status) => {
+                    return ChildOutcome::Exited {
+                        status,
+                        pgid: child.id(),
+                    }
+                }
                 Err(_) => {
                     eprintln!("validate-lock: cannot wait on child: {source}");
-                    return ChildOutcome::TimedOut;
+                    return ChildOutcome::Uncertain {
+                        pgid: child.id(),
+                        reason: source.to_string(),
+                    };
                 }
             },
         }
         if Instant::now() >= deadline {
+            let pgid = child.id();
             terminate_child_group(child, target);
-            return ChildOutcome::TimedOut;
+            return ChildOutcome::TimedOut { pgid };
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
@@ -1352,24 +1757,52 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
 /// SIGTERM then (after a grace period) SIGKILL the child's process group and reap
 /// the direct child. `signal_group` is reused from landing_lock.
 fn terminate_child_group(child: &mut Child, target: &str) {
-    let group = format!("-{}", child.id());
+    let pgid = child.id();
+    let group = format!("-{pgid}");
     eprintln!("validate-lock: child-deadline reached for {target}; SIGTERM process group {group}");
-    signal_group(libc::SIGTERM, child.id());
+    signal_group(libc::SIGTERM, pgid);
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
-        if let Ok(Some(_)) = child.try_wait() {
-            return;
-        }
     }
     eprintln!("validate-lock: grace expired for {target}; SIGKILL process group {group}");
-    signal_group(libc::SIGKILL, child.id());
-    let _ = child.wait();
+    let kill_sent = signal_group(libc::SIGKILL, pgid);
+    let child_reaped = if kill_sent {
+        child.wait().is_ok()
+    } else {
+        matches!(child.try_wait(), Ok(Some(_)))
+    };
+    let killed_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
+    while Instant::now() < killed_deadline {
+        if child_reaped && !process_group_exists(pgid) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
+    }
+    if child_reaped {
+        reap_exited_children();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::landing_lock::{exact_process_liveness, signal_exact_process, ProcessIdentity};
+    use std::os::unix::process::ExitStatusExt;
+
+    const HARD_DEATH_ROOT_ENV: &str = "CI_HUB_VALIDATE_HARD_DEATH_ROOT";
+    const HARD_DEATH_POINT_ENV: &str = "CI_HUB_VALIDATE_HARD_DEATH_POINT";
+
+    fn paths_at(root: &Path) -> LockPaths {
+        let lock = root.join(".validate-lock");
+        LockPaths {
+            guard: suffix(&lock, ".guard"),
+            queue: suffix(&lock, ".queue"),
+            owner: suffix(&lock, ".owner"),
+            cleanup: suffix(&lock, ".cleanup-required"),
+            lock,
+        }
+    }
 
     fn temp_paths(name: &str) -> LockPaths {
         let root = env::temp_dir().join(format!(
@@ -1378,13 +1811,7 @@ mod tests {
             epoch_seconds().unwrap()
         ));
         fs::create_dir_all(&root).unwrap();
-        let lock = root.join(".validate-lock");
-        LockPaths {
-            guard: suffix(&lock, ".guard"),
-            queue: suffix(&lock, ".queue"),
-            owner: suffix(&lock, ".owner"),
-            lock,
-        }
+        paths_at(&root)
     }
 
     // 1. Byte round-trip for the holder (kind+target) and a queue entry.
@@ -1419,9 +1846,10 @@ mod tests {
         );
     }
 
-    // 2. N=3 sequential validates all admitted, lock ends FREE.
+    // 2. N=3 sequential box-exclusive jobs all admitted, lock ends FREE.
     #[test]
     fn positive_non_starvation_three_sequential() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
         let paths = temp_paths("three-sequential");
         let lock = ValidateLock {
             paths: paths.clone(),
@@ -1431,7 +1859,7 @@ mod tests {
                 .run(
                     RunArgs {
                         agent: format!("validate-agent-{i}"),
-                        kind: Kind::Validate,
+                        kind: Kind::Bench,
                         target: format!("sha-{i}"),
                         no_wait: false,
                         wait: 0,
@@ -1455,6 +1883,7 @@ mod tests {
 
     #[test]
     fn run_child_receives_process_bound_exclusivity_proof() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
         let paths = temp_paths("child-proof");
         let lock = ValidateLock {
             paths: paths.clone(),
@@ -1466,7 +1895,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "proof-agent".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "proof-sha".into(),
                     no_wait: false,
                     wait: 0,
@@ -1515,7 +1944,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "agent2".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha2".into(),
                     no_wait: true,
                     wait: 0,
@@ -1555,6 +1984,7 @@ mod tests {
     // 4. run child-deadline kills the child quickly and releases the box.
     #[test]
     fn run_child_deadline_kills_and_releases() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
         let paths = temp_paths("child-deadline");
         let lock = ValidateLock {
             paths: paths.clone(),
@@ -1564,7 +1994,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "stuck-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-stuck".into(),
                     no_wait: false,
                     wait: 0,
@@ -1587,6 +2017,528 @@ mod tests {
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
+    #[test]
+    fn run_kills_stubborn_descendant_before_releasing_box() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        let paths = temp_paths("stubborn-descendant");
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("descendant.identity");
+        let script = r#"
+trap 'exit 0' TERM
+(
+  trap '' TERM HUP
+  pid=$BASHPID
+  start=$(awk '{print $22}' "/proc/$pid/stat")
+  printf '%s %s %s\n' "$pid" "$start" "$$" > "$1"
+  while :; do sleep 60; done
+) &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let started = Instant::now();
+        let code = lock
+            .run(
+                RunArgs {
+                    agent: "stubborn-validate".into(),
+                    kind: Kind::Bench,
+                    target: "sha-stubborn".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 1,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![
+                        OsString::from("/bin/bash"),
+                        OsString::from("-c"),
+                        OsString::from(script),
+                        OsString::from("stubborn-descendant"),
+                        identity_path.clone().into_os_string(),
+                    ],
+                },
+                paths.lock.parent().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(code, CHILD_DEADLINE_EXIT_CODE);
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        assert_eq!(fields.len(), 3, "unexpected identity record {identity:?}");
+        let pid: u32 = fields[0].parse().unwrap();
+        let start_ticks: u64 = fields[1].parse().unwrap();
+        let pgid: u32 = fields[2].parse().unwrap();
+        let descendant_survived_release =
+            matches!(process_start_ticks(pid), Ok(current) if current == start_ticks);
+        if descendant_survived_release {
+            signal_group(libc::SIGKILL, pgid);
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_secs(CHILD_TERM_GRACE_SECONDS),
+            "stubborn descendant did not survive TERM grace"
+        );
+        assert!(
+            !descendant_survived_release,
+            "exact descendant {pid}@{start_ticks} survived box release"
+        );
+        assert!(!process_group_exists(pgid));
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn escaped_payload_quarantine_refuses_consumers_until_exact_recovery() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        let paths = temp_paths("escaped-quarantine");
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+trap 'exit 0' TERM
+setsid /bin/bash -c '
+  trap "" TERM HUP
+  pid=$BASHPID
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let run_error = lock
+            .run(
+                RunArgs {
+                    agent: "escaped-validate".into(),
+                    kind: Kind::Bench,
+                    target: "sha-escaped".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 1,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![
+                        OsString::from("/bin/bash"),
+                        OsString::from("-c"),
+                        OsString::from(script),
+                        OsString::from("escaped-leader"),
+                        identity_path.clone().into_os_string(),
+                    ],
+                },
+                paths.lock.parent().unwrap(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            run_error,
+            ValidateLockError::CleanupQuarantined(_)
+        ));
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match &record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals.clone(),
+            phase => panic!("expected complete residual phase, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(matches!(exact_process_liveness(&escaped), Ok(true)));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Active { .. }
+        ));
+
+        assert!(matches!(
+            lock.acquire("replacement-validate", Kind::Validate, "sha-next", 0, 30),
+            Err(ValidateLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.renew("escaped-validate", 30, false),
+            Err(ValidateLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.release("escaped-validate", false),
+            Err(ValidateLockError::CleanupQuarantined(_))
+        ));
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert!(matches!(
+            lock.acquire("replacement-validate", Kind::Validate, "sha-next", 0, 30),
+            Err(ValidateLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.reclaim_dead(),
+            Err(ValidateLockError::ReclaimNotProven(_))
+        ));
+        lock.status().unwrap();
+
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(residuals
+            .iter()
+            .all(|identity| matches!(exact_process_liveness(identity), Ok(false))));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Recoverable { .. }
+        ));
+        assert!(matches!(
+            lock.acquire("replacement-validate", Kind::Validate, "sha-next", 0, 30),
+            Err(ValidateLockError::CleanupQuarantined(_))
+        ));
+
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        assert!(!paths.cleanup.exists());
+        assert_eq!(
+            lock.acquire("replacement-validate", Kind::Validate, "sha-next", 0, 30)
+                .unwrap(),
+            0
+        );
+        lock.release("replacement-validate", false).unwrap();
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn hard_death_run_subprocess_entry() {
+        let Some(root) = env::var_os(HARD_DEATH_ROOT_ENV).map(PathBuf::from) else {
+            return;
+        };
+        let point = match env::var(HARD_DEATH_POINT_ENV).as_deref() {
+            Ok("after-arm") => crate::landing_lock::RunCrashPoint::AfterArm,
+            Ok("after-spawn") => crate::landing_lock::RunCrashPoint::AfterSpawn,
+            other => panic!("invalid hard-death point {other:?}"),
+        };
+        let paths = paths_at(&root);
+        let ready = root.join("supervisor-ready");
+        let marker = root.join("payload-started");
+        let target = "hard-death";
+        crate::landing_lock::install_run_hard_death_hook(&format!("bench:{target}"), point, ready);
+        let result = ValidateLock { paths }.run(
+            RunArgs {
+                agent: "hard-death-validate".into(),
+                kind: Kind::Bench,
+                target: target.into(),
+                no_wait: false,
+                wait: 0,
+                hold: 30,
+                child_deadline: 30,
+                max: 1,
+                skip_base_check: true,
+                child: vec![
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                    OsString::from("payload"),
+                    marker.into_os_string(),
+                ],
+            },
+            &root,
+        );
+        panic!("hard-death subprocess resumed instead of being SIGKILLed: {result:?}");
+    }
+
+    #[test]
+    fn hard_death_before_publication_retains_armed_barrier() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        for point_name in ["after-arm", "after-spawn"] {
+            let paths = temp_paths(&format!("hard-death-{point_name}"));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let ready = root.join("supervisor-ready");
+            let marker = root.join("payload-started");
+            let mut supervisor = Command::new(env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("validate_lock::tests::hard_death_run_subprocess_entry")
+                .arg("--nocapture")
+                .env(HARD_DEATH_ROOT_ENV, &root)
+                .env(HARD_DEATH_POINT_ENV, point_name)
+                .spawn()
+                .unwrap();
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !ready.exists() {
+                if let Some(status) = supervisor.try_wait().unwrap() {
+                    panic!("hard-death supervisor exited before readiness: {status}");
+                }
+                if Instant::now() >= deadline {
+                    let _ = supervisor.kill();
+                    let _ = supervisor.wait();
+                    panic!("hard-death supervisor did not reach {point_name}");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let lock = ValidateLock {
+                paths: paths.clone(),
+            };
+            let owner = lock.read_process_owner().unwrap().unwrap();
+            assert_eq!(owner.pid, supervisor.id());
+            assert_eq!(
+                owner.start_ticks,
+                process_start_ticks(supervisor.id()).unwrap(),
+                "owner record was not bound to the stopped supervisor"
+            );
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(record.phase, CleanupPhase::Armed));
+            assert!(!marker.exists(), "guest ran before identity publication");
+
+            assert_eq!(
+                unsafe { libc::kill(supervisor.id() as libc::pid_t, libc::SIGKILL) },
+                0
+            );
+            let status = supervisor.wait().unwrap();
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+            let owner_identity = ProcessIdentity {
+                pid: owner.pid,
+                start_ticks: owner.start_ticks,
+            };
+            assert!(matches!(exact_process_liveness(&owner_identity), Ok(false)));
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !marker.exists(),
+                "start-gated guest ran after supervisor death"
+            );
+            let persisted =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(persisted.phase, CleanupPhase::Armed));
+
+            assert!(matches!(
+                lock.acquire("replacement-validate", Kind::Validate, "replacement", 0, 30),
+                Err(ValidateLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(ValidateLockError::ReclaimNotProven(_))
+            ));
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn crash_windows_retain_armed_or_uncensused_barrier_after_owner_death() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        for (index, point) in [
+            crate::landing_lock::RunCrashPoint::AfterArm,
+            crate::landing_lock::RunCrashPoint::AfterSpawn,
+            crate::landing_lock::RunCrashPoint::AfterPublish,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let paths = temp_paths(&format!("crash-window-{index}"));
+            let lock = ValidateLock {
+                paths: paths.clone(),
+            };
+            let marker = paths.lock.parent().unwrap().join("payload-started");
+            let target = format!("crash-{index}");
+            crate::landing_lock::install_run_crash_hook(&format!("bench:{target}"), point);
+            let error = lock
+                .run(
+                    RunArgs {
+                        agent: "crash-validate".into(),
+                        kind: Kind::Bench,
+                        target: target.clone(),
+                        no_wait: false,
+                        wait: 0,
+                        hold: 30,
+                        child_deadline: 30,
+                        max: 1,
+                        skip_base_check: true,
+                        child: vec![
+                            OsString::from("/bin/sh"),
+                            OsString::from("-c"),
+                            OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                            OsString::from("payload"),
+                            marker.clone().into_os_string(),
+                        ],
+                    },
+                    paths.lock.parent().unwrap(),
+                )
+                .unwrap_err();
+            assert!(matches!(error, ValidateLockError::CleanupQuarantined(_)));
+
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            let published = match (&point, &record.phase) {
+                (
+                    crate::landing_lock::RunCrashPoint::AfterArm
+                    | crate::landing_lock::RunCrashPoint::AfterSpawn,
+                    CleanupPhase::Armed,
+                ) => None,
+                (
+                    crate::landing_lock::RunCrashPoint::AfterPublish,
+                    CleanupPhase::Published { leader, pgid },
+                ) => Some((leader.clone(), *pgid)),
+                (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
+            };
+
+            if let Some((leader, _)) = &published {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline && !marker.exists() {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(marker.exists(), "published guest never started");
+                assert!(matches!(exact_process_liveness(leader), Ok(true)));
+            } else {
+                thread::sleep(Duration::from_millis(100));
+                reap_exited_children();
+                assert!(
+                    !marker.exists(),
+                    "guest payload ran before exact identity publication"
+                );
+            }
+
+            let mut owner = lock.read_process_owner().unwrap().unwrap();
+            owner.pid = u32::MAX;
+            write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+            assert!(matches!(
+                lock.acquire("replacement-validate", Kind::Validate, "replacement", 0, 30),
+                Err(ValidateLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.renew("crash-validate", 30, false),
+                Err(ValidateLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.release("crash-validate", false),
+                Err(ValidateLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(ValidateLockError::ReclaimNotProven(_))
+            ));
+            lock.status().unwrap();
+
+            if let Some((leader, pgid)) = published {
+                signal_group(libc::SIGKILL, pgid);
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    reap_exited_children();
+                    if matches!(exact_process_liveness(&leader), Ok(false))
+                        && !process_group_exists(pgid)
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(matches!(exact_process_liveness(&leader), Ok(false)));
+                assert!(!process_group_exists(pgid));
+                assert!(matches!(
+                    lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+                    CleanupVerification::Uncensused { .. }
+                ));
+                assert!(matches!(
+                    lock.reclaim_dead(),
+                    Err(ValidateLockError::ReclaimNotProven(_))
+                ));
+            }
+            let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn normal_leader_exit_cannot_clear_an_escaped_payload_barrier() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        let paths = temp_paths("normal-exit-escaped");
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+setsid /bin/sh -c '
+  trap "" TERM HUP
+  pid=$$
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+exit 0
+"#;
+        let error = lock
+            .run(
+                RunArgs {
+                    agent: "normal-exit-validate".into(),
+                    kind: Kind::Bench,
+                    target: "normal-exit".into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    max: 1,
+                    skip_base_check: true,
+                    child: vec![
+                        OsString::from("/bin/sh"),
+                        OsString::from("-c"),
+                        OsString::from(script),
+                        OsString::from("normal-leader"),
+                        identity_path.clone().into_os_string(),
+                    ],
+                },
+                paths.lock.parent().unwrap(),
+            )
+            .unwrap_err();
+        assert!(matches!(error, ValidateLockError::CleanupQuarantined(_)));
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals,
+            phase => panic!("expected complete residual census, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(lock.read_holder().unwrap().is_some());
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
     // 5. --max != 1 is rejected before acquiring; the box stays FREE.
     #[test]
     fn max_greater_than_one_rejected() {
@@ -1598,7 +2550,7 @@ mod tests {
             .run(
                 RunArgs {
                     agent: "greedy".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-greedy".into(),
                     no_wait: false,
                     wait: 0,
@@ -1653,10 +2605,9 @@ mod tests {
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
-    // --- rebase-base-floor admission gate (mechanical REBASE-BEFORE-VALIDATE) ---
+    // --- composite admission gate (mechanical REBASE-BEFORE-VALIDATE) ---
     // These serialize on ENV_LOCK because they mutate a process-global env var.
-    // Non-hex-target tests above never read the env (is_full_sha short-circuits),
-    // so they are unaffected and need no lock.
+    // Bench-kind tests above never read the env, so they are unaffected.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn write_stub(name: &str, body: &str) -> PathBuf {
@@ -1732,11 +2683,10 @@ mod tests {
         }
     }
 
-    // PASS-THROUGH: bench kind, a non-40-hex target, and the explicit escape
-    // hatch must all return Ok WITHOUT invoking the predicate (the stub would
-    // REFUSE if it ran), so the gate never blocks what it cannot floor-check.
+    // PASS-THROUGH: bench work is not landing evidence and does not invoke the
+    // predicate (the stub would REFUSE if it ran).
     #[test]
-    fn base_admission_passes_through_bench_nonhex_and_skip() {
+    fn base_admission_passes_through_bench() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub(
             "pass",
@@ -1748,16 +2698,25 @@ mod tests {
             base_admission_check(r, HEX_SHA, Kind::Bench, false).is_ok(),
             "bench is never floor-gated"
         );
-        assert!(
-            base_admission_check(r, "sha-3", Kind::Validate, false).is_ok(),
-            "a non-40-hex target is not resolvable here and must pass through"
-        );
-        assert!(
-            base_admission_check(r, HEX_SHA, Kind::Validate, true).is_ok(),
-            "--skip-base-check must bypass the gate"
-        );
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         let _ = fs::remove_file(&stub);
+    }
+
+    // BYPASS NEGATIVES: neither an ambiguous target nor the former skip flag can
+    // mint qualifying evidence. Both refuse before invoking the predicate.
+    #[test]
+    fn base_admission_refuses_nonhex_and_skip_bypass() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let r = Path::new("/nonexistent");
+        for result in [
+            base_admission_check(r, "sha-3", Kind::Validate, false),
+            base_admission_check(r, HEX_SHA, Kind::Validate, true),
+        ] {
+            assert!(
+                matches!(result, Err(ValidateLockError::StaleBase(_))),
+                "a validate admission bypass must be refused, got {result:?}"
+            );
+        }
     }
 
     // END-TO-END through run(): a stale base is refused with STALE_BASE_EXIT_CODE

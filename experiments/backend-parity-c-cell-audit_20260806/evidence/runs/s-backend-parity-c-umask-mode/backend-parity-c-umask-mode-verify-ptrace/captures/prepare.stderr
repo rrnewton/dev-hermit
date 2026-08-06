@@ -1,0 +1,8 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/umask_mode.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/umask_mode.c:31:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   31 |   if (mkdtemp(root) == NULL) {
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/umask_mode.c:31:21: error: comparison between pointer and integer [-Werror]
+   31 |   if (mkdtemp(root) == NULL) {
+      |                     ^~
+cc1: all warnings being treated as errors

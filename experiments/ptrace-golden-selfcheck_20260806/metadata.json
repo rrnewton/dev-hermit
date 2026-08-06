@@ -1,0 +1,27 @@
+{
+  "experiment": "ptrace-golden-selfcheck_20260806",
+  "question": "Is the PTRACE reference itself double-run deterministic at every ladder rung? Any rung where it diverges from itself is disqualified as a golden.",
+  "date_utc": "2026-08-06",
+  "method": "Per rung, N=5 INDEPENDENT PAIRS. Each pair: two `--log info --log-file` captures under --strict, leading wall-clock timestamp stripped, compared byte-for-byte. This is the golden's own definition of identity, so the verdict binds to what the ratchet actually compares.",
+  "comparison_depth": "INFO log (Detcore COMMIT + DETLOG records). NOT stdout-only.",
+  "sets": {
+    "A-ratchet-f89c69766": {
+      "binary": "debug build at f89c69766371806d3c9b2c3003531df2d59d6118",
+      "why": "the SHA the prefix-depth ratchet captured its golden at",
+      "flags": "--log info --log-file <p> run --strict"
+    },
+    "B-pinned-goldens-4c70658e7": {
+      "binary": "debug build at 4c70658e785834737cbe1524f77330c781a6f5ea",
+      "why": "the 7 goldens pinned by experiments/golden-logs-prefix-depth_20260806",
+      "flags": "--log info --log-file <p> run --base-env minimal -e LC_ALL=C -e TZ=UTC --strict"
+    }
+  },
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "disqualified_rungs": [],
+  "not_established": [
+    "Set A's Z counts (23/52/53/182) differ from the ratchet doc's (14/43/44/16) because the ratchet's env and its exact fork/exec guest are not recorded in the doc; my Set A rungs approximate rather than reproduce them.",
+    "Set B used a debug build at the golden SHA, not the manifest's exact release binary (sha256 differs); the Z counts match the manifest exactly, which is the strongest available cross-check.",
+    "N=5 pairs bounds a flake rate loosely: 0/5 clean pairs leaves a ~45% one-sided 95% upper bound on a per-pair flake rate. IDENTICAL here means 'not observed to diverge in 5 pairs', not 'proven deterministic'."
+  ]
+}

@@ -1,0 +1,11 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pipe2_flags.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pipe2_flags.c:36:7: error: implicit declaration of function ‘pipe2’; did you mean ‘pipe’? [-Werror=implicit-function-declaration]
+   36 |   if (pipe2(fds, 0) == 0 && fd_cloexec(fds[0]) == 0 && fd_cloexec(fds[1]) == 0 &&
+      |       ^~~~~
+      |       pipe
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pipe2_flags.c:44:18: error: ‘O_CLOEXEC’ undeclared (first use in this function); did you mean ‘FD_CLOEXEC’?
+   44 |   if (pipe2(fds, O_CLOEXEC) == 0 && fd_cloexec(fds[0]) == 1 &&
+      |                  ^~~~~~~~~
+      |                  FD_CLOEXEC
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/pipe2_flags.c:44:18: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

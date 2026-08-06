@@ -1,0 +1,5 @@
+backend,env_entries,argv,auxv,double_run_diff_lines,vs_ptrace_diff_lines,env_depends_on_host_path,env_depends_on_hermit_flags
+ptrace,159,1,22,0,0,no,no
+sabre,159,1,22,0,10,no,no
+e9patch,159,1,22,0,0,no,no
+dbi,163,1,22,0,186,YES,YES

@@ -1,0 +1,20 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:63:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   63 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:74:7: error: implicit declaration of function ‘truncate’ [-Werror=implicit-function-declaration]
+   74 |   if (truncate(template, 4) == 0 && path_size(template) == 4)
+      |       ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:86:15: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   86 |   ssize_t n = pread(rd, buf, sizeof(buf), 0);
+      |               ^~~~~
+      |               read
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:98:7: error: implicit declaration of function ‘faccessat’; did you mean ‘access’? [-Werror=implicit-function-declaration]
+   98 |   if (faccessat(AT_FDCWD, template, R_OK, 0) == 0)
+      |       ^~~~~~~~~
+      |       access
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:98:17: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   98 |   if (faccessat(AT_FDCWD, template, R_OK, 0) == 0)
+      |                 ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/path_file_ops.c:98:17: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Out-of-band liveness detector for SCHEDULED GitHub workflow runs.
+
+WHY OUT-OF-BAND. A downstream `if: always()` alert job (hermit PR #1634) catches the
+case where ONE JOB is killed by `timeout-minutes`. It structurally cannot catch:
+  C1 whole-run cancel   -- concurrency cancel-in-progress / manual / API cancel kills
+                           the alert job too;
+  C2 run never created  -- the cron did not fire, or GitHub auto-disabled the schedule
+                           after 60 days of repo inactivity;
+  C3 run never started  -- queued forever behind a scarce self-hosted runner
+                           (measured: 2026-07-26 queued ~6.5 h for the `pmu` runner);
+  C4 schedule removed   -- the workflow file was edited/renamed/deleted.
+All four are ABSENCE. A detector inside the thing being monitored cannot observe its
+own absence, so this one runs elsewhere (the coordinator's hourly rollup), reads the
+run list, and asserts a POSITIVE: "a terminal run of W finished within its own period".
+
+THE PERIOD IS DERIVED FROM THE WORKFLOW'S OWN CRON, not hardcoded -- the value carries
+the condition it was computed under.
+
+CLASSIFICATION IS DELEGATED. Terminal-vs-no-result is decided by the canonical
+agent-utils/py/ci_hub_check_outcome.py table when it is importable, so this tool does
+not become yet another inline copy of that decision.
+"""
+import argparse, json, re, subprocess, sys
+from datetime import datetime, timedelta, timezone
+
+CANONICAL = "agent-utils/py/ci_hub_check_outcome.py"
+
+def classify(conclusion, root=None):
+    """PASSED / FAILED / NO_RESULT via the canonical table, with a declared fallback."""
+    if root:
+        p = f"{root}/{CANONICAL}"
+        try:
+            r = subprocess.run([sys.executable, p, "--status", "completed",
+                                "--conclusion", conclusion or ""],
+                               capture_output=True, text=True, timeout=20)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip(), "canonical"
+        except Exception:
+            pass
+    c = (conclusion or "").lower()
+    if c == "success": return "PASSED", "fallback"
+    if c in ("failure", "timed_out", "startup_failure", "error"): return "FAILED", "fallback"
+    return "NO_RESULT", "fallback"
+
+def cron_period_hours(cron):
+    """Coarse upper bound on the gap between fires. Deliberately conservative: we only
+    need an order of magnitude to set a staleness window, and over-estimating the period
+    makes the detector QUIETER, never falsely loud."""
+    f = cron.split()
+    if len(f) != 5: return None
+    minute, hour, dom, month, dow = f
+    if dow != "*" and dom == "*": return 24 * 7          # weekly
+    if hour != "*": return 24                            # daily
+    if minute != "*": return 1                           # hourly (incl. "7,37 * * * *")
+    return 1
+
+def crons_for(workflow_body):
+    return re.findall(r'cron:\s*["\']([^"\']+)["\']', workflow_body)
+
+def evaluate(workflow, crons, runs, now, grace=2.0, root=None):
+    """runs: list of {event,status,conclusion,createdAt,updatedAt} newest-first."""
+    periods = [cron_period_hours(c) for c in crons]
+    periods = [p for p in periods if p]
+    if not periods:
+        return {"workflow": workflow, "verdict": "NO-SCHEDULE",
+                "detail": "no parsable cron -- not a scheduled workflow"}
+    period_h = min(periods)
+    window = timedelta(hours=period_h * grace)
+    sched = [r for r in runs if r.get("event") == "schedule"]
+    if not sched:
+        return {"workflow": workflow, "verdict": "NEVER-RAN", "period_hours": period_h,
+                "detail": "no scheduled run of this workflow exists at all"}
+    terminal = []
+    for r in sched:
+        if r.get("status") != "completed":
+            continue
+        cls, src = classify(r.get("conclusion"), root)
+        if cls in ("PASSED", "FAILED"):
+            terminal.append((r, cls, src))
+    newest = sched[0]
+    if not terminal:
+        return {"workflow": workflow, "verdict": "NO-TERMINAL-RUN", "period_hours": period_h,
+                "detail": f"newest scheduled run is status={newest.get('status')} "
+                          f"conclusion={newest.get('conclusion')} -- no run has ever reached "
+                          f"a terminal outcome"}
+    r, cls, src = terminal[0]
+    ts = datetime.fromisoformat(r["updatedAt"].replace("Z", "+00:00"))
+    age = now - ts
+    out = {"workflow": workflow, "period_hours": period_h,
+           "window_hours": round(window.total_seconds() / 3600, 1),
+           "newest_terminal": {"conclusion": r.get("conclusion"), "class": cls,
+                               "classifier": src, "at": r["updatedAt"],
+                               "age_hours": round(age.total_seconds() / 3600, 1)}}
+    if age > window:
+        out["verdict"] = "STALE"
+        out["detail"] = (f"last terminal scheduled run was {age.total_seconds()/3600:.1f} h ago, "
+                         f"outside the {window.total_seconds()/3600:.0f} h window")
+    else:
+        out["verdict"] = "OK"
+    # a fresh terminal run does not excuse a newer non-terminal one
+    if newest.get("status") == "completed":
+        ncls, _ = classify(newest.get("conclusion"), root)
+        if ncls == "NO_RESULT" and out["verdict"] == "OK":
+            out["verdict"] = "LAST-RUN-NO-RESULT"
+            out["detail"] = (f"the most recent scheduled run concluded "
+                             f"{newest.get('conclusion')!r} -- a no-result, which is silent")
+    return out
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--runs", required=True, help="JSON: {workflow: {crons:[...], runs:[...]}}")
+    ap.add_argument("--now", help="ISO instant to evaluate at (default: from the fixture)")
+    ap.add_argument("--root", help="dev-hermit parent, to reach the canonical classifier")
+    ap.add_argument("--grace", type=float, default=2.0)
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    data = json.load(open(a.runs))
+    now = datetime.fromisoformat((a.now or data["now"]).replace("Z", "+00:00"))
+    results = [evaluate(w, d.get("crons", []), d.get("runs", []), now, a.grace, a.root)
+               for w, d in data["workflows"].items()]
+    bad = [r for r in results if r["verdict"] not in ("OK", "NO-SCHEDULE")]
+    if a.json:
+        print(json.dumps({"results": results, "alerting": len(bad)}, indent=1))
+    else:
+        for r in results:
+            mark = "ok  " if r["verdict"] in ("OK", "NO-SCHEDULE") else "ALERT"
+            print(f"  {mark} {r['workflow']:26s} {r['verdict']:18s} {r.get('detail','')}")
+    return 1 if bad else 0
+
+if __name__ == "__main__":
+    sys.exit(main())

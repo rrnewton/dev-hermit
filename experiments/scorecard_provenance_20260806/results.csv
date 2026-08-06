@@ -1,0 +1,12 @@
+id,provenance dimension,state,value,verdict
+P1,hermit_sha recorded,recorded,618 of 618 rows carry a 40-hex SHA,OK
+P2,dirty-tree flag recorded,recorded,0 rows dirty=true,OK
+P3,is the measured code current,NO,"2 SHAs are 304 and 306 commits behind origin/main tip 2c54dfb5; 5 of 7 SHAs are NOT on main at all",STALE
+P4,single code state,NO,"the 180 enabled cells pool SIX different hermit SHAs spanning 2026-08-01..2026-08-05",POOLED
+P5,reverie_sha recorded,MOSTLY NOT,"173 of 180 enabled cells = 'unknown' (96%); only the 7 kvm cells carry one",UNBOUND
+P6,run_utc single-valued per run_id,NO for one run,kvm-fullcorpus-scorecard has MIXED(4) run_utc under one run_id,INCONSISTENT
+P7,comparator / flags recorded,NO COLUMN EXISTS,"columns are run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason",UNRECORDED
+P8,is a parity verdict re-derivable from the artifact,ALMOST NEVER,"8 of 91 non-ptrace enabled cells with a parity verdict have a ptrace reference row in the SAME run; 83 do not",NOT RE-DERIVABLE
+P9,distinct runs merged into one CSV,9 run_ids,"kvm-fullcorpus 200, liteinst-fullcorpus 200, canonical-release-ptrace-dbi 46, liteinst-spst 40, 5x backend-parity 24-28 each",MERGED
+X1,related finding (separate artifact),parity column is stdout-hash-only,collect-envelope.rs:432,see compat_scorecard_depth_20260806
+X2,related finding (separate artifact),deterministic column is `pass` with no mode check,collect-envelope.rs:260-265,see strict_verify_holes_20260806

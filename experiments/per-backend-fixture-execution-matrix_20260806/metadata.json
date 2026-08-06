@@ -1,0 +1,20 @@
+{
+  "question": "For each backend-parity fixture and backend, does it actually EXECUTE, or is it gated off / not wired / unable to run?",
+  "hermit_sha": "f706d3dc3d6f1086593a8f353d405b4a3cb86732",
+  "hermit_base": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "manifest": "tests/e2e/manifests/backend-parity-c.toml",
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "compiler_flags": ["-O1", "-D_GNU_SOURCE", "-pthread"],
+  "run_command": "hermit run --strict --verify --base-env=minimal -- <fixture>",
+  "backend_availability_measured": {
+    "ptrace": "available",
+    "kvm": "hung, no verdict in 60s",
+    "dbi": "DBI support was not included in this build",
+    "liteinst": "libreverie_liteinst.so missing",
+    "sabre": "SaBRe support was not included in this build",
+    "e9patch": "e9patch support was not included in this build"
+  },
+  "cells": 2550,
+  "ci_selected_cells": 1
+}

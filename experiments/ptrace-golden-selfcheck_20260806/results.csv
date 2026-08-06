@@ -1,0 +1,12 @@
+set,rung,argv,Z_commits,pairs_clean,pairs,verdict
+A-ratchet-f89c69766,true,"/bin/true",23,5,5,IDENTICAL
+A-ratchet-f89c69766,echo,"/bin/echo hello",52,5,5,IDENTICAL
+A-ratchet-f89c69766,wc-hostname,"/usr/bin/wc -c /etc/hostname",53,5,5,IDENTICAL
+A-ratchet-f89c69766,fork-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",182,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,true,"/bin/true",5,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,echo,"/bin/echo hermit-golden",6,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,cat-hostname,"/bin/cat /etc/hostname",7,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,wc-passwd,"/usr/bin/wc -l /etc/passwd",7,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,head-passwd,"/usr/bin/head -1 /etc/passwd",7,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,sh-pipeline,"/bin/sh -c /bin/echo a | /usr/bin/wc -c",30,5,5,IDENTICAL
+B-pinned-goldens-4c70658e7,sh-loop-exec,"/bin/sh -c for i in 1 2 3; do /bin/echo $i; done",45,5,5,IDENTICAL

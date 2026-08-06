@@ -1,0 +1,15 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/readdir_entries.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/readdir_entries.c:44:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   44 |   if (mkdtemp(root) == NULL) {
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/readdir_entries.c:44:21: error: comparison between pointer and integer [-Werror]
+   44 |   if (mkdtemp(root) == NULL) {
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/readdir_entries.c:69:20: error: implicit declaration of function ‘strdup’; did you mean ‘strcmp’? [-Werror=implicit-function-declaration]
+   69 |       names[n++] = strdup(entry->d_name);
+      |                    ^~~~~~
+      |                    strcmp
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/readdir_entries.c:69:18: error: assignment to ‘char *’ from ‘int’ makes pointer from integer without a cast [-Werror=int-conversion]
+   69 |       names[n++] = strdup(entry->d_name);
+      |                  ^
+cc1: all warnings being treated as errors

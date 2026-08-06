@@ -1,0 +1,5 @@
+fixture,backend,syscall_source,expected,intercepted,note
+usemylib,ptrace,libmylib.so(50)+libc(50),100,100,reference
+usemylib,sabre,libmylib.so(50)+libc(50),100,50,only the libc half; libmylib.so not on known_syscall_libs
+dl,ptrace,ld.so via dlopen,openat14+mmap13+mprotect4,all,reference
+dl,sabre,ld.so via dlopen,openat14+mmap13+mprotect4,0,ld syscalls routed to real_syscall not plugin_sc_handler

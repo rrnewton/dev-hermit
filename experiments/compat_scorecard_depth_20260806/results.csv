@@ -1,0 +1,22 @@
+id,measurement,value,note
+C1,scorecard.csv rows,618,"canonical CSV, last written 2026-08-05 00:24"
+C2,enabled cells,180 of 618 (29%),"the parity%/det% denominator"
+C3,cell_state split,"enabled 180 / disabled 422 / expansion 16",
+C4,dbi coverage,87 enabled of 92 rows (94.6%),
+C5,ptrace coverage,79 of 99 (79.8%),the reference backend
+C6,kvm coverage,7 of 200 (3.5%),"177 disabled, 35 of them kvm-run-fail-exit1"
+C7,liteinst coverage,0 of 220 (0.0%),"the entire backend has ZERO enabled cells"
+C8,sabre coverage,7 of 7 (100%) enabled but 0 pass,"all 7 outcome=unavailable"
+G1,enabled cells not (pass AND parity=1),16,the real gap list
+G2,dbi gaps,1,backend-parity/file_metadata parity=0 (known #1549 fchown/virtual-root)
+G3,kvm gaps,4,"epoll- madvise- mmap- thread-sync-determinism, all det=0 under verify"
+G4,ptrace gaps,4,"parity blank -- expected, ptrace IS the reference"
+G5,sabre gaps,7,all outcome=unavailable (backend does not run these cells at all)
+D1,what the parity column measures,"stdout SHA-256 only","collect-envelope.rs:432 'Capture guest stdout under ptrace and under backend; parity = hashes match'"
+D2,is the limit disclosed,YES,"REPORT.md renamed it 'stdout parity' and states it is an upper bound on four-signal parity, with a documented counterexample (backend-parity/exit_zero)"
+P1,deep probe /bin/true ptrace vs dbi,"stdout MATCH, rc 0/0","ptrace DETLOG 165 lines; dbi --log-file produced NO FILE"
+P2,deep probe /bin/echo hi,"stdout MATCH, rc 0/0","ptrace DETLOG 487 vs dbi 396; log-diff --skip-commit = 'differences found'"
+P3,deep probe /bin/date +%Y,"stdout MATCH, rc 0/0","ptrace DETLOG 523 vs dbi 423"
+P4,does DBI honour --log-file,NO,"the file is never created; DETLOG goes to STDERR instead (153/396/423 lines there)"
+P5,consequence,"a harness collecting DETLOG via --log-file gets an EMPTY file for DBI","it would compare nothing and report no differences -- a silent no-result"
+I1,libunwind workaround,"/tmp/lu extracted tree was cleaned mid-session","re-extracted durably to ~/.local/hermit-deps/lu/usr/lib64 from the RPM that survives there"

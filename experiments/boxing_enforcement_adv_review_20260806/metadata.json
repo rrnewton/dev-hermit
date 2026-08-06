@@ -1,0 +1,17 @@
+{
+  "question": "Do the boxing/enforcement artifacts actually fire -- is a breach killed, not limited on paper?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "runner": "agent-utils/common/bin/safe-ci-dag-runner v0.11.0, engine resolves to PYTHON",
+  "agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930",
+  "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "dev_hermit_parent_head": "37cfbcb96def372e1946352f16800b0e1851a313",
+  "denominator": "6 artifacts in the task's stated scope",
+  "verdicts": {"REAL": 3, "half-inert": 1, "absent": 1, "out-of-scope": 1},
+  "live_audit_line": "memory.max=562300178432 (bound), memory.swap.max=0 (disabled), memory.oom.group=1 (enabled), cpu.max=max 100000 (bound)",
+  "not_done": [
+    "artifact 5 (validate.sh duplicates product functionality) has no breach to plant; recorded as out-of-scope rather than given a verdict it cannot have",
+    "did not measure CPU-timeout enforcement end-to-end because 0/55 steps declare one -- there is nothing deployed to breach"
+  ]
+}

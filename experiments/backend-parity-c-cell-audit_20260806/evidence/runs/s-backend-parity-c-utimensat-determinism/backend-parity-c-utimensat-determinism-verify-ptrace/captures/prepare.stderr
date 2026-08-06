@@ -1,0 +1,43 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:25:10: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   25 |     if (!mkdtemp(dir)) {
+      |          ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:40:21: error: array type has incomplete element type ‘struct timespec’
+   40 |     struct timespec ts[2] = {{1111111111, 0}, {2222222222, 0}};
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:42:9: error: implicit declaration of function ‘utimensat’ [-Werror=implicit-function-declaration]
+   42 |     if (utimensat(AT_FDCWD, path, ts, 0) == 0) ok++;
+      |         ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:42:19: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   42 |     if (utimensat(AT_FDCWD, path, ts, 0) == 0) ok++;
+      |                   ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:42:19: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:46:17: error: ‘struct stat’ has no member named ‘st_atim’; did you mean ‘st_atime’?
+   46 |     long a = st.st_atim.tv_sec;
+      |                 ^~~~~~~
+      |                 st_atime
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:47:17: error: ‘struct stat’ has no member named ‘st_mtim’; did you mean ‘st_mtime’?
+   47 |     long m = st.st_mtim.tv_sec;
+      |                 ^~~~~~~
+      |                 st_mtime
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:54:21: error: array type has incomplete element type ‘struct timespec’
+   54 |     struct timespec ts2[2] = {{0, UTIME_OMIT}, {3333333333, 0}};
+      |                     ^~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:54:35: error: ‘UTIME_OMIT’ undeclared (first use in this function)
+   54 |     struct timespec ts2[2] = {{0, UTIME_OMIT}, {3333333333, 0}};
+      |                                   ^~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:60:19: error: ‘struct stat’ has no member named ‘st_atim’; did you mean ‘st_atime’?
+   60 |     long a2 = st2.st_atim.tv_sec;
+      |                   ^~~~~~~
+      |                   st_atime
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:61:19: error: ‘struct stat’ has no member named ‘st_mtim’; did you mean ‘st_mtime’?
+   61 |     long m2 = st2.st_mtim.tv_sec;
+      |                   ^~~~~~~
+      |                   st_mtime
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:54:21: error: unused variable ‘ts2’ [-Werror=unused-variable]
+   54 |     struct timespec ts2[2] = {{0, UTIME_OMIT}, {3333333333, 0}};
+      |                     ^~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/utimensat_determinism.c:40:21: error: unused variable ‘ts’ [-Werror=unused-variable]
+   40 |     struct timespec ts[2] = {{1111111111, 0}, {2222222222, 0}};
+      |                     ^~
+cc1: all warnings being treated as errors

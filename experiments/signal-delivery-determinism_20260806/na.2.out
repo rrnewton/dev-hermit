@@ -1,0 +1,6 @@
+ALRM tick=1 at_iter=13485
+ALRM tick=2 at_iter=26105
+ALRM tick=3 at_iter=38879
+ALRM tick=4 at_iter=52384
+ALRM tick=5 at_iter=65768
+final ticks=5

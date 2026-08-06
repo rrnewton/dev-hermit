@@ -1,0 +1,329 @@
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import subprocess
+import sys
+import tempfile
+import pathlib
+import unittest
+from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import start_unit  # noqa: E402
+
+
+SHA = "a" * 40
+
+
+def completed(command: list[str], rc: int = 0, stdout: str = "", stderr: str = ""):
+    return subprocess.CompletedProcess(command, rc, stdout, stderr)
+
+
+class FakeRun:
+    def __init__(self, checkout: Path) -> None:
+        self.checkout = checkout
+        self.commands: list[list[str]] = []
+        self.dirty = ""
+        self.admission_rc = 0
+        self.herdr_status_rc = 0
+
+    def __call__(self, command: list[str], **_kwargs: object):
+        self.commands.append(command)
+        if command[:4] == ["git", "-C", str(self.checkout), "rev-parse"]:
+            if command[-1] == "--show-toplevel":
+                return completed(command, stdout=f"{self.checkout}\n")
+            return completed(command, stdout=f"{SHA}\n")
+        if command[:4] == ["git", "-C", str(self.checkout), "status"]:
+            return completed(command, stdout=self.dirty)
+        if command[0].endswith("preflight_validate.py"):
+            return completed(
+                command,
+                rc=self.admission_rc,
+                stderr="stale base" if self.admission_rc else "",
+            )
+        if command[0] == "systemd-run" and "herdr" in command:
+            herdr = command[command.index("herdr") :]
+            if herdr == ["herdr", "status", "--json"]:
+                return completed(
+                    command,
+                    rc=self.herdr_status_rc,
+                    stdout=json.dumps({"server": {"running": True}}),
+                    stderr="jail denied" if self.herdr_status_rc else "",
+                )
+            if herdr == ["herdr", "server"]:
+                return completed(command, stdout="Running as unit: ci-hub-herdr.service\n")
+            if herdr == ["herdr", "workspace", "list"]:
+                return completed(
+                    command,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "workspaces": [
+                                    {
+                                        "workspace_id": "wV",
+                                        "label": "validate-hermit",
+                                    }
+                                ]
+                            }
+                        }
+                    ),
+                )
+            if herdr[:3] == ["herdr", "tab", "create"]:
+                return completed(
+                    command,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "root_pane": {"pane_id": "wV:p2"},
+                                "tab": {"tab_id": "wV:t2"},
+                            }
+                        }
+                    ),
+                )
+            if herdr[:3] == ["herdr", "pane", "rename"]:
+                return completed(command)
+            if herdr[:3] == ["herdr", "pane", "run"]:
+                return completed(command)
+            raise AssertionError(command)
+        if command[0] == "systemd-run" and "validate-lock" in command:
+            return completed(command, stdout="Running as unit: validate-test.service\n")
+        if command[:3] == ["systemctl", "--user", "show"]:
+            return completed(
+                command,
+                stdout=(
+                    "ActiveState=inactive\nSubState=dead\nExecMainStatus=0\nResult=success\n"
+                ),
+            )
+        raise AssertionError(command)
+
+
+class StartUnitTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name).resolve()
+        self.checkout = self.root / "hermit"
+        self.checkout.mkdir()
+        (self.checkout / "validate.sh").write_text("#!/bin/sh\n")
+        (self.root / "ci-hub/validate").mkdir(parents=True)
+        self.fake = FakeRun(self.checkout)
+        self.environment = {"HOME": "/home/test", "PATH": "/usr/bin:/bin"}
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def invoke(self, extra: list[str] | None = None) -> tuple[int, str, str]:
+        out = io.StringIO()
+        err = io.StringIO()
+        argv = [
+            "--checkout",
+            str(self.checkout),
+            "--agent",
+            "hermit-test",
+            "--target",
+            SHA,
+            "--unit",
+            "validate-test",
+            "--log",
+            str(self.root / "run.log"),
+            *(extra or []),
+        ]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = start_unit.main(
+                argv,
+                run=self.fake,
+                environment=self.environment,
+                root=self.root,
+                sleep=lambda _seconds: None,
+            )
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_positive_launch_routes_systemd_service_through_validate_lock(self) -> None:
+        rc, output, error = self.invoke(["--pr", "123", "--", "full", "--ignore-cache"])
+
+        self.assertEqual(0, rc, error)
+        systemd = next(
+            command
+            for command in self.fake.commands
+            if command[0] == "systemd-run" and "validate-lock" in command
+        )
+        self.assertIn(str(self.root / "ci-hub/ci-hub"), systemd)
+        lock = systemd.index("validate-lock")
+        self.assertEqual(["validate-lock", "run"], systemd[lock : lock + 2])
+        self.assertEqual(
+            ["/usr/bin/env", "PR_NUMBER=123", "with-proxy", "./validate.sh", "full", "--ignore-cache"],
+            systemd[-6:],
+        )
+        pane_run = next(command for command in self.fake.commands if "pane_watch.py" in " ".join(command))
+        self.assertIn("herdr", pane_run)
+        self.assertNotIn("validate.sh", pane_run)
+        self.assertFalse(any(command[0] == "herdr" for command in self.fake.commands))
+        self.assertIn("HANDLE", output)
+        self.assertIn("PANE workspace=wV tab=wV:t2 pane=wV:p2", output)
+        self.assertIn("FINISHED", output)
+        record = start_unit.run_registry.read_record(
+            self.root / "ignored/validate/runs/validate-test.json"
+        )
+        self.assertEqual("completed", record["state"])
+        self.assertEqual("observer-only", record["pane_role"])
+
+    def test_dry_run_is_non_mutating_but_exposes_exact_command(self) -> None:
+        rc, output, error = self.invoke(["--dry-run"])
+
+        self.assertEqual(0, rc, error)
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+        self.assertIn("WOULD-START", output)
+        self.assertIn("PANE-PLAN workspace=validate-hermit role=observer-only", output)
+        self.assertIn("ci-hub validate-lock run", output)
+        self.assertFalse((self.root / "run.log").exists())
+
+    def test_dirty_checkout_is_refused_before_admission(self) -> None:
+        self.fake.dirty = " M validate.sh\n"
+
+        rc, _output, error = self.invoke()
+
+        self.assertEqual(2, rc)
+        self.assertIn("checkout is dirty", error)
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+    def test_stale_head_is_refused_before_systemd_admission(self) -> None:
+        self.fake.admission_rc = 2
+
+        rc, _output, error = self.invoke()
+
+        self.assertEqual(2, rc)
+        self.assertIn("validation admission refused", error)
+        self.assertIn("stale base", error)
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+    def test_visibility_failure_refuses_before_validation_service(self) -> None:
+        self.fake.herdr_status_rc = 1
+
+        rc, _output, error = self.invoke()
+
+        self.assertEqual(2, rc)
+        self.assertIn("Herdr server did not become ready", error)
+        self.assertFalse(
+            any(
+                command[0] == "systemd-run" and "validate-lock" in command
+                for command in self.fake.commands
+            )
+        )
+
+    def test_attach_waits_on_existing_handle_without_relaunching(self) -> None:
+        record = self.root / "ignored/validate/runs/validate-test.json"
+        start_unit.run_registry.write_record(
+            record,
+            {
+                "schema_version": 1,
+                "state": "running",
+                "unit": "validate-test.service",
+                "target": SHA,
+                "checkout": str(self.checkout),
+                "log": str(self.root / "run.log"),
+                "workspace_id": "wV",
+                "tab_id": "wV:t2",
+                "pane_id": "wV:p2",
+            },
+        )
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = start_unit.main(
+                ["--attach", "validate-test"],
+                run=self.fake,
+                environment=self.environment,
+                root=self.root,
+                sleep=lambda _seconds: None,
+            )
+
+        self.assertEqual(0, rc, err.getvalue())
+        self.assertIn("ATTACHED", out.getvalue())
+        self.assertIn("FINISHED", out.getvalue())
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+
+
+class LibunwindEnvTest(unittest.TestCase):
+    """The unit must carry libunwind's pkg-config path when it exists in-repo.
+
+    Without it `unwind-sys`'s build.rs panics and every workspace-building DAG
+    lane fails with an environment fault that reads exactly like a product red.
+    """
+
+    def _build(self, root):
+        return start_unit.build_systemd_command(
+            root=root,
+            checkout=root,
+            target="0" * 40,
+            agent="a",
+            unit="validate-a",
+            log=pathlib.Path("/tmp/x.log"),
+            pr=None,
+            validate_args=["full"],
+            wait=1,
+            hold=1,
+            child_deadline=1,
+            environment={"HOME": "/h", "PATH": "/usr/bin"},
+        )
+
+    def test_sets_pkg_config_path_when_the_pc_file_is_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            pc = root / "ignored/lu-parity/usr/lib64/pkgconfig"
+            pc.mkdir(parents=True)
+            (pc / "libunwind-ptrace.pc").write_text("")
+            cmd = self._build(root)
+            self.assertIn(f"PKG_CONFIG_PATH={pc}", cmd)
+            # LINK dir is lu-parity, which carries the .pc and the static
+            # libunwind-ptrace.a.
+            self.assertIn(f"LIBRARY_PATH={pc.parent}", cmd)
+            # RUNTIME dir must NOT be lu-parity: it has no libunwind-ptrace.so*,
+            # so the loader would fail with
+            # `libunwind-ptrace.so.0: cannot open shared object file`.
+            ld = [c for c in cmd if c.startswith("LD_LIBRARY_PATH=")]
+            self.assertEqual(len(ld), 1)
+            self.assertNotIn(str(pc.parent), ld[0])
+
+    def test_absent_pc_file_leaves_the_unit_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd = self._build(pathlib.Path(tmp))
+            self.assertFalse([c for c in cmd if "PKG_CONFIG_PATH=" in c])
+            self.assertFalse([c for c in cmd if "LD_LIBRARY_PATH=" in c])
+            self.assertFalse([c for c in cmd if c.startswith("LIBRARY_PATH=")])
+
+    def test_runtime_dir_prefers_a_candidate_carrying_the_shared_ptrace_lib(self):
+        """lu-parity ships libunwind-ptrace.a but no .so; the loader needs the .so."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            link_dir = root / "link"
+            link_dir.mkdir()
+            (link_dir / "libunwind-ptrace.a").write_text("")
+            good = root / "runtime"
+            good.mkdir()
+            (good / "libunwind-ptrace.so.0").write_text("")
+            original = start_unit.RUNTIME_CANDIDATES
+            start_unit.RUNTIME_CANDIDATES = (str(good),)
+            try:
+                self.assertEqual(start_unit._libunwind_runtime_dir(root, link_dir), good)
+            finally:
+                start_unit.RUNTIME_CANDIDATES = original
+
+    def test_runtime_dir_falls_back_to_the_link_dir_when_no_candidate_exists(self):
+        """Unknown host: behave exactly as before rather than inventing a path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            link_dir = root / "link"
+            link_dir.mkdir()
+            original = start_unit.RUNTIME_CANDIDATES
+            start_unit.RUNTIME_CANDIDATES = (str(root / "absent"),)
+            try:
+                self.assertEqual(start_unit._libunwind_runtime_dir(root, link_dir), link_dir)
+            finally:
+                start_unit.RUNTIME_CANDIDATES = original
+
+
+if __name__ == "__main__":
+    unittest.main()

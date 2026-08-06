@@ -1,0 +1,16 @@
+{
+  "question": "Is cpu_timeout enforcement inert, and if not, why is no CPU bound in effect for hermit steps?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "runner": "safe-ci-dag-runner v0.11.0, engine=python, cgroup boxing ACTIVE",
+  "hermit_agent_utils_pin": "a6f4232f849271af4c65585f9861769912411222 (SMALL caps OPT-IN, default OFF)",
+  "parent_agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930 (SMALL caps ON by default; --small-default-cap demoted to a no-op)",
+  "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "dev_hermit_parent_head": "5645376a7ae6b58d4476a44be5c617a7727c7c6a",
+  "code_change_made": false,
+  "why_no_code_change": "the mechanism the task asked me to wire is already wired and measured working; the real defect is that a routine pin advance flips the SMALL default OFF->ON and would reap all 55 undeclared hermit steps at 10 CPU-seconds",
+  "limits": [
+    "all runs local with boxing ACTIVE; the guard is inert when boxing is off (the known hosted-CI condition), so this establishes the mechanism not hosted behaviour",
+    "did not measure per-step CPU-seconds for the 55 hermit steps, so no budget values are proposed"
+  ]
+}

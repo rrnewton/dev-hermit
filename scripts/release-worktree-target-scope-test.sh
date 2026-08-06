@@ -3,7 +3,9 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 subject="$script_dir/release-worktree.rs"
-test_root="$(mktemp -d "${TMPDIR:-/tmp}/release-worktree-scope.XXXXXX")"
+registry_subject="$script_dir/check-worktree-registry.rs"
+podman_subject="$script_dir/agent-podman.rs"
+test_root="$(mktemp -d "${TMPDIR:-/tmp}/release-worktree-test.scope.XXXXXX")"
 trap 'rm -rf -- "$test_root"' EXIT
 
 fail() {
@@ -13,10 +15,51 @@ fail() {
 
 init_root() {
   local root=$1
-  mkdir -p "$root/scripts" "$root/worktrees" "$root/moved"
+  mkdir -p \
+    "$root/scripts" \
+    "$root/worktrees" \
+    "$root/moved" \
+    "$root/remotes" \
+    "$root/bin" \
+    "$root/ignored/ci-hub" \
+    "$root/test-proc" \
+    "$root/test-cgroup/fixture-owner"
+  : >"$root/test-tmux-panes"
+  : >"$root/test-cgroup/fixture-owner/cgroup.procs"
+  printf '%s\n' 'populated 0' >"$root/test-cgroup/fixture-owner/cgroup.events"
+  printf '{"schema_version":1,"captured_at":%s,"agents":[]}\n' \
+    "$(date +%s)" >"$root/ignored/ci-hub/agent-snapshot.json"
+  printf '%s\n' '{"schema_version":1,"containers":{}}' \
+    >"$root/ignored/ci-hub/agent-containers.json"
+  printf '%s\n' '[]' >"$root/podman.json"
+  cat >"$root/bin/podman" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+rows = json.loads(Path(os.environ["RELEASE_TEST_PODMAN_STATE"]).read_text())
+args = sys.argv[1:]
+if args[:3] == ["ps", "-a", "--format"]:
+    print(json.dumps(rows))
+elif args[:2] == ["container", "inspect"] and len(args) == 3:
+    row = next((candidate for candidate in rows if candidate["Id"] == args[2]), None)
+    if row is None:
+        raise SystemExit(1)
+    print(json.dumps([row]))
+else:
+    print(f"unsupported fake podman argv: {args}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+  chmod +x "$root/bin/podman"
   : >"$root/.gitmodules"
   cp "$subject" "$root/scripts/release-worktree.rs"
+  cp "$registry_subject" "$root/scripts/check-worktree-registry.rs"
+  cp "$podman_subject" "$root/scripts/agent-podman.rs"
   chmod +x "$root/scripts/release-worktree.rs"
+  chmod +x "$root/scripts/check-worktree-registry.rs"
+  chmod +x "$root/scripts/agent-podman.rs"
   printf '%s\n' '# fixture ACTIVE' >"$root/worktrees/ACTIVE.md"
   for product in hermit reverie liteinst2; do
     git init -q "$root/$product"
@@ -26,6 +69,9 @@ init_root() {
     git -C "$root/$product" add seed
     git -C "$root/$product" commit -qm seed
     git -C "$root/$product" branch -M main
+    git init -q --bare "$root/remotes/$product.git"
+    git -C "$root/$product" remote add origin "$root/remotes/$product.git"
+    git -C "$root/$product" push -q -u origin main
   done
 }
 
@@ -61,7 +107,7 @@ write_state() {
     '  "version": 3,' \
     '  "slots": {' \
     "    \"$slot\": {" \
-    '      "agents": [{"name": "fixture-owner", "read_only": false}],' \
+    '      "agents": [{"name": "fixture-owner", "read_only": false, "tmux_pane_id": "%fixture", "cgroup_path": "/fixture-owner"}],' \
     "      \"hermit_branch\": \"$hbranch\"," \
     "      \"hermit_path\": \"$hpath\"," \
     "      \"reverie_branch\": \"$rbranch\"," \
@@ -72,11 +118,40 @@ write_state() {
     '    }' \
     '  }' \
     '}' >"$root/worktree-state.json"
+  printf '%s\n' \
+    '# fixture ACTIVE' \
+    '<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->' \
+    '| Slot | Agents / tasks | Hermit branch | Reverie branch | LiteInst2 branch | Task | Status | Shared |' \
+    '| --- | --- | --- | --- | --- | --- | --- | --- |' \
+    "| $slot | fixture-owner | $hbranch | $rbranch | $lbranch | fixture | active | no |" \
+    '<!-- END worktree-state -->' >"$root/worktrees/ACTIVE.md"
 }
 
 run_release() {
   local root=$1 slot=$2
-  (cd "$root" && scripts/release-worktree.rs --slot "$slot" --clean)
+  (
+    cd "$root"
+    HERMIT_RELEASE_TEST_PROC_ROOT="$root/test-proc" \
+      HERMIT_RELEASE_TEST_CGROUP_ROOT="$root/test-cgroup" \
+      HERMIT_RELEASE_TEST_TMUX_PANES="$root/test-tmux-panes" \
+      HERMIT_RELEASE_TEST_PODMAN_BIN="$root/bin/podman" \
+      RELEASE_TEST_PODMAN_STATE="$root/podman.json" \
+      scripts/release-worktree.rs --slot "$slot" --clean
+  )
+}
+
+run_recovery() {
+  local root=$1 slot=$2
+  (
+    cd "$root"
+    HERMIT_RELEASE_TEST_PROC_ROOT="$root/test-proc" \
+      HERMIT_RELEASE_TEST_CGROUP_ROOT="$root/test-cgroup" \
+      HERMIT_RELEASE_TEST_TMUX_PANES="$root/test-tmux-panes" \
+      HERMIT_RELEASE_TEST_PODMAN_BIN="$root/bin/podman" \
+      RELEASE_TEST_PODMAN_STATE="$root/podman.json" \
+      scripts/release-worktree.rs --slot "$slot" --clean \
+        --recover-submodule-cleanup
+  )
 }
 
 # Positive: exact targets disappear while unrelated prunable admin entries in
@@ -124,8 +199,11 @@ active_before="$(sha256sum "$root/worktrees/ACTIVE.md")"
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'allocated missing target was accepted'
 fi
-rg -q 'clean preflight failed.*allocated reverie worktree is missing' "$root/release.out" \
-  || fail 'missing-target refusal was not explicit'
+rg -q 'clean preflight failed: canonical registry verifier refused cleanup: DRIFT slot=target reverie recorded=detached actual=-' "$root/release.out" \
+  || {
+    cat "$root/release.out" >&2
+    fail 'missing-target refusal was not explicit'
+  }
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'preflight mutated an earlier target'
 [[ "$(sha256sum "$root/worktree-state.json")" == "$state_before" ]] \
   || fail 'missing-target refusal changed state'
@@ -142,8 +220,11 @@ write_state "$root" target detached - - worktrees/sibling/hermit
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'mismatched recorded path was accepted'
 fi
-rg -q "records hermit path 'worktrees/sibling/hermit'" "$root/release.out" \
-  || fail 'mismatched-path refusal was not explicit'
+rg -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit path recorded=Some("worktrees/sibling/hermit") expected=worktrees/target/hermit' "$root/release.out" \
+  || {
+    cat "$root/release.out" >&2
+    fail 'mismatched-path refusal was not explicit'
+  }
 [[ -e "$root/worktrees/sibling/hermit" ]] || fail 'sibling path was removed'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'target changed on mismatch refusal'
 
@@ -156,7 +237,7 @@ write_state "$root" target wrong-branch - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'checkout identity mismatch was accepted'
 fi
-rg -q "records hermit checkout 'wrong-branch'" "$root/release.out" \
+rg -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit recorded=wrong-branch actual=detached:' "$root/release.out" \
   || fail 'checkout identity refusal was not explicit'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'identity refusal removed target'
 
@@ -186,8 +267,11 @@ mv "$root/state.tmp" "$root/worktree-state.json"
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'missing branch field was accepted'
 fi
-rg -q 'missing/non-string hermit_branch' "$root/release.out" \
-  || fail 'missing-branch refusal was not explicit'
+rg -Fq 'DRIFT slot=target hermit recorded=- actual=detached:' "$root/release.out" \
+  || {
+    cat "$root/release.out" >&2
+    fail 'missing-branch refusal was not explicit'
+  }
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'missing-branch refusal removed target'
 
 # Negative: a symlink at the canonical lexical path cannot alias a sibling
@@ -202,8 +286,11 @@ write_state "$root" target detached - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'symlink alias was accepted'
 fi
-rg -q 'is a symlink; refusing alias' "$root/release.out" \
-  || fail 'symlink refusal was not explicit'
+rg -q 'refusing symlink/path alias' "$root/release.out" \
+  || {
+    cat "$root/release.out" >&2
+    fail 'symlink refusal was not explicit'
+  }
 [[ -e "$root/worktrees/sibling/hermit" ]] || fail 'symlink refusal removed sibling'
 
 # Negative: a stale primary admin record and a replacement repository at the
@@ -224,7 +311,10 @@ if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'replacement repository at stale registered path was accepted'
 fi
 rg -q 'child common-dir .* does not match primary' "$root/release.out" \
-  || fail 'replacement-repo refusal was not explicit'
+  || {
+    cat "$root/release.out" >&2
+    fail 'replacement-repo refusal was not explicit'
+  }
 [[ -e "$root/worktrees/target/hermit/replacement" ]] \
   || fail 'replacement-repo refusal removed replacement data'
 
@@ -242,23 +332,35 @@ rg -q 'contains unexpected entry' "$root/release.out" \
   || fail 'slot residue refusal was not explicit'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'residue refusal removed target'
 
-# Negative: an exact registered but locked target fails without changing state
-# or ACTIVE. This brackets the runtime failure path after all preflights pass.
+# Negative plus recovery: an exact registered but locked target retains the
+# target and a durable armed journal. Ordinary retries refuse that transaction;
+# explicit recovery resumes it after the lock is removed.
 root="$test_root/locked"
 init_root "$root"
 add_target "$root" hermit target
 write_state "$root" target detached - -
 git -C "$root/hermit" worktree lock "$root/worktrees/target/hermit"
-state_before="$(sha256sum "$root/worktree-state.json")"
-active_before="$(sha256sum "$root/worktrees/ACTIVE.md")"
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'locked target was removed'
 fi
-[[ "$(sha256sum "$root/worktree-state.json")" == "$state_before" ]] \
-  || fail 'locked-target refusal changed state'
-[[ "$(sha256sum "$root/worktrees/ACTIVE.md")" == "$active_before" ]] \
-  || fail 'locked-target refusal changed ACTIVE'
+jq -e '.slots.target.status == "releasing" and
+       .slots.target.release_journal.label == "hermit" and
+       .slots.target.release_journal.phase == "armed"' \
+  "$root/worktree-state.json" >/dev/null \
+  || fail 'locked-target refusal did not retain its exact durable journal'
+rg -Fq '| target | fixture-owner | detached | - | - | fixture | releasing | no |' \
+  "$root/worktrees/ACTIVE.md" \
+  || fail 'locked-target journal was not projected into ACTIVE'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'locked-target refusal removed target'
+if run_release "$root" target >"$root/retry.out" 2>&1; then
+  fail 'ordinary retry bypassed the unfinished locked-target journal'
+fi
+rg -q 'unfinished release journal' "$root/retry.out" \
+  || fail 'ordinary locked-target retry refusal was not explicit'
+git -C "$root/hermit" worktree unlock "$root/worktrees/target/hermit"
+run_recovery "$root" target >/dev/null
+jq -e '.slots.target == null' "$root/worktree-state.json" >/dev/null \
+  || fail 'locked-target recovery did not complete release'
 
 # Negative plus recovery: if a later exact product removal fails, completed
 # removals are recorded per product and retry resumes the remaining target.
@@ -276,8 +378,12 @@ jq -e '.slots.target.hermit_branch == "-" and .slots.target.reverie_branch == "d
   || fail 'partial release did not record exact per-product progress'
 [[ ! -e "$root/worktrees/target/hermit" ]] || fail 'first exact target was not removed'
 [[ -e "$root/worktrees/target/reverie" ]] || fail 'locked remaining target was removed'
+jq -e '.slots.target.release_journal.label == "reverie" and
+       .slots.target.release_journal.phase == "armed"' \
+  "$root/worktree-state.json" >/dev/null \
+  || fail 'partial release did not retain the remaining exact transaction'
 git -C "$root/reverie" worktree unlock "$root/worktrees/target/reverie"
-run_release "$root" target >/dev/null
+run_recovery "$root" target >/dev/null
 jq -e '.slots.target == null' "$root/worktree-state.json" >/dev/null \
   || fail 'retry did not complete slot release'
 [[ ! -e "$root/worktrees/target" ]] || fail 'retry left target slot directory'

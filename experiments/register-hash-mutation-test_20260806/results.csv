@@ -1,0 +1,9 @@
+tier,leg,case,expected,observed,evidence
+full,1-plant,register diverges at a control point,FAIL,FAIL,"mismatch at log message 13 is the [registers] line; Mismatch-in-stdout count = 0"
+full,2-clean,constant register same shape,PASS,PASS,"22 INFO messages compared"
+full,3-nonvacuity,register lines emitted by both legs,>0,1 and 1,"plant=1 clean=1"
+full,4-boundary,200 CPUID + 200 RDTSC handler entries,PASS,PASS,"1 sample for 1 control point; zero extra"
+spot-1/10,1-plant,register diverges at a control point,FAIL,FAIL,"after the sample-index fix"
+spot-1/10,2-clean,constant register same shape,PASS,PASS,
+spot-1/10,3-nonvacuity,register lines emitted by both legs,>0,1 and 1,"was 0 and 0 BEFORE the fix -- the defect this test found"
+spot-1/10,4-boundary,handler traffic,PASS,PASS,

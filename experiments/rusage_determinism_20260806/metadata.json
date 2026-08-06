@@ -1,0 +1,15 @@
+{
+  "question": "Do getrusage/times/rlimit leak host values, and if virtualized do they stay continuous (#140)?",
+  "answer": "No leak -- deterministic on all three backends. But ru_utime/ru_stime and the fault/context-switch counters are ZEROED (#140 anti-pattern), while /proc/uptime advances 123->130 in the same run.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30, --features third-party-backends",
+  "backends_tested": ["ptrace","dbi","sabre"],
+  "kvm": "NOT tested -- livelocks at guest startup",
+  "pass": ["cross-invocation determinism on all 3", "rlimits virtualized consistently", "ru_maxrss deterministic AND evolving"],
+  "fail_140": ["ru_utime", "ru_stime", "ru_minflt", "ru_majflt", "ru_nvcsw", "ru_nivcsw", "times() tms_utime"],
+  "inconsistent": ["times() return is frozen in-run and backend-dependent", "tms_stime advances on ptrace only"],
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "d606952330bd9319271b8053f4c015caef699212",
+  "not_done": ["did not locate where the zeroing is implemented", "one guest, N=2", "no code changed"]
+}

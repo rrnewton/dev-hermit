@@ -1,0 +1,15 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c:31:22: error: field ‘handle’ has incomplete type
+   31 |   struct file_handle handle;
+      |                      ^~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c:32:28: error: invalid application of ‘sizeof’ to incomplete type ‘struct file_handle’
+   32 |   unsigned char raw[sizeof(struct file_handle) + HANDLE_CAP];
+      |                            ^~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c:46:7: error: implicit declaration of function ‘name_to_handle_at’ [-Werror=implicit-function-declaration]
+   46 |       name_to_handle_at(AT_FDCWD, "/", &storage.handle, &mount_id, 0);
+      |       ^~~~~~~~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c:46:25: error: ‘AT_FDCWD’ undeclared (first use in this function)
+   46 |       name_to_handle_at(AT_FDCWD, "/", &storage.handle, &mount_id, 0);
+      |                         ^~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/name_to_handle.c:46:25: note: each undeclared identifier is reported only once for each function it appears in
+cc1: all warnings being treated as errors

@@ -1,0 +1,37 @@
+=== A. ttyname with ONE pty shared by fd 0/1/2 ===
+  native  ['ttyname.stdout=/dev/pts/50', 'devtty=ok rows=24 cols=80']
+  ptrace  ['ttyname.stdout=err errno=19', 'devtty=ok rows=24 cols=80']
+  dbi     ['ttyname.stdout=err errno=19', 'devtty=ok rows=24 cols=80']
+  sabre   ['ttyname.stdout=err errno=19', 'devtty=ok rows=24 cols=80']
+
+=== B. host termios variation, geometry fixed at 24x80 ===
+    (lines below are exactly what the guest read back)
+  -- backend=ptrace
+     default      TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a3b
+     default      TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     raw-noecho   TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a30
+     raw-noecho   TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     b9600-vmin3  TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bd lflag=00008a3b
+     b9600-vmin3  TCGETS.stdout.cc=031c7f150407030011131a00120f171600000000000000000000000000000000
+     => 3 distinct guest-visible termios across 3 host settings: HOST TERMIOS LEAKS
+  -- backend=dbi
+     default      TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a3b
+     default      TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     raw-noecho   TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a30
+     raw-noecho   TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     b9600-vmin3  TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bd lflag=00008a3b
+     b9600-vmin3  TCGETS.stdout.cc=031c7f150407030011131a00120f171600000000000000000000000000000000
+     => 3 distinct guest-visible termios across 3 host settings: HOST TERMIOS LEAKS
+  -- backend=sabre
+     default      TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a3b
+     default      TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     raw-noecho   TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a30
+     raw-noecho   TCGETS.stdout.cc=031c7f150400010011131a00120f171600000000000000000000000000000000
+     b9600-vmin3  TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bd lflag=00008a3b
+     b9600-vmin3  TCGETS.stdout.cc=031c7f150407030011131a00120f171600000000000000000000000000000000
+     => 3 distinct guest-visible termios across 3 host settings: HOST TERMIOS LEAKS
+
+=== B-control: does the HOST itself vary across these settings? ===
+  native default      ['TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a3b']
+  native raw-noecho   ['TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bf lflag=00008a30']
+  native b9600-vmin3  ['TCGETS.stdout=ok iflag=00000500 oflag=00000005 cflag=000000bd lflag=00008a3b']

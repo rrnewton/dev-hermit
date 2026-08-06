@@ -1,0 +1,8 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/sync_file_range.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/sync_file_range.c:48:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   48 |   int fd = mkstemp(tmpl);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/sync_file_range.c:64:7: error: implicit declaration of function ‘sync_file_range’ [-Werror=implicit-function-declaration]
+   64 |   if (sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WRITE) == 0) {
+      |       ^~~~~~~~~~~~~~~
+cc1: all warnings being treated as errors

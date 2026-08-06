@@ -37,13 +37,41 @@ BROOT="$1"; LABEL="$2"; TMO="$3"; shift 3
 PATTERN="${ATTR_PROC_PATTERN:-hermit}"
 CAP="${ATTR_CAPTURE_MAX:-200}"
 
+# --- CPU accounting for the cpu/wall KILL SIGNATURE ---------------------------
+# cpu ~= wall at the budget => LIVELOCK (product spin, retry-futile, a REAL red).
+# cpu << wall               => the subject was WAITING (rules out a livelock).
+# Without cpu_s a killed run is unattributable, so record it here.
+#
+# GOTCHA (measured, do not "simplify" this): `times` MUST be captured with a
+# REDIRECT, never command substitution.  `x=$(times)` forks a subshell, and fork
+# ZEROES RUSAGE_CHILDREN, so the children line reads 0m0.000s every time --
+# a silently-always-zero cpu, which is worse than none.  Verified on this box:
+# redirect -> "0m1.033s", $(times) -> "0m0.000s" for the same child.
+tpre="$(mktemp)"; tpost="$(mktemp)"
+_child_cpu() {  # $1=file holding `times` output -> children (user+sys) seconds
+  awk 'NR==2{ n=split($0,f," ");
+              t=0;
+              for(i=1;i<=n && i<=2;i++){ split(f[i],p,"m"); sub(/s$/,"",p[2]);
+                                         t += p[1]*60 + p[2] }
+              printf "%.3f", t }' "$1" 2>/dev/null
+}
+times > "$tpre"
+
 # --- run, capturing streams to temp files (deleted unless we preserve them) ----
 tout="$(mktemp)"; terr="$(mktemp)"
 start=$(date +%s.%N 2>/dev/null || date +%s)
 timeout "$TMO" "$@" >"$tout" 2>"$terr"
 rc=$?
 end=$(date +%s.%N 2>/dev/null || date +%s)
+times > "$tpost"
 wall=$(awk "BEGIN{printf \"%.3f\", $end-$start}" 2>/dev/null || echo "")
+cpu_pre="$(_child_cpu "$tpre")"; cpu_post="$(_child_cpu "$tpost")"
+if [ -n "$cpu_pre" ] && [ -n "$cpu_post" ]; then
+  cpu=$(awk "BEGIN{printf \"%.3f\", $cpu_post-$cpu_pre}" 2>/dev/null || echo "")
+else
+  cpu=""
+fi
+rm -f "$tpre" "$tpost"
 timed_out=false
 [ "$rc" -eq 124 ] && timed_out=true
 
@@ -83,12 +111,16 @@ if [ -n "$BROOT" ]; then
   jstr() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
   {
     printf '{\n'
-    printf '  "schema_version": 1,\n'
+    printf '  "schema_version": 2,\n'
     printf '  "label": "%s",\n' "$(jstr "$LABEL")"
     printf '  "cmd_str": "%s",\n' "$(jstr "$cmd_str")"
     printf '  "exit_code": %s,\n' "$rc"
     printf '  "timed_out": %s,\n' "$timed_out"
     printf '  "wall_s": %s,\n' "${wall:-null}"
+    # On a timed-out run this is a LOWER BOUND: `times` counts only children the
+    # shell REAPED, so descendants killed with the subject are not included.
+    printf '  "cpu_s": %s,\n' "${cpu:-null}"
+    printf '  "cpu_s_is_lower_bound": %s,\n' "$timed_out"
     printf '  "captured_at": "%sZ",\n' "$(date -u +%Y-%m-%dT%H:%M:%S)"
     printf '  "host_after": {\n'
     printf '    "load1": %s,\n' "${l1:-null}"

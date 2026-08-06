@@ -1,0 +1,426 @@
+{
+ "default_step_timeout": 600,
+ "resource_caps": {},
+ "steps": [
+  {
+   "group": "applications",
+   "job": "example-timed-progress-bar__verify__liteinst",
+   "desc": "expansion cell applications/example-timed-progress-bar [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/applications__applications-example-timed-progress-bar__verify__liteinst portable applications applications/example-timed-progress-bar verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "backend-parity-c",
+   "job": "pid-probe__verify__liteinst",
+   "desc": "expansion cell backend-parity-c/pid-probe [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/backend-parity-c__backend-parity-c-pid-probe__verify__liteinst portable backend-parity-c backend-parity-c/pid-probe verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "bin-c",
+   "job": "posix-timer-test__verify__liteinst",
+   "desc": "expansion cell bin-c/posix-timer-test [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/bin-c__bin-c-posix-timer-test__verify__liteinst portable bin-c bin-c/posix-timer-test verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "name-to-handle-at-eopnotsupp__verify__liteinst",
+   "desc": "expansion cell c-programs/name-to-handle-at-eopnotsupp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-name-to-handle-at-eopnotsupp__verify__liteinst portable c-programs c-programs/name-to-handle-at-eopnotsupp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "name-to-handle-directory-eopnotsupp__verify__liteinst",
+   "desc": "expansion cell c-programs/name-to-handle-directory-eopnotsupp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-name-to-handle-directory-eopnotsupp__verify__liteinst portable c-programs c-programs/name-to-handle-directory-eopnotsupp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "name-to-handle-empty-path-eopnotsupp__verify__liteinst",
+   "desc": "expansion cell c-programs/name-to-handle-empty-path-eopnotsupp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-name-to-handle-empty-path-eopnotsupp__verify__liteinst portable c-programs c-programs/name-to-handle-empty-path-eopnotsupp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "name-to-handle-regular-eopnotsupp__verify__liteinst",
+   "desc": "expansion cell c-programs/name-to-handle-regular-eopnotsupp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-name-to-handle-regular-eopnotsupp__verify__liteinst portable c-programs c-programs/name-to-handle-regular-eopnotsupp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "netlink-autobind-generic__verify__liteinst",
+   "desc": "expansion cell c-programs/netlink-autobind-generic [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-netlink-autobind-generic__verify__liteinst portable c-programs c-programs/netlink-autobind-generic verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "netlink-autobind-route__verify__liteinst",
+   "desc": "expansion cell c-programs/netlink-autobind-route [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-netlink-autobind-route__verify__liteinst portable c-programs c-programs/netlink-autobind-route verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "netlink-autobind-usersock__verify__liteinst",
+   "desc": "expansion cell c-programs/netlink-autobind-usersock [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-netlink-autobind-usersock__verify__liteinst portable c-programs c-programs/netlink-autobind-usersock verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "proc-fd-link-aliases__verify__liteinst",
+   "desc": "expansion cell c-programs/proc-fd-link-aliases [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-proc-fd-link-aliases__verify__liteinst portable c-programs c-programs/proc-fd-link-aliases verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "so-incoming-cpu-tcp4__verify__liteinst",
+   "desc": "expansion cell c-programs/so-incoming-cpu-tcp4 [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-so-incoming-cpu-tcp4__verify__liteinst portable c-programs c-programs/so-incoming-cpu-tcp4 verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "so-incoming-cpu-tcp6__verify__liteinst",
+   "desc": "expansion cell c-programs/so-incoming-cpu-tcp6 [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-so-incoming-cpu-tcp6__verify__liteinst portable c-programs c-programs/so-incoming-cpu-tcp6 verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "so-incoming-cpu-udp4__verify__liteinst",
+   "desc": "expansion cell c-programs/so-incoming-cpu-udp4 [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-so-incoming-cpu-udp4__verify__liteinst portable c-programs c-programs/so-incoming-cpu-udp4 verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-cookie-tcp__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-cookie-tcp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-cookie-tcp__verify__liteinst portable c-programs c-programs/socket-cookie-tcp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-cookie-udp__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-cookie-udp [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-cookie-udp__verify__liteinst portable c-programs c-programs/socket-cookie-udp verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-cookie-unix__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-cookie-unix [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-cookie-unix__verify__liteinst portable c-programs c-programs/socket-cookie-unix verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-timestamp-edge-cases__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-timestamp-edge-cases [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-timestamp-edge-cases__verify__liteinst portable c-programs c-programs/socket-timestamp-edge-cases verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-timestamp-timespec__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-timestamp-timespec [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-timestamp-timespec__verify__liteinst portable c-programs c-programs/socket-timestamp-timespec verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "socket-timestamp-timeval__verify__liteinst",
+   "desc": "expansion cell c-programs/socket-timestamp-timeval [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-socket-timestamp-timeval__verify__liteinst portable c-programs c-programs/socket-timestamp-timeval verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "unix-autobind-dgram__verify__liteinst",
+   "desc": "expansion cell c-programs/unix-autobind-dgram [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-unix-autobind-dgram__verify__liteinst portable c-programs c-programs/unix-autobind-dgram verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "unix-autobind-seqpacket__verify__liteinst",
+   "desc": "expansion cell c-programs/unix-autobind-seqpacket [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-unix-autobind-seqpacket__verify__liteinst portable c-programs c-programs/unix-autobind-seqpacket verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "c-programs",
+   "job": "unix-autobind-stream__verify__liteinst",
+   "desc": "expansion cell c-programs/unix-autobind-stream [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/c-programs__c-programs-unix-autobind-stream__verify__liteinst portable c-programs c-programs/unix-autobind-stream verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "debugger-c",
+   "job": "debuggee__verify__liteinst",
+   "desc": "expansion cell debugger-c/debuggee [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/debugger-c__debugger-c-debuggee__verify__liteinst portable debugger-c debugger-c/debuggee verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "group": "language-runtimes",
+   "job": "example-python-random__verify__liteinst",
+   "desc": "expansion cell language-runtimes/example-python-random [verify] on liteinst",
+   "cmd": "bash /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit /home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/language-runtimes__language-runtimes-example-python-random__verify__liteinst portable language-runtimes language-runtimes/example-python-random verify liteinst",
+   "deps": [],
+   "timeout": 600,
+   "hint": {
+    "est_duration_s": 180,
+    "rss_baseline_bytes": 805306368,
+    "hard_mem_max_bytes": 1207959552,
+    "classification": "cpu-bound"
+   },
+   "cpu_timeout": 180
+  },
+  {
+   "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/system-utils__system-utils-clock-determinism__verify__liteinst' 'portable' 'system-utils' 'system-utils/clock-determinism' 'verify' 'liteinst'",
+   "deps": [],
+   "desc": "expansion cell system-utils/clock-determinism [verify] on liteinst",
+   "group": "system-utils",
+   "hint": {
+    "classification": "cpu-bound",
+    "est_duration_s": 180,
+    "hard_mem_max_bytes": 1207959552,
+    "rss_baseline_bytes": 805306368
+   },
+   "job": "clock-determinism__verify__liteinst",
+   "timeout": 600,
+   "cpu_timeout": 180
+  },
+  {
+   "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/system-utils__system-utils-clock-determinism__custom__liteinst' 'portable' 'system-utils' 'system-utils/clock-determinism' 'custom' 'liteinst'",
+   "deps": [],
+   "desc": "expansion cell system-utils/clock-determinism [custom] on liteinst",
+   "group": "system-utils",
+   "hint": {
+    "classification": "cpu-bound",
+    "est_duration_s": 180,
+    "hard_mem_max_bytes": 1207959552,
+    "rss_baseline_bytes": 805306368
+   },
+   "job": "clock-determinism__custom__liteinst",
+   "timeout": 600,
+   "cpu_timeout": 180
+  },
+  {
+   "cmd": "bash '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/run-expansion-cell.sh' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/hermit' '/home/newton/work/dev-hermit/scratch/liteinst-expansion-52d56e5c/evidence/armD-52d56e5c/system-utils__system-utils-record-getpid__verify__liteinst' 'portable' 'system-utils' 'system-utils/record-getpid' 'verify' 'liteinst'",
+   "deps": [],
+   "desc": "expansion cell system-utils/record-getpid [verify] on liteinst",
+   "group": "system-utils",
+   "hint": {
+    "classification": "cpu-bound",
+    "est_duration_s": 180,
+    "hard_mem_max_bytes": 1207959552,
+    "rss_baseline_bytes": 805306368
+   },
+   "job": "record-getpid__verify__liteinst",
+   "timeout": 600,
+   "cpu_timeout": 180
+  }
+ ]
+}

@@ -1,0 +1,9 @@
+fpe               native=136   ptrace=136  dbi=1  sabre=124
+ill               native=132   ptrace=132  dbi=124  sabre=143
+raise_term        native=143   ptrace=143  dbi=1  sabre=143
+raise_kill        native=137   ptrace=137  dbi=1  sabre=137
+raise_trap        native=133   ptrace=100  dbi=1  sabre=133
+stackoverflow     native=139   ptrace=139  dbi=1  sabre=139
+thread_exit       native=7     ptrace=7  dbi=124  sabre=1,7
+thread_join_exit  native=5     ptrace=5  dbi=5  sabre=5
+DONE

@@ -26,6 +26,19 @@ touch "$root/.gitmodules"
 cp "$script_dir/allocate-worktree.rs" "$root/scripts/"
 cp "$script_dir/check-worktree-registry.rs" "$root/scripts/"
 
+git -C "$root" init -q -b main
+git -C "$root" config user.email test@example.invalid
+git -C "$root" config user.name test
+touch "$root/parent-seed"
+git -C "$root" add parent-seed .gitmodules
+git -C "$root" commit -q -m 'seed parent checkout'
+git -C "$root/hermit" init -q -b main
+git -C "$root/hermit" config user.email test@example.invalid
+git -C "$root/hermit" config user.name test
+touch "$root/hermit/seed"
+git -C "$root/hermit" add seed
+git -C "$root/hermit" commit -q -m 'seed product primary'
+
 new_repo() { # dir  checked-out-branch  [extra-local-branch]
   local dir=$1 branch=$2 extra=${3:-}
   mkdir -p "$dir"
@@ -125,4 +138,130 @@ grep -Fq '"hermit_branch": "correct-71"' "$root/worktree-state.json" \
 grep -Fq 'repair: 0 branch cells needed reconciliation' "$root/repair2.out" \
   || { echo "FAIL: repair is not idempotent" >&2; cat "$root/repair2.out" >&2; exit 1; }
 
-echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved; CONTROL: 1/1 correct row untouched; human content preserved; idempotent)"
+# FALSE-ASCENT NEGATIVE: a generated-residue directory sees the fixture
+# parent's `main`, but neither repair nor allocator adoption may treat that
+# ancestor as the requested Hermit checkout.
+mkdir -p "$root/worktrees/ascent72/hermit/target"
+printf 'generated\n' >"$root/worktrees/ascent72/hermit/target/artifact"
+python3 - "$root/worktree-state.json" "$root/worktrees/ACTIVE.md" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path, active_path = map(pathlib.Path, sys.argv[1:])
+state = json.loads(state_path.read_text())
+state["slots"]["ascent72"] = {
+    "agents": [{"name": "agent-ascent", "read_only": False}],
+    "hermit_branch": "main", "hermit_path": "worktrees/ascent72/hermit",
+    "reverie_branch": "-", "reverie_path": "worktrees/ascent72/reverie",
+    "liteinst2_branch": "-", "liteinst2_path": "worktrees/ascent72/liteinst2",
+    "task": "task-ascent", "status": "released",
+}
+state_path.write_text(json.dumps(state, indent=2) + "\n")
+active = active_path.read_text()
+row = "| ascent72 | agent-ascent | main | - | - | task-ascent | released | no |\n"
+active_path.write_text(active.replace("<!-- END worktree-state -->", row + "<!-- END worktree-state -->"))
+PY
+ascent_hash=$(sha256sum "$root/worktree-state.json")
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair --dry-run) \
+    >"$root/ascent-repair.out" 2>&1; then
+  : # zero writable cells is a successful dry run
+fi
+grep -Fq "skip ascent72/hermit: worktree unreadable; recorded='main' left as-is" \
+  "$root/ascent-repair.out" \
+  || { echo 'FAIL: repair did not refuse the parent-ascent proxy' >&2; cat "$root/ascent-repair.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$ascent_hash" ]] \
+  || { echo 'FAIL: dry-run parent-ascent refusal mutated registry state' >&2; exit 1; }
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-ascent --slot ascent72 --task task-ascent --product hermit \
+    --hermit-branch requested-ascent) >"$root/ascent-adopt.out" 2>&1; then
+  echo 'FAIL: allocator adopted parent-ascent residue as a product worktree' >&2; exit 1
+fi
+grep -Fq 'path exists but is not the exact requested git worktree' "$root/ascent-adopt.out" \
+  || { echo 'FAIL: allocator did not expose exact-root adoption refusal' >&2; cat "$root/ascent-adopt.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$ascent_hash" ]] \
+  || { echo 'FAIL: refused parent-ascent adoption mutated registry state' >&2; exit 1; }
+
+# PATH-ALIAS NEGATIVE: repair and adoption must not canonicalize an alternate
+# spelling into registry authority or silently rewrite around it.
+python3 - "$root/worktree-state.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state["slots"]["ascent72"]["hermit_path"] = "worktrees/ascent72/./hermit"
+path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+alias_hash=$(sha256sum "$root/worktree-state.json")
+(cd "$root" && "$root/scripts/allocate-worktree.rs" --repair --dry-run) \
+  >"$root/alias-repair.out" 2>&1
+grep -Fq "skip ascent72: slot ascent72 records noncanonical hermit_path; expected exact path 'worktrees/ascent72/hermit'; all branch cells left as-is" \
+  "$root/alias-repair.out" \
+  || { echo 'FAIL: repair did not refuse lexical path alias' >&2; cat "$root/alias-repair.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$alias_hash" ]] \
+  || { echo 'FAIL: alias-refusing repair mutated registry state' >&2; exit 1; }
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-ascent --slot ascent72 --task task-ascent --product hermit \
+    --hermit-branch requested-ascent) >"$root/alias-adopt.out" 2>&1; then
+  echo 'FAIL: allocator adopted a slot with an aliased registry path' >&2; exit 1
+fi
+grep -Fq "slot ascent72 records noncanonical hermit_path; expected exact path 'worktrees/ascent72/hermit'" \
+  "$root/alias-adopt.out" \
+  || { echo 'FAIL: allocator did not expose lexical path alias' >&2; cat "$root/alias-adopt.out" >&2; exit 1; }
+python3 - "$root/worktree-state.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state["slots"]["ascent72"]["hermit_path"] = "worktrees/ascent72/hermit"
+path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+
+# --- RELEASE-JOURNAL ISOLATION: a fenced checkout is intentionally absent at
+# its canonical path. Neither repair nor ordinary re-adoption may translate
+# that transient absence into branch="-" or status=active.
+fenced="$root/worktrees/ok71/.hermit.release-worktree-123-456"
+mv "$root/worktrees/ok71/hermit" "$fenced"
+python3 - "$root/worktree-state.json" "$fenced" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+state = json.loads(state_path.read_text())
+record = state["slots"]["ok71"]
+record["status"] = "releasing"
+record["release_journal"] = {
+    "schema_version": 1,
+    "label": "hermit",
+    "original": str(state_path.parent / "worktrees/ok71/hermit"),
+    "fenced": sys.argv[2],
+}
+state_path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+journal_hash=$(sha256sum "$root/worktree-state.json")
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) \
+    >"$root/releasing-repair.out" 2>&1; then
+  echo 'FAIL: repair consumed an unfinished release journal' >&2; exit 1
+fi
+grep -Fq 'REFUSING repair while slot release transaction(s) require guarded recovery: ok71' \
+  "$root/releasing-repair.out" \
+  || { echo 'FAIL: repair did not identify the journaled slot' >&2; cat "$root/releasing-repair.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
+  || { echo 'FAIL: refused repair mutated the release journal' >&2; exit 1; }
+
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-71 --slot ok71 --task task-71 --product hermit) \
+    >"$root/releasing-adopt.out" 2>&1; then
+  echo 'FAIL: re-adoption consumed an unfinished release journal' >&2; exit 1
+fi
+grep -Fq 'slot ok71 has an unfinished release transaction' "$root/releasing-adopt.out" \
+  || { echo 'FAIL: re-adoption did not refuse the journaled slot' >&2; cat "$root/releasing-adopt.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
+  || { echo 'FAIL: refused re-adoption mutated the release journal' >&2; exit 1; }
+
+echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved and parent-ascent/path-alias residue skipped/refused; CONTROL: 1/1 correct row untouched; release journal isolated from repair/re-adoption; human content preserved; idempotent)"

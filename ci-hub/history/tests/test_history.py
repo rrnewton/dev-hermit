@@ -405,17 +405,43 @@ class TempParentTest(unittest.TestCase):
             res["green_ledger_hours"] + res["green_conclusion_only_hours"],
             res["green_hours"], places=2)
 
-    def test_green_split_filtered_tests_nonzero_does_not_corroborate(self):
-        # NEGATIVE: filtered_tests>0 (the false-green case) fails the predicate,
-        # so the slice stays conclusion-only. Also covers a red commit whose
-        # ledger row must never leak into green_ledger.
+    def test_green_split_filtered_tests_nonzero_still_corroborates(self):
+        # POSITIVE: aggregate filtered_tests is diagnostic. A full run may filter
+        # tests outside its planned DAG nodes, while complete per-node coverage
+        # proves that every planned test-bearing node actually ran.
         self._write_gha([
             self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
                          "2026-08-03T00:00:00Z"),
             self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
                          "2026-08-03T01:00:00Z"),
         ])
-        self._write_ledger([self._full_pass_row("a" * 40, filtered_tests=3)])
+        self._write_ledger([self._full_pass_row(
+            "a" * 40,
+            schema_version=5,
+            filtered_tests=3,
+            coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
+                      "absent_nodes": []},
+        )])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertGreater(res["green_ledger_hours"], 0.0)
+
+    def test_green_split_incomplete_coverage_does_not_corroborate(self):
+        # NEGATIVE: an absent planned node keeps the slice conclusion-only even
+        # when aggregate counts are positive. Coverage, not filtered count, is
+        # the binding evidence for completeness.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        self._write_ledger([self._full_pass_row(
+            "a" * 40,
+            schema_version=5,
+            filtered_tests=3,
+            coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
+                      "absent_nodes": ["test.missing"]},
+        )])
         res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertEqual(res["green_ledger_hours"], 0.0)
 

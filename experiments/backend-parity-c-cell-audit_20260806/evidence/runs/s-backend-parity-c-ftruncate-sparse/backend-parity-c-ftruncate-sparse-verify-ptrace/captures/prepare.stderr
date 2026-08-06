@@ -1,0 +1,14 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/ftruncate_sparse.c: In function ‘read_all_at0’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/ftruncate_sparse.c:61:17: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   61 |     ssize_t r = pread(fd, buf + got, n - got, (off_t)got);
+      |                 ^~~~~
+      |                 read
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/ftruncate_sparse.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/ftruncate_sparse.c:83:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   83 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/ftruncate_sparse.c:95:7: error: implicit declaration of function ‘ftruncate’; did you mean ‘strncat’? [-Werror=implicit-function-declaration]
+   95 |   if (ftruncate(fd, 16) != 0)
+      |       ^~~~~~~~~
+      |       strncat
+cc1: all warnings being treated as errors

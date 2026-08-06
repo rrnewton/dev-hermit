@@ -1,0 +1,18 @@
+{
+  "question": "Root-cause SaBRe's remaining RED cells toward 100%",
+  "answer": "they are not red -- all 7 are outcome=unavailable from a collection-time gate whose recorded reason is misattributed and whose condition no longer holds",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "binary_under_test": "hermit/target/release/hermit built 2026-08-03 20:47 (NOT current main)",
+  "sabre_binary": "hermit/target/install_pkg/rsrcs/sabre, 94096 bytes, 2026-08-03 20:45 (PRESENT)",
+  "env": "LD_LIBRARY_PATH=~/.local/hermit-deps/lu/usr/lib64",
+  "flags": "--strict --verify --no-virtualize-cpuid --max-timeslice=disabled --log=info",
+  "scorecard_read": "compat-envelope/scorecard.csv @ 13c791e",
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "770c10db975be9604611eaad9f9f876ef010a9d4",
+  "cells_closed": 0,
+  "not_done": [
+    "did NOT run the 7 specific cells -- 3 are C fixtures not built here; archive-roundtrip and timed-progress-bar not attempted",
+    "no claim that the 7 cells pass; only that the availability gate is wrong so they would be measured"
+  ]
+}

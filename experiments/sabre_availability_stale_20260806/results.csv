@@ -1,0 +1,13 @@
+id,question,evidence,result
+A1,what does the scorecard record for SaBRe,"7 enabled cells, outcome=unavailable, deterministic blank, parity blank; unchanged across both snapshots (Aug 3 -> Aug 5)",0 of 7 measured
+A2,what does outcome=unavailable mean in the collector,"collect-envelope.rs:241-242 -- emitted when backend_available() is false",gate at collection time
+A3,does backend_available() check for a binary,"NO -- collect-envelope.rs:492-512 RUNS a probe: timeout 60s hermit run --backend <b> -- /bin/true","it is a RUN probe, not a file check"
+A4,is the sabre binary actually present,"hermit/target/install_pkg/rsrcs/sabre, 94096 bytes, 2026-08-03 20:45",PRESENT
+A5,does the probe pass NOW,"timeout 90 ./target/release/hermit run --backend sabre -- /bin/true","rc=0, clean stdout and stderr -- PASSES"
+A6,is the recorded reason accurate,"collect-envelope.rs:242 hardcodes reason='backend binary not present in this checkout' for ANY probe failure","MISATTRIBUTED -- the binary IS present and the probe passes"
+V1,sabre --strict --verify /bin/true,rc=0,Determinism verified
+V2,sabre --strict --verify /bin/echo hi,rc=0,Determinism verified
+V3,sabre --strict --verify /bin/date +%N (nanosecond clock),rc=0,Determinism verified
+V4,"sabre --strict --verify sh -c 'head -c 16 /dev/urandom | od -An -tx1' (entropy)",rc=0,"Determinism verified; stdout is Detcore's virtualized stream (29 72 bb 04 4d 96 df 28 ...)"
+N1,were the 7 SPECIFIC cells run,NO,"3 of them are C fixtures that are NOT BUILT here (get_robust_list_self, ioctl_fioclex, kcmp_eperm); archive-roundtrip and timed-progress-bar not attempted"
+N2,cells closed,0,"the claim is that the gate is wrong so they would be MEASURED, not that they are green"

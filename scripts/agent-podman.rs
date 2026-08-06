@@ -19,11 +19,11 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io;
-use std::path::{Path, PathBuf};
+use std::io::{self, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command, ExitStatus, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MANAGED_LABEL: &str = "io.dev-hermit.agent-podman";
 const MANAGED_VERSION: &str = "v1";
@@ -38,6 +38,7 @@ const EVIDENCE_TIMEOUT_SECS: &str = "1s";
 const STOP_TIMEOUT_SECS: &str = "13s";
 const REMOVE_TIMEOUT_SECS: &str = "3s";
 const MAX_PROCESS_EVIDENCE: usize = 10;
+const REGISTRATION_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(30);
 
 const USAGE: &str = r#"Usage: agent-podman.rs COMMAND [OPTIONS]
 
@@ -62,6 +63,12 @@ Commands:
       With --apply, gracefully stop and remove only managed agent-lifetime
       containers whose exact owner invocation is gone. Never force-removes,
       and never removes task-retained or unlabelled containers.
+
+  release-audit --fence-token TOKEN --owner AGENT... [--target ABSOLUTE-PATH...] [--json]
+      Release-only authority: refuse any container owned by AGENT or whose
+      effective host mount overlaps a target. The caller must already hold the
+      container lifecycle lock exclusively; unavailable/incomplete evidence
+      fails closed.
 
 Environment:
   DG_AGENT_NAME              Required for run/create/transfer.
@@ -220,6 +227,44 @@ struct ReconcileReport {
     errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct ReleaseAuditDetail {
+    id: String,
+    name: String,
+    owner_agent: Option<String>,
+    matching_mounts: Vec<String>,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseAuditReport {
+    state: String,
+    inspected: usize,
+    stale_registry_entries_removed: usize,
+    owner_matches: usize,
+    target_mounts: usize,
+    details: Vec<ReleaseAuditDetail>,
+    container_observation: Vec<ReleaseContainerObservation>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseContainerObservation {
+    id: String,
+    name: String,
+    state: String,
+    ps_labels: BTreeMap<String, String>,
+    inspect_labels: BTreeMap<String, String>,
+    registry_ownership: Option<Ownership>,
+    mount_sources: Vec<String>,
+    resolved_mounts: Vec<String>,
+}
+
+struct ReleaseInspection {
+    labels: BTreeMap<String, String>,
+    mount_sources: Vec<String>,
+    mounts: Vec<PathBuf>,
+}
+
 #[derive(Debug)]
 enum Cli {
     Quickstart,
@@ -239,6 +284,12 @@ enum Cli {
         live_invocations: Option<PathBuf>,
         json: bool,
         apply: bool,
+    },
+    ReleaseAudit {
+        fence_token: String,
+        owners: BTreeSet<String>,
+        targets: Vec<PathBuf>,
+        json: bool,
     },
 }
 
@@ -265,6 +316,7 @@ fn run(arguments: Vec<String>) -> Result<i32> {
             Cli::Transfer { .. } => "transfer",
             Cli::Audit { apply: true, .. } => "reconcile",
             Cli::Audit { apply: false, .. } => "audit",
+            Cli::ReleaseAudit { .. } => "release-audit",
         };
         println!("state=parse-ok command={name} summary=arguments-valid-no-action-taken");
         return Ok(0);
@@ -291,6 +343,12 @@ fn run(arguments: Vec<String>) -> Result<i32> {
             json,
             apply,
         } => reconcile(&agents_json, live_invocations.as_deref(), json, apply),
+        Cli::ReleaseAudit {
+            fence_token,
+            owners,
+            targets,
+            json,
+        } => release_audit(&fence_token, &owners, &targets, json),
     }
 }
 
@@ -319,7 +377,67 @@ fn parse_cli(arguments: Vec<String>) -> Result<Cli> {
     if matches!(command, "audit" | "reconcile") {
         return parse_audit(command, &arguments[1..]);
     }
+    if command == "release-audit" {
+        return parse_release_audit(&arguments[1..]);
+    }
     Err(AppError::Usage(format!("unknown command {command:?}")))
+}
+
+fn parse_release_audit(arguments: &[String]) -> Result<Cli> {
+    let mut fence_token = None;
+    let mut owners = BTreeSet::new();
+    let mut targets = Vec::new();
+    let mut json = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--fence-token" => {
+                index += 1;
+                fence_token = arguments
+                    .get(index)
+                    .filter(|value| !value.trim().is_empty())
+                    .cloned();
+            }
+            "--owner" => {
+                index += 1;
+                let owner = arguments
+                    .get(index)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| AppError::Usage("--owner needs a value".to_string()))?;
+                owners.insert(owner.clone());
+            }
+            "--target" => {
+                index += 1;
+                let target = arguments
+                    .get(index)
+                    .map(PathBuf::from)
+                    .ok_or_else(|| AppError::Usage("--target needs a value".to_string()))?;
+                if !normalized_absolute_path(&target) {
+                    return Err(AppError::Usage(format!(
+                        "--target must be a normalized absolute path: {}",
+                        target.display()
+                    )));
+                }
+                targets.push(target);
+            }
+            "--json" => json = true,
+            value => return Err(AppError::Usage(format!("unexpected option {value:?}"))),
+        }
+        index += 1;
+    }
+    if owners.is_empty() {
+        return Err(AppError::Usage(
+            "release-audit requires at least one --owner".to_string(),
+        ));
+    }
+    targets.sort();
+    targets.dedup();
+    Ok(Cli::ReleaseAudit {
+        fence_token: required_nonempty("--fence-token", fence_token)?,
+        owners,
+        targets,
+        json,
+    })
 }
 
 fn parse_launch(mode: &str, arguments: &[String]) -> Result<Cli> {
@@ -517,6 +635,10 @@ fn launch(mode: &str, task: &str, lifetime: Lifetime, arguments: &[String]) -> R
         std::process::id(),
         now_secs()
     ));
+    // Container creation and durable registration are one lifecycle operation.
+    // `release-worktree.rs` takes this exact lifecycle lock exclusively before
+    // proving that no owner container can retain or newly acquire a slot path.
+    let mut lifecycle_lock = Some(open_lifecycle_lock_shared()?);
     let labels = ownership_labels(&identity, task, lifetime);
     let mut command = Command::new(podman_bin());
     command.arg(mode);
@@ -533,24 +655,33 @@ fn launch(mode: &str, task: &str, lifetime: Lifetime, arguments: &[String]) -> R
     })?;
 
     let mut registered_id = None;
+    let register_visible_id = |id: &str| -> Result<()> {
+        let ownership = Ownership {
+            container_id: id.to_string(),
+            owner_agent: identity.name.clone(),
+            owner_invocation: identity.invocation.clone(),
+            owner_pane: identity.pane.clone(),
+            task: task.to_string(),
+            lifetime,
+            updated_at: now_secs(),
+        };
+        update_registry(|registry| {
+            registry.containers.insert(id.to_string(), ownership);
+        })?;
+        wait_for_release_visibility(id, REGISTRATION_VISIBILITY_TIMEOUT)
+    };
     let status = loop {
         if registered_id.is_none() {
             if let Ok(raw) = fs::read_to_string(&cidfile) {
                 let id = raw.trim();
                 if !id.is_empty() {
-                    let ownership = Ownership {
-                        container_id: id.to_string(),
-                        owner_agent: identity.name.clone(),
-                        owner_invocation: identity.invocation.clone(),
-                        owner_pane: identity.pane.clone(),
-                        task: task.to_string(),
-                        lifetime,
-                        updated_at: now_secs(),
-                    };
-                    update_registry(|registry| {
-                        registry.containers.insert(id.to_string(), ownership);
-                    })?;
+                    if let Err(error) = register_visible_id(id) {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(error);
+                    }
                     registered_id = Some(id.to_string());
+                    drop(lifecycle_lock.take());
                 }
             }
         }
@@ -567,25 +698,22 @@ fn launch(mode: &str, task: &str, lifetime: Lifetime, arguments: &[String]) -> R
         if let Ok(raw) = fs::read_to_string(&cidfile) {
             let id = raw.trim();
             if !id.is_empty() {
-                let ownership = Ownership {
-                    container_id: id.to_string(),
-                    owner_agent: identity.name,
-                    owner_invocation: identity.invocation,
-                    owner_pane: identity.pane,
-                    task: task.to_string(),
-                    lifetime,
-                    updated_at: now_secs(),
-                };
-                update_registry(|registry| {
-                    registry.containers.insert(id.to_string(), ownership);
-                })?;
+                register_visible_id(id)?;
                 registered_id = Some(id.to_string());
+                drop(lifecycle_lock.take());
             }
         }
     }
+    // A command that never produced a cidfile cannot leave a registered
+    // container. Retain the lifecycle lock until the child has terminated and
+    // that absence is known. A visible container's final cleanup reacquires the
+    // same lock so release cannot observe registry mutation outside lifecycle
+    // authority.
+    drop(lifecycle_lock.take());
     let _ = fs::remove_file(&cidfile);
     if let Some(id) = registered_id {
-        if !container_exists(&id) {
+        let _cleanup_lifecycle_lock = open_lifecycle_lock_shared()?;
+        if !container_exists_authoritative(&id)? {
             update_registry(|registry| {
                 registry.containers.remove(&id);
             })?;
@@ -595,6 +723,7 @@ fn launch(mode: &str, task: &str, lifetime: Lifetime, arguments: &[String]) -> R
 }
 
 fn transfer(container: &str, task: &str, lifetime: Lifetime) -> Result<i32> {
+    let _lifecycle_lock = open_lifecycle_lock_exclusive()?;
     let identity = current_identity()?;
     let labels = inspect_labels(container)?;
     if labels.get(MANAGED_LABEL).map(String::as_str) != Some(MANAGED_VERSION) {
@@ -645,12 +774,22 @@ fn reconcile(
     json_output: bool,
     apply: bool,
 ) -> Result<i32> {
+    // A mutating reconciliation takes the lifecycle fence exclusively. This
+    // serializes classify-through-remove against create registration and
+    // transfer, as well as against release. Read-only audits do not mutate.
+    let _lifecycle_lock = if apply {
+        Some(open_lifecycle_lock_exclusive()?)
+    } else {
+        None
+    };
     let agents = load_live_agents(agents_path)?;
     let invocations = match live_invocations_path {
         Some(path) => load_live_invocations(path)?,
         None => discover_live_invocations(&agents),
     };
-    let registry = read_registry()?;
+    let registry_path = state_path()?;
+    let registry_was_present = registry_path.is_file();
+    let registry = read_registry_unlocked(&registry_path)?;
     let containers = list_containers()?;
     let mut reclaimed_ids = BTreeSet::new();
 
@@ -771,7 +910,10 @@ fn reconcile(
             }
         }
     }
-    if apply && !reclaimed_ids.is_empty() {
+    if apply && (!reclaimed_ids.is_empty() || (!registry_was_present && report.managed == 0)) {
+        // A no-managed-container apply may durably bootstrap the explicit
+        // empty authority. Never infer or recreate live managed ownership from
+        // immutable creation labels when the current-owner registry is absent.
         update_registry(|current| {
             for id in &reclaimed_ids {
                 current.containers.remove(id);
@@ -847,6 +989,407 @@ fn effective_ownership(container: &Container, registry: &Registry) -> Option<Own
         lifetime: Lifetime::parse(container.labels.get(LIFETIME_LABEL)?).ok()?,
         updated_at: 0,
     })
+}
+
+fn normalized_absolute_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left == right || left.starts_with(right) || right.starts_with(left)
+}
+
+fn verify_release_fence(fence_token: &str) -> Result<()> {
+    let path = lifecycle_lock_path()?;
+    let recorded = fs::read_to_string(&path).map_err(|source| AppError::Io {
+        context: format!("read release lifecycle token {}", path.display()),
+        source,
+    })?;
+    if recorded.trim() != fence_token {
+        return Err(AppError::Message(
+            "release lifecycle token does not match the held fence".to_string(),
+        ));
+    }
+    let probe = open_lifecycle_lock_file()?;
+    // A second shared acquisition succeeds when the alleged holder has only a
+    // shared lock, but blocks when another process owns the exclusive release
+    // fence. This distinguishes the exact lock mode instead of treating any
+    // unrelated lifecycle user as release authority.
+    match FileExt::try_lock_shared(&probe) {
+        Ok(()) => {
+            let _ = FileExt::unlock(&probe);
+            Err(AppError::Message(
+                "release-audit requires an independently held exclusive lifecycle fence"
+                    .to_string(),
+            ))
+        }
+        Err(source) if source.kind() == io::ErrorKind::WouldBlock => Ok(()),
+        Err(source) => Err(AppError::Io {
+            context: format!("probe release lifecycle fence {}", path.display()),
+            source,
+        }),
+    }
+}
+
+fn inspect_release_container(container: &Container) -> Result<ReleaseInspection> {
+    let output = bounded_podman(&["container", "inspect", &container.id], QUERY_TIMEOUT_SECS)?;
+    if !output.status.success() {
+        return Err(AppError::Message(format!(
+            "podman inspect failed for {}: {}",
+            container.id,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|source| AppError::Json {
+        context: format!("parse podman inspect JSON for {}", container.id),
+        source,
+    })?;
+    let rows = value.as_array().ok_or_else(|| {
+        AppError::Message(format!(
+            "podman inspect JSON for {} is not an array",
+            container.id
+        ))
+    })?;
+    if rows.len() != 1 {
+        return Err(AppError::Message(format!(
+            "podman inspect returned {} rows for {}",
+            rows.len(),
+            container.id
+        )));
+    }
+    let row = rows[0].as_object().ok_or_else(|| {
+        AppError::Message(format!(
+            "podman inspect row for {} is not an object",
+            container.id
+        ))
+    })?;
+    let inspected_id = string_field(row, &["Id", "ID"]).ok_or_else(|| {
+        AppError::Message(format!("podman inspect row for {} has no ID", container.id))
+    })?;
+    if inspected_id != container.id {
+        return Err(AppError::Message(format!(
+            "podman inspect identity changed: requested {}, received {inspected_id}",
+            container.id
+        )));
+    }
+    let config = row
+        .get("Config")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            AppError::Message(format!(
+                "podman inspect row for {} has no Config object",
+                container.id
+            ))
+        })?;
+    let labels = match config.get("Labels") {
+        None | Some(Value::Null) => BTreeMap::new(),
+        Some(Value::Object(labels)) => labels
+            .iter()
+            .map(|(key, value)| {
+                value
+                    .as_str()
+                    .map(|value| (key.clone(), value.to_string()))
+                    .ok_or_else(|| {
+                        AppError::Message(format!(
+                            "podman inspect label {key} for {} is not a string",
+                            container.id
+                        ))
+                    })
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?,
+        Some(_) => {
+            return Err(AppError::Message(format!(
+                "podman inspect labels for {} are not an object",
+                container.id
+            )))
+        }
+    };
+    let mounts = row.get("Mounts").and_then(Value::as_array).ok_or_else(|| {
+        AppError::Message(format!(
+            "podman inspect row for {} has no Mounts array",
+            container.id
+        ))
+    })?;
+    let mut sources = Vec::new();
+    let mut mount_sources = Vec::new();
+    for (index, mount) in mounts.iter().enumerate() {
+        let object = mount.as_object().ok_or_else(|| {
+            AppError::Message(format!(
+                "podman inspect mount {index} for {} is not an object",
+                container.id
+            ))
+        })?;
+        let source = object
+            .get("Source")
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "podman inspect mount {index} for {} has no Source field",
+                    container.id
+                ))
+            })?
+            .as_str()
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "podman inspect mount {index} Source for {} is not a string",
+                    container.id
+                ))
+            })?;
+        mount_sources.push(source.to_string());
+        if source.is_empty() {
+            continue;
+        }
+        let source = PathBuf::from(source);
+        if !normalized_absolute_path(&source) {
+            return Err(AppError::Message(format!(
+                "podman inspect mount {index} for {} has non-normalized source {}",
+                container.id,
+                source.display()
+            )));
+        }
+        // Retain both Podman's lexical source and the resolved filesystem
+        // identity. Resolution is authority, not enrichment: after a path
+        // fence, a dangling alias could otherwise erase the only observable
+        // binding between a live mount and the moved worktree.
+        let canonical = fs::canonicalize(&source).map_err(|error| {
+            AppError::Message(format!(
+                "podman inspect mount {index} source {} for {} cannot be resolved: {error}",
+                source.display(),
+                container.id
+            ))
+        })?;
+        if !normalized_absolute_path(&canonical) {
+            return Err(AppError::Message(format!(
+                "podman inspect mount {index} for {} resolves outside normalized absolute path syntax: {}",
+                container.id,
+                canonical.display()
+            )));
+        }
+        sources.push(source);
+        sources.push(canonical);
+    }
+    sources.sort();
+    sources.dedup();
+    Ok(ReleaseInspection {
+        labels,
+        mount_sources,
+        mounts: sources,
+    })
+}
+
+fn release_audit(
+    fence_token: &str,
+    owners: &BTreeSet<String>,
+    targets: &[PathBuf],
+    json_output: bool,
+) -> Result<i32> {
+    verify_release_fence(fence_token)?;
+    // The lifecycle fence excludes every supported create/transfer/reconcile
+    // mutation.  Take the narrower registry lock as well so the ownership map
+    // and the engine census form one observation.
+    let _registry_lock = open_lock()?;
+    let registry_path = state_path()?;
+    let metadata = fs::symlink_metadata(&registry_path).map_err(|source| AppError::Io {
+        context: format!(
+            "release ownership registry is unavailable at {}",
+            registry_path.display()
+        ),
+        source,
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(AppError::Message(format!(
+            "release ownership registry is not an exact file: {}",
+            registry_path.display()
+        )));
+    }
+    let mut registry = read_registry_unlocked(&registry_path)?;
+    if registry.schema_version != 1 {
+        return Err(AppError::Message(format!(
+            "release ownership registry has unsupported schema {}",
+            registry.schema_version
+        )));
+    }
+    for (id, ownership) in &registry.containers {
+        if ownership.container_id != *id {
+            return Err(AppError::Message(format!(
+                "container registry key {id} does not bind payload ID {}",
+                ownership.container_id
+            )));
+        }
+    }
+    let containers = list_containers()?;
+    let initial_ids: BTreeSet<String> = containers
+        .iter()
+        .map(|container| container.id.clone())
+        .collect();
+    if initial_ids.len() != containers.len() {
+        return Err(AppError::Message(
+            "podman ps returned duplicate container IDs".to_string(),
+        ));
+    }
+    let registry_ids: BTreeSet<String> = registry.containers.keys().cloned().collect();
+    let missing_from_census: Vec<String> = registry_ids.difference(&initial_ids).cloned().collect();
+    let mut stale_registry_ids = Vec::new();
+    for id in &missing_from_census {
+        match container_exists_authoritative(id) {
+            Ok(false) => stale_registry_ids.push(id.clone()),
+            Ok(true) => {
+                return Err(AppError::Message(format!(
+                    "release ownership registry container {id} exists but is absent from the exact engine census"
+                )))
+            }
+            Err(error) => {
+                return Err(AppError::Message(format!(
+                    "release ownership registry container {id} has uncertain engine existence: {error}"
+                )))
+            }
+        }
+    }
+    for id in &stale_registry_ids {
+        registry.containers.remove(id);
+    }
+    if !stale_registry_ids.is_empty() {
+        write_registry_unlocked(&registry_path, &registry)?;
+    }
+
+    let mut details = Vec::new();
+    let mut container_observation = Vec::new();
+    let mut owner_matches = 0usize;
+    let mut target_mounts = 0usize;
+    for container in &containers {
+        let registry_ownership = registry.containers.get(&container.id);
+        let registry_owner = registry_ownership.map(|ownership| ownership.owner_agent.clone());
+        let inspection = inspect_release_container(container)?;
+        let managed = inspection.labels.get(MANAGED_LABEL).map(String::as_str);
+        let label_owner = inspection.labels.get(AGENT_LABEL).cloned();
+        if registry_owner.is_some() && managed != Some(MANAGED_VERSION) {
+            return Err(AppError::Message(format!(
+                "live container {} has registry ownership but no matching managed label",
+                container.id
+            )));
+        }
+        if managed == Some(MANAGED_VERSION) && label_owner.is_none() {
+            return Err(AppError::Message(format!(
+                "managed container {} has no owner-agent label",
+                container.id
+            )));
+        }
+        if managed == Some(MANAGED_VERSION) && registry_ownership.is_none() {
+            return Err(AppError::Message(format!(
+                "managed live container {} ({}) has no durable current-owner registry entry",
+                container.id, container.name
+            )));
+        }
+        if registry_owner.as_ref().is_some_and(String::is_empty) {
+            return Err(AppError::Message(format!(
+                "container {} has an empty registry owner",
+                container.id
+            )));
+        }
+        // `transfer` intentionally advances current ownership in the durable
+        // registry without rewriting immutable creation labels. The registry
+        // is therefore the current-owner authority for every managed live
+        // container; labels remain a conservative fallback only for unmanaged
+        // containers that happen to carry an owner label.
+        let owner = registry_owner.or(label_owner);
+        let matching_mounts: Vec<String> = inspection
+            .mounts
+            .iter()
+            .filter(|source| targets.iter().any(|target| paths_overlap(source, target)))
+            .map(|source| source.display().to_string())
+            .collect();
+        let mut reasons = Vec::new();
+        if owner.as_ref().is_some_and(|owner| owners.contains(owner)) {
+            owner_matches += 1;
+            reasons.push("recorded-owner-container".to_string());
+        }
+        if !matching_mounts.is_empty() {
+            target_mounts += 1;
+            reasons.push("target-overlapping-mount".to_string());
+        }
+        if !reasons.is_empty() {
+            details.push(ReleaseAuditDetail {
+                id: container.id.clone(),
+                name: container.name.clone(),
+                owner_agent: owner,
+                matching_mounts,
+                reasons,
+            });
+        }
+        container_observation.push(ReleaseContainerObservation {
+            id: container.id.clone(),
+            name: container.name.clone(),
+            state: container.state.clone(),
+            ps_labels: container.labels.clone(),
+            inspect_labels: inspection.labels,
+            registry_ownership: registry_ownership.cloned(),
+            mount_sources: inspection.mount_sources,
+            resolved_mounts: inspection
+                .mounts
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        });
+    }
+    container_observation.sort_by(|left, right| left.id.cmp(&right.id));
+
+    // Completeness bracket: a disappearing or newly appearing container makes
+    // this observation unusable rather than silently shrinking its coverage.
+    let final_containers = list_containers()?;
+    let final_ids: BTreeSet<String> = final_containers
+        .iter()
+        .map(|container| container.id.clone())
+        .collect();
+    if final_ids.len() != final_containers.len() || final_ids != initial_ids {
+        return Err(AppError::Message(
+            "podman container census changed during release-audit".to_string(),
+        ));
+    }
+
+    let report = ReleaseAuditReport {
+        state: if details.is_empty() {
+            "ok".to_string()
+        } else {
+            "refused".to_string()
+        },
+        inspected: containers.len(),
+        stale_registry_entries_removed: stale_registry_ids.len(),
+        owner_matches,
+        target_mounts,
+        details,
+        container_observation,
+    };
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|source| AppError::Json {
+                context: "serialize release audit".to_string(),
+                source,
+            })?
+        );
+    } else {
+        println!(
+            "state={} inspected={} stale_registry_entries_removed={} owner_matches={} target_mounts={}",
+            report.state,
+            report.inspected,
+            report.stale_registry_entries_removed,
+            report.owner_matches,
+            report.target_mounts
+        );
+        for detail in &report.details {
+            println!(
+                "container={} name={} owner={} reasons={} mounts={}",
+                detail.id,
+                detail.name,
+                detail.owner_agent.as_deref().unwrap_or("-"),
+                detail.reasons.join(","),
+                detail.matching_mounts.join(",")
+            );
+        }
+    }
+    Ok(i32::from(report.state != "ok"))
 }
 
 fn load_live_agents(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -1181,10 +1724,60 @@ fn inspect_id(container: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn container_exists(container: &str) -> bool {
-    bounded_podman(&["container", "exists", container], QUERY_TIMEOUT_SECS)
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+fn container_exists_authoritative(container: &str) -> Result<bool> {
+    let output = bounded_podman(&["container", "exists", container], QUERY_TIMEOUT_SECS)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        code => Err(AppError::Message(format!(
+            "podman container exists was inconclusive for {container} (exit {}): {}",
+            code.map_or_else(|| "signal".to_string(), |code| code.to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))),
+    }
+}
+
+fn container_release_visible(container: &str) -> Result<bool> {
+    if !container_exists_authoritative(container)? {
+        return Ok(false);
+    }
+    let containers = list_containers()?;
+    let matches = containers
+        .iter()
+        .filter(|candidate| candidate.id == container)
+        .count();
+    if matches > 1 {
+        return Err(AppError::Message(format!(
+            "podman census duplicated newly registered container {container}"
+        )));
+    }
+    if matches == 1 {
+        let candidate = containers
+            .iter()
+            .find(|candidate| candidate.id == container)
+            .expect("exactly one matching census row");
+        inspect_release_container(candidate)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn wait_for_release_visibility(container: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let last_observation = match container_release_visible(container) {
+            Ok(true) => return Ok(()),
+            Ok(false) => "container absent from exact engine census".to_string(),
+            Err(error) => error.to_string(),
+        };
+        if Instant::now() >= deadline {
+            return Err(AppError::Message(format!(
+                "new container {container} was registered but not release-visible within {}s; ownership registry retained: {last_observation}",
+                timeout.as_secs()
+            )));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn bounded_podman(arguments: &[&str], timeout_secs: &str) -> Result<std::process::Output> {
@@ -1238,6 +1831,51 @@ fn state_path() -> Result<PathBuf> {
     ))
 }
 
+fn lifecycle_lock_path() -> Result<PathBuf> {
+    let state = state_path()?;
+    let parent = state
+        .parent()
+        .ok_or_else(|| AppError::Message("ownership state has no parent".to_string()))?;
+    Ok(parent.join("agent-container-lifecycle.lock"))
+}
+
+fn open_lifecycle_lock_file() -> Result<File> {
+    let path = lifecycle_lock_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| AppError::Io {
+            context: format!("create {}", parent.display()),
+            source,
+        })?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|source| AppError::Io {
+            context: format!("open {}", path.display()),
+            source,
+        })
+}
+
+fn open_lifecycle_lock_shared() -> Result<File> {
+    let file = open_lifecycle_lock_file()?;
+    FileExt::lock_shared(&file).map_err(|source| AppError::Io {
+        context: "lock container lifecycle shared".to_string(),
+        source,
+    })?;
+    Ok(file)
+}
+
+fn open_lifecycle_lock_exclusive() -> Result<File> {
+    let file = open_lifecycle_lock_file()?;
+    FileExt::lock_exclusive(&file).map_err(|source| AppError::Io {
+        context: "lock container lifecycle exclusive".to_string(),
+        source,
+    })?;
+    Ok(file)
+}
+
 fn lock_path() -> Result<PathBuf> {
     let state = state_path()?;
     Ok(state.with_extension("lock"))
@@ -1281,10 +1919,6 @@ fn read_registry_unlocked(path: &Path) -> Result<Registry> {
     }
 }
 
-fn read_registry() -> Result<Registry> {
-    read_registry_unlocked(&state_path()?)
-}
-
 fn update_registry(action: impl FnOnce(&mut Registry)) -> Result<()> {
     let _lock = open_lock()?;
     let path = state_path()?;
@@ -1293,25 +1927,50 @@ fn update_registry(action: impl FnOnce(&mut Registry)) -> Result<()> {
     write_registry_unlocked(&path, &registry)
 }
 
-fn write_registry_unlocked(path: &Path, registry: &Registry) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| AppError::Io {
-            context: format!("create {}", parent.display()),
-            source,
-        })?;
+fn durable_registry_replace(
+    path: &Path,
+    bytes: &[u8],
+    before_rename: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "registry has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".agent-containers.{}.{nonce}.tmp",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        before_rename()?;
+        fs::rename(&temporary, path)?;
+        File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
     }
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    result
+}
+
+fn write_registry_unlocked(path: &Path, registry: &Registry) -> Result<()> {
     let text = serde_json::to_string_pretty(registry).map_err(|source| AppError::Json {
         context: "serialize ownership registry".to_string(),
         source,
     })?;
-    fs::write(&temporary, format!("{text}\n")).map_err(|source| AppError::Io {
-        context: format!("write {}", temporary.display()),
-        source,
-    })?;
-    fs::rename(&temporary, path).map_err(|source| AppError::Io {
-        context: format!("replace {}", path.display()),
-        source,
+    durable_registry_replace(path, format!("{text}\n").as_bytes(), || Ok(())).map_err(|source| {
+        AppError::Io {
+            context: format!("durably replace {}", path.display()),
+            source,
+        }
     })
 }
 
@@ -1482,5 +2141,33 @@ mod tests {
     fn quickstart_is_nonempty_and_consequence_led() {
         assert!(QUICKSTART.contains("never automatic deletion targets"));
         assert!(QUICKSTART.lines().count() < 20);
+    }
+
+    #[test]
+    fn registry_replace_failure_preserves_previous_authority() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!(
+            "agent-podman-registry-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("agent-containers.json");
+        fs::write(&path, b"old-authority\n").unwrap();
+
+        let result = durable_registry_replace(&path, b"new-authority\n", || {
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "planted pre-rename failure",
+            ))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"old-authority\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 }

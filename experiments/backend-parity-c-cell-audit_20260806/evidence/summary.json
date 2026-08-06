@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "tests": 1,
+  "cells": 1,
+  "passed": 0,
+  "failed": 1,
+  "errors": 0,
+  "by_mode": {
+    "verify": {
+      "cells": 1,
+      "passed": 0
+    }
+  }
+}

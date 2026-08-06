@@ -1,0 +1,23 @@
+{
+  "question": "Underneath the dtid confound, do DBI's [stack]/[heap] digests match ptrace's?",
+  "answer": "heap = NO-RESULT (DBI emits zero heap records); stack = NOT COMPARABLE (DBI's stack region is one page larger). Neither is a memory-content divergence.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30, --features third-party-backends",
+  "guest": "~/.local/hermit-deps/guests/guest_heap (gcc -O1, dynamic; no static libc on this host), prints sum=125080",
+  "flags": "--log=info --log-file <outside /tmp> --strict --no-virtualize-cpuid --max-timeslice=disabled --detlog-heap --detlog-stack",
+  "capture": "ptrace from the log file; DBI from STDERR (it ignores --log-file)",
+  "control": "ptrace p1 vs p2 identical canonical streams -- ptrace is a clean oracle for this guest",
+  "counts": {"ptrace_memory_records": 63, "ptrace_stack": 59, "ptrace_heap": 4, "dbi_memory_records": 55, "dbi_stack": 55, "dbi_heap": 0},
+  "instrument_bugs_found": [
+    "guest under /tmp is refused by hermit (explains the prior agent's zero-from-both)",
+    "--log-file under /tmp: ptrace PANICS while DBI silently ignores it"
+  ],
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "a7c79b7f4fdec0fff268d4ba9c89ffa99ee39ccd",
+  "not_done": [
+    "no divergence fixed, no code changed",
+    "one single-threaded guest only; a known ptrace-side stack divergence exists on multithreaded zstd -T4",
+    "did not determine WHY DBI's stack is a page larger or why heap records are absent"
+  ]
+}

@@ -1,0 +1,7 @@
+backend,intercepts_getppid,of,guest_tracer_pid,wall_2k_s,wall_50k_s,us_per_syscall,gate
+ptrace,200,200,1,0.0873,1.7257,34.13,FAIL-reference
+e9patch,200,200,1,0.0842,1.7309,34.31,FAIL
+sabre,200,200,1,0.2132,2.1276,39.88,FAIL
+dbi,200,200,1,0.0657,0.1341,1.43,PASS
+liteinst,,,,,,,BLOCKED-preload-handshake
+kvm,,,,,,,UNMEASURABLE-hangs-400s

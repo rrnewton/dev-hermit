@@ -1,0 +1,37 @@
+:: Run1...
+:: Run2...
+:: Comparing logs... /tmp/run1_log_ix1Pf and /tmp/run2_log_Ultql
+Logs contain 2761 | 2761 messages total
+Logs contain 2334 | 2334 detcore-specific messages
+Logs contain 1453 | 1453 INFO messages
+Logs contain 2248 | 2248 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+(DETLOG) Mismatch at log messages 678 (run 1) and 678 (run 2): [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [memory][dtid <NUM>] <ADDR>-<ADDR> MMPermissions(READ | WRITE | PRIVATE) <NUM> <NUM>:<NUM> <NUM> [stack]->20c[0m[1;48;5;52;31m0[0m[31m6[0m[1;48;5;52;31m6b[0m[31m0[0m[1;48;5;52;31m6ba[0m[31m02[0m[1;48;5;52;31mc[0m[31m7e1[0m[1;48;5;52;31mb35955[0m[31m20[0m[1;48;5;52;31md[0m[31m7[0m[1;48;5;52;31m31[0m[31m0[0m[1;48;5;52;31m0[0m[31m9[0m[1;48;5;52;31mf2d3ba[0m[31me[0m[1;48;5;52;31ma36b[0m[31m5[0m[1;48;5;52;31me6a05139a[0m[31m8[0m[1;48;5;52;31m0[0m[31mcc[0m[1;48;5;52;31m2a22aa6[0m[31m"[0m
+[32m>"INFO detcore: DETLOG [memory][dtid <NUM>] <ADDR>-<ADDR> MMPermissions(READ | WRITE | PRIVATE) <NUM> <NUM>:<NUM> <NUM> [stack]->[0m[1;48;5;22;32m3f05f3a7[0m[32m2[0m[1;48;5;22;32mb[0m[32m0[0m[1;48;5;22;32m28[0m[32mc[0m[1;48;5;22;32m39e[0m[32m600[0m[1;48;5;22;32m53e[0m[32m2[0m[1;48;5;22;32m2fa49[0m[32m7[0m[1;48;5;22;32m9[0m[32me12[0m[1;48;5;22;32m4c[0m[32m0[0m[1;48;5;22;32mc4b[0m[32m7[0m[1;48;5;22;32mc8c2[0m[32m09[0m[1;48;5;22;32m40[0m[32me[0m[1;48;5;22;32mc[0m[32m5[0m[1;48;5;22;32m27dd777[0m[32m8cc[0m[1;48;5;22;32m37[0m[32m"[0m
+(DETLOG) Original entries before normalization: [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->20c[0m[1;48;5;52;31m0[0m[31m6[0m[1;48;5;52;31m6b[0m[31m0[0m[1;48;5;52;31m6ba[0m[31m02[0m[1;48;5;52;31mc[0m[31m7e1[0m[1;48;5;52;31mb35955[0m[31m20[0m[1;48;5;52;31md[0m[31m7[0m[1;48;5;52;31m31[0m[31m0[0m[1;48;5;52;31m0[0m[31m9[0m[1;48;5;52;31mf2d3ba[0m[31me[0m[1;48;5;52;31ma36b[0m[31m5[0m[1;48;5;52;31me6a05139a[0m[31m8[0m[1;48;5;52;31m0[0m[31mcc[0m[1;48;5;52;31m2a22aa6[0m[31m"[0m
+[32m>"INFO detcore: DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->[0m[1;48;5;22;32m3f05f3a7[0m[32m2[0m[1;48;5;22;32mb[0m[32m0[0m[1;48;5;22;32m28[0m[32mc[0m[1;48;5;22;32m39e[0m[32m600[0m[1;48;5;22;32m53e[0m[32m2[0m[1;48;5;22;32m2fa49[0m[32m7[0m[1;48;5;22;32m9[0m[32me12[0m[1;48;5;22;32m4c[0m[32m0[0m[1;48;5;22;32mc4b[0m[32m7[0m[1;48;5;22;32mc8c2[0m[32m09[0m[1;48;5;22;32m40[0m[32me[0m[1;48;5;22;32mc[0m[32m5[0m[1;48;5;22;32m27dd777[0m[32m8cc[0m[1;48;5;22;32m37[0m[32m"[0m
+Divergent syscall context:
+  run 1, log message 676: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #77: sysinfo(0x7fffffffe8d0) = Ok(0)
+  run 2, log message 676: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #77: sysinfo(0x7fffffffe8d0) = Ok(0)
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #72: brk(NULL) = Ok(93824992337920)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #73: brk(0x55555558f000) = Ok(93824992473088)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #74: ioctl(2, TCGETS, 0x7fffffffe8e0) = Err(Errno(ENOTTY))
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #75: rt_sigaction(14, 0x7fffffffe830, NULL, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #76: rt_sigaction(10, 0x7fffffffe830, NULL, 8) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #72: brk(NULL) = Ok(93824992337920)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #73: brk(0x55555558f000) = Ok(93824992473088)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #74: ioctl(2, TCGETS, 0x7fffffffe8e0) = Err(Errno(ENOTTY))
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #75: rt_sigaction(14, 0x7fffffffe830, NULL, 8) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #76: rt_sigaction(10, 0x7fffffffe830, NULL, 8) = Ok(0)
+
+Done processing logs, differences found.
+:: Log differences found between runs.
+:: Respective Logs retained for further inspection: /tmp/run1_log_ix1Pf /tmp/run2_log_Ultql
+:: Failure: nondeterministic.
+Error: Mismatch between run 1 and run 2 outputs (logs retained).

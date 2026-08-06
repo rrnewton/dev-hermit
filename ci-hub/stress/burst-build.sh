@@ -20,6 +20,10 @@ WT="$ROOT/ignored/ci-hub/stress-wt/nightly"
 SHA="$1"; WIDTH="${2:-64}"; TIMEOUT="${3:-20}"; WL="$4"
 BIN_NAME="${WL%%:*}"
 short() { git -C "$WT" rev-parse --short HEAD 2>/dev/null || echo unknown; }
+detcore_package_name() {
+  grep -m1 -E '^name = "(hermit-)?detcore"$' "$1/detcore/Cargo.toml" |
+    cut -d '"' -f 2
+}
 
 mkdir -p "$(dirname "$WT")"
 
@@ -39,7 +43,12 @@ fi
 
 # Build the burst binary in-tree (incremental; NO reflink seed of target/).
 bstart=$(date +%s)
-if ! ( cd "$WT" && cargo test -p detcore --test "$BIN_NAME" --no-run ) >/dev/null 2>&1; then
+DETCOR_PACKAGE="$(detcore_package_name "$WT")"
+case "$DETCOR_PACKAGE" in
+  detcore | hermit-detcore) ;;
+  *) echo "$SHA,$(short),$(( $(date +%s)-bstart )),$WIDTH,,,,,BUILD_FAIL"; exit 0 ;;
+esac
+if ! ( cd "$WT" && cargo test -p "$DETCOR_PACKAGE" --test "$BIN_NAME" --no-run ) >/dev/null 2>&1; then
   echo "$SHA,$(short),$(( $(date +%s)-bstart )),$WIDTH,,,,,BUILD_FAIL"; exit 0
 fi
 

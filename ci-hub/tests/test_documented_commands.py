@@ -34,11 +34,50 @@ class DocumentedCommandsTest(unittest.TestCase):
         )
         self.assertTrue(any("ci-hub/ci-hub quickstart" in command.text for command in commands))
         self.assertTrue(any("systemd-run --user" in command.text for command in commands))
+        reconcile_commands = [
+            command
+            for command in commands
+            if command.text.startswith("./ci-hub/bin/reconcile-receipts")
+        ]
+        self.assertEqual(len(reconcile_commands), 3)
+        self.assertEqual({command.mode for command in reconcile_commands}, {"live-read"})
 
     def test_systemd_activation_is_syntax_only(self) -> None:
         command = "systemd-run --user --unit=fixture /bin/true"
         self.assertEqual(documented_commands._classify(command), "parse")
         self.assertEqual(documented_commands._parse_probe(command), "systemd-run --help")
+
+    def test_reconcile_receipts_is_a_live_read_with_exact_binary_identity(self) -> None:
+        self.assertEqual(
+            documented_commands._classify(
+                "./ci-hub/bin/reconcile-receipts # human table"
+            ),
+            "live-read",
+        )
+        with self.assertRaises(documented_commands.DocsCommandError):
+            documented_commands._classify(
+                "./ci-hub/bin/reconcile-receipts-untrusted # human table"
+            )
+
+    def test_reconcile_receipts_non_live_mode_executes_only_help(self) -> None:
+        command = documented_commands.DocumentedCommand(
+            documented_commands.ROOT / "ci-hub/README.md",
+            73,
+            "./ci-hub/bin/reconcile-receipts --json",
+            "live-read",
+        )
+        self.assertEqual(
+            documented_commands._parse_probe(command.text),
+            "./ci-hub/bin/reconcile-receipts --help",
+        )
+        reports = documented_commands._run_one(
+            command,
+            root=documented_commands.ROOT,
+            environment=os.environ.copy(),
+            live=False,
+            verify_purity=False,
+        )
+        self.assertIn("PASS live-read", reports[0])
 
     def test_unclassified_command_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

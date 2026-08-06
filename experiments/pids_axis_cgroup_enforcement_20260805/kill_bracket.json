@@ -1,0 +1,2 @@
+{"arm":"A-kill-fired","unit":"pids-killA-374001","kill_fired":true,"kill_write_ok":true,"pids_max_readback":"64","pids_current":"15","members_before":14,"alive_before":14,"alive_after":0,"cgroup_procs_after":"absent","all_died":true,"all_survived":false}
+{"arm":"B-kill-not-fired","unit":"pids-killB-374001","kill_fired":false,"kill_write_ok":false,"pids_max_readback":"64","pids_current":"15","members_before":14,"alive_before":14,"alive_after":14,"cgroup_procs_after":"14","all_died":false,"all_survived":true}

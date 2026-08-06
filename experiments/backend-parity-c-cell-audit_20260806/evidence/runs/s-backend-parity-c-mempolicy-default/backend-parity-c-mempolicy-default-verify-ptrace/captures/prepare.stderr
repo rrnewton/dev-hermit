@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mempolicy_default.c: In function ‘get_mode’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/mempolicy_default.c:45:16: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   45 |         return syscall(SYS_get_mempolicy, mode, (void *)0, 0UL, addr, flags);
+      |                ^~~~~~~
+cc1: all warnings being treated as errors

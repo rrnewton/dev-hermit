@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/sendfile_copy.c: In function ‘temp_file’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/sendfile_copy.c:54:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   54 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+cc1: all warnings being treated as errors

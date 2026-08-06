@@ -46,6 +46,17 @@ are:
 ./ci-hub/ci-hub local-history --since 2026-08-03
 ./ci-hub/ci-hub validate-worktrees --runs 10
 ./ci-hub/ci-hub runner-health --all
+
+# Launch one detached full validate through the sole admission point. The user
+# service runs ci-hub validate-lock before validate.sh and writes a durable log.
+# A ci-hub-owned observer tab appears in the validate-hermit Herdr workspace.
+./ci-hub/ci-hub validate-run --checkout worktrees/slot01/hermit \
+  --agent hermit-example --target aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --pr 123 --dry-run -- full
+
+# A live launch prints its validate-* handle before blocking. A replacement
+# caller can resume the wait without relaunching or changing the run:
+./ci-hub/ci-hub validate-run --attach validate-hermit-example-aaaaaaaaaaaa
 ```
 
 The landing syntax is shown as non-executable text because the real command is
@@ -55,16 +66,59 @@ a mutation, not a documentation probe:
 ci-hub/bin/safe-exact-head-land --repo rrnewton/hermit --pr PR \
   --expected-head 40_HEX_HEAD --actor REGISTERED_AGENT --json
 ```
+`validate-run` and the inner `validate-lock` both call the same fail-closed
+admission authority. It refreshes `origin/main`, requires that exact tip to be
+an ancestor of the exact validation SHA, and checks every fixed receipt/merge
+floor before `validate.sh` can start. A stale or unresolvable base is a refusal,
+not a soft warning. Historical differential debugging on an older head is
+non-qualifying and runs outside this receipt-producing path.
 
 Networked commands use `with-proxy` internally.
 
-Detached validations outlive their launching agents. Stop the unit, not the
-watcher: `./ci-hub/ci-hub validate-stop --unit validate-NAME.service` targets one
-run, while `./ci-hub/ci-hub validate-stop --all` enumerates every active
-`validate-*` user service or scope. The command refuses unrelated unit names,
-uses `systemctl --user stop` on each exact unit, and fails if any unit remains
-active. A signal-aware `validate.sh` records that operator stop as `no_result`,
-never as a product failure.
+`fresh` selects one latest check attempt per context and uses that same selected
+set for both the rollup state and failing-check names. A selected failed GitHub
+Actions check remains red unless a bounded lookup of its exact job binds the
+repository, run ID, job ID, PR head SHA, check name/URL, timestamps, completed
+failure, and the complete step list. Only a job whose sole step is failed
+`Set up job` becomes typed `NO_RESULT`; it is reported as pending and never as
+green. One versioned downstream contract is also recognized: the exact
+`merge-gate-v4` job may become typed `NO_RESULT` only when the same selected
+rollup/run contains an independently verified setup-only
+`reverie-pin-is-latest-main` source and the complete seven-step gate receipt
+shows only the prerequisite requirement failing while product validation stayed
+skipped. The authority also dereferences the exact workflow run and exact-head
+workflow contents, requiring the reviewed v4 blob whose YAML declares the
+`needs.reverie-pin.result` link. This is not a generic gate-failure carve-out.
+Missing/malformed API
+data, identity mismatches, later workflow steps, source/run mismatches, timeouts,
+and lookup-budget exhaustion preserve the red verdict. JSON output exposes
+`setup_only_no_result_checks`, `setup_only_evidence`,
+`prerequisite_no_result_checks`, `prerequisite_evidence`, and any
+`actions_job_verification_errors` on the affected PR.
+
+The launch looks synchronous to its caller, but the run is owned by an
+independent `validate-*` user service. Before that service starts, ci-hub creates
+an observer-only tab in the `validate-hermit` Herdr workspace, titled with the
+PR (or unit), exact head prefix, and start time. Pane control crosses the agent
+jail through short-lived `systemd-run` broker calls. The pane tails the durable
+log and observes the service's `/proc` descendants; it never runs `validate.sh`
+and therefore cannot become an unboxed second producer. It prints every
+observed `safe-ci-*` cgroup path and stores those paths in the durable handle at
+`ignored/validate/runs/<unit>.json`.
+
+Visibility is fail-closed: if ci-hub cannot create the Herdr observer, it does
+not start the validation service. Once launched, recycling or interrupting the
+waiting agent does not stop the run. A successor uses `--attach <unit>` to read
+the same handle and wait for the same service; it must not relaunch. Multiple
+queued services can each be visible, but `validate-lock` remains the execution
+authority and currently admits one validate/bench at a time.
+
+Stop the unit, not the watcher: `./ci-hub/ci-hub validate-stop --unit
+validate-NAME.service` targets one run, while `./ci-hub/ci-hub validate-stop
+--all` enumerates every active `validate-*` user service or scope. The command
+refuses unrelated unit names, uses `systemctl --user stop` on each exact unit,
+and fails if any unit remains active. A signal-aware `validate.sh` records that
+operator stop as `no_result`, never as a product failure.
 
 ## Standing receipt reconciliation
 

@@ -1,0 +1,16 @@
+guest,backend,pty24x80,pty40x120,pty50x200,output_verdict,detlog_80_vs_120,detlog_msgs
+probe,ptrace,764ad0d7b800b201/exit0,e41ed16f825b5c27/exit0,d502b60d98bd47b6/exit0,LEAK,DIFF,
+probe,dbi,f59a4b6158977598/exit0,096c753373cc6059/exit0,374cdec4ccb190ac/exit0,LEAK,nolog,
+probe,sabre,764ad0d7b800b201/exit0,e41ed16f825b5c27/exit0,d502b60d98bd47b6/exit0,LEAK,same,15
+winsz-branch,ptrace,e3b0c44298fc1c14/exit80,e3b0c44298fc1c14/exit120,e3b0c44298fc1c14/exit0,LEAK,DIFF,
+winsz-branch,dbi,e3b0c44298fc1c14/exit80,e3b0c44298fc1c14/exit120,e3b0c44298fc1c14/exit0,LEAK,nolog,
+winsz-branch,sabre,e3b0c44298fc1c14/exit80,e3b0c44298fc1c14/exit120,e3b0c44298fc1c14/exit0,LEAK,same,4
+winsz-silent,ptrace,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,output-stable,same,120
+winsz-silent,dbi,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,output-stable,nolog,
+winsz-silent,sabre,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,e3b0c44298fc1c14/exit0,output-stable,same,4
+ls-C,ptrace,66e54070ffc254ab/exit0,d9dd4f1403b936d8/exit0,395b425bfe489023/exit0,LEAK,DIFF,
+ls-C,dbi,66e54070ffc254ab/exit0,d9dd4f1403b936d8/exit0,395b425bfe489023/exit0,LEAK,nolog,
+ls-C,sabre,66e54070ffc254ab/exit0,d9dd4f1403b936d8/exit0,395b425bfe489023/exit0,LEAK,DIFF,
+stty-a,ptrace,85cf454bada9dbe5/exit0,5937be738f397ea1/exit0,3f5323f96f1bcef6/exit0,LEAK,DIFF,
+stty-a,dbi,85cf454bada9dbe5/exit0,5937be738f397ea1/exit0,3f5323f96f1bcef6/exit0,LEAK,nolog,
+stty-a,sabre,85cf454bada9dbe5/exit0,5937be738f397ea1/exit0,3f5323f96f1bcef6/exit0,LEAK,DIFF,

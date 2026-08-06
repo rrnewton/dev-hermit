@@ -473,8 +473,17 @@ def _table(hdr, body) -> str:
 # ~one core, so cpu ~= wall (the measured livelock signature was 599.986 cpu /
 # 600.013 wall -> ratio ~= 1.0).  Ratios are reported alongside the verdict, not
 # in place of it, so a reader can audit every boundary call.
-LIVELOCK_RATIO = 0.8    # cpu/wall >= this: CPU-bound (>=~one core) -> livelock
-CONTENTION_RATIO = 0.3  # cpu/wall <  this: wait-bound -> contention/flake
+# The thresholds and the verdict function now live in ONE shared table,
+# ci-hub/lib/kill_signature.py, imported by BOTH this ledger-side consumer and
+# the run-bundle attributor (ci-hub/attribution/attribution.py).  They were
+# previously implemented here only, leaving the attributor blind to the signal;
+# a second copy would have been a standing drift risk.  Change a threshold once,
+# there.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import kill_signature as _ks  # noqa: E402
+
+LIVELOCK_RATIO = _ks.LIVELOCK_RATIO
+CONTENTION_RATIO = _ks.CONTENTION_RATIO
 
 
 def _cpu_wall(row: dict):
@@ -518,15 +527,7 @@ def _kill_verdict(kind, ratio):
     (<0.3) is contention (retry-valid).  A high ratio (>>1) is legitimately
     parallel CPU-bound work that also cannot be fixed by retry, so it still
     lands in the livelock (retry-futile) bucket alongside single-core spin."""
-    if kind == "oom":
-        return "oom"
-    if ratio is None:
-        return "unknown"
-    if ratio >= LIVELOCK_RATIO:
-        return "livelock"
-    if ratio < CONTENTION_RATIO:
-        return "contention"
-    return "ambiguous"
+    return _ks.classify_kill(kind, ratio)
 
 
 def _source(row: dict) -> str:
@@ -888,13 +889,12 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 # sub-buckets, reported SEPARATELY and never silently summed:
 #   green_ledger           green-by-conclusion AND a validate-run-ledger receipt
 #                          at that exact commit SHA satisfies the full-pass
-#                          predicate below (mirrors ci-hub/lib/validate_status.rs
-#                          is_clean_full_pass, PLUS the filtered_tests==0 clause
-#                          that fixes the false-green (c) case).
+#                          predicate below (the canonical shared predicate also
+#                          used by ci-hub/lib/validate_status.rs).
 #   green_conclusion_only  green-by-conclusion but NO corroborating receipt.
-# A row missing any of the schema-3 count fields (executed_tests/filtered_tests)
-# does NOT corroborate — it falls to conclusion-only. That asymmetry is
-# intentional and honest: an uncounted green cannot back a stronger claim.
+# A row missing both count fields does NOT corroborate, and schema-5+ rows must
+# prove complete per-node coverage. `filtered_tests` is diagnostic: full runs
+# legitimately filter tests outside their planned DAG nodes.
 LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
 
 

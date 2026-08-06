@@ -1,0 +1,1 @@
+Error: Program /tmp/bpc2/runs/s-backend-parity-c-pid-probe/backend-parity-c-pid-probe-verify-ptrace/fixtures/program is under host /tmp, but Hermit replaces guest /tmp with an isolated directory. Pass --tmp=/tmp to expose host /tmp or bind the program into guest /tmp.

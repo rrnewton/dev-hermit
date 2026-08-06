@@ -1,0 +1,9 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cachestat_refusal.c: In function ‘refused_and_untouched’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cachestat_refusal.c:62:15: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   62 |     long rc = syscall(SYS_cachestat, (unsigned)fd, &range, &stat, 0u);
+      |               ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cachestat_refusal.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/cachestat_refusal.c:86:19: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   86 |     int file_fd = mkstemp(path);
+      |                   ^~~~~~~
+cc1: all warnings being treated as errors

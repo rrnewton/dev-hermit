@@ -1,0 +1,9 @@
+guest,backend,n,conc,ok_runs,timeouts,other_fail,distinct_pev,distinct_out,verdict
+forkwait_any,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+zombie_delay,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+orphan_reparent,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+vfork_exec,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+exec_chain,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+fork_pipe,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+sh_pipeline,ptrace,20,1,20,0,0,1,1,L4-CLEAN
+sh_bgjobs,ptrace,20,1,20,0,0,1,1,L4-CLEAN

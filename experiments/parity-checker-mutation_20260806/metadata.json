@@ -1,0 +1,15 @@
+{
+  "experiment": "parity-checker-mutation-test",
+  "date_utc": "2026-08-06",
+  "question": "Does the shipped parity checker actually catch a planted divergence, and does it tolerate what it should? Emit a kill score.",
+  "agent": "hermit-verify",
+  "target": "hermit log-diff (shipped comparator)",
+  "binary": "worktrees/covnode/hermit/target/debug/hermit",
+  "binary_head": "fc49593ac21c7655e841a3de825ef86692ad117c",
+  "baseline": "two boxed ptrace runs of /bin/echo hello, pinned env, --strict --detlog-stack --detlog-heap; 172|172 DETLOG messages compared, clean",
+  "provenance": "observed",
+  "kill_score_default": "6/6",
+  "kill_score_unsafe_strip_lines": "4/6",
+  "controls": "2/2 correctly not flagged (clean pair; wall-clock-prefix-only)",
+  "headline": "Checker is SOUND in default mode; the defect is that bare --verify selects Stripped, which goes blind on exactly the syscall-value class (numeric result, hex argument)"
+}

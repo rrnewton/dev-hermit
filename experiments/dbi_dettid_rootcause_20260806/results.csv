@@ -1,0 +1,12 @@
+id,question,evidence,result
+R1,is the [memory] emitter the problem,"detcore/src/lib.rs:740 and :757 -- BOTH branches use guest.thread_state().dettid",NO -- emitter is innocent; dettid itself differs
+R2,where does dettid come from for the root thread,"detcore/src/lib.rs:1150  None => ThreadState::new(DetPid::from_raw(tid.into()), ...)","the BACKEND-SUPPLIED tid, cast -- no translation"
+R3,is there an acknowledged gap,"detcore/src/lib.rs:1148 in-code comment: 'TODO(T78538674): virtualize tid, extend tid<=>dettid mapping here.'","YES -- detcore does NOT virtualize tid, and says so"
+R4,why does ptrace look deterministic then,"hermit-cli/src/bin/hermit/container.rs:137 and :171 .unshare(Namespace::PID)","BORROWED from the PID namespace -- inside a fresh ns the tid is small and stable (3)"
+R5,why does DBI leak,"no namespace translation on the tool-side tid for the DBI path","raw host TID reaches DetPid::from_raw unchanged"
+M1,DBI dtid across 3 identical runs,"2179371 / 2179454 / 2179541","UNSTABLE, and MONOTONICALLY INCREASING -- the host tid allocator advancing between runs"
+M2,ptrace dtid across 2 identical runs,3 / 3,STABLE (control)
+M3,prior evidence corroborated,"7 identical DBI runs -> 7 host TIDs (experiments/dbi-strict-parity_20260806)",consistent with M1
+X1,does DBI virtualize what the GUEST sees,"PR #1147 test run_dbi_virtualizes_process_identities asserts canonical pid=3/4/6/9","YES -- guest-visible getpid IS virtualized; the TOOL-side identity is not. TWO SEPARATE IDENTITY PATHS."
+F1,is 'always report 3' an acceptable fix,-,"NO -- that erases thread distinctness (coarsening, #140). The fix must be a first-appearance-ordinal MAPPING that preserves distinctness and aliasing."
+S1,was the fix implemented,NO,"hermit product code; the only build I have is worktrees/oci/hermit which is owned by hermit-oci -- I must not edit it"

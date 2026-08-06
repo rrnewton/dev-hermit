@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/getpriority_identity.c: In function ‘expect_raw_priority’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/c/getpriority_identity.c:51:14: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   51 |   long ret = syscall(SYS_getpriority, WHICH_PROCESS, 0);
+      |              ^~~~~~~
+cc1: all warnings being treated as errors

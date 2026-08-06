@@ -1,0 +1,13 @@
+{
+  "question": "A cancelled scheduled run is silent. What does PR #1634 cover, what can an in-run detector never cover, and what detects the rest?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "egress": "DOWN (403) -- no gh API calls; GitHub run history is cited from hermit-ghdag's prior measurement, not re-measured",
+  "hermit_origin_main": "b64d893ae9ea6404472eae9cb86102d91ec642ef",
+  "pr_1634_head": "49a357059eac030aaaea81d92ff04dc181279b49",
+  "pr_1634_landed": false,
+  "toolchain": {"rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)", "python": "Python 3.12.13+meta"},
+  "canonical_classifier": "agent-utils/py/ci_hub_check_outcome.py (scripts/classify-required-check.sh is a thin exec wrapper around it, not a second engine)",
+  "command": "./scheduled-run-liveness --runs fixtures.json --root /home/newton/work/dev-hermit",
+  "limitation": "the detector has been exercised only against synthetic fixtures; it has never consumed real 'gh run list --json' output"
+}

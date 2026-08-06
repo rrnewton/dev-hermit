@@ -1,0 +1,11 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fsync_durability.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fsync_durability.c:23:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   23 |   int fd = mkstemp(path);
+      |            ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fsync_durability.c:40:7: error: implicit declaration of function ‘fdatasync’ [-Werror=implicit-function-declaration]
+   40 |   if (fdatasync(fd) == 0) {
+      |       ^~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fsync_durability.c:45:7: error: implicit declaration of function ‘syncfs’ [-Werror=implicit-function-declaration]
+   45 |   if (syncfs(fd) == 0) {
+      |       ^~~~~~
+cc1: all warnings being treated as errors

@@ -1,0 +1,30 @@
+{
+  "mode": "control",
+  "requested_children": 8,
+  "cgroup_dir": "/sys/fs/cgroup/user.slice/user-212630.slice/user@212630.service/app.slice/pids-control-348080.scope",
+  "self_pid": 348281,
+  "pids_max_readback": "64",
+  "self_in_cgroup_procs": true,
+  "baseline_pids_current": 3,
+  "events_before": {
+    "max": 0
+  },
+  "children_forked": 8,
+  "fork_failure": null,
+  "pids_current_at_peak": 11,
+  "pids_peak": "11",
+  "events_after": {
+    "max": 0
+  },
+  "all_children_live_concurrently": true,
+  "causal_equation": {
+    "baseline": 3,
+    "children_forked": 8,
+    "sum": 11,
+    "observed_pids_current": 11,
+    "holds": true
+  },
+  "children_reaped": 8,
+  "pids_current_after_reap": 3,
+  "returned_to_baseline": true
+}

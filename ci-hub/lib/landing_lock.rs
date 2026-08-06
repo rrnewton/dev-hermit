@@ -3,17 +3,16 @@
 use chrono::{Local, TimeZone};
 use clap::{Args, Subcommand};
 use fs2::FileExt;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::process::{Child, Command, ExitStatus};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -22,14 +21,16 @@ const DEFAULT_WAIT_SECONDS: u64 = 1_800;
 const DEFAULT_HOLD_SECONDS: u64 = 900;
 const POLL_SECONDS: u64 = 3;
 const GUARD_WAIT_SECONDS: u64 = 30;
-/// Hard ceiling on how long a `run` child may execute before it is killed and the
-/// lock is released. A stuck land holding the lock is a head-of-line block for
-/// every other FIFO waiter (the ~2040-minute starvation this bounds against): an
-/// unbounded wait is unboxed compute. A real land is minutes; this measured
-/// ceiling is far below any starvation.
+/// Hard ceiling on how long a `run` child may execute before it is killed and
+/// cleanup is proved. A complete empty-domain proof releases the lock; otherwise
+/// it stays quarantined. A stuck land holding the lock is a head-of-line block
+/// for every other FIFO waiter (the ~2040-minute starvation this bounds
+/// against): an unbounded wait is unboxed compute. A real land is minutes; this
+/// measured ceiling is far below any starvation.
 // Measured 2026-08-04: 11 successful demo-gate runs had p99/max 864s. The
 // lander gate bound is 1080s (max + 25%); the whole-child ceiling allows two
-// complete gate windows while still guaranteeing release on a wedged child.
+// complete gate windows while still guaranteeing bounded cleanup or quarantine
+// on a wedged child.
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
@@ -40,19 +41,17 @@ const HEARTBEAT_FAILURE_EXIT_CODE: i32 = 125;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
-/// Maximum time to observe the exec wrapper self-stop before user code starts.
-const CHILD_STARTUP_SECONDS: u64 = 30;
-/// Maximum time to acknowledge the watchdog's clean shutdown. The watchdog
-/// normally exits immediately after its supervisor writes `done`; a bounded
-/// wait keeps a broken watchdog from becoming a new unboxed process.
-const WATCHDOG_SHUTDOWN_SECONDS: u64 = 5;
-/// Extra observation room around a phase whose nominal work is bounded by a
-/// separate timeout. The exact-parent watchdog is a last-resort flock breaker,
-/// not the primary timeout reporter.
-const SUPERVISOR_PHASE_MARGIN_SECONDS: u64 = 2;
+const START_GATE_FD: libc::c_int = 9;
 /// Maximum launcher layers accepted on either side of the selected Python
 /// landing child. Normal measured topology is two edges or fewer.
 const MAX_ASSERT_CHILD_ANCESTRY_DEPTH: usize = 8;
+const START_GATE_SCRIPT: &str = r#"
+if IFS= read -r ci_hub_start_token <&9 && [ "$ci_hub_start_token" = "ci-hub-go" ]; then
+  exec 9<&-
+  exec "$@"
+fi
+exit 125
+"#;
 
 #[derive(Args, Clone, Debug)]
 pub struct LandLockArgs {
@@ -80,17 +79,9 @@ pub enum LandLockCommand {
     BindMutationCall(MutationCallArgs),
     /// Clear a barrier after proving the external mutation cannot still occur.
     ClearMutation(MutationArgs),
-    /// Acquire, run one command with a heartbeat, then release.
+    /// Acquire and run with a heartbeat; release after complete cleanup proof,
+    /// otherwise retain a quarantine.
     Run(RunArgs),
-    /// Internal exact process-domain deadline watchdog.
-    #[command(hide = true)]
-    Watchdog(WatchdogArgs),
-    /// Internal process-group anchor and arbitrary-command launcher.
-    #[command(hide = true)]
-    Payload(PayloadArgs),
-    /// Internal exact-parent deadline watchdog for the canonical run path.
-    #[command(hide = true)]
-    SupervisorWatchdog(SupervisorWatchdogArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -130,9 +121,8 @@ pub struct AssertChildArgs {
     /// Exact operation identity (the authorized head for safe landings).
     #[arg(long)]
     pub operation: Option<String>,
-    /// PID of the Python landing child. This is only a selector: the canonical
-    /// verifier dereferences kernel ancestry to bind it to both the recorded
-    /// supervisor and this verifier process.
+    /// PID of the Python landing child. This selector is checked against both
+    /// the published cleanup authority and this verifier's kernel ancestry.
     #[arg(long)]
     pub child_pid: u32,
 }
@@ -180,9 +170,7 @@ pub struct RunArgs {
     pub agent: String,
     #[arg(long)]
     pub pr: String,
-    /// Repository identity carried by supervised landing children. Legacy and
-    /// diagnostic lock users may omit it, but such leases cannot authorize an
-    /// exact-repository child assertion.
+    /// Repository identity carried by supervised exact-head landing children.
     #[arg(long)]
     pub repo: Option<String>,
     /// Exact operation identity used to recover a retained external mutation.
@@ -192,37 +180,13 @@ pub struct RunArgs {
     pub wait: u64,
     #[arg(long, default_value_t = DEFAULT_HOLD_SECONDS)]
     pub hold: u64,
-    /// Kill and empty the child domain if it runs longer than this many
-    /// seconds. The lock then releases only if no external mutation barrier is
-    /// armed. Must be positive: unbounded lock holders are forbidden.
+    /// Kill the child if it runs longer than this many seconds. Release follows
+    /// only after complete cleanup proof; otherwise the lock remains
+    /// quarantined. Must be positive: unbounded lock holders are forbidden.
     #[arg(long, default_value_t = DEFAULT_CHILD_DEADLINE_SECONDS)]
     pub child_deadline: u64,
     #[arg(last = true, required = true)]
     pub child: Vec<OsString>,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct WatchdogArgs {
-    #[arg(long)]
-    pub pgid: u32,
-    #[arg(long)]
-    pub leader_pid: u32,
-    #[arg(long)]
-    pub leader_start_ticks: u64,
-    #[arg(long)]
-    pub deadline_at: i64,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct PayloadArgs {
-    #[arg(last = true, required = true)]
-    pub child: Vec<OsString>,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct SupervisorWatchdogArgs {
-    #[arg(long)]
-    pub supervisor_start_ticks: u64,
 }
 
 impl LandLockCommand {
@@ -234,19 +198,14 @@ impl LandLockCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockState {
     pub agent: String,
-    /// Added for supervised exact-repository landings. None preserves parsing
-    /// and rendering compatibility with legacy/manual leases.
+    /// Optional fields added by the exact-head lander while it owns the
+    /// shared lease.  The mutex must preserve these fields on parse/render so
+    /// an annotated holder remains readable by every landing entry point.
     pub repo: Option<String>,
-    /// Exact operation identity (the authorized head for safe landings).
     pub operation: Option<String>,
-    /// Operation whose external mutation may still complete. This barrier is
-    /// retained across supervisor death and non-successful child exits.
     pub pending_mutation: Option<String>,
-    /// Durable event-log attempt that owns `pending_mutation`.
     pub pending_attempt: Option<String>,
-    /// Number of fsynced external-call intents bound to this barrier.
     pub pending_call_count: Option<u64>,
-    /// Most recent fsynced call identity, or none when the count is zero.
     pub pending_call_id: Option<String>,
     pub pr: String,
     pub host: String,
@@ -264,80 +223,237 @@ struct ProcessOwner {
     start_ticks: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ProcessDomain {
-    host: String,
-    boot_id: String,
-    leader_pid: u32,
-    leader_start_ticks: u64,
-    pgid: u32,
-    deadline_at: i64,
-    watchdog_pid: u32,
-    watchdog_start_ticks: u64,
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ProcessIdentity {
+    pub(crate) pid: u32,
+    pub(crate) start_ticks: u64,
 }
 
-impl ProcessDomain {
-    fn parse(content: &str) -> Result<Self, LandLockError> {
-        let mut host = None;
-        let mut boot_id = None;
-        let mut leader_pid = None;
-        let mut leader_start_ticks = None;
-        let mut pgid = None;
-        let mut deadline_at = None;
-        let mut watchdog_pid = None;
-        let mut watchdog_start_ticks = None;
-        for (line_number, line) in content.lines().enumerate() {
-            let (key, value) = line.split_once('=').ok_or_else(|| {
-                LandLockError::InvalidState(format!(
-                    "domain line {} is not key=value",
-                    line_number + 1
-                ))
-            })?;
-            match key {
-                "host" => host = Some(value.to_string()),
-                "boot_id" => boot_id = Some(value.to_string()),
-                "leader_pid" => leader_pid = Some(parse_unsigned(key, value)?),
-                "leader_start_ticks" => leader_start_ticks = Some(parse_unsigned(key, value)?),
-                "pgid" => pgid = Some(parse_unsigned(key, value)?),
-                "deadline_at" => deadline_at = Some(parse_integer(key, value)?),
-                "watchdog_pid" => watchdog_pid = Some(parse_unsigned(key, value)?),
-                "watchdog_start_ticks" => watchdog_start_ticks = Some(parse_unsigned(key, value)?),
-                unknown => {
-                    return Err(LandLockError::InvalidState(format!(
-                        "unknown domain field {unknown:?}"
-                    )));
-                }
-            }
+/// Durable state for one supervised payload domain. The `Armed` state is
+/// persisted before spawn, `Published` binds the still-gated child identity,
+/// `CensusPending` durably disables heartbeat renewal before any descendant is
+/// frozen, and `Residual` records the final exact census. Every consumer
+/// must dereference this record through `verify_cleanup_record`; file existence
+/// or a printed marker is not proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CleanupRecord {
+    pub(crate) agent: String,
+    pub(crate) operation: String,
+    pub(crate) host: String,
+    pub(crate) boot_id: String,
+    pub(crate) phase: CleanupPhase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupPhase {
+    Armed,
+    Published {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
+    CensusPending {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
+    Residual {
+        pgid: u32,
+        domain_complete: bool,
+        residuals: Vec<ProcessIdentity>,
+    },
+}
+
+impl CleanupRecord {
+    pub(crate) fn new(
+        agent: impl Into<String>,
+        operation: impl Into<String>,
+        phase: CleanupPhase,
+    ) -> io::Result<Self> {
+        let host = current_host();
+        if host == "unknown" {
+            return Err(io::Error::other(
+                "cannot arm cleanup authority without a host identity",
+            ));
         }
         Ok(Self {
-            host: required(host, "domain host")?,
-            boot_id: required(boot_id, "domain boot_id")?,
-            leader_pid: u32::try_from(required(leader_pid, "domain leader_pid")?)
-                .map_err(|_| LandLockError::InvalidState("domain leader pid exceeds u32".into()))?,
-            leader_start_ticks: required(leader_start_ticks, "domain leader_start_ticks")?,
-            pgid: u32::try_from(required(pgid, "domain pgid")?)
-                .map_err(|_| LandLockError::InvalidState("domain pgid exceeds u32".into()))?,
-            deadline_at: required(deadline_at, "domain deadline_at")?,
-            watchdog_pid: u32::try_from(required(watchdog_pid, "domain watchdog_pid")?).map_err(
-                |_| LandLockError::InvalidState("domain watchdog pid exceeds u32".into()),
-            )?,
-            watchdog_start_ticks: required(watchdog_start_ticks, "domain watchdog_start_ticks")?,
+            agent: agent.into(),
+            operation: operation.into(),
+            host,
+            boot_id: read_current_boot_id()?,
+            phase,
         })
     }
 
-    fn render(&self) -> String {
-        format!(
-            "host={}\nboot_id={}\nleader_pid={}\nleader_start_ticks={}\npgid={}\ndeadline_at={}\nwatchdog_pid={}\nwatchdog_start_ticks={}\n",
-            self.host,
-            self.boot_id,
-            self.leader_pid,
-            self.leader_start_ticks,
-            self.pgid,
-            self.deadline_at,
-            self.watchdog_pid,
-            self.watchdog_start_ticks,
-        )
+    pub(crate) fn parse(content: &str) -> Result<Self, String> {
+        let mut version = None;
+        let mut agent = None;
+        let mut operation = None;
+        let mut host = None;
+        let mut boot_id = None;
+        let mut phase = None;
+        let mut leader = None;
+        let mut pgid = None;
+        let mut domain_complete = None;
+        let mut residuals = Vec::new();
+        for (line_number, line) in content.lines().enumerate() {
+            let (key, value) = line
+                .split_once('=')
+                .ok_or_else(|| format!("cleanup line {} is not key=value", line_number + 1))?;
+            match key {
+                "version" => set_once(&mut version, value.to_string(), key)?,
+                "agent" => set_once(&mut agent, value.to_string(), key)?,
+                "operation" => set_once(&mut operation, value.to_string(), key)?,
+                "host" => set_once(&mut host, value.to_string(), key)?,
+                "boot_id" => set_once(&mut boot_id, value.to_string(), key)?,
+                "phase" => set_once(&mut phase, value.to_string(), key)?,
+                "leader" => {
+                    let identity = parse_process_identity(value, "leader")?;
+                    set_once(&mut leader, identity, key)?;
+                }
+                "pgid" => set_once(
+                    &mut pgid,
+                    value
+                        .parse::<u32>()
+                        .map_err(|error| format!("invalid cleanup pgid {value:?}: {error}"))?,
+                    key,
+                )?,
+                "domain_complete" => {
+                    let parsed = match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(format!("invalid domain_complete {value:?}")),
+                    };
+                    set_once(&mut domain_complete, parsed, key)?;
+                }
+                "residual" => residuals.push(parse_process_identity(value, "residual")?),
+                unknown => return Err(format!("unknown cleanup field {unknown:?}")),
+            }
+        }
+        if version.as_deref() != Some("2") {
+            return Err(format!("unsupported cleanup version {version:?}"));
+        }
+        residuals.sort();
+        residuals.dedup();
+        let phase = match phase.as_deref() {
+            Some("armed")
+                if leader.is_none()
+                    && pgid.is_none()
+                    && domain_complete.is_none()
+                    && residuals.is_empty() =>
+            {
+                CleanupPhase::Armed
+            }
+            Some("published") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::Published {
+                    leader: leader
+                        .ok_or_else(|| "published cleanup record has no leader".to_string())?,
+                    pgid: pgid.ok_or_else(|| "published cleanup record has no pgid".to_string())?,
+                }
+            }
+            Some("census-pending") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::CensusPending {
+                    leader: leader
+                        .ok_or_else(|| "census-pending cleanup record has no leader".to_string())?,
+                    pgid: pgid
+                        .ok_or_else(|| "census-pending cleanup record has no pgid".to_string())?,
+                }
+            }
+            Some("residual") if leader.is_none() => CleanupPhase::Residual {
+                pgid: pgid.ok_or_else(|| "residual cleanup record has no pgid".to_string())?,
+                domain_complete: domain_complete
+                    .ok_or_else(|| "residual cleanup record has no domain_complete".to_string())?,
+                residuals,
+            },
+            Some(value) => return Err(format!("cleanup phase {value:?} has incompatible fields")),
+            None => return Err("cleanup record has no phase".to_string()),
+        };
+        Ok(Self {
+            agent: agent.ok_or_else(|| "cleanup record has no agent".to_string())?,
+            operation: operation.ok_or_else(|| "cleanup record has no operation".to_string())?,
+            host: host.ok_or_else(|| "cleanup record has no host".to_string())?,
+            boot_id: boot_id.ok_or_else(|| "cleanup record has no boot_id".to_string())?,
+            phase,
+        })
     }
+
+    pub(crate) fn render(&self) -> String {
+        let mut output = format!(
+            "version=2\nagent={}\noperation={}\nhost={}\nboot_id={}\n",
+            self.agent, self.operation, self.host, self.boot_id
+        );
+        match &self.phase {
+            CleanupPhase::Armed => output.push_str("phase=armed\n"),
+            CleanupPhase::Published { leader, pgid } => output.push_str(&format!(
+                "phase=published\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
+            CleanupPhase::CensusPending { leader, pgid } => output.push_str(&format!(
+                "phase=census-pending\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
+            CleanupPhase::Residual {
+                pgid,
+                domain_complete,
+                residuals,
+            } => {
+                output.push_str(&format!(
+                    "phase=residual\npgid={pgid}\ndomain_complete={domain_complete}\n"
+                ));
+                for identity in residuals {
+                    output.push_str(&format!(
+                        "residual={}:{}\n",
+                        identity.pid, identity.start_ticks
+                    ));
+                }
+            }
+        }
+        output
+    }
+}
+
+fn set_once<T>(slot: &mut Option<T>, value: T, key: &str) -> Result<(), String> {
+    if slot.replace(value).is_some() {
+        return Err(format!("duplicate cleanup field {key:?}"));
+    }
+    Ok(())
+}
+
+fn parse_process_identity(value: &str, field: &str) -> Result<ProcessIdentity, String> {
+    let (pid, start_ticks) = value
+        .split_once(':')
+        .ok_or_else(|| format!("invalid {field} identity {value:?}"))?;
+    Ok(ProcessIdentity {
+        pid: pid
+            .parse()
+            .map_err(|error| format!("invalid {field} pid {pid:?}: {error}"))?,
+        start_ticks: start_ticks
+            .parse()
+            .map_err(|error| format!("invalid {field} start ticks {start_ticks:?}: {error}"))?,
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CleanupVerification {
+    None,
+    Armed {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Active {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Uncensused {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Recoverable {
+        record: CleanupRecord,
+        reason: String,
+    },
+    Unknown {
+        record: Option<CleanupRecord>,
+        reason: String,
+    },
 }
 
 impl ProcessOwner {
@@ -386,14 +502,6 @@ impl ProcessOwner {
 enum OwnerLiveness {
     Alive,
     Dead(String),
-    Unknown(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum DomainLiveness {
-    Absent,
-    Active,
-    Empty,
     Unknown(String),
 }
 
@@ -465,22 +573,13 @@ impl LockState {
             (Some(mutation), Some(attempt), Some(0), None)
                 if state.repo.is_some()
                     && state.operation.as_deref() == Some(mutation)
-                    && attempt.len() == 32
-                    && attempt.bytes().all(|byte| {
-                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-                    }) => {}
+                    && valid_lower_hex32(attempt) => {}
             (Some(mutation), Some(attempt), Some(count), Some(call_id))
                 if count > 0
                     && state.repo.is_some()
                     && state.operation.as_deref() == Some(mutation)
-                    && attempt.len() == 32
-                    && attempt.bytes().all(|byte| {
-                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-                    })
-                    && call_id.len() == 32
-                    && call_id.bytes().all(|byte| {
-                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-                    }) => {}
+                    && valid_lower_hex32(attempt)
+                    && valid_lower_hex32(call_id) => {}
             _ => {
                 return Err(LandLockError::InvalidState(
                     "pending mutation must bind exact operation, repository, attempt, and call high-water"
@@ -493,23 +592,21 @@ impl LockState {
 
     fn render(&self) -> String {
         let mut output = format!("agent={}\n", self.agent);
-        if let Some(repo) = &self.repo {
-            output.push_str(&format!("repo={repo}\n"));
+        for (key, value) in [
+            ("repo", self.repo.as_deref()),
+            ("operation", self.operation.as_deref()),
+            ("pending_mutation", self.pending_mutation.as_deref()),
+            ("pending_attempt", self.pending_attempt.as_deref()),
+        ] {
+            if let Some(value) = value {
+                output.push_str(&format!("{key}={value}\n"));
+            }
         }
-        if let Some(operation) = &self.operation {
-            output.push_str(&format!("operation={operation}\n"));
+        if let Some(value) = self.pending_call_count {
+            output.push_str(&format!("pending_call_count={value}\n"));
         }
-        if let Some(pending_mutation) = &self.pending_mutation {
-            output.push_str(&format!("pending_mutation={pending_mutation}\n"));
-        }
-        if let Some(pending_attempt) = &self.pending_attempt {
-            output.push_str(&format!("pending_attempt={pending_attempt}\n"));
-        }
-        if let Some(pending_call_count) = self.pending_call_count {
-            output.push_str(&format!("pending_call_count={pending_call_count}\n"));
-        }
-        if let Some(pending_call_id) = &self.pending_call_id {
-            output.push_str(&format!("pending_call_id={pending_call_id}\n"));
+        if let Some(value) = &self.pending_call_id {
+            output.push_str(&format!("pending_call_id={value}\n"));
         }
         output.push_str(&format!(
             "pr={}\nhost={}\nacquired_at={}\nacquired_human={}\nexpires_at={}\n",
@@ -523,6 +620,17 @@ impl LockState {
 
     fn live_at(&self, now: i64) -> bool {
         now < self.expires_at
+    }
+
+    fn renewed(&self, hold: u64) -> Result<Self, LandLockError> {
+        let mut renewed = new_holder(&self.agent, &self.pr, hold, None)?;
+        renewed.repo = self.repo.clone();
+        renewed.operation = self.operation.clone();
+        renewed.pending_mutation = self.pending_mutation.clone();
+        renewed.pending_attempt = self.pending_attempt.clone();
+        renewed.pending_call_count = self.pending_call_count;
+        renewed.pending_call_id = self.pending_call_id.clone();
+        Ok(renewed)
     }
 }
 
@@ -582,12 +690,12 @@ pub enum LandLockError {
     ProcessNotOwner { operation: &'static str, pid: u32 },
     #[error("landing-lock: assert-child refused: {0}")]
     ChildAssertion(String),
-    #[error("landing-lock: supervised child domain is still active: {0}")]
-    DomainActive(String),
     #[error("landing-lock: external mutation remains pending: {0}")]
     MutationPending(String),
     #[error("landing-lock: cannot reclaim lease: {0}")]
     ReclaimNotProven(String),
+    #[error("landing-lock: cleanup quarantine: {0}")]
+    CleanupQuarantined(String),
 }
 
 impl LandLockError {
@@ -597,9 +705,9 @@ impl LandLockError {
             | Self::ReleaseNotOwner { .. }
             | Self::ProcessNotOwner { .. }
             | Self::ChildAssertion(_)
-            | Self::DomainActive(_)
             | Self::MutationPending(_)
             | Self::ReclaimNotProven(_)
+            | Self::CleanupQuarantined(_)
             | Self::GuardTimeout
             | Self::InvalidState(_) => 3,
             Self::Io { .. } | Self::EmptyChild | Self::UnboundedChildDeadline => 2,
@@ -613,7 +721,7 @@ struct LockPaths {
     guard: PathBuf,
     queue: PathBuf,
     owner: PathBuf,
-    domain: PathBuf,
+    cleanup: PathBuf,
 }
 
 impl LockPaths {
@@ -625,7 +733,7 @@ impl LockPaths {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
-            domain: suffix(&lock, ".domain"),
+            cleanup: suffix(&lock, ".cleanup-required"),
             lock,
         }
     }
@@ -666,13 +774,241 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
         LandLockCommand::BindMutationCall(args) => lock.bind_mutation_call(&args),
         LandLockCommand::ClearMutation(args) => lock.set_mutation_barrier(&args, false),
         LandLockCommand::Run(args) => lock.run(args),
-        LandLockCommand::Watchdog(args) => run_domain_watchdog(&lock, &args),
-        LandLockCommand::Payload(args) => run_payload_launcher(&args),
-        LandLockCommand::SupervisorWatchdog(args) => run_supervisor_watchdog(&args),
     }
 }
 
 impl LandingLock {
+    fn cleanup_verification(&self, holder: Option<&LockState>) -> CleanupVerification {
+        let operation = holder.map(|holder| format!("pr:{}", holder.pr));
+        let expected = holder
+            .zip(operation.as_deref())
+            .map(|(holder, operation)| (holder.agent.as_str(), operation));
+        verify_cleanup_record(&self.paths.cleanup, expected)
+    }
+
+    fn require_no_cleanup(&self, holder: Option<&LockState>) -> Result<(), LandLockError> {
+        match self.cleanup_verification(holder) {
+            CleanupVerification::None => Ok(()),
+            CleanupVerification::Armed { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("ARMED: {reason}")),
+            ),
+            CleanupVerification::Active { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("ACTIVE: {reason}")),
+            ),
+            CleanupVerification::Uncensused { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("UNCENSUSED: {reason}")),
+            ),
+            CleanupVerification::Recoverable { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!(
+                    "payload absence is proven but explicit reclaim-dead recovery is required: {reason}"
+                )),
+            ),
+            CleanupVerification::Unknown { reason, .. } => Err(
+                LandLockError::CleanupQuarantined(format!("UNVERIFIABLE: {reason}")),
+            ),
+        }
+    }
+
+    fn require_no_pending_mutation(&self, holder: Option<&LockState>) -> Result<(), LandLockError> {
+        if let Some(operation) = holder.and_then(|state| state.pending_mutation.as_deref()) {
+            return Err(LandLockError::MutationPending(operation.to_string()));
+        }
+        Ok(())
+    }
+
+    fn arm_run(&self, agent: &str, pr: &str) -> Result<(), LandLockError> {
+        let record = CleanupRecord::new(agent, format!("pr:{pr}"), CleanupPhase::Armed)
+            .map_err(|source| io_error("construct", &self.paths.cleanup, source))?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cannot arm cleanup without a lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "cleanup arm does not match the current operation".into(),
+                ));
+            }
+            self.require_no_cleanup(Some(&holder))?;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn transition_run_cleanup(
+        &self,
+        agent: &str,
+        pr: &str,
+        expected: fn(&CleanupPhase) -> bool,
+        next: CleanupPhase,
+    ) -> Result<(), LandLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cleanup transition has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "cleanup transition does not match the current operation".into(),
+                ));
+            }
+            let verification = self.cleanup_verification(Some(&holder));
+            let mut record = match verification {
+                CleanupVerification::Armed { record, .. }
+                | CleanupVerification::Active { record, .. }
+                | CleanupVerification::Uncensused { record, .. }
+                | CleanupVerification::Recoverable { record, .. } => record,
+                CleanupVerification::None => {
+                    return Err(LandLockError::InvalidState(
+                        "cleanup transition has no durable authority".into(),
+                    ))
+                }
+                CleanupVerification::Unknown { reason, .. } => {
+                    return Err(LandLockError::CleanupQuarantined(format!(
+                        "cannot transition unverifiable authority: {reason}"
+                    )))
+                }
+            };
+            if !expected(&record.phase) {
+                return Err(LandLockError::InvalidState(format!(
+                    "cleanup transition rejected phase {:?}",
+                    record.phase
+                )));
+            }
+            record.phase = next;
+            write_cleanup_record(&self.paths.cleanup, &record)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+        })
+    }
+
+    fn publish_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::Armed),
+            CleanupPhase::Published {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_unstarted_run(&self, agent: &str, pr: &str) -> Result<(), LandLockError> {
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("unstarted cleanup has no lock holder".into())
+            })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::InvalidState(
+                    "unstarted cleanup does not match current operation".into(),
+                ));
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { .. } => {
+                    self.assert_current_process_owner("clear unstarted run")?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(LandLockError::InvalidState(format!(
+                    "unstarted cleanup requires armed authority, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn record_residuals(
+        &self,
+        agent: &str,
+        pr: &str,
+        pgid: u32,
+        capture: ResidualCapture,
+    ) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::CensusPending { .. }),
+            CleanupPhase::Residual {
+                pgid,
+                domain_complete: capture.complete,
+                residuals: capture.identities,
+            },
+        )
+    }
+
+    fn begin_run_census(
+        &self,
+        agent: &str,
+        pr: &str,
+        gated: &GatedChild,
+    ) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            CleanupPhase::CensusPending {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn clear_proven_run(&self, agent: &str, pr: &str, pgid: u32) -> Result<(), LandLockError> {
+        self.record_residuals(
+            agent,
+            pr,
+            pgid,
+            ResidualCapture {
+                complete: true,
+                identities: Vec::new(),
+            },
+        )?;
+        self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::InvalidState("cleanup clear has no lock holder".into())
+            })?;
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Recoverable { .. } => {
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))
+                }
+                other => Err(LandLockError::InvalidState(format!(
+                    "cleanup clear requires proven absence, got {other:?}"
+                ))),
+            }
+        })
+    }
+
+    fn renew_run_lease(&self, agent: &str, pr: &str, hold: u64) -> Result<(), LandLockError> {
+        #[cfg(test)]
+        if FAIL_NEXT_RUN_HEARTBEAT.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(LandLockError::InvalidState(
+                "test-injected run heartbeat failure".into(),
+            ));
+        }
+        self.with_guard(|| {
+            let holder = self
+                .read_holder()?
+                .ok_or_else(|| LandLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                })?;
+            if holder.agent != agent || holder.pr != pr {
+                return Err(LandLockError::RenewNotOwner {
+                    agent: agent.to_string(),
+                });
+            }
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Active { record, .. }
+                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                other => {
+                    return Err(LandLockError::CleanupQuarantined(format!(
+                        "run heartbeat requires an active published domain, got {other:?}"
+                    )))
+                }
+            }
+            self.assert_current_process_owner("run heartbeat")?;
+            heartbeat_test_helper_delay();
+            self.write_holder(&holder.renewed(hold)?)
+        })
+    }
+
     fn acquire(&self, args: &AcquireArgs) -> Result<i32, LandLockError> {
         self.acquire_with_binding(args, None)
     }
@@ -682,45 +1018,12 @@ impl LandingLock {
         args: &AcquireArgs,
         binding: Option<(Option<&str>, Option<&str>)>,
     ) -> Result<i32, LandLockError> {
-        self.acquire_with_binding_impl(args, binding, None)
-    }
-
-    fn acquire_with_binding_supervised(
-        &self,
-        args: &AcquireArgs,
-        binding: Option<(Option<&str>, Option<&str>)>,
-        supervisor_watchdog: &mut SupervisorWatchdog,
-    ) -> Result<i32, LandLockError> {
-        self.acquire_with_binding_impl(args, binding, Some(supervisor_watchdog))
-    }
-
-    fn acquire_with_binding_impl(
-        &self,
-        args: &AcquireArgs,
-        binding: Option<(Option<&str>, Option<&str>)>,
-        mut supervisor_watchdog: Option<&mut SupervisorWatchdog>,
-    ) -> Result<i32, LandLockError> {
         let started = Instant::now();
         let mut last = String::new();
         loop {
-            if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                watchdog.arm_for(GUARD_WAIT_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-            }
-            let token = match self.with_guard(|| self.try_acquire(args, binding)) {
-                Ok(token) => token,
-                Err(error) => {
-                    if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                        let _ = watchdog.idle();
-                    }
-                    return Err(error);
-                }
-            };
+            let token = self.with_guard(|| self.try_acquire(args, binding))?;
             match token {
                 AcquireToken::Acquired => {
-                    if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                        watchdog
-                            .arm_for(CHILD_STARTUP_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-                    }
                     eprintln!(
                         "landing-lock: ACQUIRED by {} for PR #{} (lease {}s)",
                         args.agent, args.pr, args.hold
@@ -728,10 +1031,6 @@ impl LandingLock {
                     return Ok(0);
                 }
                 AcquireToken::AcquiredReclaimed(previous) => {
-                    if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                        watchdog
-                            .arm_for(CHILD_STARTUP_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-                    }
                     eprintln!(
                         "landing-lock: ACQUIRED by {} for PR #{}; evidence-reclaimed lease from {}",
                         args.agent, args.pr, previous
@@ -759,21 +1058,11 @@ impl LandingLock {
                     }
                 }
             }
-            if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                watchdog.arm_for(POLL_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-            }
             if started.elapsed() >= Duration::from_secs(args.wait) {
-                if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                    watchdog.arm_for(GUARD_WAIT_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-                }
-                let removal = self.with_guard(|| {
+                self.with_guard(|| {
                     self.remove_from_queue(&args.agent)?;
                     Ok(())
-                });
-                if let Some(watchdog) = supervisor_watchdog.as_deref_mut() {
-                    watchdog.idle()?;
-                }
-                removal?;
+                })?;
                 eprintln!("landing-lock: TIMEOUT after {}s", args.wait);
                 return Ok(1);
             }
@@ -787,6 +1076,9 @@ impl LandingLock {
         binding: Option<(Option<&str>, Option<&str>)>,
     ) -> Result<AcquireToken, LandLockError> {
         let now = epoch_seconds()?;
+        let holder = self.read_holder()?;
+        self.require_no_pending_mutation(holder.as_ref())?;
+        self.require_no_cleanup(holder.as_ref())?;
         let mut queue = self.read_queue()?;
         if !queue.iter().any(|entry| entry.agent == args.agent) {
             queue.push(QueueEntry {
@@ -798,41 +1090,22 @@ impl LandingLock {
         let cutoff = now - (2 * DEFAULT_WAIT_SECONDS) as i64;
         queue.retain(|entry| entry.enqueued_at >= cutoff);
 
-        let holder = self.read_holder()?;
-        let owner_recorded = self.read_process_owner()?.is_some();
-        let owner_liveness = self.owner_liveness()?;
-        let domain_liveness = self.domain_liveness()?;
-        let timed_out_empty_domain = self.timed_out_empty_domain(now)?;
-        let timed_out_owner_superseded = timed_out_empty_domain
-            && binding.is_some_and(|(repo, operation)| repo.is_some() && operation.is_some());
-        let owner_superseded =
-            matches!(owner_liveness, OwnerLiveness::Dead(_)) || timed_out_owner_superseded;
-        let supervised_active = (matches!(owner_liveness, OwnerLiveness::Alive)
-            && !timed_out_owner_superseded)
-            || (owner_recorded
-                && matches!(owner_liveness, OwnerLiveness::Unknown(_))
-                && !timed_out_owner_superseded)
-            || matches!(
-                domain_liveness,
-                DomainLiveness::Active | DomainLiveness::Unknown(_)
-            );
-        let retained_mutation = holder
+        let dead_owner = if holder.as_ref().is_some_and(|holder| holder.live_at(now)) {
+            match self.owner_liveness()? {
+                OwnerLiveness::Dead(reason) => Some(reason),
+                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) => None,
+            }
+        } else {
+            None
+        };
+        if let Some(holder) = holder
             .as_ref()
-            .is_some_and(|holder| holder.pending_mutation.is_some());
-        if holder.is_none() && supervised_active {
-            self.write_queue(&queue)?;
-            return Ok(AcquireToken::Held {
-                agent: "<supervised-authority-without-holder>".into(),
-                seconds_left: 0,
-            });
-        }
-        if let Some(holder) = holder.as_ref().filter(|holder| {
-            (holder.live_at(now) && !owner_superseded) || supervised_active || retained_mutation
-        }) {
+            .filter(|holder| holder.live_at(now) && dead_owner.is_none())
+        {
             self.write_queue(&queue)?;
             return Ok(AcquireToken::Held {
                 agent: holder.agent.clone(),
-                seconds_left: (holder.expires_at - now).max(0),
+                seconds_left: holder.expires_at - now,
             });
         }
 
@@ -845,14 +1118,11 @@ impl LandingLock {
         }
 
         let reclaimed = holder.map(|holder| {
-            let reason = match &owner_liveness {
-                OwnerLiveness::Dead(reason) => format!(" (dead owner: {reason})"),
-                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) if timed_out_owner_superseded => {
-                    " (deadline elapsed; exact child domain empty)".into()
-                }
-                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) => String::new(),
-            };
-            format!("{}{reason}", holder.agent)
+            if let Some(reason) = &dead_owner {
+                format!("{} (dead owner: {reason})", holder.agent)
+            } else {
+                holder.agent
+            }
         });
         let mut acquired = new_holder(&args.agent, &args.pr, args.hold, reclaimed.clone())?;
         if let Some((repo, operation)) = binding {
@@ -861,7 +1131,6 @@ impl LandingLock {
         }
         self.write_holder(&acquired)?;
         remove_if_exists(&self.paths.owner)?;
-        remove_if_exists(&self.paths.domain)?;
         if binding.is_some() {
             self.write_current_process_owner()?;
         }
@@ -880,20 +1149,14 @@ impl LandingLock {
                 .ok_or_else(|| LandLockError::RenewNotOwner {
                     agent: agent.to_string(),
                 })?;
+            self.require_no_cleanup(Some(&holder))?;
             if holder.agent != agent {
                 return Err(LandLockError::RenewNotOwner {
                     agent: agent.to_string(),
                 });
             }
             self.assert_current_process_owner("renew")?;
-            let mut renewed = new_holder(agent, &holder.pr, hold, None)?;
-            renewed.repo = holder.repo;
-            renewed.operation = holder.operation;
-            renewed.pending_mutation = holder.pending_mutation;
-            renewed.pending_attempt = holder.pending_attempt;
-            renewed.pending_call_count = holder.pending_call_count;
-            renewed.pending_call_id = holder.pending_call_id;
-            self.write_holder(&renewed)?;
+            self.write_holder(&holder.renewed(hold)?)?;
             Ok(())
         })?;
         if announce {
@@ -904,24 +1167,11 @@ impl LandingLock {
 
     fn release(&self, agent: &str, announce: bool) -> Result<(), LandLockError> {
         let (released, next) = self.with_guard(|| {
-            let Some(holder) = self.read_holder()? else {
-                let owner_recorded = self.read_process_owner()?.is_some();
-                if owner_recorded {
-                    self.assert_current_process_owner("release")?;
-                }
-                match self.domain_liveness()? {
-                    DomainLiveness::Active => {
-                        return Err(LandLockError::DomainActive(
-                            "holder is missing while its process group remains live".into(),
-                        ));
-                    }
-                    DomainLiveness::Unknown(reason) => {
-                        return Err(LandLockError::DomainActive(reason));
-                    }
-                    DomainLiveness::Absent | DomainLiveness::Empty => {}
-                }
+            let holder = self.read_holder()?;
+            self.require_no_pending_mutation(holder.as_ref())?;
+            self.require_no_cleanup(holder.as_ref())?;
+            let Some(holder) = holder else {
                 remove_if_exists(&self.paths.owner)?;
-                remove_if_exists(&self.paths.domain)?;
                 return Ok((false, None));
             };
             if holder.agent != agent {
@@ -930,24 +1180,9 @@ impl LandingLock {
                     holder: holder.agent,
                 });
             }
-            if let Some(operation) = &holder.pending_mutation {
-                return Err(LandLockError::MutationPending(operation.clone()));
-            }
             self.assert_current_process_owner("release")?;
-            match self.domain_liveness()? {
-                DomainLiveness::Active => {
-                    return Err(LandLockError::DomainActive(
-                        "process group still contains live members".into(),
-                    ));
-                }
-                DomainLiveness::Unknown(reason) => {
-                    return Err(LandLockError::DomainActive(reason));
-                }
-                DomainLiveness::Absent | DomainLiveness::Empty => {}
-            }
             remove_if_exists(&self.paths.lock)?;
             remove_if_exists(&self.paths.owner)?;
-            remove_if_exists(&self.paths.domain)?;
             self.remove_from_queue(agent)?;
             Ok((
                 true,
@@ -971,72 +1206,67 @@ impl LandingLock {
     fn status(&self) -> Result<(), LandLockError> {
         let now = epoch_seconds()?;
         let holder = self.read_holder()?;
-        let owner_recorded = self.read_process_owner()?.is_some();
         let liveness = self.owner_liveness()?;
-        let domain = self.domain_liveness()?;
-        match holder {
-            Some(holder) if holder.pending_mutation.is_some() => {
-                println!("RETAINED_MUTATION (recovery required):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
+        let cleanup = self.cleanup_verification(holder.as_ref());
+        let quarantined = !matches!(cleanup, CleanupVerification::None);
+        match cleanup {
+            CleanupVerification::None => {}
+            CleanupVerification::Armed { record, reason } => {
+                println!("QUARANTINED (pre-spawn barrier armed):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Active { record, reason } => {
+                println!("QUARANTINED (cleanup active):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Recoverable { record, reason } => {
+                println!("QUARANTINED (absence proven; run reclaim-dead):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Uncensused { record, reason } => {
+                println!("QUARANTINED (published domain lacks final census):");
+                print_cleanup_record(&record, &reason);
+            }
+            CleanupVerification::Unknown { record, reason } => {
+                println!("QUARANTINED (cleanup unverifiable):");
+                if let Some(record) = record {
+                    print_cleanup_record(&record, &reason);
+                } else {
+                    println!("  reason={reason}");
                 }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
             }
-            Some(holder)
-                if matches!(domain, DomainLiveness::Active | DomainLiveness::Unknown(_)) =>
-            {
-                println!("SUPERVISED_DOMAIN_ACTIVE (not reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
+        }
+        if quarantined {
+            println!("  owner_process={}", render_liveness(&liveness));
+        } else {
+            match holder {
+                Some(holder)
+                    if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) =>
+                {
+                    println!("ORPHANED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
                 }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-            }
-            Some(holder)
-                if matches!(liveness, OwnerLiveness::Alive)
-                    || (owner_recorded && matches!(liveness, OwnerLiveness::Unknown(_))) =>
-            {
-                println!("HELD:");
-                for line in holder.render().lines() {
-                    println!("  {line}");
+                Some(holder) if holder.live_at(now) => {
+                    println!("HELD:");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
+                    println!("  secs_left={}", holder.expires_at - now);
                 }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-                println!("  secs_left={}", (holder.expires_at - now).max(0));
-            }
-            Some(holder) if holder.live_at(now) && matches!(liveness, OwnerLiveness::Dead(_)) => {
-                println!("ORPHANED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
+                Some(holder) => {
+                    println!("LAPSED (reclaimable):");
+                    for line in holder.render().lines() {
+                        println!("  {line}");
+                    }
+                    println!("  owner_process={}", render_liveness(&liveness));
                 }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-                println!("  secs_left={}", holder.expires_at - now);
+                None => println!("FREE"),
             }
-            Some(holder) if holder.live_at(now) => {
-                println!("HELD:");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-                println!("  secs_left={}", holder.expires_at - now);
-            }
-            Some(holder) => {
-                println!("LAPSED (reclaimable):");
-                for line in holder.render().lines() {
-                    println!("  {line}");
-                }
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-            }
-            None if owner_recorded || !matches!(domain, DomainLiveness::Absent) => {
-                println!("INCONSISTENT_SUPERVISED_AUTHORITY (not free):");
-                println!("  owner_process={}", render_liveness(&liveness));
-                println!("  child_domain={}", render_domain_liveness(&domain));
-            }
-            None => println!("FREE"),
         }
         let queue = self.read_queue()?;
         if !queue.is_empty() {
@@ -1051,55 +1281,44 @@ impl LandingLock {
     fn reclaim_dead(&self) -> Result<i32, LandLockError> {
         let reclaimed = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
-                match self.domain_liveness()? {
-                    DomainLiveness::Active => {
-                        return Err(LandLockError::ReclaimNotProven(
-                            "holder is missing while supervised child domain is active".into(),
-                        ));
-                    }
-                    DomainLiveness::Unknown(reason) => {
-                        return Err(LandLockError::ReclaimNotProven(reason));
-                    }
-                    DomainLiveness::Absent | DomainLiveness::Empty => {}
-                }
-                match self.owner_liveness()? {
-                    OwnerLiveness::Alive => {
-                        return Err(LandLockError::ReclaimNotProven(
-                            "holder is missing while recorded owner process is alive".into(),
-                        ));
-                    }
-                    OwnerLiveness::Unknown(reason) if self.read_process_owner()?.is_some() => {
-                        return Err(LandLockError::ReclaimNotProven(reason));
-                    }
-                    OwnerLiveness::Dead(_) | OwnerLiveness::Unknown(_) => {
+                return match self.cleanup_verification(None) {
+                    CleanupVerification::None => {
                         remove_if_exists(&self.paths.owner)?;
-                        remove_if_exists(&self.paths.domain)?;
-                        return Ok(None);
+                        Ok(None)
                     }
-                }
+                    CleanupVerification::Armed { reason, .. }
+                    | CleanupVerification::Active { reason, .. }
+                    | CleanupVerification::Uncensused { reason, .. }
+                    | CleanupVerification::Unknown { reason, .. } => {
+                        Err(LandLockError::ReclaimNotProven(reason))
+                    }
+                    CleanupVerification::Recoverable { .. } => {
+                        Err(LandLockError::ReclaimNotProven(
+                            "cleanup authority is not bound to a lock holder".into(),
+                        ))
+                    }
+                };
             };
-            if holder.pending_mutation.is_some() {
+            if let Some(operation) = &holder.pending_mutation {
                 return Err(LandLockError::ReclaimNotProven(format!(
-                    "external mutation {:?} requires exact-operation recovery",
-                    holder.pending_mutation
+                    "external mutation {operation:?} requires exact-operation recovery"
                 )));
             }
-            match self.domain_liveness()? {
-                DomainLiveness::Active => {
-                    return Err(LandLockError::ReclaimNotProven(
-                        "supervised child domain is still active".into(),
-                    ));
-                }
-                DomainLiveness::Unknown(reason) => {
+            match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Armed { reason, .. }
+                | CleanupVerification::Active { reason, .. }
+                | CleanupVerification::Uncensused { reason, .. }
+                | CleanupVerification::Unknown { reason, .. } => {
                     return Err(LandLockError::ReclaimNotProven(reason));
                 }
-                DomainLiveness::Absent | DomainLiveness::Empty => {}
+                CleanupVerification::Recoverable { .. } | CleanupVerification::None => {}
             }
             match self.owner_liveness()? {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
-                    remove_if_exists(&self.paths.domain)?;
+                    remove_cleanup_record(&self.paths.cleanup)
+                        .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.pr, reason)))
                 }
                 OwnerLiveness::Alive => Err(LandLockError::ReclaimNotProven(
@@ -1117,6 +1336,10 @@ impl LandingLock {
         Ok(0)
     }
 
+    /// Adopt only a retained external mutation whose complete authority tuple
+    /// exactly matches this run. Cleanup must either be absent or already carry
+    /// a complete absence proof; generic acquisition is never allowed to cross
+    /// this barrier.
     fn try_adopt_retained_mutation(&self, args: &RunArgs) -> Result<bool, LandLockError> {
         let Some(holder) = self.read_holder()? else {
             return Ok(false);
@@ -1124,9 +1347,6 @@ impl LandingLock {
         let Some(pending) = holder.pending_mutation.as_deref() else {
             return Ok(false);
         };
-        let pending_attempt = holder.pending_attempt.clone();
-        let pending_call_count = holder.pending_call_count;
-        let pending_call_id = holder.pending_call_id.clone();
         if holder.agent != args.agent
             || holder.pr != args.pr
             || holder.repo != args.repo
@@ -1135,29 +1355,34 @@ impl LandingLock {
         {
             return Ok(false);
         }
-        let timed_out_empty_domain = self.timed_out_empty_domain(epoch_seconds()?)?;
-        if self.read_process_owner()?.is_some() {
-            match self.owner_liveness()? {
-                OwnerLiveness::Dead(_) => {}
-                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) if timed_out_empty_domain => {}
-                OwnerLiveness::Alive | OwnerLiveness::Unknown(_) => return Ok(false),
-            }
-        }
-        match self.domain_liveness()? {
-            DomainLiveness::Absent | DomainLiveness::Empty => {}
-            DomainLiveness::Active | DomainLiveness::Unknown(_) => return Ok(false),
+        let cleanup_recoverable = match self.cleanup_verification(Some(&holder)) {
+            CleanupVerification::None => false,
+            CleanupVerification::Recoverable { .. } => true,
+            CleanupVerification::Armed { .. }
+            | CleanupVerification::Active { .. }
+            | CleanupVerification::Uncensused { .. }
+            | CleanupVerification::Unknown { .. } => return Ok(false),
+        };
+        if !cleanup_recoverable
+            && self.read_process_owner()?.is_some()
+            && !matches!(self.owner_liveness()?, OwnerLiveness::Dead(_))
+        {
+            return Ok(false);
         }
 
         let mut adopted = new_holder(&args.agent, &args.pr, args.hold, None)?;
         adopted.repo = args.repo.clone();
         adopted.operation = args.operation.clone();
-        adopted.pending_mutation = Some(pending.to_string());
-        adopted.pending_attempt = pending_attempt;
-        adopted.pending_call_count = pending_call_count;
-        adopted.pending_call_id = pending_call_id;
+        adopted.pending_mutation = holder.pending_mutation;
+        adopted.pending_attempt = holder.pending_attempt;
+        adopted.pending_call_count = holder.pending_call_count;
+        adopted.pending_call_id = holder.pending_call_id;
         self.write_holder(&adopted)?;
         remove_if_exists(&self.paths.owner)?;
-        remove_if_exists(&self.paths.domain)?;
+        if cleanup_recoverable {
+            remove_cleanup_record(&self.paths.cleanup)
+                .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
+        }
         self.write_current_process_owner()?;
         self.remove_from_queue(&args.agent)?;
         Ok(true)
@@ -1170,48 +1395,74 @@ impl LandingLock {
         if args.child_deadline == 0 {
             return Err(LandLockError::UnboundedChildDeadline);
         }
-        let payload_executable = internal_executable()?;
-        // This exact-parent pidfd watchdog exists before the first guard
-        // attempt. It is the canonical run path's escape hatch if SIGSTOP or a
-        // deadlock freezes the supervisor while it owns the advisory flock.
-        let mut supervisor_watchdog = SupervisorWatchdog::spawn()?;
+        enable_child_subreaper().map_err(|source| {
+            io_error("enable child subreaper at", Path::new("/proc/self"), source)
+        })?;
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
             pr: args.pr.clone(),
             wait: args.wait,
             hold: args.hold,
         };
-        supervisor_watchdog.arm_for(GUARD_WAIT_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
-        let adopted = match self.with_guard(|| self.try_adopt_retained_mutation(&args)) {
-            Ok(adopted) => adopted,
-            Err(error) => {
-                let _ = supervisor_watchdog.idle();
-                return Err(error);
-            }
-        };
+        let adopted = self.with_guard(|| self.try_adopt_retained_mutation(&args))?;
         if adopted {
-            supervisor_watchdog.arm_for(CHILD_STARTUP_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
             eprintln!(
                 "landing-lock: ADOPTED retained mutation by {} for PR #{} operation={:?}",
                 args.agent, args.pr, args.operation
             );
         } else {
-            supervisor_watchdog.idle()?;
             let binding = Some((args.repo.as_deref(), args.operation.as_deref()));
-            let acquire_status =
-                self.acquire_with_binding_supervised(&acquire, binding, &mut supervisor_watchdog)?;
+            let acquire_status = self.acquire_with_binding(&acquire, binding)?;
             if acquire_status != 0 {
-                supervisor_watchdog.finish()?;
                 return Ok(acquire_status);
             }
         }
 
+        // Persist the fail-closed authority before any child exists. The start
+        // gate below cannot run the guest until its exact identity has replaced
+        // this armed record durably.
+        self.arm_run(&args.agent, &args.pr)?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterArm) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after arm".into(),
+            ));
+        }
+        let mut gated = match spawn_gated_child(&args.child[0], &args.child[1..], |_| {}) {
+            Ok(gated) => gated,
+            Err(source) => {
+                self.clear_unstarted_run(&args.agent, &args.pr)?;
+                self.release(&args.agent, true)?;
+                return Err(LandLockError::Io {
+                    action: "launch start-gated child from",
+                    path: PathBuf::from(&args.child[0]),
+                    source,
+                });
+            }
+        };
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterSpawn) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after spawn".into(),
+            ));
+        }
+        self.publish_run(&args.agent, &args.pr, &gated)?;
+        gated.release().map_err(|source| {
+            io_error("release child start gate at", &self.paths.cleanup, source)
+        })?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterPublish) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after publication".into(),
+            ));
+        }
+
         let (stop_tx, stop_rx) = mpsc::channel();
-        let heartbeat_failed = Arc::new(AtomicBool::new(false));
+        let (heartbeat_failed_tx, heartbeat_failed_rx) = mpsc::channel();
         let heartbeat_paths = self.paths.clone();
         let heartbeat_agent = args.agent.clone();
+        let heartbeat_pr = args.pr.clone();
         let heartbeat_hold = args.hold;
-        let heartbeat_failed_worker = Arc::clone(&heartbeat_failed);
         let heartbeat = thread::spawn(move || {
             let heartbeat_lock = LandingLock {
                 paths: heartbeat_paths,
@@ -1219,161 +1470,70 @@ impl LandingLock {
             let interval = Duration::from_secs((heartbeat_hold / 3).max(1));
             while stop_rx.recv_timeout(interval).is_err() {
                 if heartbeat_lock
-                    .renew(&heartbeat_agent, heartbeat_hold, false)
+                    .renew_run_lease(&heartbeat_agent, &heartbeat_pr, heartbeat_hold)
                     .is_err()
                 {
-                    heartbeat_failed_worker.store(true, Ordering::Release);
+                    let _ = heartbeat_failed_tx.send(());
                     break;
                 }
             }
         });
 
-        // Run the child in its own process group so a deadline kill reaches the
-        // whole land subtree (gh / git / cargo), not just the wrapper shell.
-        // PDEATHSIG shortens supervisor-death cleanup; the persisted process
-        // domain remains the authority for refusing reacquisition until every
-        // group member is gone.
-        let supervisor_pid = std::process::id() as libc::pid_t;
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", "kill -STOP $$; exec \"$@\"", "ci-hub-land-child"])
-            .arg(&payload_executable)
-            .args(["land-lock", "payload", "--"])
-            .args(&args.child)
-            .process_group(0);
-        // SAFETY: this closure runs after fork and before exec. It calls only
-        // async-signal-safe libc operations and returns fixed errno values.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                if libc::getppid() != supervisor_pid {
-                    return Err(io::Error::from_raw_os_error(libc::ESRCH));
-                }
-                Ok(())
-            });
-        }
-        let outcome: Result<i32, LandLockError> = match command.spawn() {
-            Ok(mut child) => {
-                let stopped = wait_for_process_state(
-                    child.id(),
-                    |state| state == "T" || state == "t",
-                    Duration::from_secs(CHILD_STARTUP_SECONDS),
-                );
-                let domain_result = match stopped {
-                    Ok(true) => self.start_process_domain(child.id(), args.child_deadline),
-                    Ok(false) => Err(LandLockError::InvalidState(format!(
-                        "supervised child {} did not stop before startup deadline",
-                        child.id()
-                    ))),
-                    Err(source) => Err(LandLockError::Io {
-                        action: "observe stopped child from",
-                        path: PathBuf::from(format!("/proc/{}/stat", child.id())),
-                        source,
-                    }),
-                };
-                match domain_result {
-                    Ok(mut watchdog) => {
-                        let supervisor_deadline = args
-                            .child_deadline
-                            .saturating_add(2 * CHILD_TERM_GRACE_SECONDS)
-                            .saturating_add(SUPERVISOR_PHASE_MARGIN_SECONDS);
-                        if let Err(error) = supervisor_watchdog.arm_for(supervisor_deadline) {
-                            watchdog.trigger_cleanup();
-                            Err(error)
-                        } else {
-                            if !signal_group_succeeds(libc::SIGCONT, child.id()) {
-                                let emptied = terminate_child_group(&mut child, &args.pr);
-                                if !emptied {
-                                    watchdog.trigger_cleanup();
-                                    Err(LandLockError::DomainActive(format!(
-                                        "failed to resume or empty process group {}",
-                                        child.id()
-                                    )))
-                                } else {
-                                    let resume_error = LandLockError::InvalidState(format!(
-                                        "failed to resume supervised process group {}",
-                                        child.id()
-                                    ));
-                                    match watchdog.finish() {
-                                        Ok(()) => Err(resume_error),
-                                        Err(error) => Err(error),
-                                    }
-                                }
-                            } else {
-                                let supervised = supervise_child(
-                                    &mut child,
-                                    args.child_deadline,
-                                    &args.pr,
-                                    &heartbeat_failed,
-                                    &mut watchdog,
-                                    &mut supervisor_watchdog,
-                                );
-                                match supervised {
-                                    Ok(outcome) => match watchdog.finish() {
-                                        Ok(()) => Ok(match outcome {
-                                            ChildOutcome::Exited(status) => {
-                                                exit_status_code(status)
-                                            }
-                                            ChildOutcome::TimedOut => CHILD_DEADLINE_EXIT_CODE,
-                                            ChildOutcome::HeartbeatFailed => {
-                                                HEARTBEAT_FAILURE_EXIT_CODE
-                                            }
-                                        }),
-                                        Err(error) => Err(error),
-                                    },
-                                    Err(error) => {
-                                        watchdog.trigger_cleanup();
-                                        Err(error)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        let emptied = terminate_child_group(&mut child, &args.pr);
-                        if !emptied {
-                            Err(LandLockError::DomainActive(format!(
-                                "failed to bind and empty process group {}",
-                                child.id()
-                            )))
-                        } else {
-                            Err(error)
-                        }
-                    }
-                }
-            }
-            Err(source) => Err(LandLockError::Io {
-                action: "launch child from",
-                path: PathBuf::from(&args.child[0]),
-                source,
-            }),
-        };
-        // Child supervision is over; bound heartbeat shutdown and every final
-        // guard before waiting on a thread that may itself be wedged in flock
-        // or filesystem I/O.
-        supervisor_watchdog.arm_for(GUARD_WAIT_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
+        let outcome = supervise_child(
+            &mut gated.child,
+            args.child_deadline,
+            &args.pr,
+            &heartbeat_failed_rx,
+        );
+        // Atomically disable heartbeat renewal before stopping it. A heartbeat
+        // already holding the guard finishes first; after this durable phase
+        // transition no stale renewal can race cleanup or authorize reclaim.
+        self.begin_run_census(&args.agent, &args.pr, &gated)?;
         let _ = stop_tx.send(());
         let _ = heartbeat.join();
-
-        match self.domain_liveness()? {
-            DomainLiveness::Active => {
-                return Err(LandLockError::DomainActive(
-                    "child process group remained live after supervision".into(),
-                ));
-            }
-            DomainLiveness::Unknown(reason) => {
-                return Err(LandLockError::DomainActive(reason));
-            }
-            DomainLiveness::Absent | DomainLiveness::Empty => {}
+        reap_exited_children();
+        let pgid = outcome.pgid();
+        let capture = capture_and_freeze_residuals(std::process::id());
+        let domain_empty =
+            !process_group_exists(pgid) && capture.complete && capture.identities.is_empty();
+        if !domain_empty {
+            let residual_count = capture.identities.len();
+            self.record_residuals(&args.agent, &args.pr, pgid, capture)?;
+            return Err(LandLockError::CleanupQuarantined(format!(
+                "completed process group {pgid} did not yield an empty payload domain; {residual_count} exact residual identities recorded and lock retained"
+            )));
         }
-
-        let result_code = outcome
-            .as_ref()
-            .copied()
-            .unwrap_or_else(|error| error.exit_code());
-        supervisor_watchdog.arm_for(GUARD_WAIT_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS)?;
+        self.clear_proven_run(&args.agent, &args.pr, pgid)?;
+        let (result_code, terminal_error) = match outcome {
+            ChildOutcome::Exited { status, pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
+                (exit_status_code(status), None)
+            }
+            ChildOutcome::TimedOut { pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
+                eprintln!(
+                    "landing-lock: ABANDON PR #{}: child exceeded --child-deadline {}s; \
+                     killed the land subtree and RELEASED the lock so the FIFO can proceed. \
+                     PR left open for retry.",
+                    args.pr, args.child_deadline
+                );
+                (CHILD_DEADLINE_EXIT_CODE, None)
+            }
+            ChildOutcome::HeartbeatFailed { pgid } => {
+                debug_assert_eq!(pgid, gated.pgid);
+                eprintln!(
+                    "landing-lock: ABANDON PR #{}: lease heartbeat failed; verified the land subtree empty",
+                    args.pr
+                );
+                (HEARTBEAT_FAILURE_EXIT_CODE, None)
+            }
+            ChildOutcome::Uncertain { reason, .. } => {
+                let error = LandLockError::InvalidState(format!(
+                    "child supervision failed after payload domain was proven empty: {reason}"
+                ));
+                (error.exit_code(), Some(error))
+            }
+        };
         let retained = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
                 return Ok(false);
@@ -1383,11 +1543,9 @@ impl LandingLock {
             }
             self.assert_current_process_owner("retain mutation")?;
             remove_if_exists(&self.paths.owner)?;
-            remove_if_exists(&self.paths.domain)?;
             Ok(true)
         })?;
         if retained {
-            supervisor_watchdog.finish()?;
             eprintln!(
                 "landing-lock: RETAINED external mutation for PR #{} operation={:?}; exact-operation recovery required",
                 args.pr, args.operation
@@ -1397,25 +1555,16 @@ impl LandingLock {
                     args.operation.unwrap_or_else(|| "unknown operation".into()),
                 ));
             }
-            return outcome;
+            if let Some(error) = terminal_error {
+                return Err(error);
+            }
+            return Ok(result_code);
         }
-
-        let release_result = self.release(&args.agent, true);
-        supervisor_watchdog.finish()?;
-        release_result?;
-        if result_code == CHILD_DEADLINE_EXIT_CODE {
-            eprintln!(
-                "landing-lock: ABANDON PR #{}: child exceeded --child-deadline {}s; \
-                 verified the land subtree empty and RELEASED the lock. PR left open for retry.",
-                args.pr, args.child_deadline
-            );
-        } else if result_code == HEARTBEAT_FAILURE_EXIT_CODE {
-            eprintln!(
-                "landing-lock: ABANDON PR #{}: lease heartbeat failed; verified the land subtree empty and RELEASED the lock",
-                args.pr
-            );
+        self.release(&args.agent, true)?;
+        match terminal_error {
+            Some(error) => Err(error),
+            None => Ok(result_code),
         }
-        outcome
     }
 
     fn assert_child(&self, args: &AssertChildArgs) -> Result<i32, LandLockError> {
@@ -1449,12 +1598,7 @@ impl LandingLock {
     }
 
     fn set_mutation_barrier(&self, args: &MutationArgs, armed: bool) -> Result<i32, LandLockError> {
-        if args.attempt_id.len() != 32
-            || !args
-                .attempt_id
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if !valid_lower_hex32(&args.attempt_id) {
             return Err(LandLockError::ChildAssertion(
                 "mutation barrier attempt id must be lowercase 32-hex".into(),
             ));
@@ -1521,13 +1665,10 @@ impl LandingLock {
     }
 
     fn bind_mutation_call(&self, args: &MutationCallArgs) -> Result<i32, LandLockError> {
-        let valid_hex = |value: &str| {
-            value.len() == 32
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        };
-        if !valid_hex(&args.attempt_id) || !valid_hex(&args.call_id) || args.call_count == 0 {
+        if !valid_lower_hex32(&args.attempt_id)
+            || !valid_lower_hex32(&args.call_id)
+            || args.call_count == 0
+        {
             return Err(LandLockError::ChildAssertion(
                 "mutation call requires lowercase 32-hex attempt/call ids and positive count"
                     .into(),
@@ -1587,11 +1728,9 @@ impl LandingLock {
         Ok(0)
     }
 
-    /// Canonical child-ownership predicate. The selected Python landing child
-    /// must descend from the recorded supervisor, and the short-lived verifier
-    /// must descend from that child. Bounded walks on both sides permit the
-    /// host's Python and rust-script launchers without accepting an unrelated
-    /// process tree.
+    /// Canonical child-ownership predicate. The selected landing child must be
+    /// inside the exact still-published process group, and this verifier must
+    /// descend from that child through a bounded kernel-observed ancestry walk.
     fn assert_child_process(
         &self,
         args: &AssertChildArgs,
@@ -1641,25 +1780,8 @@ impl LandingLock {
                 holder.pr, args.pr
             )));
         }
-        match (&holder.pending_mutation, &holder.pending_attempt) {
-            (None, None) | (Some(_), Some(_)) => {}
-            _ => {
-                return Err(LandLockError::ChildAssertion(
-                    "mutation barrier lacks an exact durable attempt binding".into(),
-                ))
-            }
-        }
-        let pending_mutation = holder.pending_mutation.clone();
-        let pending_attempt = holder.pending_attempt.clone();
-        let pending_call_count = holder.pending_call_count;
-        let pending_call_id = holder.pending_call_id.clone();
         let local_host = current_host();
-        if local_host == "unknown" {
-            return Err(LandLockError::ChildAssertion(
-                "current host identity is unavailable".into(),
-            ));
-        }
-        if holder.host != local_host {
+        if local_host == "unknown" || holder.host != local_host {
             return Err(LandLockError::ChildAssertion(format!(
                 "holder host is {:?}, not current host {:?}",
                 holder.host, local_host
@@ -1673,69 +1795,52 @@ impl LandingLock {
             OwnerLiveness::Dead(reason) => {
                 return Err(LandLockError::ChildAssertion(format!(
                     "recorded supervisor is dead: {reason}"
-                )));
+                )))
             }
             OwnerLiveness::Unknown(reason) => {
                 return Err(LandLockError::ChildAssertion(format!(
                     "recorded supervisor cannot be verified: {reason}"
-                )));
+                )))
             }
         }
-        let domain = self.read_process_domain()?.ok_or_else(|| {
-            LandLockError::ChildAssertion("lease has no supervised child domain".into())
-        })?;
-        if domain.host != local_host || domain.boot_id != current_boot_id()? {
-            return Err(LandLockError::ChildAssertion(
-                "supervised child domain is not on the current host boot".into(),
-            ));
-        }
-        match recorded_process_liveness(
-            domain.watchdog_pid,
-            domain.watchdog_start_ticks,
-            "domain watchdog",
-        ) {
-            OwnerLiveness::Alive => {}
-            OwnerLiveness::Dead(reason) | OwnerLiveness::Unknown(reason) => {
+        let (leader, pgid) = match self.cleanup_verification(Some(&holder)) {
+            CleanupVerification::Active { record, .. } => match record.phase {
+                CleanupPhase::Published { leader, pgid } => (leader, pgid),
+                phase => {
+                    return Err(LandLockError::ChildAssertion(format!(
+                        "cleanup authority is not in Published phase: {phase:?}"
+                    )))
+                }
+            },
+            other => {
                 return Err(LandLockError::ChildAssertion(format!(
-                    "deadline watchdog is not live: {reason}"
-                )));
+                    "cleanup authority is not an active published domain: {other:?}"
+                )))
             }
-        }
-        if epoch_seconds()? >= domain.deadline_at {
-            return Err(LandLockError::ChildAssertion(
-                "supervised child domain deadline has expired".into(),
-            ));
-        }
-        let leader_ticks =
-            process_start_ticks(domain.leader_pid).map_err(|source| LandLockError::Io {
-                action: "read supervised child identity from",
-                path: PathBuf::from(format!("/proc/{}/stat", domain.leader_pid)),
+        };
+        if !exact_process_liveness(&leader).map_err(LandLockError::ChildAssertion)?
+            || process_group_id(leader.pid).map_err(|source| LandLockError::Io {
+                action: "read published child process group from",
+                path: PathBuf::from(format!("/proc/{}/stat", leader.pid)),
                 source,
-            })?;
-        if leader_ticks != domain.leader_start_ticks
-            || process_group_id(domain.leader_pid).map_err(|source| LandLockError::Io {
-                action: "read supervised child process group from",
-                path: PathBuf::from(format!("/proc/{}/stat", domain.leader_pid)),
-                source,
-            })? != domain.pgid
+            })? != pgid
         {
             return Err(LandLockError::ChildAssertion(
-                "supervised child domain identity changed".into(),
+                "published cleanup leader identity changed".into(),
             ));
         }
-        let leader_parent =
-            process_parent_pid(domain.leader_pid).map_err(|source| LandLockError::Io {
-                action: "read supervised child parent from",
-                path: PathBuf::from(format!("/proc/{}/stat", domain.leader_pid)),
-                source,
-            })?;
-        if leader_parent != owner.pid {
+        if process_parent_pid(leader.pid).map_err(|source| LandLockError::Io {
+            action: "read published child parent from",
+            path: PathBuf::from(format!("/proc/{}/stat", leader.pid)),
+            source,
+        })? != owner.pid
+        {
             return Err(LandLockError::ChildAssertion(format!(
-                "supervised domain leader {} is not a direct child of owner {}",
-                domain.leader_pid, owner.pid
+                "published leader {} is not a direct child of owner {}",
+                leader.pid, owner.pid
             )));
         }
-        if process_relation_depth(args.child_pid, domain.leader_pid)
+        if process_relation_depth(args.child_pid, leader.pid)
             .map_err(|source| LandLockError::Io {
                 action: "read selected landing child ancestry from",
                 path: PathBuf::from(format!("/proc/{}/stat", args.child_pid)),
@@ -1744,61 +1849,57 @@ impl LandingLock {
             .is_none()
         {
             return Err(LandLockError::ChildAssertion(format!(
-                "selected landing child {} is outside supervised domain leader {}",
-                args.child_pid, domain.leader_pid
+                "selected landing child {} is outside published leader {}",
+                args.child_pid, leader.pid
             )));
         }
         for (role, pid) in [
             ("selected landing child", args.child_pid),
             ("landing verifier", verifier_pid),
         ] {
-            let pgid = process_group_id(pid).map_err(|source| LandLockError::Io {
+            let observed = process_group_id(pid).map_err(|source| LandLockError::Io {
                 action: "read supervised process group from",
                 path: PathBuf::from(format!("/proc/{pid}/stat")),
                 source,
             })?;
-            if pgid != domain.pgid {
+            if observed != pgid {
                 return Err(LandLockError::ChildAssertion(format!(
-                    "{role} {pid} escaped supervised process group {} into {pgid}",
-                    domain.pgid
+                    "{role} {pid} escaped published process group {pgid} into {observed}"
                 )));
             }
         }
-        let child_depth = process_ancestry_depth(args.child_pid, owner.pid).map_err(|source| {
-            LandLockError::Io {
+        let child_depth = process_ancestry_depth(args.child_pid, owner.pid)
+            .map_err(|source| LandLockError::Io {
                 action: "read landing child ancestry from",
                 path: PathBuf::from(format!("/proc/{}/stat", args.child_pid)),
                 source,
-            }
-        })?;
-        let Some(child_depth) = child_depth else {
-            return Err(LandLockError::ChildAssertion(format!(
-                "landing child {} is not a bounded descendant of recorded supervisor {}",
-                args.child_pid, owner.pid
-            )));
-        };
-        let verifier_depth =
-            process_ancestry_depth(verifier_pid, args.child_pid).map_err(|source| {
-                LandLockError::Io {
-                    action: "read landing verifier ancestry from",
-                    path: PathBuf::from(format!("/proc/{verifier_pid}/stat")),
-                    source,
-                }
+            })?
+            .ok_or_else(|| {
+                LandLockError::ChildAssertion(format!(
+                    "landing child {} is not a bounded descendant of recorded supervisor {}",
+                    args.child_pid, owner.pid
+                ))
             })?;
-        let Some(verifier_depth) = verifier_depth else {
-            return Err(LandLockError::ChildAssertion(format!(
-                "verifier {verifier_pid} is not a bounded descendant of landing child {}",
-                args.child_pid
-            )));
-        };
+        let verifier_depth = process_ancestry_depth(verifier_pid, args.child_pid)
+            .map_err(|source| LandLockError::Io {
+                action: "read landing verifier ancestry from",
+                path: PathBuf::from(format!("/proc/{verifier_pid}/stat")),
+                source,
+            })?
+            .ok_or_else(|| {
+                LandLockError::ChildAssertion(format!(
+                    "verifier {verifier_pid} is not a bounded descendant of landing child {}",
+                    args.child_pid
+                ))
+            })?;
         Ok((
             owner.pid,
             child_depth,
             verifier_depth,
-            pending_mutation,
-            pending_attempt,
-            pending_call_count,
-            pending_call_id,
+            holder.pending_mutation,
+            holder.pending_attempt,
+            holder.pending_call_count,
+            holder.pending_call_id,
         ))
     }
 
@@ -1857,173 +1958,9 @@ impl LandingLock {
         Ok(Some(ProcessOwner::parse(&content)?))
     }
 
-    fn read_process_domain(&self) -> Result<Option<ProcessDomain>, LandLockError> {
-        if !self.paths.domain.exists() {
-            return Ok(None);
-        }
-        let content = read_to_string(&self.paths.domain)?;
-        Ok(Some(ProcessDomain::parse(&content)?))
-    }
-
-    fn assert_watchdog_authority(&self, args: &WatchdogArgs) -> Result<(), LandLockError> {
-        let domain = self.read_process_domain()?.ok_or_else(|| {
-            LandLockError::ChildAssertion("watchdog has no persisted process domain".into())
-        })?;
-        let watchdog = current_process_owner()?;
-        if domain.host != watchdog.host
-            || domain.boot_id != watchdog.boot_id
-            || domain.leader_pid != args.leader_pid
-            || domain.leader_start_ticks != args.leader_start_ticks
-            || domain.pgid != args.pgid
-            || domain.deadline_at != args.deadline_at
-            || domain.watchdog_pid != watchdog.pid
-            || domain.watchdog_start_ticks != watchdog.start_ticks
-        {
-            return Err(LandLockError::ChildAssertion(
-                "watchdog arguments and exact process identity do not match .domain".into(),
-            ));
-        }
-        if process_group_id(watchdog.pid).map_err(|source| LandLockError::Io {
-            action: "read watchdog process group from",
-            path: PathBuf::from(format!("/proc/{}/stat", watchdog.pid)),
-            source,
-        })? != watchdog.pid
-        {
-            return Err(LandLockError::ChildAssertion(
-                "watchdog is not isolated in its own process group".into(),
-            ));
-        }
-        let owner = self.read_process_owner()?.ok_or_else(|| {
-            LandLockError::ChildAssertion("watchdog has no persisted supervisor owner".into())
-        })?;
-        let parent_pid = process_parent_pid(watchdog.pid).map_err(|source| LandLockError::Io {
-            action: "read watchdog parent from",
-            path: PathBuf::from(format!("/proc/{}/stat", watchdog.pid)),
-            source,
-        })?;
-        if parent_pid != owner.pid {
-            return Err(LandLockError::ChildAssertion(format!(
-                "watchdog parent {parent_pid} is not persisted owner {}",
-                owner.pid
-            )));
-        }
-        match self.owner_liveness()? {
-            OwnerLiveness::Alive => Ok(()),
-            OwnerLiveness::Dead(reason) | OwnerLiveness::Unknown(reason) => {
-                Err(LandLockError::ChildAssertion(format!(
-                    "watchdog supervisor identity is not live: {reason}"
-                )))
-            }
-        }
-    }
-
     fn write_current_process_owner(&self) -> Result<(), LandLockError> {
         let owner = current_process_owner()?;
         write_truncated(&self.paths.owner, owner.render().as_bytes())
-    }
-
-    fn start_process_domain(
-        &self,
-        leader_pid: u32,
-        deadline_seconds: u64,
-    ) -> Result<DomainWatchdog, LandLockError> {
-        let owner = process_owner(leader_pid)?;
-        let pgid = process_group_id(leader_pid).map_err(|source| LandLockError::Io {
-            action: "read child process group from",
-            path: PathBuf::from(format!("/proc/{leader_pid}/stat")),
-            source,
-        })?;
-        if pgid != leader_pid {
-            return Err(LandLockError::InvalidState(format!(
-                "supervised child {leader_pid} is in process group {pgid}, not its own group"
-            )));
-        }
-        let deadline_at =
-            epoch_seconds()?.saturating_add(i64::try_from(deadline_seconds).unwrap_or(i64::MAX));
-        let mut watchdog = DomainWatchdog::spawn(
-            pgid,
-            leader_pid,
-            owner.start_ticks,
-            deadline_at,
-            &self.paths.lock,
-        )?;
-        let domain = ProcessDomain {
-            host: owner.host,
-            boot_id: owner.boot_id,
-            leader_pid,
-            leader_start_ticks: owner.start_ticks,
-            pgid,
-            deadline_at,
-            watchdog_pid: watchdog.owner.pid,
-            watchdog_start_ticks: watchdog.owner.start_ticks,
-        };
-        if let Err(error) =
-            self.with_guard(|| write_truncated(&self.paths.domain, domain.render().as_bytes()))
-        {
-            watchdog.cancel_unarmed();
-            return Err(error);
-        }
-        if let Err(error) = watchdog.arm() {
-            watchdog.cancel_unarmed();
-            return Err(error);
-        }
-        Ok(watchdog)
-    }
-
-    fn domain_liveness(&self) -> Result<DomainLiveness, LandLockError> {
-        let Some(domain) = self.read_process_domain()? else {
-            return Ok(DomainLiveness::Absent);
-        };
-        let host = current_host();
-        if domain.host != host {
-            return Ok(DomainLiveness::Unknown(format!(
-                "domain host {} differs from local host {host}",
-                domain.host
-            )));
-        }
-        let boot_id = current_boot_id()?;
-        if domain.boot_id != boot_id {
-            return Ok(DomainLiveness::Empty);
-        }
-        let watchdog = recorded_process_liveness(
-            domain.watchdog_pid,
-            domain.watchdog_start_ticks,
-            "domain watchdog",
-        );
-        match (process_group_has_live_members(domain.pgid), watchdog) {
-            (Ok(true), _) | (Ok(false), OwnerLiveness::Alive) => Ok(DomainLiveness::Active),
-            (Ok(false), OwnerLiveness::Dead(_)) => Ok(DomainLiveness::Empty),
-            (Ok(false), OwnerLiveness::Unknown(reason)) => Ok(DomainLiveness::Unknown(reason)),
-            (Err(_), OwnerLiveness::Alive) => Ok(DomainLiveness::Active),
-            (Err(error), OwnerLiveness::Dead(_) | OwnerLiveness::Unknown(_)) => {
-                Ok(DomainLiveness::Unknown(format!(
-                    "cannot inspect process group {}: {error}",
-                    domain.pgid
-                )))
-            }
-        }
-    }
-
-    /// A live-but-wedged supervisor stops being an authorization proxy only
-    /// after its durable deadline, both TERM/KILL grace windows, and an extra
-    /// observation second have elapsed, with the exact watchdog dead and the
-    /// payload group proven empty. If the old supervisor later resumes, its
-    /// persisted owner tuple has already been replaced, so renew/release and
-    /// mutation-barrier writes fail their canonical owner check.
-    fn timed_out_empty_domain(&self, now: i64) -> Result<bool, LandLockError> {
-        let Some(domain) = self.read_process_domain()? else {
-            return Ok(false);
-        };
-        if domain.host != current_host() || domain.boot_id != current_boot_id()? {
-            return Ok(false);
-        }
-        let recovery_at = domain
-            .deadline_at
-            .saturating_add((2 * CHILD_TERM_GRACE_SECONDS + 1) as i64);
-        if now < recovery_at {
-            return Ok(false);
-        }
-        Ok(matches!(self.domain_liveness()?, DomainLiveness::Empty))
     }
 
     fn owner_liveness(&self) -> Result<OwnerLiveness, LandLockError> {
@@ -2046,25 +1983,24 @@ impl LandingLock {
                 owner.boot_id
             )));
         }
-        Ok(recorded_process_liveness(
-            owner.pid,
-            owner.start_ticks,
-            "owner",
-        ))
+        match process_start_ticks(owner.pid) {
+            Ok(start_ticks) if start_ticks == owner.start_ticks => Ok(OwnerLiveness::Alive),
+            Ok(start_ticks) => Ok(OwnerLiveness::Dead(format!(
+                "pid {} was reused (owner start_ticks={} current={start_ticks})",
+                owner.pid, owner.start_ticks
+            ))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(OwnerLiveness::Dead(format!("pid {} is absent", owner.pid)))
+            }
+            Err(error) => Ok(OwnerLiveness::Unknown(format!(
+                "cannot inspect pid {}: {error}",
+                owner.pid
+            ))),
+        }
     }
 
     fn assert_current_process_owner(&self, operation: &'static str) -> Result<(), LandLockError> {
         let Some(owner) = self.read_process_owner()? else {
-            let supervised_holder = self.read_holder()?.is_some_and(|holder| {
-                holder.repo.is_some()
-                    || holder.operation.is_some()
-                    || holder.pending_mutation.is_some()
-            });
-            if supervised_holder {
-                return Err(LandLockError::InvalidState(format!(
-                    "cannot {operation}: supervised holder has no exact owner fence"
-                )));
-            }
             return Ok(());
         };
         let current = current_process_owner()?;
@@ -2167,6 +2103,13 @@ fn parse_unsigned(name: &str, value: &str) -> Result<u64, LandLockError> {
     })
 }
 
+fn valid_lower_hex32(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 pub(crate) fn current_host() -> String {
     Command::new("hostname")
         .arg("-s")
@@ -2186,7 +2129,11 @@ fn current_boot_id() -> Result<String, LandLockError> {
         .map_err(|source| io_error("read", path, source))
 }
 
-fn process_stat_value(pid: u32, index: usize, name: &str) -> io::Result<String> {
+pub(crate) fn process_start_ticks(pid: u32) -> io::Result<u64> {
+    process_stat_fields(pid).map(|(_, _, start_ticks)| start_ticks)
+}
+
+fn process_stat_fields(pid: u32) -> io::Result<(char, u32, u64)> {
     let path = PathBuf::from(format!("/proc/{pid}/stat"));
     let stat = fs::read_to_string(path)?;
     let close = stat.rfind(')').ok_or_else(|| {
@@ -2196,43 +2143,62 @@ fn process_stat_value(pid: u32, index: usize, name: &str) -> io::Result<String> 
         )
     })?;
     let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
-    fields
-        .get(index)
-        .map(|value| (*value).to_string())
+    let state = fields
+        .first()
+        .and_then(|value| value.chars().next())
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("process stat has no {name} field"),
+                "process stat has no state field",
             )
-        })
-}
-
-pub(crate) fn process_start_ticks(pid: u32) -> io::Result<u64> {
-    let value = process_stat_value(pid, 19, "starttime")?;
-    value.parse().map_err(|error| {
+        })?;
+    let parent = fields.get(1).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid process starttime {value:?}: {error}"),
+            "process stat has no parent field",
         )
-    })
+    })?;
+    let start_ticks = fields.get(19).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no starttime field",
+        )
+    })?;
+    let parent = parent.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid process parent {parent:?}: {error}"),
+        )
+    })?;
+    let start_ticks = start_ticks.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid process starttime {start_ticks:?}: {error}"),
+        )
+    })?;
+    Ok((state, parent, start_ticks))
 }
 
 fn process_parent_pid(pid: u32) -> io::Result<u32> {
-    let value = process_stat_value(pid, 1, "parent pid")?;
-    value.parse().map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid process parent pid {value:?}: {error}"),
-        )
-    })
-}
-
-fn process_state(pid: u32) -> io::Result<String> {
-    process_stat_value(pid, 0, "state")
+    process_stat_fields(pid).map(|(_, parent, _)| parent)
 }
 
 fn process_group_id(pid: u32) -> io::Result<u32> {
-    let value = process_stat_value(pid, 2, "process group")?;
+    let path = PathBuf::from(format!("/proc/{pid}/stat"));
+    let stat = fs::read_to_string(path)?;
+    let close = stat.rfind(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no closing comm",
+        )
+    })?;
+    let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
+    let value = fields.get(2).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process stat has no process-group field",
+        )
+    })?;
     value.parse().map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -2250,9 +2216,6 @@ fn process_relation_depth(descendant_pid: u32, ancestor_pid: u32) -> io::Result<
 
 fn process_ancestry_depth(descendant_pid: u32, ancestor_pid: u32) -> io::Result<Option<usize>> {
     let mut current = descendant_pid;
-    // Expected warm/cold paths are Python -> rust-script -> verifier. Keep a
-    // small hard ceiling so malformed or surprising process topology fails
-    // closed instead of turning this into an unbounded proxy walk.
     for depth in 1..=MAX_ASSERT_CHILD_ANCESTRY_DEPTH {
         let parent = process_parent_pid(current)?;
         if parent == ancestor_pid {
@@ -2266,78 +2229,630 @@ fn process_ancestry_depth(descendant_pid: u32, ancestor_pid: u32) -> io::Result<
     Ok(None)
 }
 
-/// Return whether a process group contains any non-zombie member. `/proc` is
-/// the source of truth because the direct child can exit while a grandchild
-/// keeps the group alive. A disappearing entry is a benign scan race; every
-/// other inspection failure is propagated so callers fail closed.
-fn process_group_has_live_members(pgid: u32) -> io::Result<bool> {
-    Ok(!process_group_live_identities(pgid)?.is_empty())
+pub(crate) fn read_current_boot_id() -> io::Result<String> {
+    fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|value| value.trim().to_string())
 }
 
-/// Exact pid/start tuples for every non-zombie member of one process group.
-/// The watchdog carries these observations forward so it never sends a delayed
-/// signal after the recorded group was observed empty or replaced.
-fn process_group_live_identities(pgid: u32) -> io::Result<BTreeSet<(u32, u64)>> {
-    let mut identities = BTreeSet::new();
-    for entry in fs::read_dir("/proc")? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProcessGroupLiveness {
+    Active,
+    Absent,
+    Unknown(String),
+}
+
+fn process_group_liveness(pgid: u32) -> ProcessGroupLiveness {
+    let Some(target) = process_group_target(pgid) else {
+        return ProcessGroupLiveness::Unknown(format!("invalid process group {pgid}"));
+    };
+    // SAFETY: `process_group_target` excludes zero and the special -1 broadcast
+    // target. Signal zero probes existence without delivering a signal.
+    if unsafe { libc::kill(target, 0) } == 0 {
+        return ProcessGroupLiveness::Active;
+    }
+    let source = io::Error::last_os_error();
+    if source.raw_os_error() == Some(libc::ESRCH) {
+        ProcessGroupLiveness::Absent
+    } else {
+        ProcessGroupLiveness::Unknown(source.to_string())
+    }
+}
+
+pub(crate) fn exact_process_liveness(identity: &ProcessIdentity) -> Result<bool, String> {
+    match process_start_ticks(identity.pid) {
+        Ok(start_ticks) => Ok(start_ticks == identity.start_ticks),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(format!(
+            "cannot verify pid {}@{}: {source}",
+            identity.pid, identity.start_ticks
+        )),
+    }
+}
+
+pub(crate) fn verify_cleanup_record(
+    path: &Path,
+    expected: Option<(&str, &str)>,
+) -> CleanupVerification {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return CleanupVerification::None
+        }
+        Err(source) => {
+            return CleanupVerification::Unknown {
+                record: None,
+                reason: format!("cannot read {}: {source}", path.display()),
+            }
+        }
+    };
+    let record = match CleanupRecord::parse(&content) {
+        Ok(record) => record,
+        Err(reason) => {
+            return CleanupVerification::Unknown {
+                record: None,
+                reason: format!("malformed {}: {reason}", path.display()),
+            }
+        }
+    };
+    let Some((agent, operation)) = expected else {
+        return CleanupVerification::Unknown {
+            record: Some(record),
+            reason: "cleanup authority has no matching lock holder".into(),
         };
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+    };
+    if record.agent != agent || record.operation != operation {
+        return CleanupVerification::Unknown {
+            reason: format!(
+                "cleanup authority binds agent={:?} operation={:?}, not agent={agent:?} operation={operation:?}",
+                record.agent, record.operation
+            ),
+            record: Some(record),
+        };
+    }
+    let host = current_host();
+    if host == "unknown" || record.host != host {
+        return CleanupVerification::Unknown {
+            reason: format!(
+                "cleanup authority host {:?} does not match current host {host:?}",
+                record.host
+            ),
+            record: Some(record),
+        };
+    }
+    let boot_id = match read_current_boot_id() {
+        Ok(boot_id) => boot_id,
+        Err(source) => {
+            return CleanupVerification::Unknown {
+                reason: format!("cannot read current boot identity: {source}"),
+                record: Some(record),
+            }
+        }
+    };
+    if record.boot_id != boot_id {
+        return CleanupVerification::Recoverable {
+            reason: "recorded payload domain is from an earlier host boot".into(),
+            record,
+        };
+    }
+    match &record.phase {
+        CleanupPhase::Armed => CleanupVerification::Armed {
+            reason: "pre-spawn barrier is armed; no payload identity was durably published".into(),
+            record,
+        },
+        CleanupPhase::Published { leader, pgid } | CleanupPhase::CensusPending { leader, pgid } => {
+            let mut active = Vec::new();
+            let mut unknown = Vec::new();
+            match exact_process_liveness(leader) {
+                Ok(true) => active.push(format!("{}@{}", leader.pid, leader.start_ticks)),
+                Ok(false) => {}
+                Err(reason) => unknown.push(reason),
+            }
+            match process_group_liveness(*pgid) {
+                ProcessGroupLiveness::Active => active.push(format!("pgid {pgid}")),
+                ProcessGroupLiveness::Absent => {}
+                ProcessGroupLiveness::Unknown(reason) => {
+                    unknown.push(format!("cannot verify pgid {pgid}: {reason}"))
+                }
+            }
+            if !active.is_empty() {
+                CleanupVerification::Active {
+                    reason: format!(
+                        "published payload identities remain active: {}",
+                        active.join(", ")
+                    ),
+                    record,
+                }
+            } else {
+                let mut reason = unknown;
+                reason.push(
+                    "published payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
+                        .into(),
+                );
+                CleanupVerification::Uncensused {
+                    reason: reason.join("; "),
+                    record,
+                }
+            }
+        }
+        CleanupPhase::Residual {
+            pgid,
+            domain_complete,
+            residuals,
+        } => {
+            if !domain_complete {
+                return CleanupVerification::Unknown {
+                    reason: "residual process-domain capture was incomplete".into(),
+                    record: Some(record),
+                };
+            }
+            let mut active = Vec::new();
+            let mut unknown = Vec::new();
+            for identity in residuals {
+                match exact_process_liveness(identity) {
+                    Ok(true) => active.push(format!("{}@{}", identity.pid, identity.start_ticks)),
+                    Ok(false) => {}
+                    Err(reason) => unknown.push(reason),
+                }
+            }
+            match process_group_liveness(*pgid) {
+                ProcessGroupLiveness::Active => active.push(format!("pgid {pgid}")),
+                ProcessGroupLiveness::Absent => {}
+                ProcessGroupLiveness::Unknown(reason) => {
+                    unknown.push(format!("cannot verify pgid {pgid}: {reason}"))
+                }
+            }
+            if !active.is_empty() {
+                CleanupVerification::Active {
+                    reason: format!("payload identities remain active: {}", active.join(", ")),
+                    record,
+                }
+            } else if !unknown.is_empty() {
+                CleanupVerification::Unknown {
+                    reason: unknown.join("; "),
+                    record: Some(record),
+                }
+            } else {
+                CleanupVerification::Recoverable {
+                    reason:
+                        "all recorded residual identities and the captured process group are absent"
+                            .into(),
+                    record,
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn write_cleanup_record(path: &Path, record: &CleanupRecord) -> io::Result<()> {
+    let temporary = PathBuf::from(format!("{}.tmp-{}", path.display(), std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(record.render().as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_cleanup_record(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(source),
+    }
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// A child whose wrapper has execed into its own process group but whose guest
+/// command cannot start until `release` writes the one valid token. The pipe is
+/// close-on-exec everywhere except the wrapper's fixed read descriptor, and
+/// EOF/error is a fail-closed exit. Thus supervisor death before publication
+/// cannot accidentally start the guest.
+pub(crate) struct GatedChild {
+    pub(crate) child: Child,
+    pub(crate) leader: ProcessIdentity,
+    pub(crate) pgid: u32,
+    release: Option<File>,
+}
+
+impl GatedChild {
+    pub(crate) fn release(&mut self) -> io::Result<()> {
+        let mut release = self
+            .release
+            .take()
+            .ok_or_else(|| io::Error::other("child start gate was already released"))?;
+        release.write_all(b"ci-hub-go\n")?;
+        release.flush()
+    }
+}
+
+pub(crate) fn spawn_gated_child(
+    program: &OsString,
+    args: &[OsString],
+    configure: impl FnOnce(&mut Command),
+) -> io::Result<GatedChild> {
+    let mut pipe_fds = [-1; 2];
+    // SAFETY: `pipe_fds` names two writable c_int slots. Both returned
+    // descriptors are immediately owned below.
+    if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful pipe2 returned two new owned descriptors.
+    let read_gate = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+    // SAFETY: successful pipe2 returned two new owned descriptors.
+    let release_gate = unsafe { File::from_raw_fd(pipe_fds[1]) };
+    let read_fd = read_gate.as_raw_fd();
+
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(START_GATE_SCRIPT)
+        .arg("ci-hub-start-gate")
+        .arg(program)
+        .args(args)
+        .process_group(0);
+    configure(&mut command);
+    // SAFETY: the callback uses only async-signal-safe descriptor syscalls.
+    // It never waits: the execed shell performs the blocking read, so
+    // `Command::spawn` can return to publish the exact identity.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(read_fd, START_GATE_FD) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::fcntl(START_GATE_FD, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn()?;
+    drop(read_gate);
+    let pid = child.id();
+    let pid_t = libc::pid_t::try_from(pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "child pid exceeds pid_t"))?;
+    // SAFETY: getpgid only reads kernel state for this positive child PID.
+    let observed_pgid = unsafe { libc::getpgid(pid_t) };
+    if observed_pgid != pid_t {
+        drop(release_gate);
+        let _ = child.wait();
+        let detail = if observed_pgid < 0 {
+            io::Error::last_os_error().to_string()
+        } else {
+            format!("observed process group {observed_pgid}")
+        };
+        return Err(io::Error::other(format!(
+            "start-gated child {pid} was not group leader: {detail}"
+        )));
+    }
+    let leader = ProcessIdentity {
+        pid,
+        start_ticks: process_start_ticks(pid)?,
+    };
+    Ok(GatedChild {
+        child,
+        leader,
+        pgid: pid,
+        release: Some(release_gate),
+    })
+}
+
+pub(crate) fn enable_child_subreaper() -> io::Result<()> {
+    // SAFETY: PR_SET_CHILD_SUBREAPER changes only this process attribute.
+    if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut enabled: libc::c_int = 0;
+    // SAFETY: PR_GET_CHILD_SUBREAPER writes one c_int to the provided pointer.
+    if unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, &mut enabled) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if enabled != 1 {
+        return Err(io::Error::other("kernel did not enable child subreaper"));
+    }
+    Ok(())
+}
+
+fn scan_descendants(root_pid: u32) -> io::Result<Vec<ProcessIdentity>> {
+    let mut processes = BTreeMap::new();
+    for entry in fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
         let Ok(pid) = name.parse::<u32>() else {
             continue;
         };
-        let member_group = match process_group_id(pid) {
-            Ok(group) => group,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        if member_group != pgid {
-            continue;
-        }
-        let state = match process_state(pid) {
-            Ok(state) => state,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        if state != "Z" && state != "X" {
-            let start_ticks = match process_start_ticks(pid) {
-                Ok(start_ticks) => start_ticks,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            identities.insert((pid, start_ticks));
+        match scan_process_stat_fields(pid) {
+            Ok((_, parent, start_ticks)) => {
+                processes.insert(pid, (parent, start_ticks));
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => return Err(source),
         }
     }
-    Ok(identities)
-}
-
-fn wait_for_process_state(
-    pid: u32,
-    predicate: impl Fn(&str) -> bool,
-    timeout: Duration,
-) -> io::Result<bool> {
-    let deadline = Instant::now() + timeout;
+    let mut domain = BTreeSet::from([root_pid]);
     loop {
-        match process_state(pid) {
-            Ok(state) if predicate(&state) => return Ok(true),
-            Ok(state) if state == "Z" || state == "X" => return Ok(false),
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error),
+        let before = domain.len();
+        for (&pid, &(parent, _)) in &processes {
+            if domain.contains(&parent) {
+                domain.insert(pid);
+            }
         }
-        if Instant::now() >= deadline {
-            return Ok(false);
+        if domain.len() == before {
+            break;
         }
-        thread::sleep(Duration::from_millis(10));
+    }
+    domain.remove(&root_pid);
+    Ok(domain
+        .into_iter()
+        .filter_map(|pid| {
+            processes.get(&pid).map(|(_, start_ticks)| ProcessIdentity {
+                pid,
+                start_ticks: *start_ticks,
+            })
+        })
+        .collect())
+}
+
+fn scan_process_stat_fields(pid: u32) -> io::Result<(char, u32, u64)> {
+    #[cfg(test)]
+    if SCAN_UNREADABLE_PID.load(std::sync::atomic::Ordering::SeqCst) == pid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "test-injected unreadable process identity",
+        ));
+    }
+    process_stat_fields(pid)
+}
+
+#[cfg(test)]
+static SCAN_UNREADABLE_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(test)]
+fn inject_unreadable_scan_pid(pid: u32) {
+    SCAN_UNREADABLE_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub(crate) fn signal_exact_process(
+    identity: &ProcessIdentity,
+    signal: libc::c_int,
+) -> io::Result<bool> {
+    let pid = libc::pid_t::try_from(identity.pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "pid exceeds pid_t"))?;
+    // Open a stable kernel reference before checking start_ticks. If the PID was
+    // already reused, the identity check rejects it; if it exits afterward,
+    // pidfd_send_signal returns ESRCH rather than targeting a future occupant.
+    // SAFETY: pidfd_open takes a positive PID and zero flags.
+    let raw_pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if raw_pidfd < 0 {
+        let source = io::Error::last_os_error();
+        return if source.raw_os_error() == Some(libc::ESRCH) {
+            Ok(false)
+        } else {
+            Err(source)
+        };
+    }
+    // SAFETY: successful pidfd_open returned one new owned descriptor.
+    let pidfd = unsafe { OwnedFd::from_raw_fd(raw_pidfd as libc::c_int) };
+    if !exact_process_liveness(identity).map_err(io::Error::other)? {
+        return Ok(false);
+    }
+    // SAFETY: pidfd_send_signal targets only the process referenced by pidfd;
+    // a null siginfo and zero flags are the documented simple-signal form.
+    let sent = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            signal,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    if sent == 0 {
+        Ok(true)
+    } else {
+        let source = io::Error::last_os_error();
+        if source.raw_os_error() == Some(libc::ESRCH) {
+            Ok(false)
+        } else {
+            Err(source)
+        }
     }
 }
 
-fn process_owner(pid: u32) -> Result<ProcessOwner, LandLockError> {
+pub(crate) struct ResidualCapture {
+    pub(crate) complete: bool,
+    pub(crate) identities: Vec<ProcessIdentity>,
+}
+
+pub(crate) fn capture_and_freeze_residuals(supervisor_pid: u32) -> ResidualCapture {
+    #[cfg(test)]
+    if FORCE_INCOMPLETE_CENSUS.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return ResidualCapture {
+            complete: false,
+            identities: Vec::new(),
+        };
+    }
+    let mut prior = Vec::new();
+    for _ in 0..4 {
+        let identities = match scan_descendants(supervisor_pid) {
+            Ok(identities) => identities,
+            Err(_) => {
+                return ResidualCapture {
+                    complete: false,
+                    identities: prior,
+                }
+            }
+        };
+        let mut all_stopped = true;
+        for identity in &identities {
+            if signal_exact_process(identity, libc::SIGSTOP).is_err() {
+                all_stopped = false;
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+        for identity in &identities {
+            match process_stat_fields(identity.pid) {
+                Ok((state, _, start_ticks)) if start_ticks == identity.start_ticks => {
+                    all_stopped &= state == 'T' || state == 't' || state == 'Z';
+                }
+                Ok(_) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => all_stopped = false,
+            }
+        }
+        if identities == prior && all_stopped {
+            return ResidualCapture {
+                complete: true,
+                identities,
+            };
+        }
+        prior = identities;
+    }
+    ResidualCapture {
+        complete: false,
+        identities: prior,
+    }
+}
+
+pub(crate) fn reap_exited_children() {
+    loop {
+        let mut status = 0;
+        // SAFETY: waitpid with WNOHANG reaps only exited children of this
+        // dedicated supervisor process and never blocks.
+        let result = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if result <= 0 {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn process_domain_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+static HEARTBEAT_HELPER_DELAY_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+static FAIL_NEXT_RUN_HEARTBEAT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+static FORCE_INCOMPLETE_CENSUS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn inject_run_heartbeat_failure() {
+    FAIL_NEXT_RUN_HEARTBEAT.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn inject_incomplete_census() {
+    FORCE_INCOMPLETE_CENSUS.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn set_heartbeat_helper_delay(milliseconds: u64) {
+    HEARTBEAT_HELPER_DELAY_MS.store(milliseconds, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn heartbeat_test_helper_delay() {
+    let milliseconds = HEARTBEAT_HELPER_DELAY_MS.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if milliseconds > 0 {
+        Command::new("/bin/sleep")
+            .arg(format!("{:.3}", milliseconds as f64 / 1_000.0))
+            .status()
+            .expect("delayed heartbeat helper must complete");
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn heartbeat_test_helper_delay() {}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunCrashPoint {
+    AfterArm,
+    AfterSpawn,
+    AfterPublish,
+}
+
+#[cfg(test)]
+enum RunCrashAction {
+    ReturnError,
+    StopSupervisor { ready: PathBuf },
+}
+
+#[cfg(test)]
+static RUN_CRASH_HOOK: std::sync::Mutex<Option<(String, RunCrashPoint, RunCrashAction)>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn install_run_crash_hook(operation: &str, point: RunCrashPoint) {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(hook.is_none(), "a run crash hook is already installed");
+    *hook = Some((operation.to_string(), point, RunCrashAction::ReturnError));
+}
+
+#[cfg(test)]
+pub(crate) fn install_run_hard_death_hook(operation: &str, point: RunCrashPoint, ready: PathBuf) {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(hook.is_none(), "a run crash hook is already installed");
+    *hook = Some((
+        operation.to_string(),
+        point,
+        RunCrashAction::StopSupervisor { ready },
+    ));
+}
+
+#[cfg(test)]
+pub(crate) fn take_run_crash_hook(operation: &str, point: RunCrashPoint) -> bool {
+    let mut hook = RUN_CRASH_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let action = if hook
+        .as_ref()
+        .is_some_and(|(expected_operation, expected_point, _)| {
+            expected_operation == operation && *expected_point == point
+        }) {
+        hook.take().map(|(_, _, action)| action)
+    } else {
+        None
+    };
+    drop(hook);
+    match action {
+        Some(RunCrashAction::ReturnError) => true,
+        Some(RunCrashAction::StopSupervisor { ready }) => {
+            fs::write(&ready, b"ready\n").unwrap_or_else(|source| {
+                panic!("write hard-death readiness marker at {ready:?}: {source}")
+            });
+            let raised = unsafe { libc::raise(libc::SIGSTOP) };
+            assert_eq!(raised, 0, "SIGSTOP hard-death supervisor hook failed");
+            true
+        }
+        None => false,
+    }
+}
+
+fn current_process_owner() -> Result<ProcessOwner, LandLockError> {
+    let pid = std::process::id();
     let start_ticks = process_start_ticks(pid).map_err(|source| LandLockError::Io {
         action: "read process identity from",
         path: PathBuf::from(format!("/proc/{pid}/stat")),
@@ -2351,40 +2866,6 @@ fn process_owner(pid: u32) -> Result<ProcessOwner, LandLockError> {
     })
 }
 
-/// Check a persisted pid/start-time tuple without treating pid reuse or a
-/// zombie awaiting reap as the recorded process. Callers use `Unknown` as a
-/// fail-closed state rather than silently turning an inspection error into
-/// authority to reclaim the lock.
-fn recorded_process_liveness(pid: u32, start_ticks: u64, label: &str) -> OwnerLiveness {
-    match process_start_ticks(pid) {
-        Ok(current_ticks) if current_ticks != start_ticks => OwnerLiveness::Dead(format!(
-            "{label} pid {pid} was reused (recorded start_ticks={start_ticks} current={current_ticks})"
-        )),
-        Ok(_) => match process_state(pid) {
-            Ok(state) if state == "Z" || state == "X" => {
-                OwnerLiveness::Dead(format!("{label} pid {pid} is {state}"))
-            }
-            Ok(_) => OwnerLiveness::Alive,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                OwnerLiveness::Dead(format!("{label} pid {pid} is absent"))
-            }
-            Err(error) => OwnerLiveness::Unknown(format!(
-                "cannot inspect {label} pid {pid} state: {error}"
-            )),
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            OwnerLiveness::Dead(format!("{label} pid {pid} is absent"))
-        }
-        Err(error) => OwnerLiveness::Unknown(format!(
-            "cannot inspect {label} pid {pid} identity: {error}"
-        )),
-    }
-}
-
-fn current_process_owner() -> Result<ProcessOwner, LandLockError> {
-    process_owner(std::process::id())
-}
-
 fn render_liveness(liveness: &OwnerLiveness) -> String {
     match liveness {
         OwnerLiveness::Alive => "alive".into(),
@@ -2393,13 +2874,11 @@ fn render_liveness(liveness: &OwnerLiveness) -> String {
     }
 }
 
-fn render_domain_liveness(liveness: &DomainLiveness) -> String {
-    match liveness {
-        DomainLiveness::Absent => "absent".into(),
-        DomainLiveness::Active => "active".into(),
-        DomainLiveness::Empty => "empty".into(),
-        DomainLiveness::Unknown(reason) => format!("unknown:{reason}"),
+pub(crate) fn print_cleanup_record(record: &CleanupRecord, reason: &str) {
+    for line in record.render().lines() {
+        println!("  {line}");
     }
+    println!("  verification={reason}");
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T, LandLockError> {
@@ -2427,6 +2906,8 @@ fn write_truncated(path: &Path, bytes: &[u8]) -> Result<(), LandLockError> {
         .map_err(|source| io_error("open for write", path, source))?;
     file.write_all(bytes)
         .map_err(|source| io_error("write", path, source))?;
+    file.flush()
+        .map_err(|source| io_error("flush", path, source))?;
     file.sync_all()
         .map_err(|source| io_error("sync", path, source))?;
     sync_parent_directory(path)?;
@@ -2434,13 +2915,10 @@ fn write_truncated(path: &Path, bytes: &[u8]) -> Result<(), LandLockError> {
 }
 
 fn sync_parent_directory(path: &Path) -> Result<(), LandLockError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| LandLockError::InvalidState(format!("{} has no parent", path.display())))?;
-    let directory = File::open(parent).map_err(|source| io_error("open parent", parent, source))?;
-    directory
-        .sync_all()
-        .map_err(|source| io_error("sync parent", parent, source))
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| io_error("sync parent directory for", path, source))
 }
 
 fn remove_if_exists(path: &Path) -> Result<(), LandLockError> {
@@ -2459,930 +2937,36 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> LandLockErr
     }
 }
 
-fn internal_executable() -> Result<PathBuf, LandLockError> {
-    #[cfg(test)]
-    {
-        let source = PathBuf::from(file!());
-        let ci_hub_dir = source.parent().and_then(Path::parent).ok_or_else(|| {
-            LandLockError::InvalidState(format!(
-                "cannot resolve ci-hub executable from {}",
-                source.display()
-            ))
-        })?;
-        return Ok(ci_hub_dir.join("ci-hub"));
-    }
-    #[cfg(not(test))]
-    {
-        env::current_exe().map_err(|source| LandLockError::Io {
-            action: "resolve internal ci-hub executable from",
-            path: PathBuf::from("/proc/self/exe"),
-            source,
-        })
-    }
-}
-
-enum WatchdogControl {
-    Line(String),
-    Eof,
-    Error(String),
-}
-
-fn spawn_watchdog_control_reader() -> mpsc::Receiver<WatchdogControl> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let stdin = io::stdin();
-        let mut reader = BufReader::new(stdin.lock());
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = sender.send(WatchdogControl::Eof);
-                    break;
-                }
-                Ok(_) => {
-                    let line = line.trim_end_matches(['\r', '\n']).to_string();
-                    if sender.send(WatchdogControl::Line(line)).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = sender.send(WatchdogControl::Error(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-    receiver
-}
-
-/// Hidden child entry point. The launcher remains the exact process-group
-/// leader for the entire arbitrary command and ignores TERM itself, while the
-/// payload receives default signals. That anchor prevents the numeric PGID
-/// from being recycled between the watchdog's TERM and KILL phases.
-fn run_payload_launcher(args: &PayloadArgs) -> Result<i32, LandLockError> {
-    if args.child.is_empty() {
-        return Err(LandLockError::EmptyChild);
-    }
-    let pid = std::process::id();
-    let pgid = process_group_id(pid).map_err(|source| LandLockError::Io {
-        action: "read payload launcher process group from",
-        path: PathBuf::from(format!("/proc/{pid}/stat")),
-        source,
-    })?;
-    if pgid != pid {
-        return Err(LandLockError::InvalidState(format!(
-            "payload launcher pid {pid} is not its process-group leader ({pgid})"
-        )));
-    }
-    // The parent resumes this launcher only after the watchdog identity and
-    // deadline are durable and ARMED. Before that point PDEATHSIG closes every
-    // supervisor-death startup race; afterwards the watchdog owns cleanup.
-    unsafe {
-        if libc::prctl(libc::PR_SET_PDEATHSIG, 0) != 0 {
-            return Err(LandLockError::Io {
-                action: "clear payload launcher parent-death signal from",
-                path: PathBuf::from("/proc/self/status"),
-                source: io::Error::last_os_error(),
-            });
-        }
-        for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
-            if libc::signal(signal, libc::SIG_IGN) == libc::SIG_ERR {
-                return Err(LandLockError::Io {
-                    action: "install payload launcher anchor signal from",
-                    path: PathBuf::from("/proc/self/status"),
-                    source: io::Error::last_os_error(),
-                });
-            }
-        }
-    }
-
-    let mut command = Command::new(&args.child[0]);
-    command.args(&args.child[1..]);
-    // SAFETY: after fork and before exec, only async-signal-safe libc signal
-    // disposition changes are made. The payload must not inherit the anchor's
-    // ignored signals.
-    unsafe {
-        command.pre_exec(|| {
-            for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
-                if libc::signal(signal, libc::SIG_DFL) == libc::SIG_ERR {
-                    return Err(io::Error::last_os_error());
-                }
-            }
-            Ok(())
-        });
-    }
-    let mut child = command.spawn().map_err(|source| LandLockError::Io {
-        action: "launch payload child from",
-        path: PathBuf::from(&args.child[0]),
-        source,
-    })?;
-    let status = child.wait().map_err(|source| LandLockError::Io {
-        action: "wait for payload child from",
-        path: PathBuf::from(format!("/proc/{}", child.id())),
-        source,
-    })?;
-
-    // A daemonized descendant remains in this group. Keep the exact leader
-    // alive as an anchor until the descendant exits naturally or the external
-    // watchdog enforces the deadline.
-    loop {
-        let mut members =
-            process_group_live_identities(pgid).map_err(|source| LandLockError::Io {
-                action: "scan anchored payload process group from",
-                path: PathBuf::from("/proc"),
-                source,
-            })?;
-        members.retain(|(member_pid, _)| *member_pid != pid);
-        if members.is_empty() {
-            return Ok(exit_status_code(status));
-        }
-        thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
-    }
-}
-
-/// Hidden watchdog entry point. READY proves it has observed the exact stopped
-/// group leader; ARMED is emitted only after the parent fsyncs the watchdog
-/// identity into `.domain`. Once armed, either supervisor EOF/read failure or
-/// the absolute deadline triggers immediate TERM/grace/KILL cleanup.
-fn run_domain_watchdog(lock: &LandingLock, args: &WatchdogArgs) -> Result<i32, LandLockError> {
-    if args.pgid != args.leader_pid {
-        return Err(LandLockError::InvalidState(format!(
-            "watchdog leader {} does not equal process group {}",
-            args.leader_pid, args.pgid
-        )));
-    }
-    let mut previous =
-        process_group_live_identities(args.pgid).map_err(|source| LandLockError::Io {
-            action: "scan initial watchdog process group from",
-            path: PathBuf::from("/proc"),
-            source,
-        })?;
-    if !previous.contains(&(args.leader_pid, args.leader_start_ticks)) {
-        return Err(LandLockError::InvalidState(
-            "watchdog did not observe the exact recorded group leader".into(),
-        ));
-    }
-    println!("READY");
-    io::stdout().flush().map_err(|source| LandLockError::Io {
-        action: "publish watchdog readiness through",
-        path: PathBuf::from("/proc/self/fd/1"),
-        source,
-    })?;
-
-    let controls = spawn_watchdog_control_reader();
-    match controls.recv_timeout(Duration::from_secs(CHILD_STARTUP_SECONDS)) {
-        Ok(WatchdogControl::Line(line)) if line == "armed" => {}
-        Ok(WatchdogControl::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
-        Ok(WatchdogControl::Line(line)) => {
-            return Err(LandLockError::InvalidState(format!(
-                "watchdog received {line:?} before it was armed"
-            )));
-        }
-        Ok(WatchdogControl::Error(reason)) => {
-            return Err(LandLockError::InvalidState(format!(
-                "watchdog control failed before arming: {reason}"
-            )));
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => return Ok(0),
-    }
-    lock.assert_watchdog_authority(args)?;
-    println!("ARMED");
-    io::stdout().flush().map_err(|source| LandLockError::Io {
-        action: "publish watchdog arming through",
-        path: PathBuf::from("/proc/self/fd/1"),
-        source,
-    })?;
-
-    let remaining = args.deadline_at.saturating_sub(epoch_seconds()?).max(0) as u64;
-    let deadline = Instant::now()
-        .checked_add(Duration::from_secs(remaining))
-        .ok_or_else(|| LandLockError::InvalidState("watchdog deadline overflows Instant".into()))?;
-    let mut payload_observed_empty = false;
-    loop {
-        let control = match controls.recv_timeout(Duration::from_millis(50)) {
-            Ok(control) => Some(control),
-            Err(mpsc::RecvTimeoutError::Timeout) => None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => Some(WatchdogControl::Eof),
-        };
-
-        if !payload_observed_empty {
-            let current =
-                process_group_live_identities(args.pgid).map_err(|source| LandLockError::Io {
-                    action: "scan armed watchdog process group from",
-                    path: PathBuf::from("/proc"),
-                    source,
-                })?;
-            if current.is_empty() {
-                payload_observed_empty = true;
-            } else if previous.is_disjoint(&current) {
-                return Err(LandLockError::InvalidState(
-                    "watchdog process-group identity continuity was lost".into(),
-                ));
-            } else {
-                previous = current;
-            }
-        }
-
-        match control {
-            Some(WatchdogControl::Line(line)) if line == "done" => {
-                if payload_observed_empty {
-                    return Ok(0);
-                }
-                terminate_watchdog_domain(args.pgid, &mut previous)?;
-                return Err(LandLockError::InvalidState(
-                    "watchdog received done while payload group was still active".into(),
-                ));
-            }
-            Some(WatchdogControl::Line(line)) => {
-                if !payload_observed_empty {
-                    terminate_watchdog_domain(args.pgid, &mut previous)?;
-                }
-                return Err(LandLockError::InvalidState(format!(
-                    "watchdog received unexpected control {line:?}"
-                )));
-            }
-            Some(WatchdogControl::Eof) => {
-                if payload_observed_empty {
-                    return Ok(0);
-                }
-                terminate_watchdog_domain(args.pgid, &mut previous)?;
-                return Ok(0);
-            }
-            Some(WatchdogControl::Error(reason)) => {
-                if !payload_observed_empty {
-                    terminate_watchdog_domain(args.pgid, &mut previous)?;
-                }
-                return Err(LandLockError::InvalidState(format!(
-                    "watchdog control failed after arming: {reason}"
-                )));
-            }
-            None => {}
-        }
-
-        if Instant::now() >= deadline {
-            if payload_observed_empty {
-                return Ok(0);
-            }
-            terminate_watchdog_domain(args.pgid, &mut previous)?;
-            return Ok(0);
-        }
-    }
-}
-
-fn terminate_watchdog_domain(
-    pgid: u32,
-    previous: &mut BTreeSet<(u32, u64)>,
-) -> Result<(), LandLockError> {
-    signal_process_group(pgid, libc::SIGTERM)?;
-    let term_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
-    loop {
-        let current = process_group_live_identities(pgid).map_err(|source| LandLockError::Io {
-            action: "scan watchdog TERM process group from",
-            path: PathBuf::from("/proc"),
-            source,
-        })?;
-        if current.is_empty() {
-            return Ok(());
-        }
-        if previous.is_disjoint(&current) {
-            return Err(LandLockError::InvalidState(
-                "watchdog refused to signal a replaced process group after TERM".into(),
-            ));
-        }
-        *previous = current;
-        if Instant::now() >= term_deadline {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-
-    signal_process_group(pgid, libc::SIGKILL)?;
-    let kill_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
-    loop {
-        let current = process_group_live_identities(pgid).map_err(|source| LandLockError::Io {
-            action: "scan watchdog KILL process group from",
-            path: PathBuf::from("/proc"),
-            source,
-        })?;
-        if current.is_empty() || previous.is_disjoint(&current) {
-            return Ok(());
-        }
-        *previous = current;
-        if Instant::now() >= kill_deadline {
-            return Err(LandLockError::DomainActive(format!(
-                "watchdog could not empty process group {pgid}"
-            )));
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn signal_process_group(pgid: u32, signal: i32) -> Result<(), LandLockError> {
-    let pgid = i32::try_from(pgid).map_err(|_| {
-        LandLockError::InvalidState(format!("process group {pgid} exceeds signed pid range"))
-    })?;
-    let result = unsafe { libc::kill(-pgid, signal) };
-    if result == 0 {
-        return Ok(());
-    }
-    let source = io::Error::last_os_error();
-    if source.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-    Err(LandLockError::Io {
-        action: "signal watchdog process group from",
-        path: PathBuf::from("/proc"),
-        source,
-    })
-}
-
-/// A lifetime child of the canonical `run` supervisor that can break a flock
-/// held by a stopped or deadlocked supervisor. It opens a pidfd for its actual
-/// parent before reporting READY; caller-supplied PIDs therefore cannot turn
-/// the hidden command into a kill primitive. Every phase update is pipe-atomic
-/// and acknowledged before the supervisor enters the bounded phase.
-struct SupervisorWatchdog {
-    child: Child,
-    input: Option<ChildStdin>,
-    acknowledgements: mpsc::Receiver<Result<String, String>>,
-}
-
-impl SupervisorWatchdog {
-    fn spawn() -> Result<Self, LandLockError> {
-        let supervisor = current_process_owner()?;
-        let executable = internal_executable()?;
-        let mut child = Command::new(&executable)
-            .args([
-                "land-lock",
-                "supervisor-watchdog",
-                "--supervisor-start-ticks",
-                &supervisor.start_ticks.to_string(),
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .map_err(|source| LandLockError::Io {
-                action: "launch supervisor watchdog from",
-                path: executable,
-                source,
-            })?;
-        let input = child.stdin.take().ok_or_else(|| {
-            LandLockError::InvalidState("supervisor watchdog has no control pipe".into())
-        })?;
-        let output = child.stdout.take().ok_or_else(|| {
-            LandLockError::InvalidState("supervisor watchdog has no acknowledgement pipe".into())
-        })?;
-        let acknowledgements = spawn_line_reader(output);
-        let mut watchdog = Self {
-            child,
-            input: Some(input),
-            acknowledgements,
-        };
-        if let Err(error) = watchdog.expect_acknowledgement("READY") {
-            watchdog.cancel();
-            return Err(error);
-        }
-        Ok(watchdog)
-    }
-
-    fn arm_for(&mut self, seconds: u64) -> Result<(), LandLockError> {
-        if seconds == 0 {
-            return Err(LandLockError::InvalidState(
-                "supervisor watchdog phase must be bounded".into(),
-            ));
-        }
-        let input = self.input.as_mut().ok_or_else(|| {
-            LandLockError::InvalidState("supervisor watchdog control pipe is closed".into())
-        })?;
-        let command = format!("arm {seconds}\n");
-        input
-            .write_all(command.as_bytes())
-            .map_err(|source| LandLockError::Io {
-                action: "arm supervisor watchdog through",
-                path: PathBuf::from(format!("/proc/{}/fd/0", self.child.id())),
-                source,
-            })?;
-        self.expect_acknowledgement(&format!("ARMED {seconds}"))
-    }
-
-    fn idle(&mut self) -> Result<(), LandLockError> {
-        let input = self.input.as_mut().ok_or_else(|| {
-            LandLockError::InvalidState("supervisor watchdog control pipe is closed".into())
-        })?;
-        input
-            .write_all(b"idle\n")
-            .map_err(|source| LandLockError::Io {
-                action: "idle supervisor watchdog through",
-                path: PathBuf::from(format!("/proc/{}/fd/0", self.child.id())),
-                source,
-            })?;
-        self.expect_acknowledgement("IDLE")
-    }
-
-    fn is_alive(&mut self) -> Result<bool, LandLockError> {
-        self.child
-            .try_wait()
-            .map(|status| status.is_none())
-            .map_err(|source| LandLockError::Io {
-                action: "observe supervisor watchdog from",
-                path: PathBuf::from(format!("/proc/{}", self.child.id())),
-                source,
-            })
-    }
-
-    fn expect_acknowledgement(&mut self, expected: &str) -> Result<(), LandLockError> {
-        match self
-            .acknowledgements
-            .recv_timeout(Duration::from_secs(CHILD_STARTUP_SECONDS))
-        {
-            Ok(Ok(observed)) if observed == expected => Ok(()),
-            Ok(Ok(observed)) => Err(LandLockError::InvalidState(format!(
-                "supervisor watchdog emitted {observed:?}, expected {expected:?}"
-            ))),
-            Ok(Err(reason)) => Err(LandLockError::InvalidState(format!(
-                "supervisor watchdog acknowledgement failed: {reason}"
-            ))),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(LandLockError::InvalidState(format!(
-                "supervisor watchdog did not emit {expected} before startup deadline"
-            ))),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LandLockError::InvalidState(format!(
-                "supervisor watchdog closed before emitting {expected}"
-            ))),
-        }
-    }
-
-    fn finish(&mut self) -> Result<(), LandLockError> {
-        let input = self.input.as_mut().ok_or_else(|| {
-            LandLockError::InvalidState("supervisor watchdog control pipe is closed".into())
-        })?;
-        input
-            .write_all(b"done\n")
-            .map_err(|source| LandLockError::Io {
-                action: "stop supervisor watchdog through",
-                path: PathBuf::from(format!("/proc/{}/fd/0", self.child.id())),
-                source,
-            })?;
-        self.expect_acknowledgement("DONE")?;
-        self.input.take();
-        let deadline = Instant::now() + Duration::from_secs(WATCHDOG_SHUTDOWN_SECONDS);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) if status.success() => return Ok(()),
-                Ok(Some(status)) => {
-                    return Err(LandLockError::InvalidState(format!(
-                        "supervisor watchdog rejected clean shutdown: {status}"
-                    )))
-                }
-                Ok(None) => {}
-                Err(source) => {
-                    return Err(LandLockError::Io {
-                        action: "reap supervisor watchdog from",
-                        path: PathBuf::from(format!("/proc/{}", self.child.id())),
-                        source,
-                    })
-                }
-            }
-            if Instant::now() >= deadline {
-                self.cancel();
-                return Err(LandLockError::InvalidState(
-                    "supervisor watchdog did not exit after DONE".into(),
-                ));
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn cancel(&mut self) {
-        self.input.take();
-        let deadline = Instant::now() + Duration::from_secs(WATCHDOG_SHUTDOWN_SECONDS);
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) | Err(_) => thread::sleep(Duration::from_millis(10)),
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl Drop for SupervisorWatchdog {
-    fn drop(&mut self) {
-        if self.input.is_some() {
-            self.cancel();
-        }
-    }
-}
-
-fn open_parent_pidfd(pid: u32) -> Result<File, LandLockError> {
-    // SAFETY: pidfd_open does not dereference userspace pointers. The returned
-    // fd owns one exact process identity and is wrapped immediately in File.
-    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
-    if raw < 0 {
-        return Err(LandLockError::Io {
-            action: "open exact supervisor pidfd from",
-            path: PathBuf::from(format!("/proc/{pid}")),
-            source: io::Error::last_os_error(),
-        });
-    }
-    // SAFETY: successful pidfd_open returns a new owned fd.
-    Ok(unsafe { File::from_raw_fd(raw as i32) })
-}
-
-fn pidfd_sigkill(pidfd: &File, pid: u32) -> Result<(), LandLockError> {
-    // SAFETY: pidfd_send_signal receives a valid owned pidfd, a fixed signal,
-    // no siginfo pointer, and zero flags.
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_pidfd_send_signal,
-            pidfd.as_raw_fd(),
-            libc::SIGKILL,
-            std::ptr::null::<libc::siginfo_t>(),
-            0u32,
-        )
-    };
-    if result == 0 {
-        return Ok(());
-    }
-    let source = io::Error::last_os_error();
-    if source.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-    Err(LandLockError::Io {
-        action: "signal exact supervisor pidfd from",
-        path: PathBuf::from(format!("/proc/{pid}")),
-        source,
-    })
-}
-
-fn run_supervisor_watchdog(args: &SupervisorWatchdogArgs) -> Result<i32, LandLockError> {
-    let parent_pid = unsafe { libc::getppid() };
-    if parent_pid <= 1 {
-        return Err(LandLockError::InvalidState(
-            "supervisor watchdog has no live direct parent".into(),
-        ));
-    }
-    let parent_pid = parent_pid as u32;
-    let pidfd = open_parent_pidfd(parent_pid)?;
-    if unsafe { libc::getppid() } != parent_pid as libc::pid_t {
-        return Err(LandLockError::InvalidState(
-            "supervisor watchdog parent changed while opening pidfd".into(),
-        ));
-    }
-    let parent = process_owner(parent_pid)?;
-    if parent.start_ticks != args.supervisor_start_ticks {
-        return Err(LandLockError::InvalidState(
-            "supervisor watchdog parent start time does not match launcher".into(),
-        ));
-    }
-    if unsafe { libc::getppid() } != parent_pid as libc::pid_t {
-        return Err(LandLockError::InvalidState(
-            "supervisor watchdog parent changed while verifying start time".into(),
-        ));
-    }
-    let self_pid = std::process::id();
-    if process_group_id(self_pid).map_err(|source| LandLockError::Io {
-        action: "read supervisor watchdog process group from",
-        path: PathBuf::from(format!("/proc/{self_pid}/stat")),
-        source,
-    })? != self_pid
-    {
-        return Err(LandLockError::InvalidState(
-            "supervisor watchdog is not isolated in its own process group".into(),
-        ));
-    }
-    // READY itself carries a short bound. There is no unarmed interval in
-    // which a stopped parent can retain a flock or FIFO position forever.
-    let mut deadline = Instant::now()
-        .checked_add(Duration::from_secs(
-            CHILD_STARTUP_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS,
-        ))
-        .ok_or_else(|| {
-            LandLockError::InvalidState("supervisor startup phase overflows Instant".into())
-        })?;
-    println!("READY");
-    io::stdout().flush().map_err(|source| LandLockError::Io {
-        action: "publish supervisor watchdog readiness through",
-        path: PathBuf::from("/proc/self/fd/1"),
-        source,
-    })?;
-
-    let controls = spawn_watchdog_control_reader();
-    loop {
-        let control = match controls.recv_timeout(Duration::from_millis(50)) {
-            Ok(control) => Some(control),
-            Err(mpsc::RecvTimeoutError::Timeout) => None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => Some(WatchdogControl::Eof),
-        };
-        match control {
-            Some(WatchdogControl::Line(line)) if line == "idle" => {
-                // IDLE means no guard is intentionally held, but the process
-                // may still own the FIFO head. Keep it bounded through one
-                // poll interval rather than creating an unarmed state.
-                deadline = Instant::now()
-                    .checked_add(Duration::from_secs(
-                        POLL_SECONDS + SUPERVISOR_PHASE_MARGIN_SECONDS,
-                    ))
-                    .ok_or_else(|| {
-                        LandLockError::InvalidState(
-                            "supervisor idle phase overflows Instant".into(),
-                        )
-                    })?;
-                println!("IDLE");
-                io::stdout().flush().map_err(|source| LandLockError::Io {
-                    action: "acknowledge supervisor watchdog idle through",
-                    path: PathBuf::from("/proc/self/fd/1"),
-                    source,
-                })?;
-            }
-            Some(WatchdogControl::Line(line)) if line == "done" => {
-                println!("DONE");
-                io::stdout().flush().map_err(|source| LandLockError::Io {
-                    action: "acknowledge supervisor watchdog shutdown through",
-                    path: PathBuf::from("/proc/self/fd/1"),
-                    source,
-                })?;
-                return Ok(0);
-            }
-            Some(WatchdogControl::Line(line)) if line.starts_with("arm ") => {
-                let seconds = line[4..].parse::<u64>().map_err(|_| {
-                    LandLockError::InvalidState(
-                        "supervisor watchdog arm is not an unsigned duration".into(),
-                    )
-                })?;
-                if seconds == 0 {
-                    return Err(LandLockError::InvalidState(
-                        "supervisor watchdog refused an unbounded phase".into(),
-                    ));
-                }
-                deadline = Instant::now()
-                    .checked_add(Duration::from_secs(seconds))
-                    .ok_or_else(|| {
-                        LandLockError::InvalidState(
-                            "supervisor watchdog phase overflows Instant".into(),
-                        )
-                    })?;
-                println!("ARMED {seconds}");
-                io::stdout().flush().map_err(|source| LandLockError::Io {
-                    action: "acknowledge supervisor watchdog arm through",
-                    path: PathBuf::from("/proc/self/fd/1"),
-                    source,
-                })?;
-            }
-            Some(WatchdogControl::Line(line)) => {
-                return Err(LandLockError::InvalidState(format!(
-                    "supervisor watchdog received unexpected control {line:?}"
-                )))
-            }
-            Some(WatchdogControl::Eof) => return Ok(0),
-            Some(WatchdogControl::Error(reason)) => {
-                return Err(LandLockError::InvalidState(format!(
-                    "supervisor watchdog control failed: {reason}"
-                )))
-            }
-            None => {}
-        }
-        if Instant::now() >= deadline {
-            pidfd_sigkill(&pidfd, parent_pid)?;
-            return Ok(0);
-        }
-    }
-}
-
-/// A sibling process that survives an exact supervisor death and enforces the
-/// persisted child-domain deadline. Its first pipe message arms cleanup only
-/// after the exact watchdog identity has been fsynced into `.domain`; EOF before
-/// that message is deliberately inert. Its second message is either `done`
-/// during orderly shutdown or EOF after supervisor death.
-struct DomainWatchdog {
-    child: Child,
-    input: Option<ChildStdin>,
-    acknowledgements: mpsc::Receiver<Result<String, String>>,
-    owner: ProcessOwner,
-    deadline_at: i64,
-}
-
-impl DomainWatchdog {
-    fn spawn(
-        pgid: u32,
-        leader_pid: u32,
-        leader_start_ticks: u64,
-        deadline_at: i64,
-        lock_path: &Path,
-    ) -> Result<Self, LandLockError> {
-        let executable = internal_executable()?;
-        let mut child = Command::new(&executable)
-            .args([
-                "land-lock",
-                "watchdog",
-                "--pgid",
-                &pgid.to_string(),
-                "--leader-pid",
-                &leader_pid.to_string(),
-                "--leader-start-ticks",
-                &leader_start_ticks.to_string(),
-                "--deadline-at",
-                &deadline_at.to_string(),
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env("CI_HUB_LANDING_LOCK", lock_path)
-            .process_group(0)
-            .spawn()
-            .map_err(|source| LandLockError::Io {
-                action: "launch deadline watchdog from",
-                path: executable,
-                source,
-            })?;
-        let input = child.stdin.take().ok_or_else(|| {
-            LandLockError::InvalidState("deadline watchdog has no control pipe".into())
-        })?;
-        let output = child.stdout.take().ok_or_else(|| {
-            LandLockError::InvalidState("deadline watchdog has no acknowledgement pipe".into())
-        })?;
-        let acknowledgements = spawn_line_reader(output);
-        let owner = match process_owner(child.id()) {
-            Ok(owner) => owner,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        let mut watchdog = Self {
-            child,
-            input: Some(input),
-            acknowledgements,
-            owner,
-            deadline_at,
-        };
-        if let Err(error) = watchdog.expect_acknowledgement("READY") {
-            watchdog.cancel_unarmed();
-            return Err(error);
-        }
-        Ok(watchdog)
-    }
-
-    fn arm(&mut self) -> Result<(), LandLockError> {
-        let input = self.input.as_mut().ok_or_else(|| {
-            LandLockError::InvalidState("deadline watchdog control pipe is closed".into())
-        })?;
-        // One short pipe write is atomic: a reported failure cannot leave a
-        // truncated `armed` token that the watchdog mistakes for authority.
-        input
-            .write_all(b"armed\n")
-            .map_err(|source| LandLockError::Io {
-                action: "arm deadline watchdog through",
-                path: PathBuf::from(format!("/proc/{}/fd/0", self.child.id())),
-                source,
-            })?;
-        self.expect_acknowledgement("ARMED")
-    }
-
-    fn expect_acknowledgement(&mut self, expected: &str) -> Result<(), LandLockError> {
-        match self
-            .acknowledgements
-            .recv_timeout(Duration::from_secs(CHILD_STARTUP_SECONDS))
-        {
-            Ok(Ok(observed)) if observed == expected => Ok(()),
-            Ok(Ok(observed)) => Err(LandLockError::InvalidState(format!(
-                "deadline watchdog emitted {observed:?}, expected {expected:?}"
-            ))),
-            Ok(Err(reason)) => Err(LandLockError::InvalidState(format!(
-                "deadline watchdog acknowledgement failed: {reason}"
-            ))),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(LandLockError::InvalidState(format!(
-                "deadline watchdog did not emit {expected} before startup deadline"
-            ))),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LandLockError::InvalidState(format!(
-                "deadline watchdog closed before emitting {expected}"
-            ))),
-        }
-    }
-
-    fn is_alive(&mut self) -> Result<bool, LandLockError> {
-        self.child
-            .try_wait()
-            .map(|status| status.is_none())
-            .map_err(|source| LandLockError::Io {
-                action: "observe deadline watchdog from",
-                path: PathBuf::from(format!("/proc/{}", self.child.id())),
-                source,
-            })
-    }
-
-    /// Close an unarmed watchdog. This is used only before `arm` succeeds, so
-    /// EOF cannot authorize a group signal.
-    fn cancel_unarmed(&mut self) {
-        self.input.take();
-        let deadline = Instant::now() + Duration::from_secs(WATCHDOG_SHUTDOWN_SECONDS);
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) | Err(_) => thread::sleep(Duration::from_millis(10)),
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-
-    /// Deliver EOF to an armed watchdog and leave it alive to enforce the
-    /// persisted deadline. The `.domain` record keeps reacquisition blocked
-    /// until both this exact pid/start tuple and the payload group are gone.
-    fn trigger_cleanup(&mut self) {
-        self.input.take();
-    }
-
-    fn finish(&mut self) -> Result<(), LandLockError> {
-        let write_result = match self.input.as_mut() {
-            Some(input) => input.write_all(b"done\n"),
-            None => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "deadline watchdog control pipe is closed",
-            )),
-        };
-        self.input.take();
-        let deadline = Instant::now() + Duration::from_secs(WATCHDOG_SHUTDOWN_SECONDS);
-        let status = loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {}
-                Err(source) => {
-                    return Err(LandLockError::Io {
-                        action: "reap deadline watchdog from",
-                        path: PathBuf::from(format!("/proc/{}", self.child.id())),
-                        source,
-                    });
-                }
-            }
-            if Instant::now() >= deadline {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                return Err(LandLockError::InvalidState(
-                    "deadline watchdog did not acknowledge clean shutdown".into(),
-                ));
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-        if !status.success() {
-            if let Err(source) = write_result {
-                return Err(LandLockError::Io {
-                    action: "stop failed deadline watchdog through",
-                    path: PathBuf::from(format!("/proc/{}/fd/0", self.child.id())),
-                    source,
-                });
-            }
-            return Err(LandLockError::InvalidState(format!(
-                "deadline watchdog rejected clean shutdown: {status}"
-            )));
-        }
-        // The caller proves the payload group empty before invoking `finish`.
-        // A successful watchdog may already have exited after observing that
-        // emptiness or enforcing the same absolute deadline, so EPIPE on the
-        // best-effort `done` acknowledgement is not an ambiguous live domain.
-        Ok(())
-    }
-}
-
-fn spawn_line_reader(output: ChildStdout) -> mpsc::Receiver<Result<String, String>> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(output);
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = sender.send(Err("acknowledgement pipe reached EOF".into()));
-                    break;
-                }
-                Ok(_) => {
-                    let line = line.trim_end_matches(['\r', '\n']).to_string();
-                    if sender.send(Ok(line)).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = sender.send(Err(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-    receiver
-}
-
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     /// The child exited on its own with this status.
-    Exited(ExitStatus),
+    Exited {
+        status: ExitStatus,
+        pgid: u32,
+    },
     /// The child exceeded its deadline and was killed.
-    TimedOut,
-    /// Lease renewal failed, so the child domain was killed before the lease
-    /// could become a stale authorization proxy.
-    HeartbeatFailed,
+    TimedOut {
+        pgid: u32,
+    },
+    /// The lease heartbeat failed; the child domain was terminated.
+    HeartbeatFailed {
+        pgid: u32,
+    },
+    Uncertain {
+        pgid: u32,
+        reason: String,
+    },
+}
+
+impl ChildOutcome {
+    fn pgid(&self) -> u32 {
+        match self {
+            Self::Exited { pgid, .. }
+            | Self::TimedOut { pgid }
+            | Self::HeartbeatFailed { pgid }
+            | Self::Uncertain { pgid, .. } => *pgid,
+        }
+    }
 }
 
 /// Wait for `child`, killing it if it runs longer than `deadline_secs`.
@@ -3395,115 +2979,53 @@ fn supervise_child(
     child: &mut Child,
     deadline_secs: u64,
     pr: &str,
-    heartbeat_failed: &AtomicBool,
-    watchdog: &mut DomainWatchdog,
-    supervisor_watchdog: &mut SupervisorWatchdog,
-) -> Result<ChildOutcome, LandLockError> {
+    heartbeat_failed: &mpsc::Receiver<()>,
+) -> ChildOutcome {
     let deadline = Instant::now() + Duration::from_secs(deadline_secs);
     loop {
-        if !supervisor_watchdog.is_alive()? {
-            if !terminate_child_group(child, pr) {
-                return Err(LandLockError::DomainActive(format!(
-                    "supervisor watchdog exited and process group {} could not be emptied",
-                    child.id()
-                )));
+        match heartbeat_failed.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
+                let pgid = child.id();
+                eprintln!(
+                    "landing-lock: lease heartbeat failed for PR #{pr}; terminating process group -{pgid}"
+                );
+                terminate_child_group(child, pr);
+                return ChildOutcome::HeartbeatFailed { pgid };
             }
-            return Err(LandLockError::InvalidState(
-                "supervisor watchdog exited before canonical state was released".into(),
-            ));
+            Err(mpsc::TryRecvError::Empty) => {}
         }
-        if heartbeat_failed.load(Ordering::Acquire) {
-            eprintln!(
-                "landing-lock: lease heartbeat failed for PR #{pr}; terminating supervised domain"
-            );
-            if !terminate_child_group(child, pr) {
-                return Err(LandLockError::DomainActive(format!(
-                    "heartbeat failed and process group {} could not be emptied",
-                    child.id()
-                )));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return ChildOutcome::Exited {
+                    status,
+                    pgid: child.id(),
+                }
             }
-            return Ok(ChildOutcome::HeartbeatFailed);
-        }
-        match process_state(child.id()) {
-            Ok(state) if state == "Z" || state == "X" => {
-                match process_group_has_live_members(child.id()) {
-                    Ok(false) => {
-                        let status = child.wait().map_err(|source| LandLockError::Io {
-                            action: "reap supervised child from",
-                            path: PathBuf::from(format!("/proc/{}", child.id())),
-                            source,
-                        })?;
-                        if epoch_seconds()? >= watchdog.deadline_at {
-                            return Ok(ChildOutcome::TimedOut);
+            Ok(None) => {}
+            Err(source) => {
+                // Cannot supervise a child we can't wait on; block on it so we do
+                // not spin, and report whatever status it finally yields.
+                match child.wait() {
+                    Ok(status) => {
+                        return ChildOutcome::Exited {
+                            status,
+                            pgid: child.id(),
                         }
-                        return Ok(ChildOutcome::Exited(status));
                     }
-                    Ok(true) => {
-                        eprintln!(
-                            "landing-lock: direct child exited for PR #{pr}, but its process group still has live members; terminating them"
-                        );
-                        let (emptied, status) = terminate_child_group_with_status(child, pr);
-                        if !emptied {
-                            return Err(LandLockError::DomainActive(format!(
-                                "process group {} remained active after direct-child exit",
-                                child.id()
-                            )));
-                        }
-                        if epoch_seconds()? >= watchdog.deadline_at {
-                            return Ok(ChildOutcome::TimedOut);
-                        }
-                        return status.map(ChildOutcome::Exited).ok_or_else(|| {
-                            LandLockError::InvalidState(
-                                "emptied payload group but could not reap its leader".into(),
-                            )
-                        });
-                    }
-                    Err(error) => {
-                        return Err(LandLockError::DomainActive(format!(
-                            "cannot verify process group {} after direct-child exit: {error}",
-                            child.id()
-                        )));
+                    Err(_) => {
+                        eprintln!("landing-lock: cannot wait on child: {source}");
+                        return ChildOutcome::Uncertain {
+                            pgid: child.id(),
+                            reason: source.to_string(),
+                        };
                     }
                 }
             }
-            Ok(_) => {}
-            Err(source) if source.kind() == io::ErrorKind::NotFound => {
-                return Err(LandLockError::InvalidState(format!(
-                    "supervised child {} disappeared before it could be reaped",
-                    child.id()
-                )));
-            }
-            Err(source) => {
-                return Err(LandLockError::Io {
-                    action: "observe supervised child from",
-                    path: PathBuf::from(format!("/proc/{}/stat", child.id())),
-                    source,
-                });
-            }
-        }
-        if !watchdog.is_alive()? {
-            let watchdog_deadline_reached = epoch_seconds()? >= watchdog.deadline_at;
-            if !terminate_child_group(child, pr) {
-                return Err(LandLockError::DomainActive(format!(
-                    "deadline watchdog exited and process group {} could not be emptied",
-                    child.id()
-                )));
-            }
-            if watchdog_deadline_reached {
-                return Ok(ChildOutcome::TimedOut);
-            }
-            return Err(LandLockError::InvalidState(
-                "deadline watchdog exited before the payload domain was empty".into(),
-            ));
         }
         if Instant::now() >= deadline {
-            if !terminate_child_group(child, pr) {
-                return Err(LandLockError::DomainActive(format!(
-                    "deadline expired and process group {} could not be emptied",
-                    child.id()
-                )));
-            }
-            return Ok(ChildOutcome::TimedOut);
+            let pgid = child.id();
+            terminate_child_group(child, pr);
+            return ChildOutcome::TimedOut { pgid };
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
@@ -3512,61 +3034,72 @@ fn supervise_child(
 /// SIGTERM then (after a grace period) SIGKILL the child's process group, and
 /// reap the direct child. The child was spawned with `process_group(0)`, so its
 /// pid equals its pgid and signalling `-pid` reaches the whole land subtree
-/// (gh / git / cargo), not just the wrapper shell. `/proc` group scans, rather
-/// than direct-child exit, decide when the executable domain is empty.
-fn terminate_child_group(child: &mut Child, pr: &str) -> bool {
-    terminate_child_group_with_status(child, pr).0
-}
-
-fn terminate_child_group_with_status(child: &mut Child, pr: &str) -> (bool, Option<ExitStatus>) {
-    let group = format!("-{}", child.id());
-    eprintln!("landing-lock: terminating PR #{pr}; SIGTERM process group {group}");
-    signal_group(libc::SIGTERM, child.id());
+/// (gh / git / cargo), not just the wrapper shell.
+fn terminate_child_group(child: &mut Child, pr: &str) {
+    // Capture the protected domain before TERM can reap its leader. Descendants
+    // retain this pgid even after the direct child exits.
+    let pgid = child.id();
+    let group = format!("-{pgid}");
+    eprintln!("landing-lock: child-deadline reached for PR #{pr}; SIGTERM process group {group}");
+    signal_group(libc::SIGTERM, pgid);
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
-        match process_group_has_live_members(child.id()) {
-            Ok(false) => {
-                return (true, child.wait().ok());
-            }
-            Ok(true) | Err(_) => {}
-        }
+        // Do not reap the leader yet: its exact PID keeps the captured process
+        // group identity from disappearing or being reused before final KILL.
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
     eprintln!("landing-lock: grace expired for PR #{pr}; SIGKILL process group {group}");
-    signal_group(libc::SIGKILL, child.id());
+    let kill_sent = signal_group(libc::SIGKILL, pgid);
+    let child_reaped = if kill_sent {
+        child.wait().is_ok()
+    } else {
+        matches!(child.try_wait(), Ok(Some(_)))
+    };
     let killed_deadline = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < killed_deadline {
-        match process_group_has_live_members(child.id()) {
-            Ok(false) => {
-                return (true, child.wait().ok());
-            }
-            Ok(true) | Err(_) => {}
+        if child_reaped && !process_group_exists(pgid) {
+            break;
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
-    if matches!(process_group_has_live_members(child.id()), Ok(false)) {
-        (true, child.wait().ok())
-    } else {
-        (false, None)
+    if child_reaped {
+        reap_exited_children();
     }
 }
 
 /// Send `signal` to the positive process-group ID without delegating negative
 /// PID parsing to a host-specific `kill(1)` implementation.
-pub(crate) fn signal_group(signal: libc::c_int, pgid: u32) {
-    let _ = signal_group_succeeds(signal, pgid);
+pub(crate) fn signal_group(signal: libc::c_int, pgid: u32) -> bool {
+    signal_group_succeeds(signal, pgid)
 }
 
 fn signal_group_succeeds(signal: libc::c_int, pgid: u32) -> bool {
-    let Ok(pgid) = libc::pid_t::try_from(pgid) else {
-        return false;
-    };
-    if pgid <= 0 {
-        return false;
-    }
-    // SAFETY: a negative, nonzero pid targets exactly one process group. The
-    // signal values are libc constants at every call site.
-    unsafe { libc::kill(-pgid, signal) == 0 }
+    signal_group_with(signal, pgid, |target, signal| {
+        // SAFETY: `signal_group_with` admits only a negative group target below
+        // -1, and every signal is a libc constant at the production call sites.
+        unsafe { libc::kill(target, signal) == 0 }
+    })
+}
+
+fn signal_group_with(
+    signal: libc::c_int,
+    pgid: u32,
+    send: impl FnOnce(libc::pid_t, libc::c_int) -> bool,
+) -> bool {
+    process_group_target(pgid).is_some_and(|target| send(target, signal))
+}
+
+fn process_group_target(pgid: u32) -> Option<libc::pid_t> {
+    let pgid = libc::pid_t::try_from(pgid).ok()?;
+    // `kill(-1, signal)` is the Linux broadcast form, not process group 1.
+    // Refuse both non-group values before entering the syscall boundary.
+    (pgid > 1).then_some(-pgid)
+}
+
+/// Probe the captured process group, treating every error except ESRCH as live
+/// so cleanup fails closed on permission or transient kernel errors.
+pub(crate) fn process_group_exists(pgid: u32) -> bool {
+    !matches!(process_group_liveness(pgid), ProcessGroupLiveness::Absent)
 }
 
 pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
@@ -3580,6 +3113,20 @@ pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::*;
 
+    const HARD_DEATH_ROOT_ENV: &str = "CI_HUB_LANDING_HARD_DEATH_ROOT";
+    const HARD_DEATH_POINT_ENV: &str = "CI_HUB_LANDING_HARD_DEATH_POINT";
+
+    fn paths_at(root: &Path) -> LockPaths {
+        let lock = root.join(".landing-lock");
+        LockPaths {
+            guard: suffix(&lock, ".guard"),
+            queue: suffix(&lock, ".queue"),
+            owner: suffix(&lock, ".owner"),
+            cleanup: suffix(&lock, ".cleanup-required"),
+            lock,
+        }
+    }
+
     fn temp_paths(name: &str) -> LockPaths {
         let root = env::temp_dir().join(format!(
             "ci-hub-landing-lock-{name}-{}-{}",
@@ -3587,14 +3134,7 @@ mod tests {
             epoch_seconds().unwrap()
         ));
         fs::create_dir_all(&root).unwrap();
-        let lock = root.join(".landing-lock");
-        LockPaths {
-            guard: suffix(&lock, ".guard"),
-            queue: suffix(&lock, ".queue"),
-            owner: suffix(&lock, ".owner"),
-            domain: suffix(&lock, ".domain"),
-            lock,
-        }
+        paths_at(&root)
     }
 
     #[test]
@@ -3610,7 +3150,15 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let zero_refused = !signal_group_succeeds(libc::SIGTERM, 0);
+        let invalid_syscalls = std::cell::Cell::new(0);
+        let zero_refused = !signal_group_with(libc::SIGTERM, 0, |_, _| {
+            invalid_syscalls.set(invalid_syscalls.get() + 1);
+            true
+        });
+        let one_refused = !signal_group_with(libc::SIGTERM, 1, |_, _| {
+            invalid_syscalls.set(invalid_syscalls.get() + 1);
+            true
+        });
         let target_signaled = signal_group_succeeds(libc::SIGTERM, target.id());
         let deadline = Instant::now() + Duration::from_secs(2);
         let target_exited = loop {
@@ -3632,9 +3180,60 @@ mod tests {
         let _ = control.wait();
 
         assert!(zero_refused, "pgid 0 must never target the caller's group");
+        assert!(one_refused, "pgid 1 must never become kill(-1) broadcast");
+        assert_eq!(
+            invalid_syscalls.get(),
+            0,
+            "invalid pgids must be rejected before signal delivery"
+        );
         assert!(target_signaled, "typed process-group signal was refused");
         assert!(target_exited, "target group did not terminate within 2s");
         assert!(control_survived, "unrelated process group was signalled");
+    }
+
+    #[test]
+    fn unreadable_descendant_identity_makes_census_incomplete_then_recovers() {
+        let _domain_guard = process_domain_test_guard();
+        let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity {
+            pid: child.id(),
+            start_ticks: process_start_ticks(child.id()).unwrap(),
+        };
+        inject_unreadable_scan_pid(identity.pid);
+        let incomplete = capture_and_freeze_residuals(std::process::id());
+        assert!(!incomplete.complete);
+
+        inject_unreadable_scan_pid(0);
+        let visible = capture_and_freeze_residuals(std::process::id());
+        assert!(visible.complete);
+        assert!(visible.identities.contains(&identity));
+        signal_exact_process(&identity, libc::SIGKILL).unwrap();
+        child.wait().unwrap();
+        reap_exited_children();
+        let recovered = capture_and_freeze_residuals(std::process::id());
+        assert!(recovered.complete);
+        assert!(recovered.identities.is_empty());
+    }
+
+    #[test]
+    fn pidfd_signal_rejects_stale_identity_and_targets_exact_process() {
+        let mut target = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let mut control = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity {
+            pid: target.id(),
+            start_ticks: process_start_ticks(target.id()).unwrap(),
+        };
+        let stale = ProcessIdentity {
+            pid: identity.pid,
+            start_ticks: identity.start_ticks.saturating_add(1),
+        };
+        assert!(!signal_exact_process(&stale, libc::SIGKILL).unwrap());
+        assert!(target.try_wait().unwrap().is_none());
+        assert!(signal_exact_process(&identity, libc::SIGKILL).unwrap());
+        target.wait().unwrap();
+        assert!(control.try_wait().unwrap().is_none());
+        control.kill().unwrap();
+        control.wait().unwrap();
     }
 
     #[test]
@@ -3660,41 +3259,183 @@ mod tests {
     }
 
     #[test]
-    fn repository_holder_round_trips_without_changing_legacy_format() {
-        let holder = LockState {
-            agent: "hermit-lander".into(),
-            repo: Some("rrnewton/hermit".into()),
-            operation: Some("deadbeef".into()),
-            pending_mutation: Some("deadbeef".into()),
-            pending_attempt: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
-            pending_call_count: Some(0),
-            pending_call_id: None,
-            pr: "1628".into(),
-            host: "testhost".into(),
-            acquired_at: 100,
-            acquired_human: "1970-01-01T00:01:40+0000".into(),
-            expires_at: 1_000,
-            reclaimed_from: None,
-        };
-        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=deadbeef\npending_mutation=deadbeef\npending_attempt=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\npending_call_count=0\npr=1628\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
+    fn holder_format_preserves_exact_head_lander_extensions() {
+        let rendered = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=0123456789abcdef0123456789abcdef01234567\npending_mutation=0123456789abcdef0123456789abcdef01234567\npending_attempt=0123456789abcdef0123456789abcdef\npending_call_count=1\npending_call_id=fedcba9876543210fedcba9876543210\npr=1650\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
+        let holder = LockState::parse(rendered).unwrap();
+        assert_eq!(holder.repo.as_deref(), Some("rrnewton/hermit"));
+        assert_eq!(holder.pending_call_count, Some(1));
         assert_eq!(holder.render(), rendered);
-        assert_eq!(LockState::parse(rendered).unwrap(), holder);
+
+        let renewed = holder.renewed(60).unwrap();
+        assert_eq!(renewed.repo, holder.repo);
+        assert_eq!(renewed.operation, holder.operation);
+        assert_eq!(renewed.pending_mutation, holder.pending_mutation);
+        assert_eq!(renewed.pending_attempt, holder.pending_attempt);
+        assert_eq!(renewed.pending_call_count, holder.pending_call_count);
+        assert_eq!(renewed.pending_call_id, holder.pending_call_id);
+
+        let unknown = format!("{rendered}unexpected=x\n");
+        assert!(matches!(
+            LockState::parse(&unknown),
+            Err(LandLockError::InvalidState(message))
+                if message.contains("unknown holder field")
+        ));
+    }
+
+    fn retained_holder(agent: &str, pr: &str, operation: &str) -> LockState {
+        let mut holder = new_holder(agent, pr, 60, None).unwrap();
+        holder.repo = Some("rrnewton/hermit".into());
+        holder.operation = Some(operation.into());
+        holder.pending_mutation = Some(operation.into());
+        holder.pending_attempt = Some("0123456789abcdef0123456789abcdef".into());
+        holder.pending_call_count = Some(0);
+        holder
     }
 
     #[test]
-    fn holder_refuses_one_sided_or_misbound_pending_attempt() {
-        let base = "agent=hermit-lander\nrepo=rrnewton/hermit\noperation=deadbeef\npr=1628\nhost=testhost\nacquired_at=100\nacquired_human=1970-01-01T00:01:40+0000\nexpires_at=1000\n";
-        for planted in [
-            format!("pending_mutation=deadbeef\n{base}"),
-            format!("pending_attempt={}\n{base}", "a".repeat(32)),
-            format!(
-                "pending_mutation=cafebabe\npending_attempt={}\n{base}",
-                "a".repeat(32)
-            ),
-            format!("pending_mutation=deadbeef\npending_attempt=not-hex\n{base}"),
-        ] {
-            assert!(LockState::parse(&planted).is_err());
-        }
+    fn retained_mutation_refuses_generic_acquire_release_and_reclaim() {
+        let paths = temp_paths("retained-refusals");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let operation = "0123456789abcdef0123456789abcdef01234567";
+        lock.write_holder(&retained_holder("exact-agent", "1650", operation))
+            .unwrap();
+
+        let acquire = lock.acquire(&AcquireArgs {
+            agent: "other-agent".into(),
+            pr: "1651".into(),
+            wait: 0,
+            hold: 60,
+        });
+        assert!(
+            matches!(acquire, Err(LandLockError::MutationPending(value)) if value == operation)
+        );
+        assert!(matches!(
+            lock.release("exact-agent", false),
+            Err(LandLockError::MutationPending(value)) if value == operation
+        ));
+        assert!(matches!(
+            lock.reclaim_dead(),
+            Err(LandLockError::ReclaimNotProven(message))
+                if message.contains("exact-operation recovery")
+        ));
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn retained_mutation_adoption_requires_the_exact_tuple() {
+        let paths = temp_paths("retained-exact-tuple");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let operation = "0123456789abcdef0123456789abcdef01234567";
+        lock.write_holder(&retained_holder("exact-agent", "1650", operation))
+            .unwrap();
+        let exact = RunArgs {
+            agent: "exact-agent".into(),
+            pr: "1650".into(),
+            repo: Some("rrnewton/hermit".into()),
+            operation: Some(operation.into()),
+            wait: 0,
+            hold: 60,
+            child_deadline: 30,
+            child: vec![OsString::from("/bin/true")],
+        };
+        let mut wrong = exact.clone();
+        wrong.operation = Some("fedcba9876543210fedcba9876543210fedcba98".into());
+        assert!(!lock.try_adopt_retained_mutation(&wrong).unwrap());
+        assert!(lock.try_adopt_retained_mutation(&exact).unwrap());
+        let adopted = lock.read_holder().unwrap().unwrap();
+        assert_eq!(adopted.agent, exact.agent);
+        assert_eq!(adopted.repo, exact.repo);
+        assert_eq!(adopted.operation, exact.operation);
+        assert_eq!(adopted.pending_mutation.as_deref(), Some(operation));
+        assert!(lock.read_process_owner().unwrap().is_some());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn assert_child_refuses_armed_non_published_cleanup_phase() {
+        let paths = temp_paths("assert-child-non-published");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let operation = "0123456789abcdef0123456789abcdef01234567";
+        let mut holder = new_holder("exact-agent", "1650", 60, None).unwrap();
+        holder.repo = Some("rrnewton/hermit".into());
+        holder.operation = Some(operation.into());
+        lock.write_holder(&holder).unwrap();
+        lock.write_current_process_owner().unwrap();
+        let record = CleanupRecord::new("exact-agent", "pr:1650", CleanupPhase::Armed).unwrap();
+        write_cleanup_record(&paths.cleanup, &record).unwrap();
+        let args = AssertChildArgs {
+            agent: "exact-agent".into(),
+            repo: "rrnewton/hermit".into(),
+            pr: "1650".into(),
+            operation: Some(operation.into()),
+            child_pid: std::process::id(),
+        };
+        assert!(matches!(
+            lock.assert_child_process(&args, std::process::id()),
+            Err(LandLockError::ChildAssertion(message))
+                if message.contains("not an active published domain")
+        ));
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn heartbeat_failure_releases_only_after_complete_empty_census() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("heartbeat-empty-release");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        inject_run_heartbeat_failure();
+        let code = lock
+            .run(RunArgs {
+                agent: "heartbeat-agent".into(),
+                pr: "1650".into(),
+                repo: Some("rrnewton/hermit".into()),
+                operation: Some("0123456789abcdef0123456789abcdef01234567".into()),
+                wait: 0,
+                hold: 3,
+                child_deadline: 30,
+                child: vec![OsString::from("/bin/sleep"), OsString::from("30")],
+            })
+            .unwrap();
+        assert_eq!(code, HEARTBEAT_FAILURE_EXIT_CODE);
+        assert!(!paths.lock.exists());
+        assert!(!paths.owner.exists());
+        assert!(!paths.cleanup.exists());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn heartbeat_failure_quarantines_an_incomplete_census() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("heartbeat-incomplete-quarantine");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        inject_run_heartbeat_failure();
+        inject_incomplete_census();
+        let error = lock
+            .run(RunArgs {
+                agent: "heartbeat-agent".into(),
+                pr: "1650".into(),
+                repo: Some("rrnewton/hermit".into()),
+                operation: Some("0123456789abcdef0123456789abcdef01234567".into()),
+                wait: 0,
+                hold: 3,
+                child_deadline: 30,
+                child: vec![OsString::from("/bin/sleep"), OsString::from("30")],
+            })
+            .unwrap_err();
+        assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+        assert!(paths.lock.exists());
+        assert!(paths.cleanup.exists());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
     #[test]
@@ -3725,291 +3466,6 @@ mod tests {
     }
 
     #[test]
-    fn process_domain_sidecar_round_trips() {
-        let domain = ProcessDomain {
-            host: "testhost".into(),
-            boot_id: "boot-1".into(),
-            leader_pid: 43,
-            leader_start_ticks: 654_321,
-            pgid: 43,
-            deadline_at: 1_785_000_000,
-            watchdog_pid: 44,
-            watchdog_start_ticks: 777_888,
-        };
-        let rendered = "host=testhost\nboot_id=boot-1\nleader_pid=43\nleader_start_ticks=654321\npgid=43\ndeadline_at=1785000000\nwatchdog_pid=44\nwatchdog_start_ticks=777888\n";
-        assert_eq!(domain.render(), rendered);
-        assert_eq!(ProcessDomain::parse(rendered).unwrap(), domain);
-    }
-
-    fn install_assert_child_fixture(lock: &LandingLock, args: &AssertChildArgs) -> ProcessOwner {
-        let supervisor_pid = process_parent_pid(args.child_pid).unwrap();
-        let supervisor = process_owner(supervisor_pid).unwrap();
-        let mut holder = new_holder(&args.agent, &args.pr, 60, None).unwrap();
-        holder.repo = Some(args.repo.clone());
-        holder.operation = args.operation.clone();
-        lock.write_holder(&holder).unwrap();
-        write_truncated(&lock.paths.owner, supervisor.render().as_bytes()).unwrap();
-        let domain = ProcessDomain {
-            host: current_host(),
-            boot_id: current_boot_id().unwrap(),
-            leader_pid: args.child_pid,
-            leader_start_ticks: process_start_ticks(args.child_pid).unwrap(),
-            pgid: process_group_id(args.child_pid).unwrap(),
-            deadline_at: epoch_seconds().unwrap() + 60,
-            watchdog_pid: std::process::id(),
-            watchdog_start_ticks: process_start_ticks(std::process::id()).unwrap(),
-        };
-        write_truncated(&lock.paths.domain, domain.render().as_bytes()).unwrap();
-        supervisor
-    }
-
-    fn assert_child_args() -> AssertChildArgs {
-        AssertChildArgs {
-            agent: "hermit-lander".into(),
-            repo: "rrnewton/hermit".into(),
-            pr: "1628".into(),
-            operation: Some("deadbeef".into()),
-            child_pid: process_parent_pid(std::process::id()).unwrap(),
-        }
-    }
-
-    #[test]
-    fn exact_live_supervised_child_is_authorized() {
-        let paths = temp_paths("assert-child-positive");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let args = assert_child_args();
-        let verifier_pid = std::process::id();
-        let supervisor = install_assert_child_fixture(&lock, &args);
-
-        assert_eq!(
-            lock.assert_child_process(&args, verifier_pid).unwrap(),
-            (supervisor.pid, 1, 1, None, None, None, None)
-        );
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn assert_child_refuses_wrong_agent_repository_pr_and_host() {
-        let paths = temp_paths("assert-child-identities");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let args = assert_child_args();
-        let verifier_pid = std::process::id();
-        install_assert_child_fixture(&lock, &args);
-
-        for wrong in [
-            AssertChildArgs {
-                agent: "attacker".into(),
-                ..args.clone()
-            },
-            AssertChildArgs {
-                repo: "rrnewton/reverie".into(),
-                ..args.clone()
-            },
-            AssertChildArgs {
-                pr: "1629".into(),
-                ..args.clone()
-            },
-            AssertChildArgs {
-                operation: Some("cafebabe".into()),
-                ..args.clone()
-            },
-            AssertChildArgs {
-                child_pid: verifier_pid,
-                ..args.clone()
-            },
-        ] {
-            assert!(matches!(
-                lock.assert_child_process(&wrong, verifier_pid),
-                Err(LandLockError::ChildAssertion(_))
-            ));
-        }
-
-        let mut wrong_host = lock.read_holder().unwrap().unwrap();
-        wrong_host.host = "some-other-host".into();
-        lock.write_holder(&wrong_host).unwrap();
-        assert!(matches!(
-            lock.assert_child_process(&args, verifier_pid),
-            Err(LandLockError::ChildAssertion(_))
-        ));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn assert_child_refuses_non_parent_supervisor_and_reused_pid() {
-        let paths = temp_paths("assert-child-process-identity");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let args = assert_child_args();
-        let verifier_pid = std::process::id();
-        install_assert_child_fixture(&lock, &args);
-
-        let direct_process = current_process_owner().unwrap();
-        write_truncated(&paths.owner, direct_process.render().as_bytes()).unwrap();
-        let ancestry_error = lock
-            .assert_child_process(&args, verifier_pid)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            ancestry_error.contains("landing child")
-                || ancestry_error.contains("supervised domain leader")
-        );
-
-        let mut reused = process_owner(process_parent_pid(args.child_pid).unwrap()).unwrap();
-        reused.start_ticks = reused.start_ticks.saturating_add(1);
-        write_truncated(&paths.owner, reused.render().as_bytes()).unwrap();
-        let reuse_error = lock
-            .assert_child_process(&args, verifier_pid)
-            .unwrap_err()
-            .to_string();
-        assert!(reuse_error.contains("pid") && reuse_error.contains("reused"));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn assert_child_refuses_reboot_missing_owner_and_expired_lease() {
-        let paths = temp_paths("assert-child-fail-closed-state");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let args = assert_child_args();
-        let verifier_pid = std::process::id();
-        let mut owner = install_assert_child_fixture(&lock, &args);
-
-        owner.boot_id = "planted-previous-boot".into();
-        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
-        let reboot_error = lock
-            .assert_child_process(&args, verifier_pid)
-            .unwrap_err()
-            .to_string();
-        assert!(reboot_error.contains("host rebooted"));
-
-        remove_if_exists(&paths.owner).unwrap();
-        let missing_error = lock
-            .assert_child_process(&args, verifier_pid)
-            .unwrap_err()
-            .to_string();
-        assert!(missing_error.contains("no supervised process identity"));
-
-        install_assert_child_fixture(&lock, &args);
-        let mut expired = lock.read_holder().unwrap().unwrap();
-        expired.expires_at = epoch_seconds().unwrap();
-        lock.write_holder(&expired).unwrap();
-        let expired_error = lock
-            .assert_child_process(&args, verifier_pid)
-            .unwrap_err()
-            .to_string();
-        assert!(expired_error.contains("expired"));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn renewal_preserves_supervised_repository_binding() {
-        let paths = temp_paths("renew-preserves-repo");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        lock.acquire_with_binding(
-            &AcquireArgs {
-                agent: "hermit-lander".into(),
-                pr: "1628".into(),
-                wait: 0,
-                hold: 30,
-            },
-            Some((Some("rrnewton/hermit"), Some("deadbeef"))),
-        )
-        .unwrap();
-        lock.write_current_process_owner().unwrap();
-
-        lock.renew("hermit-lander", 60, false).unwrap();
-        assert_eq!(
-            lock.read_holder().unwrap().unwrap().repo.as_deref(),
-            Some("rrnewton/hermit")
-        );
-        assert_eq!(
-            lock.read_holder().unwrap().unwrap().operation.as_deref(),
-            Some("deadbeef")
-        );
-        lock.release("hermit-lander", false).unwrap();
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn supervised_holder_without_owner_fence_cannot_be_renewed_or_released() {
-        let paths = temp_paths("missing-supervised-owner-fence");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let mut holder = new_holder("hermit-lander", "1628", 60, None).unwrap();
-        holder.repo = Some("rrnewton/hermit".into());
-        holder.operation = Some("deadbeef".into());
-        lock.write_holder(&holder).unwrap();
-
-        let renew_error = lock.renew("hermit-lander", 60, false).unwrap_err();
-        assert!(renew_error.to_string().contains("no exact owner fence"));
-        let release_error = lock.release("hermit-lander", false).unwrap_err();
-        assert!(release_error.to_string().contains("no exact owner fence"));
-        assert_eq!(lock.read_holder().unwrap(), Some(holder));
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
-    fn elapsed_empty_domain_supersedes_live_wedged_owner() {
-        let paths = temp_paths("elapsed-empty-domain");
-        let lock = LandingLock {
-            paths: paths.clone(),
-        };
-        let mut holder = new_holder("hermit-lander", "1628", 600, None).unwrap();
-        holder.repo = Some("rrnewton/hermit".into());
-        holder.operation = Some("deadbeef".into());
-        lock.write_holder(&holder).unwrap();
-        let mut wedged_owner = Command::new("sleep").arg("60").spawn().unwrap();
-        let old_owner = process_owner(wedged_owner.id()).unwrap();
-        write_truncated(&paths.owner, old_owner.render().as_bytes()).unwrap();
-        let absent_pid = 4_000_000;
-        let domain = ProcessDomain {
-            host: current_host(),
-            boot_id: current_boot_id().unwrap(),
-            leader_pid: absent_pid,
-            leader_start_ticks: 1,
-            pgid: absent_pid,
-            deadline_at: epoch_seconds().unwrap() - 30,
-            watchdog_pid: absent_pid + 1,
-            watchdog_start_ticks: 1,
-        };
-        write_truncated(&paths.domain, domain.render().as_bytes()).unwrap();
-
-        let acquire = AcquireArgs {
-            agent: "hermit-lander".into(),
-            pr: "1628".into(),
-            wait: 0,
-            hold: 60,
-        };
-        assert_eq!(lock.acquire(&acquire).unwrap(), 1);
-        assert_eq!(
-            lock.acquire_with_binding(&acquire, Some((Some("rrnewton/hermit"), Some("cafebabe"))),)
-                .unwrap(),
-            0
-        );
-        let acquired = lock.read_holder().unwrap().unwrap();
-        assert_eq!(acquired.agent, "hermit-lander");
-        assert_eq!(acquired.operation.as_deref(), Some("cafebabe"));
-        assert_eq!(
-            lock.read_process_owner().unwrap(),
-            Some(current_process_owner().unwrap())
-        );
-        assert_ne!(lock.read_process_owner().unwrap(), Some(old_owner));
-        assert!(!paths.domain.exists());
-        let _ = wedged_owner.kill();
-        let _ = wedged_owner.wait();
-        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
-    }
-
-    #[test]
     fn acquire_and_release_share_the_legacy_files() {
         let paths = temp_paths("roundtrip");
         let lock = LandingLock {
@@ -4034,6 +3490,7 @@ mod tests {
 
     #[test]
     fn full_protocol_acquire_renew_status_release_and_run() {
+        let _domain_guard = process_domain_test_guard();
         let paths = temp_paths("full-protocol");
         let lock = LandingLock {
             paths: paths.clone(),
@@ -4075,7 +3532,45 @@ mod tests {
     }
 
     #[test]
+    fn census_waits_for_delayed_heartbeat_helper_before_freezing_descendants() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("delayed-heartbeat-helper");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        set_heartbeat_helper_delay(1_200);
+        let started = Instant::now();
+        let code = lock
+            .run(RunArgs {
+                agent: "delayed-heartbeat".into(),
+                pr: "delayed-helper".into(),
+                repo: None,
+                operation: None,
+                wait: 0,
+                hold: 3,
+                child_deadline: 10,
+                child: vec![OsString::from("/bin/sleep"), OsString::from("1.4")],
+            })
+            .unwrap();
+        assert_eq!(code, 0);
+        assert!(
+            started.elapsed() >= Duration::from_secs(2),
+            "heartbeat delay was not exercised: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "census froze the heartbeat helper: {:?}",
+            started.elapsed()
+        );
+        assert!(!paths.cleanup.exists());
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
     fn run_child_deadline_kills_child_and_releases_the_lock() {
+        let _domain_guard = process_domain_test_guard();
         let paths = temp_paths("child-deadline");
         let lock = LandingLock {
             paths: paths.clone(),
@@ -4104,6 +3599,511 @@ mod tests {
         );
         // Head-of-line block is cleared: the lock is free for the next waiter.
         assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn run_kills_stubborn_descendant_before_releasing_lock() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("stubborn-descendant");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("descendant.identity");
+        let script = r#"
+trap 'exit 0' TERM
+(
+  trap '' TERM HUP
+  pid=$BASHPID
+  start=$(awk '{print $22}' "/proc/$pid/stat")
+  printf '%s %s %s\n' "$pid" "$start" "$$" > "$1"
+  while :; do sleep 60; done
+) &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let started = Instant::now();
+        let code = lock
+            .run(RunArgs {
+                agent: "stubborn-lander".into(),
+                pr: "9997".into(),
+                repo: None,
+                operation: None,
+                wait: 0,
+                hold: 30,
+                child_deadline: 1,
+                child: vec![
+                    OsString::from("/bin/bash"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("stubborn-descendant"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap();
+        assert_eq!(code, CHILD_DEADLINE_EXIT_CODE);
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        assert_eq!(fields.len(), 3, "unexpected identity record {identity:?}");
+        let pid: u32 = fields[0].parse().unwrap();
+        let start_ticks: u64 = fields[1].parse().unwrap();
+        let pgid: u32 = fields[2].parse().unwrap();
+        let descendant_survived_release =
+            matches!(process_start_ticks(pid), Ok(current) if current == start_ticks);
+        if descendant_survived_release {
+            signal_group(libc::SIGKILL, pgid);
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_secs(CHILD_TERM_GRACE_SECONDS),
+            "stubborn descendant did not survive TERM grace"
+        );
+        assert!(
+            !descendant_survived_release,
+            "exact descendant {pid}@{start_ticks} survived lock release"
+        );
+        assert!(!process_group_exists(pgid));
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn escaped_payload_quarantine_refuses_consumers_until_exact_recovery() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("escaped-quarantine");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+trap 'exit 0' TERM
+setsid /bin/bash -c '
+  trap "" TERM HUP
+  pid=$BASHPID
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+wait
+"#;
+        let run_error = lock
+            .run(RunArgs {
+                agent: "escaped-lander".into(),
+                pr: "9996".into(),
+                repo: None,
+                operation: None,
+                wait: 0,
+                hold: 30,
+                child_deadline: 1,
+                child: vec![
+                    OsString::from("/bin/bash"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("escaped-leader"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap_err();
+        assert!(matches!(run_error, LandLockError::CleanupQuarantined(_)));
+
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match &record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals.clone(),
+            phase => panic!("expected complete residual phase, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(matches!(exact_process_liveness(&escaped), Ok(true)));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Active { .. }
+        ));
+
+        let second = AcquireArgs {
+            agent: "replacement-lander".into(),
+            pr: "10000".into(),
+            wait: 0,
+            hold: 30,
+        };
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.renew("escaped-lander", 30, false),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.release("escaped-lander", false),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        assert!(matches!(
+            lock.reclaim_dead(),
+            Err(LandLockError::ReclaimNotProven(_))
+        ));
+        lock.status().unwrap();
+
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(residuals
+            .iter()
+            .all(|identity| matches!(exact_process_liveness(identity), Ok(false))));
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Recoverable { .. }
+        ));
+        // Proven absence alone does not let an ordinary acquire erase the
+        // quarantine; explicit recovery is still required.
+        assert!(matches!(
+            lock.acquire(&second),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        assert!(!paths.cleanup.exists());
+        assert_eq!(lock.acquire(&second).unwrap(), 0);
+        lock.release(&second.agent, false).unwrap();
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn hard_death_run_subprocess_entry() {
+        let Some(root) = env::var_os(HARD_DEATH_ROOT_ENV).map(PathBuf::from) else {
+            return;
+        };
+        let point = match env::var(HARD_DEATH_POINT_ENV).as_deref() {
+            Ok("after-arm") => RunCrashPoint::AfterArm,
+            Ok("after-spawn") => RunCrashPoint::AfterSpawn,
+            other => panic!("invalid hard-death point {other:?}"),
+        };
+        let paths = paths_at(&root);
+        let ready = root.join("supervisor-ready");
+        let marker = root.join("payload-started");
+        let pr = "hard-death";
+        install_run_hard_death_hook(&format!("pr:{pr}"), point, ready);
+        let result = LandingLock { paths }.run(RunArgs {
+            agent: "hard-death-lander".into(),
+            pr: pr.into(),
+            repo: None,
+            operation: None,
+            wait: 0,
+            hold: 30,
+            child_deadline: 30,
+            child: vec![
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                OsString::from("payload"),
+                marker.into_os_string(),
+            ],
+        });
+        panic!("hard-death subprocess resumed instead of being SIGKILLed: {result:?}");
+    }
+
+    #[test]
+    fn hard_death_before_publication_retains_armed_barrier() {
+        let _domain_guard = process_domain_test_guard();
+        for point_name in ["after-arm", "after-spawn"] {
+            let paths = temp_paths(&format!("hard-death-{point_name}"));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let ready = root.join("supervisor-ready");
+            let marker = root.join("payload-started");
+            let mut supervisor = Command::new(env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("landing_lock::tests::hard_death_run_subprocess_entry")
+                .arg("--nocapture")
+                .env(HARD_DEATH_ROOT_ENV, &root)
+                .env(HARD_DEATH_POINT_ENV, point_name)
+                .spawn()
+                .unwrap();
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !ready.exists() {
+                if let Some(status) = supervisor.try_wait().unwrap() {
+                    panic!("hard-death supervisor exited before readiness: {status}");
+                }
+                if Instant::now() >= deadline {
+                    let _ = supervisor.kill();
+                    let _ = supervisor.wait();
+                    panic!("hard-death supervisor did not reach {point_name}");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let lock = LandingLock {
+                paths: paths.clone(),
+            };
+            let owner = lock.read_process_owner().unwrap().unwrap();
+            assert_eq!(owner.pid, supervisor.id());
+            assert_eq!(
+                owner.start_ticks,
+                process_start_ticks(supervisor.id()).unwrap(),
+                "owner record was not bound to the stopped supervisor"
+            );
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(record.phase, CleanupPhase::Armed));
+            assert!(!marker.exists(), "guest ran before identity publication");
+
+            assert_eq!(
+                unsafe { libc::kill(supervisor.id() as libc::pid_t, libc::SIGKILL) },
+                0
+            );
+            let status = supervisor.wait().unwrap();
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+            let owner_identity = ProcessIdentity {
+                pid: owner.pid,
+                start_ticks: owner.start_ticks,
+            };
+            assert!(matches!(exact_process_liveness(&owner_identity), Ok(false)));
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !marker.exists(),
+                "start-gated guest ran after supervisor death"
+            );
+            let persisted =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            assert!(matches!(persisted.phase, CleanupPhase::Armed));
+
+            let second = AcquireArgs {
+                agent: "replacement-lander".into(),
+                pr: "replacement".into(),
+                wait: 0,
+                hold: 30,
+            };
+            assert!(matches!(
+                lock.acquire(&second),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(LandLockError::ReclaimNotProven(_))
+            ));
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn crash_windows_retain_armed_or_uncensused_barrier_after_owner_death() {
+        let _domain_guard = process_domain_test_guard();
+        for (index, point) in [
+            RunCrashPoint::AfterArm,
+            RunCrashPoint::AfterSpawn,
+            RunCrashPoint::AfterPublish,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let paths = temp_paths(&format!("crash-window-{index}"));
+            let lock = LandingLock {
+                paths: paths.clone(),
+            };
+            let marker = paths.lock.parent().unwrap().join("payload-started");
+            let pr = format!("crash-{index}");
+            install_run_crash_hook(&format!("pr:{pr}"), point);
+            let error = lock
+                .run(RunArgs {
+                    agent: "crash-lander".into(),
+                    pr: pr.clone(),
+                    repo: None,
+                    operation: None,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    child: vec![
+                        OsString::from("/bin/sh"),
+                        OsString::from("-c"),
+                        OsString::from("printf started > \"$1\"; while :; do sleep 60; done"),
+                        OsString::from("payload"),
+                        marker.clone().into_os_string(),
+                    ],
+                })
+                .unwrap_err();
+            assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+
+            let record =
+                CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+            let published = match (&point, &record.phase) {
+                (RunCrashPoint::AfterArm | RunCrashPoint::AfterSpawn, CleanupPhase::Armed) => None,
+                (RunCrashPoint::AfterPublish, CleanupPhase::Published { leader, pgid }) => {
+                    Some((leader.clone(), *pgid))
+                }
+                (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
+            };
+
+            if let Some((leader, _)) = &published {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline && !marker.exists() {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(marker.exists(), "published guest never started");
+                assert!(matches!(exact_process_liveness(leader), Ok(true)));
+            } else {
+                thread::sleep(Duration::from_millis(100));
+                reap_exited_children();
+                assert!(
+                    !marker.exists(),
+                    "guest payload ran before exact identity publication"
+                );
+            }
+
+            let mut owner = lock.read_process_owner().unwrap().unwrap();
+            owner.pid = u32::MAX;
+            write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+            let second = AcquireArgs {
+                agent: "replacement-lander".into(),
+                pr: "replacement".into(),
+                wait: 0,
+                hold: 30,
+            };
+            assert!(matches!(
+                lock.acquire(&second),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.renew("crash-lander", 30, false),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.release("crash-lander", false),
+                Err(LandLockError::CleanupQuarantined(_))
+            ));
+            assert!(matches!(
+                lock.reclaim_dead(),
+                Err(LandLockError::ReclaimNotProven(_))
+            ));
+            lock.status().unwrap();
+
+            if let Some((leader, pgid)) = published {
+                signal_group(libc::SIGKILL, pgid);
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    reap_exited_children();
+                    if matches!(exact_process_liveness(&leader), Ok(false))
+                        && !process_group_exists(pgid)
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(matches!(exact_process_liveness(&leader), Ok(false)));
+                assert!(!process_group_exists(pgid));
+                assert!(matches!(
+                    lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+                    CleanupVerification::Uncensused { .. }
+                ));
+                assert!(matches!(
+                    lock.reclaim_dead(),
+                    Err(LandLockError::ReclaimNotProven(_))
+                ));
+            }
+            let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn normal_leader_exit_cannot_clear_an_escaped_payload_barrier() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("normal-exit-escaped");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        let identity_path = paths.lock.parent().unwrap().join("escaped.identity");
+        let script = r#"
+setsid /bin/sh -c '
+  trap "" TERM HUP
+  pid=$$
+  start=$(awk "{print \$22}" "/proc/$pid/stat")
+  printf "%s %s\n" "$pid" "$start" > "$1"
+  while :; do sleep 60; done
+' escaped-child "$1" &
+while [ ! -s "$1" ]; do sleep 0.01; done
+exit 0
+"#;
+        let error = lock
+            .run(RunArgs {
+                agent: "normal-exit-lander".into(),
+                pr: "normal-exit".into(),
+                repo: None,
+                operation: None,
+                wait: 0,
+                hold: 30,
+                child_deadline: 30,
+                child: vec![
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("normal-leader"),
+                    identity_path.clone().into_os_string(),
+                ],
+            })
+            .unwrap_err();
+        assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        let escaped = ProcessIdentity {
+            pid: fields[0].parse().unwrap(),
+            start_ticks: fields[1].parse().unwrap(),
+        };
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        let residuals = match record.phase {
+            CleanupPhase::Residual {
+                domain_complete: true,
+                residuals,
+                ..
+            } => residuals,
+            phase => panic!("expected complete residual census, got {phase:?}"),
+        };
+        assert!(residuals.contains(&escaped));
+        assert!(lock.read_holder().unwrap().is_some());
+        for residual in &residuals {
+            let _ = signal_exact_process(residual, libc::SIGKILL).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            reap_exited_children();
+            if residuals
+                .iter()
+                .all(|identity| matches!(exact_process_liveness(identity), Ok(false)))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 

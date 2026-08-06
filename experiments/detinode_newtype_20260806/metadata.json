@@ -1,0 +1,16 @@
+{
+  "question": "Make DetInode a newtype so a raw host inode cannot reach the deterministic log, and enumerate sibling aliases.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "proof": {"alias_compiles_the_leak": true, "newtype_rejects_it": "error[E0631] type mismatch in function arguments"},
+  "bypass_sites": ["detcore/src/syscalls/files.rs:969","detcore/src/syscalls/files.rs:1226","detcore/src/syscalls/files.rs:1256"],
+  "unverified_adjacent_site": "detcore/src/syscalls/files.rs:849 (out_inode)",
+  "existing_boundary": "determinize_inode tool_global.rs:2402 -> recv_determinize_inode :1568 -> add_inode :165",
+  "aliases_in_detcore_model": 9,
+  "rank1_sibling": "pid.rs:83 DetTid = DetPid -- the mechanism behind dbi-determinize-detlog-thread-id (DetPid::from_raw(tid) at detcore/src/lib.rs:1150)",
+  "hermit_origin_main": "4b9202c232f529aa7d9831494a2e11b7ec1918a0",
+  "dev_hermit_parent_head": "d1799fd6a04427035b018ed42860cb14d94710fc",
+  "implemented_in_product": false,
+  "why_not": "requires a hermit slot; change touches 27 DetInode mentions plus the counter type",
+  "not_done": ["files.rs:849 not verified", "arithmetic sites consts.rs:21,25 and syscalls.rs:32 not designed for"]
+}

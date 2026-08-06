@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/epoll_pwait2_readiness.c: In function ‘epoll_pwait2_call’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/epoll_pwait2_readiness.c:37:17: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   37 |     return (int)syscall(SYS_epoll_pwait2, epfd, ev, maxev, timeout, (void *)0,
+      |                 ^~~~~~~
+cc1: all warnings being treated as errors

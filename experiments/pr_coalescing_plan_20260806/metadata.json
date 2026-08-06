@@ -1,0 +1,16 @@
+{
+  "question": "Group the staged artifacts into a small number of stacked per-topic PRs",
+  "correction": "No staged work can become a PR: 106 unpushed commits are ALL in the parent (which uses shared main, not PRs) and there are ZERO unpushed product commits.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "parent_unpushed_commits": 106,
+  "parent_files": 527,
+  "product_unpushed_commits": {"hermit": 0, "reverie": 0, "liteinst2": 0, "agent-utils": 0},
+  "smuggled_product_code_in_parent": "none -- only agent-utils and reverie gitlinks",
+  "deliverable": "Part A: one parent push (egress-blocked). Part B: a 4-stack plan for product PRs that must still be WRITTEN.",
+  "hermit_origin_main": "4b9202c232f529aa7d9831494a2e11b7ec1918a0",
+  "dev_hermit_parent_head": "61c1941bf03513121c87413f01c27a53846c669c",
+  "prs_opened": 0,
+  "product_code_written": 0,
+  "not_done": ["could not reconcile the '~193' figure with any measurement", "every Part-B item needs a slot"]
+}

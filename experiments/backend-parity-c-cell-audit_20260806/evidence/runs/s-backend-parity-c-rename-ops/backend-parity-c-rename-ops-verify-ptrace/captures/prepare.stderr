@@ -1,0 +1,16 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c:49:7: error: implicit declaration of function ‘mkdtemp’ [-Werror=implicit-function-declaration]
+   49 |   if (mkdtemp(root) == NULL) {
+      |       ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c:49:21: error: comparison between pointer and integer [-Werror]
+   49 |   if (mkdtemp(root) == NULL) {
+      |                     ^~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c:82:40: error: ‘O_DIRECTORY’ undeclared (first use in this function)
+   82 |     int rootfd = open(root, O_RDONLY | O_DIRECTORY);
+      |                                        ^~~~~~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c:82:40: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/rename_ops.c:85:9: error: implicit declaration of function ‘renameat’; did you mean ‘rename’? [-Werror=implicit-function-declaration]
+   85 |         renameat(rootfd, "b", subfd, "c") == 0) {
+      |         ^~~~~~~~
+      |         rename
+cc1: all warnings being treated as errors

@@ -1,0 +1,15 @@
+[Unit]
+Description=Hourly alignment-reminder relay (durable replacement for the session-bound driver)
+
+[Timer]
+# Hourly on the hour, matching the cadence the relay ran at for 169 ticks.
+OnCalendar=hourly
+# Persistent=true runs a missed tick after downtime -- the property the
+# session-bound driver lacked: it died with its tmux server and never came back
+# even when a new server started ~16h later.
+Persistent=true
+AccuracySec=30s
+Unit=alignment-reminder-relay.service
+
+[Install]
+WantedBy=timers.target

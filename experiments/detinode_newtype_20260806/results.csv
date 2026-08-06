@@ -1,0 +1,17 @@
+id,item,evidence,result
+P1,the defect,"detcore-model/src/fd.rs:22  pub type DetInode = RawInode  (and :19 RawInode = u64)","a BARE ALIAS -- DetInode and RawInode are the SAME TYPE to the compiler"
+P2,proof the alias hides the leak,"alias.rs: raw_ino.map(ResourceID::FileContents) with DetInode = RawInode","COMPILES CLEANLY -- no diagnostic. The leak is invisible."
+P3,proof a newtype catches it,"newtype.rs: same expression with struct DetInode(u64)","rc=1  error[E0631]: type mismatch in function arguments -- COMPILE ERROR"
+B1,the legitimate conversion boundary ALREADY EXISTS,"tool_global.rs:165 add_inode(raw_inode: RawInode, ..) -> (DetInode, ..), backed by inodes: HashMap<RawInode, DetInode> at :106; reached via determinize_inode (:2402) -> recv_determinize_inode (:1568)","one deliberate mapping point -- it is simply not TYPE-ENFORCED"
+B2,det inodes are a monotonic counter,"add_inode: let new = self.next_inode; self.next_inode += 1  (next_inode initialized to 1 at :157)","a det inode is small; FileContents(221742951) is therefore unambiguously a RAW HOST inode"
+L1,bypass site,detcore/src/syscalls/files.rs:969,"resource.or_else(|| raw_ino.map(ResourceID::FileContents)) -- variable literally named raw_ino"
+L2,bypass site,detcore/src/syscalls/files.rs:1226,same expression
+L3,bypass site,detcore/src/syscalls/files.rs:1256,same expression
+L4,adjacent site (different variable),detcore/src/syscalls/files.rs:849,"out_inode.map(ResourceID::FileContents) -- name suggests already determinized; NOT verified"
+C1,type contamination in the counter,detcore/src/tool_global.rs:108,"next_inode: RawInode -- the counter for DETERMINISTIC inodes is typed RawInode"
+S1,sibling alias RANK 1,pid.rs:83  DetTid = DetPid,"SAME CLASS AND IMPLICATED IN A SEPARATE P0: it is why DetPid::from_raw(tid.into()) at detcore/src/lib.rs:1150 compiles, the site behind dbi-determinize-detlog-thread-id"
+S2,sibling alias RANK 2,time.rs:125  LogicalDuration = LogicalTime,a DURATION aliased to a POINT IN TIME -- adding two timestamps type-checks
+S3,sibling alias RANK 3,config.rs:1001  MaybePreemptionTimeout = MaybeTimeslice,two distinct concepts collapsed to one type
+S4,supply-side bare primitives,"fd.rs:19 RawInode=u64; time.rs:372 Microseconds=u64; schedule.rs:119 InstructionPointer=NonZeroUsize; config.rs:997 MaybeTimeslice=Option<NonZeroU64>","any primitive of the right shape can be one of these"
+S5,benign,fd.rs:16 RawFd = std::os::unix::io::RawFd,"a documented re-export workaround, raw->raw; not a determinism alias"
+N1,was the newtype implemented in the product,NO,"requires a hermit slot; I hold none, and the change touches 27 DetInode mentions plus the counter type"

@@ -1,0 +1,9 @@
+# arm C (expansion runner @ hermit 464cbd9f9bb4): per-cell outcome
+backend-parity-c__backend-parity-c-pid-probe__chaos__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pid-probe__custom__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pid-probe__replay__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pid-probe__verify__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pthread-lifecycle__chaos__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pthread-lifecycle__custom__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pthread-lifecycle__replay__liteinst	exit=2	test_harness.sh: filters selected no required test cells
+backend-parity-c__backend-parity-c-pthread-lifecycle__verify__liteinst	exit=2	test_harness.sh: filters selected no required test cells

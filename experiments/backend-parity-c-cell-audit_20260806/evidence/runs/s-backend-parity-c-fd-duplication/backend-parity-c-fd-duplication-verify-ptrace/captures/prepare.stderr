@@ -1,0 +1,18 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c:68:14: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   68 |   int base = mkstemp(template);
+      |              ^~~~~~~
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c:115:7: error: implicit declaration of function ‘dup3’; did you mean ‘dup2’? [-Werror=implicit-function-declaration]
+  115 |   if (dup3(base, slot3, O_CLOEXEC) == slot3)
+      |       ^~~~
+      |       dup2
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c:115:25: error: ‘O_CLOEXEC’ undeclared (first use in this function); did you mean ‘FD_CLOEXEC’?
+  115 |   if (dup3(base, slot3, O_CLOEXEC) == slot3)
+      |                         ^~~~~~~~~
+      |                         FD_CLOEXEC
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c:115:25: note: each undeclared identifier is reported only once for each function it appears in
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/fd_duplication.c:132:34: error: ‘F_DUPFD_CLOEXEC’ undeclared (first use in this function); did you mean ‘FD_CLOEXEC’?
+  132 |   int high_cloexec = fcntl(base, F_DUPFD_CLOEXEC, 100);
+      |                                  ^~~~~~~~~~~~~~~
+      |                                  FD_CLOEXEC
+cc1: all warnings being treated as errors

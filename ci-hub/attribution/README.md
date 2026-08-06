@@ -67,7 +67,20 @@ the three real examples above). In order:
    value **looks like a live host reading** (matches `/sys/`, `/proc` (not
    `self/maps`), `clock_gettime`, `getrandom`, `rdtsc`, `cpuid`, `meminfo`,
    `loadavg`, `refcnt`, …) → `ENVIRONMENT` (high). Otherwise → hermit (medium).
-4. **Hang** (timeout, no divergence) — decided by the **low-load control**:
+4. **Hang** (timeout, no divergence) — first the free **cpu/wall kill signature**
+   (`ci-hub/lib/kill_signature.py`, the one table shared with
+   `ci-hub/history/query.py kill-taxonomy`), then the low-load control:
+   * `cpu/wall >= 0.8` at the budget → **LIVELOCK** → `HERMIT_NONDETERMINISM`
+     (high). A spin to budget is retry-futile, so **this red is REAL** — the
+     single most useful thing to know before condemning a PR.
+   * **OOM is excluded before the ratio test**, and that ordering is load-bearing:
+     OOM rows reach `cpu/wall` of 127 (parallel build vs a memory ceiling), so
+     without the exclusion 17 of the 27 kills in the live store would be
+     mislabelled livelocks. → `INFRASTRUCTURE` (medium).
+   * `cpu/wall < 0.3` → wait-bound. This **rules out a livelock but picks no
+     cause**: starvation and a futex/deadlock wedge are indistinguishable at
+     `cpu ≈ 0`, so it falls through to the control rather than guessing.
+   * then, decided by the **low-load control**:
    * clean at low load **and** host was under pressure at failure →
      `INFRASTRUCTURE` (high).
    * clean at low load, no measured pressure → `INFRASTRUCTURE` (medium).

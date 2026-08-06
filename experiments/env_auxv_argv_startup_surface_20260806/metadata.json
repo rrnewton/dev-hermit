@@ -1,0 +1,19 @@
+{
+  "question": "Is the guest's startup surface (environ contents+order, auxv, argv) deterministic and parity-clean across backends?",
+  "date": "2026-08-06",
+  "host": "devbig014",
+  "hermit": "debug g0f891e432a75-dirty",
+  "env_required": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64",
+  "natively_varying_auxv": ["AT_BASE(7)", "AT_PLATFORM(15)", "AT_RANDOM ptr(25)", "AT_EXECFN(31)", "AT_SYSINFO_EHDR(33)"],
+  "all_backends_determinize_those": true,
+  "double_run_result": "ALL FOUR backends identical across runs -- the obvious test passes everywhere",
+  "defect": {
+    "backend": "dbi",
+    "injected_env": ["DYNAMORIO_CONFIGDIR=$HOME", "DYNAMORIO_EXE_PATH=<absolute host path of guest>", "DYNAMORIO_TAKEOVER_IN_INIT=1", "HERMIT_DBI_DETCONFIG=<full Detcore config JSON incl seed/epoch/flags>"],
+    "leak_dimensions_demonstrated": ["host path (2 lines differ between two paths; ptrace 0)", "host $HOME (argued from content + path demo)", "hermit CLI flags (2 lines differ with/without --detlog-stack; ptrace 0)"],
+    "note": "--detlog-stack, a flag whose purpose is to MEASURE determinism, changes what the guest observes"
+  },
+  "methodological_finding": "dbi PASSED the double-run test; self-consistency in a fixed context cannot detect host-state leaks. Varied-context runs (different path, $HOME, harness flags) are required.",
+  "fix_precedent_in_tree": "reverie-sabre take_private_env (paths.rs:63) splices the entry out of environ and zeroes the bytes after reading -- this is removal from guest view, NOT freezing a value (#140)",
+  "sabre_10_lines": "all auxv ADDRESSES (PIE base 0x555555554040 vs 0x400040); environ/argv byte-identical; AT_RANDOM contents identical, only the pointer moves -- address-layout axis, flagged not duplicated"
+}

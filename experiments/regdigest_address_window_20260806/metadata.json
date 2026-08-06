@@ -1,0 +1,15 @@
+{
+  "question": "Does the new register-file hash cover what it claims, and where does it silently not?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "subject": "hermit PR #1618 head f16d173b49654d3beaf0263eca43c04aab62e824 (branch codex/register-file-hashing-verify, NOT on origin/main)",
+  "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "dev_hermit_parent_head": "811265d81598fbf5b25ccd9f40c831e623d1fad9",
+  "method": "verbatim extraction of the pure fn detcore::regdigest::canonicalize_and_hash_pairs; digest is sha256(summary) so summary equality == digest equality",
+  "toolchain": {"rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"},
+  "not_done": [
+    "did NOT run the end-to-end hermit-cli/tests/register_file_hashing.rs integration test (needs a hermit build; task rules out a concurrent validate)",
+    "did NOT independently verify the exact field list of the [syscall] DETLOG line -- the double-coverage claim for argument registers is cited from the module's own docs"
+  ],
+  "command": "rustc --edition=2021 -O probe.rs -o /tmp/probe && /tmp/probe"
+}

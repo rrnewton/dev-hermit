@@ -1,0 +1,5 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/aio_refusal.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/aio_refusal.c:31:17: error: implicit declaration of function ‘syscall’ [-Werror=implicit-function-declaration]
+   31 |   long result = syscall(SYS_io_setup, 128, &ctx);
+      |                 ^~~~~~~
+cc1: all warnings being treated as errors

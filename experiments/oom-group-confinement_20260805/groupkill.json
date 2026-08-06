@@ -1,0 +1,3 @@
+{"steps":[{"group":"groupkill","job":"sibling","desc":"innocent sibling in the SAME step cgroup",
+ "hint":{"hard_mem_max_bytes":268435456},
+ "cmd":"( sleep 20; echo SIBLING_SURVIVED > /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/sibling.survived ) & SIB=$!; echo \"sibling pid=$SIB\"; sleep 0.5; python3 -c \"a=[]\nimport sys\nfor i in range(64):\n    a.append(bytearray(64*1024*1024))\"; echo ALLOCATOR_RETURNED >> /home/newton/work/dev-hermit/experiments/oom-group-confinement_20260805/out/sibling.allocret; wait $SIB"}]}

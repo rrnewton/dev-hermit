@@ -1,0 +1,22 @@
+id,question,setup,observation,verdict
+S1,how many scheduled workflows exist,hermit + reverie .github/workflows on origin/main,"2 in hermit (runner-health.yml every 30 min; validation-levels.yml weekly), 0 in reverie",small-population
+S2,how many scheduled JOBS can be silently cancelled,"quick(180,ubuntu) full(360,pmu) super(720,pmu) health(10,ubuntu)",4,denominator
+S3,how many are protected by a cancel alert,PR #1634 adds super-cancel-alert (needs: super),1 of 4,"quick, full and health are unprotected; full shares the 360-min wall class that killed super"
+S4,does the helper build and behave as claimed,rustc --edition=2021 -D warnings at PR head 49a357059,"builds clean; cancelled/neutral/stale/action_required/empty -> exit 1 ALERT; success/failure/skipped -> exit 0 silent",confirms-prior-review
+S5,does the helper agree with the canonical outcome classifier,10 conclusion values vs agent-utils/py/ci_hub_check_outcome.py,"7/10 agree; diverge on skipped (canonical NO_RESULT vs helper silent), timed_out and startup_failure (canonical FAILED vs helper ALERT)",latent-drift-benign
+S6,are the divergent values reachable through this wiring,"needs.<job>.result can only be success|failure|cancelled|skipped","timed_out and startup_failure are UNREACHABLE; skipped is separately gated off by the job's if:",drift-is-latent-not-live
+C1,can an in-run alert job detect a whole-run cancel,concurrency cancel-in-progress:true is set at workflow level,"NO -- the alert job is cancelled with the run",structural-hole
+C2,can it detect a run that was never created,"cron did not fire / GitHub auto-disables schedules after 60 days of repo inactivity","NO -- no run, no job, no alert",structural-hole
+C3,can it detect a run queued forever,"prior measurement: 2026-07-26 queued ~6.5 h for the scarce pmu runner","NO -- no job result exists while queued",structural-hole
+C4,can it detect the schedule being removed,workflow file edited/renamed/deleted,NO,structural-hole
+L1,liveness detector: healthy weekly,terminal success 4 days ago inside a 336 h window,OK (silent),no-false-alarm
+L2,liveness detector: last run cancelled,single scheduled run concluded cancelled,ALERT NO-TERMINAL-RUN,detects
+L3,liveness detector: never ran,no scheduled runs at all,ALERT NEVER-RAN,detects-C2
+L4,liveness detector: schedule died,last terminal success 1575 h ago vs 336 h window,ALERT STALE,detects-C2/C4
+L5,liveness detector: queued forever,newest scheduled run status=queued,ALERT NO-TERMINAL-RUN,detects-C3
+L6,liveness detector: recent failure,terminal failure inside the window,OK (silent),"correct -- a failure is already loud; the detector is for absence"
+L7,liveness detector: hourly healthy,terminal success 23 min ago vs 2 h window,OK (silent),no-false-alarm
+L8,liveness detector: hourly stopped,last terminal success 24.4 h ago vs 2 h window,ALERT STALE,detects
+L9,liveness detector: dispatch-only,fresh workflow_dispatch success but no schedule run,ALERT NEVER-RAN,"detects the case a naive 'any recent run' check would pass"
+L10,liveness detector: stale success masking recent cancels,"success inside the window PLUS two newer cancelled runs",ALERT LAST-RUN-NO-RESULT,"the real observed shape; a naive 'was there a success?' check MISSES it"
+P1,are monitoring windows derived or hardcoded,cron parsed from the real workflow files,"runner-health 1 h -> 2 h window; validation-levels 168 h -> 336 h window; ci-portable n/a (unscheduled)",derived

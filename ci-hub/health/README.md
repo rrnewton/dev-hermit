@@ -59,6 +59,15 @@ view for at most ten minutes. It fails unknown rather than classifying against
 a missing or stale snapshot. Use `--json` for the versioned full report and
 `--gate` for tick-hub key/value output.
 
+An hourly `unowned_residue` reminder catches the complementary case where a
+correct refusal or recycle leaves no active owner and therefore emits no normal
+failure. `residue_sweep.py` combines the canonical orphan-task detector, exact
+declined-action note markers, and a two-signal held-slot predicate (dead
+registered owner **and** no live process cwd under the slot). The gate only
+reports and wakes the coordinator; `--route` records typed TaskGraph
+dispositions, while task reassignment and slot lifecycle remain coordinator
+operations.
+
 Hub cadence data lives in the gitignored `.tick-hub/fired-state`. Health and PR
 probes are read-only. The primary-snapshot reminder is intentionally mutating,
 but only through clean fast-forwards and a path-limited parent gitlink commit;

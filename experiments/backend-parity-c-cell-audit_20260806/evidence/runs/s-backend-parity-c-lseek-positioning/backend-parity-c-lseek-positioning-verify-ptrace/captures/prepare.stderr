@@ -1,0 +1,10 @@
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/lseek_positioning.c: In function ‘pread_exact’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/lseek_positioning.c:77:17: error: implicit declaration of function ‘pread’; did you mean ‘read’? [-Werror=implicit-function-declaration]
+   77 |     ssize_t r = pread(fd, buf + got, n - got, off + (off_t)got);
+      |                 ^~~~~
+      |                 read
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/lseek_positioning.c: In function ‘main’:
+/home/newton/work/dev-hermit/worktrees/oci2/hermit/tests/backend-parity/fixtures/lseek_positioning.c:99:12: error: implicit declaration of function ‘mkstemp’ [-Werror=implicit-function-declaration]
+   99 |   int fd = mkstemp(template);
+      |            ^~~~~~~
+cc1: all warnings being treated as errors

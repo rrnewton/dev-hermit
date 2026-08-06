@@ -1,0 +1,10 @@
+forked child 0
+SIGCHLD #1
+forked child 1
+SIGCHLD #2
+forked child 2
+reaped exit=0
+reaped exit=1
+SIGCHLD #3
+reaped exit=2
+handlers=3 reaped=3

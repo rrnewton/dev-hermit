@@ -5,7 +5,9 @@ description: "Compatibility role pointer for the Hermit landing agent. Load when
 
 # Hermit lander
 
-This role has no independent landing protocol.
+This role has no independent landing protocol. The workspace's single
+end-to-end procedure is
+[`ai_docs/pr-landing-consolidated-process.md`](../../../ai_docs/pr-landing-consolidated-process.md).
 
 1. On startup or replacement, run `ci-hub/ci-hub inherit-obligations --agent
    <registered-agent>` and inspect every inherited remediation before accepting
