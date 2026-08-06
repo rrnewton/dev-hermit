@@ -77,9 +77,19 @@ Actions check remains red unless a bounded lookup of its exact job binds the
 repository, run ID, job ID, PR head SHA, check name/URL, timestamps, completed
 failure, and the complete step list. Only a job whose sole step is failed
 `Set up job` becomes typed `NO_RESULT`; it is reported as pending and never as
-green. Missing/malformed API data, identity mismatches, later workflow steps,
-timeouts, and lookup-budget exhaustion preserve the red verdict. JSON output
-exposes `setup_only_no_result_checks`, `setup_only_evidence`, and any
+green. One versioned downstream contract is also recognized: the exact
+`merge-gate-v4` job may become typed `NO_RESULT` only when the same selected
+rollup/run contains an independently verified setup-only
+`reverie-pin-is-latest-main` source and the complete seven-step gate receipt
+shows only the prerequisite requirement failing while product validation stayed
+skipped. The authority also dereferences the exact workflow run and exact-head
+workflow contents, requiring the reviewed v4 blob whose YAML declares the
+`needs.reverie-pin.result` link. This is not a generic gate-failure carve-out.
+Missing/malformed API
+data, identity mismatches, later workflow steps, source/run mismatches, timeouts,
+and lookup-budget exhaustion preserve the red verdict. JSON output exposes
+`setup_only_no_result_checks`, `setup_only_evidence`,
+`prerequisite_no_result_checks`, `prerequisite_evidence`, and any
 `actions_job_verification_errors` on the affected PR.
 
 The launch looks synchronous to its caller, but the run is owned by an

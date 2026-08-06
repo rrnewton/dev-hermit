@@ -59,6 +59,59 @@ def _negative_check() -> dict[str, object]:
     }
 
 
+def _downstream_check() -> dict[str, object]:
+    return {
+        "__typename": "CheckRun",
+        "completedAt": "2026-08-06T18:20:25Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": (
+            "https://github.com/rrnewton/hermit/actions/runs/31114544049/"
+            "job/92670128104"
+        ),
+        "name": "merge-gate-v4",
+        "startedAt": "2026-08-06T18:20:19Z",
+        "status": "COMPLETED",
+        "workflowName": "Merge Gate",
+    }
+
+
+def _run_payload() -> dict[str, object]:
+    api = "https://api.github.com/repos/rrnewton/hermit"
+    return {
+        "id": 31114544049,
+        "name": "Merge Gate",
+        "path": ".github/workflows/merge-gate.yml",
+        "head_sha": POSITIVE_HEAD,
+        "url": f"{api}/actions/runs/31114544049",
+        "jobs_url": f"{api}/actions/runs/31114544049/jobs",
+        "workflow_url": f"{api}/actions/workflows/319326542",
+        "run_attempt": 1,
+        "status": "queued",
+        "conclusion": None,
+    }
+
+
+def _workflow_contents_payload() -> dict[str, object]:
+    return {
+        "type": "file",
+        "name": "merge-gate.yml",
+        "path": ".github/workflows/merge-gate.yml",
+        "sha": "579f5e7816c7e2844eadfd7018d95ee37c8d8640",
+    }
+
+
+def _workflow_binding() -> outcome.RegisteredWorkflowBinding:
+    binding, error = outcome.verify_registered_workflow_payloads(
+        repo="rrnewton/hermit",
+        run_id=31114544049,
+        head_sha=POSITIVE_HEAD,
+        run_payload=_run_payload(),
+        contents_payload=_workflow_contents_payload(),
+    )
+    assert not error and binding is not None
+    return binding
+
+
 class PayloadVerifierTests(unittest.TestCase):
     def verify(
         self,
@@ -73,8 +126,87 @@ class PayloadVerifierTests(unittest.TestCase):
     def test_live_positive_1665_setup_only_job_is_accepted(self) -> None:
         result = self.verify(_positive_check(), POSITIVE_HEAD, _fixture(92660569815))
         self.assertTrue(result.accepted)
+        self.assertEqual(result.kind, "setup-only")
         self.assertEqual(result.run_id, 31114544049)
         self.assertEqual(result.job_id, 92660569815)
+
+    def test_live_positive_1665_downstream_consequence_is_accepted(self) -> None:
+        source = self.verify(_positive_check(), POSITIVE_HEAD, _fixture(92660569815))
+        result = outcome.verify_prerequisite_no_result_job_payload(
+            repo="rrnewton/hermit",
+            check=_downstream_check(),
+            head_sha=POSITIVE_HEAD,
+            payload=_fixture(92670128104),
+            source_check=_positive_check(),
+            source=source,
+            workflow=_workflow_binding(),
+        )
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.kind, "prerequisite-no-result")
+        self.assertEqual(result.job_id, 92670128104)
+        self.assertEqual(result.source_job_id, 92660569815)
+
+    def test_downstream_contract_tampering_never_becomes_no_result(self) -> None:
+        source = self.verify(_positive_check(), POSITIVE_HEAD, _fixture(92660569815))
+        mutations = {
+            "generic-gate-name": ("check-name", "another-gate"),
+            "different-workflow": ("check-workflow", "Other"),
+            "product-step-ran": ("step-6", "failure"),
+            "wrong-failed-step": ("step-5", "success"),
+            "later-step": ("append", "success"),
+        }
+        for label, (field, value) in mutations.items():
+            with self.subTest(label=label):
+                check = _downstream_check()
+                payload = _fixture(92670128104)
+                if field == "check-name":
+                    check["name"] = value
+                    payload["name"] = value
+                elif field == "check-workflow":
+                    check["workflowName"] = value
+                    payload["workflow_name"] = value
+                elif field.startswith("step-"):
+                    steps = payload["steps"]
+                    assert isinstance(steps, list)
+                    steps[int(field.split("-")[1]) - 1]["conclusion"] = value
+                else:
+                    steps = payload["steps"]
+                    assert isinstance(steps, list)
+                    steps.append(copy.deepcopy(steps[-1]))
+                result = outcome.verify_prerequisite_no_result_job_payload(
+                    repo="rrnewton/hermit",
+                    check=check,
+                    head_sha=POSITIVE_HEAD,
+                    payload=payload,
+                    source_check=_positive_check(),
+                    source=source,
+                    workflow=_workflow_binding(),
+                )
+                self.assertFalse(result.accepted)
+
+    def test_downstream_requires_exact_reviewed_workflow_blob(self) -> None:
+        for label, target, field, value in (
+            ("run-path", "run", "path", ".github/workflows/other.yml"),
+            ("run-head", "run", "head_sha", "f" * 40),
+            ("run-id", "run", "id", 31114544050),
+            ("run-attempt", "run", "run_attempt", 0),
+            ("blob", "contents", "sha", "f" * 40),
+            ("contents-path", "contents", "path", ".github/workflows/other.yml"),
+        ):
+            with self.subTest(label=label):
+                run_payload = _run_payload()
+                contents_payload = _workflow_contents_payload()
+                payload = run_payload if target == "run" else contents_payload
+                payload[field] = value
+                binding, error = outcome.verify_registered_workflow_payloads(
+                    repo="rrnewton/hermit",
+                    run_id=31114544049,
+                    head_sha=POSITIVE_HEAD,
+                    run_payload=run_payload,
+                    contents_payload=contents_payload,
+                )
+                self.assertIsNone(binding)
+                self.assertTrue(error)
 
     def test_live_negative_1697_product_job_is_refused(self) -> None:
         result = self.verify(_negative_check(), NEGATIVE_HEAD, _fixture(92645431859))
@@ -205,6 +337,120 @@ class BoundedDereferenceTests(unittest.TestCase):
                 "repos/rrnewton/hermit/actions/jobs/92660569815",
             ],
         )
+
+    @mock.patch("actions_job_outcome.subprocess.run")
+    def test_batch_proves_source_and_consequence_in_either_order(
+        self, run: mock.Mock
+    ) -> None:
+        payloads = {
+            "92660569815": _fixture(92660569815),
+            "92670128104": _fixture(92670128104),
+        }
+
+        def response(
+            command: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess:
+            endpoint = command[-1]
+            if "/actions/jobs/" in endpoint:
+                job_id = endpoint.rsplit("/", 1)[-1]
+                payload = payloads[job_id]
+            elif endpoint.endswith("/actions/runs/31114544049"):
+                payload = _run_payload()
+            elif "/contents/.github/workflows/merge-gate.yml?ref=" in endpoint:
+                payload = _workflow_contents_payload()
+            else:
+                raise AssertionError(f"unexpected endpoint: {endpoint}")
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+        run.side_effect = response
+        for checks in (
+            (_positive_check(), _downstream_check()),
+            (_downstream_check(), _positive_check()),
+        ):
+            with self.subTest(order=[check["name"] for check in checks]):
+                authority = self.authority()
+                results = authority.verify_failures(
+                    "rrnewton/hermit", checks, POSITIVE_HEAD
+                )
+                by_kind = {result.kind: result for result in results}
+                self.assertEqual(set(by_kind), {"setup-only", "prerequisite-no-result"})
+                self.assertEqual(
+                    by_kind["prerequisite-no-result"].source_job_id,
+                    92660569815,
+                )
+
+    @mock.patch("actions_job_outcome.subprocess.run")
+    def test_downstream_without_dereferenced_source_stays_failed(
+        self, run: mock.Mock
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(_fixture(92670128104)),
+            stderr="",
+        )
+        (result,) = self.authority().verify_failures(
+            "rrnewton/hermit", (_downstream_check(),), POSITIVE_HEAD
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("exactly one", result.reason)
+
+    @mock.patch("actions_job_outcome.subprocess.run")
+    def test_unreviewed_workflow_blob_keeps_downstream_red(
+        self, run: mock.Mock
+    ) -> None:
+        def response(
+            command: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess:
+            endpoint = command[-1]
+            if endpoint.endswith("/actions/jobs/92660569815"):
+                payload = _fixture(92660569815)
+            elif endpoint.endswith("/actions/jobs/92670128104"):
+                payload = _fixture(92670128104)
+            elif endpoint.endswith("/actions/runs/31114544049"):
+                payload = _run_payload()
+            elif "/contents/.github/workflows/merge-gate.yml?ref=" in endpoint:
+                payload = _workflow_contents_payload()
+                payload["sha"] = "f" * 40
+            else:
+                raise AssertionError(f"unexpected endpoint: {endpoint}")
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+        run.side_effect = response
+        source, downstream = self.authority().verify_failures(
+            "rrnewton/hermit",
+            (_positive_check(), _downstream_check()),
+            POSITIVE_HEAD,
+        )
+        self.assertTrue(source.accepted)
+        self.assertFalse(downstream.accepted)
+        self.assertIn("workflow contents sha mismatch", downstream.reason)
+
+    @mock.patch("actions_job_outcome.subprocess.run")
+    def test_genuine_product_failure_stays_failed_in_batch(
+        self, run: mock.Mock
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(_fixture(92645431859)),
+            stderr="",
+        )
+        (result,) = self.authority().verify_failures(
+            "rrnewton/hermit", (_negative_check(),), NEGATIVE_HEAD
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("exactly one step, observed 18", result.reason)
 
     @mock.patch("actions_job_outcome.subprocess.run")
     def test_well_shaped_nonexistent_job_retains_failure(self, run: mock.Mock) -> None:

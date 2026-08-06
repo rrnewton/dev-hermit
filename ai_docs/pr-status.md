@@ -31,10 +31,24 @@ name and URL, timestamps, and completed-failure conclusion, and its entire step
 list contains exactly one failed `Set up job`. This is an infrastructure run
 that produced no product result, so it is pending—not red and never green.
 
+The only transitive form is the registered `merge-gate-v4` contract. Its exact
+job may also become `NO_RESULT` when an independently verified setup-only
+`reverie-pin-is-latest-main` job is present in the same selected run, completed
+before the gate was created, and the gate's complete identity-bound seven-step
+receipt shows the prerequisite requirement as its sole failure while the
+product-validation requirement was skipped. Input order is irrelevant because
+the authority dereferences the complete failed-check set before following this
+link. It separately binds the exact run path and exact-head workflow contents to
+the reviewed v4 Git blob that declares `merge-gate.needs: [..., reverie-pin]`
+and reads `needs.reverie-pin.result`; a successful step name alone is not proof.
+A generic failed gate step, a missing source, another workflow/version/blob,
+another run, or any changed/executed product step remains red.
+
 Every incomplete, malformed, stale, cancelled, mismatched, paginated, timed-out,
 or budget-exhausted lookup fails closed: the original red/undetermined state is
 retained. Human and JSON reports expose the accepted setup-only checks and
-failed-verification reasons rather than silently dropping them.
+their accepted prerequisite consequences separately, plus failed-verification
+reasons, rather than silently dropping them.
 
 ## rrnewton/hermit
 

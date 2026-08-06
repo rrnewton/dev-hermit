@@ -209,6 +209,7 @@ def pull_request_gate() -> int:
                 "green": 0,
                 "real_reds": 0,
                 "setup_only_no_result_checks": 0,
+                "prerequisite_no_result_checks": 0,
                 "outage": "no",
                 "degraded": "yes",
                 "summary": f"all repos unavailable ({reasons})",
@@ -225,6 +226,7 @@ def pull_request_gate() -> int:
             "pending",
             "real_reds",
             "setup_only_no_result_checks",
+            "prerequisite_no_result_checks",
         )
     }
     outage = any(status.outage_suspected for status in statuses)
@@ -243,6 +245,7 @@ def pull_request_gate() -> int:
         f"open={counts['open']},red={counts['red']},"
         f"pending={counts['pending']},real={counts['real_reds']},"
         f"setup_only_no_result={counts['setup_only_no_result_checks']},"
+        f"prerequisite_no_result={counts['prerequisite_no_result_checks']},"
         f"outage={'yes' if outage else 'no'}"
     )
     if degraded:
@@ -256,6 +259,7 @@ def pull_request_gate() -> int:
             "green": counts["green"],
             "real_reds": counts["real_reds"],
             "setup_only_no_result_checks": counts["setup_only_no_result_checks"],
+            "prerequisite_no_result_checks": counts["prerequisite_no_result_checks"],
             "outage": "yes" if outage else "no",
             "degraded": "yes" if degraded else "no",
             "summary": summary,

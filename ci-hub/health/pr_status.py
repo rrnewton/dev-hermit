@@ -193,6 +193,8 @@ class RollupClassification:
     failing_check_names: tuple[str, ...]
     setup_only_no_result_checks: tuple[str, ...]
     setup_only_evidence: tuple[str, ...]
+    prerequisite_no_result_checks: tuple[str, ...]
+    prerequisite_evidence: tuple[str, ...]
     actions_job_verification_errors: tuple[str, ...]
 
 
@@ -246,6 +248,10 @@ class RepoStatus:
     # only ``Set up job`` ran and failed. These become typed NO_RESULT (pending),
     # never green, and remain visible in each PR's evidence fields.
     setup_only_no_result_checks: int = 0
+    # Narrow downstream consequences whose exact registered merge-gate-v4 job
+    # failed only because a same-run prerequisite above was setup-only. These
+    # are independently visible and, like their source, remain pending.
+    prerequisite_no_result_checks: int = 0
     available: bool = True
     reason: str = ""
 
@@ -339,15 +345,64 @@ def _classify_rollup(
     """
     selected = select_latest_checks(rollup, head_sha=head_sha)
     if not selected:
-        return RollupClassification("pending", (), (), (), ())
+        return RollupClassification("pending", (), (), (), (), (), ())
     any_fail = False
     any_pending = False
     any_ok = False
     failing_names: list[str] = []
     setup_only_names: list[str] = []
     setup_only_evidence: list[str] = []
+    prerequisite_names: list[str] = []
+    prerequisite_evidence: list[str] = []
     verification_errors: list[str] = []
-    for check in selected:
+
+    failed: list[tuple[int, dict[str, object]]] = []
+    for index, check in enumerate(selected):
+        if not isinstance(check, dict):
+            continue
+        status = str(check.get("status") or "").upper()
+        outcome = str(check.get("conclusion") or check.get("state") or "").upper()
+        if classify_check(status, outcome) is CheckOutcome.FAILED:
+            failed.append((index, check))
+
+    verifications: dict[int, SetupOnlyVerification] = {}
+    verifier_errors: dict[int, str] = {}
+    if setup_only_verifier is not None and failed:
+        batch_verifier = getattr(setup_only_verifier, "verify_failures", None)
+        if callable(batch_verifier):
+            try:
+                batch_results = tuple(
+                    batch_verifier(
+                        repo,
+                        tuple(check for _, check in failed),
+                        head_sha,
+                    )
+                )
+                if len(batch_results) != len(failed):
+                    raise ValueError(
+                        "batch verifier result count mismatch: "
+                        f"{len(batch_results)} != {len(failed)}"
+                    )
+                for (index, _), verification in zip(failed, batch_results, strict=True):
+                    if not isinstance(verification, SetupOnlyVerification):
+                        raise TypeError(
+                            "batch verifier returned a non-verification result"
+                        )
+                    verifications[index] = verification
+            except Exception as error:  # fail closed on a verifier defect
+                message = f"verifier error: {type(error).__name__}: {error}"
+                for index, _ in failed:
+                    verifier_errors[index] = message
+        else:
+            for index, check in failed:
+                try:
+                    verifications[index] = setup_only_verifier(repo, check, head_sha)
+                except Exception as error:  # fail closed on a verifier defect
+                    verifier_errors[index] = (
+                        f"verifier error: {type(error).__name__}: {error}"
+                    )
+
+    for index, check in enumerate(selected):
         if not isinstance(check, dict):
             continue
         name = str(check.get("name") or check.get("context") or "")
@@ -356,24 +411,29 @@ def _classify_rollup(
         outcome = str(check.get("conclusion") or check.get("state") or "").upper()
         classified = classify_check(status, outcome)
         if classified is CheckOutcome.FAILED:
-            verification: SetupOnlyVerification | None = None
-            if setup_only_verifier is not None:
-                try:
-                    verification = setup_only_verifier(repo, check, head_sha)
-                except Exception as error:  # fail closed on a verifier defect
-                    verification_errors.append(
-                        f"{name or '<unnamed>'}: verifier error: "
-                        f"{type(error).__name__}: {error}"
-                    )
-            if verification is not None and verification.accepted:
-                # A setup-only failure is a typed NO_RESULT. It blocks green
-                # even if every other check passed.
-                any_pending = True
-                setup_only_names.append(name)
-                setup_only_evidence.append(
-                    f"{name or '<unnamed>'}: run={verification.run_id} "
-                    f"job={verification.job_id}"
+            verification = verifications.get(index)
+            if index in verifier_errors:
+                verification_errors.append(
+                    f"{name or '<unnamed>'}: {verifier_errors[index]}"
                 )
+            if verification is not None and verification.accepted:
+                # Both the direct source and its narrowly proven registered
+                # consequence are typed NO_RESULT. They block green even if
+                # every other check passed.
+                any_pending = True
+                if verification.kind == "prerequisite-no-result":
+                    prerequisite_names.append(name)
+                    prerequisite_evidence.append(
+                        f"{name or '<unnamed>'}: run={verification.run_id} "
+                        f"job={verification.job_id} "
+                        f"source_job={verification.source_job_id}"
+                    )
+                else:
+                    setup_only_names.append(name)
+                    setup_only_evidence.append(
+                        f"{name or '<unnamed>'}: run={verification.run_id} "
+                        f"job={verification.job_id}"
+                    )
             else:
                 any_fail = True
                 failing_names.append(name)
@@ -399,6 +459,8 @@ def _classify_rollup(
         failing_check_names=tuple(failing_names),
         setup_only_no_result_checks=tuple(setup_only_names),
         setup_only_evidence=tuple(setup_only_evidence),
+        prerequisite_no_result_checks=tuple(prerequisite_names),
+        prerequisite_evidence=tuple(prerequisite_evidence),
         actions_job_verification_errors=tuple(verification_errors),
     )
 
@@ -681,6 +743,7 @@ def _classify_gh_prs(
     green_local = 0
     ledger_no_result = ledger_needs_rerun = 0
     setup_only_no_result_checks = 0
+    prerequisite_no_result_checks = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -699,6 +762,7 @@ def _classify_gh_prs(
         )
         ci = rollup.state
         setup_only_no_result_checks += len(rollup.setup_only_no_result_checks)
+        prerequisite_no_result_checks += len(rollup.prerequisite_no_result_checks)
         mergeable = str(entry.get("mergeable") or "").upper()
         merge_state = str(entry.get("mergeStateStatus") or "").upper()
         # Stale-base vs real: a CONFLICTING/DIRTY red is red because its merge
@@ -794,6 +858,8 @@ def _classify_gh_prs(
                 "failing_checks": rollup.failing_check_names,
                 "setup_only_no_result_checks": (rollup.setup_only_no_result_checks),
                 "setup_only_evidence": rollup.setup_only_evidence,
+                "prerequisite_no_result_checks": (rollup.prerequisite_no_result_checks),
+                "prerequisite_evidence": rollup.prerequisite_evidence,
                 "actions_job_verification_errors": (
                     rollup.actions_job_verification_errors
                 ),
@@ -821,6 +887,7 @@ def _classify_gh_prs(
         ledger_no_result=ledger_no_result,
         ledger_needs_rerun=ledger_needs_rerun,
         setup_only_no_result_checks=setup_only_no_result_checks,
+        prerequisite_no_result_checks=prerequisite_no_result_checks,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -1231,6 +1298,7 @@ def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
                 "ledger_no_result": status.ledger_no_result,
                 "ledger_needs_rerun": status.ledger_needs_rerun,
                 "setup_only_no_result_checks": (status.setup_only_no_result_checks),
+                "prerequisite_no_result_checks": (status.prerequisite_no_result_checks),
                 "no_result": status.pending,
                 "outage_suspected": status.outage_suspected,
                 "triggers_unhealthy": status.unhealthy,
@@ -1282,6 +1350,7 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             "ledger_no_result={ledger_no_result} "
             "ledger_needs_rerun={ledger_needs_rerun} "
             "setup_only_no_result_checks={setup_only_no_result_checks} "
+            "prerequisite_no_result_checks={prerequisite_no_result_checks} "
             "undetermined_reds={undetermined_reds} no_result={no_result} "
             "outage={outage_suspected} triggers_unhealthy={triggers_unhealthy}".format(
                 **item
@@ -1357,6 +1426,14 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 "only step was failed `Set up job`; classified NO_RESULT, never "
                 "green (see setup_only_no_result_checks and setup_only_evidence)"
             )
+        if status.prerequisite_no_result_checks:
+            lines.append(
+                f"    actions jobs: {status.prerequisite_no_result_checks} "
+                "registered merge-gate-v4 consequence(s) were bound to an exact "
+                "same-run setup-only Reverie-pin prerequisite; classified "
+                "NO_RESULT, never green (see prerequisite_no_result_checks and "
+                "prerequisite_evidence)"
+            )
         if status.green_local:
             lines.append(
                 f"    ledger: {status.green_local} open head(s) carry an "
@@ -1384,6 +1461,12 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 lines.append(
                     "      setup-only NO_RESULT: "
                     + ", ".join(str(v) for v in setup_only)
+                )
+            prerequisite = pr.get("prerequisite_no_result_checks")
+            if prerequisite:
+                lines.append(
+                    "      prerequisite consequence NO_RESULT: "
+                    + ", ".join(str(v) for v in prerequisite)
                 )
             verification_errors = pr.get("actions_job_verification_errors")
             if verification_errors:

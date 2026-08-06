@@ -335,6 +335,60 @@ class SetupOnlyRollupClassificationTests(unittest.TestCase):
         self.assertEqual(result.setup_only_no_result_checks, ("setup-infra",))
         self.assertEqual(result.failing_check_names, ("product",))
 
+    def test_batch_authority_preserves_source_and_downstream_no_result(self) -> None:
+        class BatchAuthority:
+            def __call__(self, *_args: object) -> pr_status.SetupOnlyVerification:
+                raise AssertionError("rollup must use the single batch authority")
+
+            def verify_failures(
+                self,
+                _repo: str,
+                checks: tuple[dict[str, object], ...],
+                _head: str,
+            ) -> tuple[pr_status.SetupOnlyVerification, ...]:
+                results = []
+                for check in checks:
+                    if check.get("name") == "reverie-pin-is-latest-main":
+                        results.append(
+                            pr_status.SetupOnlyVerification(
+                                True,
+                                "setup only",
+                                31114544049,
+                                92660569815,
+                                kind="setup-only",
+                            )
+                        )
+                    else:
+                        results.append(
+                            pr_status.SetupOnlyVerification(
+                                True,
+                                "prerequisite consequence",
+                                31114544049,
+                                92670128104,
+                                kind="prerequisite-no-result",
+                                source_job_id=92660569815,
+                            )
+                        )
+                return tuple(results)
+
+        downstream = self.failed_check(name="merge-gate-v4", job=92670128104)
+        downstream["startedAt"] = "2026-08-06T18:20:19Z"
+        downstream["completedAt"] = "2026-08-06T18:20:25Z"
+        result = pr_status._classify_rollup(
+            "rrnewton/hermit",
+            [downstream, self.failed_check()],
+            head_sha=self.HEAD,
+            setup_only_verifier=BatchAuthority(),
+        )
+        self.assertEqual(result.state, "pending")
+        self.assertEqual(
+            result.setup_only_no_result_checks,
+            ("reverie-pin-is-latest-main",),
+        )
+        self.assertEqual(result.prerequisite_no_result_checks, ("merge-gate-v4",))
+        self.assertEqual(result.failing_check_names, ())
+        self.assertIn("source_job=92660569815", result.prerequisite_evidence[0])
+
     def test_latest_attempt_is_selected_once_for_state_and_names(self) -> None:
         old_product = self.failed_check(name="same", run=10, job=100)
         new_setup = self.failed_check(name="same", run=11, job=101)
