@@ -1,0 +1,33 @@
+{
+  "experiment": "kvm-strict-parity-ratchet_20260806",
+  "task": "kvm-strict-parity-ratchet",
+  "question": "Ratchet KVM parity cells to the ptrace golden under --strict --verify.",
+  "outcome": "BLOCKED: zero cells ratcheted. Every --backend kvm run hangs before guest output.",
+  "date_utc": "2026-08-06",
+  "blocker": {
+    "reverie_pr": "https://github.com/rrnewton/reverie/pull/387",
+    "state": "OPEN, unmerged",
+    "fix_commit": "ad1b845c",
+    "branch": "fix/kvm-tree-root-identity-vs-guest-ppid",
+    "in_reverie_main": false,
+    "parent_pinned_reverie": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "local_build_carrying_fix": "none"
+  },
+  "binary": {
+    "path": "worktrees/audit/hermit/target/release/hermit",
+    "version": "hermit 0.2.0 (2026-08-06, gfad50bc75543)",
+    "sha256": "aa5b07052884752e2b21ce8dab1413340ef47f578a620a139515c558fe332027"
+  },
+  "probes": [
+    {"cmd": "run --backend kvm --base-env=minimal -- /bin/echo hi", "result": "HUNG", "wall_s": 48.1, "stdout": ""},
+    {"cmd": "run --backend kvm --strict --base-env=minimal -- /bin/echo hi", "result": "HUNG", "wall_s": 48.1, "stdout": ""}
+  ],
+  "correction": "Earlier notes say KVM ignores SIGTERM; here SIGTERM to the PROCESS GROUP did reap it. The earlier runs likely used timeout(1), which signals only the direct child. Bound KVM with start_new_session + killpg(SIGKILL).",
+  "process_hygiene": "zero surviving processes after the probe, verified by ps snapshot",
+  "dev_kvm": "crw-rw-rw-, readable and writable by this agent -- not the obstacle",
+  "cell_surface_all_manifests": {"no_evidence": 215, "documented_limitation": 986, "already_enabled": 23},
+  "no_evidence_by_bucket": {"c-programs/verify": 152, "backend-parity-c/verify": 49, "determinism-stress-c/verify": 5, "shared-futex-c/verify": 4, "other/verify": 5},
+  "not_done": "no cells ratcheted, no manifest edit, no per-cell tier (backend does not run); fix not built/tested (no allocated slot, provisioning is coordinator-only); kvm engagement witness not yet identified",
+  "host": "devbig014",
+  "outputs": ["README.md", "results.csv", "kvm_probe.py"]
+}

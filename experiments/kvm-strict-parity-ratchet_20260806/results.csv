@@ -1,0 +1,4 @@
+class,cells,meaning
+no-evidence,215,"qualifiable surface: 'not evaluated' / 'L2 --verify witness was not recorded' -- unblocks when reverie #387 lands"
+documented-limitation,986,"by design: privileged runner / record-replay unsupported / chaos unsupported / ElfExecutor ENOSYS gaps"
+already-enabled,23,"kvm already in backends_enabled"
