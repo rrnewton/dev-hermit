@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -128,6 +128,7 @@ fn main() {
             "--lane" => lane = it.next().unwrap_or_else(|| die("--lane needs a value")),
             "--buckets" => buckets_arg = Some(it.next().unwrap_or_else(|| die("--buckets needs a list"))),
             "--backends" => backends_arg = Some(it.next().unwrap_or_else(|| die("--backends needs a list"))),
+            "--self-check" => std::process::exit(self_check()),
             "--with-parity" => with_parity = true,
             "--csv" => csv = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--csv needs a path")))),
             "--repo" => repo = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--repo needs a path")))),
@@ -307,21 +308,48 @@ fn main() {
             } else {
                 ""
             };
-            let (parity, parity_exercised, native_output_hash, output_hash, ref_output_hash) =
-                if with_parity && pass {
-                    capture_parity(&repo, &lane, c, backend)
-                } else {
-                    (None, None, String::new(), String::new(), String::new())
-                };
+            let (
+                parity,
+                parity_exercised,
+                native_output_hash,
+                output_hash,
+                ref_output_hash,
+                backend_engaged,
+            ) = if with_parity && pass {
+                capture_parity(&repo, &lane, c, backend)
+            } else {
+                (None, None, String::new(), String::new(), String::new(), None)
+            };
             // NOT-EXERCISED is a THIRD bucket, not a downgrade of pass/fail. A cell whose guest
             // produces the same bytes with and without hermit did not exercise the property the
             // cell claims to measure, so reporting it as parity asserts coverage that does not
             // exist. The verdict is RECLASSIFIED, never dropped: `parity` keeps its measured
             // value so the row stays auditable, and `outcome` names the vacuity.
-            let outcome = if parity_exercised == Some(false) {
+            // The SECOND, orthogonal not-exercised condition: DID THIS BACKEND ENGAGE.
+            // The check above asks whether the GUEST exercised anything hermit
+            // virtualizes. It cannot see a backend that did nothing, because the shared
+            // runtime underneath still determinizes the guest: e9patch reporting
+            // mapped_sites=0 still differs from native, so it passes the guest test and
+            // then scores byte-identical parity with ptrace -- a manufactured perfect
+            // score for a backend that never ran. Zero is a THIRD BUCKET here too:
+            // never a pass, never a failure, excluded from the parity number with its
+            // reason, because a libc-only guest legitimately gives a main-ELF patcher
+            // nothing to do.
+            let engagement_vacuous = backend_engaged == Some(0);
+            let outcome = if parity_exercised == Some(false) || engagement_vacuous {
                 "not-exercised".to_string()
             } else {
                 outcome
+            };
+            let reason = if engagement_vacuous {
+                format!(
+                    "{backend} performed no work on this guest ({}=0); excluded from parity \
+                     rather than scored, because a backend that does nothing agrees with the \
+                     reference perfectly",
+                    engagement_counter_name(backend)
+                )
+            } else {
+                reason
             };
             // WHICH INVOCATION produced this row. Without it, "pass" is ambiguous across
             // strictness levels: the same cell id can be run under different harness flags and
@@ -349,6 +377,10 @@ fn main() {
                 deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 parity.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
                 parity_exercised.map(|b| if b { "1" } else { "0" }).unwrap_or("").to_string(),
+                // THE COUNT TRAVELS WITH THE CELL. Blank means no counter was found
+                // for this backend, which is not the same as zero and must not be read
+                // as engagement.
+                backend_engaged.map(|n| n.to_string()).unwrap_or_default(),
                 native_output_hash,
                 output_hash,
                 ref_output_hash,
@@ -522,17 +554,24 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
 /// unable to say what it matched. A comparison result that does not name both sides is not
 /// reproducible evidence: a reader cannot tell a genuine match from a row where both sides were
 /// empty, nor re-check the claim later. Both hashes are now recorded.
+fn split_run(r: Option<(String, Option<i64>)>) -> (Option<String>, Option<i64>) {
+    match r {
+        Some((h, e)) => (Some(h), e),
+        None => (None, None),
+    }
+}
+
 fn capture_parity(
     repo: &Path,
     lane: &str,
     cell: &PlanCell,
     backend: &str,
-) -> (Option<bool>, Option<bool>, String, String, String) {
+) -> (Option<bool>, Option<bool>, String, String, String, Option<i64>) {
     let Some(guest) = guest_command(repo, &cell.test) else {
-        return (None, None, String::new(), String::new(), String::new());
+        return (None, None, String::new(), String::new(), String::new(), None);
     };
-    let ref_hash = run_and_hash(repo, lane, "ptrace", &guest);
-    let this_hash = run_and_hash(repo, lane, backend, &guest);
+    let (ref_hash, _) = split_run(run_and_hash(repo, lane, "ptrace", &guest));
+    let (this_hash, engaged) = split_run(run_and_hash(repo, lane, backend, &guest));
     let native_hash = run_native_and_hash(repo, &guest);
     // A cell is EXERCISED when the determinized answer differs from the bare host answer. If they
     // are equal the guest observed nothing hermit virtualizes, so no backend could ever fail it.
@@ -544,13 +583,14 @@ fn capture_parity(
     };
     let native = native_hash.unwrap_or_default();
     match (ref_hash.clone(), this_hash.clone()) {
-        (Some(r), Some(t)) => (Some(r == t), exercised, native, t, r),
+        (Some(r), Some(t)) => (Some(r == t), exercised, native, t, r, engaged),
         _ => (
             None,
             exercised,
             native,
             this_hash.unwrap_or_default(),
             ref_hash.unwrap_or_default(),
+            engaged,
         ),
     }
 }
@@ -737,7 +777,121 @@ fn build_compiled_fixture(
 
 /// Run a guest under one backend with the portable determinism profile, capture
 /// stdout, and return its SHA-256 (or None on failure/timeout).
-fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Option<String> {
+/// How much work THIS backend uniquely performed, parsed from its own run output.
+///
+/// A backend that did nothing agrees with the reference perfectly. e9patch scored
+/// byte-identical parity with ptrace while reporting `mapped_sites=0`: the AOT pass
+/// rewrote nothing, so plain ptrace ran and the cell recorded a manufactured perfect
+/// score. The count is therefore a CONDITION that must travel with the verdict --
+/// a cell without it cannot be distinguished from an earned one.
+///
+/// Each pattern counts work only that backend does, so a nonzero value cannot be
+/// produced by the shared runtime underneath:
+///   e9patch  `mapped_sites`  -- main-ELF sites actually rewritten by the AOT pass
+///   sabre    `patched_sites` -- call sites routed to the in-guest handler
+///   dbi      `branches`      -- blocks translated by DynamoRIO
+///   ptrace   `turns`         -- scheduler turns, i.e. guest stops the tracer took
+///
+/// `None` means NO COUNTER WAS FOUND, which is deliberately not the same as zero and
+/// must never be read as engagement: liteinst and kvm expose no such counter yet, so
+/// they return `None` here and their cells cannot claim to be earned until they do.
+fn backend_engagement(backend: &str, text: &str) -> Option<i64> {
+    let key = match backend {
+        "e9patch" => "mapped_sites=",
+        "sabre" => "patched_sites=",
+        "dbi" => "branches=",
+        "ptrace" => return parse_scheduler_turns(text),
+        // liteinst and kvm publish no engagement counter today.
+        _ => return None,
+    };
+    let start = text.find(key)? + key.len();
+    let digits: String = text[start..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// PLANTED BOTH-WAYS CHECK for the engagement invariant, run with `--self-check`.
+///
+/// The fixtures are REAL banner text measured on this box, not invented strings, so
+/// the parser is pinned against what the backends actually print rather than against
+/// what this file wishes they printed. Every backend is asserted in BOTH directions:
+/// an exercising run must read nonzero, a non-exercising run must read zero, and a
+/// backend with no counter must read "unknown" -- which is deliberately distinct from
+/// zero, because treating "I could not tell" as "it engaged" is the failure this
+/// whole invariant exists to prevent.
+fn self_check() -> i32 {
+    // (backend, text, expected)
+    let cases: &[(&str, &str, Option<i64>)] = &[
+        // e9patch, the motivating case. Measured: an ordinary dynamically linked guest
+        // gives the AOT pass nothing to rewrite, while a guest with syscalls in its main
+        // ELF gives it two.
+        ("e9patch", ":: Backend: e9patch preprocessing + ptrace runtime; candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit;", Some(0)),
+        ("e9patch", ":: Backend: e9patch preprocessing + ptrace runtime; candidate_sites=2; mapped_sites=2; b0_sites=0; instruction_map_cache=Miss;", Some(2)),
+        // dbi
+        ("dbi", "reverie-dbi: tool=Detcore branches=134328 syscalls=131 rewritten=130 stdin_reads=0 memory_hash=5262c47218cba9ee", Some(134328)),
+        ("dbi", "reverie-dbi: tool=Detcore branches=0 syscalls=0 rewritten=0 stdin_reads=0 memory_hash=0", Some(0)),
+        // sabre
+        ("sabre", "sabre: patched_sites=7", Some(7)),
+        ("sabre", "sabre: patched_sites=0", Some(0)),
+        // ptrace
+        ("ptrace", "Internally, the hermit scheduler ran 43 turns, recorded 0 events", Some(43)),
+        ("ptrace", "Internally, the hermit scheduler ran 0 turns, recorded 0 events", Some(0)),
+        // No counter published yet. MUST be None, never Some(0) and never a pass.
+        ("liteinst", "hermit: [liteinst host hybrid] activation verified", None),
+        ("kvm", "some kvm output with no engagement counter", None),
+        // A backend that printed nothing at all cannot be scored either.
+        ("e9patch", "", None),
+    ];
+    let mut failures = 0;
+    for (backend, text, expected) in cases {
+        let got = backend_engagement(backend, text);
+        let verdict = match got {
+            None => "unknown".to_string(),
+            Some(0) => "NOT-EXERCISED".to_string(),
+            Some(n) => format!("engaged({n})"),
+        };
+        if got != *expected {
+            println!("SELF-CHECK FAIL {backend}: expected {expected:?} got {got:?}");
+            failures += 1;
+        } else {
+            println!("self-check ok  {backend:<9} {verdict}");
+        }
+    }
+    // The discrimination itself, stated as a property rather than left implicit.
+    if backend_engagement("e9patch", "mapped_sites=0") == backend_engagement("e9patch", "mapped_sites=2") {
+        println!("SELF-CHECK FAIL: parser does not discriminate zero from nonzero");
+        failures += 1;
+    }
+    if failures == 0 {
+        println!("self-check: {} cases, all discriminating", cases.len());
+        0
+    } else {
+        println!("self-check: {failures} FAILED");
+        3
+    }
+}
+
+/// The name of the counter that backs each backend's engagement invariant, so the
+/// reason string names the exact quantity that was zero rather than gesturing at it.
+fn engagement_counter_name(backend: &str) -> &'static str {
+    match backend {
+        "e9patch" => "mapped_sites",
+        "sabre" => "patched_sites",
+        "dbi" => "branches",
+        "ptrace" => "scheduler turns",
+        _ => "engagement",
+    }
+}
+
+/// ptrace reports its engagement as scheduler turns in the `--summary` report:
+/// "Internally, the hermit scheduler ran 43 turns, ...".
+fn parse_scheduler_turns(text: &str) -> Option<i64> {
+    let marker = "hermit scheduler ran ";
+    let start = text.find(marker)? + marker.len();
+    let digits: String = text[start..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Option<(String, Option<i64>)> {
     let hermit = hermit_bin(repo);
     let mut cmd = Command::new("timeout");
     cmd.arg("120s").arg(&hermit).arg("run").arg("--backend").arg(backend).arg("--strict");
@@ -751,6 +905,9 @@ fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Opt
     // this, but any stack-derived observable does, so pinning here (once, at the env) is what
     // keeps cells comparable across invocations instead of two downstream exclusions that drift.
     // `minimal` is hermit's own deterministic base: PATH, HOSTNAME, HOME and nothing else.
+    // --summary makes ptrace state its own engagement count; the other backends
+    // print theirs unconditionally.
+    cmd.arg("--summary");
     cmd.arg("--base-env").arg("minimal");
     // Re-add the two variables this harness has always relied on for guest determinism.
     // `minimal` would otherwise drop them, and an UNSET TZ is worse than an inherited one:
@@ -771,7 +928,13 @@ fn run_and_hash(repo: &Path, lane: &str, backend: &str, guest: &[String]) -> Opt
     }
     let mut h = Sha256::new();
     h.update(&out.stdout);
-    Some(format!("{:x}", h.finalize()))
+    // The banner goes to stderr for some backends and stdout for others, so both are
+    // searched; the count is parsed from the SAME run whose bytes are being hashed,
+    // never from a separate invocation that might have engaged differently.
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let engaged = backend_engagement(backend, &text);
+    Some((format!("{:x}", h.finalize()), engaged))
 }
 
 /// Resolve the hermit binary the same way `ci/test_harness.sh` does:
