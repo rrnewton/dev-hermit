@@ -1,0 +1,4 @@
+backend,regions,total_bytes,unstable_regions,unstable_guest_regions,guest_regions,content_twins_of_ptrace,exact_addr_and_content_matches,ref_regions,mutation_detected,mutation_digest_matches_ptrace
+ptrace,4,33878016,0,0,2,4,4,4,yes,yes
+sabre,10,61349888,1,0,2,2,0,4,yes,yes
+dbi,38,41451520,35,0,2,2,0,4,yes,yes

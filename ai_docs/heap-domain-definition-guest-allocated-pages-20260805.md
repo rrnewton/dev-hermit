@@ -224,12 +224,66 @@ heap_digest = {
 
 | | Deliverable | State |
 | --- | --- | --- |
-| (1) | Implement the definition; boundary from the memory map, not a per-backend list | **Designed, not implemented.** Two rules specified (§2); Rule B recommended, and its substrate already exists in `memory_metadata`. |
-| (2) | Test the prediction on a patching backend | **Not run** (dispatch: no validate). Experiment fully specified in §3, including the both-directions bar. |
-| (3) | Answer the DBT question empirically, do not assume hopeless | **Advanced, not closed.** Separability is available via documented DR API (§4) and is *not* plumbed in `reverie-dbi`. The distinct risk — DR perturbing the app's own addresses — remains unmeasured. |
+| (1) | Implement the definition; boundary from the memory map, not a per-backend list | **Rule A implemented and run** as a guest-side enumerator (2026-08-06, see §8). Rule B still designed-only; its substrate exists in `memory_metadata`. |
+| (2) | Test the prediction on a patching backend | **RUN.** SaBRe vs ptrace: contents identical, addresses not. §8. |
+| (3) | Answer the DBT question empirically, do not assume hopeless | **Answered, with a condition.** Not separable under a map-derived rule; separable in principle by provenance. §8. |
 
 **The task stays open per the owner's explicit instruction:** do not claim patching
-backends can match full heap hashes until demonstrated. Nothing here demonstrates it.
+backends can match full heap hashes until demonstrated. §8 does not demonstrate it — it
+matches on *contents* but not on *addresses*, and one SaBRe-side region is still unstable.
+
+---
+
+## 8. Results — §3's experiment, run (2026-08-06)
+
+Full artifact, reproduction and limitations:
+[`experiments/heap-domain-parity_20260806/`](../experiments/heap-domain-parity_20260806/README.md).
+Hermit `f89c6976` / Reverie `dd3c178e`, ptrace + sabre + dbi, both-directions bracketed.
+
+| arm | domain regions | unstable run-to-run | unstable regions carrying **guest** data | content twins of ptrace | **exact (addr+content) matches** |
+|---|---:|---:|---:|---:|---:|
+| ptrace | 4 | 0 | 0 | 4/4 | 4/4 |
+| sabre | 10 | 1 | **0** | 2/4 | **0/4** |
+| dbi | 38 | 35 | **0** | 2/4 | **0/4** |
+
+**"Same contents" — CONFIRMED, and for DBT too.** The guest's own allocations carry identical
+digests under all three backends, before *and* after a planted one-byte mutation (which moves
+every arm to the same new digest, so the instrument is reading real guest data and is not
+vacuous).
+
+**"Same address" — REFUTED for both families.** Zero exact matches. Each backend relocates the
+guest: sabre loads PIE at `0x555555571000` where ptrace has `0x52d000`; DynamoRIO shifts `brk`
+by exactly one page and the large mappings by ~2 GiB. The prediction is half right, and the
+failing half is the one that would have made a heap diff self-evidently a bug. **Compare
+content-keyed, and report the address delta as its own column.**
+
+**The DBT answer depends on which rule you use, which is why "hopeless" was the wrong frame.**
+Under Rule A, DR's allocations are *not* separable: 34 extra regions enter the domain and 35 of
+38 are unstable, so a Rule-A heap hash under DBT is dominated by translator noise. But none of
+that noise touched the guest's data. So DBT heap parity is unreachable **under Rule A
+specifically** and reachable under a provenance rule.
+
+**A provenance channel already exists in the memory map, and only one backend uses it.** SaBRe's
+allocator names its arenas with `PR_SET_VMA_ANON_NAME`, so they appear as `[anon:mimalloc]` —
+the runtime declaring the memory is its own. This is a domain clause, not an exception list, and
+it removes 1.0 GiB across 6 regions under sabre. **DynamoRIO tags nothing.** That single
+difference explains sabre's 10 regions / 1 unstable versus dbi's 38 / 35. Adopt this as a clause
+alongside Rule A; for DBT, either plumb `dr_memory_is_dr_internal()` (§4) or have DR name its
+arenas — the latter is cheaper and makes the map self-describing for every consumer.
+
+**Two Rule A clauses proved load-bearing rather than theoretical.** *Not-executable* removed
+hermit's injected page and 14 regions of DR's code cache — this is the clause that makes the
+owner's principle work, since patch and JIT bytes were then never in the domain. *Readable*
+removed **9.0 GiB** of `PROT_NONE` address space DR reserves.
+
+**Residual, and it is small:** under sabre exactly one region is unstable — an *untagged*
+anonymous 20 KiB block between tagged mimalloc arenas and libm's mapping, carrying no guest
+data. Tag or attribute it and sabre's heap domain is fully stable, which is the property the
+owner wanted.
+
+**Today's `--detlog-heap` would have shown none of this**: it hashes only `[heap]`, 0.8% of the
+domain here. Fixing the domain *creates* heap differences where there were none — that is the
+instrument starting to work, as §3 predicted.
 
 ## 7. Limitations
 

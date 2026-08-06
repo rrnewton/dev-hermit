@@ -1,0 +1,37 @@
+{
+  "experiment": "heap-domain-parity_20260806",
+  "task": "define-the-heap-as-guest-allocated-pages-only-code-and-static-excluded",
+  "question": "Does the owner's heap definition (guest-allocated pages, code and static excluded) make heap pages identical to ptrace under a patching backend, and are DBT allocations separable from the guest's?",
+  "date_utc": "2026-08-06",
+  "repo_shas": {
+    "dev_hermit_parent_base": "03e9a4ad91bcf1ac9ddbe1459de6084207d80a12",
+    "hermit": "f89c69766371806d3c9b2c3003531df2d59d6118",
+    "reverie": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6"
+  },
+  "hermit_version": "hermit 0.2.0 (2026-08-06, gf89c69766371-dirty)",
+  "hermit_build": "debug (release build lacks the sabre feature)",
+  "command": "experiments/heap-domain-parity_20260806/run.sh",
+  "guest_command": "hermit run --backend <ptrace|sabre|dbi> --strict --base-env minimal -e LC_ALL=C -e TZ=UTC -- <outdir>/probe [--mutate]",
+  "backends_measured": ["ptrace", "sabre", "dbi"],
+  "backends_unavailable": {
+    "e9patch": "hermit on this host is built without the e9patch feature",
+    "liteinst": "does not complete its preload handshake on this box"
+  },
+  "host": "devbig014",
+  "cores": 316,
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "toolchain": {"gcc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-15)", "glibc": "2.34"},
+  "runtime_env": {
+    "LD_LIBRARY_PATH": "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib",
+    "guest_env": "--base-env minimal -e LC_ALL=C -e TZ=UTC (7 pinned variables)"
+  },
+  "seed": "none; workload is a deterministic function of the loop index",
+  "inputs": {"workload": "2000 x 64B malloc (brk) + 8 x 4MiB malloc (mmap)", "threads": 0},
+  "digest": "FNV-1a 64 (dependency-free determinism, not collision resistance)",
+  "brackets": {
+    "positive": "each arm run twice; guest-carrying regions must be identical",
+    "negative": "one-byte mutation at big[3][1234567]; digest must move"
+  },
+  "headline": "Contents match across all three backends bit-for-bit; addresses do not (0/4 exact address+content matches under sabre and dbi). All run-to-run instability is in backend-owned regions, never guest data.",
+  "outputs": ["results.csv", "README.md"]
+}
