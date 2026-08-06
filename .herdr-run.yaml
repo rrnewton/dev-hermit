@@ -32,6 +32,24 @@ allow:
   - ci-hub
 
 allow_subcommand:
+  # cargo compiles and executes repository-controlled code -- build scripts and
+  # proc macros run arbitrary code from the tree -- which is exactly the property
+  # the note above says must NOT run unconfined. So cargo is fail-closed on the
+  # subcommand too, and only the network-fetching, non-compiling ones are
+  # reachable. `cargo build`/`check`/`test`/`run` are deliberately absent.
+  #
+  # agent-utils 089f2348 made this list MANDATORY whenever cargo is in `allow`
+  # (py/herdr_run/config.py:460). The pin advanced without this entry, so config
+  # validation raised before dispatch and EVERY herdr-run call failed -- for any
+  # program, not just cargo -- taking fleet egress down until this was added.
+  #
+  # The three below are what agents measurably use: `fetch` dominates, plus
+  # `search` (registry query) and `vendor` (downloads and copies sources, runs
+  # no build script). Kept minimal on purpose; add on evidence, not in advance.
+  cargo:
+    - fetch
+    - search
+    - vendor
   # Read-only queries against the landable frontier and the local ledger.
   # Deliberately excludes validate-run, apply-local-label, close-task and every
   # other mutating or process-launching subcommand.
