@@ -1,0 +1,141 @@
+{
+  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "hermit_binary_sha256": "e381c1127ed46abda1ecedadef1aeb75f7b1644362165c0114d127d90061b920",
+  "profile": "release",
+  "backend": "ptrace",
+  "flags": [
+    "--log info",
+    "--log-file <path>",
+    "run",
+    "--base-env minimal",
+    "-e LC_ALL=C",
+    "-e TZ=UTC",
+    "--strict"
+  ],
+  "guest_env": {
+    "base": "minimal",
+    "explicit": [
+      "LC_ALL=C",
+      "TZ=UTC"
+    ]
+  },
+  "hermit_process_env": {
+    "PATH": "/usr/bin:/bin",
+    "HOME": "/tmp",
+    "TERM": "dumb",
+    "LC_ALL": "C",
+    "TZ": "UTC",
+    "LD_LIBRARY_PATH": "/home/newton/work/dev-hermit/ignored/lu-parity/usr/lib64"
+  },
+  "normalization": "leading wall-clock timestamp stripped; nothing else",
+  "Z_definition": "count of COMMIT messages == hermit's reported scheduler turn count",
+  "self_determinism_gate": "captured twice; byte-identical after normalization or NOT-A-GOLDEN",
+  "host": {
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "nproc": "316",
+    "cpu": "AMD EPYC 9D85 158-Core Processor"
+  },
+  "goldens": [
+    {
+      "guest": "true",
+      "argv": [
+        "/bin/true"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 5,
+      "detlog_msgs": 68,
+      "log_lines": 114,
+      "guest_exit": 0,
+      "golden_sha256": "2da55546d39ab39b13f3caa9ea9b1dee2973230a7be602942d62a0588026e964",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "echo",
+      "argv": [
+        "/bin/echo",
+        "hermit-golden"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 6,
+      "detlog_msgs": 82,
+      "log_lines": 131,
+      "guest_exit": 0,
+      "golden_sha256": "b9e0af10bb0a4d65b7cdaf1d5002c040a0e6bda2f89a2ac4f1ec786b2f2440a2",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "cat-hostname",
+      "argv": [
+        "/bin/cat",
+        "/etc/hostname"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 7,
+      "detlog_msgs": 98,
+      "log_lines": 151,
+      "guest_exit": 0,
+      "golden_sha256": "bbfbf4894078e6c738f675d5b3d5dab45082dd61a192d4dd2997612b171cc99c",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "wc-passwd",
+      "argv": [
+        "/usr/bin/wc",
+        "-l",
+        "/etc/passwd"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 7,
+      "detlog_msgs": 92,
+      "log_lines": 145,
+      "guest_exit": 0,
+      "golden_sha256": "4cff237581996f52b6a73a87f3e206741676799d8de138004fe180a2c12c64b7",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "head-passwd",
+      "argv": [
+        "/usr/bin/head",
+        "-1",
+        "/etc/passwd"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 7,
+      "detlog_msgs": 90,
+      "log_lines": 143,
+      "guest_exit": 0,
+      "golden_sha256": "b050ecf96122d85ae5f40d10932dfb46da2c5bbc1f3bb5a4388dc4854983689f",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "sh-pipeline",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "/bin/echo a | /usr/bin/wc -c"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 30,
+      "detlog_msgs": 493,
+      "log_lines": 661,
+      "guest_exit": 0,
+      "golden_sha256": "9bc300902ed75b1f9df079c3fee244e4b199e9868d5e5cdb412f8c6950c35a2f",
+      "detail": "run1 == run2 after timestamp strip"
+    },
+    {
+      "guest": "sh-loop-exec",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "for i in 1 2 3; do /bin/echo $i; done"
+      ],
+      "verdict": "GOLDEN",
+      "Z_commits": 45,
+      "detlog_msgs": 619,
+      "log_lines": 857,
+      "guest_exit": 0,
+      "golden_sha256": "379f92ea21c2e040a00dae668e49dd5bb90ae7385793aff6c4945e879029cff7",
+      "detail": "run1 == run2 after timestamp strip"
+    }
+  ]
+}
