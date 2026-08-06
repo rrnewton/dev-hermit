@@ -1,0 +1,16 @@
+guest,shape,backend,reach_counter,value,verdict
+libc-baseline,dynamically-linked libc (contrast),e9patch,mapped_sites,0,NOT-EXERCISED
+inline_syscall_sites,inline asm syscalls in main ELF,e9patch,mapped_sites,5,EXERCISED
+static_nolibc_syscall_sites,-static -nostdlib (no PLT),e9patch,mapped_sites,6,EXERCISED
+mixed_inline_and_libc_syscalls,inline + libc interleaved,e9patch,mapped_sites,1,EXERCISED
+libc-baseline,dynamically-linked libc (contrast),sabre,NONE EXPOSED,,NO-COUNTER
+inline_syscall_sites,inline asm syscalls in main ELF,sabre,NONE EXPOSED,,NO-COUNTER
+static_nolibc_syscall_sites,-static -nostdlib (no PLT),sabre,NONE EXPOSED,,CRASHED-SIGSEGV
+mixed_inline_and_libc_syscalls,inline + libc interleaved,sabre,NONE EXPOSED,,NO-COUNTER
+libc-baseline,dynamically-linked libc (contrast),liteinst,n/a,,UNMEASURABLE-ON-THIS-HOST
+inline_syscall_sites,inline asm syscalls in main ELF,liteinst,n/a,,UNMEASURABLE-ON-THIS-HOST
+static_nolibc_syscall_sites,-static -nostdlib (no PLT),liteinst,n/a,,UNMEASURABLE-ON-THIS-HOST
+mixed_inline_and_libc_syscalls,inline + libc interleaved,liteinst,n/a,,UNMEASURABLE-ON-THIS-HOST
+static_libc_syscall_sites,-static against glibc (libc syscalls in main ELF),e9patch,mapped_sites,144,EXERCISED
+static_libc_syscall_sites,-static against glibc (libc syscalls in main ELF),sabre,NONE EXPOSED,,CRASHED-SIGSEGV
+static_libc_syscall_sites,-static against glibc (libc syscalls in main ELF),liteinst,n/a,,STRUCTURALLY-INAPPLICABLE-LD_PRELOAD
