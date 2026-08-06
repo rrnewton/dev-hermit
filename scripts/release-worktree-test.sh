@@ -15,6 +15,7 @@ esac
 live_pid=
 fence_pid=
 locked_proc_dir=
+fixture_count=0
 cleanup() {
   if [[ -n ${locked_proc_dir:-} ]]; then
     chmod 700 "$locked_proc_dir" 2>/dev/null || true
@@ -236,6 +237,7 @@ PY
 # Set globals fixture_root, primary, target, keep, target_branch, and output.
 make_fixture() {
   local name=$1
+  fixture_count=$((fixture_count + 1))
   fixture_root="$suite_root/$name"
   primary="$fixture_root/hermit"
   target="$fixture_root/worktrees/$name/hermit"
@@ -712,8 +714,150 @@ if run_release path-fence-podman-race \
   fail 'container that acquired a bind at the path fence was deleted'
 fi
 grep -Fq 'target-overlapping-mount' "$output" \
-  || fail 'post-move Podman audit did not observe the racing target mount'
+  || grep -Fq 'cannot be resolved' "$output" \
+  || fail 'post-move Podman audit did not observe or fail closed on the racing target mount'
 assert_target_retained path-fence-podman-race
+
+# PATH-FENCE DANGLING-ALIAS NEGATIVE: a direct Podman user can insert a bind
+# through an alias at the move boundary. The alias becomes dangling when Git
+# moves the target, but that must make evidence incomplete rather than erase
+# the live mount's identity.
+make_fixture path-fence-podman-alias-race
+alias_source="$fixture_root/late-target-alias"
+ln -s "$target" "$alias_source"
+cat >"$fixture_root/podman-alias-race.json" <<JSON
+[{
+  "Id": "abababababababababababababababababababababababababababababababab",
+  "Names": ["fence-alias-race-mount"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$alias_source"}]
+}]
+JSON
+if run_release path-fence-podman-alias-race \
+    RELEASE_TEST_PODMAN_RACE_SOURCE="$fixture_root/podman-alias-race.json" \
+    RELEASE_TEST_PODMAN_RACE_TARGET="$fixture_root/podman.json"; then
+  fail 'container with a dangling post-fence source alias authorized deletion'
+fi
+grep -Fq 'cannot be resolved' "$output" \
+  || fail 'dangling post-fence mount alias did not fail closed'
+assert_target_retained path-fence-podman-alias-race
+
+# PATH-FENCE CONFIG-CHANGE NEGATIVE: even when both old and new sources are
+# unrelated and resolvable, direct out-of-protocol configuration changes must
+# invalidate the pre-fence observation instead of being accepted as a fresh,
+# unrelated snapshot.
+make_fixture path-fence-podman-config-race
+mkdir -p "$fixture_root/unrelated-before" "$fixture_root/unrelated-after"
+cat >"$fixture_root/podman.json" <<JSON
+[{
+  "Id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "Names": ["changing-unrelated-mount"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$fixture_root/unrelated-before"}]
+}]
+JSON
+cat >"$fixture_root/podman-config-race.json" <<JSON
+[{
+  "Id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "Names": ["changing-unrelated-mount"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$fixture_root/unrelated-after"}]
+}]
+JSON
+if run_release path-fence-podman-config-race \
+    RELEASE_TEST_PODMAN_RACE_SOURCE="$fixture_root/podman-config-race.json" \
+    RELEASE_TEST_PODMAN_RACE_TARGET="$fixture_root/podman.json"; then
+  fail 'changed container mount configuration authorized deletion'
+fi
+grep -Fq 'container census/config/mount observation changed across the path fence' "$output" \
+  || fail 'path-fence config mutation was not bound to the pre-fence observation'
+assert_target_retained path-fence-podman-config-race
+
+# REGISTRY-SPLIT CRASHES: worktree-state.json is authoritative and ACTIVE.md
+# is a human-augmented projection. Each planted crash after the JSON rename but
+# before the managed block rewrite must converge under explicit recovery while
+# preserving content outside the markers.
+make_fixture journal-arm-active-split
+printf 'human recovery sentinel: journal-arm\n' >>"$fixture_root/worktrees/ACTIVE.md"
+arm_split_evidence="$fixture_root/journal-arm-active-split"
+: >"$arm_split_evidence"
+if run_release journal-arm-active-split \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_JOURNAL_ARM_STATE="$arm_split_evidence"; then
+  fail 'journal-arm state/ACTIVE split injection unexpectedly completed'
+fi
+grep -Fxq 'post-journal-arm state/ACTIVE split injected' "$arm_split_evidence" \
+  || fail 'journal-arm split did not reach the exact persistence boundary'
+grep -Fq '"status": "releasing"' "$fixture_root/worktree-state.json" \
+  || fail 'journal-arm split did not durably arm JSON state'
+grep -Fq '| journal-arm-active-split ' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'journal-arm split unexpectedly rewrote ACTIVE before the crash'
+if ! run_release_recover journal-arm-active-split; then
+  cat "$output" >&2
+  fail 'explicit recovery did not reconcile the journal-arm ACTIVE split'
+fi
+grep -Fxq 'human recovery sentinel: journal-arm' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'journal-arm recovery overwrote human ACTIVE content'
+assert_unrelated_survives
+
+make_fixture journal-clear-active-split
+printf 'human recovery sentinel: journal-clear\n' >>"$fixture_root/worktrees/ACTIVE.md"
+clear_split_evidence="$fixture_root/journal-clear-active-split"
+: >"$clear_split_evidence"
+if run_release journal-clear-active-split \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_JOURNAL_CLEAR_STATE="$clear_split_evidence"; then
+  fail 'journal-clear state/ACTIVE split injection unexpectedly completed'
+fi
+grep -Fxq 'post-journal-clear state/ACTIVE split injected' "$clear_split_evidence" \
+  || fail 'journal-clear split did not reach the exact persistence boundary'
+test ! -e "$target" || fail 'journal-clear split did not follow completed Git removal'
+grep -Fq '"status": "active"' "$fixture_root/worktree-state.json" \
+  || fail 'journal-clear split did not durably clear releasing state'
+grep -Fq '| journal-clear-active-split ' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'journal-clear split unexpectedly removed the stale ACTIVE row'
+if ! run_release_recover journal-clear-active-split; then
+  cat "$output" >&2
+  fail 'explicit recovery did not reconcile the journal-clear ACTIVE split'
+fi
+grep -Fxq 'human recovery sentinel: journal-clear' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'journal-clear recovery overwrote human ACTIVE content'
+assert_unrelated_survives
+
+make_fixture final-state-active-split
+printf 'human recovery sentinel: final-state\n' >>"$fixture_root/worktrees/ACTIVE.md"
+final_split_evidence="$fixture_root/final-state-active-split"
+: >"$final_split_evidence"
+if run_release final-state-active-split \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_FINAL_STATE="$final_split_evidence"; then
+  fail 'final-state state/ACTIVE split injection unexpectedly completed'
+fi
+grep -Fxq 'post-final-state state/ACTIVE split injected' "$final_split_evidence" \
+  || fail 'final-state split did not reach the exact persistence boundary'
+if grep -Fq 'final-state-active-split' "$fixture_root/worktree-state.json"; then
+  fail 'final-state split did not durably delete the slot JSON record'
+fi
+grep -Fq '| final-state-active-split ' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'final-state split unexpectedly removed the stale ACTIVE row'
+# Terminal missing-slot recovery proves absence through every product worktree
+# authority. Materialize the otherwise-unused fixture primaries for that proof.
+for product in reverie liteinst2; do
+  git -C "$fixture_root/$product" init -q -b main
+  configure_repo "$fixture_root/$product"
+  : >"$fixture_root/$product/.fixture"
+  git -C "$fixture_root/$product" add .fixture
+  git -C "$fixture_root/$product" commit -q -m 'fixture primary'
+done
+if ! run_release_recover final-state-active-split; then
+  cat "$output" >&2
+  fail 'explicit recovery did not reconcile the final-slot ACTIVE split'
+fi
+grep -Fxq 'human recovery sentinel: final-state' "$fixture_root/worktrees/ACTIVE.md" \
+  || fail 'final-state recovery overwrote human ACTIVE content'
+grep -Fq 'recovered completed release metadata' "$output" \
+  || fail 'terminal missing-slot recovery did not report its proof'
+assert_unrelated_survives
 
 # CRASH/RECOVERY BRACKET: production performs a real recursive deinit and exact
 # admin quarantine, then the fixture terminates before removal. Ordinary and
@@ -810,7 +954,8 @@ assert_unrelated_survives
 
 # COMPLETED-REMOVE CRASH/RECOVERY: Git can remove the fenced worktree before
 # the registry journal is advanced. Recovery may accept the absent paths only
-# after proving that Git's own worktree registry also contains neither path.
+# after proving that Git's own worktree registry contains neither path and the
+# exact release process durably recorded successful Git removal.
 make_fixture interrupted-after-remove
 remove_crash_evidence="$fixture_root/post-git-remove-crash"
 : >"$remove_crash_evidence"
@@ -824,6 +969,8 @@ test ! -e "$target" \
   || fail 'post-Git-remove crash retained the canonical target'
 grep -Fq '"status": "releasing"' "$fixture_root/worktree-state.json" \
   || fail 'post-Git-remove crash did not retain its release journal'
+grep -Fq '"phase": "git-removal-complete"' "$fixture_root/worktree-state.json" \
+  || fail 'post-Git-remove crash lacks causal completion evidence'
 if run_release interrupted-after-remove; then
   fail 'ordinary retry consumed a completed-remove journal'
 fi
@@ -840,6 +987,26 @@ test -e "$fixture_root/worktree-state.json" \
 if grep -Fq 'interrupted-after-remove' "$fixture_root/worktree-state.json"; then
   fail 'completed-remove recovery retained the released slot record'
 fi
+assert_unrelated_survives
+
+# ABSENCE IS NOT COMPLETION AUTHORITY: remove an armed target out of band before
+# the release process records Git success. Identical path/registration absence
+# without the causal phase must remain a refusal.
+make_fixture absent-without-completion-evidence
+absence_split_evidence="$fixture_root/absence-journal-arm"
+: >"$absence_split_evidence"
+if run_release absent-without-completion-evidence \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_JOURNAL_ARM_STATE="$absence_split_evidence"; then
+  fail 'absence-authority fixture unexpectedly passed journal arm'
+fi
+git -C "$primary" worktree remove --force "$target"
+if run_release_recover absent-without-completion-evidence; then
+  fail 'mere target absence authorized completed-removal recovery'
+fi
+grep -Fq 'without durable git-removal-complete evidence' "$output" \
+  || fail 'completed-removal recovery did not require causal phase evidence'
+grep -Fq '"phase": "armed"' "$fixture_root/worktree-state.json" \
+  || fail 'absence-authority refusal rewrote the armed journal'
 assert_unrelated_survives
 
 # REVIEW FIXTURE 4: the registered state key points at a symlink alias of an
@@ -1232,4 +1399,5 @@ grep -Fq "invalid slot name: '../valid-token'" "$output" \
   || fail 'invalid slot token did not reach the token guard'
 assert_target_retained valid-token
 
-echo 'release-worktree-test: PASS (40 fixtures: 7 clean/locked/recovered/explicit-force/protected-unrelated removals; 38 planted refusals; unrelated path+worktree survived)'
+printf 'release-worktree-test: PASS (%d fixtures: clean/recovery/force positives plus planted refusals; unrelated path+worktree survived)\n' \
+  "$fixture_count"

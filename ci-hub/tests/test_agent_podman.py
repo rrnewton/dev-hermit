@@ -527,6 +527,92 @@ class AgentPodmanTests(unittest.TestCase):
         self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
         self.assertEqual(json.loads(accepted.stdout)["inspected"], 4)
 
+    def test_release_audit_refuses_malformed_or_unresolvable_mount_sources(self) -> None:
+        target = self.directory / "worktrees" / "slot01" / "hermit"
+        target.mkdir(parents=True)
+        unrelated = self.directory / "unrelated"
+        unrelated.mkdir()
+        self.registry.write_text(
+            json.dumps({"schema_version": 1, "containers": {}})
+        )
+
+        malformed = [
+            ({}, "has no Source field"),
+            ({"Source": {"concealed": str(target)}}, "is not a string"),
+            ({"Source": 17}, "is not a string"),
+        ]
+        for index, (mount, expected) in enumerate(malformed):
+            with self.subTest(mount=mount):
+                self.podman_state.write_text(
+                    json.dumps(
+                        [
+                            container(
+                                str(index + 1) * 64,
+                                "malformed-mount-source",
+                                None,
+                                mounts=[mount],
+                            )
+                        ]
+                    )
+                )
+                refused = self.release_audit(
+                    "--owner", "unrelated-owner", "--target", str(target)
+                )
+                self.assertEqual(refused.returncode, 1, refused.stdout)
+                self.assertIn(expected, refused.stderr)
+
+        # Empty sources are a legitimate Podman schema value, while a resolved
+        # absolute unrelated source is positive evidence that the parser is not
+        # simply refusing every mount entry.
+        self.podman_state.write_text(
+            json.dumps(
+                [
+                    container(
+                        "4" * 64,
+                        "well-shaped-unrelated-mounts",
+                        None,
+                        mounts=[{"Source": ""}, {"Source": str(unrelated)}],
+                    )
+                ]
+            )
+        )
+        accepted = self.release_audit(
+            "--owner", "unrelated-owner", "--target", str(target)
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+        observation = json.loads(accepted.stdout)["container_observation"]
+        self.assertEqual(observation[0]["mount_sources"], ["", str(unrelated)])
+
+        # The path fence can make an alias dangling while the kernel mount still
+        # refers to the moved inode. Losing resolution must refuse, not erase
+        # the pre-fence identity and report target_mounts=0.
+        alias = self.directory / "late-alias"
+        alias.symlink_to(target, target_is_directory=True)
+        fenced = target.parent / ".hermit.release-worktree-fixture"
+        target.rename(fenced)
+        self.podman_state.write_text(
+            json.dumps(
+                [
+                    container(
+                        "5" * 64,
+                        "dangling-alias-mount",
+                        None,
+                        mounts=[{"Source": str(alias)}],
+                    )
+                ]
+            )
+        )
+        dangling = self.release_audit(
+            "--owner",
+            "unrelated-owner",
+            "--target",
+            str(target),
+            "--target",
+            str(fenced),
+        )
+        self.assertEqual(dangling.returncode, 1, dangling.stdout)
+        self.assertIn("cannot be resolved", dangling.stderr)
+
     def test_release_audit_requires_exclusive_fence_and_registry_authority(self) -> None:
         self.podman_state.write_text("[]")
 
