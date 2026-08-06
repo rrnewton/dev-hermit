@@ -1,0 +1,14 @@
+Hermit source: f89c69766371806d3c9b2c3003531df2d59d6118
+Binary SHA-256: 5f4aa9ab8e6b1cf3bf98f73cca35001211e28c2829215e97d9c2c927e5ae9047
+Backend/flags: ptrace --strict --max-timeslice disabled; CPU 0
+
+Guest command:
+  /usr/bin/python3 -c 'import os; a=open("/proc/self/stat").read().split(); print("cpu",a[13],a[14]); print("uptime",open("/proc/uptime").read().strip()); [os.stat("/proc/self/stat") for _ in range(10000)]; b=open("/proc/self/stat").read().split(); print("cpu",b[13],b[14]); print("uptime",open("/proc/uptime").read().strip())'
+
+Observed output:
+  cpu 0 0
+  uptime 126.00 0.00
+  cpu 0 0
+  uptime 142.00 0.00
+
+Interpretation: uptime evolves with deterministic virtual work; self CPU counters remain frozen.

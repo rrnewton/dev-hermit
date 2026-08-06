@@ -1,14 +1,39 @@
 {
-  "question": "Do guest reads of /proc and /sys leak host nondeterminism?",
-  "answer": "No leak in the enumerated set of 27 (stability verified non-vacuous against a host-varies control). Residual: /proc/self/stat utime/stime are FROZEN at zero -- the opposite failure.",
+  "question": "Do Hermit's complete proc/sys sanitizer classes leak host state across deterministic runs?",
+  "answer": "No leak observed: 67/67 source-derived ProcfsKind cells passed stripped internal verify and byte-exact stdout equality across two additional runs. Canonical internal-log verification remains blocked by a /bin/true baseline divergence.",
   "date_utc": "2026-08-06",
   "host": "devbig014.atn7.facebook.com",
-  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30",
-  "backend": "ptrace only",
-  "flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
-  "paths_swept": 27,
-  "leaks_found": 0,
-  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
-  "dev_hermit_parent_head": "892a5088684ca3f3887d93ebb013c2bdf43e0566",
-  "not_done": ["not an exhaustive /proc+/sys enumeration", "DBI and KVM not swept", "intra-run evolution probed for only 2 paths"]
+  "hermit_source_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "hermit_version": "hermit 0.2.0 (2026-08-06, gf89c69766371)",
+  "binary_sha256": "5f4aa9ab8e6b1cf3bf98f73cca35001211e28c2829215e97d9c2c927e5ae9047",
+  "backend": "ptrace",
+  "flags": ["--strict", "--verify", "--max-timeslice=disabled"],
+  "cpu": 0,
+  "timeout_seconds": 60,
+  "libunwind_dir": "/home/newton/.local/hermit-deps/lu/usr/lib64",
+  "scorecard_denominator": 67,
+  "host_readable": 67,
+  "verify_matched": 67,
+  "exact_stdout_matched": 67,
+  "nonempty": 67,
+  "timeouts": 0,
+  "guest_failures": 0,
+  "content_divergences": 0,
+  "guest_equals_host_snapshot": 7,
+  "guest_executions": 268,
+  "canonical_strict_control": {
+    "true_verified": false,
+    "proc_stat_verified": false,
+    "interpretation": "baseline-wide verifier divergence; no per-cell canonical claim"
+  },
+  "continuous_evolution": {
+    "proc_uptime_seconds": [126, 142],
+    "proc_self_stat_utime_stime": [[0, 0], [0, 0]]
+  },
+  "limitations": [
+    "ptrace backend only",
+    "internal positive records use the stripped verifier; exact stdout is compared independently",
+    "seven host snapshots equaled guest output but did not demonstrate native evolution",
+    "one representative path per ProcfsKind semantic class, not every instance of dynamic path families"
+  ]
 }
