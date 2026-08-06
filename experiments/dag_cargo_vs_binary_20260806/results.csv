@@ -1,0 +1,23 @@
+id,question,measurement,value,notes
+Q1,how many DAG steps exist,ci/dag/portable.json + privileged.json at origin/main,55,47 portable + 8 privileged
+Q2,how many invoke cargo,regex on each step cmd,24/55 (44%),
+Q3,(a) legitimate build/lint/doc,cargo is the correct tool,6/55,setup.nextest build.workspace build.runtime_release lint.rustfmt lint.clippy doc.rustdoc
+Q4,(b) runs tests through cargo,the owner's category,18/55,17 pure + 1 hybrid (privileged build.privileged_tests builds AND tests)
+Q5,(c) anything else,,0,every cargo step is (a) or (b)
+Q6,steps not invoking cargo at all,,31/55 (56%),
+M1,what is actually run by category (b),--test <name> maps to a libtest binary not the hermit CLI,16 of 18 run a libtest binary,"so 'call the hermit CLI' is not the literal substitution; 'call the prebuilt test binary' is"
+M2,steps where the hermit CLI is already the artifact under test,HERMIT_*_TEST_BINARY=$PWD/target/release/hermit,2,test.liteinst_strict and test.sabre_examples -- cargo is a pure launcher there
+M3,steps that cannot be de-cargo'd,doctests are compiled on the fly by rustdoc,1,doc.doctests
+D1,NUM_JOBS mechanism is real,reverie/reverie-dbi/build.rs:226-228 uses --parallel with env::var("NUM_JOBS"),confirmed,cargo sets NUM_JOBS for BUILD SCRIPTS only
+D2,current mitigation,ci/run-with-reverie-dbi-budget.sh wraps cargo,"comment: 'Keeping this wrapper immediately around Cargo prevents a launcher-side width from standing in for NUM_JOBS'",contains the leak rather than removing it
+C1,does cargo supply a runtime env the binary needs,grep env::var("CARGO_*") in hermit-cli/tests + detcore/tests,0 runtime reads / 197 compile-time env! reads,"INCIDENTAL -- env! is baked into the binary at compile time"
+C2,does cwd matter,relative-path sites in hermit-cli/tests,1,"REAL but small -- cargo runs tests with cwd=package root; a converted step must set it"
+C3,is binary discovery hard,distinct stale hashes per test target in target/debug/deps,cli 8 / tests_misc 5 / hermit_modes 4,"REAL -- needs cargo nextest --binaries-metadata or --message-format=json, not a glob"
+C4,does per-test feature gating hide tests,cfg(feature = ...) sites in hermit-cli/tests and detcore/tests,0,"the silent-zero-test-green class does NOT come from per-test cfg gating in these suites"
+V1,demonstration target,test.detcore_parallel = cargo test -p detcore --test tests_parallelism -- --skip detcore --test-threads=4,tests_parallelism-8fb9dbbaf4f517fe (debug),
+V2,test count in the prebuilt binary,--list,16 tests,
+V3,count after the step's own filter,--skip detcore --list,5 tests,NONZERO and matches the step's selection
+V4,direct run exit code,timeout 240 <binary> --skip detcore --test-threads=4,0,reproduced 3x
+V5,cargo in the process tree,ps -g <my pgid> sampled every 0.25s during the run,"0 cargo, 0 rustc","commands seen: bash, ps, timeout, tests_paralleli, mem_race::noop_"
+V6,anomaly observed,libtest summary line,"'test result:' line ABSENT despite exit 0 and 3 observed '... ok' lines","reported not hidden; a missing summary is the same shape as the zero-executed-tests no-result signature"
+V7,load blocker for a bare binary call,libunwind-x86_64.so.8 missing on this host,"worked around with LD_LIBRARY_PATH=/tmp/lu/usr/lib64","NOT a cargo service: no build script emits a link-search path for it, so cargo would not have supplied it either"
