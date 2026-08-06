@@ -1,0 +1,5 @@
+arm,cpuquota_requested,cpu_max_readback,scope_survives_main_exit,procs_in_scope,escapee_pct_of_one_core,alive_after_window,reaped,verdict
+no-quota,none,(no cpu.max file),yes,1,100.3,yes,no,LEAK: scope pinned by setsid escapee burning a full core
+with-quota,20%,20000 100000,yes,1,20.0,yes,no,THROTTLED NOT REAPED: quota works as a cap; process alive and scope still pinned
+no-quota-after-cgroup-kill,none,,no,0,,no,yes,REAPED: scope gone escapee dead
+with-quota-after-cgroup-kill,20%,,no,0,,no,yes,REAPED: scope gone escapee dead
