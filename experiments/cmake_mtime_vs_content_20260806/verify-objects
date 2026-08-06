@@ -1,0 +1,15 @@
+#!/bin/bash
+# Content-integrity gate for build outputs. Exit 1 and DELETE any object that is
+# empty, not ELF, or whose sha256 disagrees with its recorded sidecar.
+bad=0; checked=0
+for o in "$@"; do
+  [ -e "$o" ] || continue
+  checked=$((checked+1)); why=""
+  if [ ! -s "$o" ]; then why="EMPTY"
+  elif [ "$(head -c4 "$o" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then why="NOT-ELF"
+  elif [ -f "$o.sha256" ] && [ "$(sha256sum <"$o" | cut -d' ' -f1)" != "$(cat "$o.sha256")" ]; then why="HASH-MISMATCH"
+  fi
+  if [ -n "$why" ]; then echo "CORRUPT($why): $o -- deleting so the build rebuilds it"; rm -f "$o"; bad=$((bad+1)); fi
+done
+echo "verify-objects: checked=$checked corrupt=$bad"
+[ $bad -eq 0 ]

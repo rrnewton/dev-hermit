@@ -1,0 +1,16 @@
+id,question,setup,observation,verdict
+E0,does the replica build and run,"4 TU C++ project, CMake-generated Unix Makefiles rule shape (3 mtime prerequisites + .DELETE_ON_ERROR)","4 objects built; app links; prints 'ok 7 42'",baseline-green
+E1,does an unchanged incremental build skip,no change after E0,"0 of 4 rebuilt; SKIPPED 4 of 4; gmake -q rc=0 for all 4 objects",incremental-works
+E2,does make notice a truncated object,truncate -s 0 obj/scheduler_impl.cpp.o (mtime 20:21:35 > src 20:21:07),"gmake -q rc=0 (UP TO DATE); make does NOT recompile; link fails 'undefined reference to sched_t<int>::set_cur_input(int, int, bool)'",MTIME-ONLY-CONFIRMED
+E3,does touching the source still rebuild,touch scheduler_impl.cpp,"1 of 4 rebuilt; object restored to 1504 B; app runs",source-dep-intact
+E4a,does .DELETE_ON_ERROR fire on an ordinary failure,recipe writes 0 bytes then exits 1,"make rc=2; 'Deleting file' emitted; artifact DELETED",safeguard-works
+E4b,does it fire when the recipe self-SIGKILLs and make survives,recipe writes 0 bytes then kill -9 self,"make rc=2; 'Deleting file' emitted; artifact DELETED",safeguard-works
+E4c,does it fire when the whole process group is killed,setsid make; kill -9 -PGID mid-recipe,"make exit 137; no cleanup; artifact SURVIVES 0 B; gmake -q rc=0 afterwards",SAFEGUARD-DEFEATED
+E4d,what if the recipe succeeds having written 0 bytes,recipe writes 0 bytes and exits 0,"make rc=0; artifact SURVIVES 0 B",SAFEGUARD-NOT-APPLICABLE
+F1,does the content validator detect and heal,verify-objects over 5 objects with one truncated,"checked=5 corrupt=1 rc=1; corrupt object deleted; next build rebuilt exactly 1 of 4; app runs again",DETECT-OK
+F2,does the validator cause spurious rebuilds,verify-objects then build with no change,"checked=5 corrupt=0 rc=0; 0 of 4 rebuilt; SKIPPED 4 of 4; 'app is up to date'",NO-FALSE-REBUILD
+F3a,naive recipe under a mid-compile group kill,slow compiler writes -o target then sleeps; kill -9 -PGID,"make exit 137; target SURVIVES 0 B; gmake -q rc=0 => poisoned permanently",POISONED
+F3b,atomic launcher under the same group kill,same kill through cc-atomic (compile to .tmp then rename),"make exit 137; target ABSENT; 1 .tmp leftover; gmake -q rc=1 => make will rebuild",PREVENTED
+C1,cost of ELF-magic validation on the real tree,834 objects / 407.4 MiB in the live DynamoRIO build tree,wall 0.25 s (cpu 0.00u+0.09s),negligible
+C2,cost of full sha256 on the same objects,same 834 objects / 407.4 MiB,wall 0.51 s (cpu 0.30u+0.14s),negligible
+S1,live zero-byte sweep,"find over the whole parent workspace, 2026-08-06T03:16Z","101 zero-byte artifacts: 50 vendored vcpkg test fixtures, 47 rust rcgu.o, 3 hand-built scratch .o (2026-07-27), 1 CMake-produced libdrpoints.so (2026-08-04 11:44:50)",cluster-decayed-to-1
