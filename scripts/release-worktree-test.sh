@@ -13,6 +13,7 @@ case "$suite_root" in
   *) echo "unsafe temporary test root: $suite_root" >&2; exit 1 ;;
 esac
 live_pid=
+fence_pid=
 locked_proc_dir=
 cleanup() {
   if [[ -n ${locked_proc_dir:-} ]]; then
@@ -21,6 +22,10 @@ cleanup() {
   if [[ -n ${live_pid:-} ]] && kill -0 "$live_pid" 2>/dev/null; then
     kill "$live_pid"
     wait "$live_pid" 2>/dev/null || true
+  fi
+  if [[ -n ${fence_pid:-} ]] && kill -0 "$fence_pid" 2>/dev/null; then
+    kill "$fence_pid"
+    wait "$fence_pid" 2>/dev/null || true
   fi
   rm -rf -- "$suite_root"
 }
@@ -83,12 +88,84 @@ if [[ -n ${RELEASE_TEST_FORCE_ADMIN:-} ]] \
 fi
 if [[ -n ${RELEASE_TEST_REMOVE_RACE_TARGET:-} ]] \
     && [[ " $* " == *' worktree remove '* ]]; then
-  printf 'planted at worktree remove invocation\n' >"$RELEASE_TEST_REMOVE_RACE_TARGET"
+  remove_path=${*: -1}
+  printf 'planted at worktree remove invocation\n' \
+    >"$remove_path/$RELEASE_TEST_REMOVE_RACE_TARGET"
+fi
+if [[ -n ${RELEASE_TEST_FENCE_PROCESS_TARGET:-} ]] \
+    && [[ " $* " == *' worktree move '* ]] \
+    && [[ ! -e $RELEASE_TEST_FENCE_PROCESS_PID ]]; then
+  (cd "$RELEASE_TEST_FENCE_PROCESS_TARGET" && exec sleep 60) \
+    </dev/null >"$RELEASE_TEST_FENCE_PROCESS_LOG" 2>&1 &
+  process_pid=$!
+  printf '%s\n' "$process_pid" >"$RELEASE_TEST_FENCE_PROCESS_PID"
+  mkdir -p "$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/fd" \
+    "$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/map_files"
+  fenced_path=${*: -1}
+  ln -s "$fenced_path" "$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/cwd"
+  ln -s /bin/sleep "$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/exe"
+  ln -s / "$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/root"
+  : >"$RELEASE_TEST_FENCE_PROC_ROOT/$process_pid/maps"
+fi
+if [[ -n ${RELEASE_TEST_PODMAN_RACE_SOURCE:-} ]] \
+    && [[ " $* " == *' worktree move '* ]]; then
+  cp "$RELEASE_TEST_PODMAN_RACE_SOURCE" "$RELEASE_TEST_PODMAN_RACE_TARGET"
+fi
+if [[ -n ${RELEASE_TEST_CONTAINER_LOCK_PATH:-} ]] \
+    && [[ " $* " == *' worktree move '* ]]; then
+  exec {container_lock_fd}<>"$RELEASE_TEST_CONTAINER_LOCK_PATH"
+  if flock -n "$container_lock_fd"; then
+    printf 'acquired\n' >"$RELEASE_TEST_CONTAINER_LOCK_RESULT"
+    flock -u "$container_lock_fd"
+  else
+    printf 'blocked\n' >"$RELEASE_TEST_CONTAINER_LOCK_RESULT"
+  fi
+  exec {container_lock_fd}>&-
+fi
+if [[ ${RELEASE_TEST_FAKE_REMOVE_SUCCESS:-0} == 1 ]] \
+    && [[ " $* " == *' worktree remove '* ]]; then
+  printf 'zero-without-removal\n' >"$RELEASE_TEST_FAKE_REMOVE_RESULT"
+  exit 0
 fi
 exec "$RELEASE_TEST_REAL_GIT" "$@"
 SH
+cat >"$suite_root/bin/podman" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["RELEASE_TEST_PODMAN_STATE"])
+args = sys.argv[1:]
+if os.environ.get("RELEASE_TEST_PODMAN_FAIL") == "1":
+    print("planted podman authority failure", file=sys.stderr)
+    raise SystemExit(125)
+if os.environ.get("RELEASE_TEST_PODMAN_MALFORMED") == "1":
+    print("not-json")
+    raise SystemExit(0)
+containers = json.loads(state.read_text())
+if args[:3] == ["ps", "-a", "--format"]:
+    print(json.dumps(containers))
+elif args[:2] == ["container", "inspect"] and len(args) == 3:
+    if os.environ.get("RELEASE_TEST_PODMAN_INCOMPLETE") == "1":
+        print("[]")
+        raise SystemExit(0)
+    container = next((row for row in containers if row["Id"] == args[2]), None)
+    if container is None:
+        raise SystemExit(1)
+    print(json.dumps([{
+        "Id": container["Id"],
+        "Config": {"Labels": container.get("Labels")},
+        "Mounts": container.get("Mounts", []),
+    }]))
+else:
+    print(f"unsupported fake podman argv: {args}", file=sys.stderr)
+    raise SystemExit(2)
+PY
 chmod +x "$suite_root/bin/with-proxy"
 chmod +x "$suite_root/bin/git"
+chmod +x "$suite_root/bin/podman"
 export PATH="$suite_root/bin:$PATH"
 
 configure_repo() {
@@ -104,7 +181,12 @@ write_state() {
   "version": 3,
   "slots": {
     "$slot": {
-      "agents": [{"name": "fixture-$slot", "read_only": false}],
+      "agents": [{
+        "name": "fixture-$slot",
+        "read_only": false,
+        "tmux_pane_id": "%lease-$slot",
+        "cgroup_path": "/agent.slice/fixture-$slot.scope"
+      }],
       "hermit_branch": "$branch",
       "hermit_path": "$recorded_path",
       "reverie_branch": "-",
@@ -162,6 +244,7 @@ make_fixture() {
   output="$fixture_root/release.out"
 
   mkdir -p \
+    "$fixture_root/bin" \
     "$fixture_root/remotes" \
     "$fixture_root/reverie" \
     "$fixture_root/liteinst2" \
@@ -173,6 +256,8 @@ make_fixture() {
     "$fixture_root/unrelated"
   : >"$fixture_root/.gitmodules"
   cp "$script_dir/check-worktree-registry.rs" "$fixture_root/scripts/"
+  cp "$script_dir/agent-podman.rs" "$fixture_root/scripts/"
+  cp "$suite_root/bin/podman" "$fixture_root/bin/podman"
   printf 'must survive\n' >"$fixture_root/unrelated/sentinel.txt"
   cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
 {
@@ -182,6 +267,13 @@ make_fixture() {
 }
 JSON
   : >"$fixture_root/tmux-panes"
+  printf '[]\n' >"$fixture_root/podman.json"
+  cat >"$fixture_root/ignored/ci-hub/agent-containers.json" <<'JSON'
+{
+  "schema_version": 1,
+  "containers": {}
+}
+JSON
 
   local leaf_origin="$fixture_root/remotes/leaf.git"
   local leaf_seed="$fixture_root/leaf-seed"
@@ -240,6 +332,8 @@ run_release() {
     HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
     HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
     HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
+    HERMIT_RELEASE_TEST_PODMAN_BIN="$fixture_root/bin/podman" \
+    RELEASE_TEST_PODMAN_STATE="$fixture_root/podman.json" \
     "$@" "$script_dir/release-worktree.rs" --slot "$slot" --clean) \
     >"$output" 2>&1
 }
@@ -250,6 +344,8 @@ run_release_force() {
     HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
     HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
     HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
+    HERMIT_RELEASE_TEST_PODMAN_BIN="$fixture_root/bin/podman" \
+    RELEASE_TEST_PODMAN_STATE="$fixture_root/podman.json" \
     "$script_dir/release-worktree.rs" \
     --slot "$slot" --clean --force) >"$output" 2>&1
 }
@@ -262,6 +358,8 @@ run_release_recover() {
     HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
     HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
     HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
+    HERMIT_RELEASE_TEST_PODMAN_BIN="$fixture_root/bin/podman" \
+    RELEASE_TEST_PODMAN_STATE="$fixture_root/podman.json" \
     "$@" \
     "$script_dir/release-worktree.rs" \
     --slot "$slot" --clean --recover-submodule-cleanup) >"$output" 2>&1
@@ -310,6 +408,10 @@ assert_bad_owners_refused() {
 # POSITIVE: the outer repository plus two recursively initialized levels are
 # clean and exactly published. Production must enumerate and verify all three.
 make_fixture clean-submodule
+mkdir -p "$fixture_root/cgroup/agent.slice/fixture-clean-submodule.scope"
+: >"$fixture_root/cgroup/agent.slice/fixture-clean-submodule.scope/cgroup.procs"
+printf 'populated 0\nfrozen 0\n' \
+  >"$fixture_root/cgroup/agent.slice/fixture-clean-submodule.scope/cgroup.events"
 test -z "$(git -C "$target" status --porcelain)" \
   || fail 'positive parent fixture is dirty before release'
 test -z "$(git -C "$target/deps/nested" status --porcelain)" \
@@ -330,9 +432,12 @@ test "$leaf_head" = "$remote_leaf_head" \
   || fail 'positive recursively nested HEAD is not exactly published'
 clean_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
 transaction_result="$fixture_root/transaction-result"
+container_lock_result="$fixture_root/container-lock-result"
 if ! run_release clean-submodule \
     RELEASE_TEST_TRANSACTION_ADMIN="$clean_admin" \
-    RELEASE_TEST_TRANSACTION_RESULT="$transaction_result"; then
+    RELEASE_TEST_TRANSACTION_RESULT="$transaction_result" \
+    RELEASE_TEST_CONTAINER_LOCK_PATH="$fixture_root/ignored/ci-hub/agent-container-lifecycle.lock" \
+    RELEASE_TEST_CONTAINER_LOCK_RESULT="$container_lock_result"; then
   cat "$output" >&2
   fail 'clean, fully published parent+submodule worktree was refused'
 fi
@@ -340,6 +445,8 @@ grep -Fq 'verified 3 outer/nested repository HEAD(s) on origin' "$output" \
   || fail 'production did not report all three recursive repository proofs'
 grep -Fxq 'active-nonforce' "$transaction_result" \
   || fail 'positive cleanup did not carry its marker/quarantine into non-force removal'
+grep -Fxq 'blocked' "$container_lock_result" \
+  || fail 'path fence was not protected by the canonical container lifecycle lock'
 test ! -e "$clean_admin" \
   || fail 'successful cleanup left its worktree admin transaction behind'
 test ! -e "$target" || fail 'clean target path survived successful release'
@@ -425,6 +532,8 @@ if ! (cd "$fixture_root" && env \
     HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
     HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
     HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
+    HERMIT_RELEASE_TEST_PODMAN_BIN="$fixture_root/bin/podman" \
+    RELEASE_TEST_PODMAN_STATE="$fixture_root/podman.json" \
     RELEASE_TEST_FORCE_ADMIN="$force_admin" \
     RELEASE_TEST_FORCE_RESULT="$force_result" \
     "$script_dir/release-worktree.rs" --slot explicit-force --clean --force) \
@@ -530,7 +639,7 @@ remove_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
 test -d "$remove_admin/modules" \
   || fail 'remove-race fixture has no initialized submodule admin to quarantine'
 if run_release remove-boundary-race \
-    RELEASE_TEST_REMOVE_RACE_TARGET="$target/remove-raced.txt"; then
+    RELEASE_TEST_REMOVE_RACE_TARGET="remove-raced.txt"; then
   fail 'write planted at worktree remove invocation was deleted'
 fi
 grep -Fxq 'planted at worktree remove invocation' "$target/remove-raced.txt" \
@@ -544,6 +653,67 @@ test ! -e "$remove_admin/modules.release-worktree" \
 test -f "$remove_admin/release-worktree.in-progress" \
   || fail 'failed submodule cleanup lost its crash-recovery marker'
 assert_target_retained remove-boundary-race
+
+# GIT-SUCCESS POSTCONDITION NEGATIVE: exit zero is not removal authority. A
+# fake Git that reports success while retaining both the fenced path and its
+# registration must be observed, rolled back, and left journaled for recovery.
+make_fixture false-remove-success
+false_remove_result="$fixture_root/false-remove-result"
+if run_release false-remove-success \
+    RELEASE_TEST_FAKE_REMOVE_SUCCESS=1 \
+    RELEASE_TEST_FAKE_REMOVE_RESULT="$false_remove_result"; then
+  fail 'Git exit zero without removal authorized release'
+fi
+grep -Fxq 'zero-without-removal' "$false_remove_result" \
+  || fail 'false-success fixture did not intercept Git removal'
+grep -Fq 'Git removal postcondition failed for hermit' "$output" \
+  || fail 'release trusted Git exit zero without observing its postcondition'
+assert_target_retained false-remove-success
+
+# PATH-FENCE RACE NEGATIVE: a process acquires cwd after every preliminary
+# proof but immediately before Git atomically moves the target. Its live cwd
+# follows the moved inode, so the post-move scan must observe it and roll back.
+make_fixture path-fence-process-race
+fence_process_pid_file="$fixture_root/fence-process.pid"
+fence_process_log="$fixture_root/fence-process.log"
+if run_release path-fence-process-race \
+    RELEASE_TEST_FENCE_PROCESS_TARGET="$target" \
+    RELEASE_TEST_FENCE_PROCESS_PID="$fence_process_pid_file" \
+    RELEASE_TEST_FENCE_PROCESS_LOG="$fence_process_log" \
+    RELEASE_TEST_FENCE_PROC_ROOT="$fixture_root/proc"; then
+  fail 'process that acquired cwd at the path fence was deleted'
+fi
+fence_pid=$(cat "$fence_process_pid_file")
+kill -0 "$fence_pid" 2>/dev/null \
+  || fail 'path-fence release signaled a process it did not own'
+grep -Fq 'post-fence live process ownership' "$output" \
+  || fail 'post-move scan did not observe the racing cwd owner'
+kill "$fence_pid"
+wait "$fence_pid" 2>/dev/null || true
+fence_pid=
+assert_target_retained path-fence-process-race
+
+# PATH-FENCE PODMAN RACE NEGATIVE: an out-of-protocol container appears at the
+# move boundary after every preliminary Podman audit. The repeat audit over the
+# original and fenced paths must still retain it.
+make_fixture path-fence-podman-race
+cat >"$fixture_root/podman-race.json" <<JSON
+[{
+  "Id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "Names": ["fence-race-mount"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$target"}]
+}]
+JSON
+if run_release path-fence-podman-race \
+    RELEASE_TEST_PODMAN_RACE_SOURCE="$fixture_root/podman-race.json" \
+    RELEASE_TEST_PODMAN_RACE_TARGET="$fixture_root/podman.json"; then
+  fail 'container that acquired a bind at the path fence was deleted'
+fi
+grep -Fq 'target-overlapping-mount' "$output" \
+  || fail 'post-move Podman audit did not observe the racing target mount'
+assert_target_retained path-fence-podman-race
 
 # CRASH/RECOVERY BRACKET: production performs a real recursive deinit and exact
 # admin quarantine, then the fixture terminates before removal. Ordinary and
@@ -572,7 +742,7 @@ submodule_state="$(git -C "$target" submodule status deps/nested)"
 if run_release_force interrupted-deinit; then
   fail 'force consumed a real interrupted submodule-cleanup transaction'
 fi
-grep -Fq 'unfinished submodule cleanup artifact' "$output" \
+grep -Fq 'unfinished release journal' "$output" \
   || fail 'ordinary retry did not refuse the real interrupted transaction'
 assert_target_retained interrupted-deinit
 
@@ -590,6 +760,86 @@ grep -Fq 'verified 3 outer/nested repository HEAD(s) on origin' "$output" \
 grep -Fxq 'active-nonforce' "$recovery_transaction_result" \
   || fail 'recovered cleanup did not reach ordinary non-force removal'
 test ! -e "$target" || fail 'recovered target survived successful cleanup'
+assert_unrelated_survives
+
+# PATH-FENCE CRASH/RECOVERY: terminate after the canonical path has moved and
+# the Git registration plus exact journal marker bind the fenced nonce. Guarded
+# recovery must move it back, restore/reinitialize submodules, repeat proofs,
+# and reach a fresh fenced non-force removal.
+make_fixture interrupted-path-fence
+fence_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
+fence_crash_evidence="$fixture_root/post-path-fence-crash"
+: >"$fence_crash_evidence"
+if run_release interrupted-path-fence \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_PATH_FENCE="$fence_crash_evidence"; then
+  fail 'post-path-fence crash injection unexpectedly completed cleanup'
+fi
+grep -Fxq 'post-path-fence crash injected' "$fence_crash_evidence" \
+  || fail 'production did not reach the post-path-fence crash boundary'
+test ! -e "$target" \
+  || fail 'path-fence crash left the canonical target path published'
+fenced_paths=("$fixture_root/worktrees/interrupted-path-fence"/.hermit.release-worktree-*)
+if test "${#fenced_paths[@]}" -ne 1 || test ! -d "${fenced_paths[0]}"; then
+  fail 'path-fence crash did not retain one exact fenced target'
+fi
+grep -Fq '"status": "releasing"' "$fixture_root/worktree-state.json" \
+  || fail 'path-fence crash did not retain releasing registry state'
+test -f "$fence_admin/release-worktree.path-fence.json" \
+  || fail 'path-fence crash lost its exact path marker'
+if run_release_force interrupted-path-fence; then
+  fail 'force consumed an interrupted path-fence transaction'
+fi
+grep -Fq 'unfinished release journal' "$output" \
+  || fail 'ordinary retry did not refuse the path-fence journal'
+
+fence_recovery_result="$fixture_root/fence-recovery-transaction-result"
+if ! run_release_recover interrupted-path-fence \
+    RELEASE_TEST_TRANSACTION_ADMIN="$fence_admin" \
+    RELEASE_TEST_TRANSACTION_RESULT="$fence_recovery_result"; then
+  cat "$output" >&2
+  fail 'guarded path-fence recovery could not re-prove and remove the target'
+fi
+grep -Fq 'recovered path-acquisition fence' "$output" \
+  || fail 'guarded recovery did not report the restored path fence'
+grep -Fq 'recovered interrupted submodule cleanup' "$output" \
+  || fail 'guarded path recovery did not restore recursive submodule state'
+grep -Fxq 'active-nonforce' "$fence_recovery_result" \
+  || fail 'path-fence recovery did not reach fresh ordinary non-force removal'
+test ! -e "$target" || fail 'path-fence recovered target survived cleanup'
+assert_unrelated_survives
+
+# COMPLETED-REMOVE CRASH/RECOVERY: Git can remove the fenced worktree before
+# the registry journal is advanced. Recovery may accept the absent paths only
+# after proving that Git's own worktree registry also contains neither path.
+make_fixture interrupted-after-remove
+remove_crash_evidence="$fixture_root/post-git-remove-crash"
+: >"$remove_crash_evidence"
+if run_release interrupted-after-remove \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_GIT_REMOVE="$remove_crash_evidence"; then
+  fail 'post-Git-remove crash injection unexpectedly completed cleanup'
+fi
+grep -Fxq 'post-git-remove crash injected' "$remove_crash_evidence" \
+  || fail 'production did not reach the post-Git-remove crash boundary'
+test ! -e "$target" \
+  || fail 'post-Git-remove crash retained the canonical target'
+grep -Fq '"status": "releasing"' "$fixture_root/worktree-state.json" \
+  || fail 'post-Git-remove crash did not retain its release journal'
+if run_release interrupted-after-remove; then
+  fail 'ordinary retry consumed a completed-remove journal'
+fi
+grep -Fq 'unfinished release journal' "$output" \
+  || fail 'ordinary retry did not refuse the completed-remove journal'
+if ! run_release_recover interrupted-after-remove; then
+  cat "$output" >&2
+  fail 'guarded recovery did not reconcile the completed Git removal'
+fi
+grep -Fq 'recovered completed Git removal for hermit' "$output" \
+  || fail 'completed-remove recovery did not report its Git registration proof'
+test -e "$fixture_root/worktree-state.json" \
+  || fail 'completed-remove recovery unexpectedly removed the registry file'
+if grep -Fq 'interrupted-after-remove' "$fixture_root/worktree-state.json"; then
+  fail 'completed-remove recovery retained the released slot record'
+fi
 assert_unrelated_survives
 
 # REVIEW FIXTURE 4: the registered state key points at a symlink alias of an
@@ -677,11 +927,12 @@ cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
   "agents": [{
     "name": "fixture-recorded-live-owner",
     "status": "working",
-    "tmux_pane_id": "%42"
+    "tmux_pane_id": "%lease-recorded-live-owner"
   }]
 }
 JSON
-printf 'fixture-recorded-live-owner\t%%42\t424242\n' >"$fixture_root/tmux-panes"
+printf 'fixture-recorded-live-owner\t%%lease-recorded-live-owner\t424242\n' \
+  >"$fixture_root/tmux-panes"
 mkdir -p \
   "$fixture_root/proc/424242" \
   "$fixture_root/cgroup/agent.slice/fixture-recorded-live-owner.scope"
@@ -689,16 +940,167 @@ printf '0::/agent.slice/fixture-recorded-live-owner.scope\n' \
   >"$fixture_root/proc/424242/cgroup"
 printf '424242\n' \
   >"$fixture_root/cgroup/agent.slice/fixture-recorded-live-owner.scope/cgroup.procs"
+printf 'populated 1\nfrozen 0\n' \
+  >"$fixture_root/cgroup/agent.slice/fixture-recorded-live-owner.scope/cgroup.events"
 printf 'DG_AGENT_NAME=fixture-recorded-live-owner\0' \
   >"$fixture_root/proc/424242/environ"
 if run_release_force recorded-live-owner; then
   fail 'exact live recorded-owner lease authorized worktree deletion'
 fi
-grep -Fq "recorded owner 'fixture-recorded-live-owner' remains live in pane %42" "$output" \
+grep -Fq "recorded owner 'fixture-recorded-live-owner' remains live in pane %lease-recorded-live-owner" "$output" \
   || fail 'live recorded owner did not bind to its exact pane and cgroup lease'
 grep -Fq 'cgroup /agent.slice/fixture-recorded-live-owner.scope, members=1' "$output" \
   || fail 'live recorded owner refusal omitted its nonempty cgroup lease'
 assert_target_retained recorded-live-owner
+
+# LEASED-PANE NEGATIVE: a terminal snapshot may omit its pane and the tmux
+# window may have been renamed. The durable pane lease itself must still veto
+# cleanup; checking only the current window name would lose the incarnation.
+make_fixture terminal-renamed-pane
+cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
+{
+  "schema_version": 1,
+  "captured_at": $(date +%s),
+  "agents": [{
+    "name": "fixture-terminal-renamed-pane",
+    "status": "terminated"
+  }]
+}
+JSON
+printf 'renamed-window\t%%lease-terminal-renamed-pane\t434343\n' \
+  >"$fixture_root/tmux-panes"
+if run_release_force terminal-renamed-pane; then
+  fail 'renamed durable pane lease authorized worktree deletion'
+fi
+grep -Fq 'leased tmux pane %lease-terminal-renamed-pane remains under another window identity' "$output" \
+  || fail 'terminal owner proof did not check its durable pane identity directly'
+assert_target_retained terminal-renamed-pane
+
+# CONTAINER-OWNER NEGATIVE: ORC and tmux report the recorded owner absent, but
+# its managed retained container still exists without any target mount. The
+# canonical Podman authority, not a correlated process scan, must refuse it.
+make_fixture recorded-owner-container
+cat >"$fixture_root/podman.json" <<JSON
+[{
+  "Id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "Names": ["recorded-owner-container"],
+  "State": "stopped",
+  "Labels": {
+    "io.dev-hermit.agent-podman": "v1",
+    "io.dev-hermit.owner-agent": "fixture-recorded-owner-container",
+    "io.dev-hermit.owner-invocation": "retired-invocation",
+    "io.dev-hermit.owner-pane": "%retired",
+    "io.dev-hermit.owner-task": "fixture-recorded-owner-container",
+    "io.dev-hermit.lifetime": "task"
+  },
+  "Mounts": []
+}]
+JSON
+cat >"$fixture_root/ignored/ci-hub/agent-containers.json" <<JSON
+{
+  "schema_version": 1,
+  "containers": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+      "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "owner_agent": "fixture-recorded-owner-container",
+      "owner_invocation": "retired-invocation",
+      "owner_pane": "%retired",
+      "task": "fixture-recorded-owner-container",
+      "lifetime": "task",
+      "updated_at": 1
+    }
+  }
+}
+JSON
+if run_release recorded-owner-container; then
+  fail 'ORC-absent recorded-owner container authorized deletion'
+fi
+grep -Fq 'recorded-owner-container' "$output" \
+  || fail 'recorded-owner container refusal was not bound to Podman evidence'
+assert_target_retained recorded-owner-container
+
+# CONTAINER-MOUNT NEGATIVE: an unmanaged container owned by nobody in the slot
+# still holds an ancestor bind mount. Effective mount overlap alone must refuse.
+make_fixture unmanaged-target-mount
+cat >"$fixture_root/podman.json" <<JSON
+[{
+  "Id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "Names": ["unmanaged-target-mount"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$fixture_root/worktrees/unmanaged-target-mount"}]
+}]
+JSON
+if run_release unmanaged-target-mount; then
+  fail 'unmanaged target-mounted container authorized deletion'
+fi
+grep -Fq 'target-overlapping-mount' "$output" \
+  || fail 'target-mounted container refusal omitted effective mount evidence'
+assert_target_retained unmanaged-target-mount
+
+# CONTAINER-AUTHORITY NEGATIVES: absence is not established by a failed,
+# malformed, or incomplete engine query.
+make_fixture podman-unavailable
+if run_release podman-unavailable RELEASE_TEST_PODMAN_FAIL=1; then
+  fail 'unavailable Podman authority authorized deletion'
+fi
+grep -Fq 'planted podman authority failure' "$output" \
+  || fail 'Podman authority failure did not fail closed'
+assert_target_retained podman-unavailable
+
+make_fixture podman-malformed
+if run_release podman-malformed RELEASE_TEST_PODMAN_MALFORMED=1; then
+  fail 'malformed Podman authority authorized deletion'
+fi
+grep -Fq 'parse podman ps JSON' "$output" \
+  || fail 'malformed Podman authority did not fail closed'
+assert_target_retained podman-malformed
+
+make_fixture podman-incomplete
+cat >"$fixture_root/podman.json" <<JSON
+[{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Names":["incomplete"],"State":"running","Labels":null,"Mounts":[]}]
+JSON
+if run_release podman-incomplete RELEASE_TEST_PODMAN_INCOMPLETE=1; then
+  fail 'incomplete Podman inspect authorized deletion'
+fi
+grep -Fq 'podman inspect returned 0 rows' "$output" \
+  || fail 'incomplete Podman inspection did not fail closed'
+assert_target_retained podman-incomplete
+
+# OWNER-LEASE NEGATIVES: legacy state without an exact lease cannot authorize
+# cleanup, and an empty direct cgroup.procs is irrelevant when descendants keep
+# the recorded subtree populated.
+make_fixture owner-lease-missing
+python3 - "$fixture_root/worktree-state.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+owner = next(iter(state["slots"].values()))["agents"][0]
+owner.pop("tmux_pane_id")
+owner.pop("cgroup_path")
+path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+if run_release owner-lease-missing; then
+  fail 'legacy owner without pane/cgroup lease authorized deletion'
+fi
+grep -Fq 'lacks tmux_pane_id lease data' "$output" \
+  || fail 'legacy owner lease refusal omitted migration instruction'
+assert_target_retained owner-lease-missing
+
+make_fixture owner-subtree-populated
+mkdir -p "$fixture_root/cgroup/agent.slice/fixture-owner-subtree-populated.scope"
+: >"$fixture_root/cgroup/agent.slice/fixture-owner-subtree-populated.scope/cgroup.procs"
+printf 'populated 1\nfrozen 0\n' \
+  >"$fixture_root/cgroup/agent.slice/fixture-owner-subtree-populated.scope/cgroup.events"
+if run_release owner-subtree-populated; then
+  fail 'populated owner cgroup subtree authorized deletion'
+fi
+grep -Fq 'retains populated cgroup subtree' "$output" \
+  || fail 'descendant-populated owner lease was not observed through cgroup.events'
+assert_target_retained owner-subtree-populated
 
 # TARGET-REFERENCE NEGATIVE: cwd/exe/root/maps are all unrelated, while one
 # readable open file descriptor alone references the target. It must refuse.
@@ -794,6 +1196,15 @@ printf '525252\n' \
   >"$fixture_root/cgroup/system.slice/protected-systemd.service/cgroup.procs"
 : >"$protected_pid_dir/maps"
 chmod 000 "$locked_proc_dir"
+cat >"$fixture_root/podman.json" <<JSON
+[{
+  "Id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "Names": ["unrelated-container"],
+  "State": "running",
+  "Labels": null,
+  "Mounts": [{"Source": "$fixture_root/unrelated"}]
+}]
+JSON
 if ls -A "$locked_proc_dir" >/dev/null 2>&1; then
   chmod 700 "$locked_proc_dir"
   locked_proc_dir=
@@ -821,4 +1232,4 @@ grep -Fq "invalid slot name: '../valid-token'" "$output" \
   || fail 'invalid slot token did not reach the token guard'
 assert_target_retained valid-token
 
-echo 'release-worktree-test: PASS (27 fixtures: 5 clean/locked/recovered/explicit-force/protected-unrelated removals; 23 planted refusals; unrelated path+worktree survived)'
+echo 'release-worktree-test: PASS (40 fixtures: 7 clean/locked/recovered/explicit-force/protected-unrelated removals; 38 planted refusals; unrelated path+worktree survived)'

@@ -125,4 +125,47 @@ grep -Fq '"hermit_branch": "correct-71"' "$root/worktree-state.json" \
 grep -Fq 'repair: 0 branch cells needed reconciliation' "$root/repair2.out" \
   || { echo "FAIL: repair is not idempotent" >&2; cat "$root/repair2.out" >&2; exit 1; }
 
-echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved; CONTROL: 1/1 correct row untouched; human content preserved; idempotent)"
+# --- RELEASE-JOURNAL ISOLATION: a fenced checkout is intentionally absent at
+# its canonical path. Neither repair nor ordinary re-adoption may translate
+# that transient absence into branch="-" or status=active.
+fenced="$root/worktrees/ok71/.hermit.release-worktree-123-456"
+mv "$root/worktrees/ok71/hermit" "$fenced"
+python3 - "$root/worktree-state.json" "$fenced" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+state = json.loads(state_path.read_text())
+record = state["slots"]["ok71"]
+record["status"] = "releasing"
+record["release_journal"] = {
+    "schema_version": 1,
+    "label": "hermit",
+    "original": str(state_path.parent / "worktrees/ok71/hermit"),
+    "fenced": sys.argv[2],
+}
+state_path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+journal_hash=$(sha256sum "$root/worktree-state.json")
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) \
+    >"$root/releasing-repair.out" 2>&1; then
+  echo 'FAIL: repair consumed an unfinished release journal' >&2; exit 1
+fi
+grep -Fq 'REFUSING repair while slot release transaction(s) require guarded recovery: ok71' \
+  "$root/releasing-repair.out" \
+  || { echo 'FAIL: repair did not identify the journaled slot' >&2; cat "$root/releasing-repair.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
+  || { echo 'FAIL: refused repair mutated the release journal' >&2; exit 1; }
+
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-71 --slot ok71 --task task-71 --product hermit) \
+    >"$root/releasing-adopt.out" 2>&1; then
+  echo 'FAIL: re-adoption consumed an unfinished release journal' >&2; exit 1
+fi
+grep -Fq 'slot ok71 has an unfinished release transaction' "$root/releasing-adopt.out" \
+  || { echo 'FAIL: re-adoption did not refuse the journaled slot' >&2; cat "$root/releasing-adopt.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
+  || { echo 'FAIL: refused re-adoption mutated the release journal' >&2; exit 1; }
+
+echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved; CONTROL: 1/1 correct row untouched; release journal isolated from repair/re-adoption; human content preserved; idempotent)"

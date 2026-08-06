@@ -27,7 +27,7 @@
 use fs2::FileExt;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command};
 
 /// Workspace homeostasis caps. Disk is the primary advisory (expressed in GB);
@@ -98,6 +98,8 @@ Policy:
   * One mutating owner per slot; a second mutating agent is refused.
   * One slot per agent; if the agent already owns a different slot, refused.
   * Read-mostly agents may share and are recorded as such.
+  * After an owner starts or is replaced, re-run the same allocation to adopt
+    its exact pane/cgroup lease; release refuses legacy or unbound ownership.
 
 Examples:
   ./scripts/allocate-worktree.rs --agent hermit-kvm --task impl-kvm-ratchet
@@ -540,6 +542,26 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
         .map(|s| s.keys().cloned().collect())
         .unwrap_or_default();
 
+    let releasing: Vec<&String> = slot_names
+        .iter()
+        .filter(|slot| {
+            let record = &state["slots"][*slot];
+            record["status"].as_str() == Some("releasing")
+                || record.get("release_journal").is_some()
+        })
+        .collect();
+    if !releasing.is_empty() {
+        eprintln!(
+            "REFUSING repair while slot release transaction(s) require guarded recovery: {}",
+            releasing
+                .iter()
+                .map(|slot| slot.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        exit(1);
+    }
+
     let mut changed = 0usize;
     let mut skipped = 0usize;
     for slot in &slot_names {
@@ -607,6 +629,127 @@ fn valid_slot(name: &str) -> bool {
             .next()
             .map(|c| c.is_ascii_alphanumeric())
             .unwrap_or(false)
+}
+
+/// Capture the exact live pane and unified cgroup that own an agent name.  A
+/// newly provisioned slot may precede agent startup; in that case allocation
+/// succeeds but release remains fail-closed until the coordinator re-runs this
+/// allocator adoption after the owner is live.
+fn observe_owner_lease(root: &Path, agent: &str) -> Result<(String, String), String> {
+    let snapshot_path = root.join("ignored/ci-hub/agent-snapshot.json");
+    let raw = fs::read_to_string(&snapshot_path)
+        .map_err(|error| format!("read {}: {error}", snapshot_path.display()))?;
+    let snapshot: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("parse {}: {error}", snapshot_path.display()))?;
+    if snapshot["schema_version"].as_u64() != Some(1) {
+        return Err("owner snapshot has unsupported schema".to_string());
+    }
+    let captured = snapshot["captured_at"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| "owner snapshot has invalid captured_at".to_string())?;
+    let age = epoch_now() as f64 - captured;
+    if !(0.0..=600.0).contains(&age) {
+        return Err(format!(
+            "owner snapshot is not fresh (age={}s)",
+            age.max(0.0) as i64
+        ));
+    }
+    let agents = snapshot["agents"]
+        .as_array()
+        .ok_or_else(|| "owner snapshot agents is not an array".to_string())?;
+    let matches: Vec<&Value> = agents
+        .iter()
+        .filter(|entry| entry["name"].as_str() == Some(agent))
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "owner snapshot resolves agent '{agent}' {} times",
+            matches.len()
+        ));
+    }
+    let entry = matches[0];
+    let status = entry["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "closed"
+            | "crashed"
+            | "dead"
+            | "disconnected"
+            | "error"
+            | "exited"
+            | "failed"
+            | "retired"
+            | "terminated"
+            | "unreachable"
+            | "unresponsive"
+    ) {
+        return Err(format!("owner '{agent}' is terminal in the fresh snapshot"));
+    }
+    let pane = entry["tmux_pane_id"]
+        .as_str()
+        .filter(|pane| pane.starts_with('%') && !pane.chars().any(char::is_whitespace))
+        .ok_or_else(|| format!("owner '{agent}' has no valid tmux pane identity"))?;
+    let output = Command::new("tmux")
+        .args(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}"])
+        .output()
+        .map_err(|error| format!("tmux pane query unavailable: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tmux pane query failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(candidate, _)| *candidate == pane)
+        .map(|(_, pid)| {
+            pid.parse::<u32>()
+                .map_err(|_| format!("tmux pane {pane} has invalid pid '{pid}'"))
+        })
+        .collect::<Result<_, _>>()?;
+    if pids.len() != 1 {
+        return Err(format!("tmux pane {pane} resolves {} times", pids.len()));
+    }
+    let cgroup_text = fs::read_to_string(format!("/proc/{}/cgroup", pids[0]))
+        .map_err(|error| format!("read pane {pane} cgroup: {error}"))?;
+    let groups: Vec<&str> = cgroup_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("0::"))
+        .collect();
+    if groups.len() != 1 || groups[0] == "/" || !groups[0].starts_with('/') {
+        return Err(format!("pane {pane} has no non-root unified cgroup"));
+    }
+    let relative = Path::new(groups[0].trim_start_matches('/'));
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("pane {pane} cgroup is not normalized"));
+    }
+    Ok((pane.to_string(), groups[0].to_string()))
+}
+
+fn apply_observed_owner_lease(owner: &mut Value, observed: &Result<(String, String), String>) {
+    match observed {
+        Ok((pane, cgroup)) => {
+            owner["tmux_pane_id"] = json!(pane);
+            owner["cgroup_path"] = json!(cgroup);
+        }
+        Err(_) => {
+            // An adoption attempt that cannot bind the current exact owner
+            // invalidates any prior incarnation's lease.
+            if let Some(owner) = owner.as_object_mut() {
+                owner.remove("tmux_pane_id");
+                owner.remove("cgroup_path");
+            }
+        }
+    }
 }
 
 fn next_free_slot(root: &Path, state: &Value) -> String {
@@ -786,6 +929,15 @@ fn main() {
             "invalid slot name: '{slot}' (expected [a-z0-9-]+ or slotNN)"
         ));
     }
+    if let Some(existing) = state["slots"].get(&slot) {
+        if existing["status"].as_str() == Some("releasing")
+            || existing.get("release_journal").is_some()
+        {
+            die(&format!(
+                "slot {slot} has an unfinished release transaction; run release-worktree.rs --clean --recover-submodule-cleanup before allocation or re-adoption"
+            ));
+        }
+    }
 
     // 1-1 mapping: refuse if this mutating agent already owns a different slot.
     if !read_mostly {
@@ -869,6 +1021,17 @@ fn main() {
         );
     }
 
+    // Bind an adoption to the exact live pane/cgroup when the owner already
+    // exists. Initial provisioning often precedes agent startup; that remains
+    // usable, but cleanup is intentionally unavailable until this command is
+    // re-run after the owner is live and the lease can be recorded.
+    let observed_owner_lease = observe_owner_lease(&root, &agent);
+    if let Err(error) = &observed_owner_lease {
+        eprintln!(
+            "⚠  owner lease for '{agent}' was not refreshed: {error}. Re-run this exact allocation/adoption after the owner is live; release will refuse legacy/unbound ownership."
+        );
+    }
+
     // Merge/append this agent into the slot record.
     let now = now_iso();
     let entry = state["slots"]
@@ -929,8 +1092,11 @@ fn main() {
         if !task.is_empty() {
             a["task"] = json!(task.clone());
         }
+        apply_observed_owner_lease(a, &observed_owner_lease);
     } else {
-        agents.push(json!({ "name": agent, "read_only": read_mostly, "task": task }));
+        let mut owner = json!({ "name": agent, "read_only": read_mostly, "task": task });
+        apply_observed_owner_lease(&mut owner, &observed_owner_lease);
+        agents.push(owner);
     }
 
     save_state(&root, &mut state);
@@ -947,5 +1113,39 @@ fn main() {
             "  note: hermit worktree is DETACHED. Create a feature branch before editing:\n\
              \r        git -C worktrees/{slot}/hermit switch -c <branch> origin/main"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_adoption_invalidates_prior_incarnation_lease() {
+        let mut owner = json!({
+            "name": "hermit-kvm",
+            "read_only": false,
+            "tmux_pane_id": "%old",
+            "cgroup_path": "/agent.slice/old.scope"
+        });
+        apply_observed_owner_lease(&mut owner, &Err("snapshot unavailable".to_string()));
+        assert!(owner.get("tmux_pane_id").is_none());
+        assert!(owner.get("cgroup_path").is_none());
+    }
+
+    #[test]
+    fn successful_adoption_replaces_prior_incarnation_lease() {
+        let mut owner = json!({
+            "name": "hermit-kvm",
+            "read_only": false,
+            "tmux_pane_id": "%old",
+            "cgroup_path": "/agent.slice/old.scope"
+        });
+        apply_observed_owner_lease(
+            &mut owner,
+            &Ok(("%new".to_string(), "/agent.slice/new.scope".to_string())),
+        );
+        assert_eq!(owner["tmux_pane_id"], "%new");
+        assert_eq!(owner["cgroup_path"], "/agent.slice/new.scope");
     }
 }
