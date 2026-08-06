@@ -4,7 +4,12 @@
 **Bound to:** hermit `f89c69766371806d3c9b2c3003531df2d59d6118` (clean worktree build, no `-dirty`),
 reverie cargo pin `9470712afa9b421c72850ab7955fb335692e43a0`. **Host:** devbig014. **Local, no egress.**
 **Full experiment (harness, guests, all CSVs, reproduction):**
-`experiments/fork-exec-process-tree-determinism_20260806/`. **Gap filed:** `sysinfo_2_writes_uninitialized`.
+`experiments/fork-exec-process-tree-determinism_20260806/`. **Gap filed:** `sysinfo_2_writes_uninitialized`,
+now owned by **hermit-det2**, who is carrying the fix in
+`experiments/sysinfo-padding-uninitialized_20260806/`. Their independent analysis reaches the same two
+padding windows (82..88, 108..112) and goes further into the reverie side
+(`reverie-memory/src/lib.rs:139` `write_value` copying `size_of::<T>()` raw bytes via
+`from_raw_parts`); read their task notes for the fix, this note for the discovery evidence.
 
 This note carries the two findings that are *not* about fork/exec and therefore outlive the sweep that
 found them. The process-tree result itself lives in the experiment README.
