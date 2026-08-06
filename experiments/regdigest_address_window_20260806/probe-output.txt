@@ -1,0 +1,24 @@
+== reproduce the module's own advertised properties ==
+  address-only diff (shifted backend)                  equal=true  want=true  as-designed
+  non-address value diff (42 vs 43)                    equal=false want=false as-designed
+  aliasing change (two regs share an addr vs not)      equal=false want=false as-designed
+  appearance-order change                              equal=true  want=true  as-designed
+
+== the is_address() PROXY: non-pointer values inside the VA window ==
+  HOLE-1 read() count 4096 vs 8192 in rdx              equal=true  want=false ** UNEXPECTED **
+      A: rdi=v3 rsi=a1 rdx=a2
+      B: rdi=v3 rsi=a1 rdx=a2
+  HOLE-2 lseek offset 65536 vs 131072 in rsi           equal=true  want=false ** UNEXPECTED **
+      A: rdi=v3 rsi=a1
+      B: rdi=v3 rsi=a1
+  HOLE-3 timestamp-ish value 1_700_000_000 vs +1       equal=true  want=false ** UNEXPECTED **
+      A: r12=a1
+      B: r12=a1
+  CONTROL just below the window: 4095 vs 4094          equal=false want=false as-designed
+  CONTROL negative -1 (above VA_MAX) vs -2             equal=false want=false as-designed
+
+== the test fixture's own boundary: marker in %r15 (callee-saved) ==
+  AS SHIPPED  r15 marker 101 vs 202 (below 0x1000)     equal=false want=false as-designed
+  PLANT       r15 marker 0x1000+101 vs 0x1000+202      equal=true  want=false ** UNEXPECTED **
+      A: r15=a1 rip=a2
+      B: r15=a1 rip=a2
