@@ -1,0 +1,9 @@
+getrandom(2)           63b091c267b3dc6712ab376880e4f387
+/dev/urandom           2972bb044d96df2871ba034c95de2770
+/dev/random            2972bb044d96df2871ba034c95de2770
+AT_RANDOM(auxv)        a2cd18d300537a5cb083dc48dbfa0ef2
+RDRAND                 f304dc18ac4ca8d4
+arc4random             <not in this libc>
+getentropy(3)          7c2e57e8739e284b622a35093a91226c
+/proc/uuid             66303930333837622d386437322d346534322d383938622d383837316539316634303765
+ASLR(varies?)          stack=65534 heap=1030

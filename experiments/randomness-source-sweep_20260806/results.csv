@@ -1,0 +1,10 @@
+source,mechanism,native_varies,hermit_strict_double_run,determinized,notes
+getrandom(2),syscall intercepted -> seeded per-thread PRNG,yes,identical,yes,detcore/src/syscalls/misc.rs handle_getrandom -> fill_random_bytes
+/dev/urandom,file read intercepted -> canonical device stream,yes,identical,yes,fill_random_device_bytes keyed on config().rng_seed()
+/dev/random,file read intercepted -> same canonical stream,yes,identical,yes,returns the SAME bytes as /dev/urandom (one shared stream)
+AT_RANDOM(auxv),rewritten at post_exec,yes,identical,yes,detcore/src/lib.rs:1344 guest.auxv().at_random()
+RDRAND,CPUID feature bit MASKED OFF (instruction NOT trapped),yes,identical (bit clear so insn never runs),NO - hidden not determinized,see gap: CPUID-ignoring code still gets raw hardware entropy
+getentropy(3),glibc wrapper over getrandom,yes,identical,yes,transitively covered
+arc4random,absent from this libc,n/a,n/a,untested here,glibc < 2.36 on this host
+/proc/sys/kernel/random/uuid,procfs read intercepted,yes,identical,yes,
+ASLR (stack/heap layout),address-space layout,yes (stack),identical,yes,stack offset constant under hermit

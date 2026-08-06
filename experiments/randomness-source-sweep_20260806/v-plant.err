@@ -1,0 +1,25 @@
+:: Run1...
+:: Run2...
+Mismatch in stdout between run 1 and run 2:
+  getrandom(2)           63b091c267b3dc6712ab376880e4f387
+  /dev/urandom           2972bb044d96df2871ba034c95de2770
+  /dev/random            2972bb044d96df2871ba034c95de2770
+  AT_RANDOM(auxv)        a2cd18d300537a5cb083dc48dbfa0ef2
+- RDRAND                 8c60033e2e6cf45f
++ RDRAND                 001930583856c3a2
+  arc4random             <not in this libc>
+  getentropy(3)          7c2e57e8739e284b622a35093a91226c
+  /proc/uuid             66303930333837622d386437322d346534322d383938622d383837316539316634303765
+  ASLR(varies?)          stack=65534 heap=1030
+  
+:: Comparing logs... /tmp/run1_log_CJ6Su and /tmp/run2_log_ksPX4
+Logs contain 507 | 507 messages total
+Logs contain 379 | 379 detcore-specific messages
+Logs contain 138 | 138 INFO messages
+Logs contain 318 | 318 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+Done processing logs, no substantive differences found (318 | 318 DETLOG messages compared).
+:: Failure: nondeterministic.
+Error: Mismatch between run 1 and run 2 outputs (logs retained).
