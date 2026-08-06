@@ -1,0 +1,7 @@
+test,guest,info_verdict,info_ptrace_msgs,info_dbi_msgs,stack_verdict,heap_verdict,dbi_log_source
+true,/bin/true,DIVERGE,166,1,DIVERGE,NO-RESULT (no records either side),stderr (GAP-1)
+echo,/bin/echo hello,DIVERGE,194,1,DIVERGE,NO-RESULT (records on one side only),stderr (GAP-1)
+pwd,/bin/pwd,DIVERGE,198,1,DIVERGE,NO-RESULT (records on one side only),stderr (GAP-1)
+date-utc,/bin/date -u +%Y,DIVERGE,203,1,DIVERGE,NO-RESULT (records on one side only),stderr (GAP-1)
+head-etc-hostname,/usr/bin/head -c 16 /etc/hostname,DIVERGE,208,1,DIVERGE,NO-RESULT (records on one side only),stderr (GAP-1)
+wc-self,/usr/bin/wc -c /bin/true,DIVERGE,208,1,DIVERGE,NO-RESULT (records on one side only),stderr (GAP-1)
