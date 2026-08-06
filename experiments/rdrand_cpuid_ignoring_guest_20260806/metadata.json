@@ -1,0 +1,22 @@
+{
+  "experiment": "rdrand_cpuid_ignoring_guest_20260806",
+  "question": "Is RDRAND determinized under hermit, or only hidden by CPUID masking? What does a guest that executes it without consulting CPUID observe?",
+  "date_utc": "2026-08-06",
+  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "binary": "debug build of hermit at the above SHA, ptrace backend",
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "guest_build": "cc -O1 -mrdrnd",
+  "commands": [
+    "hermit run --strict -- rdrand_direct        (x3)",
+    "hermit run --strict --verify -- rdrand_direct",
+    "hermit run --strict --verify -- rd_silent"
+  ],
+  "answer": "Only hidden. Detcore's sole RDRAND handling is the CPUID mask in detcore/src/cpuid.rs; there is no instruction-level determinization. A guest that ignores CPUID reads host entropy under --strict (3 distinct values in 3 runs). --verify catches it only when the value reaches stdout; when consumed internally, --verify returns 0 and the DETLOG/INFO traces are byte-identical.",
+  "not_established": [
+    "Whether masking-only is the intended product boundary or a gap -- that is an owner call.",
+    "The silent-consumer case under --verify-strict: that mode timed out on this host (known verify-hang), so plain --verify was used.",
+    "Non-ptrace backends were not measured for this surface."
+  ]
+}

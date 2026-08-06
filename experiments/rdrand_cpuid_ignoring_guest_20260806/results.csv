@@ -1,0 +1,6 @@
+leg,case,mode,runs,observation,verdict
+leg1-nonvacuity,rdrand_direct,native,3,"323a6df9d388f113 / e7c1fe5f24011ba3 / a08b0e433c286bf3 (3 distinct)",probe can fail
+leg2-contract,rdrand_direct,hermit --strict,3,"c264466c39155c08 / 0fb6e03e202a3ac3 / 321d49467d7f2747 (3 distinct)",CONTRACT VIOLATED
+leg2-contract,rdrand_direct,hermit --strict --verify,1,"stdout mismatch; DETLOG 318|318 identical; INFO 153|153 identical; rc=1",caught only via stdout
+leg2-contract,rd_silent,hermit --strict --verify,1,"rc=0 -- reported deterministic",INVISIBLE
+leg3-control,random_sources (unmodified),hermit --strict,3,"byte-identical stdout x3",unaffected
