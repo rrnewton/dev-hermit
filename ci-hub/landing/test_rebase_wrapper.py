@@ -3,11 +3,9 @@
 
 Verifies BOTH directions the owner named: a zero-conflict rebase is soft-greened
 mechanically; a conflicted rebase WITHOUT a risk judgement is refused, never
-defaulted to green. Also that the base's floor status is carried (a clean rebase
-onto a sub-floor base is NOT landable), that a receipt at the PUSHED head Z is
-carried (a push with NO receipt is NOT landable, and a receipt appearing later
-flips Z eligible via the live re-check), and that the lander's `eligible` query
-answers every direction.
+defaulted to green. Also that the base's floor status is carried, that hard green
+at X is inherited without requiring a redundant receipt at Z, that exact hard
+green at Z upgrades the basis, and that known red/disagreement remains visible.
 """
 from __future__ import annotations
 
@@ -87,40 +85,40 @@ def test_soft_green_levels_are_distinguishable() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# receipt at Z: the afternoon-cost gap. A push with NO receipt is NOT landable. #
+# exact hard at X is inherited; exact hard at Z is an optional stronger basis   #
 # --------------------------------------------------------------------------- #
-def test_zero_conflict_no_receipt_at_pushed_head_is_not_landable() -> None:
+def test_zero_conflict_inherits_source_hard_green_without_result_receipt() -> None:
     v = M.derive_verdict([], None, None, base_clears_floor=True, base_unmet=[],
-                         receipt_present=False, result=Z)
-    # The confidence LEVEL still records the zero-conflict bet ...
+                         source_hard_green_present=True,
+                         result_hard_green_present=False, result=Z)
     assert v["soft_green"] == M.SOFT_ZERO_CONFLICT
-    # ... but with no receipt bound to the pushed head, Z is NOT landable.
-    assert v["landable"] is False
-    assert "no-receipt-at-pushed-head" in v["landable_reason"]
-
-
-def test_zero_conflict_with_receipt_is_landable() -> None:
-    v = M.derive_verdict([], None, None, base_clears_floor=True, base_unmet=[],
-                         receipt_present=True, result=Z)
     assert v["landable"] is True
-    assert "receipt bound at Z" in v["landable_reason"]
+    assert v["eligibility_kind"] == "soft-green(inherited-source)"
+    assert "post-land" in v["landable_reason"]
 
 
-def test_resolver_retained_but_no_receipt_is_not_landable() -> None:
+def test_exact_result_hard_green_upgrades_landability_basis() -> None:
+    v = M.derive_verdict([], None, None, base_clears_floor=True, base_unmet=[],
+                         source_hard_green_present=False,
+                         result_hard_green_present=True, result=Z)
+    assert v["landable"] is True
+    assert v["eligibility_kind"] == "hard-green(exact-result)"
+
+
+def test_resolver_retained_inherits_source_hard_green() -> None:
     v = M.derive_verdict(["src/lib.rs"], M.RISK_RETAIN, "trivial reorder",
                          base_clears_floor=True, base_unmet=[],
-                         receipt_present=False, result=Z)
+                         source_hard_green_present=True,
+                         result_hard_green_present=False, result=Z)
     assert v["soft_green"] == M.SOFT_RESOLVER_JUDGED
-    assert v["landable"] is False
-    assert "no-receipt-at-pushed-head" in v["landable_reason"]
+    assert v["landable"] is True
 
 
-def test_landable_reason_order_floor_before_receipt() -> None:
-    # Both the floor and the receipt fail; the floor is named first (it makes the
-    # base unusable regardless of any receipt on the derived Z).
+def test_landable_reason_floor_blocks_even_with_source_hard_green() -> None:
     unmet = [{"sha": "e" * 40, "kind": "merge-gate", "field": "v2"}]
     r = M.landable_reason(M.SOFT_ZERO_CONFLICT, base_clears_floor=False,
-                          base_unmet=unmet, receipt_present=False, result=Z)
+                          base_unmet=unmet, source_hard_green_present=True,
+                          result_hard_green_present=False, result=Z)
     assert "unlandable-base-below-floor" in r
 
 
@@ -177,36 +175,105 @@ def test_store_roundtrip_and_latest_wins(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 _STUB_RECEIPT = {"sha": Z, "verdict": "VALIDATED", "profile": "full",
                  "qualifying_count": 1}
+_HARD_X = {"schema_version": 1, "sha": X, "verdict": "HARD_GREEN",
+           "passing_authorities": ["local-full-validate"], "sources": {}}
+_HARD_Z = {"schema_version": 1, "sha": Z, "verdict": "HARD_GREEN",
+           "passing_authorities": ["github-portable+privileged"], "sources": {}}
+_DURABLE_HARD_X = {
+    "schema_version": 1, "sha": X, "verdict": "HARD_GREEN",
+    "passing_authorities": ["github-portable+privileged"],
+    "sources": {"github": {"lanes": [
+        {"state": "passed", "sha": X, "run_id": 10, "job_id": 20},
+        {"state": "passed", "sha": X, "run_id": 11, "job_id": 21},
+    ]}},
+}
 
 
 def _args(argv, store, monkeypatch, clears=True, unmet=None, receipt=True):
-    """Parse argv, point the store at tmp, and stub the floor + receipt checks +
-    clock. `receipt=True` binds a validated receipt at Z; False/None binds none."""
+    """Parse argv and stub floor + exact-SHA hard-green authorities."""
     args = M.build_parser().parse_args(argv + ["--store", store, "--no-fetch"]
                                        if "record" == argv[0] else argv + ["--store", store])
     monkeypatch.setattr(M, "base_floor_status",
                         lambda *a, **k: {"ok": clears, "unmet": unmet or []})
-    monkeypatch.setattr(M, "receipt_at",
-                        lambda *a, **k: (_STUB_RECEIPT if receipt else None))
+    monkeypatch.setattr(M, "hard_green_status", lambda rev: (
+        _HARD_X if rev == X else (_HARD_Z if receipt and rev == Z else {
+            "schema_version": 1, "sha": rev, "verdict": "NO_RESULT",
+            "passing_authorities": [], "sources": {}})))
     monkeypatch.setattr(M, "utc_now", lambda: "2026-08-04T00:00:00Z")
     return args
 
 
-def test_do_record_zero_conflict_then_eligible_query(tmp_path, monkeypatch) -> None:
-    store = str(tmp_path / "s.jsonl")
-    rc = M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z,
-         "--conflicts", "none"], store, monkeypatch))
-    assert rc == M.EXIT_OK
-    rec = M.load_records(store)[-1]
-    assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT and rec["landable"] is True
+def _append_clean(store: str, *, source_hard=True, result_hard=False,
+                  base_ok=True) -> dict:
+    sx = _HARD_X if source_hard else None
+    rz = _HARD_Z if result_hard else None
+    verdict = M.derive_verdict(
+        [], None, None, base_clears_floor=base_ok, base_unmet=[],
+        source_hard_green_present=source_hard,
+        result_hard_green_present=result_hard, result=Z)
+    rec = M.build_record(
+        X, Y, Z, [], None, verdict, "2026-08-04T00:00:00Z",
+        source_hard_green=sx, result_hard_green=rz)
+    M.append_record(store, rec)
+    return rec
 
-    # Lander QUERIES: this exact head is eligible -> exit 0 (trust the frozen
-    # floor + receipt snapshot; live re-checks are exercised separately).
-    q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
-         "--no-recheck-receipt"])
-    assert M.do_eligible(q) == M.EXIT_OK
+
+def _stub_live_source(monkeypatch, *, result=None) -> None:
+    result_report = result or {"schema_version": 1, "sha": Z,
+                               "verdict": "NO_RESULT", "sources": {}}
+    monkeypatch.setattr(M, "hard_green_status",
+                        lambda rev: _HARD_X if rev == X else result_report)
+
+
+def test_record_refuses_caller_asserted_zero_conflict(tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    try:
+        M.do_record(_args(
+            ["record", "--source", X, "--base", Y, "--result", Z,
+             "--conflicts", "none"], store, monkeypatch))
+    except M.Refused as error:
+        assert "only the wrapper-owned `rebase`" in str(error)
+        assert M.load_records(store) == []
+        return
+    raise AssertionError("caller-asserted clean rebase must be refused")
+
+
+def test_record_requires_full_commit_ids(tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    args = _args([
+        "record", "--source", X[:12], "--base", Y, "--result", Z,
+        "--conflicts", "a.rs", "--risk-judgement", M.RISK_RETAIN,
+        "--rationale", "fixture",
+    ], store, monkeypatch)
+    try:
+        M.do_record(args)
+    except M.RebaseError as error:
+        assert "full 40-hex" in str(error)
+        return
+    raise AssertionError("abbreviated authority keys must be refused")
+
+
+def test_wrapper_owned_clean_rebase_mints_inherited_soft_green(
+        tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    args = M.build_parser().parse_args([
+        "rebase", "--source", X, "--onto", Y, "--no-fetch",
+        "--store", store,
+    ])
+    monkeypatch.setattr(M, "resolve_rev", lambda checkout, rev: Z if rev == "HEAD" else rev)
+    monkeypatch.setattr(M, "_git", lambda *args, **kwargs: _cp(0))
+    monkeypatch.setattr(M, "_run", lambda *args, **kwargs: _cp(0))
+    monkeypatch.setattr(M, "base_floor_status",
+                        lambda *args, **kwargs: {"ok": True, "unmet": []})
+    monkeypatch.setattr(M, "hard_green_status", lambda rev: (
+        _HARD_X if rev == X else {"sha": rev, "verdict": "NO_RESULT"}))
+    monkeypatch.setattr(M, "utc_now", lambda: "2026-08-04T00:00:00Z")
+    assert M.do_rebase(args) == M.EXIT_OK
+    rec = M.load_records(store)[-1]
+    assert rec["source_rev"] == X and rec["result"] == Z
+    assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT
+    assert rec["eligibility_kind"] == "soft-green(inherited-source)"
+    assert rec["landable"] is True
 
 
 def test_do_record_conflict_without_judgement_refused(tmp_path, monkeypatch) -> None:
@@ -250,10 +317,7 @@ def test_eligible_unknown_head_is_refused(tmp_path) -> None:
 def test_eligible_recheck_floor_demotes_stale_record(tmp_path, monkeypatch) -> None:
     """A floor added AFTER recording must demote a previously-landable head."""
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, clears=True))
-    assert M.load_records(store)[-1]["landable"] is True
+    _append_clean(store)
     # Now a new floor is live; the base no longer clears it.
     monkeypatch.setattr(M.gate_floors, "load_floors", lambda p: [{"sha": "f" * 40}])
     monkeypatch.setattr(M.gate_floors, "clears_all",
@@ -261,60 +325,46 @@ def test_eligible_recheck_floor_demotes_stale_record(tmp_path, monkeypatch) -> N
                             "ok": False,
                             "unmet": [{"sha": "f" * 40, "kind": "merge-gate",
                                        "field": "v3"}]})
-    # Trust the frozen receipt so the ONLY demoting factor is the new floor.
+    monkeypatch.setattr(M, "hard_green_status", lambda rev: _HARD_X if rev == X else {
+        "sha": rev, "verdict": "NO_RESULT"})
     q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-receipt"])
+        ["eligible", "--result", Z, "--store", store])
     assert M.do_eligible(q) == M.EXIT_REFUSED
 
 
-def test_do_record_no_receipt_is_not_landable(tmp_path, monkeypatch) -> None:
-    """A clean rebase whose pushed head Z has NO receipt yet is recorded VISIBLY
-    with receipt_at_Z=null and NOT-LANDABLE -- the afternoon-cost gap, closed."""
+def test_no_result_receipt_is_landable_via_inherited_source(tmp_path, monkeypatch) -> None:
     store = str(tmp_path / "s.jsonl")
-    rc = M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=False))
-    assert rc == M.EXIT_OK
-    rec = M.load_records(store)[-1]
-    assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT   # the bet is still recorded
-    assert rec["receipt_at_Z"] is None                  # ... but null is VISIBLE
-    assert rec["landable"] is False
+    rec = _append_clean(store, source_hard=True, result_hard=False)
+    assert rec["soft_green"] == M.SOFT_ZERO_CONFLICT
+    assert rec["landable"] is True
+    assert rec["eligibility_kind"] == "soft-green(inherited-source)"
+    _stub_live_source(monkeypatch)
     q = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
-         "--no-recheck-receipt"])
-    assert M.do_eligible(q) == M.EXIT_REFUSED
-
-
-def test_eligible_live_receipt_flips_head_landable(tmp_path, monkeypatch) -> None:
-    """The mailbox-free promotion: a head recorded with NO receipt becomes eligible
-    once a receipt is bound live to the exact pushed Z -- no re-record needed."""
-    store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=False))
-    # Frozen snapshot: still not eligible.
-    q0 = M.build_parser().parse_args(
-        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
-         "--no-recheck-receipt"])
-    assert M.do_eligible(q0) == M.EXIT_REFUSED
-    # Validate at Z now completes; the live re-check dereferences the authority.
-    # The live path is `receipt_status` (tri-state), NOT the record-time snapshot
-    # helper `receipt_at` -- stub the authority the re-check actually calls.
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
-        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
-    q1 = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
-    assert M.do_eligible(q1) == M.EXIT_OK
+    assert M.do_eligible(q) == M.EXIT_OK
 
 
-def test_eligible_live_receipt_revocation_demotes(tmp_path, monkeypatch) -> None:
-    """Symmetric: a head recorded landable is demoted if the live receipt vanishes
-    (e.g. the ledger record was superseded / the push rewrote Z again)."""
+def test_live_exact_result_hard_green_upgrades_basis(tmp_path, monkeypatch, capsys) -> None:
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=True))
-    monkeypatch.setattr(M, "receipt_at", lambda z: None)
+    _append_clean(store, source_hard=True, result_hard=False)
+    _stub_live_source(monkeypatch)
+    q0 = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q0) == M.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["eligibility_kind"] == "soft-green(inherited-source)"
+    monkeypatch.setattr(M, "hard_green_status",
+                        lambda rev: _HARD_X if rev == X else _HARD_Z)
+    q1 = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor", "--json"])
+    assert M.do_eligible(q1) == M.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["eligibility_kind"] == "hard-green(exact-result)"
+
+
+def test_live_exact_result_red_vetoes_inherited_soft_green(tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    _append_clean(store, source_hard=True, result_hard=False)
+    monkeypatch.setattr(M, "hard_green_status", lambda rev: (
+        _HARD_X if rev == X else {"sha": Z, "verdict": "HARD_RED"}))
     q = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
     assert M.do_eligible(q) == M.EXIT_REFUSED
@@ -389,59 +439,72 @@ def test_receipt_status_unknown_on_authority_failure(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CLOSURE BAR: a planted eligible head SURVIVES a validate-status failure       #
+# CLOSURE BAR: a planted hard source survives a transient authority failure     #
 # --------------------------------------------------------------------------- #
-def _unknown_receipt(_z):
-    return {"status": M.RECEIPT_UNKNOWN, "identity": None,
-            "detail": "validate-status unreachable"}
+def _no_result_hard(rev):
+    return {"schema_version": 1, "sha": rev, "verdict": "NO_RESULT",
+            "reason": "authority temporarily unreachable"}
 
 
-def test_closure_bar_targeted_head_survives_validate_status_failure(
+def test_closure_bar_targeted_head_refuses_unverified_cache_during_outage(
         tmp_path, monkeypatch, capsys) -> None:
-    """Plant a would-be-eligible head (soft-green, base clears, receipt bound), then
-    make the receipt authority FAIL on the live re-check. The head must NOT vanish:
-    it stays VISIBLE as receipt-unknown and non-landable -- the invisible-failure
-    class must not be rebuilt inside the fix for it."""
+    """A frozen JSONL positive is visible but cannot authorize during an outage."""
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=True))
-    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
-    monkeypatch.setattr(M, "receipt_status", _unknown_receipt)
+    _append_clean(store, source_hard=True, result_hard=False)
+    monkeypatch.setattr(M, "hard_green_status", _no_result_hard)
     q = M.build_parser().parse_args(
         ["eligible", "--result", Z, "--store", store, "--no-recheck-floor",
          "--json"])
     rc = M.do_eligible(q)
     out = json.loads(capsys.readouterr().out)
-    assert rc == M.EXIT_REFUSED                    # not landed on an unknown ...
-    assert out["result"] == Z                      # ... but the head is PRESENT ...
+    assert rc == M.EXIT_REFUSED
+    assert out["result"] == Z
     assert out["eligible"] is False
-    assert out["receipt_state"] == M.RECEIPT_UNKNOWN   # ... and VISIBLE as unknown
-    assert "receipt-unknown" in out["reason"]
+    assert out["source_hard_green_state"] == "NO_RESULT"
 
 
-def test_closure_bar_reconciled_head_survives_as_receipt_unknown(
+def test_closure_bar_reconciled_head_remains_visible_as_unknown(
         tmp_path, monkeypatch, capsys) -> None:
-    """List/reconcile mode: the head is an open PR; the receipt authority fails. It
-    must land in the receipt-unknown bucket (VISIBLE), never be silently dropped
-    from the population -- 'invisible != nothing-pending' includes 'unknown'."""
+    """Reconciliation shows, rather than trusts, an unverified cached positive."""
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=True))
-    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    _append_clean(store, source_hard=True, result_hard=False)
     monkeypatch.setattr(M, "open_pushed_prs",
                         lambda repo: [{"number": 7, "headRefOid": Z,
                                        "headRefName": "feat", "url": "u"}])
-    monkeypatch.setattr(M, "receipt_status", _unknown_receipt)
+    monkeypatch.setattr(M, "hard_green_status", _no_result_hard)
     q = M.build_parser().parse_args(
         ["eligible", "--store", store, "--no-recheck-floor", "--json"])
     assert M.do_eligible(q) == M.EXIT_OK
     out = json.loads(capsys.readouterr().out)
-    assert out["summary"]["receipt-unknown"] == 1
     assert out["summary"]["eligible"] == 0
-    assert out["receipt_unknown"][0]["result"] == Z      # present, not vanished
+    assert out["summary"]["hard-green-unknown"] == 1
+    assert out["hard_green_unknown"][0]["result"] == Z
     assert out["reconciled"] is True
+
+
+def test_planted_legacy_receipt_snapshot_cannot_authorize(tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    M.append_record(store, {
+        "schema_version": 1, "source_rev": X, "base": Y, "result": Z,
+        "conflicts": [], "soft_green": M.SOFT_ZERO_CONFLICT,
+        "base_clears_floor": True,
+        "receipt_at_Z": {"sha": Z, "verdict": "VALIDATED", "profile": "full"},
+        "landable": True,
+    })
+    monkeypatch.setattr(M, "hard_green_status", _no_result_hard)
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+    assert M.do_eligible(q) == M.EXIT_REFUSED
+
+
+def test_mismatched_live_hard_green_sha_cannot_authorize(tmp_path, monkeypatch) -> None:
+    store = str(tmp_path / "s.jsonl")
+    _append_clean(store)
+    monkeypatch.setattr(M, "hard_green_status", lambda rev: {
+        "sha": "f" * 40, "verdict": "HARD_GREEN", "sources": {}})
+    q = M.build_parser().parse_args(
+        ["eligible", "--result", Z, "--store", store, "--no-recheck-floor"])
+    assert M.do_eligible(q) == M.EXIT_REFUSED
 
 
 # --------------------------------------------------------------------------- #
@@ -469,15 +532,13 @@ def test_reconcile_recorded_landable_is_eligible_not_inert(
     """The positive bracket: a recorded landable head that IS an open PR fires as
     ELIGIBLE -- the gate is live, not inert."""
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=True))
-    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    _append_clean(store, source_hard=True, result_hard=False)
     monkeypatch.setattr(M, "open_pushed_prs",
                         lambda repo: [{"number": 3, "headRefOid": Z,
                                        "headRefName": "feat", "url": "u"}])
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
-        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
+    monkeypatch.setattr(M, "hard_green_status",
+                        lambda rev: _HARD_X if rev == X else {
+                            "sha": rev, "verdict": "NO_RESULT"})
     q = M.build_parser().parse_args(
         ["eligible", "--store", store, "--no-recheck-floor", "--json"])
     assert M.do_eligible(q) == M.EXIT_OK
@@ -493,10 +554,7 @@ def test_reconcile_orphaned_head_is_recorded_not_open(
     force-pushed away) is no open PR's head. It must be reported as
     recorded_not_open (superseded), NOT counted as eligible."""
     store = str(tmp_path / "s.jsonl")
-    M.do_record(_args(
-        ["record", "--source", X, "--base", Y, "--result", Z, "--conflicts",
-         "none"], store, monkeypatch, receipt=True))
-    capsys.readouterr()  # drain the RECORDED line so the eligible JSON parses alone
+    _append_clean(store, source_hard=True, result_hard=False)
     # The live population has a DIFFERENT head (the orphaning re-rebase minted Z2).
     monkeypatch.setattr(M, "open_pushed_prs",
                         lambda repo: [{"number": 5, "headRefOid": Z2,
@@ -517,10 +575,11 @@ def test_provenance_body_carries_only_nonderivable() -> None:
     rec = {"source_rev": X, "base": Y, "result": Z, "conflicts": [],
            "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
            "rationale": "", "resolver": "", "recorded_utc": "t",
-           "base_clears_floor": True, "receipt_at_Z": {"sha": Z}}
+           "base_clears_floor": True, "receipt_at_Z": {"sha": Z},
+           "source_hard_green": _DURABLE_HARD_X}
     prov = json.loads(M.provenance_body(rec))
     assert prov["soft_green"] == M.SOFT_ZERO_CONFLICT and prov["result"] == Z
-    # Live-authority fields must NOT be frozen into durable provenance.
+    assert prov["source_hard_green"]["sha"] == X
     assert "base_clears_floor" not in prov and "receipt_at_Z" not in prov
 
 
@@ -533,6 +592,18 @@ def test_publish_provenance_refuses_null_soft_green() -> None:
     raise AssertionError("null soft-green carries no durable claim; must refuse")
 
 
+def test_publish_provenance_refuses_machine_local_hard_green() -> None:
+    rec = {"source_rev": X, "base": Y, "result": Z, "conflicts": [],
+           "soft_green": M.SOFT_ZERO_CONFLICT,
+           "source_hard_green": _HARD_X}
+    try:
+        M.publish_provenance(rec)
+    except M.RebaseError as error:
+        assert "machine-local" in str(error)
+        return
+    raise AssertionError("non-dereferenceable hard-green snapshot must not publish")
+
+
 def test_publish_provenance_content_addressed_immutable_path(monkeypatch) -> None:
     import hashlib
     captured = {}
@@ -543,7 +614,8 @@ def test_publish_provenance_content_addressed_immutable_path(monkeypatch) -> Non
     monkeypatch.setattr(M.publish_receipt, "publish", fake_publish)
     rec = {"source_rev": X, "base": Y, "result": Z, "conflicts": [],
            "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
-           "rationale": "", "resolver": "", "recorded_utc": "t"}
+           "rationale": "", "resolver": "", "recorded_utc": "t",
+           "source_hard_green": _DURABLE_HARD_X}
     info = M.publish_provenance(rec)
     digest = hashlib.sha256(M.provenance_body(rec)).hexdigest()
     assert captured["path"] == f"rebase-provenance/{Z}/{digest}.json"
@@ -590,13 +662,14 @@ def test_durable_provenance_recovers_unaccounted_cross_host(
     monkeypatch.setattr(M, "fetch_provenance", lambda z: {
         "source_rev": X, "base": Y, "result": Z, "conflicts": [],
         "soft_green": M.SOFT_ZERO_CONFLICT, "risk_judgement": M.RISK_NA,
-        "rationale": "", "resolver": "", "recorded_utc": "t"})
-    # Live gates still apply: floor clears, receipt validated.
+        "rationale": "", "resolver": "", "recorded_utc": "t",
+        "source_hard_green": _DURABLE_HARD_X})
+    # Live floor and exact-source authority still apply; provenance is not itself
+    # an authorization.
     monkeypatch.setattr(M.gate_floors, "load_floors", lambda p: [])
     monkeypatch.setattr(M.gate_floors, "clears_all",
                         lambda floors, co, base: {"ok": True, "unmet": []})
-    monkeypatch.setattr(M, "receipt_status", lambda z: {
-        "status": M.RECEIPT_VALIDATED, "identity": _STUB_RECEIPT, "detail": ""})
+    _stub_live_source(monkeypatch)
     q = M.build_parser().parse_args(
         ["eligible", "--store", store, "--durable-provenance", "--json"])
     assert M.do_eligible(q) == M.EXIT_OK

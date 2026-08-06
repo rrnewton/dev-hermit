@@ -40,19 +40,16 @@ FOUR THINGS THIS TOOL GETS RIGHT (each a Proxy-Binding predicate):
      the base's floor status is carried in the record and RE-CHECKED live at query
      time, so a floor added after recording demotes a stale record.
 
-  4. CARRY THE RECEIPT AT Z, THE *PUSHED* HEAD. This wrapper OWNS the whole span
-     rebase -> push -> validate-at-pushed-head -> record: not just the rebase.
-     THE PUSH REWRITES THE HEAD, so a receipt earned on the pre-push SHA dies with
-     it -- and the merge gate checks the pushed Z, for which no receipt then
-     exists. That exact gap cost an afternoon (2026-08-04): 15 heads rebased,
-     pushed, marked ready; NONE could merge (`qualifying_count: 0`) because every
-     receipt was bound to a SHA the push had discarded. No agent was wrong -- the
-     missing step lived in the GAP between the rebase front (ends at push) and the
-     lander (assumes a receipt). So `receipt_at_Z` is a FIRST-CLASS RECORD FIELD
-     and a null there is VISIBLE (a missing receipt inside an assumption is not),
-     landability REQUIRES it, and `eligible` RE-CHECKS it live by dereferencing the
-     ONE receipt authority (`ci-hub validate-status --sha Z`). A push with no
-     subsequent receipt is REFUSED as landable, never silently queued.
+  4. CARRY HARD GREEN AT X, NOT JUST A RECEIPT AT Z. X must have passed one of
+     the interchangeable exact-SHA authorities (counted local full validation or
+     hosted portable+privileged). A conflict-free rebase inherits that evidence
+     as a probabilistic soft green at Z. Requiring another full receipt at Z
+     before landing destroys the inheritance and recreates the queue-stalling
+     protocol this wrapper exists to avoid. A receipt/hosted pass at Z is still
+     recorded when present and upgrades Z to exact hard green; it is not required
+     for the inherited-soft path. Every speculative landing arms exact-Z
+     post-facto validation before the merge, so the residual risk is bounded by
+     durable remediation rather than shifted into a multi-day pre-land queue.
 
 CONSUMER: the lander QUERIES for eligible heads (`eligible`) rather than reading
 posted notes -- a query has no mailbox to miss, closing the producer-posted-to-
@@ -69,24 +66,26 @@ RECORD SCHEMA (ignored/rebase-records.jsonl, append-only, latest-per-Z wins):
     rationale, soft_green: null | soft-green(zero-conflict) |
       soft-green(resolver-judged),
     base_clears_floor, base_unmet_floors: [...],
-    receipt_at_Z: null | { sha: Z, verdict: VALIDATED, profile, selection_mode,
-      finished_at, slot, host, qualifying_count },   # bound to the PUSHED head Z
+    source_hard_green: null | { sha: X, verdict: HARD_GREEN, sources: ... },
+    result_hard_green: null | { sha: Z, verdict: HARD_GREEN, sources: ... },
+    receipt_at_Z: null | {...}, # legacy compatibility/cache only
+    eligibility_kind: hard-green(exact-result) | soft-green(inherited-source),
     landable, landable_reason }
 
 SUBCOMMANDS
   record    Record a completed rebase outcome and derive its soft-green level.
-            The mechanical zero-conflict path and the resolver path both funnel
-            here; this is where refusal-on-absent-judgement lives. Binds the
-            receipt at Z (best-effort snapshot; re-checked live by `eligible`).
+            Resolver-only: a non-empty conflict list, closed judgement, rationale,
+            and exact hard-green evidence are required. Caller-asserted clean
+            rebases are refused; only `rebase` observes and mints that fact.
   rebase    OWN the mechanical rebase in a checkout: fetch, resolve the base
             (--onto <sha> | --onto newest-green), attempt `git rebase`. Zero
             conflicts -> complete, record soft-green(zero-conflict) mechanically,
-            optionally push, then bind the receipt at the PUSHED head Z. Conflicts
+            optionally push, carrying X's hard-green evidence into the record. Conflicts
             -> abort cleanly, report the conflicted files, and REFUSE to soft-green
             (the resolver resolves, then calls `record --risk-judgement ...`).
   eligible  Consumer query for the lander: list (or test) heads that are eligible
-            to land NOW -- soft-green AND the base clears every live floor AND a
-            clean full-validation receipt is bound live to the pushed head Z.
+            to land NOW -- either exact hard green at Z, or source hard green at X
+            plus a retained soft-green derivation, and a base clearing every floor.
 
 EXIT CODES (shared with the sibling floor tools)
   0  OK       recorded / listed / the queried head IS eligible
@@ -127,6 +126,10 @@ import gate_floors  # noqa: E402  (path injected above)
 _VALIDATION_DIR = os.path.join(_CIHUB_DIR, "validation")
 sys.path.insert(0, _VALIDATION_DIR)
 import publish_receipt  # noqa: E402  (path injected above)
+
+_LANDING_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _LANDING_DIR)
+import hard_green as hard_green_authority  # noqa: E402
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -185,7 +188,7 @@ def default_store() -> str:
 _PARENT_ROOT = parent_root()
 DEFAULT_STORE = default_store()
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # The resolving agent's judgement is a CLOSED set: an absent or unrecognised value
 # is a REFUSAL, never a silent default to green.
@@ -197,7 +200,8 @@ VALID_JUDGEMENTS = {RISK_RETAIN, RISK_VALIDATE}
 SOFT_ZERO_CONFLICT = "soft-green(zero-conflict)"
 SOFT_RESOLVER_JUDGED = "soft-green(resolver-judged)"
 
-# Receipt at Z is a TRI-STATE, never a boolean-with-a-hidden-third-value. The
+# Legacy receipt-at-Z helpers retain a TRI-STATE for schema-1 records. New
+# schema-2 records use the combined hard-green authority below.
 # whole mechanism exists to kill invisible failures, so the query must NEVER
 # conflate "authority answered: no receipt" (ABSENT, a real pending head) with
 # "authority could not be reached" (UNKNOWN). Fail-closing an UNKNOWN to
@@ -241,54 +245,49 @@ def _is_hexish(rev: str) -> bool:
     return 7 <= len(r) <= 40 and all(c in "0123456789abcdef" for c in r)
 
 
+def _is_full_sha(rev: str) -> bool:
+    r = (rev or "").strip().lower()
+    return len(r) == 40 and all(c in "0123456789abcdef" for c in r)
+
+
 # --------------------------------------------------------------------------- #
 # Pure verdict derivation -- the heart of the mechanism, git-free and testable. #
 # --------------------------------------------------------------------------- #
 def landable_reason(soft_green: str | None, base_clears_floor: bool,
-                    base_unmet: list[dict], receipt_present: bool,
-                    result: str = "", receipt_state: str | None = None) -> str:
-    """The single explanation of landability -- shared by record and the live
-    `eligible` re-check so both speak with one voice. The order mirrors the
-    landability conjunction: soft-green first, then the base floor (carry Y),
-    then the receipt at the pushed head Z (carry the receipt). `receipt_state`
-    distinguishes an ABSENT receipt (authority answered "not yet") from an
-    UNKNOWN one (authority unreachable) -- the latter is VISIBLE, never vanished."""
-    if soft_green is None:
-        return "resolver-flagged-needs-full-validate: verify the tip before landing"
+                    base_unmet: list[dict], source_hard_green_present: bool,
+                    result_hard_green_present: bool, result: str = "",
+                    hard_green_state: str | None = None) -> str:
+    """Explain the exact-hard OR inherited-soft landing decision."""
     if not base_clears_floor:
         unmet = ", ".join(_short(f["sha"]) for f in base_unmet) or "?"
         return (f"unlandable-base-below-floor: base predates floor(s) {unmet}; "
                 "a clean rebase onto a sub-floor base still yields an unlandable "
                 "Z -- rebase onto a base at/after every floor")
-    if not receipt_present:
-        if receipt_state == RECEIPT_UNKNOWN:
-            return (f"receipt-unknown: could NOT dereference the validate-status "
-                    f"authority for pushed head {_short(result) or 'Z'} "
-                    f"(tool/network/parse failure). This head is VISIBLE and "
-                    f"UNKNOWN -- NOT vanished and NOT assumed absent. Never land "
-                    f"on an unknown receipt; re-query once the authority is "
-                    f"reachable (`ci-hub validate-status --sha {_short(result) or '<Z>'}`).")
-        return (f"no-receipt-at-pushed-head: soft-green + base clears every floor, "
-                f"but NO clean full-validation receipt is bound to the PUSHED head "
-                f"{_short(result) or 'Z'}. The push rewrites the head, so a receipt "
-                f"on the pre-push SHA does not count -- that is the gap that cost an "
-                f"afternoon. Run validate at Z, then `ci-hub validate-status --sha "
-                f"{_short(result) or '<Z>'}` must read VALIDATED (re-checked live).")
-    return f"landable via {soft_green}; base clears all floors; receipt bound at Z"
+    if hard_green_state in {"HARD_RED", "DISAGREEMENT"}:
+        return "hard-green-refused: an exact-SHA authority reports red/disagreement"
+    if result_hard_green_present:
+        return "landable via hard-green(exact-result); base clears all floors"
+    if soft_green is not None and source_hard_green_present:
+        return (f"landable via {soft_green} inherited from exact source hard green; "
+                "post-land exact-result validation is mandatory")
+    if soft_green is None:
+        return ("resolver-flagged-needs-full-validate: no exact-result hard green; "
+                "verify the resolved tip before landing")
+    return ("no-hard-green-at-source: soft-green derivation has no exact-SHA hard "
+            "green to inherit; validate X or Z before landing")
 
 
 def derive_verdict(conflicts: list[str], risk_judgement: str | None,
                    rationale: str | None, base_clears_floor: bool,
-                   base_unmet: list[dict], receipt_present: bool = True,
+                   base_unmet: list[dict], source_hard_green_present: bool = True,
+                   result_hard_green_present: bool = False,
                    result: str = "") -> dict:
-    """Map (conflicts, judgement, base-floor, receipt-at-Z) -> soft-green + landability.
+    """Map conflict judgement + exact evidence to hard/soft landability.
 
     RAISES Refused when conflicts exist without a valid judgement + rationale --
     an absent judgement must NEVER read as approval. Returns the derived fields
-    otherwise; landability is soft-green AND the base clears every floor AND a
-    receipt is bound to the pushed head Z. `receipt_present` defaults True so the
-    pure floor/conflict dimensions can be exercised in isolation; every real
-    record/query path passes it explicitly.
+    Exact hard green at Z is sufficient. Otherwise Z may inherit a soft-green
+    prior only when X was hard green and the conflict judgement retains it.
     """
     if conflicts:
         rj = (risk_judgement or "").strip()
@@ -315,7 +314,12 @@ def derive_verdict(conflicts: list[str], risk_judgement: str | None,
         soft_green = SOFT_ZERO_CONFLICT
         judgement = RISK_NA
 
-    landable = soft_green is not None and base_clears_floor and receipt_present
+    inherited_soft = soft_green is not None and source_hard_green_present
+    landable = base_clears_floor and (result_hard_green_present or inherited_soft)
+    eligibility_kind = None
+    if landable:
+        eligibility_kind = ("hard-green(exact-result)" if result_hard_green_present
+                            else "soft-green(inherited-source)")
     return {
         "risk_judgement": judgement,
         "soft_green": soft_green,
@@ -324,8 +328,10 @@ def derive_verdict(conflicts: list[str], risk_judgement: str | None,
             {"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
             for f in base_unmet],
         "landable": landable,
+        "eligibility_kind": eligibility_kind,
         "landable_reason": landable_reason(soft_green, base_clears_floor,
-                                           base_unmet, receipt_present, result),
+                                           base_unmet, source_hard_green_present,
+                                           result_hard_green_present, result),
     }
 
 
@@ -400,6 +406,44 @@ def receipt_at(result: str) -> dict | None:
     is acceptable ONLY for the frozen snapshot (null is re-checked live by
     `eligible`, which uses the full tri-state and never lets UNKNOWN vanish)."""
     return receipt_status(result)["identity"]
+
+
+# --------------------------------------------------------------------------- #
+# Combined exact-SHA hard-green authority (local full OR hosted full)           #
+# --------------------------------------------------------------------------- #
+def hard_green_status(revision: str) -> dict:
+    """Dereference the shared exact-SHA authority without re-deriving it here."""
+    if not revision or not _is_full_sha(revision):
+        return {
+            "schema_version": 1,
+            "sha": revision,
+            "verdict": "NO_RESULT",
+            "exit_code": hard_green_authority.EXIT_NO_RESULT,
+            "reason": "revision is not a commit SHA",
+            "passing_authorities": [],
+            "sources": {},
+        }
+    return hard_green_authority.status(revision, repo=DEFAULT_PR_REPO)
+
+
+def hard_green_at(revision: str) -> dict | None:
+    """Return a self-describing hard-green evidence record, or None."""
+    report = hard_green_status(revision)
+    return report if _is_hard_green(report, revision) else None
+
+
+def _is_hard_green(evidence: dict | None, expected_sha: str | None = None) -> bool:
+    return bool(evidence and evidence.get("verdict") == "HARD_GREEN"
+                and (expected_sha is None or evidence.get("sha") == expected_sha))
+
+
+def _legacy_result_hard_green(rec: dict, result: str) -> dict | None:
+    """Schema-1 snapshots are caches, never authority.
+
+    They are deliberately not upgraded without a live verifier: a planted JSONL
+    row must not become an authorization merely because it is well-shaped.
+    """
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -553,12 +597,9 @@ def open_pushed_prs(pr_repo: str) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # A2: durable, cross-host soft-green provenance on the shared receipts branch   #
 # --------------------------------------------------------------------------- #
-# The store's ONE irreducibly non-derivable datum is HOW the soft-green was
-# earned: the confidence level, and (for a conflict) the resolver's risk
-# judgement + rationale. Everything else in a record is re-derived LIVE from a
-# shared authority -- the base floor from gate_floors, the receipt at Z from
-# `ci-hub validate-status`. So a clean checkout on ANOTHER host can reconstruct
-# every field EXCEPT this one. A machine-local JSONL cannot carry it across hosts
+# The store's irreducibly non-derivable data are HOW the soft-green was earned
+# and WHICH exact-source hard-green record it inherited. A machine-local JSONL
+# cannot carry them across hosts
 # (dbi's finding: two hosts each write their own store, each lander sees the
 # other's landable heads as UNTRACKED forever). Publishing just this datum,
 # content-addressed and keyed by Z, to the SAME validation-receipts branch the
@@ -589,12 +630,37 @@ def provenance_body(rec: dict) -> bytes:
         "rationale": rec.get("rationale", ""),
         "resolver": rec.get("resolver", ""),
         "recorded_utc": rec.get("recorded_utc"),
+        "source_hard_green": rec.get("source_hard_green"),
+        "result_hard_green": rec.get("result_hard_green"),
     }
     return json.dumps(prov, sort_keys=True, separators=(",", ":")).encode()
 
 
 def provenance_path(z: str, digest: str) -> str:
     return f"rebase-provenance/{z}/{digest}.json"
+
+
+def durable_hard_green(evidence: dict | None, expected_sha: str) -> bool:
+    """Whether a frozen hard-green pointer is independently dereferenceable.
+
+    Machine-local ledger rows are intentionally not publishable as cross-host
+    authority. Hosted evidence carries both exact run and job IDs for both lanes;
+    immutable local receipts may carry their commit/path/digest tuple.
+    """
+    if not _is_hard_green(evidence, expected_sha):
+        return False
+    sources = evidence.get("sources") or {}
+    local = sources.get("local") or {}
+    immutable = local.get("immutable_receipt") or {}
+    if all(immutable.get(key) for key in ("commit", "path", "sha256")):
+        return True
+    github = sources.get("github") or {}
+    lanes = github.get("lanes") or []
+    return (len(lanes) == 2
+            and all(lane.get("state") == "passed"
+                    and lane.get("sha") == expected_sha
+                    and lane.get("run_id") and lane.get("job_id")
+                    for lane in lanes))
 
 
 def publish_provenance(rec: dict, *, repo: str = RECEIPT_REPO,
@@ -611,6 +677,11 @@ def publish_provenance(rec: dict, *, repo: str = RECEIPT_REPO,
         raise RebaseError(
             "cannot publish provenance for a null soft-green (no durable claim to "
             "make); resolver said needs-full-validate or the rebase was aborted")
+    if not durable_hard_green(rec.get("source_hard_green"), rec.get("source_rev", "")):
+        raise RebaseError(
+            "cannot publish provenance: source hard green is only machine-local or "
+            "malformed. Publish an immutable local receipt pointer or carry exact "
+            "hosted run+job IDs for both lanes.")
     import hashlib
     body = provenance_body(rec)
     digest = hashlib.sha256(body).hexdigest()
@@ -662,11 +733,10 @@ def fetch_provenance(z: str, *, repo: str = RECEIPT_REPO,
 
 def record_from_provenance(prov: dict) -> dict:
     """Adapt a durable provenance blob into a record shape `_classify_row` accepts.
-    Carries ONLY the non-derivable soft-green datum plus source/base/result; the
-    base floor and the receipt at Z are re-derived LIVE by the classifier, so a
-    durable-provenance head is held to the exact same live gates as a local one --
-    durability never grants landability, it only supplies the datum a fresh
-    checkout cannot reconstruct."""
+    Carries ONLY the non-derivable derivation plus source/base/result; the base
+    floor and both exact-SHA authorities are re-derived LIVE. Durability never
+    grants landability; it supplies only the derivation a fresh checkout cannot
+    reconstruct."""
     return {
         "source_rev": prov.get("source_rev"),
         "base": prov.get("base"),
@@ -677,7 +747,12 @@ def record_from_provenance(prov: dict) -> dict:
         "risk_judgement": prov.get("risk_judgement"),
         "soft_green": prov.get("soft_green"),
         "recorded_utc": prov.get("recorded_utc"),
-        "receipt_at_Z": None,          # never trust a frozen receipt; re-check live
+        "source_hard_green": (prov.get("source_hard_green")
+                              if durable_hard_green(prov.get("source_hard_green"),
+                                                    prov.get("source_rev", ""))
+                              else None),
+        "result_hard_green": prov.get("result_hard_green"),
+        "receipt_at_Z": None,          # schema-1 compatibility only
         "base_clears_floor": False,    # re-derived live (recheck_floor default on)
         "base_unmet_floors": [],
         "landable": False,
@@ -690,6 +765,8 @@ def record_from_provenance(prov: dict) -> dict:
 # --------------------------------------------------------------------------- #
 def build_record(source: str, base: str, result: str, conflicts: list[str],
                  resolver: str | None, verdict: dict, now_utc: str,
+                 source_hard_green: dict | None = None,
+                 result_hard_green: dict | None = None,
                  receipt: dict | None = None) -> dict:
     rec = {
         "schema_version": SCHEMA_VERSION,
@@ -700,7 +777,11 @@ def build_record(source: str, base: str, result: str, conflicts: list[str],
         "conflicts": conflicts,
         "resolver": resolver or "",
         "rationale": "",
-        "receipt_at_Z": receipt,  # bound to the PUSHED head; null is VISIBLE.
+        "source_hard_green": source_hard_green,
+        "result_hard_green": result_hard_green,
+        # Retained for schema-1 readers. New readers use result_hard_green,
+        # which can represent either the local or hosted exact-SHA authority.
+        "receipt_at_Z": receipt,
     }
     rec.update(verdict)
     return rec
@@ -709,9 +790,15 @@ def build_record(source: str, base: str, result: str, conflicts: list[str],
 def do_record(args) -> int:
     for label, rev in (("--source", args.source), ("--base", args.base),
                        ("--result", args.result)):
-        if not _is_hexish(rev):
-            raise RebaseError(f"{label} {rev!r} is not a 7-40 hex commit sha")
+        if not _is_full_sha(rev):
+            raise RebaseError(f"{label} {rev!r} is not a full 40-hex commit sha")
     conflicts = parse_conflicts(args.conflicts)
+    if not conflicts:
+        raise Refused(
+            "`record --conflicts none` cannot attest a clean rebase: only the "
+            "wrapper-owned `rebase` operation observes that fact. Use `rebase` for "
+            "zero-conflict inheritance; use `record` only after resolving the "
+            "non-empty conflict list with an explicit risk judgement.")
     # base-floor status is the load-bearing "carry Y" half; refresh unless offline.
     if not args.no_fetch:
         try:
@@ -719,18 +806,33 @@ def do_record(args) -> int:
         except RebaseError:
             pass  # offline is not fatal for a purely-local ancestry check
     fstatus = base_floor_status(args.registry, args.repo_checkout, args.base)
-    # Bind the receipt at the pushed head Z (best-effort snapshot; `eligible`
-    # re-checks it live, so a receipt that lands after recording still flips Z
-    # eligible, and one revoked demotes it). --no-receipt-check records null.
-    receipt = None if args.no_receipt_check else receipt_at(args.result)
+    # Bind exact hard-green evidence at both ends. X is what a soft Z inherits;
+    # exact hard green at Z independently authorizes the resolved result.
+    source_status = ({"verdict": "NO_RESULT"} if args.no_hard_green_check
+                     else hard_green_status(args.source))
+    result_status = ({"verdict": "NO_RESULT"} if args.no_hard_green_check
+                     else hard_green_status(args.result))
+    source_hard = source_status if _is_hard_green(source_status, args.source) else None
+    result_hard = result_status if _is_hard_green(result_status, args.result) else None
     verdict = derive_verdict(conflicts, args.risk_judgement, args.rationale,
                              fstatus["ok"], fstatus["unmet"],
-                             receipt_present=receipt is not None,
+                             source_hard_green_present=_is_hard_green(source_hard),
+                             result_hard_green_present=_is_hard_green(result_hard),
                              result=args.result)
+    if (source_status.get("verdict") in {"HARD_RED", "DISAGREEMENT"}
+            or result_status.get("verdict") in {"HARD_RED", "DISAGREEMENT"}):
+        verdict["landable"] = False
+        verdict["eligibility_kind"] = None
+        verdict["landable_reason"] = (
+            "hard-green-refused: an exact-SHA authority reports red/disagreement")
     now = utc_now()
     rec = build_record(args.source, args.base, args.result, conflicts,
-                       args.resolver, verdict, now, receipt=receipt)
+                       args.resolver, verdict, now,
+                       source_hard_green=source_hard,
+                       result_hard_green=result_hard)
     rec["rationale"] = (args.rationale or "").strip()
+    rec["source_hard_green_state"] = source_status.get("verdict")
+    rec["result_hard_green_state"] = result_status.get("verdict")
     append_record(args.store, rec)
     maybe_publish_provenance(args, rec)
     emit_record(rec, args.json, action="RECORDED")
@@ -780,6 +882,11 @@ def do_rebase(args) -> int:
     else:
         base = resolve_rev(checkout, args.onto)
     source = resolve_rev(checkout, args.source)
+    source_hard = None if args.no_hard_green_check else hard_green_at(source)
+    if not _is_hard_green(source_hard):
+        raise Refused(
+            f"source {_short(source)} has no exact-SHA hard green to inherit; "
+            "run full local validation or hosted portable+privileged first")
 
     # Work on a detached, PID-unique wip ref so we never clobber a caller's branch.
     wip = f"_rebasewrap_{os.getpid()}"
@@ -820,7 +927,7 @@ def do_rebase(args) -> int:
                 f"{_short(source)} --base {_short(base)} --result <Z> --conflicts "
                 f"'{','.join(conflicts)}' --risk-judgement {RISK_RETAIN}|"
                 f"{RISK_VALIDATE} --rationale ...`"),
-        }, utc_now(), receipt=None)  # no result yet -> no receipt to bind
+        }, utc_now(), source_hard_green=source_hard)  # no result yet
         append_record(args.store, rec)
         emit_record(rec, args.json, action="REFUSED")
         msg = (f"CONFLICTS ({len(conflicts)}): {', '.join(conflicts)}. Rebase "
@@ -842,22 +949,32 @@ def do_rebase(args) -> int:
         if pcp.returncode != 0:
             _git(checkout, ["checkout", "-q", "--detach", base])
             raise RebaseError(f"push failed: {(pcp.stderr or pcp.stdout).strip()}")
-    # Bind the receipt at the PUSHED head Z -- this is the step that closes the
-    # afternoon-cost gap. Right after a push it is almost always null (validate at
-    # Z has not run yet): the record is written with receipt_at_Z=null and
-    # NOT-LANDABLE, and `eligible` re-derives the receipt live so Z flips landable
-    # once validate at Z completes -- no re-record, no handoff to drop.
-    receipt = None if args.no_receipt_check else receipt_at(result)
+    # A clean rebase inherits X's hard green immediately. If Z already has its
+    # own exact hard green, record the stronger basis too; it is an upgrade, not
+    # a prerequisite for speculative landing.
+    result_status = ({"verdict": "NO_RESULT"} if args.no_hard_green_check
+                     else hard_green_status(result))
+    result_hard = result_status if _is_hard_green(result_status, result) else None
     verdict = derive_verdict([], None, None, fstatus["ok"], fstatus["unmet"],
-                             receipt_present=receipt is not None, result=result)
+                             source_hard_green_present=True,
+                             result_hard_green_present=_is_hard_green(result_hard),
+                             result=result)
+    if result_status.get("verdict") in {"HARD_RED", "DISAGREEMENT"}:
+        verdict["landable"] = False
+        verdict["eligibility_kind"] = None
+        verdict["landable_reason"] = (
+            "hard-green-refused: exact result has a red/disagreement answer")
     rec = build_record(source, base, result, [], args.resolver, verdict,
-                       utc_now(), receipt=receipt)
+                       utc_now(), source_hard_green=source_hard,
+                       result_hard_green=result_hard)
+    rec["source_hard_green_state"] = "HARD_GREEN"
+    rec["result_hard_green_state"] = result_status.get("verdict")
     append_record(args.store, rec)
     maybe_publish_provenance(args, rec)
     # Leave the tree on a clean detached base (stateless, like union-rebase.sh).
     _git(checkout, ["checkout", "-q", "--detach", base])
     emit_record(rec, args.json, action="RECORDED")
-    if not receipt and not args.json:
+    if not args.json:
         print(rec["landable_reason"], file=sys.stderr)
     return EXIT_OK
 
@@ -870,14 +987,24 @@ def conflicted_files(checkout: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # eligible (consumer query for the lander)                                     #
 # --------------------------------------------------------------------------- #
-def _classify_row(z: str, rec: dict, floors, args) -> dict:
-    """Compute a head's live landability row, carrying the TRI-STATE receipt.
+def _refresh_hard_green(revision: str, frozen: dict | None,
+                        recheck: bool) -> tuple[dict | None, str]:
+    """Refresh evidence; a frozen JSON object never authorizes on its own."""
+    if not recheck:
+        return None, "NO_RESULT(unverified-cache)"
+    live = hard_green_status(revision)
+    verdict = str(live.get("verdict") or "NO_RESULT")
+    if verdict == "HARD_GREEN" and _is_hard_green(live, revision):
+        return live, verdict
+    if verdict == "HARD_GREEN":
+        return None, "ERROR(mismatched-hard-green-sha)"
+    if verdict in {"HARD_RED", "DISAGREEMENT"}:
+        return None, verdict
+    return None, verdict
 
-    Re-checks the base floor live (a floor added after recording must demote a
-    stale head) and re-derives the receipt at Z live via the tri-state authority
-    (a receipt earned later promotes Z; one revoked demotes it). CRITICALLY, an
-    UNKNOWN receipt is carried as UNKNOWN, never collapsed to absent -- so the
-    head is VISIBLE and non-landable, never silently gone."""
+
+def _classify_row(z: str, rec: dict, floors, args) -> dict:
+    """Compute live exact-hard OR inherited-soft landability."""
     soft = rec.get("soft_green")
     base_ok = rec.get("base_clears_floor", False)
     unmet = rec.get("base_unmet_floors", [])
@@ -886,33 +1013,46 @@ def _classify_row(z: str, rec: dict, floors, args) -> dict:
         base_ok = live["ok"]
         unmet = [{"sha": f["sha"], "kind": f["kind"], "field": f["field"]}
                  for f in live["unmet"]]
-    if args.recheck_receipt and z:
-        rs = receipt_status(z)
-    else:
-        snap = rec.get("receipt_at_Z")
-        rs = {"status": RECEIPT_VALIDATED if snap else RECEIPT_ABSENT,
-              "identity": snap,
-              "detail": "frozen snapshot (--no-recheck-receipt)"}
-    r_state, receipt = rs["status"], rs["identity"]
-    receipt_present = r_state == RECEIPT_VALIDATED
-    landable = soft is not None and base_ok and receipt_present
+    source = rec.get("source_rev") or ""
+    source_frozen = rec.get("source_hard_green")
+    result_frozen = rec.get("result_hard_green") or _legacy_result_hard_green(rec, z)
+    source_hard, source_state = _refresh_hard_green(
+        source, source_frozen, args.recheck_source_hard_green)
+    result_hard, result_state = _refresh_hard_green(
+        z, result_frozen, args.recheck_result_hard_green)
+    source_present = _is_hard_green(source_hard)
+    result_present = _is_hard_green(result_hard)
+    inherited = soft is not None and source_present
+    authority_conflict = (source_state in {"HARD_RED", "DISAGREEMENT"}
+                          or result_state in {"HARD_RED", "DISAGREEMENT"})
+    landable = base_ok and not authority_conflict and (result_present or inherited)
+    eligibility_kind = None
+    if landable:
+        eligibility_kind = ("hard-green(exact-result)" if result_present
+                            else "soft-green(inherited-source)")
     return {**rec, "base_clears_floor": base_ok, "base_unmet_floors": unmet,
-            "receipt_at_Z": receipt, "receipt_state": r_state,
-            "receipt_detail": rs.get("detail", ""), "landable": landable,
+            "source_hard_green": source_hard,
+            "source_hard_green_state": source_state,
+            "result_hard_green": result_hard,
+            "result_hard_green_state": result_state,
+            "landable": landable, "eligibility_kind": eligibility_kind,
             "landable_reason": landable_reason(soft, base_ok, unmet,
-                                               receipt_present, z, r_state)}
+                                               source_present, result_present, z,
+                                               ("DISAGREEMENT" if authority_conflict
+                                                else source_state))}
 
 
 def _bucket_of(row: dict) -> str:
     """Which reconciliation bucket a classified record row belongs to."""
     if row["landable"]:
         return "eligible"
-    if row["receipt_state"] == RECEIPT_UNKNOWN:
-        return "receipt-unknown"          # VISIBLE: authority unreachable, NOT gone.
-    if (row.get("soft_green") is not None and row.get("base_clears_floor")
-            and row["receipt_state"] == RECEIPT_ABSENT):
-        return "pending-no-receipt"       # soft-green, base ok, awaiting validate@Z.
-    return "disqualified"                 # not soft-green / base below floor.
+    if (row.get("source_hard_green_state") in {"HARD_RED", "DISAGREEMENT"}
+            or row.get("result_hard_green_state") in {"HARD_RED", "DISAGREEMENT"}):
+        return "hard-green-conflict"
+    if (row.get("source_hard_green_state") in {"NO_RESULT", "ERROR"}
+            and row.get("result_hard_green_state") in {"NO_RESULT", "ERROR"}):
+        return "hard-green-unknown"
+    return "disqualified"
 
 
 def do_eligible(args) -> int:
@@ -940,8 +1080,9 @@ def do_eligible(args) -> int:
         out = {"result": match["result"], "source_rev": match.get("source_rev"),
                "base": match.get("base"), "eligible": match["landable"],
                "soft_green": match.get("soft_green"),
-               "receipt_state": match.get("receipt_state"),
-               "receipt_at_Z": match.get("receipt_at_Z"),
+               "eligibility_kind": match.get("eligibility_kind"),
+               "source_hard_green_state": match.get("source_hard_green_state"),
+               "result_hard_green_state": match.get("result_hard_green_state"),
                "reason": match.get("landable_reason")}
         _print_query(out, args.json)
         return EXIT_OK if match["landable"] else EXIT_REFUSED
@@ -950,8 +1091,8 @@ def do_eligible(args) -> int:
     # "invisible" != "nothing pending" (default; --no-reconcile for store-only).
     prs = None if args.no_reconcile else open_pushed_prs(args.pr_repo)
 
-    buckets: dict[str, list] = {"eligible": [], "pending-no-receipt": [],
-                                "receipt-unknown": [], "disqualified": [],
+    buckets: dict[str, list] = {"eligible": [], "hard-green-unknown": [],
+                                "hard-green-conflict": [], "disqualified": [],
                                 "unaccounted": []}
     recorded_not_open: list[str] = []
 
@@ -966,8 +1107,8 @@ def do_eligible(args) -> int:
                 # A2 cross-host recovery: this host's local cache has no record,
                 # but another host may have published the soft-green provenance to
                 # the shared branch. Dereference it and classify as if local --
-                # the base floor and the receipt at Z are STILL re-checked live,
-                # so durability supplies only the non-derivable soft-green datum.
+                # the base floor and exact-SHA hard evidence are STILL re-checked
+                # live, so durability supplies only derivation provenance.
                 prov = fetch_provenance(z)
                 if prov is not None:
                     rec = record_from_provenance(prov)
@@ -1014,8 +1155,8 @@ def do_eligible(args) -> int:
             "pr_repo": args.pr_repo if prs is not None else None,
             "summary": summary,
             "eligible": buckets["eligible"],
-            "pending_no_receipt": buckets["pending-no-receipt"],
-            "receipt_unknown": buckets["receipt-unknown"],
+            "hard_green_unknown": buckets["hard-green-unknown"],
+            "hard_green_conflict": buckets["hard-green-conflict"],
             "unaccounted": buckets["unaccounted"],
             "disqualified": buckets["disqualified"],
             "recorded_not_open": recorded_not_open,
@@ -1030,27 +1171,28 @@ def _print_reconciliation(buckets, summary, recorded_not_open, reconciled) -> No
     if reconciled:
         print(f"RECONCILED against {summary.get('open_pushed_prs', 0)} open pushed "
               f"PR(s): eligible={summary['eligible']} "
-              f"pending-no-receipt={summary['pending-no-receipt']} "
-              f"receipt-unknown={summary['receipt-unknown']} "
+              f"hard-green-unknown={summary['hard-green-unknown']} "
+              f"hard-green-conflict={summary['hard-green-conflict']} "
               f"unaccounted={summary['unaccounted']} "
               f"disqualified={summary['disqualified']}")
     else:
         print("STORE-ONLY (not reconciled -- cannot assert invisible != nothing-"
               f"pending): eligible={summary['eligible']} "
-              f"pending-no-receipt={summary['pending-no-receipt']} "
-              f"receipt-unknown={summary['receipt-unknown']} "
+              f"hard-green-unknown={summary['hard-green-unknown']} "
+              f"hard-green-conflict={summary['hard-green-conflict']} "
               f"disqualified={summary['disqualified']}")
     for r in buckets["eligible"]:
         print(f"  ELIGIBLE {_short(r['result'])} "
               f"src={_short(r.get('source_rev',''))} "
               f"base={_short(r.get('base',''))} {r.get('soft_green')} "
-              f"pr=#{r.get('pr_number','?')} resolver={r.get('resolver') or '-'}")
-    for r in buckets["receipt-unknown"]:
-        print(f"  RECEIPT-UNKNOWN {_short(r['result'])} pr=#{r.get('pr_number','?')} "
-              f"-- {r.get('receipt_detail','')} (VISIBLE, not vanished)")
-    for r in buckets["pending-no-receipt"]:
-        print(f"  PENDING-NO-RECEIPT {_short(r['result'])} pr=#{r.get('pr_number','?')} "
-              f"-- soft-green, base ok, awaiting validate@Z")
+              f"kind={r.get('eligibility_kind')} pr=#{r.get('pr_number','?')} "
+              f"resolver={r.get('resolver') or '-'}")
+    for r in buckets["hard-green-conflict"]:
+        print(f"  HARD-GREEN-CONFLICT {_short(r['result'])} "
+              f"pr=#{r.get('pr_number','?')} -- {r.get('landable_reason','')}")
+    for r in buckets["hard-green-unknown"]:
+        print(f"  HARD-GREEN-UNKNOWN {_short(r['result'])} "
+              f"pr=#{r.get('pr_number','?')} -- no exact source/result pass")
     for r in buckets["unaccounted"]:
         print(f"  UNACCOUNTED pr=#{r.get('number','?')} {_short(r.get('result',''))} "
               f"{r.get('headRefName','')} -- no rebase record")
@@ -1064,8 +1206,8 @@ def _print_query(out: dict, as_json: bool) -> None:
         print(json.dumps(out, indent=2))
     else:
         verdict = "ELIGIBLE" if out.get("eligible") else "NOT-ELIGIBLE"
-        rstate = out.get("receipt_state")
-        tag = f" [receipt={rstate}]" if rstate and not out.get("eligible") else ""
+        rstate = out.get("result_hard_green_state")
+        tag = f" [result-hard-green={rstate}]" if rstate and not out.get("eligible") else ""
         print(f"{verdict} {_short(out.get('result',''))}{tag} -- {out.get('reason')}")
 
 
@@ -1079,15 +1221,16 @@ def emit_record(rec: dict, as_json: bool, *, action: str) -> None:
     conf = "none" if not rec["conflicts"] else f"[{', '.join(rec['conflicts'])}]"
     sg = rec.get("soft_green") or "NONE"
     land = "LANDABLE" if rec.get("landable") else "NOT-LANDABLE"
-    receipt = rec.get("receipt_at_Z")
-    rct = (f"{receipt.get('verdict')}@{_short(receipt.get('sha',''))}"
-           f"({receipt.get('profile')})") if receipt else "null"
+    source_hard = rec.get("source_hard_green")
+    result_hard = rec.get("result_hard_green")
     print(f"{action}: {_short(rec['source_rev'])} rebased on "
           f"{_short(rec['base'])} -> {_short(rec['result']) or '(no result)'} "
           f"conflicts={conf} soft-green={sg} {land}")
     print(f"  risk-judgement={rec.get('risk_judgement') or '(absent)'} "
           f"base-clears-floor={rec.get('base_clears_floor')} "
-          f"receipt-at-Z={rct} resolver={rec.get('resolver') or '-'}")
+          f"source-hard={source_hard.get('verdict') if source_hard else 'null'} "
+          f"result-hard={result_hard.get('verdict') if result_hard else 'null'} "
+          f"resolver={rec.get('resolver') or '-'}")
     print(f"  {rec.get('landable_reason')}")
 
 
@@ -1117,10 +1260,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--risk-judgement", dest="risk_judgement",
                     help=f"{RISK_RETAIN}|{RISK_VALIDATE} (required iff conflicts)")
     pr.add_argument("--rationale", help="justification (required iff conflicts)")
-    pr.add_argument("--no-receipt-check", dest="no_receipt_check",
-                    action="store_true",
-                    help="record receipt_at_Z=null without querying validate-status "
-                         "(offline); yields NOT-LANDABLE until `eligible` re-checks")
+    pr.add_argument("--no-hard-green-check", "--no-receipt-check",
+                    dest="no_hard_green_check", action="store_true",
+                    help="offline/debug only: do not query exact-SHA hard-green "
+                         "authorities; the record cannot inherit soft green")
     pr.add_argument("--publish-provenance", dest="publish_provenance",
                     action="store_true",
                     help="ALSO publish the non-derivable soft-green provenance "
@@ -1142,9 +1285,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="push the zero-conflict result to origin")
     rb.add_argument("--push-ref", dest="push_ref",
                     help="destination ref for --push")
-    rb.add_argument("--no-receipt-check", dest="no_receipt_check",
-                    action="store_true",
-                    help="skip binding the receipt at the pushed head Z (offline)")
+    rb.add_argument("--no-hard-green-check", "--no-receipt-check",
+                    dest="no_hard_green_check", action="store_true",
+                    help="offline/debug only; without exact source hard green the "
+                         "rebase is refused")
     rb.add_argument("--publish-provenance", dest="publish_provenance",
                     action="store_true",
                     help="ALSO publish the soft-green provenance durably to the "
@@ -1162,14 +1306,18 @@ def build_parser() -> argparse.ArgumentParser:
     el.add_argument("--no-recheck-floor", dest="recheck_floor",
                     action="store_false",
                     help="trust the frozen record verdict (offline)")
-    el.add_argument("--recheck-receipt", dest="recheck_receipt",
+    el.add_argument("--recheck-source-hard-green", dest="recheck_source_hard_green",
                     action="store_true", default=True,
-                    help="re-derive the receipt at Z live via validate-status "
-                         "(default) -- binds landability to the current authority "
-                         "for the exact pushed head")
-    el.add_argument("--no-recheck-receipt", dest="recheck_receipt",
-                    action="store_false",
-                    help="trust the frozen receipt_at_Z snapshot (offline)")
+                    help="refresh source X through the combined authority (default); "
+                         "NO_RESULT retains a durable cached pass, red invalidates it")
+    el.add_argument("--no-recheck-source-hard-green", dest="recheck_source_hard_green",
+                    action="store_false")
+    el.add_argument("--recheck-result-hard-green", "--recheck-receipt",
+                    dest="recheck_result_hard_green", action="store_true", default=True,
+                    help="refresh exact-result hard green at Z (default)")
+    el.add_argument("--no-recheck-result-hard-green", "--no-recheck-receipt",
+                    dest="recheck_result_hard_green", action="store_false",
+                    help="trust the frozen exact-result evidence (offline)")
     el.add_argument("--pr-repo", dest="pr_repo", default=DEFAULT_PR_REPO,
                     help="repo whose open PRs are the reconciliation population "
                          f"(default {DEFAULT_PR_REPO}); the lander lands its PRs")
