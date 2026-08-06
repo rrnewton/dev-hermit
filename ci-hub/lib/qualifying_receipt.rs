@@ -35,7 +35,7 @@
 //!    effect with no recompile (the "one edit" guarantee).
 //!
 //! A missing, unreadable, or malformed override/on-disk file is a deploy defect
-//! and PANICS (loud). The compile-time [`EMBEDDED`] snapshot exists only for
+//! and PANICS (loud). A compile-time embedded snapshot exists only for
 //! build-time alignment and isolated unit fixtures; it is never a runtime
 //! fallback. A fallback would let stale compiled rules authorize after the
 //! canonical live predicate was tightened or removed.
@@ -55,6 +55,7 @@ pub const PREDICATE_ENV: &str = "QUALIFYING_RECEIPT_PREDICATE";
 pub const PREDICATE_TEST_SENTINEL_ENV: &str = "CI_HUB_TEST_PREDICATE_OVERRIDE";
 
 /// Compile-time snapshot used only by build-alignment and isolated unit tests.
+#[cfg(test)]
 pub const EMBEDDED: &str = include_str!("../validate/qualifying-receipt.json");
 
 /// The mandatory receipt/ledger-row fields and their required values. A `pass`
