@@ -73,6 +73,40 @@ class ProtocolTest(unittest.TestCase):
             )
         self.assertEqual(landed, replay)
 
+    def test_network_run_passes_one_explicit_command_to_herdr(self) -> None:
+        command = (
+            "with-proxy",
+            "git",
+            "-C",
+            "/workspace/hermit",
+            "fetch",
+            "origin",
+            "main",
+        )
+        completed = subprocess.CompletedProcess(command, 0, "", "")
+        previous = protocol._HERDR_AGENT
+        try:
+            protocol._HERDR_AGENT = "hermit-coord"
+            with (
+                mock.patch.dict(
+                    protocol.os.environ,
+                    {"DEV_HERMIT_PARENT": str(self.root)},
+                ),
+                mock.patch.object(Path, "is_file", return_value=True),
+                mock.patch.object(protocol, "_run", return_value=completed) as run,
+            ):
+                protocol._network_run(command, check=True, timeout=17)
+        finally:
+            protocol._HERDR_AGENT = previous
+
+        wrapped = run.call_args.args[0]
+        self.assertEqual(str(self.root / "agent-utils/bin/herdr-run"), wrapped[0])
+        self.assertEqual(("--agent", "hermit-coord"), tuple(wrapped[1:3]))
+        self.assertEqual(4, len(wrapped))
+        self.assertEqual(
+            "with-proxy git -C /workspace/hermit fetch origin main", wrapped[3]
+        )
+
     def test_raw_rebase_head_failure_explains_pr_aware_check(self) -> None:
         source = self.root / "source"
         source.mkdir()

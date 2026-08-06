@@ -1,15 +1,23 @@
 # Owner tooling directive obligations
 
-`ledger.json` turns owner tooling, configuration, and repository imperatives
-into obligations. A quotation, dispatch, design document, branch, or open pull
-request is not completion. `check.py` reports `satisfied` only after the claimed
-full commit SHA or pull request `mergeCommit.oid` is an ancestor of the freshly
-fetched named target branch.
+TaskGraph tasks tagged `owner-directive` are the single authority for owner
+tooling, configuration, and repository obligations. A quotation, dispatch,
+design document, branch, asserted task status, or open pull request is not
+completion. `check.py` reports `satisfied` only after the claimed full commit
+SHA or pull request `mergeCommit.oid` is an ancestor of the freshly fetched
+named target branch.
 
-Run the pure primer before editing the ledger:
+Run the pure primer before adding or revising a typed record:
 
 ```bash
 ./ci-hub/directives/check.py --quickstart
+```
+
+Each accountable task carries one or more typed notes. The prefix and payload
+are deliberately machine-readable:
+
+```text
+OWNER-DIRECTIVE-V1: {"revision":1,"id":"...","task":"...",...}
 ```
 
 Each record requires:
@@ -24,6 +32,12 @@ Each record requires:
   directive is waiting on (for example, "zero open Hermit PRs"). A `gate` must
   name its blocking condition: an empty `gate` is rejected as `invalid`, because
   a bare "gated" is only a quieter form of unknown.
+
+TaskGraph notes are append-only. To update an obligation, add the complete
+replacement payload with a higher integer `revision`. The highest revision for
+an `id` wins. Conflicting payloads at the same revision, a tag without a typed
+note, an unknown `parent_id`, a parent cycle, or an empty population all fail
+closed. This retains child obligations that a single task-level SHA would hide.
 
 The checked result is written to `ignored/ci-hub/directives/latest.json` with
 the resolved implementation SHA, freshly fetched target tip, and terminal
@@ -53,9 +67,14 @@ The `drift=` field of the terminal summary counts `needs_owner`,
 `missing_task`, `not_landed`, `invalid`, `unverifiable`, and `fetch_failed`;
 `open` and `gated` are reported separately as in-progress and deferred work.
 
-The hourly `owner_tooling_directives` health tick runs the same command and
-wakes the coordinator for every state other than complete fresh-main ancestry.
-The versioned seed preserves the 16-row 2026-08-04 audit, expands its
-cross-repository legs, and records this tracking directive itself. Parent pins
-and child obligations therefore cannot be hidden by one partially landed
-directive.
+For a PR implementation, the checker asks GitHub for the merged PR's
+`mergeCommit.oid` and then checks that replay commit against freshly fetched
+target ancestry. The mutable pre-rebase PR head is never treated as the landed
+identity.
+
+The hourly `owner_tooling_directives` health tick runs the same TaskGraph-view
+command and wakes the coordinator for every state other than complete
+fresh-main ancestry.
+The former `ledger.json` seed was migrated into typed notes; it is no longer a
+second mutable status store. Parent pins and child obligations therefore cannot
+be hidden by one partially landed directive.

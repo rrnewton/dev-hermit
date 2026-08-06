@@ -17,8 +17,10 @@ from typing import Callable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LEDGER = Path(__file__).resolve().with_name("ledger.json")
+VERIFIER_PATH = Path(__file__).resolve().parents[1] / "remediation/protocol.py"
 DEFAULT_REPORT = ROOT / "ignored/ci-hub/directives/latest.json"
+OWNER_DIRECTIVE_TAG = "owner-directive"
+OWNER_DIRECTIVE_PREFIX = "OWNER-DIRECTIVE-V1:"
 TASK_RE = re.compile(r"[A-Za-z0-9_.-]+")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 REPO_RE = re.compile(r"[^/\s]+/[^/\s]+")
@@ -208,6 +210,12 @@ def load_ledger(path: Path) -> tuple[int, tuple[Directive, ...]]:
     )
     if len(directives) != len(raw_directives):
         raise LedgerError("every directive must be an object")
+    return 1, _validate_directive_set(directives)
+
+
+def _validate_directive_set(directives: Sequence[Directive]) -> tuple[Directive, ...]:
+    """Validate identities and typed parent links shared by every source."""
+    directives = tuple(directives)
     ids = [item.id for item in directives]
     if any(not item for item in ids):
         raise LedgerError("every directive requires a nonempty id")
@@ -223,7 +231,87 @@ def load_ledger(path: Path) -> tuple[int, tuple[Directive, ...]]:
         if directive.parent_id == directive.id:
             raise LedgerError(f"directive {directive.id} cannot parent itself")
     _assert_acyclic(directives)
-    return 1, directives
+    return directives
+
+
+def load_taskgraph_directives(
+    *, run: Run = _run, tag: str = OWNER_DIRECTIVE_TAG, timeout: float = 5
+) -> tuple[int, tuple[Directive, ...]]:
+    """Load the owner-directive view from typed TaskGraph notes.
+
+    TaskGraph notes are append-only, so an obligation update carries an integer
+    ``revision``.  The highest revision wins; two different payloads at the same
+    revision are rejected.  This makes replacement deterministic without
+    silently accepting whichever SQLite row happened to render last.
+    """
+    if not TASK_RE.fullmatch(tag):
+        raise LedgerError("owner-directive tag is invalid")
+    query = (
+        "SELECT t.local_id, COALESCE(json_group_array(n.content), '[]') "
+        "FROM tasks t LEFT JOIN task_notes n ON n.task_id = t.local_id "
+        f"WHERE t.tags LIKE '%\"{tag}\"%' GROUP BY t.local_id;"
+    )
+    result = run(("tg", "sql", query), cwd=ROOT, timeout=timeout)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "TaskGraph lookup failed").strip()
+        raise LedgerError(f"cannot load TaskGraph owner directives: {detail}")
+
+    selected: dict[str, tuple[int, Mapping[str, object]]] = {}
+    tagged_tasks: set[str] = set()
+    tasks_with_records: set[str] = set()
+    for line in result.stdout.splitlines():
+        task, separator, notes_raw = line.partition("|")
+        task = task.strip()
+        if not separator or task in {"", "local_id"} or set(task) == {"-"}:
+            continue
+        if not TASK_RE.fullmatch(task):
+            raise LedgerError(f"TaskGraph returned invalid task id {task!r}")
+        tagged_tasks.add(task)
+        try:
+            raw_notes = json.loads(notes_raw.strip())
+        except json.JSONDecodeError as error:
+            raise LedgerError(f"task {task} has invalid notes JSON: {error}") from error
+        if not isinstance(raw_notes, list):
+            raise LedgerError(f"task {task} notes must be a JSON list")
+        for note in raw_notes:
+            if not isinstance(note, str) or not note.startswith(OWNER_DIRECTIVE_PREFIX):
+                continue
+            tasks_with_records.add(task)
+            try:
+                payload = json.loads(note.removeprefix(OWNER_DIRECTIVE_PREFIX).strip())
+            except json.JSONDecodeError as error:
+                raise LedgerError(
+                    f"task {task} has malformed {OWNER_DIRECTIVE_PREFIX} note: {error}"
+                ) from error
+            if not isinstance(payload, Mapping):
+                raise LedgerError(f"task {task} owner directive must be an object")
+            if _text(payload.get("task")) != task:
+                raise LedgerError(f"owner directive note task does not match {task}")
+            revision = payload.get("revision")
+            if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+                raise LedgerError(f"task {task} owner directive requires revision >= 1")
+            item_id = _text(payload.get("id"))
+            if not item_id:
+                raise LedgerError(f"task {task} owner directive requires an id")
+            prior = selected.get(item_id)
+            if prior is None or revision > prior[0]:
+                selected[item_id] = (revision, payload)
+            elif revision == prior[0] and dict(payload) != dict(prior[1]):
+                raise LedgerError(
+                    f"conflicting owner directive {item_id} revision {revision}"
+                )
+
+    missing = sorted(tagged_tasks - tasks_with_records)
+    if missing:
+        raise LedgerError(
+            "owner-directive task(s) have no typed note: " + ",".join(missing)
+        )
+    if not selected:
+        raise LedgerError(
+            f"TaskGraph has no {tag!r} obligations; an empty authority cannot be green"
+        )
+    directives = [_parse_directive(payload) for _revision, payload in selected.values()]
+    return 2, _validate_directive_set(directives)
 
 
 def _assert_acyclic(directives: Sequence[Directive]) -> None:
@@ -316,7 +404,7 @@ def _verify_landing(
     source = (ROOT / directive.checkout).resolve()
     command = (
         sys.executable,
-        str(ROOT / "ci-hub/remediation/protocol.py"),
+        str(VERIFIER_PATH),
         "verify-landing",
         directive.implementation.identity,
         "--repo",
@@ -325,6 +413,8 @@ def _verify_landing(
         str(source),
         "--target",
         directive.target,
+        "--herdr-agent",
+        "hermit-coord",
         "--json",
     )
     result = run(command, cwd=ROOT, timeout=timeout)
@@ -361,12 +451,20 @@ def _verify_landing(
 
 def evaluate(
     *,
-    ledger_path: Path,
+    ledger_path: Path | None = None,
+    tag: str = OWNER_DIRECTIVE_TAG,
     run: Run = _run,
     deadline_seconds: float = 24,
     checked_at: str | None = None,
 ) -> Report:
-    schema_version, directives = load_ledger(ledger_path)
+    if ledger_path is None:
+        schema_version, directives = load_taskgraph_directives(
+            run=run, tag=tag, timeout=max(1.0, min(deadline_seconds, 5.0))
+        )
+        source = f"taskgraph:tag={tag}"
+    else:
+        schema_version, directives = load_ledger(ledger_path)
+        source = str(ledger_path)
     started = time.monotonic()
     known_tasks, task_lookup_error = _query_known_tasks(
         directives, run, max(1.0, min(deadline_seconds, 5.0))
@@ -485,7 +583,7 @@ def evaluate(
         schema_version=schema_version,
         checked_at=checked_at
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        ledger=str(ledger_path),
+        ledger=source,
         source_rows=len({item.source_row for item in directives if item.source_row}),
         records=len(results),
         overall_state=overall_state,
@@ -532,9 +630,9 @@ def _print_fields(report: Report) -> None:
 
 def quickstart() -> None:
     print("Owner directive tracker quickstart")
-    print("1. Add the directive to ci-hub/directives/ledger.json when it is asked.")
-    print("2. Record date, repo, TaskGraph task, owner, and commit/PR identity.")
-    print("3. Add child records for every cross-repo or incomplete-scope remainder.")
+    print("1. Add the owner-directive tag to the accountable TaskGraph task.")
+    print("2. Add an OWNER-DIRECTIVE-V1 JSON note with revision, repo, owner, and evidence.")
+    print("3. Add typed parent_id records for every cross-repo or incomplete remainder.")
     print("4. Run ./ci-hub/directives/check.py; only fresh-main ancestry is satisfied.")
     print("5. Inspect ignored/ci-hub/directives/latest.json for the durable verdict.")
 
@@ -543,7 +641,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Fail closed unless owner tooling directives are ancestry-confirmed"
     )
-    parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    parser.add_argument(
+        "--ledger",
+        type=Path,
+        help="legacy/testing override; default authority is tagged TaskGraph notes",
+    )
+    parser.add_argument("--tag", default=OWNER_DIRECTIVE_TAG)
     parser.add_argument("--output", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--deadline-secs", type=float, default=24)
     parser.add_argument("--json", action="store_true")
@@ -562,7 +665,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         report = evaluate(
-            ledger_path=args.ledger.resolve(), deadline_seconds=args.deadline_secs
+            ledger_path=args.ledger.resolve() if args.ledger else None,
+            tag=args.tag,
+            deadline_seconds=args.deadline_secs,
         )
     except LedgerError as error:
         print(f"state=invalid\nsummary={_field(error)}")
