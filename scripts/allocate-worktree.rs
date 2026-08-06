@@ -21,9 +21,12 @@
 //!
 //! ```cargo
 //! [dependencies]
+//! fs2 = "0.4"
 //! serde_json = "1"
 //! ```
+use fs2::FileExt;
 use serde_json::{json, Value};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
@@ -125,6 +128,21 @@ fn find_root() -> PathBuf {
             die("could not locate dev-hermit root (need .gitmodules + hermit/ + reverie/ + liteinst2/)");
         }
     }
+}
+
+/// Hold the single registry-writer authority across physical worktree and
+/// state/ACTIVE mutations. The releaser takes this same lock.
+fn lock_registry(root: &Path) -> fs::File {
+    let path = root.join("worktree-state.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|error| die(&format!("open registry lock {}: {error}", path.display())));
+    FileExt::lock_exclusive(&file)
+        .unwrap_or_else(|error| die(&format!("lock registry {}: {error}", path.display())));
+    file
 }
 
 fn now_iso() -> String {
@@ -705,12 +723,14 @@ fn main() {
     // allocation path so it cannot be confused with a slot request.
     if repair {
         let root = find_root();
+        let _registry_lock = lock_registry(&root);
         repair_registry(&root, dry_run);
     }
 
     // Health check only: report homeostasis and exit without allocating.
     if check_only {
         let root = find_root();
+        let _registry_lock = lock_registry(&root);
         homeostasis_check(&root);
         let checker = root.join("scripts/check-worktree-registry.rs");
         let root_arg = root.to_string_lossy().into_owned();
@@ -748,6 +768,7 @@ fn main() {
     }
 
     let root = find_root();
+    let _registry_lock = lock_registry(&root);
     let mut state = load_state(&root);
 
     // Default slot name: agent name with a leading 'hermit-' stripped.

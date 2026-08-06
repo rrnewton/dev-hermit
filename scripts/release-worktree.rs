@@ -12,12 +12,18 @@
 //!
 //! ```cargo
 //! [dependencies]
+//! fs2 = "0.4"
+//! libc = "0.2"
 //! serde_json = "1"
 //! ```
+use fs2::FileExt;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::ffi::CString;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command, Output};
 
@@ -72,6 +78,21 @@ fn find_root() -> PathBuf {
     }
 }
 
+/// Hold the single registry-writer authority across every read, physical
+/// mutation, and state/ACTIVE update. The allocator takes this same lock.
+fn lock_registry(root: &Path) -> fs::File {
+    let path = root.join("worktree-state.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap_or_else(|error| die(&format!("open registry lock {}: {error}", path.display())));
+    FileExt::lock_exclusive(&file)
+        .unwrap_or_else(|error| die(&format!("lock registry {}: {error}", path.display())));
+    file
+}
+
 fn now_iso() -> String {
     match Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -80,20 +101,6 @@ fn now_iso() -> String {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     }
-}
-
-fn git(dir: &Path, args: &[&str]) -> (bool, String, String) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| die(&format!("failed to spawn git: {e}")));
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        String::from_utf8_lossy(&out.stderr).trim().to_string(),
-    )
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Result<Output, String> {
@@ -163,6 +170,48 @@ struct RepoInspection {
     status: String,
 }
 
+fn validate_owners(slot: &str, slot_state: &Value) -> Result<(), String> {
+    let agents = slot_state["agents"]
+        .as_array()
+        .ok_or_else(|| format!("slot {slot} has no readable agents array"))?;
+    if agents.is_empty() {
+        return Err(format!("slot {slot} has no recorded owner"));
+    }
+
+    let mut names = BTreeSet::new();
+    let mut mutating = 0usize;
+    for (index, agent) in agents.iter().enumerate() {
+        let name = agent["name"]
+            .as_str()
+            .ok_or_else(|| format!("slot {slot} agent {index} has no string name"))?;
+        if name.is_empty()
+            || name.trim() != name
+            || name == "-"
+            || name.contains('|')
+            || name.chars().any(char::is_control)
+        {
+            return Err(format!(
+                "slot {slot} agent {index} has invalid name '{name}'"
+            ));
+        }
+        if !names.insert(name.to_string()) {
+            return Err(format!("slot {slot} records duplicate agent '{name}'"));
+        }
+        let read_only = agent["read_only"]
+            .as_bool()
+            .ok_or_else(|| format!("slot {slot} agent '{name}' has no boolean read_only"))?;
+        if !read_only {
+            mutating += 1;
+        }
+    }
+    if mutating != 1 {
+        return Err(format!(
+            "slot {slot} must have exactly one mutating owner, found {mutating}"
+        ));
+    }
+    Ok(())
+}
+
 fn canonical_exact(root: &Path, relative: &Path) -> Result<PathBuf, String> {
     if relative.is_absolute()
         || relative
@@ -228,12 +277,7 @@ fn clean_targets_from_state(
     let slot_state = state["slots"]
         .get(slot)
         .ok_or_else(|| format!("slot {slot} is not registered"))?;
-    let agents = slot_state["agents"]
-        .as_array()
-        .ok_or_else(|| format!("slot {slot} has no readable agents array"))?;
-    if agents.is_empty() {
-        return Err(format!("slot {slot} has no recorded owner"));
-    }
+    validate_owners(slot, slot_state)?;
 
     let mut targets = Vec::new();
     for (label, branch_key, path_key) in [
@@ -617,26 +661,46 @@ fn push_branch(path: &Path) -> Result<bool, String> {
 }
 
 fn link_inside_target(link: &Path, targets: &[PathBuf]) -> bool {
+    let text = link.to_string_lossy();
+    let link = Path::new(text.strip_suffix(" (deleted)").unwrap_or(&text));
     targets
         .iter()
         .any(|target| link == target || link.starts_with(target))
 }
 
+fn process_root(root: &Path) -> Result<PathBuf, String> {
+    let Some(test_root) = std::env::var_os("HERMIT_RELEASE_TEST_PROC_ROOT") else {
+        return Ok(PathBuf::from("/proc"));
+    };
+    let workspace = fs::canonicalize(root)
+        .map_err(|error| format!("could not canonicalize workspace for proc scan: {error}"))?;
+    let temp = fs::canonicalize(std::env::temp_dir())
+        .map_err(|error| format!("could not canonicalize temporary directory: {error}"))?;
+    let fixture_workspace = workspace.starts_with(&temp)
+        && workspace.ancestors().any(|ancestor| {
+            ancestor
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("release-worktree-test."))
+                .unwrap_or(false)
+        });
+    let test_root = fs::canonicalize(PathBuf::from(test_root))
+        .map_err(|error| format!("could not canonicalize test proc root: {error}"))?;
+    if !fixture_workspace || !test_root.starts_with(&workspace) {
+        return Err(
+            "HERMIT_RELEASE_TEST_PROC_ROOT is restricted to disposable release fixtures"
+                .to_string(),
+        );
+    }
+    Ok(test_root)
+}
+
 fn read_proc_link(path: &Path) -> Result<Option<PathBuf>, String> {
     match fs::read_link(path) {
         Ok(link) => Ok(Some(link)),
-        // Sandboxed sibling agents may hide their /proc links even though all
-        // fleet processes share a Unix uid. Such a process cannot be
-        // attributed to this target from this namespace; continue scanning
-        // visible owners rather than making every release permanently fail.
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::NotFound | ErrorKind::PermissionDenied
-            ) =>
-        {
-            Ok(None)
-        }
+        // A vanished process is an expected race. PermissionDenied is not: a
+        // hidden same-UID owner is uncertainty, so cleanup must remain blocked.
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
             "could not inspect live process link {}: {error}",
             path.display()
@@ -644,15 +708,20 @@ fn read_proc_link(path: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// Refuse while a visible process has its cwd or executable below a target. The
-/// coordinator may retry after that owner exits; cleanup never signals it.
-fn live_process_users(targets: &[PathBuf]) -> Result<Vec<String>, String> {
+/// Refuse while a same-UID process has its cwd or executable below a target,
+/// and fail closed when that ownership cannot be inspected.
+fn live_process_users(proc_root: &Path, targets: &[PathBuf]) -> Result<Vec<String>, String> {
+    let own_uid = fs::metadata("/proc/self")
+        .map_err(|error| format!("could not inspect /proc/self: {error}"))?
+        .uid();
     let mut users = Vec::new();
-    for entry in fs::read_dir("/proc").map_err(|e| format!("could not enumerate /proc: {e}"))? {
+    for entry in fs::read_dir(proc_root)
+        .map_err(|error| format!("could not enumerate {}: {error}", proc_root.display()))?
+    {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("could not enumerate /proc entry: {error}")),
+            Err(error) => return Err(format!("could not enumerate proc entry: {error}")),
         };
         let name = entry.file_name();
         let Some(pid_text) = name.to_str() else {
@@ -661,6 +730,18 @@ fn live_process_users(targets: &[PathBuf]) -> Result<Vec<String>, String> {
         let Ok(pid) = pid_text.parse::<u32>() else {
             continue;
         };
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect proc entry for pid {pid}: {error}"
+                ))
+            }
+        };
+        if metadata.uid() != own_uid {
+            continue;
+        }
         for kind in ["cwd", "exe"] {
             if let Some(link) = read_proc_link(&entry.path().join(kind))? {
                 if link_inside_target(&link, targets) {
@@ -681,20 +762,28 @@ fn snapshots(inspections: &[RepoInspection]) -> Vec<RepoSnapshot> {
         .collect()
 }
 
-/// Final boundary immediately before Git-level force removal. It repeats exact
-/// target identity, recursive enumeration, all fail-closed status inspections,
-/// HEAD/origin identity, and live-process ownership after every network call.
-/// The final outer `git status` is the last subprocess before removal, so a
-/// write planted during durability checks cannot be discarded.
+/// Rebind the full authorization and recursive repository identity after every
+/// network call. Ordinary cleanup then delegates the last write race to Git's
+/// own non-force removal boundary.
 fn final_removal_boundary(
     root: &Path,
+    proc_root: &Path,
     slot: &str,
+    expected_slot: &Value,
     expected_target: &CleanTarget,
     expected_repositories: &[RepoSnapshot],
     allow_dirty: bool,
 ) -> Result<(), String> {
     verify_registry(root)?;
     let current_state = load_state(root);
+    let current_slot = current_state["slots"]
+        .get(slot)
+        .ok_or_else(|| format!("slot {slot} disappeared from state"))?;
+    if current_slot != expected_slot {
+        return Err(format!(
+            "slot {slot} owner/task/status/branch/path authorization changed before removal"
+        ));
+    }
     let rebound = clean_targets_from_state(root, &current_state, slot)?
         .into_iter()
         .find(|target| target.label == expected_target.label)
@@ -725,7 +814,7 @@ fn final_removal_boundary(
         }
     }
 
-    let users = live_process_users(&[rebound.path.clone()])?;
+    let users = live_process_users(proc_root, &[rebound.path.clone()])?;
     if !users.is_empty() {
         return Err(format!(
             "live process ownership below {}: {}",
@@ -734,18 +823,245 @@ fn final_removal_boundary(
         ));
     }
 
-    // This is deliberately last: no network query, registry rewrite, or other
-    // subprocess may open a write window between this fail-closed status and
-    // `git worktree remove --force` in the caller.
-    let outer_status = git_inspect(
-        &rebound.path,
+    Ok(())
+}
+
+fn linked_worktree_admin(target: &CleanTarget) -> Result<PathBuf, String> {
+    let git_dir = git_inspect(
+        &target.path,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+    )?;
+    let common_dir = git_inspect(
+        &target.path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let git_dir = fs::canonicalize(&git_dir)
+        .map_err(|error| format!("could not canonicalize worktree git-dir: {error}"))?;
+    let common_dir = fs::canonicalize(&common_dir)
+        .map_err(|error| format!("could not canonicalize common git-dir: {error}"))?;
+    let worktrees_dir = fs::canonicalize(common_dir.join("worktrees"))
+        .map_err(|error| format!("could not canonicalize worktree registry: {error}"))?;
+    if git_dir.parent() != Some(worktrees_dir.as_path()) {
+        return Err(format!(
+            "{} git-dir {} is not an exact linked-worktree admin entry",
+            target.path.display(),
+            git_dir.display()
+        ));
+    }
+    Ok(git_dir)
+}
+
+#[derive(Debug)]
+struct SubmoduleAdminPaths {
+    modules: PathBuf,
+    quarantine: PathBuf,
+    in_progress: PathBuf,
+}
+
+fn submodule_admin_paths(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
+    let git_dir = linked_worktree_admin(target)?;
+    Ok(SubmoduleAdminPaths {
+        modules: git_dir.join("modules"),
+        quarantine: git_dir.join("modules.release-worktree"),
+        in_progress: git_dir.join("release-worktree.in-progress"),
+    })
+}
+
+/// Atomically rename without replacing any concurrently created destination.
+/// Unsupported kernels/filesystems fail closed and retain the worktree.
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    let from = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let to = CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "target path contains NUL"))?;
+    // SAFETY: both arguments are live NUL-terminated C strings for this call;
+    // AT_FDCWD makes each absolute path independent of mutable directory fds.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// A crash after recursive proof, deinitialization, or the atomic admin rename
+/// must never turn the previous run's proof into implicit authorization for a
+/// retry. Recovery is an explicit coordinator action; ordinary cleanup and
+/// `--force` both retain the slot while either transaction artifact exists.
+fn ensure_no_submodule_cleanup_artifacts(target: &CleanTarget) -> Result<(), String> {
+    let paths = submodule_admin_paths(target)?;
+    let mut unfinished = Vec::new();
+    for path in [&paths.in_progress, &paths.quarantine] {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Ok(_) => unfinished.push(path.display().to_string()),
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect possible submodule-cleanup artifact {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    if unfinished.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "unfinished submodule cleanup artifact(s) {}; retain slot for recovery",
+            unfinished.join(", ")
+        ))
+    }
+}
+
+/// Mark the transaction before deinitialization changes what the next process
+/// can enumerate. Any later error intentionally leaves this marker in place.
+fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
+    ensure_no_submodule_cleanup_artifacts(target)?;
+    let paths = submodule_admin_paths(target)?;
+    let mut marker = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&paths.in_progress)
+        .map_err(|error| {
+            format!(
+                "could not create submodule-cleanup marker {}: {error}",
+                paths.in_progress.display()
+            )
+        })?;
+    marker
+        .write_all(b"release-worktree submodule cleanup in progress\n")
+        .and_then(|()| marker.sync_all())
+        .map_err(|error| {
+            format!(
+                "could not persist submodule-cleanup marker {}: {error}; retain slot for recovery",
+                paths.in_progress.display()
+            )
+        })?;
+    Ok(paths)
+}
+
+fn quarantine_submodule_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(&paths.modules).map_err(|error| {
+        format!(
+            "initialized submodule admin {} is unavailable: {error}",
+            paths.modules.display()
+        )
+    })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "submodule admin {} is not an exact directory",
+            paths.modules.display()
+        ));
+    }
+    rename_no_replace(&paths.modules, &paths.quarantine).map_err(|error| {
+        format!(
+            "could not quarantine submodule admin {}: {error}",
+            paths.modules.display()
+        )
+    })
+}
+
+fn restore_submodule_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
+    rename_no_replace(&paths.quarantine, &paths.modules).map_err(|error| {
+        format!(
+            "could not restore submodule admin {} from {}: {error}",
+            paths.modules.display(),
+            paths.quarantine.display()
+        )
+    })
+}
+
+/// Remove through Git's own non-force cleanliness boundary. Initialized
+/// submodules are first deinitialized without force after recursive proof; an
+/// explicit user `--force` is the only path that reaches Git-level force.
+fn remove_target(
+    target: &CleanTarget,
+    repositories: &[RepoSnapshot],
+    proc_root: &Path,
+    allow_dirty: bool,
+) -> Result<(), String> {
+    ensure_no_submodule_cleanup_artifacts(target)?;
+    let submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
+        let paths = begin_submodule_cleanup(target)?;
+        git_inspect(&target.path, &["submodule", "deinit", "--all"])?;
+        Some(paths)
+    } else {
+        None
+    };
+
+    let status = git_inspect(
+        &target.path,
         &["status", "--porcelain=v1", "--untracked-files=all"],
     )?;
-    if !allow_dirty && !outer_status.is_empty() {
+    if !allow_dirty && !status.is_empty() {
         return Err(format!(
-            "final outer cleanliness check found work in {}: {}",
-            rebound.path.display(),
-            outer_status.replace('\n', "; ")
+            "last-moment work appeared in {}: {}",
+            target.path.display(),
+            status.replace('\n', "; ")
+        ));
+    }
+
+    // Git conflates "contains clean initialized submodules" with dirty-force.
+    // Hide only this exact linked worktree's already-proven submodule admin so
+    // ordinary removal can retain Git's own non-force dirty boundary.
+    if let Some(paths) = &submodule_cleanup {
+        quarantine_submodule_admin(paths)?;
+    }
+
+    // Last user-space ownership boundary. This also catches cwd/exe links that
+    // became "(deleted)" during submodule deinitialization.
+    let users = match live_process_users(proc_root, &[target.path.clone()]) {
+        Ok(users) => users,
+        Err(error) => {
+            if let Some(paths) = &submodule_cleanup {
+                restore_submodule_admin(paths)?;
+            }
+            return Err(error);
+        }
+    };
+    if !users.is_empty() {
+        if let Some(paths) = &submodule_cleanup {
+            restore_submodule_admin(paths)?;
+        }
+        return Err(format!(
+            "live process ownership below {}: {}",
+            target.path.display(),
+            users.join(", ")
+        ));
+    }
+
+    let path = target.path.to_string_lossy().into_owned();
+    let args = if allow_dirty {
+        vec!["worktree", "remove", "--force", &path]
+    } else {
+        vec!["worktree", "remove", &path]
+    };
+    let output = match git_output(&target.primary, &args) {
+        Ok(output) => output,
+        Err(error) => {
+            if let Some(paths) = &submodule_cleanup {
+                restore_submodule_admin(paths)?;
+            }
+            return Err(error);
+        }
+    };
+    if !output.status.success() {
+        if let Some(paths) = &submodule_cleanup {
+            restore_submodule_admin(paths)?;
+        }
+        return Err(format!(
+            "could not remove exact {} target {}: {}",
+            target.label,
+            target.path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
     Ok(())
@@ -793,6 +1109,7 @@ fn main() {
     }
 
     let root = find_root();
+    let _registry_lock = lock_registry(&root);
     let mut state = load_state(&root);
 
     if state["slots"].get(&slot).is_none() {
@@ -800,6 +1117,8 @@ fn main() {
             "slot {slot} is not registered in worktree-state.json"
         ));
     }
+    validate_owners(&slot, &state["slots"][&slot])
+        .unwrap_or_else(|error| die(&format!("invalid slot ownership: {error}")));
 
     // If dropping one sharer and others remain, do not tear down the slot.
     if let Some(name) = &agent {
@@ -812,6 +1131,11 @@ fn main() {
             .filter(|a| a["name"].as_str() != Some(name.as_str()))
             .collect();
         if !remaining.is_empty() {
+            let mut candidate = state["slots"][&slot].clone();
+            candidate["agents"] = json!(remaining.clone());
+            validate_owners(&slot, &candidate).unwrap_or_else(|error| {
+                die(&format!("refusing invalid remaining ownership: {error}"))
+            });
             let n = remaining.len();
             state["slots"][&slot]["agents"] = json!(remaining);
             state["slots"][&slot]["updated"] = json!(now_iso());
@@ -845,6 +1169,8 @@ fn main() {
         }
     }
     if clean {
+        let proc_root = process_root(&root)
+            .unwrap_or_else(|error| die(&format!("process inspection setup failed: {error}")));
         verify_registry(&root)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
         let clean_targets = clean_targets_from_state(&root, &state, &slot)
@@ -853,6 +1179,12 @@ fn main() {
         let mut any_dirty = false;
 
         for target in &clean_targets {
+            ensure_no_submodule_cleanup_artifacts(target).unwrap_or_else(|error| {
+                die(&format!(
+                    "clean preflight failed for {}: {error}",
+                    target.label
+                ))
+            });
             let inspections = inspect_target_repositories(&target.path).unwrap_or_else(|error| {
                 die(&format!(
                     "could not inspect {} target recursively: {error}",
@@ -950,7 +1282,7 @@ fn main() {
             .iter()
             .map(|target| target.path.clone())
             .collect();
-        let users = live_process_users(&target_paths)
+        let users = live_process_users(&proc_root, &target_paths)
             .unwrap_or_else(|error| die(&format!("live-process inspection failed: {error}")));
         if !users.is_empty() {
             die(&format!(
@@ -965,23 +1297,24 @@ fn main() {
                 .find(|(label, _)| *label == target.label)
                 .map(|(_, repositories)| repositories.as_slice())
                 .expect("clean target must have recursive repository proofs");
-            final_removal_boundary(&root, &slot, target, expected_repositories, force)
-                .unwrap_or_else(|error| {
-                    die(&format!(
-                        "final removal boundary refused {}: {error}",
-                        target.label
-                    ))
-                });
-
-            let path = target.path.to_string_lossy().into_owned();
-            let (ok, _, error) = git(&target.primary, &["worktree", "remove", "--force", &path]);
-            if !ok {
+            final_removal_boundary(
+                &root,
+                &proc_root,
+                &slot,
+                &state["slots"][&slot],
+                target,
+                expected_repositories,
+                force,
+            )
+            .unwrap_or_else(|error| {
                 die(&format!(
-                    "could not remove exact {} target {}: {error}; data and registry state retained",
-                    target.label,
-                    target.path.display()
-                ));
-            }
+                    "final removal boundary refused {}: {error}",
+                    target.label
+                ))
+            });
+
+            remove_target(target, expected_repositories, &proc_root, force)
+                .unwrap_or_else(|error| die(&format!("{error}; registry state retained")));
             println!(
                 "  removed {} worktree {}",
                 target.label,

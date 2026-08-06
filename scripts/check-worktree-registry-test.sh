@@ -62,6 +62,22 @@ cp "$script_dir/check-worktree-registry.rs" "$root/scripts/"
 grep -Fq 'PASS rows=2 correct_rows=2 drift_rows=0 product_cells=6 drift_cells=0' \
   "$root/check-only-pass.out"
 
+# The allocator must contend on the same canonical writer lock as release.
+exec {registry_lock_fd}>"$root/worktree-state.lock"
+flock "$registry_lock_fd"
+(cd "$root" && "$script_dir/allocate-worktree.rs" --check-only) \
+  >"$root/check-only-locked.out" 2>&1 && : >"$root/check-only-locked.done" &
+locked_pid=$!
+sleep 0.25
+kill -0 "$locked_pid" 2>/dev/null \
+  || { echo "allocate-worktree did not wait for the registry writer lock" >&2; exit 1; }
+test ! -e "$root/check-only-locked.done" \
+  || { echo "allocate-worktree crossed a held registry writer lock" >&2; exit 1; }
+flock -u "$registry_lock_fd"
+wait "$locked_pid"
+test -e "$root/check-only-locked.done"
+exec {registry_lock_fd}>&-
+
 sed -i 's/correct-01/wrong-01/g' "$root/worktree-state.json" "$root/worktrees/ACTIVE.md"
 fail="$root/fail.out"
 if "$script_dir/check-worktree-registry.rs" --root "$root" >"$fail" 2>&1; then
@@ -82,4 +98,4 @@ fi
 grep -Fq 'DRIFT slot=slot01 hermit recorded=wrong-01 actual=correct-01' \
   "$root/check-only-fail.out"
 
-echo "check-worktree-registry-test: PASS (2/2 correct accepted; 1 planted drift reported; 1/1 remaining correct row not flagged; --check-only propagates both outcomes)"
+echo "check-worktree-registry-test: PASS (2/2 correct accepted; 1 planted drift reported; 1/1 remaining correct row not flagged; shared writer lock serialized; --check-only propagates both outcomes)"
