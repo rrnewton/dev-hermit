@@ -1,0 +1,146 @@
+diff --git a/ci-hub/parity/prefix_depth.sh b/ci-hub/parity/prefix_depth.sh
+index 85ef311..fdb98a4 100755
+--- a/ci-hub/parity/prefix_depth.sh
++++ b/ci-hub/parity/prefix_depth.sh
+@@ -19,6 +19,14 @@ OUT=${OUT:-/home/newton/work/dev-hermit/scratch/prefix}
+ mkdir -p "$OUT"
+ 
+ commits() {  # $1=logfile+errfile prefix -> ordered COMMIT records, normalised
++  # A5 (audit item, owned by the ratchet task -- documented here, not changed):
++  # this concatenates .log THEN .err, so if a backend emits COMMIT records on
++  # BOTH streams the .err records are appended after all .log records rather
++  # than interleaved in emission order, and the "prefix" is then a prefix of a
++  # sequence that never occurred. The grep does filter out the KVM/LiteInst-only
++  # ':: Backend:' banner (it does not match 'COMMIT turn'), so the COUNT is not
++  # inflated by it -- the exposure is ORDER, not magnitude. Do not "fix" by
++  # dropping .err without first checking which backends log only to stderr.
+   cat "$1".log "$1".err 2>/dev/null \
+     | grep -o 'COMMIT turn .*' \
+     | sed -E 's/0x[0-9a-f]+/HEX/g'
+@@ -39,23 +47,52 @@ depth() { # $1=golden-prefix $2=cand-prefix -> Y
+ 
+ GOLDEN_SHA=$(git -C /home/newton/work/dev-hermit/hermit rev-parse HEAD)
+ DATE=$(date -u +%Y-%m-%d)
+-printf '%-22s %-9s %6s %6s  %-8s %s\n' GUEST BACKEND Y Z RC NOTE
++# EMIT is the candidate's own comparable-record count. It is printed as its own
++# column because Y alone cannot distinguish "compared and diverged immediately"
++# (Y=0, EMIT>0) from "produced nothing to compare" (NO-RUN, EMIT=0). Z is the
++# denominator for both: a count is self-describing only next to the size of the
++# thing it counted.
++printf '%-22s %-9s %6s %6s %6s  %-8s %s\n' GUEST BACKEND Y Z EMIT RC NOTE
++status=0
+ for spec in "$@"; do
+   tag="${spec%%=*}"; cmd="${spec#*=}"
+   # shellcheck disable=SC2086
+   grc=$(run ptrace "$tag" $cmd)
+   Z=$(commits "$OUT/$tag.ptrace" | wc -l)
+-  printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "ptrace(golden)" "$Z" "$Z" "$grc" "self-reference"
++  # A4: Z is the denominator for every row of this guest. If the golden run
++  # produced no comparable records there is nothing to be a prefix OF, and the
++  # self-reference row would otherwise print Y=0 Z=0 -- which reads as the golden
++  # matching itself perfectly, the most reassuring line on the page -- and every
++  # backend row would be Y/0. A missing golden is fatal for the guest, not a zero.
++  if [ "$Z" -eq 0 ]; then
++    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' \
++      "$tag" "ptrace(golden)" "NO-GOLDEN" "0" "0" "$grc" \
++      "golden emitted 0 COMMIT records; no denominator, so no rows for this guest"
++    status=2
++    continue
++  fi
++  printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "ptrace(golden)" "$Z" "$Z" "$Z" "$grc" "self-reference"
+   for be in dbi sabre e9patch; do
+     # shellcheck disable=SC2086
+     rc=$(run "$be" "$tag" $cmd)
+-    if [ "$(commits "$OUT/$tag.$be" | wc -l)" -eq 0 ] && [ "$rc" != 0 ]; then
+-      printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "NO-RUN" "$Z" "$rc" "backend did not produce a log"
++    emitted=$(commits "$OUT/$tag.$be" | wc -l)
++    # A3: NO-RUN is decided by the RECORDS, not by the exit code. The old guard
++    # was AND-gated (records==0 && rc!=0), so a backend that exits 0 while
++    # emitting nothing fell through to depth(), whose awk prints 0 for an empty
++    # candidate file, and Y=0 was published as "diverges at record 0". That is
++    # sabre's documented failure mode exactly: patched_sites=0, silent ptrace
++    # fallback, rc=0. Zero comparable records is NOT-EXERCISED whatever the rc.
++    if [ "$emitted" -eq 0 ]; then
++      printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' \
++        "$tag" "$be" "NO-RUN" "$Z" "0" "$rc" "emitted 0 comparable records (not a depth of 0)"
+       continue
+     fi
+     Y=$(depth "$OUT/$tag.ptrace" "$OUT/$tag.$be")
+-    printf '%-22s %-9s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$rc" ""
++    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$emitted" "$rc" ""
+   done
+ done
+ echo
+ echo "golden_sha=$GOLDEN_SHA  flags='--log=info --backend <be>'  date=$DATE  metric=COMMIT-record prefix depth (INFO log)"
++# Distinct exit status so a consumer can tell "measured" from "could not measure":
++# 0 = every guest had a golden denominator, 2 = at least one guest was NO-GOLDEN.
++exit "$status"
+diff --git a/compat-envelope/render-scorecard.rs b/compat-envelope/render-scorecard.rs
+index 7263e81..33faa4a 100755
+--- a/compat-envelope/render-scorecard.rs
++++ b/compat-envelope/render-scorecard.rs
+@@ -19,9 +19,17 @@
+ //!     compare INFO logs, stack detlogs, or heap detlogs. TTY behavior is also
+ //!     outside this scorecard.
+ //!     Determinism and stdout parity are independent signals; neither implies
+-//!     the other. A cell the backend never ran counts as 0 in both, so a small
+-//!     envelope reads as a low percentage — that is the honest, anti-fakery
+-//!     signal, not a bug.
++//!     the other. A cell the backend never ran is NOT counted as 0: `ran_count`
++//!     and `<parity>_measured_count` travel with every cell, an unmeasured
++//!     observable renders `?` (or `~` for partial) and a backend that could not
++//!     run renders `n/a` — none of which is a confirmed zero. A small envelope
++//!     therefore reads as a small MEASURED population, not as a low percentage
++//!     over an imagined one.
++//!     Correspondingly, an EMPTY DENOMINATOR is refused rather than rendered:
++//!     if no ptrace row passes the requested `--denominator` mode there are no
++//!     cells at all, so the tool prints `NO DATA:` with the modes and backends
++//!     the run does contain and exits 3 (distinct from 2 = usage, 0 = rendered).
++//!     Without that, a dbi/strict-only run rendered a confident `TOTAL 0`.
+ //!     Reverie counter CSVs select `--observable tool-count` instead and are
+ //!     labeled `tool-count-parity%`; the two observables are never conflated.
+ //!
+@@ -441,6 +449,43 @@ fn main() {
+         rows.insert(bucket.clone(), row);
+     }
+ 
++    // A1 -- AN EMPTY DENOMINATOR IS NOT A ZERO RESULT.
++    //
++    // The per-cell vocabulary below (`?` / `~` / `n/a`, plus ran_count and
++    // measured_count) is careful about unmeasured CELLS, but it cannot speak for
++    // the denominator one level up: when no ptrace row passes the requested mode
++    // there are no cells at all, and every format renders a confident `TOTAL 0`
++    // (exit 0) that is indistinguishable from "we measured, and nothing passed".
++    // That happens for real -- a run that is dbi/strict only has a legitimately
++    // empty verify/ptrace denominator.
++    //
++    // So refuse to render, and say what IS present so the caller can pick a mode
++    // or backend that exists. Distinct exit status (3) keeps "could not measure"
++    // separable from usage errors (2) and from a rendered result (0).
++    let denom_total: usize = ptrace_pass.values().map(|s| s.len()).sum();
++    if denom_total == 0 {
++        let modes_present: BTreeSet<&str> = cells.iter().map(|c| c.test_mode.as_str()).collect();
++        let backends_present: BTreeSet<&str> = cells.iter().map(|c| c.backend.as_str()).collect();
++        let run_label = scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into());
++        eprintln!(
++            "NO DATA: run {run} has 0 ptrace/{mode} passing cells, so the denominator is empty \
++             and no percentage is defined (this is NOT a measured zero).\n\
++             \x20 rows considered: {n}\n\
++             \x20 modes present:    {modes}\n\
++             \x20 backends present: {backends}\n\
++             \x20 csv:              {csv}\n\
++             Pick a --denominator mode that this run actually contains, or a run that has \
++             passing ptrace rows.",
++            run = run_label,
++            mode = denom_mode,
++            n = cells.len(),
++            modes = modes_present.iter().copied().collect::<Vec<_>>().join(","),
++            backends = backends_present.iter().copied().collect::<Vec<_>>().join(","),
++            csv = csv_path.display(),
++        );
++        exit(3);
++    }
++
+     let pct = |num: usize, den: usize| -> f64 {
+         if den == 0 {
+             0.0
