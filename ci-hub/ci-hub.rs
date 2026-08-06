@@ -203,6 +203,9 @@ enum HubCommand {
     RefreshHistory(RefreshHistoryArgs),
     /// Query the local commit/CI history store.
     History(PassthroughArgs),
+    /// Green-time over a linear branch history: sparse signal carried forward,
+    /// plus the densification plan that shrinks the estimate's error.
+    GreenTime(PassthroughArgs),
     /// Query legacy and machine-wide validate-run records.
     LocalHistory(LocalHistoryArgs),
     /// Show validate runs currently registered by each worktree.
@@ -1114,6 +1117,7 @@ impl HubCommand {
             | Self::ResolveObligation(_)
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
+            | Self::GreenTime(_)
             | Self::Ledger(_)
             | Self::CiMode(_)
             | Self::Batch(_)
@@ -1573,6 +1577,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 forwarded.insert(0, "--write-global".into());
                 run_python(root, "ci-hub/validate/aggregate.py", forwarded)
             }
+        }
+        HubCommand::GreenTime(args) => {
+            run_python_path(&root.join("ci-hub/greentime/timeline.py"), args.args)
         }
         HubCommand::History(args) => {
             let query = root.join("ci-hub/history/query.py");
