@@ -142,6 +142,12 @@ the cross-build invariance row above.
 
 ## Results
 
+`evidence/` — the durable copies: `armC-dag.json` and `armD-dag-enabled28.json` (the exact DAGs run),
+`run-expansion-cell.sh` (`expansion-dag.rs`'s own generated cell runner, byte-for-byte as executed),
+`armD-safe-ci-dag-runner.txt` (the full arm-D runner log), `armC-per-cell.tsv` (arm-C exit codes + stderr).
+The full per-cell trees (stdout/stderr/`results.jsonl`/`info.log`, plus the `ptrace-ref` subtrees) stay in
+gitignored `scratch/…/evidence/` and are named per row in `results.csv`'s `evidence_path`.
+
 `results.csv` — 68 rows, one per measured cell, each carrying its own provenance
 (`hermit_sha`, `hermit_version_string`, `hermit_binary_sha256`, `liteinst_runtime_sha256`, `reverie_sha`,
 `source_tree_dirty`, host, kernel, runner, outcome, reason, `evidence_path`).
