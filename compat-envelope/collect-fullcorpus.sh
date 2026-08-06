@@ -117,7 +117,7 @@ baseline() {
 }
 
 ROWS="$(mktemp -d)"
-HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason"
+HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason"
 RUN_UTC="@$(date +%s)"
 
 # --- one (backend,cell) measurement ------------------------------------------

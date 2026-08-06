@@ -45,7 +45,7 @@
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
-//!   --observable O    Observable compared by the legacy CSV `parity` field
+//!   --observable O    Observable compared by the stdout-parity CSV column
 //!                     (default: stdout; use tool-count for Reverie counters).
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
@@ -98,11 +98,24 @@ struct Cell {
     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
     outcome: String,   // pass | fail | error | timeout | oom | skip
     deterministic: Option<bool>,
-    // Legacy CSV field name: this stores stdout-only parity.
-    parity: Option<bool>,
+    /// Stdout-only parity. Read from `stdout_parity`, or from the legacy `parity`
+    /// column in scorecards written before the rename (see [`PARITY_COLUMNS`]).
+    stdout_parity: Option<bool>,
 }
 
+/// Accepted names for the stdout-parity column, in preference order.
+///
+/// The column was originally called `parity`, which claimed more than it measured: it
+/// only ever held piped-guest-stdout SHA-256 equality, never the four-signal standard.
+/// The rendered label was corrected first; this is the raw column catching up. The old
+/// name stays readable because published scorecards still carry it, and silently
+/// rendering nothing for them would be a worse failure than the misnomer.
+const PARITY_COLUMNS: &[&str] = &["stdout_parity", "parity"];
+
 /// The canonical header this renderer and `collect-envelope.rs` agree on.
+///
+/// The stdout-parity column is deliberately absent: it is resolved through
+/// [`PARITY_COLUMNS`] so either spelling is accepted.
 const HEADER: &[&str] = &[
     "run_id",
     "run_utc",
@@ -118,7 +131,6 @@ const HEADER: &[&str] = &[
     "cell_state",
     "outcome",
     "deterministic",
-    "parity",
     "output_hash",
     "duration_ms",
     "max_rss_kb",
@@ -234,7 +246,17 @@ fn main() {
     for h in HEADER {
         let _ = idx(h);
     }
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
+    // Resolve stdout-parity under either spelling, preferring the honest one.
+    let i_par = PARITY_COLUMNS
+        .iter()
+        .find_map(|name| header.iter().position(|h| h == name))
+        .unwrap_or_else(|| {
+            die(&format!(
+                "CSV missing the stdout-parity column (looked for {})",
+                PARITY_COLUMNS.join(" then ")
+            ))
+        });
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -242,7 +264,6 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
-        idx("parity"),
     );
 
     let mut cells: Vec<Cell> = Vec::new();
@@ -265,7 +286,7 @@ fn main() {
             backend: get(i_backend),
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
-            parity: parse_bool(&get(i_par)),
+            stdout_parity: parse_bool(&get(i_par)),
         });
     }
     if cells.is_empty() {
@@ -363,8 +384,8 @@ fn main() {
         // for a non-ptrace backend already requires parity.
         let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
         // Parity is true only when the collector recorded a bitwise match.
-        let par = c.parity.unwrap_or(false);
-        let par_measured = c.parity.is_some();
+        let par = c.stdout_parity.unwrap_or(false);
+        let par_measured = c.stdout_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()
