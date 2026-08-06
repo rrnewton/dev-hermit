@@ -121,7 +121,6 @@ ACTIVE.md
 # Local type-checker cache files.
 **/.mypy_cache/
 /worktree-state.json
-/worktree-state.lock
 
 # Landing mutex runtime state (see ci-hub/landing/). Machine-local, never committed.
 /.landing-lock
@@ -130,8 +129,6 @@ ACTIVE.md
 /.landing-lock.guard.*
 /.landing-lock.queue
 /.landing-lock.queue.*
-/.landing-lock.cleanup-required
-/.landing-lock.cleanup-required.tmp-*
 
 # PR-sweep command-output capture (stdout/stderr). Transient, never committed.
 /pr_sweep.out
@@ -145,8 +142,6 @@ ACTIVE.md
 /.validate-lock.guard.*
 /.validate-lock.queue
 /.validate-lock.queue.*
-/.validate-lock.cleanup-required
-/.validate-lock.cleanup-required.tmp-*
 
 # safe-ci-dag-runner runtime scratch (per-node profiles). Machine-local, never committed.
 /.safe-ci-dag-runner/

@@ -399,33 +399,7 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("must be positive", unbounded.stdout + unbounded.stderr)
         self.assertIn("FREE", self.run_bounded("land-lock", "status", env=env).stdout)
 
-    def test_cleanup_authority_runtime_files_have_exact_ignore_brackets(self) -> None:
-        for runtime_path in (
-            ".landing-lock.cleanup-required",
-            ".landing-lock.cleanup-required.tmp-123",
-            ".validate-lock.cleanup-required",
-            ".validate-lock.cleanup-required.tmp-123",
-        ):
-            ignored = subprocess.run(
-                ["git", "check-ignore", "--quiet", "--", runtime_path],
-                cwd=ROOT,
-                check=False,
-                timeout=5,
-            )
-            self.assertEqual(ignored.returncode, 0, runtime_path)
-        for durable_near_miss in (
-            ".landing-lock.cleanup-required.backup",
-            ".validate-lock.cleanup-required.tmp",
-        ):
-            visible = subprocess.run(
-                ["git", "check-ignore", "--quiet", "--", durable_near_miss],
-                cwd=ROOT,
-                check=False,
-                timeout=5,
-            )
-            self.assertEqual(visible.returncode, 1, durable_near_miss)
-
-    def test_land_lock_quarantines_a_killed_supervisor_and_refuses_overlap(
+    def test_land_lock_reclaims_a_killed_supervisor_from_process_evidence(
         self,
     ) -> None:
         lock = self.temp / "killed-supervisor.lock"
@@ -485,60 +459,16 @@ class OperationalBoundsTest(unittest.TestCase):
             os.kill(owner_pid, signal.SIGKILL)
             process.wait(timeout=5)
 
-            quarantined = self.run_bounded("land-lock", "status", env=env)
-            self.assertIn("QUARANTINED (cleanup active)", quarantined.stdout)
-            self.assertIn("phase=published", quarantined.stdout)
-            self.assertIn("owner_process=dead:", quarantined.stdout)
-            refused = self.run_bounded(
-                "land-lock",
-                "acquire",
-                "--agent",
-                "replacement-lander",
-                "--pr",
-                "replacement",
-                "--wait",
-                "0",
-                "--hold",
-                "30",
-                expected={3},
-                env=env,
+            orphaned = self.run_bounded("land-lock", "status", env=env)
+            self.assertIn("ORPHANED (reclaimable)", orphaned.stdout)
+            self.assertIn("owner_process=dead:", orphaned.stdout)
+            reclaimed = self.run_bounded("land-lock", "reclaim-dead", env=env)
+            self.assertIn(
+                "evidence-reclaimed dead owner",
+                reclaimed.stdout + reclaimed.stderr,
             )
             self.assertIn(
-                "cleanup quarantine",
-                (refused.stdout + refused.stderr).lower(),
-            )
-            active_reclaim = self.run_bounded(
-                "land-lock", "reclaim-dead", expected={3}, env=env
-            )
-            self.assertIn(
-                "cannot reclaim lease",
-                (active_reclaim.stdout + active_reclaim.stderr).lower(),
-            )
-
-            os.killpg(child_pid, signal.SIGKILL)
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and Path(f"/proc/{child_pid}").exists():
-                time.sleep(0.05)
-            self.assertFalse(
-                Path(f"/proc/{child_pid}").exists(),
-                "recorded payload identity survived exact group kill",
-            )
-            child_pid = None
-            uncensused = self.run_bounded("land-lock", "status", env=env)
-            self.assertIn(
-                "QUARANTINED (published domain lacks final census)",
-                uncensused.stdout,
-            )
-            # Leader/group absence is necessary but not sufficient after the
-            # supervisor died before its residual census: an escaped descendant
-            # may be unrecorded. Same-boot explicit recovery therefore remains
-            # refused; a prior-boot authority is the stronger recovery proof.
-            absent_reclaim = self.run_bounded(
-                "land-lock", "reclaim-dead", expected={3}, env=env
-            )
-            self.assertIn(
-                "cannot reclaim lease",
-                (absent_reclaim.stdout + absent_reclaim.stderr).lower(),
+                "FREE", self.run_bounded("land-lock", "status", env=env).stdout
             )
         finally:
             if process.poll() is None:

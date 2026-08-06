@@ -47,7 +47,7 @@ def qualifying_row(rows: list[dict[str, Any]], sha: str) -> dict[str, Any]:
     for row in rows:
         if not qualifying_receipt.row_qualifies(row, sha, pred):
             continue
-        if not row.get("started_at") or not row.get("log_file") or not row.get("host"):
+        if not row.get("started_at") or not row.get("log_file"):
             continue
         matches.append(row)
     if not matches:
@@ -94,10 +94,7 @@ def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
 
 def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -> tuple[dict[str, Any], bytes, str]:
     log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
-    # Host-in-identity (Req2): the receipt identity carries the producing host,
-    # so a receipt cannot be read blind to where it was produced and its host
-    # field cannot be swapped without breaking this tamper-evident run_id.
-    run_id = f"{sha}@{row['started_at']}@{row['host']}"
+    run_id = f"{sha}@{row['started_at']}"
     receipt = {
         "schema_version": 1,
         "repository": repo,

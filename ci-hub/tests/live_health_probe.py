@@ -13,19 +13,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CI_HUB = ROOT / "ci-hub/ci-hub"
-MAIN_HEALTH_MARKERS = (
-    "GitHub main health:",
-    "HARD WARNING: GITHUB MAIN IS RED",
-)
 
 
 def classify(returncode: int, output: str) -> tuple[bool, str]:
     if "# ci-hub/health tool COST ACTUAL" not in output:
         return False, "ci-hub did not report final wall/CPU cost"
-    if (
-        not any(marker in output for marker in MAIN_HEALTH_MARKERS)
-        or "CI health:" not in output
-    ):
+    if "GitHub main health:" not in output or "CI health:" not in output:
         return False, "ci-hub did not emit both live health sections"
     if returncode in (0, 1):
         return True, "GitHub responded; health state is authoritative"

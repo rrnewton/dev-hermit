@@ -38,7 +38,6 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 import preflight_anchor
 
@@ -82,56 +81,6 @@ def _validate_sha(value: str, *, field: str) -> str:
     return value
 
 
-def _herdr_run_binary() -> str | None:
-    """Path to the tracked ``herdr-run`` entrypoint, if it is present."""
-    candidate = (
-        Path(__file__).resolve().parents[2] / "agent-utils" / "py" / "bin" / "herdr-run"
-    )
-    return str(candidate) if candidate.exists() else None
-
-
-def _fetch_base(checkout: str, refspec: str) -> subprocess.CompletedProcess[str]:
-    """Fetch the base ref, falling back to the herdr-run egress path.
-
-    An agent sandbox has no route to github.com: the direct ``with-proxy git
-    fetch`` returns ``CONNECT tunnel failed, response 403``. ``herdr-run``
-    executes the same command outside the sandbox, where the route exists, and
-    ``git`` is on its allowlist.
-
-    This changes only the TRANSPORT. The admission predicate is untouched: a
-    real fetch must still succeed and the resulting tip is still resolved from
-    the refspec below, so there is no path here that treats an unreachable
-    remote as permission to validate. If both transports fail, the caller
-    raises and admission fails closed exactly as before.
-    """
-    direct = _run(
-        ["with-proxy", "git", "-C", checkout, "fetch", "--quiet", "origin", refspec],
-        timeout=NETWORK_TIMEOUT,
-    )
-    if direct.returncode == 0:
-        return direct
-
-    herdr = _herdr_run_binary()
-    if herdr is None:
-        return direct
-
-    relayed = _run(
-        [
-            herdr,
-            "--agent",
-            os.environ.get("CI_HUB_AGENT", "ci-hub-preflight"),
-            # herdr-run takes ONE quoted positional and executes it in the
-            # parent repo, so the checkout must be named explicitly with -C.
-            f"with-proxy git -C {checkout} fetch --quiet origin {refspec}",
-        ],
-        timeout=NETWORK_TIMEOUT,
-    )
-    if relayed.returncode == 0:
-        return relayed
-    # Report the direct failure: it is the one that names the real cause.
-    return direct
-
-
 def resolve_current_base(checkout: str, branch: str) -> str:
     """Refresh and return the exact current ``origin/<branch>`` commit."""
     if not BRANCH_RE.fullmatch(branch) or ".." in branch or "@{" in branch:
@@ -139,7 +88,19 @@ def resolve_current_base(checkout: str, branch: str) -> str:
 
     remote_ref = f"refs/remotes/origin/{branch}"
     refspec = f"refs/heads/{branch}:{remote_ref}"
-    fetched = _fetch_base(checkout, refspec)
+    fetched = _run(
+        [
+            "with-proxy",
+            "git",
+            "-C",
+            checkout,
+            "fetch",
+            "--quiet",
+            "origin",
+            refspec,
+        ],
+        timeout=NETWORK_TIMEOUT,
+    )
     if fetched.returncode != 0:
         raise AdmissionError(
             f"cannot refresh origin/{branch} in {checkout}: {_detail(fetched)}"
