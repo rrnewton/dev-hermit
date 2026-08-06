@@ -7,7 +7,7 @@ user runs precisely because they do not yet know what a tool does, and therefore
 reason to expect nothing to change.
 
 Motivated by two real defects (task coordinator_harness_scripts_mishandle, 2026-08-03):
-  * scripts/sync-memory-skill.rs --help MUTATED the working tree (created .claude/skills/*.md).
+  * scripts/sync-memory-skill.rs --help MUTATED the working tree (created skill packages).
   * scripts/prepare-demo08-assets.sh --help ran the asset build instead of showing help.
 plus seven entrypoints that ran real behavior, errored, or leaked raw comments instead of usage.
 
@@ -102,9 +102,9 @@ def _check_probe(rel: str, arg: str, failures: list[str], skips: list[str]) -> N
 def _check_no_mutation(failures: list[str], skips: list[str]) -> None:
     """Regression guard for the HEADLINE bug: sync-memory-skill.rs --help must not write files.
 
-    Build an isolated fake repo root with one `core_memory` that maps to a flat skill, point the
+    Build an isolated fake repo root with one `core_memory` that maps to a package skill, point the
     tool at it, run --help, and assert the skills directory stays EMPTY. Before the fix this created
-    <sandbox>/.claude/skills/demo-core.md."""
+    <sandbox>/.claude/skills/demo-core/SKILL.md."""
     tool = ROOT / "scripts" / "sync-memory-skill.rs"
     if not tool.exists():
         skips.append("mutation guard: sync-memory-skill.rs missing (skipped)")
@@ -120,7 +120,7 @@ def _check_no_mutation(failures: list[str], skips: list[str]) -> None:
         mem.mkdir()
         (mem / "demo-core.md").write_text(
             "---\nname: demo-core\ndescription: \"demo\"\nmetadata:\n"
-            "  core_memory: true\n  core_skill: .claude/skills/demo-core.md\n"
+            "  core_memory: true\n  core_skill: .claude/skills/demo-core/SKILL.md\n"
             "  node_type: memory\n  type: reference\n---\n\nBody.\n"
         )
         env = dict(os.environ, HERMIT_MEMORY_DIR=str(mem))

@@ -93,7 +93,16 @@ pub struct QualifyingPredicate {
     /// the per-node clause already guard emptiness/narrowing).
     #[serde(default)]
     pub gate_filtered_tests: bool,
+    /// Green classes admitted by the landing predicate. The class is derived
+    /// from receipt provenance; a row's optional `green_class` field is only a
+    /// cache and must agree with that derivation.
+    #[serde(default = "default_accepts_green_class")]
+    pub accepts_green_class: Vec<String>,
     pub coverage: CoverageClause,
+}
+
+fn default_accepts_green_class() -> Vec<String> {
+    vec!["hard".to_string()]
 }
 
 impl QualifyingPredicate {
@@ -110,6 +119,78 @@ impl QualifyingPredicate {
 /// (Proxy Binding: the condition travels with the value).
 pub fn coverage_satisfied(cov: &CoverageRow) -> bool {
     cov.planned_test_nodes > 0 && cov.zero_executed_nodes.is_empty() && cov.absent_nodes.is_empty()
+}
+
+/// Derive the receipt's green class from the same provenance fields and rules
+/// as `validate/green_class.py`. `None` is a refused, internally contradictory
+/// provenance record; `not-green` remains a derived class so the policy datum,
+/// rather than an inline Rust special case, decides whether it is accepted.
+fn derived_green_class(row: &HistoryRow) -> Option<&'static str> {
+    let commit = row.commit.as_deref()?;
+    if commit == "unknown" {
+        return None;
+    }
+    let validated = match row.extra.get("validated_head_sha") {
+        None => commit,
+        Some(value) => value.as_str()?,
+    };
+    let inherited = row.extra.get("inherited_from");
+    let derived = if validated == commit {
+        if inherited.is_some() {
+            return None;
+        }
+        "hard"
+    } else {
+        let inherited = inherited?.as_object()?;
+        let kind = inherited.get("delta_kind")?.as_str()?;
+        if !matches!(
+            kind,
+            "rebase-only" | "rebase-plus-upstream" | "new-branch-commits"
+        ) {
+            return None;
+        }
+        let branch_commits = inherited.get("branch_commits")?.as_u64()?;
+        let force_full = match inherited.get("force_full_paths") {
+            None => &[][..],
+            Some(value) => value.as_array()?.as_slice(),
+        };
+        if !force_full.iter().all(serde_json::Value::is_string) {
+            return None;
+        }
+        let upstream = match inherited.get("upstream_commits") {
+            None => 0,
+            Some(value) => value.as_u64()?,
+        };
+        if kind == "new-branch-commits" || branch_commits > 0 {
+            "not-green"
+        } else {
+            match kind {
+                "rebase-only" => {
+                    if upstream != 0 {
+                        return None;
+                    }
+                    "soft-rebase-only"
+                }
+                "rebase-plus-upstream" => {
+                    if upstream == 0 {
+                        return None;
+                    }
+                    if force_full.is_empty() {
+                        "soft-upstream-delta"
+                    } else {
+                        "soft-force-full-touched"
+                    }
+                }
+                _ => unreachable!("delta kind was checked above"),
+            }
+        }
+    };
+    if let Some(label) = row.extra.get("green_class") {
+        if label.as_str() != Some(derived) {
+            return None;
+        }
+    }
+    Some(derived)
 }
 
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
@@ -161,7 +242,7 @@ pub fn row_qualifies(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) ->
     let count_capable = schema >= pred.counts_schema;
     let counts_present = row.executed_tests.is_some() && row.filtered_tests.is_some();
     let executed_ok = matches!(row.executed_tests, Some(n) if n >= req.executed_tests_min);
-    if count_capable {
+    let value_qualifies = if count_capable {
         let coverage_ok = !pred.coverage.per_node
             || schema < pred.coverage.applies_at_schema_min
             || row.coverage.as_ref().is_some_and(coverage_satisfied);
@@ -173,7 +254,16 @@ pub fn row_qualifies(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) ->
     } else {
         // Neither count present: an uncounted receipt is UNVERIFIED, not green.
         false
+    };
+    if !value_qualifies {
+        return false;
     }
+    let Some(green_class) = derived_green_class(row) else {
+        return false;
+    };
+    pred.accepts_green_class
+        .iter()
+        .any(|accepted| accepted == green_class)
 }
 
 /// Resolve the on-disk predicate path against the repo root. The literal path
@@ -311,5 +401,121 @@ mod tests {
             "tightened must reject it"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn hard_positive_and_soft_rebase_only_negative_share_the_policy() {
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        let sha = "a".repeat(40);
+        let validated = "c".repeat(40);
+        let hard: HistoryRow = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "profile": "full",
+            "selection_mode": "full",
+            "commit": sha,
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": "pass",
+            "failures": 0,
+            "executed_tests": 740,
+            "filtered_tests": 3,
+            "coverage": {
+                "planned_test_nodes": 4,
+                "executed_test_nodes": 4,
+                "zero_executed_nodes": [],
+                "absent_nodes": []
+            }
+        }))
+        .unwrap();
+        assert!(row_qualifies(&hard, &sha, &pred));
+
+        let mut soft_value = serde_json::to_value(&hard).unwrap();
+        soft_value["validated_head_sha"] = serde_json::json!(validated);
+        soft_value["inherited_from"] = serde_json::json!({
+            "delta_kind": "rebase-only",
+            "upstream_commits": 0,
+            "branch_commits": 0,
+            "patch_identical": true,
+            "force_full_paths": []
+        });
+        soft_value["green_class"] = serde_json::json!("soft-rebase-only");
+        let soft: HistoryRow = serde_json::from_value(soft_value).unwrap();
+        assert!(
+            !row_qualifies(&soft, &sha, &pred),
+            "hard-only policy must not promote inherited soft evidence"
+        );
+    }
+
+    #[test]
+    fn soft_provenance_refuses_bool_counts_and_non_string_paths() {
+        let sha = "a".repeat(40);
+        let validated = "c".repeat(40);
+        let base = serde_json::json!({
+            "schema_version": 5,
+            "profile": "full",
+            "selection_mode": "full",
+            "commit": sha,
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": "pass",
+            "failures": 0,
+            "executed_tests": 740,
+            "coverage": {
+                "planned_test_nodes": 4,
+                "executed_test_nodes": 4,
+                "zero_executed_nodes": [],
+                "absent_nodes": []
+            },
+            "validated_head_sha": validated,
+            "inherited_from": {
+                "delta_kind": "rebase-only",
+                "upstream_commits": 0,
+                "branch_commits": 0,
+                "force_full_paths": []
+            },
+            "green_class": "soft-rebase-only"
+        });
+        let valid: HistoryRow = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(derived_green_class(&valid), Some("soft-rebase-only"));
+
+        let mut validated_number = base.clone();
+        validated_number["validated_head_sha"] = serde_json::json!(7);
+        let validated_number: HistoryRow = serde_json::from_value(validated_number).unwrap();
+        assert_eq!(derived_green_class(&validated_number), None);
+
+        let mut branch_bool = base.clone();
+        branch_bool["inherited_from"]["branch_commits"] = serde_json::json!(false);
+        let branch_bool: HistoryRow = serde_json::from_value(branch_bool).unwrap();
+        assert_eq!(derived_green_class(&branch_bool), None);
+
+        let mut upstream_bool = base.clone();
+        upstream_bool["inherited_from"]["upstream_commits"] = serde_json::json!(false);
+        let upstream_bool: HistoryRow = serde_json::from_value(upstream_bool).unwrap();
+        assert_eq!(derived_green_class(&upstream_bool), None);
+
+        let mut upstream_too_large = base.clone();
+        upstream_too_large["inherited_from"]["delta_kind"] =
+            serde_json::json!("rebase-plus-upstream");
+        upstream_too_large["inherited_from"]["upstream_commits"] =
+            serde_json::from_str("18446744073709551616").unwrap();
+        upstream_too_large["green_class"] = serde_json::json!("soft-upstream-delta");
+        let upstream_too_large: HistoryRow = serde_json::from_value(upstream_too_large).unwrap();
+        assert_eq!(derived_green_class(&upstream_too_large), None);
+
+        let mut null_path_list = base.clone();
+        null_path_list["inherited_from"]["force_full_paths"] = serde_json::Value::Null;
+        let null_path_list: HistoryRow = serde_json::from_value(null_path_list).unwrap();
+        assert_eq!(derived_green_class(&null_path_list), None);
+
+        let mut non_string_path = base;
+        non_string_path["inherited_from"] = serde_json::json!({
+            "delta_kind": "rebase-plus-upstream",
+            "upstream_commits": 1,
+            "branch_commits": 0,
+            "force_full_paths": ["ci/run-node.sh", 7]
+        });
+        non_string_path["green_class"] = serde_json::json!("soft-force-full-touched");
+        let non_string_path: HistoryRow = serde_json::from_value(non_string_path).unwrap();
+        assert_eq!(derived_green_class(&non_string_path), None);
     }
 }

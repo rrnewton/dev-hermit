@@ -37,13 +37,26 @@ fi
 
 owner=${repo%%/*}
 mapfile -t candidates < <(jq -r --arg owner "$owner" '
+    # Historical ci-hub comments used a service actor in the model slot. Keep
+    # that exact tag readable; new comments use one of the four AGENTS.md role
+    # forms, with a nonempty model for automated roles.
+    def accepted_role_tag:
+      . == "[impl agent, ci-hub]"
+      or . == "[Human]"
+      or (
+        (capture("^\\[(?<role>impl agent|adversarial-reviewer agent|coordinator), (?<model>[^]]+)\\]$")? // {})
+        | ((.model // "") | test("\\S"))
+      );
     [ .[][]?
       | select(.user.login == $owner)
-      | select((.body // "") | startswith("[impl agent, ci-hub]\n"))
-      | .body
+      | (.body // "") as $body
+      | ($body | split("\n")[0]) as $role_tag
+      | select($role_tag | accepted_role_tag)
+      | $body
       | split("\n")[]
       | capture("^<!-- locally-validated-receipt commit=(?<commit>[0-9a-f]{40}) path=(?<path>[^ ]+) sha256=(?<digest>[0-9a-f]{64}) -->$")?
-    ] | reverse[] | [.commit, .path, .digest] | @tsv
+      | . + {role_class: (if $role_tag == "[impl agent, ci-hub]" then "legacy-service" else "current" end)}
+    ] | reverse[] | [.commit, .path, .digest, .role_class] | @tsv
 ' "$comments_file" 2>/dev/null)
 
 gh_cmd=(gh)
@@ -51,24 +64,17 @@ if command -v with-proxy >/dev/null 2>&1; then
     gh_cmd=(with-proxy gh)
 fi
 
-# Resolve the ONE shared qualifying-receipt predicate. In the merge gate this
-# script AND this JSON both come from the immutable parent commit, never the PR
-# under test (check-not-in-branch). $QUALIFYING_RECEIPT_PREDICATE overrides for
-# the mutation test; NEVER point it at the live file. Restating the clauses
-# inline is the drift this delegation removes (task
-# one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry).
+# Resolve the single shared qualifying-receipt predicate from this immutable
+# parent commit. An override is used only by the cross-consumer mutation test.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 predicate_file=${QUALIFYING_RECEIPT_PREDICATE:-}
 if [[ -z $predicate_file ]]; then
-    script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     predicate_file="$script_dir/../validate/qualifying-receipt.json"
 fi
 if [[ ! -r $predicate_file ]]; then
     printf 'qualifying-receipt predicate unreadable: %s\n' "$predicate_file" >&2
     exit 2
 fi
-# Pull the fields the gate keys on. A malformed/partial predicate is a deploy
-# defect -> exit 2 (loud), never a silent lenient fallback. `-r` (not `-e`) so a
-# legitimately `false` boolean field is not mistaken for a jq error.
 p_counts_schema=$(jq -r '.counts_schema' "$predicate_file" 2>/dev/null)
 p_exec_min=$(jq -r '.require.executed_tests_min' "$predicate_file" 2>/dev/null)
 p_cov_schema=$(jq -r '.coverage.applies_at_schema_min' "$predicate_file" 2>/dev/null)
@@ -90,7 +96,7 @@ for _v in "$p_counts_schema" "$p_exec_min" "$p_cov_schema" "$p_cov_pernode" \
 done
 
 for candidate in "${candidates[@]}"; do
-    IFS=$'\t' read -r receipt_commit receipt_path receipt_digest <<<"$candidate"
+    IFS=$'\t' read -r receipt_commit receipt_path receipt_digest role_class <<<"$candidate"
     expected_prefix="validation-receipts/${repo}/${sha}/"
     if [[ $receipt_path != "$expected_prefix"*.json ]] || \
        [[ ${receipt_path##*/} != "${receipt_digest}.json" ]]; then
@@ -126,13 +132,44 @@ for candidate in "${candidates[@]}"; do
         continue
     fi
 
-    # The receipt-WRAPPER checks (schema_version 1, repo/commit/run_id/log
-    # binding) stay inline -- they are this script's own envelope contract, not
-    # the shared row predicate. The ledger_record clauses below mirror the shared
-    # `row_qualifies` (Rust/Python) clause for clause, sourcing every constant
-    # from $predicate_file so a JSON tightening moves this consumer too.
+    # The artifact digest binds the wrapper bytes, not the claimed selected
+    # ledger row. Re-run the shared semantic predicate on that embedded row and
+    # recompute its named Rust canonicalization before trusting the identity.
+    # A writer cannot repair a forged selected digest merely by recomputing the
+    # outer artifact digest/path. One Rust invocation owns BOTH decisions; a
+    # separate Python qualifier here made the authorities drift and doubled the
+    # process cost for every candidate.
+    row_file=$(mktemp)
+    if ! jq -c '.ledger_record' "$receipt_file" >"$row_file" 2>/dev/null; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    computed_digest=$("$script_dir/../ci-hub" receipt-digest --sha "$sha" \
+        --require-qualifying <"$row_file" 2>/dev/null) || computed_digest=
+    if [[ ! $computed_digest =~ ^[0-9a-f]{64}$ ]]; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    identity_present=$(jq -r 'has("selected_receipt_identity")' "$receipt_file" 2>/dev/null)
+    if [[ $identity_present == true ]]; then
+        identity_algorithm=$(jq -r '.selected_receipt_identity.digest_algorithm // ""' "$receipt_file")
+        identity_canonicalization=$(jq -r '.selected_receipt_identity.canonicalization // ""' "$receipt_file")
+        identity_digest=$(jq -r '.selected_receipt_identity.digest // ""' "$receipt_file")
+        if [[ $identity_algorithm != sha256 ]] || \
+           [[ $identity_canonicalization != 'serde_json::to_vec(HistoryRow)-v1' ]] || \
+           [[ ! $identity_digest =~ ^[0-9a-f]{64}$ ]] || \
+           [[ $computed_digest != "$identity_digest" ]]; then
+            rm -f -- "$row_file" "$receipt_file"
+            continue
+        fi
+    elif [[ $role_class != legacy-service ]]; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    rm -f -- "$row_file"
+
     if jq -e \
-        --arg sha "$sha" --arg repo "$repo" \
+        --arg sha "$sha" --arg repo "$repo" --arg role_class "$role_class" \
         --arg req_profile "$p_profile" \
         --arg req_selection "$p_selection" \
         --arg req_result "$p_result" \
@@ -144,12 +181,48 @@ for candidate in "${candidates[@]}"; do
         --argjson cov_schema "$p_cov_schema" \
         --argjson cov_pernode "$p_cov_pernode" \
         --argjson gate_filtered "$p_gate_filtered" '
+        def integer:
+          if type == "number" then . == floor else false end;
+        def nonempty_string:
+          if type == "string" then test("\\S") else false end;
+        def selected_identity_valid:
+          .digest_algorithm == "sha256"
+          and .canonicalization == "serde_json::to_vec(HistoryRow)-v1"
+          and (.digest | test("^[0-9a-f]{64}$"));
+        def current_structural_row($sha; $repo):
+          .ledger_record as $row
+          | $repo == "rrnewton/hermit"
+          and ($row.schema_version | integer and . >= 4)
+          and (
+            $row.repo == "hermit"
+            or $row.repo == "rrnewton/hermit"
+            or ($row.schema_version == 4 and $row.repo == null)
+          )
+          and $row.commit == $sha
+          and ($row.tree | type == "string" and test("^[0-9A-Fa-f]{40}$"))
+          and $row.raw_result == "pass"
+          and $row.exit_code == 0
+          and ($row.checks | integer and . > 0)
+          and ($row.gates_run | integer and . >= $row.gates_expected)
+          and ($row.gates_expected | integer and . > 0)
+          and $row.checks == $row.gates_run
+          and ($row.gates | type == "array" and length == $row.gates_run)
+          and all($row.gates[];
+            (.name | nonempty_string)
+            and .result == "pass"
+            and .exit_code == 0
+          )
+          and ($row.executed_tests | integer)
+          and ($row.filtered_tests | integer and . >= 0)
+          and ($row.started_at | nonempty_string)
+          and ($row.finished_at | nonempty_string)
+          and ($row.host | nonempty_string)
+          and ($row.slot | nonempty_string)
+          and ($row.log_file | nonempty_string);
         .schema_version == 1
         and .repository == $repo
         and .commit == $sha
-        # Host-in-identity (Req2): the run_id binds sha + started_at + producing
-        # host, so the ledger host cannot be swapped without breaking identity.
-        and (.ledger_record.host | (type == "string") and (length > 0))
+        and (.ledger_record.host | nonempty_string)
         and (.run_id == ($sha + "@" + .ledger_record.started_at + "@" + .ledger_record.host))
         and (.log_sha256 | test("^[0-9a-f]{64}$"))
         and .ledger_record.commit == $sha
@@ -161,19 +234,16 @@ for candidate in "${candidates[@]}"; do
         and ((.ledger_record.failures // 0) <= $req_failures_max)
         and .ledger_record.log_file == .source_log_file
         and (.durable_log_file | startswith("/"))
-        # Universal zero-execution guard: a demonstrated zero-test run is never
-        # a full green, at any schema (mirrors `executed_tests == Some(0)`).
         and (.ledger_record.executed_tests != 0)
         and (
           (.ledger_record.schema_version // 0) as $schema
           | ($schema >= $counts_schema) as $count_capable
-          | ((.ledger_record.executed_tests | type == "number")
-             and (.ledger_record.filtered_tests | type == "number")) as $counts_present
-          | (.ledger_record.executed_tests | type == "number" and . >= $exec_min) as $executed_ok
+          | ((.ledger_record.executed_tests | integer)
+             and (.ledger_record.filtered_tests | integer)) as $counts_present
+          | (.ledger_record.executed_tests | integer and . >= $exec_min) as $executed_ok
           | (if $gate_filtered then (.ledger_record.filtered_tests == 0) else true end) as $filtered_ok
           | $filtered_ok and (
               if $count_capable then
-                # Completeness is COVERAGE, not the executed count.
                 $executed_ok and (
                   if ($cov_pernode and ($schema >= $cov_schema)) then
                     (.ledger_record.coverage.planned_test_nodes > 0
@@ -181,11 +251,16 @@ for candidate in "${candidates[@]}"; do
                      and .ledger_record.coverage.absent_nodes == [])
                   else true end)
               elif $counts_present then
-                # Old schema predating coverage: nonzero execution is the most
-                # it can prove.
                 $executed_ok
               else false end)
         )
+        and (
+          if $role_class == "legacy-service" and (has("selected_receipt_identity") | not)
+            then true
+            else (.selected_receipt_identity | selected_identity_valid)
+            end
+        )
+        and ($role_class == "legacy-service" or current_structural_row($sha; $repo))
     ' "$receipt_file" >/dev/null; then
         printf 'receipt_commit=%s receipt_path=%s receipt_sha256=%s\n' \
             "$receipt_commit" "$receipt_path" "$receipt_digest"
@@ -197,4 +272,3 @@ done
 
 printf 'no immutable counted local-validation receipt for exact head %s\n' "$sha" >&2
 exit 1
-

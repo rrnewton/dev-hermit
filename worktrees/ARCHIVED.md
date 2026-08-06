@@ -701,3 +701,64 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/cadence2` | cadence2 / registry alias `complete-1647-ratchet-coverage` | Hermit branch `ci/reverie-dbi-budget-all-building-nodes` at `9e2b97ea2c6b755c6c9e4e3d1e9a01fe2c00f4d8`; no Reverie or LiteInst2 child | The exact head is the first parent of pushed branch tip `origin/ci/reverie-dbi-budget-all-building-nodes` at `5e9ed39da643c01324822a3cd01b98e8113aa35b`. Its stable patch ID `6f1773adcbee50458a81102c422a2d5f95b85577` equals main replay `b64d893ae9ea6404472eae9cb86102d91ec642ef` from merged Hermit PR https://github.com/rrnewton/hermit/pull/1658; replay ancestry on current `origin/main` passed. No TaskGraph task exists under the stale registry alias, so no task was synthetically closed. | Hermit child clean; no coordinator lease, tmux pane, or live process CWD remained. Bind coordinator recovery authority, then release only through `scripts/release-worktree.rs --slot cadence2 --clean`; retain the pushed branch. |
+### Coordinator slot reuse for cross-client skills (2026-08-04)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/coord` | hermit-coord / compat-examples-strict-kvm | Hermit feature head `9ca6be54289127af8625853b470d1883b55ebbe1`; no Reverie or LiteInst2 child | Hermit PR [#1037](https://github.com/rrnewton/hermit/pull/1037) merged as `b989db08a32c3636b56e10dfeee17dcee4619311`, freshly verified reachable from local `origin/main`; the feature branch is retained. | The physical slot and all three exact-path worktree registrations were already absent, and no matching process was live. The existing registry row was reassigned in place to `cross-client-skill-discovery`; no worktree or branch was deleted. |
+
+### Drainer-5 no-change debug handoff (2026-08-05)
+
+| Slot | old owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-5` | drainer-5 / fix_debug_hermit_liteinst | Hermit `39a98a4efa6f64699d5f6df184d96bc60520a063`; no Reverie or LiteInst2 child | The clean `fix/debug-liteinst-attach` branch has zero commits beyond its remote-reachable base. Task evidence records a fresh build and LiteInst 4/4 pass with no product defect or source change. The prior #1200 head remains durable at `8f676313d44e5a57ca27c2f863116c2b668a3b4e`. | The no-change debug task was closed. The 49 GB cache and physical Hermit worktree were preserved; ownership was transferred in place for #1200 recovery without invoking the unsafe global-pruning release path. |
+
+### Legacy slot 275 keyctl recovery (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/275` | hermit-275 / fix-848-keyctl-boundary | Hermit original `4453f8e9c25810803f4106edf7b4e5f488754ce6`; rebased head `f95343aebd532b0959bd5299bec5fbc1e88a812f`; squash-landed main `d79480cf9bc83dcb47b385740fcd1a39c3190456`; no Reverie or LiteInst2 child | The original local-only commit is now preserved exactly at `origin/recovery/20260805-slot275-keyctl-boundary`. It and the rebased head have identical stable patch-id `00772bbdcd736af6c709117f0b7bcadf64afd880`; PR [#976](https://github.com/rrnewton/hermit/pull/976) carries the landed result. | Task `fix-848-keyctl-boundary` is closed. All three physical child paths and Git worktree registrations were already absent, no matching process CWD was live, and the stale released registry row may be removed through the target-scoped release tool without deleting filesystem data. |
+
+### Missing-slot registry reconciliation (2026-08-05)
+
+Before retirement, every child path listed below was absent, no corresponding Git
+worktree registration existed in any product primary, and no process had a CWD under
+the slot. The stale registry rows recorded `-` for all three product branches, so
+registry-only release preserved all refs and removed no filesystem data. `debug30`
+was deliberately excluded because its lost untracked `d30work` has no recovery SHA.
+
+| Slot | owner/task | durable recovery or landed result | disposition |
+| --- | --- | --- | --- |
+| `worktrees/270` | hermit-270 / ci-ov2-cascade-landing | Hermit #1072 landed; heads for #1075 and #1078 remain pushed; Reverie #237 landed. | Task ID is absent from the local graph; evidence retained for later historical-task reconciliation. |
+| `worktrees/271` | hermit-271 / impl-debug-batch-266 | Unlanded work preserved at `origin/codex/impl-debug-batch-266` exact SHA `e5ab7ef325852d5db3a054d3688079f2a71000f8`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/272` | hermit-272 / report-hermit-chaos-controls | Source report corresponds to Hermit `c1019c4ae7f109ec9fdad7a31781300bbbb25946`; Reverie #245 landed. | Research result still needs export to a versioned parent artifact before verified closure can be reconstructed. |
+| `worktrees/273` | hermit-273 / investigate-ci-portability-gap | Hermit #1145 landed as `7c4a95ed8463d16fec324102ec9b32da00e94866`; parent guard is `d3d037cb374d0e8469e039f8244e47c196093ec7`. | Landed result; stale absent registry row retired. |
+| `worktrees/274` | hermit-274 / chaos-feature-deterministic-epochs | Hermit #1151 landed as `0c096177d71fba4cd35a37a454f223964148f432`; Reverie #204 landed. | Landed result; stale absent registry row retired. |
+| `worktrees/chaos` | hermit-chaos / chaos-feature-per-thread-slowdown | Hermit #1149 landed as `f06e576493596429a21489c406cb7398f56bb189`. | Landed result; stale absent registry row retired. |
+| `worktrees/ci` | hermit-ci / impl-ci-dag-mem-limits | Unlanded work preserved at `origin/ci/immediate-build-j64` exact SHA `53ad38a370a81c2b9585d34f77af528cdecd1702`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/dbi` | hermit-dbi / dbi-ci-timeout-investigation | Durable parent artifact `ai_docs/transient/dbi-pr1147-ci-hang-postexec-time-rewind_20260730.md` at content commit `714fc84e46959d85f3be3dc03da8b9906f075639`. | Closed through `ci-hub/bin/close-task` after typed artifact and current-main ancestry verification. |
+| `worktrees/e9patch` | hermit-e9patch / ratchet-e9patch-backend | Reverie #256 landed as `9bb0a6817b3c26def1d24cae709bf8f4b4bd4265`; #308 landed as `8b76d65b8fdc401aa3a77fd0a11d45468059db25`. | Landed results; stale absent registry row retired. |
+| `worktrees/kvm` | hermit-kvm / fix-kvm-counter2-parity-regression | Reverie #266 landed as `0f17ef2a9ab4bd264f0b821a289c9e6acf88e6f9`. | Landed result; stale absent registry row retired. |
+| `worktrees/linux` | hermit-linux / fix-kvm-startup-latency | Hermit #1127 landed as `949ca39fdadf15b613fc8e160ff673226aef4e07`. | Landed result; stale absent registry row retired. |
+| `worktrees/liteinst` | hermit-liteinst / verify-tests-dir-used | Unlanded Hermit work preserved at `origin/codex/compat-liteinst-hermit-strict` exact SHA `8992bdfe1910ad81b16c8fcfa429cee919aad740`; Reverie #260 landed. | Existing task closure requires a fresh branch handoff/disposition audit; unrelated ASLR work remains durable. |
+| `worktrees/sabre` | hermit-sabre / compat-linux-qemu-boot | Hermit #1107 landed as `8827c8302e52a75ba5621743a9b6703d59d30a2f`; Reverie #228 landed. | Landed results; stale absent registry row retired. |
+| `worktrees/slot01` | hermit-ci-examples / impl-ci-integration-green | Unlanded work preserved at `origin/codex/ci-integration-green-v3` exact SHA `77b3b6efa744cba08b47c15f5e6d11c2237f6568`. | Existing task closure predates the landed-only closure rule; branch requires a fresh handoff/disposition audit. |
+| `worktrees/slot02` | codex-1120 / fix-kvm-detpid-mismatch | Hermit #1120 landed as `c3381cae183d9d73b7698a96e8df8eeb4799269b`. | Closed through `ci-hub/bin/close-task` after fresh PR replay-SHA verification. |
+
+### Drainer-3 release before separate parent lint repair allocation (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/drainer-3` | drainer-3 / drain-hermit-1468-fix | Hermit detached `c243497c605571ec4dfeab3c67131e2cd0f35f6b`; the exact nested product submodules were clean and deinitialized before release | The assigned #1468 work landed as `5d5bb2e3850beb0fccac71e6c3a1e3ae1824ee41`; the residual checkout corresponds to closed #1443, whose active recovery moved to `drainer-1`. The detached SHA is remote-reachable. | The registry task ID is absent from the authoritative Hermit TaskGraph. The checkout was clean and no process referenced the slot. Git refused physical worktree removal because the worktree contained submodules; no force or raw removal occurred. The slot was released from the registry and parked with its cache retained. A separate new `worktrees/slot03`, not drainer-3, was allocated for Reverie #381. |
+
+### Reverie typed LiteInst activation failure release (2026-08-05)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/slot03` | hermit-380 / reverie-380-typed-error | Reverie feature head `ffd784d37e1e78328c819f0c7499c27c532b32e8` (tree `267b0e7c1cb655295543f3081e313e8d45fd0524`); no Hermit or LiteInst2 child | Branch `codex/reverie-380-typed-error` retained on origin at the exact head; PR [#381](https://github.com/rrnewton/reverie/pull/381) squash-landed as `9470712afa9b421c72850ab7955fb335692e43a0` with the identical tree and verified remote-main ancestry; issue [#380](https://github.com/rrnewton/reverie/issues/380) closed; parent PR [#38](https://github.com/rrnewton/dev-hermit/pull/38) carries pushed pin commit `f01c4d9a62ab6a51f9b6b8ac79bd1ec2c69b9a07` at head `2dcec41685951ed4ec39941105012f95c5ba051c`. | Exact-head evidence: typed-category 4/4, pre-Ready 10/10, focused race 25/25, reverie-ptrace 137 passed/1 ignored plus integration 1/1 and doc 1/1, clippy/fmt/diff-check pass, parent proxy lint 879 files/0 findings, full validate 7/7 with 982 executed/0 failures, hosted Regular + Host-dependent checks and adversarial review pass. Single-product worktree clean, process-free, and remote-preserved; uninitialized submodules pose no removal obstacle. Reclaim via `scripts/release-worktree.rs --slot slot03 --clean` for issue #1651. |
+
+### Setup-only Actions classifier closeout (2026-08-06)
+
+| Slot | owner/task | product SHAs | recovery | disposition |
+| --- | --- | --- | --- | --- |
+| `worktrees/cadence2` | setup-only-classifier (+ read-only setup-classifier-review) / `classify_setup_only_actions` | Hermit detached `4c70658e785834737cbe1524f77330c781a6f5ea`; Reverie detached `dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6`; LiteInst2 detached `8bf704feb06a62e7a05bee3b237d70793e4e2689` | The reviewed dev-hermit PR [#54](https://github.com/rrnewton/dev-hermit/pull/54) result was published directly to parent `main` as exact commit `31d01261d4a15ad846b86318a2e35b2bb040d341`. Exact-head evidence: 133/133 health tests passed and independent review returned PASS. | All three product children remained unchanged, clean, and detached. Retain the slot until parent PR #38 reconciliation lands, then release only through `scripts/release-worktree.rs --slot cadence2 --clean`; retain no task-specific product branch. |

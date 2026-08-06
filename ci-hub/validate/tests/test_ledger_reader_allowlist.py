@@ -68,6 +68,10 @@ DECLARED_READERS: dict[str, str] = {
     "health/pr_status.py": "shells out to `ci-hub ledger qualified-rows`",
     # --- tests -------------------------------------------------------------
     "validate/test_finalize_receipt.py": "test fixture",
+    "remediation/tests/test_protocol.py": (
+        "test fixture: embeds a synthetic ledger path only inside planted "
+        "validate-status response JSON; it never opens or orders the ledger"
+    ),
     "health/tests/test_pr_status.py": "test fixture",
     "history/tests/test_history.py": "test fixture",
     "validate/tests/test_ledger_reader_allowlist.py": "this lint",
