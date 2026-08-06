@@ -1,0 +1,13 @@
+id,property,case,result,verdict
+A1,address-only difference must compare EQUAL,"rdi/rsp/rip shifted to different absolute addresses, same order and aliasing",equal,as-designed
+A2,non-address value difference must compare UNEQUAL,rsi 42 vs 43,unequal,as-designed
+A3,aliasing change must compare UNEQUAL,"two regs share an address vs hold different ones",unequal,as-designed
+A4,pure swap of two independent addresses,rdi/rsi addresses exchanged,equal,"as-designed and acknowledged by the module's own third unit test"
+H1,is_address() proxy — read/write byte count,rdx 4096 vs 8192,EQUAL,"** divergence MISSED ** both canonicalize to a2"
+H2,is_address() proxy — lseek offset,rsi 65536 vs 131072,EQUAL,"** divergence MISSED ** both canonicalize to a1"
+H3,is_address() proxy — computed value in a callee-saved reg,r12 1700000000 vs 1700000001,EQUAL,"** divergence MISSED ** both canonicalize to a1"
+C1,control just below the window,rdx 4095 vs 4094,unequal,"boundary behaves exactly as coded"
+C2,control above USER_VA_MAX,rdx -1 vs -2 (two's complement),unequal,"boundary behaves exactly as coded"
+F1,shipped fixture marker,r15 101 vs 202 (below 0x1000),unequal,"the shipped negative direction DOES catch it"
+F2,same fixture with the marker moved above the window floor,r15 0x1000+101 vs 0x1000+202,EQUAL,"** the negative direction would NOT catch it ** — same register, same test shape, +0x1000"
+S1,SaBRe register digest,registers_nondeterministic_at_syscall_boundary = (backend == Sabre),emitter suppressed entirely,"correct choice (suppress, not strip) and disclosed in-code; but SaBRe then has ZERO register coverage and the underlying %rdx nondeterminism is recorded only as a config flag"
