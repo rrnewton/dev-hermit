@@ -72,24 +72,51 @@ told "explicit paths, never `git add -A`" repeatedly and it is still violated, s
 the rule was wired into `.githooks/pre-commit`, which is already active
 repo-wide via `core.hooksPath=.githooks`.
 
-### Why the guard ships WARN-only
+### The guard now BLOCKS by default (flipped 2026-08-06)
 
-Measured before choosing the default: **12 `git commit` call sites in this repo's
-own tooling, 0 of which pass a pathspec**, including `--amend --no-edit` in
-`ci-hub/landing/union-rebase.sh` and `scripts/e2e-union-rebase.sh`. Default-deny
-would break landing immediately. So the guard warns, names the staged paths so a
-foreign file is visible, and can be switched to blocking with
-`HERMIT_SHARED_INDEX_GUARD=block` once those call sites are converted.
+It first shipped warn-only on the strength of a census that said **12 call sites,
+0 with a pathspec**. **That census was wrong twice**: it counted error-message
+strings as call sites, and its grep missed the `--only` / `-o` plus separate-`--`
+argv form. Re-derived, every site that commits in the *parent* working tree was
+already safe, so **no conversion was needed at all**:
 
-The warn path is also fail-safe: a defect in the guard cannot block a commit
-unless blocking was explicitly requested.
+| site | form |
+|---|---|
+| `ci-hub/ci-hub.rs` ×2 | `git -C <root> commit -m MSG -o -- <path>` |
+| `scripts/primary_checkout.py` | `git -C <root> commit --only -m MSG -- <paths>` |
 
-## Follow-up needed before flipping to `block`
+The union-rebase amends are not parent commits: both scripts take
+`WT=${1:?hermit worktree path}` and `cd "$WT"`, so they use that worktree's own
+index and cannot race the parent.
 
-Convert the parent-committing call sites to pathspec form. Most of the 12 are
-harmless — they run `git -C <slot-or-fixture>`, which has its own index — so the
-real work is the union-rebase amends and the two `ci-hub/ci-hub.rs` commit sites.
-Until then `block` is opt-in per shell.
+**Verified BEFORE flipping (S13)**, because a flip that broke `make
+checkout-fresh` or ci-hub's state files would be exactly the outage this
+sequencing exists to avoid: `-o -- <path>` and `--only -- <paths>` are both
+ALLOWED under block, commit only the named path, and leave a bystander's staged
+file untouched.
+
+**Verified both ways after flipping**, against the real hook and the real index:
+
+- bare commit → `rc=1`, BLOCKED, reported 113 staged paths
+- pathspec commit → guard SILENT (the `rc=1` there was the pre-existing Reverie
+  pin-drift guard; zero occurrences of this guard's marker)
+- `HERMIT_SHARED_INDEX_GUARD=warn` → `rc=0`; `=off` → `rc=0` and silent
+- `HERMIT_PIN_DRIFT_OVERRIDE=1` unaffected — used for the real commit, since the
+  hermit primary was mid-change by another agent
+
+The live bare-commit test was deliberately run **through the hook** rather than
+by creating a commit: 113 other-agent paths were staged, so a guard failure would
+have swept real work. Testing a data-loss guard by risking data loss is
+self-defeating.
+
+In warn/off mode the guard is still fail-safe: a defect in it cannot block a
+commit unless blocking was explicitly requested.
+
+## Usability, which is a correctness property here
+
+The guard caps its listing at 15 paths plus a count. With 113 paths staged it
+would otherwise print a wall of text on every refusal, and a guard that floods
+the terminal gets switched off within a day — at which point it protects nobody.
 
 ## Files
 
