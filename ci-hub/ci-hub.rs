@@ -69,6 +69,7 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  validate-run            Launch detached validation through ci-hub admission
   validate-stop           Stop detached validate-* user units and verify termination
   ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
@@ -146,7 +147,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
      ./ci-hub/ci-hub land-lock status
      ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
    Serialize box-exclusive compute (one validate OR bench, so load cannot forge FAILEDs):
-     ./ci-hub/ci-hub validate-lock run --agent A --kind validate --target SHA -- ./validate.sh
+     ./ci-hub/ci-hub validate-run --checkout WORKTREE --agent A --target SHA --pr N -- full
    Never force-release another owner. Dead-owner reclamation requires process
    evidence and is built into the lock.
 
@@ -212,6 +213,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Launch a detached validation whose service enters through validate-lock.
+    ValidateRun(PassthroughArgs),
     /// Stop detached validate-* user units and verify they terminated.
     ValidateStop(PassthroughArgs),
     /// Read canonical qualified views of the validate ledger.
@@ -1115,6 +1118,7 @@ impl HubCommand {
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
+            | Self::ValidateRun(_)
             | Self::ValidateStop(_)
             | Self::ApplyLocalLabel(_)
             | Self::LandLock(_)
@@ -1635,6 +1639,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::ValidateRun(args) => {
+            run_python(root, "ci-hub/validate/start_unit.py", args.args)
+        }
         HubCommand::ValidateStop(args) => {
             run_python(root, "ci-hub/validate/stop_units.py", args.args)
         }
@@ -4694,6 +4701,30 @@ mod tests {
         };
         assert_eq!(args.args, vec![OsString::from("--all")]);
         assert!(HubCommand::ValidateStop(args).cost_spec().is_none());
+    }
+
+    #[test]
+    fn parses_validate_run_passthrough() {
+        let command = Cli::try_parse_from([
+            "ci-hub",
+            "validate-run",
+            "--checkout",
+            "/tmp/hermit",
+            "--agent",
+            "hermit-test",
+            "--target",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--",
+            "full",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::ValidateRun(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert!(args.args.contains(&OsString::from("--checkout")));
+        assert!(args.args.contains(&OsString::from("full")));
+        assert!(HubCommand::ValidateRun(args).cost_spec().is_none());
     }
 
     #[test]

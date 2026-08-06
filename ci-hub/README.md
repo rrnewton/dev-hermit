@@ -49,6 +49,12 @@ CI_HUB_DOCS_PARSE_ONLY=1 ./ci-hub/landing/land-pr.sh \
 ./ci-hub/ci-hub local-history --since 2026-08-03
 ./ci-hub/ci-hub validate-worktrees --runs 10
 ./ci-hub/ci-hub runner-health --all
+
+# Launch one detached full validate through the sole admission point. The user
+# service runs ci-hub validate-lock before validate.sh and writes a durable log.
+./ci-hub/ci-hub validate-run --checkout worktrees/slot01/hermit \
+  --agent hermit-example --target aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --pr 123 --dry-run -- full
 ```
 
 Networked commands use `with-proxy` internally.

@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 40
+EXPECTED_COMMANDS = 41
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -103,6 +103,7 @@ def _classify(text: str) -> str:
             "refresh-history",
             "resolve-obligation",
             "verify-landing",
+            "validate-run",
         }:
             return "parse"
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
