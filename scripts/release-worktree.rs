@@ -15,8 +15,11 @@
 //! serde_json = "1"
 //! ```
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command};
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Component, Path, PathBuf};
+use std::process::{exit, Command, Output};
 
 const USAGE: &str = r#"Usage: release-worktree.rs --slot SLOT [OPTIONS]
 
@@ -91,6 +94,221 @@ fn git(dir: &Path, args: &[&str]) -> (bool, String, String) {
         String::from_utf8_lossy(&out.stdout).trim().to_string(),
         String::from_utf8_lossy(&out.stderr).trim().to_string(),
     )
+}
+
+fn git_output(dir: &Path, args: &[&str]) -> Result<Output, String> {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| {
+            format!(
+                "could not run git -C {} {}: {e}",
+                dir.display(),
+                args.join(" ")
+            )
+        })
+}
+
+/// Run a Git inspection that must succeed before cleanup may continue.
+fn git_inspect(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = git_output(dir, args)?;
+    if !out.status.success() {
+        return Err(format!(
+            "git -C {} {} failed (exit {}): {}",
+            dir.display(),
+            args.join(" "),
+            out.status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Slot name is a lowercase named token (for example `kvm`) or `slotNN`.
+fn valid_slot(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphanumeric())
+            .unwrap_or(false)
+}
+
+#[derive(Clone, Debug)]
+struct CleanTarget {
+    label: &'static str,
+    branch_key: &'static str,
+    primary: PathBuf,
+    path: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RepoSnapshot {
+    path: PathBuf,
+    head: String,
+    origin_url: String,
+}
+
+#[derive(Clone, Debug)]
+struct RepoInspection {
+    snapshot: RepoSnapshot,
+    status: String,
+}
+
+fn canonical_exact(root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "target path '{}' is not a normalized relative path",
+            relative.display()
+        ));
+    }
+
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|e| format!("could not canonicalize workspace root: {e}"))?;
+    let target = root.join(relative);
+    let canonical = fs::canonicalize(&target)
+        .map_err(|e| format!("could not canonicalize target {}: {e}", target.display()))?;
+    let expected = canonical_root.join(relative);
+    if canonical != expected {
+        return Err(format!(
+            "target {} resolves to {}, not exact path {}; refusing symlink/path alias",
+            target.display(),
+            canonical.display(),
+            expected.display()
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Reuse the repository's canonical state/ACTIVE/branch reconciler. Exact
+/// physical-path binding remains local below because that verifier deliberately
+/// checks checkout state, not destructive-target identity.
+fn verify_registry(root: &Path) -> Result<(), String> {
+    let checker = root.join("scripts/check-worktree-registry.rs");
+    if !checker.is_file() {
+        return Err(format!(
+            "canonical registry verifier is missing: {}",
+            checker.display()
+        ));
+    }
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = Command::new(&checker)
+        .args(["--root", &root_arg])
+        .output()
+        .map_err(|error| format!("could not run {}: {error}", checker.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "canonical registry verifier refused cleanup: {}{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Bind cleanup to each exact state-recorded canonical product path and the
+/// corresponding product repository's physical worktree registration.
+fn clean_targets_from_state(
+    root: &Path,
+    state: &Value,
+    slot: &str,
+) -> Result<Vec<CleanTarget>, String> {
+    let slot_state = state["slots"]
+        .get(slot)
+        .ok_or_else(|| format!("slot {slot} is not registered"))?;
+    let agents = slot_state["agents"]
+        .as_array()
+        .ok_or_else(|| format!("slot {slot} has no readable agents array"))?;
+    if agents.is_empty() {
+        return Err(format!("slot {slot} has no recorded owner"));
+    }
+
+    let mut targets = Vec::new();
+    for (label, branch_key, path_key) in [
+        ("hermit", "hermit_branch", "hermit_path"),
+        ("reverie", "reverie_branch", "reverie_path"),
+        ("liteinst2", "liteinst2_branch", "liteinst2_path"),
+    ] {
+        let expected_checkout = slot_state
+            .get(branch_key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("slot {slot} has missing/non-string {branch_key}"))?;
+        if expected_checkout == "-" {
+            continue;
+        }
+
+        let recorded = slot_state
+            .get(path_key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("slot {slot} has missing/non-string {path_key}"))?;
+        let expected_recorded = format!("worktrees/{slot}/{label}");
+        if recorded != expected_recorded {
+            return Err(format!(
+                "slot {slot} records {label} path '{recorded}', expected '{expected_recorded}'"
+            ));
+        }
+        let expected_relative = PathBuf::from(&expected_recorded);
+        let canonical = canonical_exact(root, &expected_relative)?;
+        let primary = root.join(label);
+
+        let listing = git_inspect(&primary, &["worktree", "list", "--porcelain"])?;
+        let registered_matches = listing
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter(|candidate| Path::new(candidate) == canonical)
+            .count();
+        if registered_matches != 1 {
+            return Err(format!(
+                "slot {slot} {label} target {} has {registered_matches} matching physical worktree registrations; expected exactly 1",
+                canonical.display()
+            ));
+        }
+
+        targets.push(CleanTarget {
+            label,
+            branch_key,
+            primary,
+            path: canonical,
+        });
+    }
+
+    let slot_relative = PathBuf::from("worktrees").join(slot);
+    let slot_dir = root.join(&slot_relative);
+    if slot_dir.exists() {
+        canonical_exact(root, &slot_relative)?;
+        let allowed: BTreeSet<&str> = targets.iter().map(|target| target.label).collect();
+        for entry in fs::read_dir(&slot_dir).map_err(|e| {
+            format!(
+                "could not inspect slot directory {}: {e}",
+                slot_dir.display()
+            )
+        })? {
+            let entry = entry.map_err(|e| format!("could not inspect slot entry: {e}"))?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| format!("slot {slot} contains a non-UTF8 entry"))?;
+            if !allowed.contains(name.as_str()) {
+                return Err(format!(
+                    "slot {slot} contains unexpected entry {}; refusing before mutation",
+                    entry.path().display()
+                ));
+            }
+        }
+    }
+    Ok(targets)
 }
 
 fn state_path(root: &Path) -> PathBuf {
@@ -179,107 +397,203 @@ fn regen_active_md(root: &Path, state: &Value) {
     std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
 }
 
-/// Return uncommitted `git status --porcelain` output for a worktree, or None if
-/// the path is absent / not a worktree.
-fn dirty(path: &Path) -> Option<String> {
-    if !path.exists() {
-        return None;
+/// Enumerate the target plus every recursively initialized submodule. Git owns
+/// the recursion semantics; a malformed `.gitmodules` or any other inspection
+/// error is a hard refusal rather than an empty/clean result.
+fn initialized_repositories(target: &Path) -> Result<Vec<PathBuf>, String> {
+    let canonical_target = fs::canonicalize(target)
+        .map_err(|e| format!("could not canonicalize target {}: {e}", target.display()))?;
+    let out = git_output(
+        &canonical_target,
+        &[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            r#"printf '%s\0' "$displaypath""#,
+        ],
+    )?;
+    if !out.status.success() {
+        return Err(format!(
+            "could not enumerate initialized submodules below {} (exit {}): {}",
+            canonical_target.display(),
+            out.status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
-    let (ok, out, _) = git(path, &["status", "--porcelain"]);
-    if !ok || out.is_empty() {
-        None
-    } else {
-        Some(out)
+
+    let mut repositories = vec![canonical_target.clone()];
+    for raw in out
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|raw| !raw.is_empty())
+    {
+        let relative = std::str::from_utf8(raw).map_err(|_| {
+            format!(
+                "initialized submodule below {} has a non-UTF8 display path",
+                canonical_target.display()
+            )
+        })?;
+        let canonical = canonical_exact(&canonical_target, Path::new(relative))?;
+        if !repositories.contains(&canonical) {
+            repositories.push(canonical);
+        }
     }
+    repositories.sort();
+    Ok(repositories)
 }
 
-/// Authoritative "is this worktree's committed work durable on origin?" check.
-///
-/// Verifies the worktree's HEAD against `origin` via `git ls-remote` (the same
-/// authoritative check the fleet sweep uses), NOT `@{upstream}` — a branch cut
-/// from `origin/main` tracks `origin/main`, so an `@{upstream}` count wrongly
-/// flags already-pushed feature commits. HEAD is durable iff origin carries the
-/// branch at exactly HEAD, or origin is strictly ahead of HEAD (all our commits
-/// are reachable from the remote tip).
-///
-/// Returns None when the work is safe (durable on origin, absent, or a detached
-/// checkout parked at a pinned gitlink). Returns Some(reason) when committed work
-/// would be lost by removal.
-fn missing_on_origin(path: &Path) -> Option<String> {
-    if !path.exists() {
-        return None;
+fn inspect_repository(path: &Path) -> Result<RepoInspection, String> {
+    let status = git_inspect(path, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let head = git_inspect(path, &["rev-parse", "--verify", "HEAD"])?;
+    if head.is_empty() {
+        return Err(format!(
+            "repository {} has no readable HEAD",
+            path.display()
+        ));
     }
-    // Detached HEAD (parked at a pinned gitlink) has no branch to push; safe.
-    let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    if !ok_b || branch.is_empty() {
-        return None;
+    let origin_url = git_inspect(path, &["remote", "get-url", "origin"])?;
+    if origin_url.is_empty() {
+        return Err(format!(
+            "repository {} has an empty origin URL",
+            path.display()
+        ));
     }
-    let (ok_h, local_head, _) = git(path, &["rev-parse", "HEAD"]);
-    if !ok_h || local_head.is_empty() {
-        return None;
-    }
-    // Fast path: if HEAD is already an ancestor of origin/main, every commit is
-    // on origin (nothing unique to this branch) -> durable, no network needed.
-    let (on_main, _, _) = git(
-        path,
-        &["merge-base", "--is-ancestor", &local_head, "origin/main"],
-    );
-    if on_main {
-        return None;
-    }
-    // Query origin authoritatively (network; with-proxy).
-    let out = Command::new("with-proxy")
+    Ok(RepoInspection {
+        snapshot: RepoSnapshot {
+            path: path.to_path_buf(),
+            head,
+            origin_url,
+        },
+        status,
+    })
+}
+
+fn inspect_target_repositories(target: &Path) -> Result<Vec<RepoInspection>, String> {
+    initialized_repositories(target)?
+        .iter()
+        .map(|path| inspect_repository(path))
+        .collect()
+}
+
+fn proxy_git_inspect(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let output = Command::new("with-proxy")
         .arg("git")
         .arg("-C")
         .arg(path)
-        .args(["ls-remote", "origin", &format!("refs/heads/{branch}")])
-        .output();
-    let remote_sha = match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string(),
-        Ok(_) => {
-            return Some(format!(
-                "branch '{branch}' ls-remote failed (treat as unpushed)"
-            ))
-        }
-        Err(e) => return Some(format!("branch '{branch}' ls-remote could not run ({e})")),
-    };
-    if remote_sha.is_empty() {
-        return Some(format!("branch '{branch}' does not exist on origin"));
+        .args(args)
+        .output()
+        .map_err(|error| format!("could not run with-proxy git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "with-proxy git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    if remote_sha == local_head {
-        return None; // exact match: durable
-    }
-    // Remote differs. Safe ONLY if HEAD is an ancestor of the remote tip (origin
-    // is strictly ahead and carries all our commits). This requires the remote
-    // object locally; if it is not present we cannot prove safety -> at risk.
-    let (ok_anc, _, _) = git(
-        path,
-        &["merge-base", "--is-ancestor", &local_head, &remote_sha],
-    );
-    if ok_anc {
-        None
-    } else {
-        Some(format!(
-            "HEAD {} not on origin/{branch} (remote tip {})",
-            &local_head[..local_head.len().min(12)],
-            &remote_sha[..remote_sha.len().min(12)]
-        ))
-    }
+    Ok(output.stdout)
 }
 
-/// Push the worktree's current branch to `origin` via with-proxy. Returns true on success.
-fn push_branch(path: &Path) -> bool {
-    let (ok_b, branch, _) = git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    if !ok_b || branch.is_empty() {
-        eprintln!(
-            "  cannot push {}: detached HEAD / no branch",
-            path.display()
-        );
-        return false;
+/// Prove HEAD is reachable from at least one current ref advertised by this
+/// repository's own `origin`. Detached submodule HEADs receive the same proof
+/// as branch checkouts; merely being pinned by the outer repository is not a
+/// durability claim.
+fn remote_durable(snapshot: &RepoSnapshot) -> Result<bool, String> {
+    let stdout = String::from_utf8(proxy_git_inspect(&snapshot.path, &["ls-remote", "origin"])?)
+        .map_err(|_| {
+            format!(
+                "git ls-remote origin returned non-UTF8 output for {}",
+                snapshot.path.display()
+            )
+        })?;
+    let mut remote_tips = BTreeSet::new();
+    let mut branch_tips = BTreeSet::new();
+    for (index, line) in stdout.lines().enumerate() {
+        let mut fields = line.split_whitespace();
+        let sha = fields.next().ok_or_else(|| {
+            format!(
+                "malformed ls-remote output line {} for {}",
+                index + 1,
+                snapshot.path.display()
+            )
+        })?;
+        let remote_ref = fields.next().ok_or_else(|| {
+            format!(
+                "malformed ls-remote output line {} for {}",
+                index + 1,
+                snapshot.path.display()
+            )
+        })?;
+        if fields.next().is_some()
+            || !matches!(sha.len(), 40 | 64)
+            || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !(remote_ref == "HEAD" || remote_ref.starts_with("refs/"))
+        {
+            return Err(format!(
+                "malformed ls-remote output line {} for {}: {line}",
+                index + 1,
+                snapshot.path.display()
+            ));
+        }
+        remote_tips.insert(sha.to_string());
+        if remote_ref.starts_with("refs/heads/") {
+            branch_tips.insert(sha.to_string());
+        }
+    }
+
+    if remote_tips.contains(&snapshot.head) {
+        return Ok(true);
+    }
+    if branch_tips.is_empty() {
+        return Ok(false);
+    }
+
+    // Make the advertised branch-tip objects available for an observed
+    // ancestry proof. A fetch or later Git error refuses cleanup; it cannot be
+    // converted into a user-force bypass.
+    proxy_git_inspect(
+        &snapshot.path,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "origin",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )?;
+    for remote_tip in branch_tips {
+        let ancestry = git_output(
+            &snapshot.path,
+            &["merge-base", "--is-ancestor", &snapshot.head, &remote_tip],
+        )?;
+        match ancestry.status.code() {
+            Some(0) => return Ok(true),
+            Some(1) => {}
+            _ => {
+                return Err(format!(
+                    "could not inspect ancestry {}..{} in {}: {}",
+                    snapshot.head,
+                    remote_tip,
+                    snapshot.path.display(),
+                    String::from_utf8_lossy(&ancestry.stderr).trim()
+                ))
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Push the current branch only. Detached nested repositories cannot be given
+/// an invented publication ref by cleanup; they remain at risk and are refused.
+fn push_branch(path: &Path) -> Result<bool, String> {
+    let branch = git_inspect(path, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if branch == "HEAD" {
+        eprintln!("  cannot push {}: detached HEAD", path.display());
+        return Ok(false);
     }
     let refspec = format!("HEAD:refs/heads/{branch}");
     let out = Command::new("with-proxy")
@@ -287,28 +601,154 @@ fn push_branch(path: &Path) -> bool {
         .arg("-C")
         .arg(path)
         .args(["push", "origin", &refspec])
-        .output();
-    match out {
-        Ok(o) if o.status.success() => {
-            println!("  pushed {} -> origin/{branch}", path.display());
-            true
+        .output()
+        .map_err(|e| format!("could not spawn git push for {}: {e}", path.display()))?;
+    if out.status.success() {
+        println!("  pushed {} -> origin/{branch}", path.display());
+        Ok(true)
+    } else {
+        eprintln!(
+            "  push failed for {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        Ok(false)
+    }
+}
+
+fn link_inside_target(link: &Path, targets: &[PathBuf]) -> bool {
+    targets
+        .iter()
+        .any(|target| link == target || link.starts_with(target))
+}
+
+fn read_proc_link(path: &Path) -> Result<Option<PathBuf>, String> {
+    match fs::read_link(path) {
+        Ok(link) => Ok(Some(link)),
+        // Sandboxed sibling agents may hide their /proc links even though all
+        // fleet processes share a Unix uid. Such a process cannot be
+        // attributed to this target from this namespace; continue scanning
+        // visible owners rather than making every release permanently fail.
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(None)
         }
-        Ok(o) => {
-            eprintln!(
-                "  push failed for {}: {}",
-                path.display(),
-                String::from_utf8_lossy(&o.stderr).trim()
-            );
-            false
-        }
-        Err(e) => {
-            eprintln!(
-                "  could not spawn with-proxy git push for {}: {e}",
-                path.display()
-            );
-            false
+        Err(error) => Err(format!(
+            "could not inspect live process link {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+/// Refuse while a visible process has its cwd or executable below a target. The
+/// coordinator may retry after that owner exits; cleanup never signals it.
+fn live_process_users(targets: &[PathBuf]) -> Result<Vec<String>, String> {
+    let mut users = Vec::new();
+    for entry in fs::read_dir("/proc").map_err(|e| format!("could not enumerate /proc: {e}"))? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("could not enumerate /proc entry: {error}")),
+        };
+        let name = entry.file_name();
+        let Some(pid_text) = name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<u32>() else {
+            continue;
+        };
+        for kind in ["cwd", "exe"] {
+            if let Some(link) = read_proc_link(&entry.path().join(kind))? {
+                if link_inside_target(&link, targets) {
+                    users.push(format!("pid {pid} {kind}={}", link.display()));
+                }
+            }
         }
     }
+    users.sort();
+    users.dedup();
+    Ok(users)
+}
+
+fn snapshots(inspections: &[RepoInspection]) -> Vec<RepoSnapshot> {
+    inspections
+        .iter()
+        .map(|inspection| inspection.snapshot.clone())
+        .collect()
+}
+
+/// Final boundary immediately before Git-level force removal. It repeats exact
+/// target identity, recursive enumeration, all fail-closed status inspections,
+/// HEAD/origin identity, and live-process ownership after every network call.
+/// The final outer `git status` is the last subprocess before removal, so a
+/// write planted during durability checks cannot be discarded.
+fn final_removal_boundary(
+    root: &Path,
+    slot: &str,
+    expected_target: &CleanTarget,
+    expected_repositories: &[RepoSnapshot],
+    allow_dirty: bool,
+) -> Result<(), String> {
+    verify_registry(root)?;
+    let current_state = load_state(root);
+    let rebound = clean_targets_from_state(root, &current_state, slot)?
+        .into_iter()
+        .find(|target| target.label == expected_target.label)
+        .ok_or_else(|| format!("{} target disappeared from state", expected_target.label))?;
+    if rebound.path != expected_target.path || rebound.primary != expected_target.primary {
+        return Err(format!(
+            "{} target identity changed before removal",
+            expected_target.label
+        ));
+    }
+
+    let final_inspections = inspect_target_repositories(&rebound.path)?;
+    if snapshots(&final_inspections) != expected_repositories {
+        return Err(format!(
+            "{} recursive repository identity/HEAD/origin changed before removal",
+            expected_target.label
+        ));
+    }
+    if !allow_dirty {
+        for inspection in &final_inspections {
+            if !inspection.status.is_empty() {
+                return Err(format!(
+                    "final cleanliness check found work in {}: {}",
+                    inspection.snapshot.path.display(),
+                    inspection.status.replace('\n', "; ")
+                ));
+            }
+        }
+    }
+
+    let users = live_process_users(&[rebound.path.clone()])?;
+    if !users.is_empty() {
+        return Err(format!(
+            "live process ownership below {}: {}",
+            rebound.path.display(),
+            users.join(", ")
+        ));
+    }
+
+    // This is deliberately last: no network query, registry rewrite, or other
+    // subprocess may open a write window between this fail-closed status and
+    // `git worktree remove --force` in the caller.
+    let outer_status = git_inspect(
+        &rebound.path,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
+    if !allow_dirty && !outer_status.is_empty() {
+        return Err(format!(
+            "final outer cleanliness check found work in {}: {}",
+            rebound.path.display(),
+            outer_status.replace('\n', "; ")
+        ));
+    }
+    Ok(())
 }
 
 fn main() {
@@ -346,6 +786,11 @@ fn main() {
     if slot.is_empty() {
         die(&format!("--slot is required\n\n{USAGE}"));
     }
+    if !valid_slot(&slot) {
+        die(&format!(
+            "invalid slot name: '{slot}' (expected a lowercase [a-z0-9-]+ token)"
+        ));
+    }
 
     let root = find_root();
     let mut state = load_state(&root);
@@ -380,151 +825,185 @@ fn main() {
         println!("agent '{name}' was the last owner of {slot}; releasing whole slot");
     }
 
-    // Inspect all product worktrees for uncommitted work.
     let slot_dir = root.join("worktrees").join(&slot);
-    let hpath = slot_dir.join("hermit");
-    let rpath = slot_dir.join("reverie");
-    let lpath = slot_dir.join("liteinst2");
-    let mut any_dirty = false;
-    for (label, p) in [
-        ("hermit", &hpath),
-        ("reverie", &rpath),
-        ("liteinst2", &lpath),
-    ] {
-        if let Some(status) = dirty(p) {
-            any_dirty = true;
-            eprintln!("⚠  {label} worktree {} has uncommitted work:", p.display());
-            for line in status.lines() {
-                eprintln!("     {line}");
+    if !clean {
+        for label in ["hermit", "reverie", "liteinst2"] {
+            let path = slot_dir.join(label);
+            if !path.exists() {
+                continue;
+            }
+            match git_inspect(
+                &path,
+                &["status", "--porcelain=v1", "--untracked-files=all"],
+            ) {
+                Ok(status) if !status.is_empty() => {
+                    eprintln!("⚠  retained {label} worktree has uncommitted work:\n{status}")
+                }
+                Err(error) => eprintln!("⚠  could not inspect retained {label} worktree: {error}"),
+                _ => {}
             }
         }
     }
-    if any_dirty {
-        eprintln!("⚠  {slot} has uncommitted changes. Commit and push to a feature branch first.");
-        if clean && !force {
-            die("refusing --clean with uncommitted work; pass --force to override");
-        }
-    }
-
-    // PRE-RECYCLE GUARDRAIL — push-then-remove: never discard committed-but-unpushed
-    // work. Committed work survives `git worktree remove` (the branch ref stays in
-    // the primary), but a purely-local branch is not durably recoverable if the box
-    // dies. So --clean REFUSES to release a slot whose HEAD is not on origin
-    // (verified authoritatively via git ls-remote), unless --push (push-then-verify)
-    // or --force (explicit override, discards durability guarantee).
     if clean {
-        let children = [
-            ("hermit", &hpath),
-            ("reverie", &rpath),
-            ("liteinst2", &lpath),
-        ];
-        let mut at_risk: Vec<&str> = Vec::new();
-        eprintln!(
-            "pre-recycle guardrail: verifying committed work is on origin (git ls-remote)..."
-        );
-        for (label, p) in children {
-            if let Some(reason) = missing_on_origin(p) {
-                at_risk.push(label);
-                eprintln!("⚠  {label}: {reason}");
+        verify_registry(&root)
+            .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
+        let clean_targets = clean_targets_from_state(&root, &state, &slot)
+            .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
+        let mut proofs: Vec<(&'static str, Vec<RepoSnapshot>)> = Vec::new();
+        let mut any_dirty = false;
+
+        for target in &clean_targets {
+            let inspections = inspect_target_repositories(&target.path).unwrap_or_else(|error| {
+                die(&format!(
+                    "could not inspect {} target recursively: {error}",
+                    target.label
+                ))
+            });
+            for inspection in &inspections {
+                if !inspection.status.is_empty() {
+                    any_dirty = true;
+                    eprintln!(
+                        "⚠  repository {} has uncommitted work:",
+                        inspection.snapshot.path.display()
+                    );
+                    for line in inspection.status.lines() {
+                        eprintln!("     {line}");
+                    }
+                }
             }
+            proofs.push((target.label, snapshots(&inspections)));
+        }
+        if any_dirty {
+            eprintln!(
+                "⚠  {slot} has uncommitted changes. Commit and push to a feature branch first."
+            );
+            if !force {
+                die("refusing --clean with uncommitted work; pass --force to override");
+            }
+        }
+
+        eprintln!(
+            "pre-recycle guardrail: verifying every outer and initialized nested HEAD is reachable from its own origin..."
+        );
+        let mut at_risk = Vec::new();
+        for (_, repositories) in &proofs {
+            for repository in repositories {
+                match remote_durable(repository) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        eprintln!(
+                            "⚠  {}: HEAD {} is not reachable from any current origin ref",
+                            repository.path.display(),
+                            &repository.head[..repository.head.len().min(12)]
+                        );
+                        at_risk.push(repository.path.clone());
+                    }
+                    Err(error) => die(&format!("origin durability inspection failed: {error}")),
+                }
+            }
+        }
+
+        if !at_risk.is_empty() && push {
+            println!("--push: pushing at-risk repositories that have branches (with-proxy)...");
+            for repository in &at_risk {
+                push_branch(repository).unwrap_or_else(|error| {
+                    die(&format!(
+                        "could not inspect/push {}: {error}",
+                        repository.display()
+                    ))
+                });
+            }
+            at_risk.retain(|path| {
+                let proof = proofs
+                    .iter()
+                    .flat_map(|(_, repositories)| repositories)
+                    .find(|repository| repository.path == *path)
+                    .expect("at-risk repository must have a proof");
+                match remote_durable(proof) {
+                    Ok(durable) => !durable,
+                    Err(error) => die(&format!("post-push durability inspection failed: {error}")),
+                }
+            });
         }
         if !at_risk.is_empty() {
-            if push {
-                println!("--push: pushing at-risk slot branches (with-proxy)...");
-                let mut push_ok = true;
-                for (label, p) in children {
-                    if at_risk.contains(&label) && !push_branch(p) {
-                        push_ok = false;
-                    }
-                }
-                // Re-verify authoritatively AFTER pushing; only proceed if now durable.
-                let mut still_at_risk: Vec<&str> = Vec::new();
-                for (label, p) in children {
-                    if missing_on_origin(p).is_some() {
-                        still_at_risk.push(label);
-                    }
-                }
-                if !still_at_risk.is_empty() && !force {
-                    die(&format!(
-                        "push-then-verify failed; still not on origin: {}. Aborting --clean (pass --force to override).",
-                        still_at_risk.join(", ")
-                    ));
-                }
-                if push_ok && still_at_risk.is_empty() {
-                    println!("✓ all slot branches verified on origin; safe to release");
-                }
-            } else if !force {
+            let paths = at_risk
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !force {
                 die(&format!(
-                    "REFUSING to release {slot}: committed work not on origin ({}). \
-                     Pass --push to push-then-remove, or --force to discard the durability guarantee.",
-                    at_risk.join(", ")
+                    "REFUSING to release {slot}: committed work not on origin ({paths}). \
+                     Pass --push to push branch checkouts, or --force to discard the durability guarantee."
                 ));
-            } else {
-                eprintln!(
-                    "⚠  --force: releasing {slot} despite work not on origin ({}).",
-                    at_risk.join(", ")
-                );
             }
+            eprintln!("⚠  --force: releasing {slot} despite work not on origin ({paths}).");
         } else {
-            eprintln!("✓ all committed work verified on origin");
+            let count: usize = proofs
+                .iter()
+                .map(|(_, repositories)| repositories.len())
+                .sum();
+            eprintln!("✓ verified {count} outer/nested repository HEAD(s) on origin");
         }
-    }
 
-    if clean {
-        let mut remove_failed = false;
-        for (label, primary, p) in [
-            ("hermit", root.join("hermit"), &hpath),
-            ("reverie", root.join("reverie"), &rpath),
-            ("liteinst2", root.join("liteinst2"), &lpath),
-        ] {
-            if p.exists() {
-                let ps = p.to_string_lossy().to_string();
-                // Git requires its own --force to remove any worktree that has
-                // an initialized submodule, even when both repositories are
-                // clean. This is an internal transport requirement, not the
-                // user-facing policy override: the dirty and origin-durability
-                // guardrails above remain the authority for reaching removal.
-                // The CLI --force flag still controls only whether those
-                // guardrails may be explicitly bypassed.
-                let args = vec!["worktree", "remove", "--force", &ps];
-                let (ok, _, err) = git(&primary, &args);
-                if ok {
-                    println!("  removed {label} worktree {}", p.display());
-                    // Prune ONLY after this product's remove succeeded. A prune run
-                    // after a FAILED remove reaps the half-removed worktree's admin
-                    // entry while its data dir is still on disk, ORPHANING the data
-                    // (recoverable-residue -> permanent artifact). A transient IO
-                    // fault (e.g. EROFS) plus a non-idempotent cleanup is strictly
-                    // worse than either alone, so prune is bound to remove success.
-                    git(&primary, &["worktree", "prune"]);
-                } else {
-                    remove_failed = true;
-                    eprintln!("  could not remove {label} worktree {}: {err}", p.display());
-                    eprintln!(
-                        "     NOT pruning {label} registry: a prune here would orphan the retained data dir {}.",
-                        p.display()
-                    );
-                    eprintln!(
-                        "     residue retained for recovery (data dir + admin entry kept together): {}",
-                        p.display()
-                    );
-                }
-            } else {
-                // Worktree dir already gone: prune is safe (nothing to orphan) and
-                // clears any stale admin entry left behind.
-                git(&primary, &["worktree", "prune"]);
+        let target_paths: Vec<PathBuf> = clean_targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect();
+        let users = live_process_users(&target_paths)
+            .unwrap_or_else(|error| die(&format!("live-process inspection failed: {error}")));
+        if !users.is_empty() {
+            die(&format!(
+                "refusing --clean while live processes use the slot: {}",
+                users.join(", ")
+            ));
+        }
+
+        for target in &clean_targets {
+            let expected_repositories = proofs
+                .iter()
+                .find(|(label, _)| *label == target.label)
+                .map(|(_, repositories)| repositories.as_slice())
+                .expect("clean target must have recursive repository proofs");
+            final_removal_boundary(&root, &slot, target, expected_repositories, force)
+                .unwrap_or_else(|error| {
+                    die(&format!(
+                        "final removal boundary refused {}: {error}",
+                        target.label
+                    ))
+                });
+
+            let path = target.path.to_string_lossy().into_owned();
+            let (ok, _, error) = git(&target.primary, &["worktree", "remove", "--force", &path]);
+            if !ok {
+                die(&format!(
+                    "could not remove exact {} target {}: {error}; data and registry state retained",
+                    target.label,
+                    target.path.display()
+                ));
             }
-        }
-        if remove_failed {
-            eprintln!(
-                "ACTION: retry `release-worktree.rs --slot {slot} --clean` after the transient \
-                 fault clears (e.g. IO/EROFS); the retained product(s) above are recoverable, \
-                 not orphaned. Their data dir and admin entry were kept together."
+            println!(
+                "  removed {} worktree {}",
+                target.label,
+                target.path.display()
             );
-            die("one or more product worktrees could not be removed; slot state retained");
+
+            // Record each exact product removal before attempting the next one,
+            // so a later failure is retryable without lying about physical state.
+            state["slots"][&slot][target.branch_key] = json!("-");
+            state["slots"][&slot]["updated"] = json!(now_iso());
+            save_state(&root, &mut state);
+            regen_active_md(&root, &state);
         }
-        // Remove the now-empty slot dir.
-        std::fs::remove_dir(&slot_dir).ok();
+
+        if slot_dir.exists() {
+            fs::remove_dir(&slot_dir).unwrap_or_else(|error| {
+                die(&format!(
+                    "could not remove now-empty exact slot directory {}: {error}; slot state retained",
+                    slot_dir.display()
+                ))
+            });
+        }
         state["slots"].as_object_mut().unwrap().remove(&slot);
         println!("✓ released and cleaned {slot} (removed from state)");
     } else {
@@ -554,13 +1033,10 @@ fn verify_registry_advisory(root: &Path) {
     if !checker.exists() {
         return;
     }
-    let root_arg = root.to_string_lossy().into_owned();
-    match Command::new(&checker).args(["--root", &root_arg]).status() {
-        Ok(s) if s.success() => {}
-        Ok(_) => eprintln!(
-            "note: worktree registry has drift after this release; run \
+    if let Err(error) = verify_registry(root) {
+        eprintln!(
+            "note: worktree registry has drift after this release ({error}); run \
              `scripts/allocate-worktree.rs --repair` to reconcile (advisory, not a failure)."
-        ),
-        Err(e) => eprintln!("note: could not run registry verifier: {e}"),
+        );
     }
 }
