@@ -1,0 +1,22 @@
+{
+  "question": "Why does SaBRe miss loader and shared-object syscalls? Root cause, not symptom.",
+  "date": "2026-08-06",
+  "host": "devbig014",
+  "hermit": "debug, g0f891e432a75-dirty",
+  "env_required": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64",
+  "premise_corrected": "The filed premise 'SaBRe rewrites the main ELF and nothing else' is WRONG: the main ELF has ZERO syscall instructions (libc has 525); the four caught syscalls came from libc.so, so SaBRe does rewrite shared objects.",
+  "root_cause_1": {
+    "what": "hardcoded library NAME allowlist",
+    "where": "reverie/third-party/sabre/loader/ld_sc_handler.c:40, applied at :123",
+    "value": ["libc", "librt", "libpthread", "libresolv"],
+    "demonstration": "50 syscalls from a non-allowlisted .so + 50 via libc => sabre intercepts exactly 50/100, ptrace 100/100",
+    "consequence": "any app .so with raw syscalls is undeterminized; a Go binary would be almost entirely undeterminized"
+  },
+  "root_cause_2": {
+    "what": "ld IS rewritten, but its syscalls are routed to real_syscall, bypassing the plugin",
+    "where": "loader.c:406-420 rewrites {\"ld\"}; ld_sc_handler.c:247+ dispatches to real_syscall with the plugin_sc_handler call COMMENTED OUT",
+    "demonstration": "dlopen post-startup: ptrace sees openat/mmap/mprotect, sabre sees none => scope+routing, not timing"
+  },
+  "fix_machinery_already_present": ["hide_sbr_maps tracks SaBRe's own segments (self-exclusion solved)", "calling_from_plugin re-entrancy guard already at top of ld_sc_handler"],
+  "no_fix_attempted": "vendored third-party GPL-3.0 C under a build.rs-asserted REVISION marker; root cause 2 was deliberately disabled by someone"
+}
