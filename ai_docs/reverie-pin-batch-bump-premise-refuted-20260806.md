@@ -80,3 +80,79 @@ Keep it staged for a future genuine bump; do not spend a fleet-wide build stall 
 
 Do not "just bump to be safe" — the tree is already at reverie main, so a bump would be a
 no-op diff across 46 sites that invalidates every agent's cargo cache for nothing.
+
+---
+
+# Addendum: independent re-derivation and live-population scan
+
+**Date:** 2026-08-06 (later same day) · **Agent:** hermit-w6 (opus-5) · same task.
+
+Re-derived from scratch — remote `ls-remote` plus the `origin/main` **tree**, taking no
+figure from the section above or from any task note. Sections 1–4 reproduce. Three
+findings below are new, and the first is a stronger kill than anything above.
+
+## A. The 43 no longer exist — the batch's membership is empty
+
+This supersedes every argument about whether a bump is *available*: there is nothing to
+bump *to*, and also nothing to bump.
+
+`gh pr list -R rrnewton/hermit --state all --limit 2000` (1390 PRs) resolves the named sets:
+
+| set | CLOSED | MERGED | **OPEN** |
+| --- | ---: | ---: | ---: |
+| the 43 "mechanically disjoint" | 36 | 7 | **0** |
+| the 16 "reverie-adjacent" | 14 | 2 | **0** |
+
+The live open population is numbered **#1665–#1756**; the named batch was **#1221–#1579**.
+The population turned over completely. Even a real stale pin would have no batch to apply to.
+
+## B. The denominator moved again within the same day
+
+Open PR count is **72** (67 draft / 5 non-draft) at this measurement, against **59**
+measured earlier today and **73** in the original premise. The headline "59 of 73" is stale
+on *both* terms, and the population is churning fast enough that any note-carried count is
+wrong by the time it is read. Derive it at use time.
+
+## C. Live-population pin scan: zero stale pins, one coordinated pair
+
+Prior sections established that no open PR carries a pin *bump*. The stronger question the
+premise actually asks — does any open PR **sit on** a stale pin — was not measured, and a PR
+can carry a stale pin without touching a Cargo file, simply by being branched from old main.
+
+Measured directly: all 72 open PR heads fetched (`refs/pull/*/head`) into a throwaway
+object-sharing mirror, then every tracked `Cargo.toml`/`Cargo.lock` read at each head.
+
+| pinned reverie rev at PR head | PRs |
+| --- | ---: |
+| `dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6` (= current reverie main) | **71** |
+| `fa447d969db2eb08ad338e86a30e32f92d1377ea` | 1 (#1754) |
+
+**Stale-pin count in the live population: 0.**
+
+The single outlier is not stale — it is *ahead*. #1754 "Rename the DBI backend to DBT"
+pins reverie `fa447d96`, a commit of the same name (2026-08-06 11:53) that is **not an
+ancestor of reverie main**: an unlanded coordinated Reverie branch commit. That is the
+documented cross-repository pattern (land the Reverie side first, then repin), not drift.
+It does need a repin once the Reverie commit lands.
+
+## D. Tooling blocker: the canonical checker cannot run in the hermit primary
+
+`scripts/check-reverie-pin.rs` derives its scope with `git ls-files`, which requires a work
+tree. The primary `~/work/dev-hermit/hermit` has **`core.bare = true`** set in its config
+while its files are present, so every work-tree git operation there fails with
+`fatal: this operation must be run in a work tree`, and `git -c core.bare=false` does **not**
+override it. Consequence: the documented local command
+`with-proxy ./ci/run-reverie-pin-check.sh` is unrunnable for any agent using the primary,
+and `git status` on the parent fails while recursing into that submodule. This addendum's
+site list was therefore derived read-only from the bare object store
+(`git ls-tree -r origin/main` + per-file `git show`), which reproduces 46 entries across the
+same 10 files. The config anomaly was left in place (shared primary, out of task scope) and
+warrants its own task.
+
+## Bottom line
+
+The task is **moot on two independent grounds** (empty batch; no-op bump) and **incoherent
+on a third** (pin bumps cannot be mutually disjoint — every one rewrites the root
+`Cargo.lock`). Do not revive it under any reformulation that still contains the word
+"batch". If the underlying worry is that PRs are stale-*based*, that is a rebase question
+against ancestry data and needs planning from scratch.
