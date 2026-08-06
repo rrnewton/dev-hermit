@@ -1,0 +1,11 @@
+{
+  "question": "Do the new inline-syscall corpus guests actually exercise each patching backend, measured by that backend's OWN reach counter?",
+  "hermit_base": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "guests_from": "hermit PR #1730 (branch corpus-inline-syscall-guests)",
+  "backends": ["e9patch", "sabre", "liteinst"],
+  "e9tool": "hermit/target/install_pkg/rsrcs/e9tool",
+  "install_dir": "hermit/target/install_pkg",
+  "host": "devbig014",
+  "date_utc": "2026-08-06",
+  "note": "guest binaries must live OUTSIDE /tmp; hermit isolates guest /tmp and the run never reaches the guest"
+}
