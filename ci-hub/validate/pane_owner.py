@@ -225,7 +225,7 @@ def create_pane(
                 str(log),
                 "--record",
                 str(record),
-                *( ["--pr", str(pr)] if pr is not None else [] ),
+                *(["--pr", str(pr)] if pr is not None else []),
             ],
             "cannot start validate pane observer",
         ),

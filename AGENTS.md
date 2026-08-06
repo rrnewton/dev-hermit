@@ -359,12 +359,19 @@ version-aware counts consumer lands (task `prs-predating-commit-anchoring-can-ne
 **An agent sandbox CANNOT run `validate.sh` directly** (BpfJailer denies creating its own cgroup; the wrapper
 exits 3 in ~9s having run nothing, tell: `CPU/wall 1.0x`). `ci-hub validate-run` is the sole admission point.
 It launches a transient user unit which enters through `ci-hub validate-lock` before invoking `validate.sh` —
-still boxed, detached, and with a durable log that outlives recycling (green *evidence*, not a *claim*):
+still boxed, detached, and with a durable log that outlives recycling (green *evidence*, not a *claim*).
+The live call prints a `validate-*` handle, creates an observer-only tab in the `validate-hermit` Herdr
+workspace, then blocks on the detached unit. If the caller recycles, the run continues and its successor uses
+`ci-hub validate-run --attach <handle>`; never relaunch merely because the waiter disappeared:
 
 ```
 ./ci-hub/ci-hub validate-run --checkout <worktree> --agent <agent> \
   --target <exact-40-hex-head> --pr <number> -- full
 ```
+
+The Herdr pane is visibility, not the producer: it tails the durable log and reports the actual service
+descendants' `safe-ci-*` cgroup paths. Validation still runs only in the admitted systemd service through
+`validate-lock` → `validate.sh` → `safe-ci-dag-runner`. Pane creation is fail-closed before service launch.
 
 Let `apply-local-label` add the label FROM the ledger record — never by hand. Derive safe concurrency against
 total cores before fanning out. The Hermit Merge Gate must execute `ci-hub/validation/verify_receipt.sh` from

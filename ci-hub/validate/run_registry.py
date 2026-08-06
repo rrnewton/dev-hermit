@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -24,8 +26,19 @@ def read_record(path: Path) -> dict[str, Any]:
     return value
 
 
-def write_record(path: Path, value: Mapping[str, Any]) -> None:
+@contextmanager
+def exclusive_record(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _write_unlocked(path: Path, value: Mapping[str, Any]) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:
@@ -41,8 +54,17 @@ def write_record(path: Path, value: Mapping[str, Any]) -> None:
             pass
 
 
+def write_record(path: Path, value: Mapping[str, Any]) -> None:
+    with exclusive_record(path):
+        _write_unlocked(path, value)
+
+
 def update_record(path: Path, **fields: Any) -> dict[str, Any]:
-    value = read_record(path)
-    value.update(fields)
-    write_record(path, value)
+    # The caller and the observer finish at nearly the same time. Serialize the
+    # read-modify-write so a final exit update cannot erase cgroup evidence (or
+    # vice versa) while retaining atomic replacement for readers.
+    with exclusive_record(path):
+        value = read_record(path)
+        value.update(fields)
+        _write_unlocked(path, value)
     return value
