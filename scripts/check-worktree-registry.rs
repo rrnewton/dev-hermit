@@ -105,6 +105,45 @@ fn matches_expected(expected: &str, actual: &Actual) -> bool {
     matches!(actual, Actual::Branch(branch) if branch == expected)
 }
 
+fn validate_owners(slot: &str, state: &Value) -> Result<(), String> {
+    let agents = state["agents"]
+        .as_array()
+        .ok_or_else(|| "agents is not an array".to_string())?;
+    if agents.is_empty() {
+        return Err("agents is empty".to_string());
+    }
+    let mut names = BTreeSet::new();
+    let mut mutating = 0usize;
+    for (index, agent) in agents.iter().enumerate() {
+        let name = agent["name"]
+            .as_str()
+            .ok_or_else(|| format!("agent {index} has no string name"))?;
+        if name.is_empty()
+            || name.trim() != name
+            || name == "-"
+            || name.contains('|')
+            || name.chars().any(char::is_control)
+        {
+            return Err(format!("agent {index} has invalid name '{name}'"));
+        }
+        if !names.insert(name.to_string()) {
+            return Err(format!("duplicate agent '{name}'"));
+        }
+        let read_only = agent["read_only"]
+            .as_bool()
+            .ok_or_else(|| format!("agent '{name}' has no boolean read_only"))?;
+        if !read_only {
+            mutating += 1;
+        }
+    }
+    if mutating != 1 {
+        return Err(format!(
+            "slot {slot} must have exactly one mutating owner, found {mutating}"
+        ));
+    }
+    Ok(())
+}
+
 fn active_rows(path: &Path) -> BTreeMap<String, Vec<String>> {
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|error| die(&format!("read {}: {error}", path.display())));
@@ -205,6 +244,12 @@ fn main() {
     let mut issues: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut drift_cells = 0usize;
     for (slot, entry) in slots {
+        if let Err(error) = validate_owners(slot, entry) {
+            issues
+                .entry(slot.clone())
+                .or_default()
+                .push(format!("OWNERS {error}"));
+        }
         match active.get(slot) {
             Some(row) if row == &state_row(slot, entry) => {}
             Some(row) => issues.entry(slot.clone()).or_default().push(format!(
