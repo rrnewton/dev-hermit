@@ -14,8 +14,8 @@ Every open PR gets exactly one disposition. The counts add to 73 with nothing le
 | # | finding |
 |---|---|
 | 1 | **Filename overlap is a 74% false-positive proxy for conflict.** 183 pairs share a real source file; only **48** actually conflict. A plan built on filenames would serialise 135 pairs that never needed it. |
-| 2 | **One coalesce beats every stack.** 26 PRs merged into one branch, all gates green — 26 box-exclusive validate slots collapsed to 1. |
-| 3 | **Five PRs cannot pass their own validate**, each measured alone at its own head. They are ejected, not merged. |
+| 2 | **One coalesce beats every stack.** 25 PRs merged into one branch, all gates green — 25 box-exclusive validate slots collapsed to 1. |
+| 3 | **Six PRs cannot pass their own validate**, each measured alone at its own head. They are ejected, not merged. |
 | 4 | **Ten PRs are duplicates of each other** in two families of five. Those are not stacks; they are pick-one-close-four. |
 | 5 | **#1754 is a global barrier** — 100 files, conflicts with 13 other PRs. It must land alone, and everything else is either entirely before it or entirely after it. |
 
@@ -44,12 +44,12 @@ at a time into an accumulating tree rather than trusting the pairwise result.
 
 | count | disposition |
 |---|---|
-| 26 | **COALESCE-A** — one branch, gates green (§3) |
+| 25 | **COALESCE-A** — one branch, gates green (§3) |
 | 7 | **STACK-1** — already assembled as `stack/fixtures-shared-files` (separate task) |
 | 6 | **STACK-A** backend-parity-c (§4.1) |
 | 5 | **DUPLICATE FAMILY: DetInode** — pick one, close four (§5) |
 | 5 | **DUPLICATE FAMILY: getrusage** — pick one, close four (§5) |
-| 5 | **EJECTED** — fails its own validate (§6) |
+| 6 | **EJECTED** — fails its own validate (§6) |
 | 4 | **SUBSUMED** by another open PR — close as duplicate (§5) |
 | 4 | **SINGLE** — conflict-free once #1754 is scheduled (§4.6) |
 | 3 | **STACK-C** validate.sh / README (§4.2) |
@@ -63,24 +63,28 @@ at a time into an accumulating tree rather than trusting the pairwise result.
 
 ```
 branch  coalesce/validated-set
-head    e0f81c2382aaef4b89402e5c5057a34dab039aa2      (29 commits)
+head    6b6213dffe71a3bace7f16aa5add4a4459721450      (28 commits)
 base    4c70658e785834737cbe1524f77330c781a6f5ea
 pushed and remote-verified; NOT landed, no PR opened, no merge attempted
 ```
 
-**26 PRs**, in PR-number order with the three TOML-union ones last:
+**25 PRs**, in PR-number order with the two TOML-union ones last:
 
 ```
 1666 1684 1692 1694 1702 1706 1709 1711 1712 1713 1714 1720 1731 1732 1735 1736
-1739 1743 1747 1750 1753 1755 1758  +  1717 1721 1723   (system-utils.toml union)
+1739 1743 1747 1750 1753 1755 1758  +  1717 1723   (system-utils.toml union)
 ```
 
-Membership verified against the branch itself, not against the intended list: the 29 commits on
-`origin/main..coalesce/validated-set` map back to exactly these 26 PR numbers.
+Membership was verified against the branch itself, not against the intended list.
+
+An earlier head `e0f81c2382aa` (26 PRs) was published and then rebuilt from the base when #1721 was found
+to fail its own fixtures (§6). That republish was a genuine history rewrite of a branch I had created ~30
+minutes earlier, done with `--force-with-lease` pinned to the old head; nothing referenced it and nothing
+was landed from it. Recording it rather than glossing it.
 
 ### 3.1 Conflict map
 
-**23 of 26 cherry-picked with zero conflicts.** All three conflicts were the *same* additive `[[test]]`
+**23 of 25 cherry-picked with zero conflicts.** Both conflicts were the *same* additive `[[test]]`
 union in `tests/e2e/manifests/system-utils.toml`, resolved **structurally, not textually**: split each side
 into `[[test]]` blocks keyed by `id`, union them, then **prove** the result rather than eyeball it — parses
 via `tomllib`, exact expected count, no duplicate ids, every new id from either side present.
@@ -88,22 +92,37 @@ via `tomllib`, exact expected count, no duplicate ids, every new id from either 
 | step | tests before → after | new from ours | new from theirs |
 |---|---|---|---|
 | #1717 | 19 → 21 | `startup-surface-identity` | `errno-path-identity` |
-| #1721 | 21 → 23 | (carried) | `auxv-loader-dump`, `ps-proc-table` |
-| #1723 | 23 → 24 | (carried) | `file-timestamp-identity` |
+| #1723 | 21 → 22 | (carried) | `file-timestamp-identity` |
 
 The union script is at `ignored/w4/toml_union.py` in the slot (gitignored, reproducible, asserts on failure).
 Hand-merging interleaved TOML is how a manifest silently loses a case; do not do it.
 
-### 3.2 Gates at the exact head `e0f81c2382aa`
+### 3.2 Gates at the exact head `6b6213dffe71a3bace7f16aa5add4a4459721450`
 
 ```
-./ci/test_harness.sh validate            PASS  (manifest + inventory + DAG correspondence, 28.6s)
-cargo fmt --all -- --check               FMT_OK
-cargo clippy --workspace --all-targets -- -D warnings   exit 0
-cargo build --workspace --all-targets    exit 0
+./ci/test_harness.sh validate                            exit 0   (manifest + inventory + DAG correspondence)
+cargo fmt --all -- --check                               FMT_OK
+cargo clippy --workspace --all-targets -- -D warnings    exit 0
+cargo build --workspace --all-targets                    exit 0
 ```
 
-Full-profile validate receipt: see §8.
+### 3.3 Direct coverage of what the coalesce actually adds
+
+Because a full-profile receipt is not obtainable on this base (§8), the branch's own new content was
+exercised directly — `e2e.manifest_system_utils` at the exact head:
+
+| new fixture | from | result |
+|---|---|---|
+| `system-utils/startup-surface-identity` | #1702 | **PASS** (ptrace) |
+| `system-utils/errno-path-identity` | #1717 | **PASS** (ptrace) |
+| `system-utils/file-timestamp-identity` | #1723 | **PASS** (ptrace) |
+
+The bucket has exactly one failure, `record-getpid verify sabre`, and it is **not** the coalesce's:
+it reproduces at plain `origin/main` with none of these 25 PRs applied.
+
+Incidentally, the `liteinst` cells that fail on stack 1 (`clock-determinism`, `record-getpid`) **pass** here
+— consistent with the stack-1 finding that #1710's RDRAND determinization is what breaks liteinst, since
+#1710 is not in this branch.
 
 ## 4. The real stacks
 
@@ -120,10 +139,12 @@ Order — small cell-enablers first, structural changes last:
 | 1 | #1734 getcpu_identity observed values | 3 | clean | |
 | 2 | #1737 getpriority identity in CI | 3 | clean | |
 | 3 | #1756 affinity mask observed | 3 | clean | |
-| 4 | #1743 enable six passing cells | — | clean | |
-| 5 | #1665 shard backend parity manifests | 12 | **CONFLICT** | `backend-parity-c.toml` |
-| 6 | #1727 restore full-corpus perf fixtures | 43 | clean | |
-| 7 | #1757 1 → 72 enabled cells | 58 | **CONFLICT** | `ci/dag/portable.json`, `backend-parity-c.toml` |
+| 4 | #1665 shard backend parity manifests | 12 | **CONFLICT** | `backend-parity-c.toml` |
+| 5 | #1727 restore full-corpus perf fixtures | 43 | clean | |
+| 6 | #1757 1 → 72 enabled cells | 58 | **CONFLICT** | `ci/dag/portable.json`, `backend-parity-c.toml` |
+
+(#1743, *enable six passing cells*, is conflict-free against everything and already rides in COALESCE-A;
+it is deliberately **not** in this stack.)
 
 Both conflicts are in the same additive-TOML class as §3.1 plus one DAG-node union — mechanical, but
 `#1665` also **deletes** `tests/e2e/manifests/inventory/test-files.json` while `#1727` modifies it
@@ -197,7 +218,7 @@ five, twice.
 [1751,1757] b814ee42b        [1724,1730] 83da83cae   [1679,1718] 2f8cbfc00
 ```
 
-## 6. EJECTED — five PRs cannot pass their own validate
+## 6. EJECTED — six PRs cannot pass their own validate
 
 Each was checked **alone, detached at its own head, with no other PR present**. These are PR defects, not
 merge artifacts.
@@ -209,6 +230,7 @@ merge artifacts.
 | #1724 | `a2c46bbbe` | `test_harness.sh validate` | same |
 | #1730 | `addcfab23` | `test_harness.sh validate` | same |
 | #1697 | `d93d51282` | `clippy --workspace --all-targets -D warnings` | `unused import: std::os::unix::process::ExitStatusExt` at `hermit-cli/src/bin/hermit/backends.rs:45` |
+| #1721 | `9bece24c3` | `e2e.manifest_system_utils` | two of its own three new corpus entries fail at its own head: `auxv-loader-dump` and `ps-proc-table`, both `verify exited with status 1` |
 
 The three inventory failures are independently corroborated by the PR file lists: **none of the three touches
 `tests/e2e/manifests/inventory/test-files.json` at all**, while each adds `.c` fixtures under `tests/`. Six
@@ -249,17 +271,29 @@ See §8.1. Note the standing constraint measured on the sibling task
 and the portable lane exits after ~15 of 47 steps. A red on that node in any receipt below is inherited from
 the base, not caused by the branch — and, more importantly, the receipt's coverage is a fraction of the lane.
 
-### 8.1 Receipt
+### 8.1 Receipt — NOT OBTAINED, and not glossed
 
-Recorded at the end of this document.
+`ci-hub validate-run` was refused **seven consecutive times** with
+`exit 3: cleanup quarantine: ACTIVE: published payload identities remain active`. The box was genuinely held
+throughout — first by `hermit-w12` (validate `2ab2fdfa`), then `hermit-w5`, then `hermit-w12` again. Each
+holder was confirmed by PID to be somebody else's live `validate.sh`; none was touched (Hard Invariant 15).
+A retry loop at 90 s intervals is still running and will produce the receipt at the head above when the box
+frees.
+
+This matters less than it looks, and the reason is measured, not assumed: **`main` itself fails
+`e2e.manifest_determinism_stress` at `4c70658e7`** (reproduced three times, including at the base with no
+branch commits — see the sibling document). No branch on this base can produce a qualifying green, and the
+portable lane exits after ~15 of 47 steps. A receipt here would be red on an inherited node and would cover
+a fraction of the lane. **The four gates in §3.2 plus the direct coverage in §3.3 are the load-bearing
+evidence for this branch**, and they are stronger than a truncated full-profile red would be.
 
 ## 9. Suggested landing order
 
-1. **COALESCE-A** (§3) — 26 PRs, one validate, gates already green. Biggest single reduction in the pile.
+1. **COALESCE-A** (§3) — 25 PRs, one validate, gates already green. Biggest single reduction in the pile.
 2. **STACK-1** (`stack/fixtures-shared-files`, separate task) — blocked on the #1710 liteinst regression.
 3. Close the duplicates (§5): 10 PRs in two families plus 6 subsumptions → up to **14 PRs closed with no
    landing at all**.
-4. Return the five ejected PRs (§6) to their authors.
+4. Return the six ejected PRs (§6) to their authors.
 5. STACK-C, STACK-D, STACK-F, STACK-G — small, one conflict each, independent of one another.
 6. STACK-A — after the #1665 sharding decision.
 7. The §4.6 singles.
