@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Crash-recoverable, no-rewrite exact-head landing for Hermit.
 
-This first version accepts only ``rrnewton/hermit`` and only a counted local
-full-validation receipt accepted by the canonical ``ci-hub validate-status``
-verifier.  It never checks out, rebases, pushes, labels, or otherwise rewrites
-the pull-request branch.
+This first version accepts only ``rrnewton/hermit``.  Exact-head validation is
+authorized interchangeably by either a counted local full-validation receipt
+or the repository's complete authoritative GitHub job set.  Exact-head
+role-tagged adversarial-review comments are independently dereferenced before
+the merge mutation.  The tool never checks out, rebases, pushes, labels, or
+otherwise rewrites the pull-request branch.
 
 The append-only intent store is the recovery authority.  The synchronous
 GitHub merge REST call carries ``sha=X`` as the cross-host atomic head guard;
@@ -53,6 +55,11 @@ ID_RE = re.compile(r"^[0-9a-f]{32}$")
 GREEN_HARD = "hard_green"
 GREEN_SOFT = "soft_green"
 SOFT_ZERO_CONFLICT = "soft-green(zero-conflict)"
+LOCAL_VALIDATION_AUTHORITY = "ci-hub-validate-status"
+HOSTED_VALIDATION_AUTHORITY = "github-actions-exact-head-jobs-v1"
+REVIEW_AUTHORITY = "github-role-tagged-exact-head-review-v1"
+POST_FACTO_REVIEW_LABEL = "post-facto-human-review"
+REVIEW_FAMILIES = frozenset({"codex", "claude"})
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -101,6 +108,10 @@ class Refused(LandingError):
     exit_code = EXIT_REFUSED
 
 
+class NoGreenValidation(Refused):
+    """One well-formed validation source has no positive exact-head answer."""
+
+
 class Pending(LandingError):
     """The atomic merge request has not produced a terminal GitHub state yet."""
 
@@ -144,10 +155,11 @@ class ReceiptEvidence:
     report: dict[str, Any]
     report_sha256: str
     command: tuple[str, ...]
+    authority: str = LOCAL_VALIDATION_AUTHORITY
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "authority": "ci-hub-validate-status",
+            "authority": self.authority,
             "command": list(self.command),
             "report_sha256": self.report_sha256,
             "report": self.report,
@@ -382,39 +394,126 @@ def github_remote_repo(remote: str) -> str | None:
     return identity
 
 
+def _hosted_validation_problem(report: object, expected_head: str) -> str | None:
+    if not isinstance(report, Mapping):
+        return "hosted validation report is not an object"
+    if report.get("schema_version") != 1:
+        return "hosted validation report has the wrong schema"
+    if report.get("repo") != SUPPORTED_REPO:
+        return "hosted validation report is not repository-bound"
+    if report.get("sha") != expected_head:
+        return "hosted validation report is not exact-SHA-bound"
+    if report.get("verdict") != "VALIDATED":
+        return "hosted validation report is not green"
+    policy = report.get("verification_policy")
+    try:
+        if not isinstance(policy, Mapping):
+            return "hosted validation report has no policy"
+        validated_policy = obligation_protocol.validate_verification_policy(policy)
+    except obligation_protocol.ProtocolError as error:
+        return f"hosted validation policy is invalid: {error}"
+    if validated_policy.get("repo") != SUPPORTED_REPO:
+        return "hosted validation policy is not repository-bound"
+    github = report.get("github")
+    if not isinstance(github, Mapping):
+        return "hosted validation report has no GitHub result"
+    required = validated_policy["github"]["required_jobs"]
+    required_count = validated_policy["github"]["required_positive_count"]
+    if (
+        github.get("state") != "green"
+        or github.get("required_positive_count") != required_count
+        or github.get("positive_count") != required_count
+        or type(required_count) is not int
+        or required_count <= 0
+    ):
+        return "hosted validation report is not a complete positive result"
+    jobs = github.get("jobs")
+    if not isinstance(jobs, list) or len(jobs) != required_count:
+        return "hosted validation report has incomplete job coverage"
+    observed: set[tuple[str, str, str]] = set()
+    identities: set[tuple[int, int]] = set()
+    for job in jobs:
+        if not isinstance(job, Mapping) or job.get("state") != "green":
+            return "hosted validation report contains a non-green job"
+        descriptor = (
+            str(job.get("workflow_file") or ""),
+            str(job.get("workflow_name") or ""),
+            str(job.get("job_name") or ""),
+        )
+        run_id = job.get("run_id")
+        job_id = job.get("job_id")
+        if (
+            type(run_id) is not int
+            or run_id <= 0
+            or type(job_id) is not int
+            or job_id <= 0
+        ):
+            return "hosted validation job has no dereferenced identity"
+        identity = (run_id, job_id)
+        if identity in identities:
+            return "hosted validation report repeats a job identity"
+        identities.add(identity)
+        observed.add(descriptor)
+    expected = {
+        (job["workflow_file"], job["workflow_name"], job["job_name"])
+        for job in required
+    }
+    if observed != expected:
+        return "hosted validation jobs do not equal the registered policy"
+    return None
+
+
 def _receipt_problem(
     receipt: object, expected_head: str, *, require_envelope: bool
 ) -> str | None:
-    """Explain a malformed persisted canonical-receipt envelope, if any.
+    """Explain a malformed persisted validation-evidence envelope, if any.
 
-    ``ci-hub validate-status`` remains the sole semantic authority.  This is an
-    envelope/digest guard: crash recovery must not accept a vacuous report or a
-    report rebound to a different SHA merely because it is well-shaped JSON.
+    The local receipt and hosted exact-job set are interchangeable authorities,
+    but each envelope remains source-typed.  Crash recovery re-dereferences the
+    same source instead of treating this persisted record as authority.
     """
 
     if not isinstance(receipt, Mapping):
         return "receipt is not an object"
-    if require_envelope and receipt.get("authority") != "ci-hub-validate-status":
+    authority = (
+        str(receipt.get("authority") or "")
+        if require_envelope
+        else LOCAL_VALIDATION_AUTHORITY
+    )
+    if authority not in {LOCAL_VALIDATION_AUTHORITY, HOSTED_VALIDATION_AUTHORITY}:
         return "receipt has the wrong authority"
     command = receipt.get("command")
     if require_envelope:
-        if not isinstance(command, list) or len(command) != 7:
-            return "receipt command is malformed"
-        if Path(str(command[0])).name != "ci-hub" or command[1:] != [
-            "validate-status",
+        if authority == LOCAL_VALIDATION_AUTHORITY:
+            if not isinstance(command, list) or len(command) != 7:
+                return "receipt command is malformed"
+            if Path(str(command[0])).name != "ci-hub" or command[1:] != [
+                "validate-status",
+                "--repo",
+                SUPPORTED_REPO,
+                "--sha",
+                expected_head,
+                "--json",
+            ]:
+                return "receipt command is not the exact-repository/head canonical query"
+        elif command != [
+            "protocol.github_runs",
             "--repo",
             SUPPORTED_REPO,
             "--sha",
             expected_head,
-            "--json",
         ]:
-            return "receipt command is not the exact-repository/head canonical query"
+            return "hosted command is not the exact-repository/head canonical query"
     report = receipt.get("report") if require_envelope else receipt
-    problem = obligation_protocol._local_receipt_problem(
-        report,
-        repo=SUPPORTED_REPO,
-        sha=expected_head,
-        returncode=0,
+    problem = (
+        obligation_protocol._local_receipt_problem(
+            report,
+            repo=SUPPORTED_REPO,
+            sha=expected_head,
+            returncode=0,
+        )
+        if authority == LOCAL_VALIDATION_AUTHORITY
+        else _hosted_validation_problem(report, expected_head)
     )
     if problem:
         return str(problem)
@@ -425,6 +524,50 @@ def _receipt_problem(
         canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
         if hashlib.sha256(canonical).hexdigest() != digest:
             return "receipt report digest does not match"
+    return None
+
+
+def _review_evidence_problem(
+    evidence: object, *, repo: str, pr: int, expected_head: str
+) -> str | None:
+    if not isinstance(evidence, Mapping):
+        return "review evidence is not an object"
+    if evidence.get("authority") != REVIEW_AUTHORITY:
+        return "review evidence has the wrong authority"
+    if evidence.get("repo") != repo or evidence.get("pr") != pr:
+        return "review evidence is not bound to the PR"
+    if evidence.get("head") != expected_head:
+        return "review evidence is not exact-head-bound"
+    post_facto = evidence.get("post_facto_human_review")
+    if type(post_facto) is not bool:
+        return "review evidence has no policy selector"
+    required = evidence.get("required_families")
+    expected_required = ["claude", "codex"] if post_facto else ["any"]
+    if required != expected_required:
+        return "review evidence has the wrong required families"
+    approvals = evidence.get("approvals")
+    if not isinstance(approvals, list) or not approvals:
+        return "review evidence has no exact-head approval"
+    families: set[str] = set()
+    ids: set[str] = set()
+    for approval in approvals:
+        if not isinstance(approval, Mapping):
+            return "review approval is not an object"
+        family = str(approval.get("family") or "")
+        comment_id = str(approval.get("comment_id") or "")
+        if family not in REVIEW_FAMILIES or not comment_id or comment_id in ids:
+            return "review approval identity is malformed"
+        if approval.get("head") != expected_head or approval.get("verdict") != "PASS":
+            return "review approval is stale or non-passing"
+        digest = str(approval.get("body_sha256") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return "review approval body digest is malformed"
+        if not isinstance(approval.get("created_at"), str):
+            return "review approval timestamp is malformed"
+        ids.add(comment_id)
+        families.add(family)
+    if post_facto and families != REVIEW_FAMILIES:
+        return "post-facto review evidence lacks dual Claude and Codex approval"
     return None
 
 
@@ -456,6 +599,37 @@ query($owner:String!,$name:String!,$number:Int!){
   }
 }
 """.strip()
+
+    _REVIEW_EVIDENCE_QUERY = """
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      labels(first:100){nodes{name} pageInfo{hasNextPage}}
+      comments(last:100){
+        nodes{id databaseId body createdAt url author{login}}
+        pageInfo{hasPreviousPage}
+      }
+    }
+  }
+}
+""".strip()
+
+    _ROLE_TAG = re.compile(r"^\[adversarial-reviewer agent,\s*([^\]\n]+)\]$")
+    _COORDINATOR_TAG = re.compile(r"^\[coordinator,\s*([^\]\n]+)\]$")
+    _CODEX_MODEL = re.compile(
+        r"^(?:gpt-[0-9]+(?:\.[0-9]+)*(?:-[a-z0-9]+)*|codex(?:-[a-z0-9]+)*)$"
+    )
+    _CLAUDE_MODEL = re.compile(
+        r"^(?:claude-)?(?:opus|sonnet|haiku)(?:-[0-9]+(?:\.[0-9]+)*)?$"
+    )
+    _INSTANCE_ID = re.compile(r"^[a-z0-9][a-z0-9._/-]{2,127}$")
+    _ASSIGNMENT_PREFIX = "Review-assignment: "
+    _ATTESTATION_PREFIX = "Review-attestation: "
+    _EXACT_HEAD_VERDICT = re.compile(
+        r"^Exact-head verdict for `?([0-9a-f]{40})`?(?:[^:\n]*)?:\s*"
+        r"(?:\*\*)?(PASS|FAIL)(?:\*\*)?(?=[\s.,;:—-]|$)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, runner: Runner):
         self.runner = runner
@@ -552,6 +726,171 @@ query($owner:String!,$name:String!,$number:Int!){
             if not node["isResolved"]:
                 unresolved += 1
         return unresolved
+
+    @staticmethod
+    def _review_family(model: str) -> str | None:
+        lowered = model.lower()
+        codex = GitHubClient._CODEX_MODEL.fullmatch(lowered) is not None
+        claude = GitHubClient._CLAUDE_MODEL.fullmatch(lowered) is not None
+        if codex == claude:
+            return None
+        return "codex" if codex else "claude"
+
+    def review_evidence(self, repo: str, pr: int, expected_head: str) -> dict[str, Any]:
+        """Dereference role-tagged exact-head review comments and live policy label."""
+        owner, name = self._repo_parts(repo)
+        command = (
+            "with-proxy",
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={self._REVIEW_EVIDENCE_QUERY}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={pr}",
+        )
+        result = self.runner.run(command)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise LandingError(f"cannot dereference exact-head review evidence: {detail}")
+        payload = _json_object(result.stdout, "GitHub exact-head review query")
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            labels = pull["labels"]
+            label_nodes = labels["nodes"]
+            label_next = labels["pageInfo"]["hasNextPage"]
+            comments = pull["comments"]
+            comment_nodes = comments["nodes"]
+            comment_previous = comments["pageInfo"]["hasPreviousPage"]
+        except (KeyError, TypeError) as error:
+            raise LandingError("GitHub exact-head review response is incomplete") from error
+        if (
+            type(label_next) is not bool
+            or type(comment_previous) is not bool
+            or not isinstance(label_nodes, list)
+            or not isinstance(comment_nodes, list)
+        ):
+            raise LandingError("GitHub exact-head review response has invalid types")
+        if label_next:
+            raise LandingError("more than 100 PR labels; pagination is unsupported")
+        if comment_previous:
+            raise LandingError(
+                "more than 100 PR comments; exact-head review pagination is unsupported"
+            )
+        label_names: set[str] = set()
+        for node in label_nodes:
+            if not isinstance(node, Mapping) or not isinstance(node.get("name"), str):
+                raise LandingError("GitHub PR label entry is malformed")
+            label_names.add(str(node["name"]))
+        post_facto = POST_FACTO_REVIEW_LABEL in label_names
+
+        latest: dict[str, dict[str, Any]] = {}
+        for node in comment_nodes:
+            if not isinstance(node, Mapping):
+                raise LandingError("GitHub PR comment entry is malformed")
+            body = node.get("body")
+            comment_id = node.get("id")
+            created_at = node.get("createdAt")
+            if (
+                not isinstance(body, str)
+                or not isinstance(comment_id, str)
+                or not comment_id
+                or not isinstance(created_at, str)
+            ):
+                raise LandingError("GitHub PR comment identity is malformed")
+            lines = body.splitlines()
+            if not lines:
+                continue
+            role = self._ROLE_TAG.fullmatch(lines[0].strip())
+            if role is None:
+                continue
+            verdicts = [
+                match
+                for line in lines[1:]
+                if (match := self._EXACT_HEAD_VERDICT.match(line.strip())) is not None
+            ]
+            if not verdicts:
+                continue
+            if len(verdicts) != 1:
+                raise Refused(
+                    f"role-tagged review comment {comment_id} has ambiguous verdict lines"
+                )
+            verdict_head, verdict = verdicts[0].groups()
+            if verdict_head.lower() != expected_head:
+                continue
+            model = role.group(1).strip()
+            family = self._review_family(model)
+            if family is None:
+                raise Refused(
+                    f"exact-head reviewer model {model!r} has no unique Claude/Codex family"
+                )
+            author = node.get("author")
+            if author is not None and not isinstance(author, Mapping):
+                raise LandingError("GitHub PR comment author is malformed")
+            approval = {
+                "comment_id": comment_id,
+                "database_id": node.get("databaseId"),
+                "url": str(node.get("url") or ""),
+                "author": str((author or {}).get("login") or ""),
+                "created_at": created_at,
+                "model": model,
+                "family": family,
+                "head": verdict_head.lower(),
+                "verdict": verdict.upper(),
+                "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+            }
+            previous = latest.get(family)
+            ordering = (created_at, comment_id)
+            if previous is None or ordering > (
+                str(previous["created_at"]),
+                str(previous["comment_id"]),
+            ):
+                latest[family] = approval
+
+        failures = [
+            approval
+            for approval in latest.values()
+            if approval["verdict"] == "FAIL"
+        ]
+        if failures:
+            families = ", ".join(sorted(str(item["family"]) for item in failures))
+            raise Refused(f"latest exact-head adversarial verdict is FAIL for {families}")
+        approvals = sorted(
+            (
+                approval
+                for approval in latest.values()
+                if approval["verdict"] == "PASS"
+            ),
+            key=lambda item: str(item["family"]),
+        )
+        if post_facto:
+            missing = REVIEW_FAMILIES - {str(item["family"]) for item in approvals}
+            if missing:
+                raise Refused(
+                    "post-facto-human-review requires exact-head Claude and Codex "
+                    f"approvals; missing {', '.join(sorted(missing))}"
+                )
+        elif not approvals:
+            raise Refused("no role-tagged exact-head adversarial-review PASS exists")
+        evidence = {
+            "authority": REVIEW_AUTHORITY,
+            "repo": repo,
+            "pr": pr,
+            "head": expected_head,
+            "post_facto_human_review": post_facto,
+            "required_families": ["claude", "codex"] if post_facto else ["any"],
+            "approvals": approvals,
+        }
+        problem = _review_evidence_problem(
+            evidence, repo=repo, pr=pr, expected_head=expected_head
+        )
+        if problem:
+            raise LandingError(f"fresh exact-head review evidence is malformed: {problem}")
+        return evidence
 
     def pr_commits(self, repo: str, pr: int) -> tuple[str, ...]:
         """Return GitHub's complete, ordered PR commit identity list.
@@ -755,14 +1094,21 @@ class CanonicalMutationBarrier:
         )
 
 
-class CanonicalReceiptAuthority:
-    """Dereference the one counted local-full receipt verifier."""
+class CanonicalValidationAuthority:
+    """Dereference interchangeable exact-head local or hosted green authority."""
 
-    def __init__(self, runner: Runner, ci_hub: Path | None = None):
+    def __init__(
+        self,
+        runner: Runner,
+        ci_hub: Path | None = None,
+        *,
+        hosted_runs: Callable[..., list[dict[str, Any]]] | None = None,
+    ):
         self.runner = runner
         self.ci_hub = ci_hub or ROOT / "ci-hub/ci-hub"
+        self.hosted_runs = hosted_runs or obligation_protocol.github_runs
 
-    def verify(self, expected_head: str) -> ReceiptEvidence:
+    def _verify_local(self, expected_head: str) -> ReceiptEvidence:
         command = (
             str(self.ci_hub),
             "validate-status",
@@ -775,7 +1121,7 @@ class CanonicalReceiptAuthority:
         result = self.runner.run(command, timeout=60)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
-            raise Refused(
+            raise NoGreenValidation(
                 f"canonical local-full receipt verifier refused {expected_head}: {detail}"
             )
         report = _json_object(result.stdout, "ci-hub validate-status")
@@ -787,7 +1133,80 @@ class CanonicalReceiptAuthority:
             report=dict(report),
             report_sha256=hashlib.sha256(canonical).hexdigest(),
             command=command,
+            authority=LOCAL_VALIDATION_AUTHORITY,
         )
+
+    def _verify_hosted(self, expected_head: str) -> ReceiptEvidence:
+        policy = obligation_protocol.verification_policy_for_repo(SUPPORTED_REPO)
+        try:
+            runs = self.hosted_runs(
+                SUPPORTED_REPO,
+                expected_head,
+                policy=policy,
+            )
+            patch = obligation_protocol._github_patch(runs, expected_head, policy)
+        except (obligation_protocol.ProtocolError, subprocess.SubprocessError) as error:
+            raise NoGreenValidation(
+                f"canonical hosted exact-head verifier refused {expected_head}: {error}"
+            ) from error
+        github = patch.get("github")
+        if not isinstance(github, Mapping) or github.get("state") != "green":
+            state = github.get("state") if isinstance(github, Mapping) else "malformed"
+            raise NoGreenValidation(
+                f"canonical hosted exact-head verifier returned {state} for {expected_head}"
+            )
+        report = {
+            "schema_version": 1,
+            "repo": SUPPORTED_REPO,
+            "sha": expected_head,
+            "verdict": "VALIDATED",
+            "verification_policy": policy,
+            "github": dict(github),
+        }
+        problem = _hosted_validation_problem(report, expected_head)
+        if problem:
+            raise Refused(f"canonical hosted exact-head verifier refused: {problem}")
+        canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+        return ReceiptEvidence(
+            report=report,
+            report_sha256=hashlib.sha256(canonical).hexdigest(),
+            command=(
+                "protocol.github_runs",
+                "--repo",
+                SUPPORTED_REPO,
+                "--sha",
+                expected_head,
+            ),
+            authority=HOSTED_VALIDATION_AUTHORITY,
+        )
+
+    def verify_authority(
+        self, expected_head: str, authority: str
+    ) -> ReceiptEvidence:
+        if authority == LOCAL_VALIDATION_AUTHORITY:
+            return self._verify_local(expected_head)
+        if authority == HOSTED_VALIDATION_AUTHORITY:
+            return self._verify_hosted(expected_head)
+        raise Refused(f"unknown persisted validation authority {authority!r}")
+
+    def verify(self, expected_head: str) -> ReceiptEvidence:
+        local_problem: str
+        try:
+            return self._verify_local(expected_head)
+        except NoGreenValidation as error:
+            local_problem = str(error)
+        try:
+            return self._verify_hosted(expected_head)
+        except NoGreenValidation as error:
+            raise Refused(
+                f"no exact-head validation authority is green for {expected_head}; "
+                f"local={local_problem}; hosted={error}"
+            ) from error
+
+
+# Compatibility name for existing imports; the implementation is no longer
+# local-receipt-only.
+CanonicalReceiptAuthority = CanonicalValidationAuthority
 
 
 class GitRepository:
@@ -1277,6 +1696,17 @@ class EventStore:
             if github_count != count or github_commits != commits:
                 raise StoreError(
                     f"GitHub PR commit list is not bound to source commits at line {line_number}"
+                )
+            review_problem = _review_evidence_problem(
+                event.get("review_evidence"),
+                repo=str(event["repo"]),
+                pr=int(event["pr"]),
+                expected_head=str(event["expected_head"]),
+            )
+            if review_problem:
+                raise StoreError(
+                    f"invalid intent review evidence at line {line_number}: "
+                    f"{review_problem}"
                 )
             relation = event.get("observed_base_is_ancestor_of_source")
             planned = event.get("planned_green_class")
@@ -1917,6 +2347,38 @@ class LandingExecutor:
         if unresolved:
             raise Refused(f"{unresolved} unresolved review thread(s)")
 
+    def _fresh_review_evidence(
+        self, repo: str, pr: int, expected_head: str
+    ) -> dict[str, Any]:
+        evidence = self.github.review_evidence(repo, pr, expected_head)
+        problem = _review_evidence_problem(
+            evidence, repo=repo, pr=pr, expected_head=expected_head
+        )
+        if problem:
+            raise Refused(f"fresh exact-head review evidence refused: {problem}")
+        return dict(evidence)
+
+    def _assert_review_evidence_still_authoritative(
+        self, intent: Mapping[str, Any]
+    ) -> None:
+        repo = str(intent["repo"])
+        pr = int(intent["pr"])
+        expected_head = str(intent["expected_head"])
+        persisted = intent.get("review_evidence")
+        problem = _review_evidence_problem(
+            persisted, repo=repo, pr=pr, expected_head=expected_head
+        )
+        if problem:
+            raise StoreError(
+                f"persisted exact-head review evidence is malformed: {problem}"
+            )
+        live = self._fresh_review_evidence(repo, pr, expected_head)
+        if persisted != live:
+            raise Refused(
+                "persisted exact-head review evidence differs from the fresh "
+                "role-tagged review authority"
+            )
+
     @staticmethod
     def _decode_merge_response(output: str) -> tuple[bool, str | None, str]:
         payload = _json_object(output, "synchronous GitHub merge response")
@@ -2025,6 +2487,7 @@ class LandingExecutor:
         snapshot = self.github.snapshot(repo, pr)
         self._assert_open_snapshot(snapshot, expected_head)
         self._assert_reviews_resolved(repo, pr)
+        review_evidence = self._fresh_review_evidence(repo, pr, expected_head)
         observed_base = self.repository.fetch_base()
         self.repository.fetch_head(pr, expected_head)
         source = self.repository.source_provenance(expected_head, observed_base)
@@ -2061,6 +2524,7 @@ class LandingExecutor:
             "actor": actor,
             "review_decision": snapshot.review_decision,
             "unresolved_review_threads": 0,
+            "review_evidence": review_evidence,
             "source_receipt": source_receipt.as_json(),
             "base_receipt": base_receipt,
             "github_pr_commit_count": len(github_commits),
@@ -2276,10 +2740,12 @@ class LandingExecutor:
         assert isinstance(persisted, Mapping)
         persisted_report = persisted.get("report")
         assert isinstance(persisted_report, Mapping)
-        persisted_newest = persisted_report.get("newest_qualifying")
-        assert isinstance(persisted_newest, Mapping)
-
-        live = self.receipt_authority.verify(expected_head).as_json()
+        authority = str(persisted.get("authority") or "")
+        verify_authority = getattr(self.receipt_authority, "verify_authority", None)
+        if callable(verify_authority):
+            live = verify_authority(expected_head, authority).as_json()
+        else:
+            live = self.receipt_authority.verify(expected_head).as_json()
         live_problem = _receipt_problem(live, expected_head, require_envelope=True)
         if live_problem:
             raise Refused(
@@ -2287,25 +2753,30 @@ class LandingExecutor:
             )
         live_report = live.get("report")
         assert isinstance(live_report, Mapping)
-        live_newest = live_report.get("newest_qualifying")
-        assert isinstance(live_newest, Mapping)
-
-        persisted_identity = persisted_newest.get("receipt_identity")
-        live_identity = live_newest.get("receipt_identity")
-        assert isinstance(persisted_identity, Mapping)
-        assert isinstance(live_identity, Mapping)
-        if persisted_identity.get("digest") != live_identity.get("digest"):
+        if authority == LOCAL_VALIDATION_AUTHORITY:
+            persisted_newest = persisted_report.get("newest_qualifying")
+            live_newest = live_report.get("newest_qualifying")
+            assert isinstance(persisted_newest, Mapping)
+            assert isinstance(live_newest, Mapping)
+            persisted_identity = persisted_newest.get("receipt_identity")
+            live_identity = live_newest.get("receipt_identity")
+            assert isinstance(persisted_identity, Mapping)
+            assert isinstance(live_identity, Mapping)
+            if persisted_identity.get("digest") != live_identity.get("digest"):
+                raise Refused(
+                    "persisted receipt identity digest differs from the fresh "
+                    f"canonical receipt for {expected_head}"
+                )
+            # Store-wide counts may grow, but the selected receipt is stable.
+            if dict(persisted_newest) != dict(live_newest):
+                raise Refused(
+                    "persisted receipt fields differ from the fresh canonical "
+                    f"receipt for {expected_head}"
+                )
+        elif dict(persisted_report) != dict(live_report):
             raise Refused(
-                "persisted receipt identity digest differs from the fresh "
-                f"canonical receipt for {expected_head}"
-            )
-        # qualifying_count/disqualified_count are store-wide diagnostics and
-        # may grow after intent.  The selected receipt itself is stable: every
-        # dereferenced condition plus its canonical row digest must still match.
-        if dict(persisted_newest) != dict(live_newest):
-            raise Refused(
-                "persisted receipt fields differ from the fresh canonical "
-                f"receipt for {expected_head}"
+                "persisted hosted job evidence differs from the fresh canonical "
+                f"job set for {expected_head}"
             )
 
     def _assert_intent_receipts_still_authoritative(
@@ -2572,6 +3043,7 @@ class LandingExecutor:
             try:
                 self._assert_open_snapshot(snapshot, str(intent["expected_head"]))
                 self._assert_reviews_resolved(str(intent["repo"]), int(intent["pr"]))
+                self._assert_review_evidence_still_authoritative(intent)
             except Refused as error:
                 self._retain_pending(intent, "postrequest_identity_changed", str(error))
             if self.monotonic() >= deadline:
@@ -2715,6 +3187,7 @@ class LandingExecutor:
         try:
             self._assert_open_snapshot(snapshot, str(intent["expected_head"]))
             self._assert_reviews_resolved(str(intent["repo"]), int(intent["pr"]))
+            self._assert_review_evidence_still_authoritative(intent)
         except Refused as error:
             if requested:
                 self._retain_pending(intent, "postrequest_identity_changed", str(error))
@@ -2831,13 +3304,12 @@ class LandingExecutor:
         # Dereference the canonical authority again at the final pre-merge
         # boundary.  The persisted intent proves what authorized the attempt;
         # this fresh query proves that authority still answers for X now.
-        self.receipt_authority.verify(str(intent["expected_head"]))
-        if not bool(intent["observed_base_is_ancestor_of_source"]):
-            self.receipt_authority.verify(str(intent["observed_base"]))
+        self._assert_intent_receipts_still_authoritative(intent)
         final_snapshot = self.github.snapshot(str(intent["repo"]), int(intent["pr"]))
         try:
             self._assert_open_snapshot(final_snapshot, str(intent["expected_head"]))
             self._assert_reviews_resolved(str(intent["repo"]), int(intent["pr"]))
+            self._assert_review_evidence_still_authoritative(intent)
         except Refused as error:
             if requested:
                 self._retain_pending(
@@ -3205,7 +3677,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         executor = LandingExecutor(
             github=GitHubClient(runner),
             repository=repository,
-            receipt_authority=CanonicalReceiptAuthority(runner),
+            receipt_authority=CanonicalValidationAuthority(runner),
             mutation_barrier=CanonicalMutationBarrier(runner),
             armer=CanonicalObligationArmer(
                 runner,

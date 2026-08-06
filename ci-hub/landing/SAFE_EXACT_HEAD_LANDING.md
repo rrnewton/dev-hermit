@@ -46,26 +46,48 @@ Before the merge request, the executor requires all of these facts:
   origins are refused;
 - the PR is open, non-draft, still reports head `X`, targets `main`, and has no
   changes-requested/review-required decision or unresolved review thread;
+- GitHub's role-tagged PR comments contain at least one current exact-head
+  adversarial-review `PASS`; the latest exact-head verdict in each recognized
+  Claude/Codex model family must not be `FAIL`, and a live
+  `post-facto-human-review` policy label requires independent current `PASS`
+  comments from both families. Labels never substitute for a review comment;
 - a fresh PR-ref fetch is exactly `X`;
 - GitHub's complete ordered PR commit list equals the local linear, merge-free
   `S..X` list, where `S = merge-base(observed-main, X)`;
-- canonical
-  `ci-hub validate-status --repo rrnewton/hermit --sha X --json` accepts at
-  least one dereferenced receipt bound to that exact repository, SHA, and tree;
-  the receipt must be clean and commit-anchored, full/full, zero-failure, have
-  nonzero and arithmetically bound discovered/selected/executed counts,
-  complete passing gates, satisfied coverage, durable host/slot/log provenance,
-  and a canonical receipt identity tuple plus SHA-256 digest;
+- one of two interchangeable exact-head validation authorities is green:
+  canonical `ci-hub validate-status --repo rrnewton/hermit --sha X --json`
+  accepts a counted local receipt, or the registered GitHub policy's complete
+  exact-SHA job set is dereferenced as green. A local receipt must be clean and
+  commit-anchored, full/full, zero-failure, have nonzero and arithmetically
+  bound discovered/selected/executed counts, complete passing gates, satisfied
+  coverage, durable host/slot/log provenance, and a canonical receipt identity
+  tuple plus SHA-256 digest. Hosted authority requires every registered job,
+  with positive run and job identities; missing, skipped, cancelled, partial,
+  pending, or `NO_RESULT` evidence is not green;
 - if observed main is not an ancestor of `X`, exact observed main independently
   has the same hard-green receipt. This prevents a soft-only base from creating
   an untracked second soft hop.
 
+The review verifier recognizes the repository's role tag plus an explicit
+verdict line, for example:
+
+```text
+[adversarial-reviewer agent, gpt-5.6-sol]
+
+Exact-head verdict for `0123456789abcdef0123456789abcdef01234567`: **PASS**.
+```
+
+The model string must identify exactly one Claude or Codex family. A stale SHA,
+unknown/ambiguous model, newer family `FAIL`, missing required family, or
+truncated comment page refuses; the parser does not consult passed-review labels.
+
 The intent is appended and file/directory-fsynced before any merge mutation. It
 contains a unique attempt identity, `X`, observed main, `S`, the exact local and
-GitHub source lists/count, source/base trees, and dereferenced receipt envelopes
-plus their report digests. Immediately before requesting the merge, the tool
-freshly rechecks main, PR/review identity, both commit lists, source provenance,
-and every required enriched receipt. It then asks canonical Rust
+GitHub source lists/count, source/base trees, the selected validation-source
+envelopes and report digests, and the exact role-tagged review-comment
+identities/body digests. Immediately before requesting the merge, the tool
+freshly rechecks main, PR/review identity and comment authority, both commit
+lists, source provenance, and the same selected validation source. It then asks canonical Rust
 `land-lock arm-mutation` to file/directory-fsync `pending_mutation=X` together
 with the exact durable attempt id. Before every REST invocation it appends
 `merge_call_started(call_id)`, then advances Rust's fsynced call high-water
@@ -117,15 +139,17 @@ appended, file-fsynced, and directory-fsynced. Malformed events, inconsistent
 receipt envelopes, duplicate events/intents, changed attempt identity, and arm
 events not exactly matching a prior replay proof are refused.
 
-The fsynced receipt envelope is provenance and a recovery cache, never receipt
+The fsynced validation envelope is provenance and a recovery cache, never
 authority. Before any recovered merge continuation, and again immediately
-before every post-land arm, the executor reruns canonical `validate-status` for
-each persisted hard receipt (`X` and, for soft composition, `Y`). The freshly
-selected canonical receipt identity digest and every dereferenced receipt field
-must equal the persisted selection. Missing or changed evidence refuses before
-a merge request, or stays recoverably failed/pending after a request or verified
-landing. Recomputing the envelope's outer JSON hash around a forged inner
-receipt digest therefore cannot authorize recovery.
+before every post-land arm, the executor re-dereferences the same persisted
+source for each hard green (`X` and, for soft composition, `Y`). Local evidence
+must retain the selected canonical receipt identity and every selected field;
+hosted evidence must retain the complete registered exact-job set. Before a
+merge mutation, the role-tagged review authority is also re-dereferenced and
+must equal the persisted current-head selection. Missing or changed evidence
+refuses before a merge request, or stays recoverably failed/pending after a
+request or verified landing. Recomputing an envelope's outer JSON hash around
+forged inner evidence therefore cannot authorize recovery.
 
 A synchronous response with `merged=true` is never resubmitted during recovery;
 the executor polls GitHub's state. Each call persists the size-bounded raw
@@ -194,7 +218,10 @@ python3 -m py_compile ci-hub/landing/safe_exact_head_land.py
 bash -n ci-hub/bin/safe-exact-head-land
 ```
 
-The behavioral suite brackets hard/soft positives and the inert negatives:
+The behavioral suite brackets local and hosted validation positives (including
+local-absent/hosted-green), both-sources-`NO_RESULT`, ordinary and dual-family
+exact-head review positives, stale/missing/latest-`FAIL` review negatives,
+hard/soft composition positives, and the inert negatives:
 head push/drift, main advance, forbidden repository/ref, vacuous receipt,
 origin identity/lookalikes, GitHub-vs-Git commit-list mismatch, synchronous
 response propagation and duplicate submission, null/delayed `MC` propagation, crash recovery,

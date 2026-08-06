@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import safe_exact_head_land as land
 
 
@@ -131,6 +132,47 @@ class FakeReceiptAuthority:
             raise land.Refused(f"no exact hard-green receipt for {expected_head}")
         return receipt(expected_head)
 
+    def verify_authority(
+        self, expected_head: str, authority: str
+    ) -> land.ReceiptEvidence:
+        if authority != land.LOCAL_VALIDATION_AUTHORITY:
+            raise land.Refused(f"unsupported planted authority {authority}")
+        return self.verify(expected_head)
+
+
+def planted_review_evidence(
+    *,
+    head: str = X,
+    post_facto: bool = False,
+    families: tuple[str, ...] = ("codex",),
+) -> dict[str, object]:
+    approvals = []
+    for index, family in enumerate(families, 1):
+        model = "gpt-5.6-sol" if family == "codex" else "claude-opus-5"
+        approvals.append(
+            {
+                "comment_id": f"review-{family}",
+                "database_id": index,
+                "url": f"https://example.invalid/review-{family}",
+                "author": "fixture",
+                "created_at": f"2026-08-05T00:00:0{index}Z",
+                "model": model,
+                "family": family,
+                "head": head,
+                "verdict": "PASS",
+                "body_sha256": ("c" if family == "codex" else "d") * 64,
+            }
+        )
+    return {
+        "authority": land.REVIEW_AUTHORITY,
+        "repo": land.SUPPORTED_REPO,
+        "pr": 42,
+        "head": head,
+        "post_facto_human_review": post_facto,
+        "required_families": ["claude", "codex"] if post_facto else ["any"],
+        "approvals": approvals,
+    }
+
 
 class FakeGitHub:
     def __init__(
@@ -144,6 +186,7 @@ class FakeGitHub:
         merge_responses: (
             list[subprocess.CompletedProcess[str] | land.LandingError] | None
         ) = None,
+        review_evidence: dict[str, object] | land.LandingError | None = None,
     ):
         self.snapshots = list(snapshots)
         self.last_snapshot = snapshots[-1]
@@ -157,6 +200,12 @@ class FakeGitHub:
         }
         self.merge_responses = list(merge_responses or [])
         self.merge_calls = 0
+        self.review_evidence_value = (
+            planted_review_evidence()
+            if review_evidence is None
+            else review_evidence
+        )
+        self.review_evidence_calls = 0
 
     @staticmethod
     def http_envelope(status: int, payload: dict[str, object]) -> str:
@@ -174,6 +223,14 @@ class FakeGitHub:
 
     def unresolved_review_threads(self, repo: str, pr: int) -> int:
         return self.unresolved
+
+    def review_evidence(
+        self, repo: str, pr: int, expected_head: str
+    ) -> dict[str, object]:
+        self.review_evidence_calls += 1
+        if isinstance(self.review_evidence_value, land.LandingError):
+            raise self.review_evidence_value
+        return dict(self.review_evidence_value)
 
     def pr_commits(self, repo: str, pr: int) -> tuple[str, ...]:
         return self.commits
@@ -1480,6 +1537,161 @@ def test_draft_and_unresolved_review_are_refused_before_intent(
     assert not store.path.exists() or not store.load()
 
 
+def test_empty_github_review_decision_requires_role_tagged_exact_head_review(
+    tmp_path: Path,
+) -> None:
+    gh = FakeGitHub(
+        [snap(review="")],
+        review_evidence=land.Refused(
+            "no role-tagged exact-head adversarial-review PASS exists"
+        ),
+    )
+    repo = FakeRepository([O])
+    receipts = FakeReceiptAuthority({X, O})
+    ex, _, store, _ = executor(tmp_path, gh, repo, receipts)
+
+    with pytest.raises(land.Refused, match="no role-tagged exact-head"):
+        run(ex)
+
+    assert gh.merge_calls == 0
+    assert receipts.calls == []
+    assert not store.path.exists() or not store.load()
+
+
+def test_role_tagged_exact_head_review_authorizes_empty_review_decision(
+    tmp_path: Path,
+) -> None:
+    gh = FakeGitHub(
+        [
+            snap(review=""),
+            snap(review=""),
+            snap(review=""),
+            snap(state="MERGED", review="", merge_commit=MC),
+        ]
+    )
+    repo = FakeRepository([O, O, MC], replay_base=O)
+    ex, armer, _, _ = executor(tmp_path, gh, repo, FakeReceiptAuthority({X, O}))
+
+    result = run(ex)
+
+    assert result.merge_commit == MC
+    assert gh.merge_calls == 1
+    assert len(armer.calls) == 1
+
+
+def test_recovery_refuses_changed_exact_head_review_evidence(tmp_path: Path) -> None:
+    gh = FakeGitHub([snap(), snap()])
+    repo = FakeRepository([O, O])
+    ex, _, store, _ = executor(tmp_path, gh, repo, FakeReceiptAuthority({X, O}))
+    ex._new_intent(land.SUPPORTED_REPO, 42, X, "hermit-lander")
+    changed = planted_review_evidence()
+    changed["approvals"][0]["body_sha256"] = "e" * 64  # type: ignore[index]
+    gh.review_evidence_value = changed
+
+    with pytest.raises(land.Refused, match="differs from the fresh"):
+        run(ex)
+
+    assert gh.merge_calls == 0
+    assert store.load()[0]["event_type"] == "intent"
+
+
+def test_post_facto_review_requires_dual_claude_and_codex_exact_head_passes(
+    tmp_path: Path,
+) -> None:
+    codex_only = planted_review_evidence(
+        post_facto=True,
+        families=("codex",),
+    )
+    gh = FakeGitHub([snap()], review_evidence=codex_only)
+    ex, _, store, _ = executor(
+        tmp_path,
+        gh,
+        FakeRepository([O]),
+        FakeReceiptAuthority({X, O}),
+    )
+
+    with pytest.raises(land.Refused, match="lacks dual Claude and Codex"):
+        run(ex)
+    assert gh.merge_calls == 0
+    assert not store.path.exists() or not store.load()
+
+
+def github_review_payload(
+    comments: list[dict[str, object]],
+    *,
+    labels: tuple[str, ...] = (),
+    has_previous_page: bool = False,
+) -> dict[str, object]:
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "labels": {
+                        "nodes": [{"name": label} for label in labels],
+                        "pageInfo": {"hasNextPage": False},
+                    },
+                    "comments": {
+                        "nodes": comments,
+                        "pageInfo": {"hasPreviousPage": has_previous_page},
+                    },
+                }
+            }
+        }
+    }
+
+
+def review_comment(
+    family: str,
+    verdict: str,
+    *,
+    head: str = X,
+    ordinal: int = 1,
+) -> dict[str, object]:
+    model = "gpt-5.6-sol" if family == "codex" else "claude-opus-5"
+    return {
+        "id": f"comment-{family}-{ordinal}",
+        "databaseId": ordinal,
+        "body": (
+            f"[adversarial-reviewer agent, {model}]\n\n"
+            f"Exact-head verdict for `{head}`: **{verdict}**.\n"
+        ),
+        "createdAt": f"2026-08-05T00:00:{ordinal:02d}Z",
+        "url": f"https://example.invalid/comments/{ordinal}",
+        "author": {"login": "fixture"},
+    }
+
+
+def test_github_review_verifier_dereferences_dual_exact_head_comments() -> None:
+    runner = StaticRunner(
+        github_review_payload(
+            [review_comment("codex", "PASS"), review_comment("claude", "PASS", ordinal=2)],
+            labels=(land.POST_FACTO_REVIEW_LABEL,),
+        )
+    )
+
+    evidence = land.GitHubClient(runner).review_evidence(land.SUPPORTED_REPO, 42, X)
+
+    assert evidence["required_families"] == ["claude", "codex"]
+    assert [row["family"] for row in evidence["approvals"]] == ["claude", "codex"]
+
+
+def test_github_review_verifier_refuses_stale_or_latest_fail_evidence() -> None:
+    stale = StaticRunner(github_review_payload([review_comment("codex", "PASS", head=W)]))
+    with pytest.raises(land.Refused, match="no role-tagged exact-head"):
+        land.GitHubClient(stale).review_evidence(land.SUPPORTED_REPO, 42, X)
+
+    latest_fail = StaticRunner(
+        github_review_payload(
+            [
+                review_comment("codex", "PASS", ordinal=1),
+                review_comment("codex", "FAIL", ordinal=2),
+            ]
+        )
+    )
+    with pytest.raises(land.Refused, match="latest exact-head.*FAIL"):
+        land.GitHubClient(latest_fail).review_evidence(land.SUPPORTED_REPO, 42, X)
+
+
 class StaticRunner:
     def __init__(self, payload: dict[str, object], returncode: int = 0):
         self.payload = payload
@@ -1831,6 +2043,128 @@ def test_receipt_authority_queries_exact_repository_and_head() -> None:
     assert evidence.report["newest_qualifying"]["receipt_identity"]["digest"]
 
 
+def hosted_green_runs(sha_value: str) -> list[dict[str, object]]:
+    policy = land.obligation_protocol.verification_policy_for_repo(
+        land.SUPPORTED_REPO
+    )
+    runs: list[dict[str, object]] = []
+    for index, required in enumerate(policy["github"]["required_jobs"], 1):
+        runs.append(
+            {
+                "databaseId": 100 + index,
+                "headSha": sha_value,
+                "workflowFile": required["workflow_file"],
+                "workflowName": required["workflow_name"],
+                "status": "completed",
+                "conclusion": "success",
+                "createdAt": "2026-08-05T00:00:00Z",
+                "startedAt": "2026-08-05T00:00:01Z",
+                "updatedAt": "2026-08-05T00:01:00Z",
+                "url": f"https://example.invalid/runs/{100 + index}",
+                "event": "pull_request",
+                "jobs": [
+                    {
+                        "id": 200 + index,
+                        "run_id": 100 + index,
+                        "head_sha": sha_value,
+                        "name": required["job_name"],
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": f"https://example.invalid/jobs/{200 + index}",
+                    }
+                ],
+            }
+        )
+    return runs
+
+
+def test_validation_authority_accepts_hosted_green_when_local_has_no_result() -> None:
+    runner = StaticRunner({}, returncode=4)
+    calls: list[tuple[str, str]] = []
+
+    def hosted(repo: str, head: str, **kwargs: object) -> list[dict[str, object]]:
+        calls.append((repo, head))
+        assert kwargs["policy"] == land.obligation_protocol.verification_policy_for_repo(repo)
+        return hosted_green_runs(head)
+
+    authority = land.CanonicalValidationAuthority(
+        runner,
+        Path("/fixture/ci-hub"),
+        hosted_runs=hosted,  # type: ignore[arg-type]
+    )
+
+    evidence = authority.verify(X)
+
+    assert evidence.authority == land.HOSTED_VALIDATION_AUTHORITY
+    assert evidence.report["github"]["state"] == "green"
+    assert calls == [(land.SUPPORTED_REPO, X)]
+
+
+def test_validation_authority_refuses_when_local_and_hosted_have_no_result() -> None:
+    authority = land.CanonicalValidationAuthority(
+        StaticRunner({}, returncode=4),
+        Path("/fixture/ci-hub"),
+        hosted_runs=lambda *args, **kwargs: [],
+    )
+
+    with pytest.raises(land.Refused, match="no exact-head validation authority is green"):
+        authority.verify(X)
+
+
+def test_validation_authority_prefers_local_green_without_hosted_proxy() -> None:
+    def must_not_query(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("hosted source must not be queried after local exact-head green")
+
+    authority = land.CanonicalValidationAuthority(
+        StaticRunner(receipt(X).report),
+        Path("/fixture/ci-hub"),
+        hosted_runs=must_not_query,
+    )
+
+    evidence = authority.verify(X)
+
+    assert evidence.authority == land.LOCAL_VALIDATION_AUTHORITY
+
+
+def test_hosted_validation_envelope_refuses_no_result_even_with_fresh_digest() -> None:
+    authority = land.CanonicalValidationAuthority(
+        StaticRunner({}, returncode=4),
+        Path("/fixture/ci-hub"),
+        hosted_runs=lambda repo, head, **kwargs: hosted_green_runs(head),
+    )
+    evidence = authority.verify(X).as_json()
+    evidence["report"]["github"]["state"] = "no_result"
+    canonical = json.dumps(
+        evidence["report"], sort_keys=True, separators=(",", ":")
+    ).encode()
+    evidence["report_sha256"] = hashlib.sha256(canonical).hexdigest()
+
+    problem = land._receipt_problem(evidence, X, require_envelope=True)
+
+    assert problem == "hosted validation report is not a complete positive result"
+
+
+def test_executor_persists_and_rechecks_hosted_exact_head_authority(
+    tmp_path: Path,
+) -> None:
+    authority = land.CanonicalValidationAuthority(
+        StaticRunner({}, returncode=4),
+        Path("/fixture/ci-hub"),
+        hosted_runs=lambda repo, head, **kwargs: hosted_green_runs(head),
+    )
+    gh = FakeGitHub([snap(), snap(), snap(), snap(state="MERGED", merge_commit=MC)])
+    repo = FakeRepository([O, O, MC], replay_base=O)
+    ex, armer, store, _ = executor(tmp_path, gh, repo, authority)  # type: ignore[arg-type]
+
+    result = run(ex)
+
+    assert result.merge_commit == MC
+    assert len(armer.calls) == 1
+    intent = store.load()[0]
+    assert intent["source_receipt"]["authority"] == land.HOSTED_VALIDATION_AUTHORITY
+    assert intent["base_receipt"]["authority"] == land.HOSTED_VALIDATION_AUTHORITY
+
+
 def test_sparse_validate_status_report_is_refused() -> None:
     sparse = {
         "schema_version": 1,
@@ -1926,6 +2260,7 @@ def test_duplicate_intent_and_multiple_nonterminal_heads_are_refused(
     second["event_id"] = "e" * 32
     second["expected_head"] = W
     second["source_receipt"] = receipt(W).as_json()
+    second["review_evidence"] = planted_review_evidence(head=W)
     second["github_pr_commits"] = list(second["source_commits"])
     with pytest.raises(land.StoreError, match="multiple nonterminal"):
         store.append(second)
@@ -3004,3 +3339,7 @@ def test_pending_mutation_requires_exact_operation_recovery(
     )
     assert cleared.returncode == 0, cleared.stderr
     assert not lock_path.exists()
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

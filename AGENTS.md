@@ -171,11 +171,14 @@ feature diff and validation evidence; run the focused tests + repo validation th
 tested SHA is the branch tip; write the mandatory PR sections (below); re-read concurrent remote state before
 pushing. Use `with-proxy` for networked `git`/`gh`; never `gh auth switch` (auth is shared machine state).
 The author owns and shepherds the PR until it lands; a dedicated lander is for backlog recovery, not the
-steady-state handoff. Hermit's landing authority is a clean, counted, full-profile local-validation receipt for
-the exact current head, accepted by `ci-hub validate-status`; a raw command exit, label, comment, or copied field
-is not authority. GitHub checks are delayed supplemental signals and must not be awaited, though any genuine
-product failure they reveal still blocks. Reverie uses its repository-defined exact-head validation authority
-until it has an equivalent receipt verifier. Do not merge with unresolved adversarial-review findings.
+steady-state handoff. Hermit's interchangeable landing authorities are either (a) a clean, counted,
+full-profile local-validation receipt for the exact current head, accepted by `ci-hub validate-status`, or (b)
+the complete registered set of authoritative hosted-CI jobs, dereferenced green at that exact head. The safe
+lander is the shared semantic verifier for those separately typed sources; a raw command exit, workflow-level
+status, label, comment, or copied field is not validation authority. Missing, queued, skipped, cancelled,
+partial, or `NO_RESULT` hosted evidence is not green. Do not wait for hosted CI when local authority is already
+green (or vice versa), though any genuine product failure already observed still blocks. Reverie uses its
+repository-defined exact-head validation authority. Do not merge with unresolved adversarial-review findings.
 
 ### Proxy Binding Review Axis (predicate; full rationale, registry, 12 examples, 3-layer taxonomy in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
@@ -345,9 +348,10 @@ name — always report: **Hermit SHA** (40-hex), **Reverie SHA** (40-hex or expl
 **Command**, **Result** (pass/fail/skipped with material output summarized), **Environment** (host/toolchain/
 hardware constraints when relevant). Hardware-dependent Hermit tests may be impossible on some hosts — report
 that fact and the observed failure; do not weaken, delete, or falsely bless a test to make the local
-environment green. For Hermit landing, the coordinator verifies the counted exact-head receipt through
-`ci-hub validate-status` and verifies the resulting target commit's ancestry. A bare `locally-validated` label
-is only a cache and never substitutes for dereferencing that receipt. GitHub results are supplemental evidence.
+environment green. For Hermit landing, the coordinator uses the safe lander's shared verifier to dereference
+either the counted exact-head receipt through `ci-hub validate-status` or the complete registered exact-head
+hosted-job set, then verifies the resulting target commit's ancestry. A bare `locally-validated` or workflow
+label is only a cache and never substitutes for dereferencing its source. `NO_RESULT` is absence, never green.
 
 ### Running validate — `systemd-run --user` Is The Producer Path
 

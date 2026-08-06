@@ -17,6 +17,7 @@ DEFAULT_SUITES = (
     ("ci-hub/directives/tests", 9),
     ("ci-hub/health/tests", 92),
     ("ci-hub/history/tests", 43),
+    ("ci-hub/landing", 100),
     ("ci-hub/lib/tests", 6),
     ("ci-hub/remediation/tests", 87),
     ("ci-hub/runners/tests", 51),

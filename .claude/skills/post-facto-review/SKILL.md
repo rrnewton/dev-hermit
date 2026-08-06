@@ -165,9 +165,13 @@ them only at the smallest new-syscall regions, not across untouched code.
 Once required adversarial review is resolved and the authoritative gate is
 green, land the authorized change without waiting for a human.
 
-- Hermit requires `ci-hub validate-status` to accept the exact current head's
-  clean, counted, full-profile local receipt. GitHub checks are supplemental;
-  do not wait for them, but never ignore a genuine product failure they expose.
+- Hermit accepts either of two interchangeable exact-head authorities through
+  the safe lander's shared semantic verifier: a clean, counted, full-profile
+  local receipt accepted by `ci-hub validate-status`, or the complete
+  registered authoritative hosted-job set dereferenced green at the same SHA.
+  Missing, queued, skipped, cancelled, partial, or `NO_RESULT` hosted evidence
+  is not green. Do not wait for hosted CI after local authority is green (or
+  vice versa), but never ignore a genuine product failure already observed.
 - Reverie requires its repository-defined exact-head validation authority.
 - When one of the four triggers applies, add `post-facto-human-review`, verify
   every required PR section, verify both exact-head reviews, post role-tagged
