@@ -1,0 +1,45 @@
+# herdr-run project configuration for dev-hermit.
+#
+# Extends the default program allowlist with `ci-hub`, the lander's named tool.
+# Without this the lander loop cannot run `ci-hub pr-status` at all while the
+# forward-proxy denies api.github.com directly: herdr-run refuses it twice over,
+# first as a path (`program must be a bare command name`) and then via a shell
+# (`program 'bash' is not allowlisted`).
+#
+# ADMITTED THE SAME WAY `cargo` IS, AND FOR THE SAME REASON. The pane runs
+# OUTSIDE the sandbox, and ci-hub is a large binary whose other subcommands do
+# far more than query GitHub -- `validate-run`, for instance, launches transient
+# systemd units. So this is fail-closed on the subcommand, not just the program
+# name: only the read-only frontier queries below are reachable through the
+# door. A bare `ci-hub`, or any subcommand not listed, is refused.
+#
+# Residual privilege, stated rather than implied: the admitted subcommands still
+# shell out to `gh` and read/write the local validation ledger. They do not
+# compile or execute repository-controlled code, which is the property that
+# makes them safe to run unconfined.
+
+allow:
+  - git
+  - gh
+  - cargo
+  # `ci-hub-cli`, NOT `ci-hub`: herdr-run runs in the parent repo, which has a
+  # `ci-hub/` DIRECTORY. If the PATH shim is ever missing, the bare name
+  # resolves to that directory and exec fails with "Is a directory" -- and in
+  # one observed case produced NO OUTPUT, which reads as a clean empty result
+  # rather than a broken query. A name no directory shares cannot be shadowed.
+  # Install with scripts/install-ci-hub-shim.sh.
+  - ci-hub-cli
+  - ci-hub
+
+allow_subcommand:
+  # Read-only queries against the landable frontier and the local ledger.
+  # Deliberately excludes validate-run, apply-local-label, close-task and every
+  # other mutating or process-launching subcommand.
+  ci-hub-cli:
+    - pr-status
+    - newest-green
+    - validate-status
+  ci-hub:
+    - pr-status
+    - newest-green
+    - validate-status

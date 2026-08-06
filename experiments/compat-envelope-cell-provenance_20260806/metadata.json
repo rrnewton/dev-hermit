@@ -1,0 +1,17 @@
+{
+  "question": "For each published compat-envelope cell, what produced it -- a CI-enforced measurement, a probe of a cell CI does not run, or an expansion candidate -- and does the cell carry the evidence its claim needs?",
+  "parent_repo": "rrnewton/dev-hermit",
+  "parent_sha": "7bcf17f0fbc99a6ceb33ef5686649350976d1c2a",
+  "inputs": [
+    "compat-envelope/scorecard.csv",
+    "compat-envelope/fullcorpus-scorecard.csv",
+    "compat-envelope/e9patch-scorecard.csv",
+    "compat-envelope/reverie-scorecard.csv"
+  ],
+  "hermit_shas_in_scorecard_csv": 7,
+  "command": "python3 classify.py > results.csv 2> summary.txt",
+  "host": "devbig014",
+  "toolchain": "python3 (stdlib csv/collections only)",
+  "seed": "n/a (deterministic classification of committed CSVs)",
+  "date_utc": "2026-08-06"
+}

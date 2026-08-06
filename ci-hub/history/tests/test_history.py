@@ -562,7 +562,11 @@ class TempParentTest(unittest.TestCase):
         # reign 00:00-01:00: pending until the run resolves at 00:40 (0.67h gap),
         # then the verdict 00:40-01:00 (0.33h) is RED via the ordering promotion.
         self.assertAlmostEqual(res["red_hours"], 0.33, places=1)
-        self.assertAlmostEqual(res["gap_hours"], 0.67, places=1)
+        # gap_hours now also carries the unobserved tail past the store's
+        # observation horizon, which grows with wall-clock. Assert the OBSERVED
+        # gap -- the quantity this test is actually about.
+        self.assertAlmostEqual(
+            res["gap_hours"] - res["store_stale_hours"], 0.67, places=1)
         self.assertEqual(res["no_result_hours"], 0.0)
         self.assertEqual(res["job_level_red_promotions"], 1)
 
@@ -881,3 +885,84 @@ class HelperTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GreenTimeObservationHorizonTest(unittest.TestCase):
+    """A stale store must not carry the last known state forward as fact.
+
+    The metric partitions main's wall-clock into green/red/no_result/gap. Before
+    the horizon cap, the LAST commit's reign ran to `now`, so any time after the
+    store's newest row inherited that commit's verdict. Measured on the live
+    store 2026-08-06, that was 58.81h -- 53.3% of the whole denominator --
+    entirely extrapolated. When the last verdict is `success` this reports hours
+    nobody observed as GREEN, which is exactly the claim the metric exists to
+    refuse: absence of a record is not a green period.
+    """
+
+    WF = "CI (GitHub-managed portable)"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.parent = Path(self.tmp.name)
+        (self.parent / "ignored" / "ci-hub").mkdir(parents=True)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _write_gha(self, rows):
+        path = self.parent / "ignored" / "ci-hub" / "gha-runs.csv"
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=ingest.GHA_COLUMNS,
+                               extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                w.writerow({c: r.get(c, "") for c in ingest.GHA_COLUMNS})
+
+    def _row(self, sha, created, conclusion):
+        return {
+            "repo": "rrnewton/hermit", "run_id": sha, "run_attempt": "1",
+            "workflow_name": self.WF, "event": "push", "head_branch": "main",
+            "head_sha": sha, "status": "completed", "conclusion": conclusion,
+            "created_at": created, "run_started_at": created,
+            "updated_at": created,
+        }
+
+    def _timeline(self):
+        return query.state_timeline(str(self.parent), "rrnewton/hermit", None,
+                                    [self.WF])
+
+    def test_unobserved_tail_is_gap_not_the_last_known_green(self):
+        # Last observation is a SUCCESS, deliberately: this is the dangerous
+        # case. Everything after it must be gap, never green.
+        self._write_gha([
+            self._row("a" * 40, "2020-01-01T00:00:00Z", "failure"),
+            self._row("b" * 40, "2020-01-01T01:00:00Z", "success"),
+        ])
+        tl = self._timeline()
+        tail = tl["intervals"][-1]
+        self.assertEqual(tail["state"], "gap")
+        self.assertIn("no observation after", tail["reason"] or "")
+        self.assertEqual(tl["observed_through_utc"], "2020-01-01T01:00:00Z")
+        self.assertGreater(tl["store_stale_hours"], 0)
+
+        res = query.green_time(str(self.parent), "rrnewton/hermit", None, [self.WF])
+        # Years of unobserved time dwarf the 1h observed, so gap must dominate
+        # and green must be a rounding error -- not ~100%.
+        self.assertGreater(res["gap_pct"], 99.0)
+        self.assertLess(res["green_pct"], 1.0)
+
+    def test_buckets_stay_mutually_exclusive_and_sum_to_the_denominator(self):
+        self._write_gha([
+            self._row("c" * 40, "2020-01-01T00:00:00Z", "success"),
+            self._row("d" * 40, "2020-01-01T02:00:00Z", "failure"),
+        ])
+        res = query.green_time(str(self.parent), "rrnewton/hermit", None, [self.WF])
+        total = sum(res[k] for k in
+                    ("green_hours", "red_hours", "no_result_hours", "gap_hours"))
+        self.assertAlmostEqual(total, res["total_hours"], places=1)
+        pct = sum(res[k] for k in
+                  ("green_pct", "red_pct", "no_result_pct", "gap_pct"))
+        self.assertAlmostEqual(pct, 100.0, places=0)
+        # The denominator and window must be reportable -- a percentage without
+        # them is the unqualified-number defect this metric is meant to avoid.
+        for field in ("total_hours", "window_start", "window_end_utc",
+                      "observed_through_utc", "samples"):
+            self.assertIsNotNone(res.get(field), f"{field} must be reported")

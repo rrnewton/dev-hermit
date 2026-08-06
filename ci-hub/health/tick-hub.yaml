@@ -17,6 +17,24 @@ reminders:
         component: owner-tooling-directives
       title: "owner tooling directives need action: {summary}"
 
+  # Local-only parent commits are the state that got 45 commits orphaned on
+  # 2026-08-06. They emit no error and no failing check, so this runs on a
+  # timer and PUBLISHES them rather than reporting: a report needs a reader.
+  # --scope all is load-bearing -- a HEAD-scoped probe read 0 while 24 commits
+  # sat unpublished.
+  - name: unpushed_parent_commits
+    cadence_secs: 900
+    gate:
+      cmd: ./ci-hub/health/unpushed_parent_commits.py --scope all --rescue
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: unpushed-parent-commits
+      title: "parent commits existed only locally (now published to rescue/): {summary}"
+
   - name: speculative_land_obligations
     cadence_secs: 300
     gate:

@@ -127,15 +127,35 @@ RUNTIME_CANDIDATES = (
 def _libunwind_runtime_dir(root: Path, link_dir: Path) -> Path:
     """Pick the directory that can actually satisfy the loader.
 
-    Preference order: a candidate carrying `libunwind-ptrace.so.0` (the file the
-    link dir lacks), then any candidate carrying `libunwind.so.8`, then the link
-    dir itself so behaviour is unchanged on a host where neither exists.
+    `libunwind-ptrace.so.0` is THE file that matters, because pointing
+    LIBRARY_PATH at a tree carrying a shared `libunwind-ptrace.so` is what makes
+    the link depend on it in the first place (see build_systemd_command). A
+    directory that has `libunwind.so.8` but NOT the ptrace variant cannot satisfy
+    that dependency, so it must never be preferred over one that can.
+
+    `link_dir` competes on equal terms rather than being a last resort. It used
+    to be excluded on the belief that it ships only a static
+    `libunwind-ptrace.a`; that is no longer true of `ignored/lu-parity`, which
+    now carries the shared objects too and can satisfy build, link and run on its
+    own. Excluding it meant that with the first candidate absent the probe
+    selected `~/.local/hermit-deps/lu/usr/lib64` -- which has only the static
+    `.a` -- on a `libunwind.so.8` tiebreak, producing exactly the
+    `libunwind-ptrace.so.0: cannot open shared object file` failure this probe
+    exists to prevent.
+
+    Order is still candidates-then-link_dir, so on a host where a candidate has
+    the ptrace object the selection is unchanged.
     """
-    candidates = [Path(c).expanduser() for c in RUNTIME_CANDIDATES]
-    for probe in ("libunwind-ptrace.so.0", "libunwind.so.8"):
-        for candidate in candidates:
-            if (candidate / probe).exists():
-                return candidate
+    candidates = [Path(c).expanduser() for c in RUNTIME_CANDIDATES] + [link_dir]
+    # First pass: only a directory that carries the object the link needs.
+    for candidate in candidates:
+        if (candidate / "libunwind-ptrace.so.0").exists():
+            return candidate
+    # Second pass: no ptrace object anywhere. A tree with the base library is
+    # still the best available guess for a statically-linked-ptrace build.
+    for candidate in candidates:
+        if (candidate / "libunwind.so.8").exists():
+            return candidate
     return link_dir
 
 
@@ -188,18 +208,26 @@ def build_systemd_command(
     #                    the link -- the loader is not the linker, and it must
     #                    NOT be assumed equal to LIBRARY_PATH. See below.
     #
-    # THE LINK DIR AND THE RUNTIME DIR ARE DIFFERENT DIRECTORIES HERE, which has
-    # bitten twice. `ignored/lu-parity/usr/lib64` carries the .pc and a STATIC
-    # `libunwind-ptrace.a` but NO `libunwind-ptrace.so*`; the fbcode third-party
-    # tree is the only checked location that ships the shared ptrace variant.
-    # Pointing LD_LIBRARY_PATH at lu-parity therefore yields
-    # `libunwind-ptrace.so.0: cannot open shared object file`, which reads as a
-    # broken build and is not one.
+    # THE LINK DIR AND THE RUNTIME DIR NEED NOT BE THE SAME DIRECTORY, which has
+    # bitten twice, so the runtime directory is PROBED rather than assumed --
+    # see `_libunwind_runtime_dir`. A future relocation is picked up by adding a
+    # path to RUNTIME_CANDIDATES, not by rediscovering the failure.
     #
-    # Rather than hardcode a third guess, PROBE: the runtime directory is the
-    # first candidate that actually contains the shared objects, preferring one
-    # that has `libunwind-ptrace.so.0`. A future relocation is then picked up by
-    # adding a path to RUNTIME_CANDIDATES, not by rediscovering this failure.
+    # NOTE ON WHY LD_LIBRARY_PATH IS LOAD-BEARING AT ALL, since it is easy to
+    # conclude it is redundant and delete it. Measured on this host class
+    # (libunwind-devel installed system-wide, three units, one variable changed
+    # per run):
+    #   no LIBRARY_PATH, no LD_LIBRARY_PATH -> `-lunwind-ptrace` resolves to the
+    #     system STATIC /usr/lib64/libunwind-ptrace.a, ldd shows no ptrace
+    #     dependency, and the binary runs.
+    #   LIBRARY_PATH only -> the link now prefers the SHARED
+    #     `libunwind-ptrace.so` in the pointed-at tree, and the binary dies with
+    #     `libunwind-ptrace.so.0: cannot open shared object file` because
+    #     /usr/lib64 ships that library only as a static `.a`.
+    # In other words LIBRARY_PATH is what CREATES the runtime dependency that
+    # LD_LIBRARY_PATH then satisfies. The three are a set: propagate all of them
+    # or none. This also means the probe must key on `libunwind-ptrace.so.0`
+    # specifically, not on libunwind generally.
     lu_env: list[str] = []
     lu_root = root / "ignored/lu-parity/usr/lib64"
     if (lu_root / "pkgconfig/libunwind-ptrace.pc").exists():

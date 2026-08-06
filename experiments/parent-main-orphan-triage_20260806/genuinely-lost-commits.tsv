@@ -1,0 +1,46 @@
+sha	date	author	subject
+568d61949da568bc9812b3ecfdfb5e25fa67028d	2026-08-04 11:46:41 -0700	Ryan Newton	Ryan: add application description to  project vision
+491667ab0fbbcabdbce5b58e66747f23fa9d3915	2026-08-03 11:44:26 -0700	Ryan Newton	ci-hub queue-health: classify fetch failures + bound gh calls for auto-invocation
+799e45c4454b1b13fd7a5bd81d9db8b2abda9b6f	2026-08-04 11:30:12 -0700	Ryan Newton	experiments: coordinator-RPC codegen-sensitivity, build-profile firm-axis, green-inheritance 1-hop artifacts
+7f9f7608bfff462342992ae8691468502d6a178e	2026-08-04 04:37:36 -0700	Ryan Newton	experiment(liteinst-instrumentation-stats): add README reconciling instrumentation vs timing
+f9a043bde35e596f48a7a2c361f3996400925f4e	2026-08-04 11:30:12 -0700	Ryan Newton	Ryan: add application description to  project vision
+38a1b3bcf03499f9e8a22dbc15bfc42c6fe80bc9	2026-07-28 08:59:15 -0700	Ryan Newton	demos: package deterministic QEMU Linux L2 boot
+6da14260c1a64b66c2ba495da6f91c09265234b4	2026-08-04 13:34:04 -0700	Ryan Newton	ci-hub: wire ledger accessors into the front door (qualified-rows + attribute-reds)
+91a1a450be03c67b9437d67ba773d851b21ee44d	2026-08-03 11:32:41 -0700	Ryan Newton	agent-utils: bump pin to 81614e6 (setup -h/--help relative-path fix)
+70a246e4837936fad0e18cd284b34bbb7cbd3cf9	2026-08-01 08:24:45 -0700	t	demos: no-trailer (override local)
+b0239f568ddcfe9c3e2eb51b6b8a1f59aa723849	2026-08-03 11:21:29 -0700	Ryan Newton	ci-hub/attribution: flaky-failure cause attribution capability
+7028f6999c4e330424b264e3e6b7bdaae3231e3e	2026-08-03 11:27:47 -0700	Ryan Newton	ai_docs: reverie portable-vs-privileged test split audit (empirical)
+0f2a122d6db10e5cad026cd8c44fc994d43edaa6	2026-08-03 10:56:55 -0700	Ryan Newton	ai_docs: handoff for ci-hub local CI-history store
+832c89153042d9bb9b8f9a1b92d31ee4b0393eba	2026-07-28 11:54:50 -0700	Ryan Newton	demos: fail when snapshot verification diverges
+2bb0e74f1e5cb9f8bab368f66d5caa9f82fbabd6	2026-07-28 09:06:28 -0700	Ryan Newton	demos: keep QEMU L2 inputs visible from tmp checkouts
+ed30c23b68e767ece74011d2f6e2fb847bc4d3b4	2026-07-28 11:54:50 -0700	Ryan Newton	demos: keep QEMU L2 inputs visible from tmp checkouts
+fd30b4299e793eccc69efb40a348860ada7b82ef	2026-08-03 11:08:29 -0700	Ryan Newton	ci-hub: make landing recovery process-independent
+4cb2aa2d88bc0496d57985f217577976b4213450	2026-07-28 11:49:03 -0700	Ryan Newton	demos: fail when snapshot verification diverges
+a9335446521eff4aa9981c84c3698099135f3ad2	2026-08-03 10:43:50 -0700	Ryan Newton	Document speculative-land remediation architecture
+dc35c5d5c236bc3bbbb64ad8888c6499e268026d	2026-07-31 08:21:55 -0700	Ryan Newton	Add ASPLOS'20 DRB reproducibility experiment + work-ahead results
+bcb80b4771d732cf9c37422ba56df17f6b73258e	2026-08-06 08:58:32 -0700	Ryan Newton	Derive owner directives from TaskGraph
+32bc690703aae204222f68889811b22c3b83fc49	2026-08-03 10:52:23 -0700	Ryan Newton	ci-hub: add local CI-history store (ingest + query)
+71bd66a94afff8a474ed612ed74ac2172de3a1f6	2026-08-03 11:35:21 -0700	Ryan Newton	ci-hub: execute documented commands in CI
+6f3e4e6d2df8b7a80d367b97f8c78195ef2a3a35	2026-08-04 10:01:59 -0700	Ryan Newton	Merge hermit-251 newest-green floor-from-registry into origin/main
+a53f6fe311ac8ef8f399152915a48193ce603def	2026-08-03 10:57:25 -0700	Ryan Newton	ai_docs: handoff for ci-hub local CI-history store
+09c0b7142a201d5bf41b1097b0983304803f24a8	2026-07-21 18:35:10 -0700	Ryan Newton	Add Hermit research and experiment results
+51c2ec082324df68b0298c80c8d16bd09ddd61d1	2026-08-04 11:46:41 -0700	Ryan Newton	Human edits to alignment and project vision
+69c8d877aed4d095bb00e05d33ec44814729abcd	2026-07-28 11:51:01 -0700	Ryan Newton	demos: package deterministic QEMU Linux L2 boot
+99cac6ec90512318c552386e288047b1961d9aa6	2026-08-03 11:06:25 -0700	Ryan Newton	ai_docs: reverie single-runner SPOF analysis + mitigations
+cdcee6b699b5aaf4dd8e5fc0f7a32191e73ef0e2	2026-07-28 11:54:49 -0700	Ryan Newton	fixup! demos: fail when snapshot verification diverges
+f04ee23bc7aa03b95f8bc58795ffc64846cca55f	2026-08-01 02:13:47 -0700	t	override test
+1b4f8da393579118952bd1628f4daf4c7755d40d	2026-07-25 17:52:59 -0700	Ryan Newton	pr_status: reframe human-review bucket as land-with-post-facto-review
+3456f51389dacdc69a1b9cdf8f0729b109e1167a	2026-08-03 11:00:26 -0700	Ryan Newton	[impl agent, opus-4.8] ci-hub health: bound auto-invoked PR-health gate under tick-hub's 30s guillotine
+645d7d821a4e6c32e787158263f57191ae15802a	2026-08-04 11:46:41 -0700	Ryan Newton	experiments: coordinator-RPC codegen-sensitivity, build-profile firm-axis, green-inheritance 1-hop artifacts
+e55db2494810431f6a37da48ea7099357b1b71de	2026-08-03 11:46:47 -0700	Ryan Newton	ai_docs: feasibility verdict for unified patching-backend constructor
+8b5fd8655ff7d3635681626d4868360f5e9fd70d	2026-08-03 11:31:14 -0700	Ryan Newton	scripts: make every harness entrypoint's -h/--help/--version a pure safe probe
+f3e5440eb94bb47481af01bb9908043a1f3f3433	2026-07-21 18:19:25 -0700	Ryan Newton	Merge remote-tracking branch 'origin/main' into impl-update-agents-md-slot04
+e0e9b5f1c91254d8218a0f13f06063e63c896117	2026-08-01 08:24:20 -0700	t	demos: tweak 05 (reviewed)
+57ebc29577715162e815bdfc0b0b7bcb44d5e757	2026-08-04 14:53:00 -0700	Ryan Newton	ai_docs: scoped clean-rebuild-after-failure deliverable (zero-byte pre-flight scan + coverage map)
+ed6fb9552d5696fbc4baaa7366e7b49ba18014bb	2026-08-03 11:30:54 -0700	Ryan Newton	ci-hub/runners: add make stats-grade utilization, peak, and last-window CI stats
+137028397cf2ee96723fcb0b2d943e7cf325303f	2026-07-22 12:44:22 -0700	Ryan Newton	README: correct upstream framing; facebookexperimental is the release target
+d7f0f6918557745b8d489eb946911358c205b6df	2026-08-03 10:48:51 -0700	Ryan Newton	ai_docs: prove-it verifiable-repro walkthrough for today's coordinator claims
+75f164ef5a5ed533f17ee43b10c4e4bb61e87a88	2026-08-03 11:42:24 -0700	Ryan Newton	ai_docs: reverie split audit addendum — userns EPERM is a sysctl, not privilege (probe 30842156411 = 88/0 after apparmor flip)
+cff16eaec8bf5a71f068c50f55fd3305b63ee51b	2026-07-28 11:54:50 -0700	Ryan Newton	demos: package deterministic QEMU Linux L2 boot
+49f8c6ce11eb236546a3885250b6ed22423b801b	2026-07-31 08:23:21 -0700	Ryan Newton	Add ASPLOS'20 DRB reproducibility experiment + work-ahead results
+faf9e5bfc89ffdd8edd9e4c560c1a0cfa6cd7f2b	2026-07-28 11:51:01 -0700	Ryan Newton	demos: keep QEMU L2 inputs visible from tmp checkouts

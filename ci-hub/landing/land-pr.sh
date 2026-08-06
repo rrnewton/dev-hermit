@@ -40,6 +40,19 @@
 #                    with a durable timestamped log and returns immediately.
 set -uo pipefail
 
+# The eligibility predicate binds landing to the validate ledger, but it honours
+# two env overrides (CI_HUB_VALIDATE_STATUS_BIN substitutes the authority binary
+# outright; CI_HUB_VALIDATE_LEDGER substitutes the ledger file, and also
+# redirects the scan-finalize re-mint at step 4a). Those overrides exist so the
+# predicate can be bracketed inertly -- but inherited into a real landing they
+# make the authority "the ledger AND whatever environment the lander was started
+# in". Measured: with CI_HUB_VALIDATE_STATUS_BIN pointed at a two-line `exit 0`
+# script, EVERY unbacked/stale/tampered head returns ELIGIBILITY=VALIDATED.
+# Clear them once, before anything reads them and before the detached re-exec,
+# so the ledger on disk is the only authority a landing can consult. Nothing in
+# this repo legitimately sets either for the lander.
+unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER
+
 PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
@@ -349,6 +362,23 @@ MC=$(with-proxy gh pr view "$PR" -R "$R" --json mergeCommit -q .mergeCommit.oid)
 GITDIR="$ROOT/hermit"; git -C "$GITDIR" cat-file -e "$MC" 2>/dev/null || GITDIR="$WT"
 if git -C "$GITDIR" merge-base --is-ancestor "$MC" origin/main 2>/dev/null; then
   if "$ROOT/ci-hub/remediation/land_and_arm.py" complete --repo "$R" --pr "$PR"; then
+    # Wave-level pile reconciliation. The ancestry-verify above proves THIS PR
+    # landed; it says nothing about the task pile, which is closed on ancestry
+    # only and therefore grows monotonically until something re-checks it. A
+    # one-off check on 2026-08-06 found 163 of 302 already on main.
+    #
+    # Detached and single-flight: a serial wave lands many PRs, and this must
+    # neither delay a land nor spawn one audit per PR. Wrapped so a defect in
+    # the audit can never fail a landing that already succeeded.
+    if [ "${CI_HUB_POST_LAND_AUDIT:-1}" = 1 ]; then
+      (
+        exec 9>"$ROOT/ignored/.ancestry-audit.lock" 2>/dev/null || exit 0
+        flock -n 9 || exit 0   # an audit is already running; it will see this land too
+        setsid "$ROOT/ci-hub/bin/ancestry-audit" --herdr-agent "${AGENT:-hermit-lander}" \
+          --json "$ROOT/ignored/ancestry/post-land-audit.json" \
+          >"$ROOT/ignored/ancestry/post-land-audit.log" 2>&1
+      ) >/dev/null 2>&1 &
+    fi
     say "LANDED:$MC"; exit 0
   fi
   say "POST-LAND ARM PENDING: $MC is landed; durable recovery will retry"

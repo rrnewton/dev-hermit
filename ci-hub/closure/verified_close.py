@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -154,12 +155,39 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
         cwd=ROOT,
     )
     if fetched.returncode != 0:
-        return Evidence(
-            "unverifiable",
-            "artifact",
-            reference,
-            reason=(fetched.stderr or "cannot fetch parent main").strip(),
-        )
+        # An agent sandbox has no route to github, so this direct fetch always
+        # 403s in-jail and artifact closure was therefore impossible for every
+        # agent -- which is a large part of why the research tasks accumulated
+        # unclosed. Retry the SAME fetch through herdr-run, the sanctioned egress
+        # path, for which `git` is already allowlisted.
+        #
+        # This changes the TRANSPORT, never the guarantee: the ref is still
+        # freshly fetched before ancestry is tested. A `--no-fetch` escape would
+        # have been easier and wrong -- it would let a caller close against a
+        # stale origin/main, which is the exact class of defect this gateway
+        # exists to refuse.
+        agent = os.environ.get("CI_HUB_HERDR_AGENT", "")
+        herdr = ROOT / "agent-utils/bin/herdr-run"
+        relayed = None
+        if agent and herdr.is_file():
+            relayed = run(
+                (
+                    str(herdr),
+                    "--agent",
+                    agent,
+                    f"with-proxy git -C {ROOT} fetch origin "
+                    f"refs/heads/main:refs/remotes/origin/main",
+                ),
+                cwd=ROOT,
+            )
+        if relayed is None or relayed.returncode != 0:
+            detail = (fetched.stderr or "cannot fetch parent main").strip()
+            if relayed is not None:
+                detail += f" | herdr-run relay also failed: {(relayed.stderr or '').strip()[:160]}"
+            elif not agent:
+                detail += (" | set CI_HUB_HERDR_AGENT=<agent> to relay the fetch through"
+                           " herdr-run when running inside an agent sandbox")
+            return Evidence("unverifiable", "artifact", reference, reason=detail)
     present = run(
         ("git", "-C", str(ROOT), "cat-file", "-e", f"origin/main:{relative}"),
         cwd=ROOT,

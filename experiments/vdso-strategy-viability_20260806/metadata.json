@@ -1,0 +1,16 @@
+{
+  "question": "What was hermit's original vDSO strategy, is repair-and-route viable, and is it viable across backends?",
+  "answer": "Original intent CONFIRMED: disable the vDSO and force guests through the real syscall (reverie-ptrace/src/vdso.rs, added 15d2f61 2021-12-29, still live). Repair-and-route is NOT viable uniformly: ptrace cannot observe a userspace vDSO call and e9patch cannot reach a kernel-supplied image. The cross-backend constraint is ALREADY VIOLATED: three backends implement three different strategies with three different symbol sets.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014",
+  "reverie_head": "0978685",
+  "hermit_binary": "worktrees/rand/hermit/target/debug/hermit --features third-party-backends",
+  "measured_backends": ["native", "ptrace", "dbi", "e9patch"],
+  "not_measured": ["sabre (plugin coordinator decode panic before guest ran)", "liteinst (libreverie_liteinst.so not staged)", "kvm (livelocks at guest startup)"],
+  "key_commits": {
+    "ptrace_vdso_added": "15d2f61 2021-12-29 Initial commit",
+    "sabre_vdso_restored": "90970ac 2026-07-24 Restore and stabilize experimental SaBRe backend (#1)",
+    "kvm_write_vdso": "0f17ef2 2026-07-29 reverie-kvm: fix counter2 syscall-parity regression vs ptrace"
+  },
+  "evidence": "guest-visible vDSO bytes: 5 of 7 exported __vdso_* symbols replaced with 'mov $sysno,%eax; syscall; ret'; __vdso_getrandom and __vdso_sgx_enter_enclave left with real prologues"
+}

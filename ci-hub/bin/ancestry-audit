@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Standing post-landing ancestry audit. Run after every landing wave:
+#   ./ci-hub/bin/ancestry-audit --herdr-agent <your-agent> --agents 19
+# Exits 1 when tasks are closable (drift found), 0 when the pile is accurate,
+# 2 on a refusal (stale base, truncated PR window).
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+exec python3 "$ROOT/ci-hub/closure/ancestry_audit.py" "$@"

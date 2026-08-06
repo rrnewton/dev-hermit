@@ -1,0 +1,20 @@
+#!/bin/sh
+# Publish local-only parent commits immediately after any parent commit.
+#
+# An unpushed commit emits no error, no failing check and no wakeup. On
+# 2026-08-06 a local-main rewrite orphaned 45 of them, recovered only by an
+# accidental fsck sweep. The tick-hub timer catches this within 15 minutes;
+# this hook closes the window to seconds.
+#
+# DETECT AND PUBLISH ONLY: never merges, resets, rewrites, gcs, prunes,
+# expires a reflog, repacks or cleans. Its only mutation is creating new
+# remote refs under rescue/, which cannot destroy anything.
+#
+# Backgrounded and unconditionally exit 0, so it can never fail a commit or
+# slow one down. Opt out with HERMIT_SKIP_UNPUSHED_RESCUE=1.
+[ -n "$HERMIT_SKIP_UNPUSHED_RESCUE" ] && exit 0
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$root/ci-hub/health/unpushed_parent_commits.py" ] || exit 0
+( "$root/ci-hub/health/unpushed_parent_commits.py" --scope all --rescue \
+    >> "$root/ignored/unpushed-parent-rescue.log" 2>&1 & ) >/dev/null 2>&1
+exit 0

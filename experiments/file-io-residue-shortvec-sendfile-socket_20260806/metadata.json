@@ -1,0 +1,23 @@
+{
+  "task": "file-io-determinism-residue",
+  "agent": "hermit-det3",
+  "date": "2026-08-06",
+  "question": "Do readv/writev SHORT-VECTOR behaviour and sendfile with a SOCKET destination -- the two cases the parent file-io sweep explicitly did not exercise -- diverge under hermit?",
+  "hermit_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "hermit_binary_sha256": "5f4aa9ab8e6b1cf3bf98f73cca35001211e28c2829215e97d9c2c927e5ae9047",
+  "hermit_binary_provenance": "release build copied out of worktrees/det1/hermit (clean tree at f89c69766) into a private path so it could not be rebuilt mid-run; self-reports 'hermit 0.2.0 (2026-08-06, gf89c69766371)'",
+  "reverie_pin": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "host": "devbig014, x86_64, 316 cores, shared with ~15 concurrent agents",
+  "backends_available": ["ptrace", "e9patch"],
+  "backends_unavailable": {
+    "dbi": "DBI support was not included in this build",
+    "sabre": "SaBRe support was not included in this build",
+    "liteinst": "libreverie_liteinst.so preload runtime unavailable",
+    "kvm": "hangs at guest startup on this host (killed at 120s)"
+  },
+  "flags": "--strict [--verify | --detlog-stack --detlog-heap]",
+  "env": "env -i with a fixed variable set; envp is written into the guest initial stack, so an unpinned environment changes --detlog-stack and manufactures false divergence",
+  "runs_per_cell": {"verify": 3, "detlog": 5, "native_anti_vacuity": 10},
+  "guest_source_sha256": "41c46732662448dec68462d8b52f00122139a284027e97307b5b16628c3261bf",
+  "comparator": "normparity.py, copied from the parent detlog-parity sweep (sha256 375d98117f71f260d2ba33e5f369261d142f1e096a90a92faa722098b557365f)"
+}

@@ -17,6 +17,15 @@
 //! sha2 = "0.10"
 //! thiserror = "2"
 //! ```
+//!
+//! `libc` is used by `lib/landing_lock.rs` (pidfd / kill process-domain
+//! cleanup). A `#[path]` module cannot declare its own dependency, so anything
+//! those modules use must be declared HERE. Combined with `--force` above,
+//! omitting one does not degrade gracefully and does not fail only the landing
+//! subcommand: Cargo fails to build the single binary, so EVERY ci-hub
+//! subcommand stops working -- `pr-status`, `newest-green`, `validate-status`,
+//! `validate-run`, `close-task`. That is a fleet-wide landing outage from one
+//! missing line, so add the dependency in the same commit as the first use.
 
 #![recursion_limit = "256"]
 
@@ -24,6 +33,8 @@
 mod history_queries;
 #[path = "lib/landing_lock.rs"]
 mod landing_lock;
+#[path = "lib/measured.rs"]
+mod measured;
 #[path = "lib/qualifying_receipt.rs"]
 mod qualifying_receipt;
 #[path = "lib/records.rs"]
@@ -85,6 +96,7 @@ HISTORY & FORENSICS
   ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
   history                 Query the retained GitHub Actions timeline
+  green-time              Estimate carried-forward green/red time and densification gaps
   refresh-history         Ingest fresh GitHub and local history into the local store
   validate-worktrees      Show registered worktree validation runs
 
@@ -214,6 +226,9 @@ enum HubCommand {
     RefreshHistory(RefreshHistoryArgs),
     /// Query the local commit/CI history store.
     History(PassthroughArgs),
+    /// Green-time over a linear branch history: sparse signal carried forward,
+    /// plus the densification plan that shrinks the estimate's error.
+    GreenTime(PassthroughArgs),
     /// Query legacy and machine-wide validate-run records.
     LocalHistory(LocalHistoryArgs),
     /// Show validate runs currently registered by each worktree.
@@ -1163,6 +1178,7 @@ impl HubCommand {
             | Self::RecordObligationWake(_)
             | Self::ValidateWorktrees(_)
             | Self::Quickstart
+            | Self::GreenTime(_)
             | Self::Ledger(_)
             | Self::CiMode(_)
             | Self::Batch(_)
@@ -1626,6 +1642,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
                 forwarded.insert(0, "--write-global".into());
                 run_python(root, "ci-hub/validate/aggregate.py", forwarded)
             }
+        }
+        HubCommand::GreenTime(args) => {
+            run_python_path(&root.join("ci-hub/greentime/timeline.py"), args.args)
         }
         HubCommand::History(args) => {
             let query = root.join("ci-hub/history/query.py");
