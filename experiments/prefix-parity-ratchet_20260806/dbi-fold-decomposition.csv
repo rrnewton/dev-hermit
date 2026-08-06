@@ -1,0 +1,5 @@
+fold_applied,depth_Y,Z,records_differing,first_divergence
+none (strict = the ratchet number),3,118,114,COMMIT turn 0 dettid=raw host pid vs DetPid(3)
++ all pid forms (dettid/DetPid/dtid),7,118,103,brk(NULL)=Ok(93824992260096) vs Ok(140737282834432)
++ syscall ordinal #N,7,118,101,brk address (ordinal was not the blocker)
++ guest addresses,15,118,16,COMMIT turn 2 Path(libunwind ...)

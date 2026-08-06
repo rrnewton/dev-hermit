@@ -1,0 +1,22 @@
+{
+  "experiment": "prefix-parity-ratchet_20260806",
+  "question": "Owner's ratchet metric #315/#316: how many detcore INFO-log records does each backend stay bitwise-identical to the ptrace golden, per rung?",
+  "answer": "Every backend depth is CONSTANT across four orders of magnitude of Z (145 -> 400940): dbi 3, sabre 1, liteinst 8. The ratchet is measuring a process-prologue divergence, not workload parity, so heavier rungs cannot move it. e9patch instruments nothing (mapped_sites=0) and would have falsely scored a perfect Z/Z.",
+  "date_utc": "2026-08-06",
+  "definition": "record = line containing DETLOG or COMMIT turn; Z = golden record count; Y = longest common record prefix; only the real wall-clock prefix is stripped; full INFO log, not stdout. Unchanged from prefix-parity-depth-remeasured_20260806.md.",
+  "hermit_binary": "ignored/det4-parity/hermit/target/release/hermit",
+  "hermit_version": "hermit 0.2.0 (2026-08-06, g4c70658e7858)",
+  "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "reverie_pin": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "binary_provenance": "baked-in version string carries a -dirty marker; this binary reports clean",
+  "precondition": "golden captured twice per rung and required bit-identical; all 8 rungs passed",
+  "host": "devbig014",
+  "relaxations": "none for the ratchet number; the dbi fold table is explicitly labelled DIAGNOSTIC",
+  "not_established": [
+    "backend arms are n=1 per rung (the golden is n=2); depth constancy across 8 rungs is the reason replication was not prioritized",
+    "the layered fold decomposition was done on /bin/true only",
+    "depth counts records, not COMMIT-turn lines specifically; a commits-only definition would need re-baselining per #316",
+    "kvm confirmed TOOL-ERROR once, then excluded from the per-rung loop rather than re-timed 8 times",
+    "e9patch not investigated beyond mapped_sites=0; whether it can patch these guests at all is untested"
+  ]
+}

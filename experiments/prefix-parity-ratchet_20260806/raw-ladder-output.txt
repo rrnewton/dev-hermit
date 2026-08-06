@@ -1,0 +1,96 @@
+true             golden self-check PASS  Z=145
+    ptrace    145/145   SANITY (golden double-run)
+    dbi       3/145   (backend emitted 145 records) [under DynamoRIO]  [diagnostic: 5/145 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 567103 using resources {ParentContinue { parent: DetPid(567103), child: DetPid(567103) }: W}, on previously committed 1_767_225
+    sabre     1/145   (backend emitted 4 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/145   (backend emitted 937 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb2b0) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb220) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 145/145, NOT a parity result
+echo             golden self-check PASS  Z=336
+    ptrace    336/336   SANITY (golden double-run)
+    dbi       3/336   (backend emitted 336 records) [under DynamoRIO]  [diagnostic: 5/336 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 568504 using resources {ParentContinue { parent: DetPid(568504), child: DetPid(568504) }: W}, on previously committed 1_767_225
+    sabre     1/336   (backend emitted 33 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/336   (backend emitted 1122 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb2b0) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb210) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 336/336, NOT a parity result
+cat-hostname     golden self-check PASS  Z=353
+    ptrace    353/353   SANITY (golden double-run)
+    dbi       3/353   (backend emitted 353 records) [under DynamoRIO]  [diagnostic: 5/353 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 572418 using resources {ParentContinue { parent: DetPid(572418), child: DetPid(572418) }: W}, on previously committed 1_767_225
+    sabre     1/353   (backend emitted 34 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/353   (backend emitted 1139 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb2a0) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb210) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 353/353, NOT a parity result
+wc-hostname      golden self-check PASS  Z=343
+    ptrace    343/343   SANITY (golden double-run)
+    dbi       3/343   (backend emitted 343 records) [under DynamoRIO]  [diagnostic: 5/343 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 573543 using resources {ParentContinue { parent: DetPid(573543), child: DetPid(573543) }: W}, on previously committed 1_767_225
+    sabre     1/343   (backend emitted 34 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/343   (backend emitted 1129 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb290) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb200) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 343/343, NOT a parity result
+fork-exec-pipe   golden self-check PASS  Z=1297
+    ptrace    1297/1297   SANITY (golden double-run)
+    dbi       3/1297   (backend emitted 1578 records) [under DynamoRIO]  [diagnostic: 5/1297 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 574571 using resources {ParentContinue { parent: DetPid(574571), child: DetPid(574571) }: W}, on previously committed 1_767_225
+    sabre     1/1297   (backend emitted 116 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/1297   (backend emitted 1386 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb290) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb1f0) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 1297/1297, NOT a parity result
+python-startup   golden self-check PASS  Z=2833
+    ptrace    2833/2833   SANITY (golden double-run)
+    dbi       3/2833   (backend emitted 2799 records) [under DynamoRIO]  [diagnostic: 5/2833 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 578775 using resources {ParentContinue { parent: DetPid(578775), child: DetPid(578775) }: W}, on previously committed 1_767_225
+    sabre     1/2833   (backend emitted 136 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/2833   (backend emitted 3831 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb290) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb1f0) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 2833/2833, NOT a parity result
+dd-10k           golden self-check PASS  Z=40931
+    ptrace    40931/40931   SANITY (golden double-run)
+    dbi       3/40931   (backend emitted 41438 records) [under DynamoRIO]  [diagnostic: 5/40931 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 581764 using resources {ParentContinue { parent: DetPid(581764), child: DetPid(581764) }: W}, on previously committed 1_767_225
+    sabre     1/40931   (backend emitted 83 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/40931   (backend emitted 1382 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb260) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb1d0) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 40931/40931, NOT a parity result
+dd-100k          golden self-check PASS  Z=400940
+    ptrace    400940/400940   SANITY (golden double-run)
+    dbi       3/400940   (backend emitted 403338 records) [under DynamoRIO]  [diagnostic: 5/400940 if the leaked host pid were virtualized]
+        golden :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+        dbi    :  COMMIT turn 0, dettid 616077 using resources {ParentContinue { parent: DetPid(616077), child: DetPid(616077) }: W}, on previously committed 1_767_225
+    sabre     1/400940   (backend emitted 91 records) [hermit::sabre]
+        golden : INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+        sabre  :  COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_00
+    liteinst  8/400940   (backend emitted 1382 records) [activation verified (traps=1, hooks=31)]
+        golden : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb260) = ?
+        liteinst : INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffb1d0) = ?
+    e9patch   NOT-ENGAGED [mapped_sites=0] -- would have scored 400940/400940, NOT a parity result
