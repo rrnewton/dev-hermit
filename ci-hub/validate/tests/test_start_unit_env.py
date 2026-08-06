@@ -71,14 +71,40 @@ class StartUnitEnvTest(unittest.TestCase):
         self.lu = self.root / "ignored/lu-parity/usr/lib64"
         self.base_env = {"HOME": "/home/agent", "PATH": "/usr/bin"}
 
-    def plant_libunwind(self) -> None:
+    def plant_libunwind(self, *, shared_ptrace: bool = True) -> None:
+        """Plant the in-repo libunwind tree.
+
+        `shared_ptrace` controls whether it carries `libunwind-ptrace.so.0`.
+        The real `ignored/lu-parity` does carry it, which is why the link picks
+        the SHARED ptrace library and the loader then needs a directory that has
+        it -- the coupling the runtime probe exists to serve.
+        """
         (self.lu / "pkgconfig").mkdir(parents=True, exist_ok=True)
         (self.lu / "pkgconfig/libunwind-ptrace.pc").write_text("Name: libunwind-ptrace\n")
+        (self.lu / "libunwind.so.8").write_text("")
+        if shared_ptrace:
+            (self.lu / "libunwind-ptrace.so.0").write_text("")
+
+    def set_runtime_candidates(self, *candidates: Path | str) -> None:
+        """Pin RUNTIME_CANDIDATES for the test.
+
+        Without this the suite reads REAL absolute host paths (an fbsource
+        checkout), so its result depends on the machine it runs on rather than on
+        the code under test. Two tests here previously asserted the in-repo path
+        while the probe returned the host's fbsource path, and they failed on any
+        box that had fbsource -- a host-dependence bug in the test, not the code.
+        """
+        from unittest import mock
+
+        patcher = mock.patch.object(su, "RUNTIME_CANDIDATES", tuple(str(c) for c in candidates))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     # -- POSITIVE: the qualifying case fires, and fires COMPLETELY ------------
 
     def test_all_three_libunwind_vars_are_propagated(self) -> None:
         self.plant_libunwind()
+        self.set_runtime_candidates()  # no external candidate: the repo tree serves
         env = setenvs(build(self.root, dict(self.base_env)))
         # LIBRARY_PATH is the one that was missing: build.rs would pass and the
         # LINK would then fail. Assert all three, not just the two obvious ones.
@@ -90,6 +116,7 @@ class StartUnitEnvTest(unittest.TestCase):
 
     def test_existing_caller_values_are_preserved_not_clobbered(self) -> None:
         self.plant_libunwind()
+        self.set_runtime_candidates()
         env = setenvs(
             build(
                 self.root,
@@ -113,6 +140,57 @@ class StartUnitEnvTest(unittest.TestCase):
         env = setenvs(build(self.root, dict(self.base_env)))
         for var in ("PKG_CONFIG_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH"):
             self.assertNotIn(var, env, f"{var} must not be invented when libunwind is absent")
+
+    # -- the RUNTIME probe must pick a dir that can actually satisfy the loader -
+    #
+    # LIBRARY_PATH pointing at a tree with a SHARED libunwind-ptrace.so is what
+    # makes the link depend on libunwind-ptrace.so.0 (measured: with neither var
+    # the link resolves to the system STATIC .a and there is no runtime dep at
+    # all). So the runtime directory must be chosen on that exact object. A tree
+    # with libunwind.so.8 but no ptrace variant CANNOT satisfy it.
+
+    def make_tree(self, name: str, *files: str) -> Path:
+        d = self.root / "cand" / name
+        d.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            (d / f).write_text("")
+        return d
+
+    def test_runtime_probe_prefers_a_candidate_carrying_the_ptrace_object(self) -> None:
+        # Unchanged behaviour: an external candidate that HAS the ptrace object
+        # still wins over the repo tree, so this host's current selection stands.
+        good = self.make_tree("good", "libunwind-ptrace.so.0", "libunwind.so.8")
+        self.plant_libunwind()
+        self.set_runtime_candidates(good)
+        self.assertEqual(su._libunwind_runtime_dir(self.root, self.lu), good)
+
+    def test_candidate_without_ptrace_object_never_beats_the_repo_tree(self) -> None:
+        # THE REGRESSION THIS GUARDS. ~/.local/hermit-deps/lu/usr/lib64 ships only
+        # a static libunwind-ptrace.a. It used to win on a libunwind.so.8
+        # tiebreak, over a repo tree that DOES have libunwind-ptrace.so.0,
+        # producing exactly the `libunwind-ptrace.so.0: cannot open shared object
+        # file` failure the probe exists to prevent.
+        static_only = self.make_tree("static_only", "libunwind.so.8", "libunwind-ptrace.a")
+        self.plant_libunwind(shared_ptrace=True)
+        self.set_runtime_candidates(static_only)
+        self.assertEqual(
+            su._libunwind_runtime_dir(self.root, self.lu),
+            self.lu,
+            "a candidate lacking libunwind-ptrace.so.0 must not be preferred over one that has it",
+        )
+
+    def test_repo_tree_is_used_when_no_candidate_exists_at_all(self) -> None:
+        self.plant_libunwind(shared_ptrace=True)
+        self.set_runtime_candidates("/nonexistent/one", "/nonexistent/two")
+        self.assertEqual(su._libunwind_runtime_dir(self.root, self.lu), self.lu)
+
+    def test_falls_back_to_base_library_only_when_no_ptrace_object_anywhere(self) -> None:
+        # If nothing has the ptrace object the link will have used the static
+        # variant, so a tree with the base library is still the best guess.
+        base_only = self.make_tree("base_only", "libunwind.so.8")
+        self.plant_libunwind(shared_ptrace=False)
+        self.set_runtime_candidates(base_only)
+        self.assertEqual(su._libunwind_runtime_dir(self.root, self.lu), base_only)
 
     # -- the pre-existing contract must survive ------------------------------
 
