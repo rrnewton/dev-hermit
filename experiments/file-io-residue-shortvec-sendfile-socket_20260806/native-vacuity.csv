@@ -1,0 +1,15 @@
+mode,n_native,distinct_stdout,all_rc0
+readv-pipe-short,10,7,yes
+readv-nonblock-short,10,9,yes
+readv-eof-short,10,1,yes
+iov-edge,10,1,yes
+writev-nonblock-short,10,1,yes
+writev-drain-short,10,6,yes
+pipe-write-short,10,1,yes
+pipe-writev-block,10,1,yes
+sock-write-short,10,1,yes
+sock-writev-block,10,1,yes
+sendfile-sock-nodrain,10,1,yes
+sendfile-sock-unix,10,10,yes
+sendfile-sock-tcp,10,1,yes
+sendfile-sock-fallback,10,1,yes
