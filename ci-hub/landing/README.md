@@ -390,11 +390,11 @@ dispatches, and a rule that gets retyped is a rule that decays.
 
 ```bash
 # the three checks
-python3 ci-hub/landing/preflight.py --sha <handed-sha> --pr <n>          # 1: SHA still head?
-python3 ci-hub/landing/preflight.py --log <validate.log>                 # 2: nonzero executed tests?
-python3 ci-hub/landing/preflight.py --landed-pr <n> --checkout hermit    # 3: landed by ancestry?
+python3 ci-hub/landing/preflight.py --sha '<handed-sha>' --pr '<n>'          # 1: SHA still head?
+python3 ci-hub/landing/preflight.py --log '<validate.log>'                 # 2: nonzero executed tests?
+python3 ci-hub/landing/preflight.py --landed-pr '<n>' --checkout hermit    # 3: landed by ancestry?
 # the two standing traps
-python3 ci-hub/landing/preflight.py --diff-of worktrees/<slot>/hermit    # 4: reverie patch override?
+python3 ci-hub/landing/preflight.py --diff-of worktrees/'<slot>'/hermit    # 4: reverie patch override?
 #   5: byte-identical branch -- check_no_byte_identical_branch(), library use
 ```
 
