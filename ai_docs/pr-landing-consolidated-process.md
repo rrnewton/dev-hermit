@@ -192,6 +192,12 @@ exact population.
 6. Prove each constituent independently. A staging merge does not prove a non-ancestral PR head was
    included, and it does not authorize closing that PR.
 
+The typed branch-construction, shared-evidence, and constituent-verification contract is specified in
+https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/staging-batch-o1-drain-design-20260805.md.
+It requires a batch manifest and an atomic topology-preserving landing (or an equivalent typed replay
+verifier). The current single-PR rebase-only executor does not supply that constituent proof; do not
+execute a staging landing until the batch executor and closure authority are explicitly approved.
+
 Known common-cause infrastructure failures gate both modes. Fix or explicitly hold the common cause
 before spending repeated validation runs; do not classify a zero-test/no-result row as a product red.
 
