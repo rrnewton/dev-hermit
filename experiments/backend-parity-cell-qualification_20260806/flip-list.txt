@@ -1,0 +1,82 @@
+# [test.modes.verify]: move these backends from backends_disabled -> backends_enabled.
+# Every line is backed by a row in cell-qualification.csv with tier=L2 and an
+# engagement witness (dbi rewritten=N>0 / sabre guest_rpc_observed=true).
+# NOT a bulk ci=true: flipping the mode's ci flag is a separate ratchet decision
+# and requires regenerating ci/expected-e2e-plan.json.
+backend-parity-c/aio-refusal: dbi, sabre
+backend-parity-c/append-pwrite: dbi, sabre
+backend-parity-c/bind-getsockname: dbi, sabre
+backend-parity-c/cachestat-refusal: dbi, sabre
+backend-parity-c/child-subreaper-refusal: dbi, sabre
+backend-parity-c/close-range-fds: dbi, sabre
+backend-parity-c/copy-file-range-refusal: dbi, sabre
+backend-parity-c/cpu-virtualization: sabre
+backend-parity-c/dup-shared-offset: sabre
+backend-parity-c/epoll-pwait2: dbi, sabre
+backend-parity-c/epoll-readiness: dbi, sabre
+backend-parity-c/eventfd-semantics: dbi, sabre
+backend-parity-c/faccessat2-flags: dbi, sabre
+backend-parity-c/fadvise-hints: dbi, sabre
+backend-parity-c/fallocate-extents: dbi, sabre
+backend-parity-c/fchmod-bits: dbi, sabre
+backend-parity-c/fchmodat2-flags: dbi, sabre
+backend-parity-c/fd-duplication: sabre
+backend-parity-c/file-backed-mmap: dbi, sabre
+backend-parity-c/flock-lifecycle: dbi, sabre
+backend-parity-c/fsync-durability: dbi, sabre
+backend-parity-c/ftruncate-sparse: dbi, sabre
+backend-parity-c/getcpu-identity: sabre
+backend-parity-c/getpriority-identity: sabre
+backend-parity-c/getrusage-self-accounting: dbi, sabre
+backend-parity-c/inotify-watch: dbi, sabre
+backend-parity-c/ioctl-fionread: dbi, sabre
+backend-parity-c/kcmp-refusal: dbi, sabre
+backend-parity-c/linkat-flags: dbi, sabre
+backend-parity-c/lseek-positioning: sabre
+backend-parity-c/mce-kill-refusal: dbi, sabre
+backend-parity-c/memfd-create: dbi, sabre
+backend-parity-c/mempolicy-default: dbi, sabre
+backend-parity-c/mincore-residency: dbi, sabre
+backend-parity-c/mkdir-rmdir: dbi, sabre
+backend-parity-c/mknod-special: dbi, sabre
+backend-parity-c/msync-writeback: dbi, sabre
+backend-parity-c/name-to-handle-refusal: dbi, sabre
+backend-parity-c/no-new-privs-refusal: dbi, sabre
+backend-parity-c/numa-node-identity: sabre
+backend-parity-c/openat-flags: dbi, sabre
+backend-parity-c/openat2-refusal: dbi, sabre
+backend-parity-c/path-file-ops: dbi, sabre
+backend-parity-c/pid-probe: dbi
+backend-parity-c/pidfd-open-self: sabre
+backend-parity-c/pipe-ipc: dbi
+backend-parity-c/pipe2-flags: dbi, sabre
+backend-parity-c/poll-readiness: dbi, sabre
+backend-parity-c/prctl-identity: sabre
+backend-parity-c/prctl-pdeathsig: dbi, sabre
+backend-parity-c/preadv2-flags: dbi, sabre
+backend-parity-c/pthread-lifecycle: dbi
+backend-parity-c/readdir-entries: dbi, sabre
+backend-parity-c/rename-ops: dbi, sabre
+backend-parity-c/renameat2-flags: dbi, sabre
+backend-parity-c/rlimit-identity: sabre
+backend-parity-c/robust-list: dbi, sabre
+backend-parity-c/sched-getaffinity-identity: sabre
+backend-parity-c/seccomp-refusal: dbi, sabre
+backend-parity-c/sendfile-copy: dbi, sabre
+backend-parity-c/set-tid-address: dbi, sabre
+backend-parity-c/shutdown-socketpair: dbi, sabre
+backend-parity-c/signalfd-create: dbi, sabre
+backend-parity-c/socket-options: dbi, sabre
+backend-parity-c/socketpair-flags: dbi, sabre
+backend-parity-c/sockname-unnamed: dbi, sabre
+backend-parity-c/statfs-free-determinism: dbi, sabre
+backend-parity-c/statx-metadata: dbi, sabre
+backend-parity-c/symlink-ops: dbi, sabre
+backend-parity-c/sync-file-range: dbi, sabre
+backend-parity-c/sysv-ipc-refusal: dbi, sabre
+backend-parity-c/thp-disable: dbi, sabre
+backend-parity-c/umask-mode: dbi, sabre
+backend-parity-c/uname-identity: sabre
+backend-parity-c/utimensat-determinism: dbi, sabre
+backend-parity-c/vectored-file-io: dbi, sabre
+backend-parity-c/vectored-io: dbi, sabre

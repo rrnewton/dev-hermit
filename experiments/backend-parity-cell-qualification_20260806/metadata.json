@@ -1,0 +1,40 @@
+{
+  "experiment": "backend-parity-cell-qualification_20260806",
+  "task": "close-gap-cells-round2",
+  "question": "Which backend-parity-c cells disabled for LACK OF EVIDENCE actually pass against the ptrace golden, with proof the backend was engaged?",
+  "date_utc": "2026-08-06",
+  "repo_shas": {
+    "dev_hermit_parent_base": "ea2aab1",
+    "hermit_binary_build": "gfad50bc75543"
+  },
+  "binary": {
+    "path": "worktrees/audit/hermit/target/release/hermit",
+    "version": "hermit 0.2.0 (2026-08-06, gfad50bc75543)",
+    "sha256": "aa5b07052884752e2b21ce8dab1413340ef47f578a620a139515c558fe332027",
+    "digest_verified_unchanged_after_sweep": true,
+    "note": "MUST run in place: the DBI runtime is discovered as a sibling of the executable"
+  },
+  "command": "experiments/backend-parity-cell-qualification_20260806/sweep_cells.py",
+  "cell_command_shape": "hermit run [--backend B] --strict [--verify --verify-allow both] --base-env=minimal --max-timeslice=disabled --tmp=/tmp -- <fixture>",
+  "manifest": "hermit/tests/e2e/manifests/backend-parity-c.toml",
+  "surface": {"no_evidence_cells": 141, "fixtures": 78, "dbi": 66, "sabre": 75},
+  "results": {"L2_PASS": 139, "L0_DIVERGES": 2, "dbi_L2": 65, "sabre_L2": 74},
+  "engagement_witness": {
+    "dbi": "reverie-dbi rewritten=N>0 (observed range 37-71 across 65 passes)",
+    "sabre": "hermit::sabre::fallback guest_rpc_observed=true, ptrace_fallback_sites=0 on all 74"
+  },
+  "backends_not_measured": {
+    "kvm": "livelocks on this host and ignores SIGTERM (needs SIGKILL); most remaining reds are documented ENOSYS gaps",
+    "liteinst": "does not complete its preload handshake on this box"
+  },
+  "findings": [
+    "pipe-ipc/sabre: real bug - ERESTARTSYS (512) leaks to the guest on pipe read, deterministic",
+    "cpuid-probe/dbi: NOT a backend bug - --no-virtualize-cpuid goes to ptrace only; run_matrix exempts cpuid_policy but not cpuid_probe",
+    "manifest lost the legacy per-fixture build flags: build.cflags present for 3 of 78 tests; 94 of 141 cells needed a -D_GNU_SOURCE/-pthread fallback"
+  ],
+  "host": "devbig014",
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "toolchain": {"cc": "GCC 11.5.0", "glibc": "2.34"},
+  "not_done": "no manifest edit, no ci=true, no ratchet regeneration - this lane has no allocated slot (coordinator-only)",
+  "outputs": ["results.csv", "cell-qualification.csv", "flip-list.txt", "README.md"]
+}
