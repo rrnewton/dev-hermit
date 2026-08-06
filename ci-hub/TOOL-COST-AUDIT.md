@@ -10,7 +10,7 @@ small generated artifacts are not separate operator entrypoints.
 | --- | --- | --- | --- |
 | Substantive `ci-hub/ci-hub` commands | explicit unknown | yes | Typed dispatch arms cost reporting only after argument parsing; help/version/usage and instant local status reads are intentionally silent. |
 | `ci-hub/bin/main-health` | explicit unknown | yes | Repository count is stated, but no per-repository cost is invented. |
-| `ci-hub/bin/pr-status` | explicit unknown | yes | Repository count is stated, but no planner/API cost is invented. |
+| `ci-hub/bin/pr-status` | explicit unknown | yes | Repository count is stated, but no runtime is invented; the default engine makes one rollup query plus at most 32 cached exact-job dereferences per repo, each bounded to 5s and 256 KiB. |
 | `ci-hub/bin/health-tick` | explicit unknown | yes | Due gates vary and no tick history exists. |
 | Any command launched through `ci-hub/bin/tool-cost` | derived or explicit unknown | yes | Shared `wait4` child-tree measurement and exit preservation; unknown persists as JSON `null`. |
 

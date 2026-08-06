@@ -71,6 +71,17 @@ non-qualifying and runs outside this receipt-producing path.
 
 Networked commands use `with-proxy` internally.
 
+`fresh` selects one latest check attempt per context and uses that same selected
+set for both the rollup state and failing-check names. A selected failed GitHub
+Actions check remains red unless a bounded lookup of its exact job binds the
+repository, run ID, job ID, PR head SHA, check name/URL, timestamps, completed
+failure, and the complete step list. Only a job whose sole step is failed
+`Set up job` becomes typed `NO_RESULT`; it is reported as pending and never as
+green. Missing/malformed API data, identity mismatches, later workflow steps,
+timeouts, and lookup-budget exhaustion preserve the red verdict. JSON output
+exposes `setup_only_no_result_checks`, `setup_only_evidence`, and any
+`actions_job_verification_errors` on the affected PR.
+
 The launch looks synchronous to its caller, but the run is owned by an
 independent `validate-*` user service. Before that service starts, ci-hub creates
 an observer-only tab in the `validate-hermit` Herdr workspace, titled with the

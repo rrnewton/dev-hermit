@@ -21,6 +21,21 @@ For a merge candidate, also run `gh pr checks`, inspect the complete diff, and
 read review comments. "Hosted green" is not "CI green" when the self-hosted
 job is failed or queued.
 
+## Live `ci-hub pr-status` classification
+
+The live tool (unlike this historical snapshot) selects one latest attempt per
+check context. It dereferences only selected failed Actions jobs, with a fixed
+request/deadline/response/step budget. A failure becomes typed `NO_RESULT` only
+when the exact job is bound to the repository, run, job, current PR head, check
+name and URL, timestamps, and completed-failure conclusion, and its entire step
+list contains exactly one failed `Set up job`. This is an infrastructure run
+that produced no product result, so it is pending—not red and never green.
+
+Every incomplete, malformed, stale, cancelled, mismatched, paginated, timed-out,
+or budget-exhausted lookup fails closed: the original red/undetermined state is
+retained. Human and JSON reports expose the accepted setup-only checks and
+failed-verification reasons rather than silently dropping them.
+
 ## rrnewton/hermit
 
 | PR | Draft | Hosted CI | Self-hosted CI | Disposition at snapshot |

@@ -92,6 +92,29 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("red=1", output)
         self.assertIn("pending=1", output)
 
+    def test_pull_request_gate_exposes_setup_only_no_result(self) -> None:
+        status = SimpleNamespace(
+            open=1,
+            red=0,
+            green=0,
+            pending=1,
+            real_reds=0,
+            setup_only_no_result_checks=1,
+            outage_suspected=False,
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=status,
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("setup_only_no_result_checks=1", output)
+        self.assertIn("setup_only_no_result=1", output)
+
     def test_pull_request_one_repo_unavailable_is_degraded_not_lost(self) -> None:
         # A slow/blocked repo must not discard the other repo's real data: the
         # answer is DEGRADED (partial), distinct from "PRs are red".

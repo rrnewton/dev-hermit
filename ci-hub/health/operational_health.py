@@ -40,10 +40,11 @@ BROKEN_AGENT_STATES = frozenset(
 ACTIVE_AGENT_STATES = frozenset(("active", "busy", "in_progress", "running", "working"))
 DEFAULT_STUCK_AFTER_SECS = 60 * 60
 DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
-# Per-repo wall-clock budget for the auto-invoked PR-health gate. tick-hub's
-# SubprocessGateRunner hard-kills any gate at 30s, so the gate MUST resolve well
-# under that: two repos queried serially at 12s each is ~24s worst case. Staying
-# under the guillotine is what lets pr_status emit its own structured
+# Per-repo wall-clock budget for the auto-invoked PR-health gate, including its
+# bounded exact-job dereferences. tick-hub's SubprocessGateRunner hard-kills any
+# gate at 30s, so the gate MUST resolve well under that: two repos queried
+# serially at 12s each is ~24s worst case. Staying under the guillotine lets
+# pr_status emit its own structured
 # degraded/unavailable result (distinguishing "GitHub was slow" from "ci-hub is
 # broken") instead of the gate timing out into a bare, undifferentiated failure.
 DEFAULT_PR_GATE_TIMEOUT_SECS = float(
@@ -207,6 +208,7 @@ def pull_request_gate() -> int:
                 "pending": 0,
                 "green": 0,
                 "real_reds": 0,
+                "setup_only_no_result_checks": 0,
                 "outage": "no",
                 "degraded": "yes",
                 "summary": f"all repos unavailable ({reasons})",
@@ -215,8 +217,15 @@ def pull_request_gate() -> int:
         return 1
 
     counts = {
-        state: sum(getattr(status, state) for status in statuses)
-        for state in ("open", "green", "red", "pending", "real_reds")
+        state: sum(getattr(status, state, 0) for status in statuses)
+        for state in (
+            "open",
+            "green",
+            "red",
+            "pending",
+            "real_reds",
+            "setup_only_no_result_checks",
+        )
     }
     outage = any(status.outage_suspected for status in statuses)
     unhealthy = counts["real_reds"] > 0 or outage
@@ -233,6 +242,7 @@ def pull_request_gate() -> int:
     summary = (
         f"open={counts['open']},red={counts['red']},"
         f"pending={counts['pending']},real={counts['real_reds']},"
+        f"setup_only_no_result={counts['setup_only_no_result_checks']},"
         f"outage={'yes' if outage else 'no'}"
     )
     if degraded:
@@ -245,6 +255,7 @@ def pull_request_gate() -> int:
             "pending": counts["pending"],
             "green": counts["green"],
             "real_reds": counts["real_reds"],
+            "setup_only_no_result_checks": counts["setup_only_no_result_checks"],
             "outage": "yes" if outage else "no",
             "degraded": "yes" if degraded else "no",
             "summary": summary,
