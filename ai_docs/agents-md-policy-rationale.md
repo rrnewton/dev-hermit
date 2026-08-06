@@ -315,10 +315,14 @@ exact SHAs, validation, and integration disposition in `ARCHIVED.md`; detach eac
 gitlink so `git -C $slot status --short` is empty; remove the slot's row from `ACTIVE.md`. Keep feature
 branches until reachable from a pushed branch or merged target. Reclaim a parked slot only through
 `scripts/release-worktree.rs --slot <slot> --clean`; it binds the registry owner, process lease, recursive
-cleanliness, and branch durability before ordinary non-force Git removal. If an interrupted submodule cleanup
-left a recovery marker, use the script's guarded `--recover-submodule-cleanup` path; never substitute raw
-`git worktree remove --force` or `git worktree prune`. To reuse a parked slot, repeat the clean-start audit and
-branch from the current base — never reset a parked child to make it current.
+cleanliness, and branch durability before ordinary non-force Git removal. After a newly allocated or replacement
+owner is live, re-run the same allocator adoption so its exact tmux pane and unified cgroup lease are durable;
+legacy/unbound ownership cannot authorize cleanup. Release excludes container creation, invokes the canonical
+agent-podman owner/mount audit, then atomically moves the target off its published slot path and repeats the
+process/container proof before removal. If an interrupted submodule cleanup or path fence left a release journal,
+use the script's guarded `--recover-submodule-cleanup` path; never substitute raw `git worktree remove --force` or
+`git worktree prune`. To reuse a parked slot, repeat the clean-start audit and branch from the current base — never
+reset a parked child to make it current.
 
 ### Landing Authorization — lander startup obligation discovery
 

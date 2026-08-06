@@ -26,7 +26,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const AGENT_SNAPSHOT_MAX_AGE_SECS: u64 = 10 * 60;
 
@@ -98,6 +99,59 @@ fn lock_registry(root: &Path) -> fs::File {
     FileExt::lock_exclusive(&file)
         .unwrap_or_else(|error| die(&format!("lock registry {}: {error}", path.display())));
     file
+}
+
+/// Exclude agent-podman container creation from the release proof.  The
+/// wrapper takes this exact lock before spawning Podman and retains it until a
+/// cidfile has been durably registered (or the child exits without one).
+fn lock_container_lifecycle(root: &Path) -> Result<(fs::File, String), String> {
+    let path = root.join("ignored/ci-hub/agent-container-lifecycle.lock");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create container authority {}: {error}", parent.display()))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| format!("open container lifecycle lock {}: {error}", path.display()))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match FileExt::try_lock_exclusive(&file) {
+            Ok(()) => break,
+            Err(error) if error.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                return Err(format!(
+                    "container lifecycle remained busy for 30s at {}",
+                    path.display()
+                ))
+            }
+            Err(error) => {
+                return Err(format!(
+                    "lock container lifecycle {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
+        .as_nanos();
+    let token = format!("release-worktree:{}:{nonce}", std::process::id());
+    file.set_len(0)
+        .and_then(|()| file.write_all(format!("{token}\n").as_bytes()))
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            format!(
+                "persist container lifecycle token {}: {error}",
+                path.display()
+            )
+        })?;
+    Ok((file, token))
 }
 
 fn now_iso() -> String {
@@ -366,6 +420,41 @@ fn state_path(root: &Path) -> PathBuf {
     root.join("worktree-state.json")
 }
 
+/// Replace one small registry authority atomically and durably.  A release
+/// journal must survive a process or host crash without leaving a truncated
+/// JSON document that makes the fenced worktree unrecoverable.
+fn durable_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "path has no parent"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "path has no UTF-8 name"))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".{name}.release-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 fn load_state(root: &Path) -> Value {
     let p = state_path(root);
     if !p.exists() {
@@ -384,7 +473,7 @@ fn save_state(root: &Path, state: &mut Value) {
     state["updated"] = json!(now_iso());
     state["version"] = json!(3);
     let txt = serde_json::to_string_pretty(state).unwrap();
-    std::fs::write(state_path(root), txt + "\n")
+    durable_replace(&state_path(root), (txt + "\n").as_bytes())
         .unwrap_or_else(|e| die(&format!("write state: {e}")));
 }
 
@@ -445,7 +534,8 @@ fn regen_active_md(root: &Path, state: &Value) {
         };
         format!("{existing}{sep}\n## Machine-managed slot table\n\n{block}")
     };
-    std::fs::write(&path, new_content).unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
+    durable_replace(&path, new_content.as_bytes())
+        .unwrap_or_else(|e| die(&format!("write ACTIVE.md: {e}")));
 }
 
 /// Enumerate the target plus every recursively initialized submodule. Git owns
@@ -727,13 +817,56 @@ struct TmuxPane {
     pid: u32,
 }
 
-fn recorded_owner_names(slot_state: &Value) -> BTreeSet<String> {
-    slot_state["agents"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|agent| agent["name"].as_str().map(str::to_string))
-        .collect()
+#[derive(Clone, Debug)]
+struct OwnerLease {
+    pane: String,
+    cgroup: String,
+}
+
+fn normalized_cgroup_path(path: &str) -> bool {
+    if path == "/" || !path.starts_with('/') {
+        return false;
+    }
+    Path::new(path.trim_start_matches('/'))
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn recorded_owner_leases(slot_state: &Value) -> Result<BTreeMap<String, OwnerLease>, String> {
+    let mut leases = BTreeMap::new();
+    for agent in slot_state["agents"].as_array().into_iter().flatten() {
+        let owner = agent["name"]
+            .as_str()
+            .expect("validated owner must have a name");
+        let pane = agent["tmux_pane_id"].as_str().ok_or_else(|| {
+            format!(
+                "recorded owner '{owner}' lacks tmux_pane_id lease data; re-run allocate-worktree.rs for this owner while its exact pane is live"
+            )
+        })?;
+        let cgroup = agent["cgroup_path"].as_str().ok_or_else(|| {
+            format!(
+                "recorded owner '{owner}' lacks cgroup_path lease data; re-run allocate-worktree.rs for this owner while its exact pane is live"
+            )
+        })?;
+        if pane.is_empty() || !pane.starts_with('%') || pane.chars().any(char::is_whitespace) {
+            return Err(format!(
+                "recorded owner '{owner}' has invalid tmux_pane_id lease '{pane}'"
+            ));
+        }
+        if !normalized_cgroup_path(cgroup) {
+            return Err(format!(
+                "recorded owner '{owner}' has invalid cgroup_path lease '{cgroup}'"
+            ));
+        }
+        leases.insert(
+            owner.to_string(),
+            OwnerLease {
+                pane: pane.to_string(),
+                cgroup: cgroup.to_string(),
+            },
+        );
+    }
+    Ok(leases)
 }
 
 fn agent_snapshot(root: &Path) -> Result<BTreeMap<String, AgentPresence>, String> {
@@ -919,6 +1052,46 @@ fn cgroup_members(cgroup_root: &Path, cgroup: &str) -> Result<Vec<u32>, String> 
         .collect()
 }
 
+fn cgroup_populated(cgroup_root: &Path, cgroup: &str) -> Result<Option<bool>, String> {
+    let directory = cgroup_root.join(cgroup.trim_start_matches('/'));
+    let metadata = match fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return Err(format!(
+                "could not inspect owner cgroup lease {}: {error}",
+                directory.display()
+            ))
+        }
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "owner cgroup lease {} is not an exact directory",
+            directory.display()
+        ));
+    }
+    let events_path = directory.join("cgroup.events");
+    let text = fs::read_to_string(&events_path).map_err(|error| {
+        format!(
+            "could not inspect owner subtree population {}: {error}",
+            events_path.display()
+        )
+    })?;
+    let values: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter_map(|(key, value)| (key == "populated").then_some(value.trim()))
+        .collect();
+    match values.as_slice() {
+        ["0"] => Ok(Some(false)),
+        ["1"] => Ok(Some(true)),
+        _ => Err(format!(
+            "owner cgroup lease {} has no unique populated 0/1 event",
+            events_path.display()
+        )),
+    }
+}
+
 /// Resolve every registry owner through the freshness-bounded ORC snapshot and
 /// exact tmux identity used by agent-podman, then bind a live pane pid to its
 /// unified cgroup lease. Cleanup proceeds only after authoritative absence.
@@ -926,11 +1099,11 @@ fn verify_recorded_owners_absent(
     root: &Path,
     proc_root: &Path,
     cgroup_root: &Path,
-    owners: &BTreeSet<String>,
+    owners: &BTreeMap<String, OwnerLease>,
 ) -> Result<(), String> {
     let agents = agent_snapshot(root)?;
     let panes = tmux_panes(root)?;
-    for owner in owners {
+    for (owner, lease) in owners {
         let snapshot = agents.get(owner);
         let named_panes: Vec<&TmuxPane> =
             panes.iter().filter(|pane| pane.window == *owner).collect();
@@ -942,6 +1115,12 @@ fn verify_recorded_owners_absent(
                         named_panes.len()
                     ));
                 }
+                if panes.iter().any(|candidate| candidate.pane == lease.pane) {
+                    return Err(format!(
+                        "recorded owner '{owner}' is absent/terminal but leased tmux pane {} remains under another window identity",
+                        lease.pane
+                    ));
+                }
                 if let Some(pane) = snapshot.and_then(|entry| entry.pane.as_deref()) {
                     if panes.iter().any(|candidate| candidate.pane == pane) {
                         return Err(format!(
@@ -949,11 +1128,23 @@ fn verify_recorded_owners_absent(
                         ));
                     }
                 }
+                if cgroup_populated(cgroup_root, &lease.cgroup)? == Some(true) {
+                    return Err(format!(
+                        "recorded owner '{owner}' retains populated cgroup subtree {}",
+                        lease.cgroup
+                    ));
+                }
             }
             Some(AgentPresence {
                 live: true,
                 pane: Some(pane_id),
             }) => {
+                if pane_id != &lease.pane {
+                    return Err(format!(
+                        "recorded live owner '{owner}' moved from leased pane {} to {pane_id}; re-run allocator adoption before release",
+                        lease.pane
+                    ));
+                }
                 let matches: Vec<&TmuxPane> =
                     panes.iter().filter(|pane| pane.pane == *pane_id).collect();
                 if matches.len() != 1 {
@@ -965,11 +1156,22 @@ fn verify_recorded_owners_absent(
                 let pane = matches[0];
                 let proc_path = proc_root.join(pane.pid.to_string());
                 let cgroup = unified_cgroup(&proc_path)?;
+                if cgroup != lease.cgroup {
+                    return Err(format!(
+                        "recorded live owner '{owner}' pane {pane_id} moved from leased cgroup {} to {cgroup}; re-run allocator adoption before release",
+                        lease.cgroup
+                    ));
+                }
                 let members = cgroup_members(cgroup_root, &cgroup)?;
                 if !members.contains(&pane.pid) {
                     return Err(format!(
                         "recorded live owner '{owner}' pane pid {} is not bound to cgroup lease {cgroup}",
                         pane.pid
+                    ));
+                }
+                if cgroup_populated(cgroup_root, &cgroup)? != Some(true) {
+                    return Err(format!(
+                        "recorded live owner '{owner}' cgroup lease {cgroup} is not subtree-populated"
                     ));
                 }
                 return Err(format!(
@@ -1050,6 +1252,55 @@ fn inspect_process_maps(pid: u32, proc_path: &Path, targets: &[PathBuf], users: 
     }
 }
 
+/// Invoke the single semantic verifier for the Podman ownership authority.
+/// Its release-only command independently confirms that this process still
+/// holds the lifecycle fence before it enumerates every container and mount.
+fn container_release_audit(
+    root: &Path,
+    fence_token: &str,
+    owners: &BTreeSet<String>,
+    targets: &[PathBuf],
+) -> Result<(), String> {
+    let tool = root.join("scripts/agent-podman.rs");
+    if !tool.is_file() {
+        return Err(format!(
+            "canonical container authority is missing: {}",
+            tool.display()
+        ));
+    }
+    let mut command = Command::new(&tool);
+    command
+        .arg("release-audit")
+        .args(["--fence-token", fence_token]);
+    for owner in owners {
+        command.args(["--owner", owner]);
+    }
+    for target in targets {
+        command.arg("--target").arg(target);
+    }
+    command.arg("--json").env(
+        "DEV_HERMIT_CONTAINER_STATE",
+        root.join("ignored/ci-hub/agent-containers.json"),
+    );
+    if let Some(test_podman) = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_PODMAN_BIN")? {
+        command.env("AGENT_PODMAN_BIN", test_podman);
+    } else {
+        // A caller's ambient test override is not production engine authority.
+        command.env_remove("AGENT_PODMAN_BIN");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("canonical container release-audit unavailable: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "canonical container release-audit refused: {}{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 /// Refuse every readable same-UID reference into the target. Unreadable links
 /// from unrelated protected services are not global vetoes: recorded-owner
 /// uncertainty was already resolved fail-closed through ORC/tmux/cgroup above.
@@ -1057,10 +1308,13 @@ fn live_process_users(
     root: &Path,
     proc_root: &Path,
     cgroup_root: &Path,
-    owners: &BTreeSet<String>,
+    container_fence_token: &str,
+    owners: &BTreeMap<String, OwnerLease>,
     targets: &[PathBuf],
 ) -> Result<Vec<String>, String> {
     verify_recorded_owners_absent(root, proc_root, cgroup_root, owners)?;
+    let owner_names: BTreeSet<String> = owners.keys().cloned().collect();
+    container_release_audit(root, container_fence_token, &owner_names, targets)?;
     let own_uid = fs::metadata("/proc/self")
         .map_err(|error| format!("could not inspect /proc/self: {error}"))?
         .uid();
@@ -1093,7 +1347,7 @@ fn live_process_users(
             continue;
         }
         let proc_path = entry.path();
-        if process_agent_name(&proc_path).is_some_and(|name| owners.contains(&name)) {
+        if process_agent_name(&proc_path).is_some_and(|name| owners.contains_key(&name)) {
             return Err(format!(
                 "recorded owner process pid {pid} remains despite authoritative ORC absence"
             ));
@@ -1130,7 +1384,8 @@ fn final_removal_boundary(
     root: &Path,
     proc_root: &Path,
     cgroup_root: &Path,
-    owners: &BTreeSet<String>,
+    container_fence_token: &str,
+    owners: &BTreeMap<String, OwnerLease>,
     slot: &str,
     expected_slot: &Value,
     expected_target: &CleanTarget,
@@ -1181,6 +1436,7 @@ fn final_removal_boundary(
         root,
         proc_root,
         cgroup_root,
+        container_fence_token,
         owners,
         &[rebound.path.clone()],
     )?;
@@ -1224,7 +1480,9 @@ fn linked_worktree_admin(target: &CleanTarget) -> Result<PathBuf, String> {
 struct SubmoduleAdminPaths {
     modules: PathBuf,
     quarantine: PathBuf,
+    force_fence_quarantine: PathBuf,
     in_progress: PathBuf,
+    path_fence: PathBuf,
 }
 
 fn submodule_admin_paths(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
@@ -1232,7 +1490,9 @@ fn submodule_admin_paths(target: &CleanTarget) -> Result<SubmoduleAdminPaths, St
     Ok(SubmoduleAdminPaths {
         modules: git_dir.join("modules"),
         quarantine: git_dir.join("modules.release-worktree"),
+        force_fence_quarantine: git_dir.join("modules.release-path-fence"),
         in_progress: git_dir.join("release-worktree.in-progress"),
+        path_fence: git_dir.join("release-worktree.path-fence.json"),
     })
 }
 
@@ -1268,7 +1528,12 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
 fn ensure_no_submodule_cleanup_artifacts(target: &CleanTarget) -> Result<(), String> {
     let paths = submodule_admin_paths(target)?;
     let mut unfinished = Vec::new();
-    for path in [&paths.in_progress, &paths.quarantine] {
+    for path in [
+        &paths.in_progress,
+        &paths.quarantine,
+        &paths.force_fence_quarantine,
+        &paths.path_fence,
+    ] {
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Ok(_) => unfinished.push(path.display().to_string()),
@@ -1426,13 +1691,13 @@ fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, 
     Ok(paths)
 }
 
-fn maybe_inject_post_deinit_crash(marker: Option<&Path>) -> Result<(), String> {
+fn maybe_inject_fixture_crash(marker: Option<&Path>, evidence: &str) -> Result<(), String> {
     let Some(marker) = marker else {
         return Ok(());
     };
-    fs::write(marker, b"post-deinit crash injected\n").map_err(|error| {
+    fs::write(marker, format!("{evidence}\n")).map_err(|error| {
         format!(
-            "could not write post-deinit crash evidence {}: {error}",
+            "could not write injected crash evidence {}: {error}",
             marker.display()
         )
     })?;
@@ -1470,22 +1735,421 @@ fn restore_submodule_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
     })
 }
 
+fn quarantine_force_fence_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
+    rename_no_replace(&paths.modules, &paths.force_fence_quarantine).map_err(|error| {
+        format!(
+            "could not quarantine force-only path-fence admin {}: {error}",
+            paths.modules.display()
+        )
+    })
+}
+
+fn restore_force_fence_admin(paths: &SubmoduleAdminPaths) -> Result<bool, String> {
+    match fs::symlink_metadata(&paths.force_fence_quarantine) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            if paths.modules.exists() {
+                return Err(format!(
+                    "both submodule admin {} and force-fence quarantine {} exist",
+                    paths.modules.display(),
+                    paths.force_fence_quarantine.display()
+                ));
+            }
+            rename_no_replace(&paths.force_fence_quarantine, &paths.modules).map_err(|error| {
+                format!(
+                    "could not restore force-fence admin {}: {error}",
+                    paths.force_fence_quarantine.display()
+                )
+            })?;
+            Ok(true)
+        }
+        Ok(_) => Err(format!(
+            "force-fence quarantine {} is not an exact directory",
+            paths.force_fence_quarantine.display()
+        )),
+        Err(error) => Err(format!(
+            "inspect force-fence quarantine {}: {error}",
+            paths.force_fence_quarantine.display()
+        )),
+    }
+}
+
+fn arm_release_journal(
+    root: &Path,
+    state: &mut Value,
+    slot: &str,
+    target: &CleanTarget,
+) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let fenced = target
+        .path
+        .parent()
+        .expect("target has slot parent")
+        .join(format!(
+            ".{}.release-worktree-{}-{nonce}",
+            target.label,
+            std::process::id()
+        ));
+    state["slots"][slot]["status"] = json!("releasing");
+    state["slots"][slot]["release_journal"] = json!({
+        "schema_version": 1,
+        "label": target.label,
+        "original": target.path.to_string_lossy(),
+        "fenced": fenced.to_string_lossy(),
+    });
+    state["slots"][slot]["updated"] = json!(now_iso());
+    save_state(root, state);
+    regen_active_md(root, state);
+    fenced
+}
+
+fn clear_release_journal(root: &Path, state: &mut Value, slot: &str) {
+    state["slots"][slot]["status"] = json!("active");
+    state["slots"][slot]["updated"] = json!(now_iso());
+    state["slots"][slot]
+        .as_object_mut()
+        .expect("slot record is an object")
+        .remove("release_journal");
+    save_state(root, state);
+    regen_active_md(root, state);
+}
+
+fn validate_path_fence_marker(
+    paths: &SubmoduleAdminPaths,
+    original: &Path,
+    fenced: &Path,
+) -> Result<(), String> {
+    let raw = fs::read_to_string(&paths.path_fence).map_err(|error| {
+        format!(
+            "read path-fence marker {}: {error}",
+            paths.path_fence.display()
+        )
+    })?;
+    let marker: Value =
+        serde_json::from_str(&raw).map_err(|error| format!("parse path-fence marker: {error}"))?;
+    if marker["schema_version"].as_u64() != Some(1)
+        || marker["original"].as_str() != original.to_str()
+        || marker["fenced"].as_str() != fenced.to_str()
+    {
+        return Err(format!(
+            "path-fence marker {} does not bind the exact original/fenced paths",
+            paths.path_fence.display()
+        ));
+    }
+    Ok(())
+}
+
+fn begin_path_fence(target: &CleanTarget, fenced: &Path) -> Result<SubmoduleAdminPaths, String> {
+    match fs::symlink_metadata(fenced) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(format!(
+                "path-fence destination already exists: {}",
+                fenced.display()
+            ))
+        }
+        Err(error) => {
+            return Err(format!(
+                "inspect path-fence destination {}: {error}",
+                fenced.display()
+            ))
+        }
+    }
+    let paths = submodule_admin_paths(target)?;
+    match fs::symlink_metadata(&paths.path_fence) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(format!(
+                "unfinished path-fence marker {}; use --recover-submodule-cleanup",
+                paths.path_fence.display()
+            ))
+        }
+        Err(error) => return Err(format!("inspect path-fence marker: {error}")),
+    }
+    let marker = json!({
+        "schema_version": 1,
+        "original": target.path.to_string_lossy(),
+        "fenced": fenced.to_string_lossy(),
+    });
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&paths.path_fence)
+        .map_err(|error| format!("create path-fence marker: {error}"))?;
+    file.write_all(format!("{}\n", serde_json::to_string(&marker).unwrap()).as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("persist path-fence marker: {error}"))?;
+    fs::File::open(
+        paths
+            .path_fence
+            .parent()
+            .expect("path-fence marker has an admin parent"),
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|error| format!("persist path-fence directory entry: {error}"))?;
+
+    let original = target.path.to_string_lossy().into_owned();
+    let fenced_text = fenced.to_string_lossy().into_owned();
+    git_inspect(
+        &target.primary,
+        &["worktree", "move", &original, &fenced_text],
+    )?;
+    if target.path.exists() {
+        return Err(format!(
+            "canonical target {} still exists after path fence",
+            target.path.display()
+        ));
+    }
+    let canonical_fenced = fs::canonicalize(fenced)
+        .map_err(|error| format!("canonicalize fenced target {}: {error}", fenced.display()))?;
+    if canonical_fenced != fenced {
+        return Err(format!(
+            "fenced target {} resolves to unexpected {}",
+            fenced.display(),
+            canonical_fenced.display()
+        ));
+    }
+    validate_path_fence_marker(&paths, &target.path, fenced)?;
+    Ok(paths)
+}
+
+fn rollback_path_fence(
+    target: &CleanTarget,
+    fenced: &Path,
+    paths: &SubmoduleAdminPaths,
+) -> Result<(), String> {
+    let fenced_text = fenced.to_string_lossy().into_owned();
+    let original = target.path.to_string_lossy().into_owned();
+    git_inspect(
+        &target.primary,
+        &["worktree", "move", &fenced_text, &original],
+    )?;
+    fs::remove_file(&paths.path_fence).map_err(|error| {
+        format!(
+            "clear rolled-back path-fence marker {}: {error}",
+            paths.path_fence.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn journal_target(
+    root: &Path,
+    state: &Value,
+    slot: &str,
+) -> Result<Option<(CleanTarget, PathBuf)>, String> {
+    let slot_state = state["slots"]
+        .get(slot)
+        .ok_or_else(|| format!("slot {slot} is not registered"))?;
+    if slot_state["status"].as_str() != Some("releasing") {
+        return Ok(None);
+    }
+    let journal = slot_state["release_journal"]
+        .as_object()
+        .ok_or_else(|| format!("slot {slot} is releasing without a readable release_journal"))?;
+    if journal.get("schema_version").and_then(Value::as_u64) != Some(1) {
+        return Err(format!(
+            "slot {slot} release_journal has unsupported schema"
+        ));
+    }
+    let label = match journal.get("label").and_then(Value::as_str) {
+        Some("hermit") => "hermit",
+        Some("reverie") => "reverie",
+        Some("liteinst2") => "liteinst2",
+        other => {
+            return Err(format!(
+                "slot {slot} release_journal has invalid label {other:?}"
+            ))
+        }
+    };
+    let branch_key = match label {
+        "hermit" => "hermit_branch",
+        "reverie" => "reverie_branch",
+        "liteinst2" => "liteinst2_branch",
+        _ => unreachable!(),
+    };
+    let expected_original = root.join("worktrees").join(slot).join(label);
+    let original = PathBuf::from(
+        journal
+            .get("original")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("slot {slot} release_journal has no original path"))?,
+    );
+    let fenced = PathBuf::from(
+        journal
+            .get("fenced")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("slot {slot} release_journal has no fenced path"))?,
+    );
+    let expected_prefix = format!(".{label}.release-worktree-");
+    if original != expected_original
+        || fenced.parent() != expected_original.parent()
+        || !fenced
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(&expected_prefix))
+    {
+        return Err(format!(
+            "slot {slot} release_journal does not bind its exact canonical target"
+        ));
+    }
+    Ok(Some((
+        CleanTarget {
+            label,
+            branch_key,
+            primary: root.join(label),
+            path: original,
+        },
+        fenced,
+    )))
+}
+
+enum PathFenceRecovery {
+    None,
+    Restored,
+    RemovalCompleted(CleanTarget),
+}
+
+fn exact_path_present(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "inspect journal target {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn verify_completed_git_removal(target: &CleanTarget, fenced: &Path) -> Result<(), String> {
+    let original_present = exact_path_present(&target.path)?;
+    let fenced_present = exact_path_present(fenced)?;
+    let listing = git_inspect(&target.primary, &["worktree", "list", "--porcelain"])?;
+    let registrations = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .filter(|candidate| {
+            let candidate = Path::new(candidate);
+            candidate == target.path.as_path() || candidate == fenced
+        })
+        .count();
+    if original_present || fenced_present || registrations != 0 {
+        return Err(format!(
+            "Git removal postcondition failed for {}: original_present={original_present} fenced_present={fenced_present} registrations={registrations}",
+            target.label
+        ));
+    }
+    Ok(())
+}
+
+fn recover_path_fence(root: &Path, state: &Value, slot: &str) -> Result<PathFenceRecovery, String> {
+    let Some((target, fenced)) = journal_target(root, state, slot)? else {
+        return Ok(PathFenceRecovery::None);
+    };
+    let original_exists = exact_path_present(&target.path)?;
+    let fenced_exists = exact_path_present(&fenced)?;
+    let paths = match (original_exists, fenced_exists) {
+        (true, false) => {
+            let paths = submodule_admin_paths(&target)?;
+            match fs::symlink_metadata(&paths.path_fence) {
+                Ok(_) => {
+                    validate_path_fence_marker(&paths, &target.path, &fenced)?;
+                    fs::remove_file(&paths.path_fence)
+                        .map_err(|error| format!("clear recovered path-fence marker: {error}"))?;
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("inspect path-fence marker: {error}")),
+            }
+            paths
+        }
+        (false, true) => {
+            let fenced_target = CleanTarget {
+                path: fenced.clone(),
+                ..target.clone()
+            };
+            let paths = submodule_admin_paths(&fenced_target)?;
+            validate_path_fence_marker(&paths, &target.path, &fenced)?;
+            let fenced_text = fenced.to_string_lossy().into_owned();
+            let original = target.path.to_string_lossy().into_owned();
+            git_inspect(
+                &target.primary,
+                &["worktree", "move", &fenced_text, &original],
+            )?;
+            fs::remove_file(&paths.path_fence)
+                .map_err(|error| format!("clear recovered path-fence marker: {error}"))?;
+            paths
+        }
+        (true, true) => {
+            return Err(format!(
+                "both canonical and fenced targets exist: {}, {}",
+                target.path.display(),
+                fenced.display()
+            ))
+        }
+        (false, false) => {
+            // Git may have completed `worktree remove` immediately before the
+            // process crashed.  Accept that terminal transaction state only
+            // when the authoritative worktree registry contains neither the
+            // canonical nor fenced path.  A raw filesystem deletion leaves a
+            // Git registration and remains a refusal.
+            verify_completed_git_removal(&target, &fenced)?;
+            eprintln!(
+                "✓ recovered completed Git removal for {}; registry state will be advanced",
+                target.label
+            );
+            return Ok(PathFenceRecovery::RemovalCompleted(target));
+        }
+    };
+    restore_force_fence_admin(&paths)?;
+    eprintln!(
+        "✓ recovered path-acquisition fence for {}; recursive proofs will be repeated",
+        target.path.display()
+    );
+    Ok(PathFenceRecovery::Restored)
+}
+
+fn rollback_fenced_removal(
+    target: &CleanTarget,
+    fenced: &Path,
+    fence_paths: &SubmoduleAdminPaths,
+    submodule_cleanup: Option<&SubmoduleAdminPaths>,
+    force_fence_admin: bool,
+) -> Result<(), String> {
+    rollback_path_fence(target, fenced, fence_paths)?;
+    if let Some(paths) = submodule_cleanup {
+        restore_submodule_admin(paths)?;
+    }
+    if force_fence_admin {
+        restore_force_fence_admin(fence_paths)?;
+    }
+    Ok(())
+}
+
 /// Remove through Git's own non-force cleanliness boundary. Initialized
 /// submodules are first deinitialized without force after recursive proof; an
 /// explicit user `--force` is the only path that reaches Git-level force.
 fn remove_target(
     root: &Path,
     target: &CleanTarget,
+    fenced: &Path,
     repositories: &[RepoSnapshot],
     proc_root: &Path,
     cgroup_root: &Path,
-    owners: &BTreeSet<String>,
+    container_fence_token: &str,
+    owners: &BTreeMap<String, OwnerLease>,
     allow_dirty: bool,
 ) -> Result<(), String> {
     // Validate the test-only crash hook before creating a transaction marker or
     // deinitializing anything. A leaked test variable in production therefore
     // refuses without changing the target.
     let crash_marker = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_DEINIT")?;
+    let fence_crash_marker =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_PATH_FENCE")?;
+    let remove_crash_marker =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_GIT_REMOVE")?;
     ensure_no_submodule_cleanup_artifacts(target)?;
     let submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
         let paths = begin_submodule_cleanup(target)?;
@@ -1494,6 +2158,7 @@ fn remove_target(
     } else {
         None
     };
+    let force_fence_admin = allow_dirty && repositories.len() > 1;
 
     let status = git_inspect(
         &target.path,
@@ -1512,33 +2177,69 @@ fn remove_target(
     // ordinary removal can retain Git's own non-force dirty boundary.
     if let Some(paths) = &submodule_cleanup {
         quarantine_submodule_admin(paths)?;
-        maybe_inject_post_deinit_crash(crash_marker.as_deref())?;
+        maybe_inject_fixture_crash(crash_marker.as_deref(), "post-deinit crash injected")?;
+    }
+    if force_fence_admin {
+        let paths = submodule_admin_paths(target)?;
+        quarantine_force_fence_admin(&paths)?;
     }
 
-    // Last user-space ownership boundary. This also catches cwd/exe links that
-    // became "(deleted)" during submodule deinitialization.
-    let users =
-        match live_process_users(root, proc_root, cgroup_root, owners, &[target.path.clone()]) {
-            Ok(users) => users,
-            Err(error) => {
-                if let Some(paths) = &submodule_cleanup {
-                    restore_submodule_admin(paths)?;
-                }
-                return Err(error);
+    // Atomically remove the published canonical pathname before the last
+    // ownership proof. An acquisition that won the earlier race follows the
+    // moved inode and is visible below; a later canonical acquisition receives
+    // ENOENT. The lifecycle lock separately excludes supported container
+    // creation across this interval.
+    let fence_paths = begin_path_fence(target, fenced)?;
+    maybe_inject_fixture_crash(
+        fence_crash_marker.as_deref(),
+        "post-path-fence crash injected",
+    )?;
+    let proof_paths = [target.path.clone(), fenced.to_path_buf()];
+    let users = match live_process_users(
+        root,
+        proc_root,
+        cgroup_root,
+        container_fence_token,
+        owners,
+        &proof_paths,
+    ) {
+        Ok(users) => users,
+        Err(error) => {
+            return match rollback_fenced_removal(
+                target,
+                fenced,
+                &fence_paths,
+                submodule_cleanup.as_ref(),
+                force_fence_admin,
+            ) {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(format!(
+                "{error}; path-fence rollback failed: {rollback}; use --recover-submodule-cleanup"
+            )),
             }
-        };
-    if !users.is_empty() {
-        if let Some(paths) = &submodule_cleanup {
-            restore_submodule_admin(paths)?;
         }
-        return Err(format!(
-            "live process ownership below {}: {}",
-            target.path.display(),
+    };
+    if !users.is_empty() {
+        let error = format!(
+            "post-fence live process ownership below {}: {}",
+            fenced.display(),
             users.join(", ")
-        ));
+        );
+        return match rollback_fenced_removal(
+            target,
+            fenced,
+            &fence_paths,
+            submodule_cleanup.as_ref(),
+            force_fence_admin,
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!(
+                "{error}; path-fence rollback failed: {rollback}; use --recover-submodule-cleanup"
+            )),
+        };
     }
 
-    let path = target.path.to_string_lossy().into_owned();
+    let path = fenced.to_string_lossy().into_owned();
     let args = if allow_dirty {
         vec!["worktree", "remove", "--force", &path]
     } else {
@@ -1547,23 +2248,58 @@ fn remove_target(
     let output = match git_output(&target.primary, &args) {
         Ok(output) => output,
         Err(error) => {
-            if let Some(paths) = &submodule_cleanup {
-                restore_submodule_admin(paths)?;
-            }
-            return Err(error);
+            return match rollback_fenced_removal(
+                target,
+                fenced,
+                &fence_paths,
+                submodule_cleanup.as_ref(),
+                force_fence_admin,
+            ) {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(format!(
+                    "{error}; path-fence rollback failed: {rollback}; use --recover-submodule-cleanup"
+                )),
+            };
         }
     };
     if !output.status.success() {
-        if let Some(paths) = &submodule_cleanup {
-            restore_submodule_admin(paths)?;
-        }
-        return Err(format!(
+        let error = format!(
             "could not remove exact {} target {}: {}",
             target.label,
-            target.path.display(),
+            fenced.display(),
             String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        );
+        return match rollback_fenced_removal(
+            target,
+            fenced,
+            &fence_paths,
+            submodule_cleanup.as_ref(),
+            force_fence_admin,
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!(
+                "{error}; path-fence rollback failed: {rollback}; use --recover-submodule-cleanup"
+            )),
+        };
     }
+    if let Err(error) = verify_completed_git_removal(target, fenced) {
+        return match rollback_fenced_removal(
+            target,
+            fenced,
+            &fence_paths,
+            submodule_cleanup.as_ref(),
+            force_fence_admin,
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!(
+                "{error}; postcondition rollback failed: {rollback}; use --recover-submodule-cleanup"
+            )),
+        };
+    }
+    maybe_inject_fixture_crash(
+        remove_crash_marker.as_deref(),
+        "post-git-remove crash injected",
+    )?;
     Ok(())
 }
 
@@ -1624,6 +2360,14 @@ fn main() {
     }
     validate_owners(&slot, &state["slots"][&slot])
         .unwrap_or_else(|error| die(&format!("invalid slot ownership: {error}")));
+    if state["slots"][&slot]["status"].as_str() == Some("releasing") && !recover_submodules {
+        die(&format!(
+            "slot {slot} has an unfinished release journal; retain it and run --clean --recover-submodule-cleanup"
+        ));
+    }
+    if recover_submodules && agent.is_some() {
+        die("--recover-submodule-cleanup cannot be combined with --agent");
+    }
 
     // If dropping one sharer and others remain, do not tear down the slot.
     if let Some(name) = &agent {
@@ -1678,7 +2422,48 @@ fn main() {
             .unwrap_or_else(|error| die(&format!("process inspection setup failed: {error}")));
         let cgroup_root = cgroup_root(&root)
             .unwrap_or_else(|error| die(&format!("cgroup inspection setup failed: {error}")));
-        let owners = recorded_owner_names(&state["slots"][&slot]);
+        let (_container_lifecycle_lock, container_fence_token) = lock_container_lifecycle(&root)
+            .unwrap_or_else(|error| {
+                die(&format!("container lifecycle fence unavailable: {error}"))
+            });
+        let owners = recorded_owner_leases(&state["slots"][&slot])
+            .unwrap_or_else(|error| die(&format!("owner lease refused cleanup: {error}")));
+        let mut recovered_path_fence = false;
+        if recover_submodules {
+            if let Some((journaled, fenced)) = journal_target(&root, &state, &slot)
+                .unwrap_or_else(|error| die(&format!("release journal recovery failed: {error}")))
+            {
+                let recovery_paths = [journaled.path.clone(), fenced];
+                let users = live_process_users(
+                    &root,
+                    &proc_root,
+                    &cgroup_root,
+                    &container_fence_token,
+                    &owners,
+                    &recovery_paths,
+                )
+                .unwrap_or_else(|error| {
+                    die(&format!("release journal owner proof failed: {error}"))
+                });
+                if !users.is_empty() {
+                    die(&format!(
+                        "release journal remains in use; refusing recovery: {}",
+                        users.join(", ")
+                    ));
+                }
+                match recover_path_fence(&root, &state, &slot)
+                    .unwrap_or_else(|error| die(&format!("path-fence recovery failed: {error}")))
+                {
+                    PathFenceRecovery::None => {}
+                    PathFenceRecovery::Restored => recovered_path_fence = true,
+                    PathFenceRecovery::RemovalCompleted(target) => {
+                        state["slots"][&slot][target.branch_key] = json!("-");
+                        clear_release_journal(&root, &mut state, &slot);
+                        recovered_path_fence = true;
+                    }
+                }
+            }
+        }
         verify_registry(&root)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
         let clean_targets = clean_targets_from_state(&root, &state, &slot)
@@ -1691,6 +2476,7 @@ fn main() {
             &root,
             &proc_root,
             &cgroup_root,
+            &container_fence_token,
             &owners,
             &preflight_target_paths,
         )
@@ -1703,7 +2489,7 @@ fn main() {
         }
         let mut proofs: Vec<(&'static str, Vec<RepoSnapshot>)> = Vec::new();
         let mut any_dirty = false;
-        let mut recovered_any = false;
+        let mut recovered_any = recovered_path_fence;
 
         for target in &clean_targets {
             if recover_submodules {
@@ -1743,6 +2529,14 @@ fn main() {
         }
         if recover_submodules && !recovered_any {
             die("--recover-submodule-cleanup found no interrupted transaction marker");
+        }
+        if recover_submodules && state["slots"][&slot]["status"].as_str() == Some("releasing") {
+            clear_release_journal(&root, &mut state, &slot);
+            verify_registry(&root).unwrap_or_else(|error| {
+                die(&format!(
+                    "post-recovery registry verification failed: {error}"
+                ))
+            });
         }
         if any_dirty {
             eprintln!(
@@ -1821,8 +2615,15 @@ fn main() {
             .iter()
             .map(|target| target.path.clone())
             .collect();
-        let users = live_process_users(&root, &proc_root, &cgroup_root, &owners, &target_paths)
-            .unwrap_or_else(|error| die(&format!("live-process inspection failed: {error}")));
+        let users = live_process_users(
+            &root,
+            &proc_root,
+            &cgroup_root,
+            &container_fence_token,
+            &owners,
+            &target_paths,
+        )
+        .unwrap_or_else(|error| die(&format!("live-process inspection failed: {error}")));
         if !users.is_empty() {
             die(&format!(
                 "refusing --clean while live processes use the slot: {}",
@@ -1840,6 +2641,7 @@ fn main() {
                 &root,
                 &proc_root,
                 &cgroup_root,
+                &container_fence_token,
                 &owners,
                 &slot,
                 &state["slots"][&slot],
@@ -1854,12 +2656,16 @@ fn main() {
                 ))
             });
 
+            let fenced = arm_release_journal(&root, &mut state, &slot, target);
+
             remove_target(
                 &root,
                 target,
+                &fenced,
                 expected_repositories,
                 &proc_root,
                 &cgroup_root,
+                &container_fence_token,
                 &owners,
                 force,
             )
@@ -1873,9 +2679,7 @@ fn main() {
             // Record each exact product removal before attempting the next one,
             // so a later failure is retryable without lying about physical state.
             state["slots"][&slot][target.branch_key] = json!("-");
-            state["slots"][&slot]["updated"] = json!(now_iso());
-            save_state(&root, &mut state);
-            regen_active_md(&root, &state);
+            clear_release_journal(&root, &mut state, &slot);
         }
 
         if slot_dir.exists() {
