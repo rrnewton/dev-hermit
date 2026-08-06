@@ -1,0 +1,7 @@
+guest,threading,l3_verdict,rc,note
+wc -c,single,PASS,0,control - proves L3 discriminates on this binary
+sha256sum,single,PASS,0,real work single-threaded
+gzip -1,single,PASS,0,compressor that PASSES
+xz -T1,single,FAIL,1,compressor that FAILS single-threaded
+zstd -T1,single,FAIL,1,REFUTES the multithreading hypothesis
+zstd -T4,multi,FAIL,1,same divergence indices (1133/1135) as T1

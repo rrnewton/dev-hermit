@@ -1,0 +1,13 @@
+:: Backend: e9patch preprocessing + ptrace runtime; candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Miss; rewrite_cache=not-applicable; artifact_sha256=none
+:: Run1...
+:: Run2...
+:: Comparing logs... /tmp/run1_log_jRZ1K and /tmp/run2_log_74VKF
+Logs contain 471 | 471 messages total
+Logs contain 366 | 366 detcore-specific messages
+Logs contain 139 | 139 INFO messages
+Logs contain 297 | 297 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+Done processing logs, no substantive differences found.
+:: Success: deterministic. Determinism verified.

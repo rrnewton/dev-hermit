@@ -1,0 +1,12 @@
+{
+  "experiment": "signal-delivery-determinism",
+  "date_utc": "2026-08-06",
+  "question": "Is signal delivery ordering a deterministic function of virtual time, across backends?",
+  "agent": "hermit-verify",
+  "provenance": "observed",
+  "binary": "worktrees/oci/hermit/target/release/hermit @ 5562161a4 (release)",
+  "method": "strict + verify double-run; plus plain runs for cross-backend ordering; pinned env",
+  "finding": "SIGUSR and SIGCHLD deliver and are deterministic + cross-backend identical. ITIMER_REAL/SIGALRM is NEVER DELIVERED under hermit (0 vs 5 native) while --verify still reports 'Success: deterministic' -- a vacuous pass over zero deliveries.",
+  "benign_explanation_refuted": "virtual elapsed over the same loop is 52.011 ms under hermit vs 13.576 ms native; a 1 ms repeating timer was long overdue, so this is not a too-short-loop artifact",
+  "not_a_fix": "Per #140 the fix must NOT coarsen or freeze time. Virtual time is advancing correctly (52ms); the defect is that ITIMER_REAL expiry is not wired to it."
+}

@@ -1,0 +1,14 @@
+{
+  "experiment": "l3-stack-content-divergence-st-vs-mt-discriminator",
+  "date_utc": "2026-08-06",
+  "question": "Is the L3 stack-content divergence caused by MULTITHREADING, as hypothesised?",
+  "agent": "hermit-verify",
+  "provenance": "observed",
+  "binary": "worktrees/oci/hermit/target/release/hermit",
+  "binary_head": "5562161a4",
+  "build": "RELEASE (the task's stated prerequisite; debug exceeded 420s)",
+  "method": "hermit --log info run --strict --verify --detlog-stack --detlog-heap, boxed, pinned env, 2MiB deterministic input",
+  "verdict": "MULTITHREADING HYPOTHESIS REFUTED: zstd -T1 fails L3 at the same message indices (1133/1135) as -T4",
+  "class": "not all compressors: gzip PASSES, xz -T1 and zstd -T1 FAIL; wc and sha256sum PASS",
+  "new_hypothesis_UNCONFIRMED": "xz and zstd size internal buffers from a host-derived quantity (CPU count / available memory) that lands in stack memory; gzip and sha256sum do not"
+}
