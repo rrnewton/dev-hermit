@@ -1,0 +1,21 @@
+{
+  "question": "Do SaBRe's --detlog-stack and --detlog-heap reach parity with ptrace, and are they even self-deterministic?",
+  "date": "2026-08-06",
+  "host": "devbig014 AMD EPYC 9D85, nproc=316",
+  "hermit_version": "0.2.0 (2026-08-04, g0f891e432a75-dirty)",
+  "hermit_binary": "hermit/target/debug/hermit",
+  "env_required": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64",
+  "findings": {
+    "stack_determinism": "sabre NONDETERMINISTIC (3/3 distinct); ptrace stable (3/3 identical); 111/111 records differ from record #1",
+    "heap_determinism": "deterministic under BOTH backends",
+    "stack_extent": {"ptrace": "0x7ffffffdc000-0x7ffffffff000", "sabre": "0x7ffffffdb000-0x7ffffffff000", "note": "sabre one page larger"},
+    "heap_base": {"ptrace": "0x405000", "sabre": "0x555555571000"},
+    "verify_verdict": "Determinism verified for BOTH -- blind to the stack bug"
+  },
+  "refuted_causes": [
+    "AT_RANDOM: identical across all runs and both backends",
+    "staged-program PID path in argv: gated on filenames starting with 'ld'; did not fire for these fixtures",
+    "coordinator socket env var: scrubbed in place by reverie-sabre take_private_env (paths.rs:77)"
+  ],
+  "next_probe": "byte-level diff of the guest [stack] region between two sabre runs at a fixed syscall index"
+}

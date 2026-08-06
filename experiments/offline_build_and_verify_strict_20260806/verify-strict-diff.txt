@@ -1,0 +1,18 @@
+A=/tmp/run1_log_zArvr
+B=/tmp/run2_log_kn9aB
+lines_A=515  lines_B=515
+differing_lines=956
+--- differing shapes (150-char, normalized, deduped) ---
+     31 > NUM-08-06T13:03:15.NUMZ DEBUG reverie_ptrace::task: [3] handle_signal: received signal SIGSEGV
+     31 < NUM-08-06T13:03:15.NUMZ DEBUG reverie_ptrace::task: [3] handle_signal: received signal SIGSEGV
+     27 > NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (pre) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX
+     27 < NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (pre) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX
+     15 > NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (pre) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX rdx HEX
+     15 < NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (pre) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX rdx HEX
+     15 > NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (post) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX rdx HEX
+     15 < NUM-08-06T13:03:15.NUMZ DEBUG detcore: DETLOG (post) registers [dtid 3][rcbs NUM]. rax HEX rbx HEX rcx HEX rdx HEX
+     14 > NUM-08-06T13:03:15.NUMZ  INFO detcore::scheduler: [sched-step5] >>>>>>>
+     14 < NUM-08-06T13:03:15.NUMZ  INFO detcore::scheduler: [sched-step5] >>>>>>>
+     14 > NUM-08-06T13:03:15.NUMZ DEBUG detcore::scheduler: DETLOG [sched] advance global time for scheduler turn, new time LogicalTime(NUM
+     14 < NUM-08-06T13:03:15.NUMZ DEBUG detcore::scheduler: DETLOG [sched] advance global time for scheduler turn, new time LogicalTime(NUM
+DONE

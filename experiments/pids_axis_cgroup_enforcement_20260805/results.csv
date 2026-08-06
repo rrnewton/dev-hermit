@@ -1,0 +1,5 @@
+arm,side,tasks_max,pids_max_readback,baseline_pids_current,requested_children,children_forked,first_refused_fork_ordinal,errno,errno_name,pids_current_at_peak,causal_equation_holds,pids_events_max_before,pids_events_max_after,pids_current_after_reap,returned_to_baseline,members_before,alive_after_observe,all_died,all_survived,verdict
+breach,positive,64,64,3,200,61,62,11,EAGAIN,64,true,0,1,3,true,,,,,ENFORCED: fork refused at cap
+control,negative,64,64,3,8,8,,,,11,true,0,0,3,true,,,,,NOT INERT: within-cap run unflagged
+kill-A,positive,64,64,,,,,,,15,,,,,,14,0,true,false,CONTAINED: cgroup.kill killed all members
+kill-B,negative,64,64,,,,,,,15,,,,,,14,14,false,true,CONTROL: no kill fired, all members survived

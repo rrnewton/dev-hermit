@@ -1,0 +1,16 @@
+{
+  "question": "Where are the real compat gaps, and is the north star's four-signal (detlog/heap/INFO) parity bar collectable today?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "scorecard_analysed": "compat-envelope/scorecard.csv (618 rows, written 2026-08-05T00:24)",
+  "hermit_binary": "hermit/target/release/hermit built 2026-08-03 20:47 (NOT current main)",
+  "hermit_origin_main": "38cf53737268fc276c859218df77e5e8059b4120",
+  "dev_hermit_parent_head": "41c36328d133c2a69cb179a569e8fd3354ff3bbd",
+  "libunwind": "~/.local/hermit-deps/lu/usr/lib64 (re-extracted; /tmp/lu was cleaned mid-session)",
+  "not_done": [
+    "did NOT regenerate the scorecard: a full corpus run, and KVM livelocks at guest startup while SaBRe returns unavailable on every cell",
+    "did NOT attribute the 91-line ptrace-vs-dbi DETLOG delta line-by-line, so no claim that all of it is a determinism divergence",
+    "probe used a 2026-08-03 release binary, not current main"
+  ],
+  "command": "see README Reproduction"
+}

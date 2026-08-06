@@ -1,0 +1,5 @@
+{"default_step_timeout":600,"steps":[
+ {"group":"control","job":"wellbehaved","cmd":"python3 -c \"a=bytearray(8*1024*1024); print('CONTROL OK')\"; sleep 2","timeout":60,
+  "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":3}},
+ {"group":"control","job":"wellbehaved2","cmd":"python3 -c \"a=bytearray(16*1024*1024); print('CONTROL2 OK')\"; sleep 2","timeout":60,
+  "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":67108864,"est_duration_s":3}}]}

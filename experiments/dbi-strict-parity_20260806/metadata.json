@@ -1,0 +1,18 @@
+{
+  "experiment": "dbi-strict-parity-vs-ptrace",
+  "date_utc": "2026-08-06",
+  "question": "Does DBI achieve full detlog-stack/heap/INFO parity vs ptrace, not just stdout/exit?",
+  "agent": "hermit-verify",
+  "binary": "worktrees/covnode/hermit/target/debug/hermit",
+  "binary_head": "fc49593ac21c7655e841a3de825ef86692ad117c",
+  "hermit_primary_head": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "method": "same binary both backends; env -i pinned (6 vars); boxed via hermit-box-run; --strict --detlog-stack --detlog-heap --log info",
+  "provenance": "observed",
+  "cells": 6,
+  "result": "INFO parity 0/6, stack 0/6, heap no-result 6/6; all explained by 3 plumbing/determinization gaps, none by guest behaviour",
+  "gaps": {
+    "GAP-1": "--log-file silently ignored on DBI; log goes to stderr (ptrace 85149B logfile/0 stderr vs dbi ABSENT/375 DETLOG stderr; 123 [memory] records each side)",
+    "GAP-2": "DBI lines carry no wall-clock prefix; extract_log_messages splits on it, so the stream collapses to 1 message",
+    "GAP-3": "dtid is the raw HOST TID under DBI: 7 distinct values across 7 runs vs ptrace constant dtid 3 -- determinism bug, makes log parity impossible by construction"
+  }
+}

@@ -1,0 +1,6 @@
+root pid=3 ppid=1 tid=3
+thread[0] pid=3 tid=4
+thread[1] pid=3 tid=5
+thread[2] pid=3 tid=6
+thread[3] pid=3 tid=7
+child pid=8 ppid=3 tid=8

@@ -1,0 +1,14 @@
+{
+  "experiment": "dbi-red-cells-root-cause",
+  "date_utc": "2026-08-06",
+  "question": "What are the ROOT CAUSES of DBI's remaining red cells, as opposed to per-cell symptoms?",
+  "agent": "hermit-verify",
+  "provenance": "observed",
+  "population": "43 red cells of 179 ptrace-passing tests, from frozen anchor fullcorpus-scorecard.csv (hermit 82a8e853)",
+  "buckets": {"pass_but_stdout_differs": 21, "diverge_exit1": 13, "timeout_120s": 7, "diverge_exit40": 1, "diverge_exit101": 1},
+  "root_cause_A": "tid allocation STRIDE differs: ptrace consumes 2 ids/thread (5,7,9,11), DBI consumes 1 (4,5,6,7); child pid 13 vs 8. BOTH determinize (root pid=3 ppid=1 identical) -- this is a policy divergence, NOT a host-TID leak. Corrects the prior hypothesis.",
+  "root_cause_B": "DynamoRIO perturbs the guest's own address layout: static/heap uniformly +0x1000 (one page), stack -0x8d0, mmap -0x2008f1000. Empirically confirms the previously-unmeasured prediction that DR presence breaks the owner's 'same address' heap-parity requirement.",
+  "cells_root_caused_live": ["determinism-stress-c/pid-tid", "c-programs/print-memaddrs"],
+  "not_investigated": ["time cluster (5)", "socket-timestamp cluster (3)", "RNG/hash cluster (4)", "13 exit1", "7 timeouts"],
+  "fixed": "none -- product code, no worktree slot"
+}

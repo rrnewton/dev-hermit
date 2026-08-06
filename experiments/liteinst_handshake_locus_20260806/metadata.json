@@ -1,0 +1,21 @@
+{
+  "question": "Is the LiteInst preload-handshake failure caused by the container remapping the DSO path (the prior note's leading hypothesis)?",
+  "answer": "NO -- refuted by construction for the default run path",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "method": "source reading only -- no guest run required, which is what stalled the previous attempt",
+  "code_sites": [
+    "reverie/reverie-ptrace/src/task.rs:2106-2160 validate_liteinst_handshake (exact path equality, confirmed)",
+    "hermit/hermit-cli/src/bin/hermit/run.rs chroot sites at :232 :279 :1947 :2882 -- all --image-gated",
+    "hermit/hermit-cli/src/bin/hermit/container.rs:168-196 -- the chroot-bearing builder (--image path)",
+    "hermit/hermit-cli/src/bin/hermit/run.rs:2821 mounts() -- ordinary path, only /tmp remapped",
+    "hermit/scripts/stage-liteinst-runtime.sh -- stages under target/, not /tmp"
+  ],
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "acef8d2c5bda02ac5d2ad7353183e2a2c4a3bf3b",
+  "cells_closed": 0,
+  "not_done": [
+    "no cell went green; no code changed; nothing committed to a product repo",
+    "the new leading candidate (frame.version skew between the staged DSO and reverie) is NOT confirmed"
+  ]
+}

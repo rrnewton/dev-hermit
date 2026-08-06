@@ -1,0 +1,22 @@
+id,measurement,snapshot A d83a34b (2026-08-03),snapshot B 13c791e (2026-08-05),delta,note
+R1,rows,534,618,+84,
+R2,enabled cells,101,180,+79,+78% coverage breadth
+R3,dbi enabled,8,87,+79,the entire wave
+R4,dbi passing,8,86,+78,
+R5,dbi parity=1,8,86,+78,stdout-hash parity only
+R6,dbi verify-mode,8,8,+0,*** verified depth did not move ***
+R7,kvm enabled/pass,7 / 3,7 / 3,+0,unchanged
+R8,ptrace enabled/pass,79 / 79,79 / 79,+0,unchanged (the reference)
+R9,sabre enabled/pass,7 / 0,7 / 0,+0,still zero passing (outcome=unavailable)
+R10,liteinst enabled,0,0,+0,zero in both snapshots
+N1,new enabled cells in verify mode,-,-,0 of 79,every new cell is strict mode
+N2,new cells claiming deterministic=1,-,-,78,from single runs that compared nothing
+N3,new cells claiming parity=1,-,-,78,stdout-hash with the reference operand unrecorded
+N4,new cells with reverie_sha unknown,-,-,79 of 79,#268 unbindable
+N5,provenance of the new cells,-,-,3 PR-head runs (75edd745 / 52d56e5c / fc49593a),none on main
+S1,current standing stdout-parity,-,99% (164/166 measured),-,"pooled across 6 hermit SHAs; reverie unknown for 96%"
+S2,current standing verify-backed,-,63 of 168 passing,-,
+S3,current standing BITWISE,-,0,-,nothing in this path passes --verify-strict
+S4,standing against north star #89,-,0%,-,DBI DETLOG uncollectable via --log-file
+P1,premise 'DBI/KVM/liteinst/sabre/e9patch landed',-,1 of 5 true,-,"DBI yes; KVM/liteinst/sabre unchanged; e9patch not a backend in this CSV"
+B1,can the scorecard be regenerated now,NO,-,-,"binary is 2026-08-03 vs main ~300 commits later; KVM livelocks; SaBRe unavailable"

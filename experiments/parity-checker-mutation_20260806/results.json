@@ -1,0 +1,68 @@
+{
+  "score": {
+    "mutants_planted": 6,
+    "mutants_killed": 6,
+    "kill_score": "6/6",
+    "controls_planted": 2,
+    "controls_correctly_not_flagged": 2,
+    "not_applicable": 0
+  },
+  "cases": [
+    {
+      "case": "clean-pair",
+      "expect_flagged": false,
+      "flagged": false,
+      "ok": true,
+      "evidence": "rc=0 Done processing logs, no substantive differences found (172 | 172 DETLOG messages compared)."
+    },
+    {
+      "case": "heap-record-hash",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 166 (run 1) and 166 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "stack-record-hash",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "drop-one-memory-record",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "syscall-numeric-result",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 13 (run 1) and 13 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "syscall-hex-argument",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 15 (run 1) and 15 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "swap-two-memory-records",
+      "expect_flagged": true,
+      "flagged": true,
+      "ok": true,
+      "evidence": "rc=1 (DETLOG) Mismatch at log messages 14 (run 1) and 14 (run 2): \u001b[1mDiff\u001b[0m \u001b[31m< left\u001b[0m / \u001b[32mright >\u001b[0m :"
+    },
+    {
+      "case": "wall-clock-prefix-only",
+      "expect_flagged": false,
+      "flagged": false,
+      "ok": true,
+      "evidence": "rc=0 Done processing logs, no substantive differences found (172 | 172 DETLOG messages compared)."
+    }
+  ]
+}

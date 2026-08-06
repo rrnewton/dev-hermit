@@ -1,0 +1,4 @@
+guest,signal,delivered_native,delivered_hermit,double_run_verify,cross_backend_ordering,verdict
+sig_usr,SIGUSR1/2 (raise),5,5,deterministic,IDENTICAL (ptrace vs e9patch),REAL PASS
+sig_chld,SIGCHLD (fork/wait),3,3,deterministic,IDENTICAL (ptrace vs e9patch),REAL PASS
+sig_alarm,SIGALRM (ITIMER_REAL 1ms),5,0,"deterministic (VACUOUS)",n/a,HOLE: never delivered under hermit

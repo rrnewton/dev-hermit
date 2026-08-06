@@ -1,0 +1,35 @@
+{
+  "mode": "breach",
+  "requested_children": 200,
+  "cgroup_dir": "/sys/fs/cgroup/user.slice/user-212630.slice/user@212630.service/app.slice/pids-breach-343999.scope",
+  "self_pid": 344152,
+  "pids_max_readback": "64",
+  "self_in_cgroup_procs": true,
+  "baseline_pids_current": 3,
+  "events_before": {
+    "max": 0
+  },
+  "children_forked": 61,
+  "fork_failure": {
+    "attempt_ordinal": 62,
+    "errno": 11,
+    "errno_name": "EAGAIN",
+    "message": "[Errno 11] Resource temporarily unavailable"
+  },
+  "pids_current_at_peak": 64,
+  "pids_peak": "64",
+  "events_after": {
+    "max": 1
+  },
+  "all_children_live_concurrently": true,
+  "causal_equation": {
+    "baseline": 3,
+    "children_forked": 61,
+    "sum": 64,
+    "observed_pids_current": 64,
+    "holds": true
+  },
+  "children_reaped": 61,
+  "pids_current_after_reap": 3,
+  "returned_to_baseline": true
+}

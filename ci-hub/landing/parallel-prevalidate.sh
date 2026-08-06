@@ -74,11 +74,11 @@ fi
 VALIDATE_CMD="${VALIDATE_CMD:-}"                          # per-PR validate; default below = real
 VALIDATE_STATUS_CMD="${VALIDATE_STATUS_CMD:-$ROOT/ci-hub/ci-hub validate-status}"
 LAND_CMD="${LAND_CMD:-$ROOT/ci-hub/landing/land-pr.sh}"
-# Refuse-before-start: a head that PREDATES a producer anchor runs its OWN old
-# validate.sh, which emits the required receipt fields NULL, so is_clean_full_pass
-# rejects EVERY record no matter how green -- a doomed ~17-min run. preflight_anchor
-# turns that into a 2s REFUSE (exit 2). Overridable for testing.
-PREFLIGHT_CMD="${PREFLIGHT_CMD:-python3 $ROOT/ci-hub/validate/preflight_anchor.py}"
+# Refuse-before-start: the composite authority proves both that the producer can
+# emit a qualifying receipt (fixed floors) and that the head contains freshly
+# fetched origin/main (moving base). A stale-base green cannot land. Overridable
+# with a command stub for tests, but never disabled in production.
+PREFLIGHT_CMD="${PREFLIGHT_CMD:-python3 $ROOT/ci-hub/validate/preflight_validate.py}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -128,20 +128,14 @@ admit(){
 run_one(){
   local pr="$1" br="$2" slot="$3"
   local box="validate-pr${pr}"
-  # REFUSE-BEFORE-START: skip a PR whose head predates a producer anchor BEFORE
-  # spending a slot, admission, and ~17 min on a validate whose receipt can only
-  # be rejected. The named reason (which anchor, which field, rebase remedy) is
-  # printed for the drain log; the PR is left for retry after it rebases.
-  if [ -n "$PREFLIGHT_CMD" ]; then
-    local pf; pf=$($PREFLIGHT_CMD --pr "$pr" 2>&1); local pfrc=$?
-    if [ "$pfrc" -eq 2 ]; then
-      say "pr#$pr SKIP (preflight refused): $pf"; return 3
-    elif [ "$pfrc" -ne 0 ]; then
-      say "pr#$pr preflight ERROR (rc=$pfrc), proceeding cautiously: $pf"
-    else
-      say "pr#$pr preflight: $pf"
-    fi
+  # REFUSE-BEFORE-START: fixed-floor stale, moving-base stale, and unresolved
+  # authority all stop here. "Couldn't check" is never permission to spend a
+  # slot or mint a receipt.
+  local pf; pf=$($PREFLIGHT_CMD --pr "$pr" 2>&1); local pfrc=$?
+  if [ "$pfrc" -ne 0 ]; then
+    say "pr#$pr SKIP (validation admission rc=$pfrc): $pf"; return 3
   fi
+  say "pr#$pr validation admission: $pf"
   # Block until admitted; every wait iteration is SURFACED (no silent contention).
   local waited=0
   until admit "$box"; do
@@ -158,9 +152,14 @@ run_one(){
     PR="$pr" SLOT="$slot" WT="$wt" $VALIDATE_CMD \
       >"$ROOT/ignored/ci-hub/prevalidate-pr${pr}.log" 2>&1
   else
+    # Recheck the exact fetched head at the last point before validate.sh. The
+    # earlier --pr check saves the box on already-stale work; this second check
+    # closes a PR-head/main race between GitHub resolution and slot checkout.
     ( cd "$wt" \
         && with-proxy git fetch origin "pull/$pr/head" \
         && git switch --detach FETCH_HEAD \
+        && exact_head=$(git rev-parse "HEAD^{commit}") \
+        && $PREFLIGHT_CMD --head "$exact_head" --repo-checkout "$wt" \
         && ./validate.sh ) >"$ROOT/ignored/ci-hub/prevalidate-pr${pr}.log" 2>&1
   fi
 

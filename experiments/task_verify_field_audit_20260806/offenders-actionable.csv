@@ -1,0 +1,353 @@
+status,priority,created,owner,local_id,verdict,title
+BACKLOG,P0,2026-07-22,,vision-backend-parity,NO-VERIFY,VISION: DBI + KVM backends at full ptrace parity with benchmarks
+BACKLOG,P3,2026-07-22,,vision-nightly-stress-testing,NO-VERIFY,VISION: Nightly stress tests — random seeds + super-validate + bug auto-filing
+BACKLOG,P3,2026-07-22,,vng_under_hermit_hits,NO-VERIFY,vng under Hermit hits unsupported clone(CLONE_VFORK) and stalls
+BACKLOG,P3,2026-07-22,,vng_cannot_discover_the,NO-VERIFY,vng cannot discover the host kernel because Hermit virtualizes uname -r
+BACKLOG,P0,2026-07-25,hermit-dbi,impl-dbi-global-state-fix,NO-VERIFY,P0: DBI — fix fundamentally broken global state architecture for multi-process
+BACKLOG,P0,2026-07-25,hermit-168,impl-dbi-cross-process-rpc,NO-VERIFY,P0: DBI — implement cross-process RPC for GlobalState
+BACKLOG,P1,2026-07-26,,p1_retest_qemu_snapshot,NO-VERIFY,P1: Retest QEMU snapshot resume under strict after the seccomp fix
+BACKLOG,P1,2026-07-26,,p1_add_a_durable,NO-VERIFY,P1: Add a durable strict-L2 Linux userspace workload fixture
+BACKLOG,P1,2026-07-26,,p1_land_reproducible_strict,NO-VERIFY,P1: Land reproducible strict-L2 sched_ext QEMU coverage
+BACKLOG,P1,2026-07-26,,p1_resume_qemu_linux,NO-VERIFY,P1: Resume QEMU Linux R/R at zero-read and mprotect divergences
+BACKLOG,P1,2026-07-26,,p1_correct_pmu_overshoot,NO-VERIFY,P1: Correct PMU overshoot telemetry and map QEMU chaos timeslices
+BACKLOG,P2,2026-07-27,,fix-litfloor-nonmonotonic,NO-VERIFY,[review-fix] fix-litfloor-nonmonotonic
+BACKLOG,P2,2026-07-27,,fix-litfloor-matrix-dupcount,NO-VERIFY,[review-fix] fix-litfloor-matrix-dupcount
+BACKLOG,P2,2026-07-27,,fix-951-todo-breadcrumbs,NO-VERIFY,[review-fix] fix-951-todo-breadcrumbs
+BACKLOG,P2,2026-07-27,,fix-950-cppc-suffix,NO-VERIFY,[review-fix] fix-950-cppc-suffix
+BACKLOG,P2,2026-07-27,,fix-937-smaps-overzero,NO-VERIFY,[review-fix] fix-937-smaps-overzero
+BACKLOG,P2,2026-07-27,,fix-934-numa-host-leak,NO-VERIFY,[review-fix] fix-934-numa-host-leak
+BACKLOG,P2,2026-07-27,,fix-932-scaling-freq-semantic,NO-VERIFY,[review-fix] fix-932-scaling-freq-semantic
+BACKLOG,P2,2026-07-27,,fix-931-fdinfo-identity,NO-VERIFY,[review-fix] fix-931-fdinfo-identity
+BACKLOG,P2,2026-07-27,,fix-930-litfloor-versionclaim,NO-VERIFY,[review-fix] fix-930-litfloor-versionclaim
+BACKLOG,P2,2026-07-27,,fix-929-syscall-refuse-row,NO-VERIFY,[review-fix] fix-929-syscall-refuse-row
+BACKLOG,P2,2026-07-27,,fix-928-sched-host-leak,NO-VERIFY,[review-fix] fix-928-sched-host-leak
+BACKLOG,P2,2026-07-27,,fix-924-timerslack-kvm,NO-VERIFY,[review-fix] fix-924-timerslack-kvm
+BACKLOG,P2,2026-07-27,,fix-919-prctl-kvm,NO-VERIFY,[review-fix] fix-919-prctl-kvm
+BACKLOG,P2,2026-07-27,,fix-917-rtc-epoch,NO-VERIFY,[review-fix] fix-917-rtc-epoch
+BACKLOG,P2,2026-07-27,,fix-910-filenr-max,NO-VERIFY,[review-fix] fix-910-filenr-max
+BACKLOG,P2,2026-07-27,,fix-907-schedstat-policy,NO-VERIFY,[review-fix] fix-907-schedstat-policy
+BACKLOG,P2,2026-07-27,,fix-880-netlink-autobind,NO-VERIFY,[review-fix] fix-880-netlink-autobind
+BACKLOG,P2,2026-07-27,,fix-874-qemu-tcg-evidence,NO-VERIFY,[review-fix] fix-874-qemu-tcg-evidence
+BACKLOG,P2,2026-07-27,,fix-868-vfork-barrier-test,NO-VERIFY,[review-fix] fix-868-vfork-barrier-test
+BACKLOG,P1,2026-07-27,,rf-procfs-shared-access-mediation,NO-VERIFY,Fix: procfs/sysfs ProcfsFile mediation is bypassable (pread64/readv/preadv/lseek + relative/alias paths) and new determinism tests are not wired into 
+BACKLOG,P1,2026-07-27,,rf-procfs-semantic-coherence,NO-VERIFY,Fix: procfs virtual files are semantically incoherent (host topology preserved w/ zeroed counters; fail-open parsers; paired-file inconsistency; over-
+BACKLOG,P1,2026-07-27,,rf-backend-bypass-rr-dbi,NO-VERIFY,Fix: reclassified-Determinized syscalls bypass fixed handlers via DBI copied-children and record/replay subscriptions (execute host syscall)
+BACKLOG,P1,2026-07-27,,rf-ioprio-semantics,NO-VERIFY,Fix: ioprio_get ignores who (no ESRCH) and ioprio_set is a no-op that cannot round-trip (#881)
+BACKLOG,P1,2026-07-27,,rf-getsockopt-optlen-overlap,NO-VERIFY,Fix: getsockopt TCP_INFO canonicalization corrupts returned optlen when optval/optlen overlap (#904)
+BACKLOG,P1,2026-07-27,,rf-socket-timestamp-ioctl,NO-VERIFY,Fix: SIOCGSTAMP* handler advances time per-query and ignores clock mode (#912)
+BACKLOG,P1,2026-07-27,,rf-prctl-dumpable-virtualize,NO-VERIFY,"Fix-forward: PR_SET_DUMPABLE=0 physical passthrough breaks ptrace timer creation (perf_event_open denial) -- virtualize dumpability (#919, merged)"
+BACKLOG,P1,2026-07-27,,rf-prctl-timerslack-virtualize,NO-VERIFY,Fix: PR_SET_TIMERSLACK physically passed through -- alters real wake latency/timeout ordering; virtualize per-thread (#924)
+BACKLOG,P1,2026-07-27,,rf-ns-inode-identity-aliases,NO-VERIFY,Fix: namespace inode identity still observable via readlinkat/O_PATH/procfd aliases (#877)
+BACKLOG,P1,2026-07-27,,rf-netlink-autobind-determinism,NO-VERIFY,Fix: Netlink autobind (implicit sendto/sendmsg) bypasses ID rewriting; port collision vs INET ephemeral range (#880)
+BACKLOG,P1,2026-07-27,,rf-thread-self-open-time-binding,NO-VERIFY,"Fix: /proc/thread-self/{stat,status} rewrites reader TID, not opener TID (fd passed across threads) (#964)"
+BACKLOG,P1,2026-07-27,,rf-file-mutation-readback,NO-VERIFY,"Fix-forward: file_mutation fixture overclaims write parity -- never reads file content back (#929, merged)"
+BACKLOG,P1,2026-07-27,,rf-softirqs-ci-and-determinism,NO-VERIFY,Fix: /proc/softirqs -- hosted CI needs absent /usr/bin/lsirq; digit-width determinism (9->10) & access bypass (#883)
+BACKLOG,P1,2026-07-27,,rf-key-users-todo-breadcrumbs,NO-VERIFY,Fix: /proc/key-users -- bind TODO-HUMAN-REVIEW(PR-TBD) breadcrumbs to PR-951 + aliases/bypass/CI (#951)
+BACKLOG,P0,2026-07-27,,re_implement_procfs_process,NO-VERIFY,Re-implement procfs process accounting on current main (was #843)
+BACKLOG,P2,2026-07-30,,fix_demo56_concurrency_isolation,NO-VERIFY,fix-demo56-concurrency-isolation: per-run QEMU asset paths
+BACKLOG,P2,2026-07-30,,fix-pr1163-java-ci-filter,NO-VERIFY,"P2: #1163 CHANGES REQUESTED — Java tests filtered from portable CI, only weekly-super despite every-commit/merge-gate claims"
+BACKLOG,P2,2026-07-30,,fix-pr1164-clockid-validation,NO-VERIFY,P2: #1164 CHANGES REQUESTED — NULL path accepts invalid clock IDs; misses GHC dynamic -6 ID; 10us mislabeled 10ms
+BACKLOG,P3,2026-07-30,,fix-pr1120-desc-evidence,NO-VERIFY,"P3: #1120 — code accepted, description/evidence fixes required before land"
+BACKLOG,P3,2026-07-30,,fix-pr1134-rebase-desc,NO-VERIFY,P3: #1134 — rebase + description required before land
+BACKLOG,P1,2026-07-30,,dbi_branch_count_preemption,NO-VERIFY,DBI branch-count preemption (fix 6 corpus HANGs)
+BACKLOG,P2,2026-07-30,hermit-dbi,rename-dbi-to-dbt-backend,NO-VERIFY,P2 (GATED on <10 OPEN PRs — owner relaxed this from zero-open-PRs on 2026-08-04): rename the 'dbi' backend -> 'dbt' (DynamoRIO = dynamic binary TRANSL
+BACKLOG,P3,2026-07-31,,realistic-deterministic-syscall-timing-model,NO-VERIFY,LONG-TERM: realistic deterministic syscall/context-switch timing — draw per-thread nanosecond costs from empirically-profiled distributions (determini
+BACKLOG,P3,2026-07-31,,fix-stale-rr-test-suite-doc,NO-VERIFY,P3: fix stale doc — hermit/docs/rr-test-suite.md:41 claims validate.sh runs the full rr suite (it doesn't)
+BACKLOG,P1,2026-07-31,,land-container-runtime-oci-pr1179,NO-VERIFY,"P1: adversarial-review + land PR #1179 (hermit --image OCI-image support) — verify no major system interactions/risks, fix problems, then merge"
+BACKLOG,P3,2026-07-31,,container-runtime-ergonomic-image-fetch,NO-VERIFY,P3: make hermit --image more ergonomic to fetch + use docker/podman container images
+BACKLOG,P3,2026-07-31,,fix_scheduler_tentative_pop,NO-VERIFY,fix-scheduler-tentative-pop-vs-exec-bootstrap-race
+BACKLOG,P1,2026-07-31,,investigate-orc-idle-detection-bug,NO-VERIFY,"P1 (ORC bug): incorrect idle-detection — agents at codex home/placeholder prompts + Agent-Home stuck state reported as busy/managed, masking idleness"
+BACKLOG,P2,2026-07-31,,fix-1179-oci-isolation-risks,NO-VERIFY,"P2: fix #1179 OCI --image isolation risks (writable-rootfs poisoning, network-isolation/tmp bypass, backend-chroot gap) before landing"
+BACKLOG,P2,2026-07-31,hermit-220,ci-dag-runner-dryrun-estimator,NO-VERIFY,"P2: add --dry-run estimation mode to safe-ci-dag-runner (plan-only, estimate runtime from step resource footprints vs a system-load model; calibrate a"
+BACKLOG,P1,2026-07-31,,discuss-vtime-advance-heuristic-soundness,NO-VERIFY,"P1 (RECURRING NAG, unclosable until discussed): owner + coordinator must review the demo5 vtime-jump-unproductive-pollers heuristic — is the timing-ad"
+BACKLOG,P2,2026-07-31,,demo6-snapshot-provenance-gating,NO-VERIFY,P2: demo6 is existence-gated on hermit-boot.qcow2 (skips boot if file present) — make it provenance/SHA-aware or make-clean in CI so demo6-green valid
+BACKLOG,P1,2026-07-31,,coordinate-demo5-fork-decision,NO-VERIFY,Coordinate demo5 fork prototypes → owner-decision summary: aggregate results of demo5-fix-qemu-icount-idlewarp (226) + demo5-fix-detcore-deadlineless 
+BACKLOG,P3,2026-07-31,,extend-ghissue-wrapper-liteinst2,NO-VERIFY,P3: extend .orc/plugins/hermit-dev/gh-issue-create allowlist to include rrnewton/liteinst2 (currently only hermit|reverie)
+BACKLOG,P2,2026-07-31,,demo5-qemu-vcpu-condvar-starvation-under-contention,NO-VERIFY,"P2 (latent, non-release): investigate QEMU vCPU cond-var starvation under HIGH host contention — the real load-triggered demo5 wedge (separate from RC"
+BACKLOG,P2,2026-08-01,,e9patch-ratchet-round2-nongated,NO-VERIFY,"P2: E9PATCH ratchet round 2 (non-gated batch) — next fd/output-hygiene STDOUT_DIVERGE batch (non-time, non-gated) identified in PR #1216 round"
+BACKLOG,P2,2026-08-01,,e9patch-corpus-round-3,NO-VERIFY,P2: E9PATCH non-gated corpus work-ahead — next strict-subset corpus batch beyond 12/12 (non-gated
+BACKLOG,P0,2026-08-01,,e2e_proc_random_uuid,NO-VERIFY,e2e proc-random-uuid determinism test
+BACKLOG,P1,2026-08-01,hermit-coord,append-only-investigation-history-coordinator,NO-VERIFY,P1: coordinator-managed APPEND-ONLY machine-readable investigation history — serialize increments from parallel demo5 sub-agents into debug/<episode>/
+BACKLOG,P1,2026-08-01,,demo5-adversarial-critic-review,NO-VERIFY,P1: adversarial-critic review of the demo5 investigation (part of the science) — skeptic attacks the hypotheses/evidence/conclusions
+BACKLOG,P1,2026-08-01,,auto-science-process-meta-evaluation,NO-VERIFY,P1: meta-evaluation of the auto-science process — is the debug/ framework working; what scripts/data-representations to change or expand
+BACKLOG,P0,2026-08-01,,e2e_mcookie_random_determinism,NO-VERIFY,e2e mcookie-random determinism test
+BACKLOG,P0,2026-08-01,,e2e_perl_hash_order,NO-VERIFY,e2e: perl-hash-order determinism test (hash iteration order)
+BACKLOG,P0,2026-08-01,,e2e_perl_hash_order_2,NO-VERIFY,e2e: perl-hash-order determinism test (hash iteration order)
+BACKLOG,P0,2026-08-01,,demo5-fix-scheduler-fairness-impl,NO-VERIFY,P0: IMPLEMENT scheduler fairness/aging fix (from scheduler-time-model-fairness-design) → demo5 passes ~1min → PR + adversarial-reviewer detcore testim
+BACKLOG,P0,2026-08-01,,demo5-fix-revert-config-flip-0591104,NO-VERIFY,"P0: revert the 0591104 demo5 config flip (re-arm --max-timeslice in demos/05-qemu-boot.py) → restores demo5 GREEN ~1min — cheap, UNGATED, post-facto l"
+BACKLOG,P1,2026-08-01,,liteinst-flagship-acceleration,NO-VERIFY,"VISION: accelerate LiteInst to a FLAGSHIP backend — pure-Rust, 1st-party, no 3rd-party deps; native in-place-patching path off ptrace-host, multiproc,"
+BACKLOG,P1,2026-08-01,hermit-liteinst,liteinst-instrumentation-stats,NO-VERIFY,"P1: LiteInst library method to print instrumentation stats at end of hermit run — distinct RIPs patched, cacheline straddlers, patch-site instruction-"
+BACKLOG,P2,2026-08-01,,liteinst-upstream-scan-patch-site,NO-VERIFY,"P2 (RESEARCH/OPTION): general compiler-agnostic upstream-scan for a patch site — trap on the non-det instruction, scan upstream, relocate N instructio"
+BACKLOG,P1,2026-08-01,hermit-243,liteinst-corpus-ratchet-to-b3,NO-VERIFY,"P1: crank up LiteInst compat ratchet toward B3 — expand corpus coverage, close the ~80/200 failing cells, drive parity%/det% up on the scorecard"
+BACKLOG,P1,2026-08-02,,liteinst_single_process_ceiling,NO-VERIFY,LiteInst single-process ceiling corpus ratchet
+BACKLOG,P3,2026-08-02,,research-single-address-space-hermit,NO-VERIFY,"P3 (FUTURE RESEARCH): single-address-space hermit — feasibility + tradeoffs (RPC becomes in-process; would need to reimplement signals, etc.)"
+BACKLOG,P1,2026-08-02,,timeout-headroom-and-load-relative,NO-VERIFY,"P1: analyze test/CI timeout HEADROOM + make timeouts LOAD-RELATIVE — load should SLOW tests, never FLAKE them (only OOMD should kill)"
+BACKLOG,P1,2026-08-02,hermit-kvm,kvm_backend_stats_provider,NO-VERIFY,KVM backend stats provider with VM-exit reasons
+BACKLOG,P1,2026-08-02,hermit-dbi,dbi_backend_stats_provider,NO-VERIFY,DBI backend stats provider with translation metrics
+BACKLOG,P1,2026-08-02,hermit-sabre,sabre_backend_patch_and,NO-VERIFY,SaBRe backend patch and slowpath stats provider
+BACKLOG,P0,2026-08-02,,liteinst-compat-blitz,NO-VERIFY,"P0 (OVERNIGHT HEADLINE): drive LiteInst compat UP fastest — parallel test-debug (up to 5 agents), root-cause failing cells, expand parity"
+BACKLOG,P2,2026-08-02,,interactive-tty-shell-support,NO-VERIFY,"P2: interactive deterministic shell with TTY support (hermit run -it, podman-style) — fix `hrm run bash` hang + Ctrl-C/Z, PTY support, deterministic r"
+BACKLOG,P3,2026-08-02,,snapshot-resume-experiment,NO-VERIFY,"P3 (BACKLOG, RFC/PRE-LAND-only): experiment with hermit snapshot/resume — prototype on a branch, do NOT merge; explore backend-agnostic design, reveri"
+BACKLOG,P2,2026-08-02,,demo5-nonptrace-backend-milestone,NO-VERIFY,"P2 (MILESTONE TARGET): get a NON-ptrace backend to pass demo5 (linux boot), bonus if FASTER than ptrace's ~46s"
+BACKLOG,P0,2026-08-02,hermit-kvm,recover_dirty_kvm_l3,NO-VERIFY,Recover dirty KVM L3 stack-content worktree
+BACKLOG,P2,2026-08-02,hermit-sabre,sabre_non_gated_parity,NO-VERIFY,SaBRe non-gated parity frontier
+BACKLOG,P0,2026-08-02,,ci_main_red_groundtruth,NO-VERIFY,ci-main-red-groundtruth-and-dag-refactor
+BACKLOG,P2,2026-08-02,,optimize-relaxed-getpid-overhead,NO-VERIFY,P2: investigate + optimize Hermit-relaxed per-syscall overhead (getpid microbenchmark surprisingly slow)
+BACKLOG,P2,2026-08-02,,explain-dbi-sequentialized-threads-requirement,NO-VERIFY,P2: document WHY DBI requires sequentialized threads (can't do true concurrency) — explains the missing relaxed/DBI benchmark cell
+BACKLOG,P2,2026-08-02,,benchmark-methodology-cgroup-and-seq-vs-instr,NO-VERIFY,"P2 (post-sprint): bake benchmarking methodology into the benchmark skill — cgroup + K-core/CPU/wall/mem limits (no pinning), sequentialization-vs-inst"
+BACKLOG,P2,2026-08-02,,safe-ci-dag-runner-resource-limits,NO-VERIFY,"P2: safe-ci-dag-runner — add per-box resource limits (K-core constraint w/o pinning, CPU-time, wall-time, max-mem) for benchmarks + tests"
+BACKLOG,P1,2026-08-02,,make-lint-target,NO-VERIFY,"P1: add a `make lint` target running the full lint suite (clippy -D warnings, rustfmt --check, shellcheck, git diff --check) matching CI's merge-gate"
+BACKLOG,P1,2026-08-02,,reverie-pin-consistency-invariant-lint,NO-VERIFY,P1: lint enforcing the main-only-monorepo invariant — hermit Cargo.toml reverie-rev == dev-hermit reverie submodule pin == reverie origin/main; hermit
+BACKLOG,P1,2026-08-02,,test-power-to-weight-and-selective-selection,NO-VERIFY,P2 (post-CI-reshape): finish test power-to-weight analysis (coverage-value vs runtime cost) + add selective/affected-test-selection for limited-footpr
+BACKLOG,P2,2026-08-02,,dbi-liteinst-rpc-serialization-overhead,NO-VERIFY,P2: DBI/LiteInst DO serialize global-state RPC when out-of-process — measure the overhead (unlike KVM/ptrace single-address-space)
+BACKLOG,P1,2026-08-02,,matrix-tsv-schema-consolidation,NO-VERIFY,P1: consolidate the tests/backend-parity/matrix.tsv 611-col schema-migration conflict cluster (~100 red PRs share this one root cause)
+BACKLOG,P2,2026-08-02,,ux-tester-skill,NO-VERIFY,"P2: create a hermit-level 'ux-tester' skill — agents emulate a user UX tester, evaluating output quality not just exit codes"
+BACKLOG,P0,2026-08-02,hermit-coord,refresh_hermit_and_parent,NO-VERIFY,Refresh Hermit and parent pins to current Reverie main
+BACKLOG,P1,2026-08-02,,prevent_make_from_leaving,NO-VERIFY,Prevent make from leaving a stale release Hermit binary
+BACKLOG,P2,2026-08-02,,standalone_scripts_mishandle_help,NO-VERIFY,Standalone scripts mishandle --help (log_timeslice/manifest-to-commands/update_spreadsheet)
+BACKLOG,P1,2026-08-02,,validate-cputime-limit-and-antibloat-skill,NO-VERIFY,P1 (gated on CI-healthy): strict CPU-time limit on the outer validate DAG cgroup + failure message → anti-bloat skill enumerating checks before raisin
+BACKLOG,P1,2026-08-03,hermit-dbi,fanout-land-noncluster-prs,NO-VERIFY,PR-landing fan-out: land free-to-land green PRs + the non-matrix-cluster reds (parallel with lander's matrix.tsv consolidation)
+BACKLOG,P0,2026-08-03,hermit-247,fanout-land-green-free-to-land,NO-VERIFY,P0: land the ~51 GREEN free-to-land PRs NOW (low-hanging fruit — 0 landed in 40min while agents churned the red cluster)
+BACKLOG,P1,2026-08-03,,validate-run-ledger,NO-VERIFY,"P1: stand up a validate-run LEDGER — record each run's slot, commit/git-depth, pass/fail, wall+CPU time (so 'is main green' is answerable with data)"
+BACKLOG,P0,2026-08-03,,mass-parallel-rebase-stale-base,NO-VERIFY,"P0: mass-parallel rebase of stale-base red PRs — split into small batches, shard across the fleet, rebase on fresh main → flip green → land"
+BACKLOG,P1,2026-08-03,,mass_parallel_rebase_stale,NO-VERIFY,mass-parallel-rebase-stale-base
+BACKLOG,P0,2026-08-03,,make-validate-quick-and-reliable,NO-VERIFY,P0: make `make validate` work QUICKLY + RELIABLY on a fresh checkout (owner's tire-kicking bar)
+BACKLOG,P2,2026-08-03,hermit-231b,bump-hermit-cargo-reverie-pin-d2fb9a05,NO-VERIFY,"Bump hermit Cargo.toml reverie pin d973a85→d2fb9a05 (separate PR, non-blocking follow-up)"
+BACKLOG,P1,2026-08-03,hermit-ci,demo-gate-runner-relabel-owner,NO-VERIFY,OWNER-GATED: relabel/add a runner to raise demo-gate throughput (the lever for the ~174 hot-path bulk — serialized demo queue)
+BACKLOG,P3,2026-08-03,hermit-247,rust_script_warm_cache,NO-VERIFY,rust-script warm cache masks scripts/lib/rust_script_prelude.rs changes (stale binary served)
+BACKLOG,P0,2026-08-03,,enable-github-merge-queue-on-main,NO-VERIFY,OWNER-GATED (TOP morning ask): enable the GitHub MERGE QUEUE on main (add merge_queue rule to ruleset 20244443) — lands the 12 queued PRs + permanentl
+BACKLOG,P0,2026-08-03,,main-force-push-reset-incident-postmortem,NO-VERIFY,P0 INCIDENT: origin/main force-pushed backward (~2026-08-03 10Z) orphaning ~12 merged PRs — postmortem + prevent recurrence
+BACKLOG,P1,2026-08-03,,e9patch-corpus-salvage-not-wholesale-graft,NO-VERIFY,P1: salvage the SUBSTANTIVE e9patch corpus tests (roundtrips/state/errno/identity-virt/IPC) + collapse the repetitive grids into table-driven family g
+BACKLOG,P1,2026-08-03,,validate-bpfjailer-transient-sandbox-block,NO-VERIFY,P1: validate runs die on a transient BPFJailer sandbox block — root-cause + harden so validate completes reliably every time
+BACKLOG,P1,2026-08-03,,triage-plan-127-asymmetric-prs,NO-VERIFY,"P1: triage plan for the 127 matrix-symmetry-violating open PRs (25 e9patch-only + 102 legacy single-backend) — rework-to-shared vs close, per class"
+BACKLOG,P1,2026-08-03,,validate-dynamorio-host-permission-block,NO-VERIFY,"P1: validate's DynamoRIO gate fails from HOST PERMISSION block (environmental, not a code failure) — same class as the BPFJailer transient"
+BACKLOG,P1,2026-08-03,,mechanized-matrix-to-case-catalog-retarget-script,NO-VERIFY,P1: build the mechanized matrix.tsv→case-catalog re-target script (makes the 83-PR coverage migration ~3-5 days instead of weeks)
+BACKLOG,P2,2026-08-03,,lint-portability-bpftool-hardcoded-path,NO-VERIFY,P2: `make lint` portability check fails — hardcoded /usr/local/bin/bpftool in hermit/.github/workflows/demo-hot-path.yml:198
+BACKLOG,P1,2026-08-03,,dryrun-preview-batch4-identity-ipc-migration,NO-VERIFY,"P1: dry-run the re-target script on batch-4 (identity+IPC, 14 PRs) — concrete preview proving the mechanized migration works at batch scale"
+BACKLOG,P0,2026-08-03,hermit-247,hermit-02-release-readiness-assessment,NO-VERIFY,"P0: hermit 0.2 release readiness — assess + drive the actual release path (version/--version, crates.io publish dry-run, repo-split, fbsource import p"
+BACKLOG,P0,2026-08-03,hermit-226,measure-red-pr-flip-rate-on-new-main,NO-VERIFY,P0: measure how many of the 172 CI-failing PRs flip GREEN when rebased onto the new main (which now has #1521 env hardening + #1520/#1522)
+BACKLOG,P1,2026-08-03,hermit-247,preserve-validation-evidence-on-label-strip,NO-VERIFY,"P1: never lose validation evidence — every path that strips `locally-validated` must leave a comment trail recording what was validated, at which SHA,"
+BACKLOG,P2,2026-08-03,hermit-ptw,e9patch_ptw_promote_agreed_subset,NO-VERIFY,Promote AGREED e9patch power-to-weight subset (KEEPs 2-5 only) via shared TOML
+BACKLOG,P2,2026-08-03,,ci-hub-worktree-registration,NO-VERIFY,P2: validate.sh discovers ci-hub by walking up (max ~3 dirs) and registers the worktree + reports results in a standard format
+BACKLOG,P1,2026-08-03,,ci-hub-green-time-metric,NO-VERIFY,P1: measure GREEN-TIME PERCENTAGE as ci-hub's first-class health metric — what fraction of wall-clock has main been a healthy green development base?
+BACKLOG,P0,2026-08-03,hermit-231b,enable-cgroups-and-cpu-timeouts-across-dag-nodes,NO-VERIFY,P1: cpu_timeout declarations across the 54 DAG nodes — NOTE: the '--cgroups is never passed' premise was FALSE (it's a deprecated no-op; Python boxes 
+BACKLOG,P1,2026-08-03,hermit-220,runner-cpu-affinity-single-core-runs,NO-VERIFY,P1: safe-ci-dag-runner must support constraining a whole process tree to ONE core (cpuset) for sequential-execution measurement — including native and
+BACKLOG,P2,2026-08-03,hermit-250,detcore-wait4-nondelivery-sigkilled-child,NO-VERIFY,"P2 'Face B': detcore wait4 non-delivery for a SIGKILLed child — separate from the reap deadlock, found during the #355 investigation"
+BACKLOG,P0,2026-08-03,hermit-ptw,agent-utils-direct-to-main-policy,NO-VERIFY,"P0: agent-utils commits go DIRECTLY TO MAIN by default — tests before landing, keep main green, single-threaded; land the stranded #5 now"
+BACKLOG,P2,2026-08-03,,detcore-misc-residual-passive-block-1-in-2760,NO-VERIFY,BACKLOG: residual detcore_misc passive-block flake at ~1/2760 — the notifier-layer drive-to-exit fix (post-#355)
+BACKLOG,P0,2026-08-03,hermit-ptw,agent-utils-own-ci-configured-and-green,NO-VERIFY,"P0: agent-utils must have its OWN CI configured and GREEN — it's the enforcement mechanism behind 'keep main green', and five workstreams are about to"
+BACKLOG,P0,2026-08-03,hermit-ghdag,rust-runner-parity-catchup-and-real-crosscheck,NO-VERIFY,"P0: ONE agent catches the RUST DAG runner up to Python FOR REAL, and strengthens the cross-check so a capability discrepancy is a TEST FAILURE"
+BACKLOG,P2,2026-08-03,hermit-247,factor-thirdparty-backends-into-separate-packages,NO-VERIFY,P2 (GATED on <10 OPEN PRs — owner 2026-08-04): factor 3rd-party backends into separate packages
+BACKLOG,P1,2026-08-03,,fix_1213_timerfd_codex,NO-VERIFY,fix #1213 Codex findings: coherent timerfd ownership across Linux APIs
+BACKLOG,P1,2026-08-03,hermit-ci,fix_runner_health_operational,NO-VERIFY,Fix runner-health operational-bounds exit contract
+BACKLOG,P1,2026-08-03,hermit-220,dag-runner-core-allocator-with-irq-awareness,NO-VERIFY,"P1: safe-ci-dag-runner needs a STATEFUL CORE ALLOCATOR — hand out K distinct cores per box, avoiding cores already allocated OR carrying kernel-thread"
+BACKLOG,P1,2026-08-03,hermit-ptw,audit-standing-directives-actually-in-effect,NO-VERIFY,"P1: AUDIT the owner's standing architectural directives — verify each is ACTUALLY IN EFFECT, not merely stated. Two were found unimplemented today."
+BACKLOG,P0,2026-08-03,hermit-243,priority-based-ci-planner-owns-the-batch,NO-VERIFY,"P0 (OWNER): PRIORITY-BASED CI — the planner names the NEXT BATCH, that batch gets greened and landed as fast as possible, and random feature-branch CI"
+BACKLOG,P1,2026-08-03,hermit-247,make_plugin_detcore_build,NO-VERIFY,Make plugin Detcore build ID cover resolved dependencies
+BACKLOG,P1,2026-08-03,hermit-247,make_stale_hermit_dir,NO-VERIFY,Make stale HERMIT_DIR plugin repair command effective
+BACKLOG,P1,2026-08-04,hermit-ghdag,ci-jobs-download-both-debug-and-release-artifacts,NO-VERIFY,"P1: CI jobs download BOTH debug AND release artifacts in the same job — wasted transfer per job, multiplied across a 6-stage chain"
+BACKLOG,P0,2026-08-04,hermit-codex-rev,triage-and-review-62-abandoned-draft-prs,NO-VERIFY,"P0 (OWNER): 62 DRAFT PRs are ABANDONED, not parked — batch triage + adversarial review, then publish or close. Nothing here is someone else's problem."
+BACKLOG,P1,2026-08-04,hermit-kvm,reverie_341_model_linux,NO-VERIFY,Reverie #341: model Linux ptrace request-specific errno semantics
+BACKLOG,P1,2026-08-04,hermit-kvm,reverie_343_make_kvm,NO-VERIFY,Reverie #343: make KVM robust-list registry follow task lifecycle
+BACKLOG,P1,2026-08-04,hermit-kvm,translate_scm_rights_descriptors,NO-VERIFY,Translate SCM_RIGHTS descriptors in Reverie KVM sendmsg/recvmsg
+BACKLOG,P0,2026-08-04,hermit-220,per-step-parallel-speedup-study-and-j-model,NO-VERIFY,"P0 (OWNER): PER-STEP PARALLEL SPEEDUP STUDY — sweep -j per DAG step to the wall-time dip, set that as the step's max -j, and record MEMORY at each poi"
+BACKLOG,P1,2026-08-04,hermit-250,implement-overshoot-marker-and-skid-gated-retry,NO-VERIFY,"P1: IMPLEMENT the skid-gated retry — standardize ONE overshoot marker, retry ONLY on it, count every retry; and establish WHY the EPYC skid margin is "
+BACKLOG,P1,2026-08-04,hermit-codex-rev,proxy-matching-defect-class-review-rule,NO-VERIFY,P1: ELEVEN instances of one defect — a mechanism keying on a PROXY for a condition rather than the condition itself. Make it a review rule and a lint 
+BACKLOG,P1,2026-08-04,,three-core-prs-blocked-on-design-decisions-not-fixes,NO-VERIFY,"P1 (OWNER DISCUSSION): #1200, #1213, #1443 are blocked on DESIGN DECISIONS, not fixes — no agent can unblock them without an architecture call"
+BACKLOG,P0,2026-08-04,hermit-247,fold_edit_distance_into,NO-VERIFY,Fold edit-distance into detcore before 0.2 publication
+BACKLOG,P1,2026-08-04,,owner-decisions-blocking-02-publication,NO-VERIFY,OWNER DECISIONS (2): final detcore NAMING and hermit-run/DBT FACTORING — 0.2 publication cannot start until both land
+BACKLOG,P1,2026-08-04,hermit-ghdag,close-the-observation-gap-before-optimising-green-time,NO-VERIFY,"P1 (PHASE 2 PREREQ): green-time is GAP-DOMINATED (0.88% portable / 7.99% merge-gate) — the denominator is mostly ABSENCE, so close the observation gap"
+BACKLOG,P1,2026-08-04,hermit-231b,memory-caps-must-scale-with-job-count-not-be-constants,NO-VERIFY,P1: 10 DAG nodes carry a FIXED hard_mem_max_bytes against an nproc-SCALED job count — replace with cap = rss_baseline + per_worker x pinned_jobs + hea
+BACKLOG,P2,2026-08-04,hermit-coord,align_worktree_gc_with,NO-VERIFY,Align worktree-gc with the derived disk cap and accounting unit
+BACKLOG,P1,2026-08-04,OWNER-RYAN,owner-decision-queue-2026-08-04,NO-VERIFY,"OWNER DISCUSSION QUEUE (do NOT close — nag until discussed) — accumulated post-facto points requiring the owner's judgement, per his 2026-08-04 direct"
+BACKLOG,P1,2026-08-04,hermit-226,validate_sh_retry_classifier,NO-VERIFY,validate.sh retry classifier: tail|sed|grep -q SIGPIPE/pipefail false-negative may misclassify a transient failure so NO retry fires
+BACKLOG,P2,2026-08-04,hermit-dbi,times_2_tms_stime,NO-VERIFY,times(2) tms_stime diverges across backends (ptrace/dbi/kvm) — getrusage zeroes ru_stime but times() does NOT zero tms_stime
+BACKLOG,P0,2026-08-04,hermit-247,rename_public_detcore_package,NO-VERIFY,Rename public Detcore package to hermit-detcore
+BACKLOG,P0,2026-08-04,hermit-coord,pr_drain_hermit_coord,NO-VERIFY,"pr-drain-hermit-coord: claim #1558 #1570 #1534 #1547 #1299 (validate@head via systemd-run, --rebase land green)"
+BACKLOG,P0,2026-08-04,hermit-ci,p0_implement_load_immune,NO-VERIFY,P0: implement load-immune ci-hub timeout management
+BACKLOG,P1,2026-08-04,hermit-247,validate_4_open_hermit,NO-VERIFY,Validate 4 open hermit PRs SOLO via producer path
+BACKLOG,P0,2026-08-04,hermit-e9patch,recover_stranded_1549_uncommitted,NO-VERIFY,Recover stranded #1549 uncommitted test-count fix in e9patch slot (drain/pr-1549)
+BACKLOG,P0,2026-08-04,hermit-ptw,batch-bump-the-43-mechanically-disjoint-stale-pins,NO-VERIFY,P0 `drain/pin-bump-43`: 59 of 73 open PRs carry the UNFIXED reverie pin and CANNOT pass on any box — establish whether the 43 mechanically-disjoint on
+BACKLOG,P0,2026-08-04,hermit-238b,shared_dev_hermit_tree,NO-VERIFY,Shared dev-hermit tree accumulates uncommitted source from recycled agents (standing hazard until D114651186 deploys)
+BACKLOG,P1,2026-08-04,hermit-e9patch,replace_reverie_ptrace_provenance,NO-VERIFY,Replace Reverie ptrace provenance error-string fallback with typed classification
+BACKLOG,P0,2026-08-04,OWNER-RYAN,green-reset-after-landing-sprint-recompute-envelope-on-bitwise,NO-VERIFY,P0 (AFTER LANDING SPRINT — owner 2026-08-04): RESET WHAT GREEN MEANS. Recompute the ENTIRE compat envelope under BITWISE parity. The envelope is EXPEC
+BACKLOG,P0,2026-08-04,hermit-238b,per-node-private-cargo-target-dirs-to-kill-lock-contention,NO-VERIFY,SUPERSEDED by `dag/one-fat-build` — private target dirs work around a lock that should not exist; collapsing the separate build invocations removes it
+BACKLOG,P0,2026-08-04,,ledger-records-reds-without-distinguishing-flake-from-defect,NO-VERIFY,P0 `ci/false-red-durability`: the validate ledger records a FAILED with no way to distinguish DEFECT from FLAKE or CONTENTION — and a recorded red is 
+BACKLOG,P0,2026-08-04,,validate-must-refuse-to-run-unharnessed-inside-dev-hermit,NO-VERIFY,"P0 (OWNER) `ci-hub/sole-admission-control`: NOT LIVE — I verified validate.sh (196,820 bytes) and it contains NO ci-hub refusal, NO dev-hermit harness"
+BACKLOG,P1,2026-08-04,,sabre_sb3_safety_net,NO-VERIFY,"OWNER CORRECTION `patching/sabre-sb3`: the FAIL-CLOSED path for un-instrumented syscalls is the SYSTRAP-STYLE IN-GUEST SIGNAL HANDLER, **NOT** a ptrac"
+BACKLOG,P0,2026-08-04,,owner-decision-zero-ptracer-requires-reverie-core-abstraction-changes,NO-VERIFY,OWNER DECISION `patching/zero-ptracer-scope`: the path to no-ptrace is NOT a pure additive extension — it CHANGES Reverie core-abstraction categories 
+BACKLOG,P2,2026-08-04,,research-0p3-combine-offline-and-online-patching-to-eliminate-first-call-traps,NO-VERIFY,"P2 RESEARCH (OWNER, 0.3 GENERATION — NOT NOW): combine OFFLINE patching (e9patch/SaBRe) with ONLINE patching (liteinst) so the first-call trap is avoi"
+BACKLOG,P0,2026-08-05,,determinize_findmnt_against_transient,NO-VERIFY,Determinize findmnt against transient host user mounts
+BACKLOG,P1,2026-08-05,,p1_repair_primary_hermit,NO-VERIFY,P1: Repair primary hermit checkout bare-repo anomaly (breaks make demo7 + parent git status)
+BACKLOG,P0,2026-08-06,hermit-coord,resync-upper-team-main-and-agent-utils,NO-VERIFY,"P0 `recovery/resync`: pull upper-team advances into main + bring agent-utils back to its master, re-establish the frontier"
+IN_PROGRESS,P1,2026-07-31,hermit-oci,research-oci-integration-next-phases,NO-VERIFY,"P2 RESEARCH: proposal for next phases of OCI integration — `hermit oci` subcommand, podman gap analysis, + deterministic container builds (dovetail wi"
+IN_PROGRESS,P1,2026-08-03,egress-probe,e9patch-corpus-power-to-weight-selection,NO-VERIFY,P1: select the subset of the e9patch corpus with the best POWER-TO-WEIGHT (coverage gained per second of validate time) — agent + adversarial reviewer
+IN_PROGRESS,P0,2026-08-03,egress-probe,validate-sh-duplicates-product-functionality,NO-VERIFY,P0: validate.sh reimplements product functionality in bash (R/R stdout/stderr determinism comparison belongs in `hermit --verify`) — audit every dupli
+IN_PROGRESS,P1,2026-08-03,egress-recheck,flaky-failure-attribution-capability,NO-VERIFY,"P1: build FLAKY-FAILURE ATTRIBUTION — for every failing run in a 1/10, determine whether it was INFRASTRUCTURE, HERMIT NONDETERMINISM, or ENVIRONMENT,"
+IN_PROGRESS,P1,2026-08-03,egress-probe,backends-md-ground-truth-audit-three-patching,NO-VERIFY,"P1: GROUND-TRUTH audit of what is ACTUALLY implemented in sabre / liteinst / e9patch — verify every BACKENDS.md claim against source with file:line, t"
+IN_PROGRESS,P1,2026-08-03,hermit-clone,fix_reverie_330_fork,NO-VERIFY,fix_reverie_330_fork_wait_reconstruction
+IN_PROGRESS,P0,2026-08-03,hermit-coord,validate-484s-single-gate-dominates,NO-VERIFY,"P0 (OWNER): validate is 92% ONE GATE — `portable CI DAG manifest` takes 484s of 528s, at CPU/wall 2.6x on a 316-core box"
+IN_PROGRESS,P1,2026-08-04,hermit-clone,reverie_338_aggregate_kvm,NO-VERIFY,Reverie #338: aggregate KVM exit statistics from forked children
+IN_PROGRESS,P1,2026-08-04,hermit-clone,reverie_344_route_new,NO-VERIFY,Reverie #344: route new KVM seccomp syscall through required review
+IN_PROGRESS,P0,2026-08-04,hermit-coord,pr-planning-process-consolidation-drain-as-testcase,NO-VERIFY,"P0 (OWNER): CONSOLIDATE the PR-planning skills + procedure into ONE working process — and PROVE it on the live 88-PR drain, not in theory"
+IN_PROGRESS,P0,2026-08-04,egress-probe,pids_axis_real_cgroup,NO-VERIFY,pids-axis-real-cgroup-enforcement-test
+IN_PROGRESS,P1,2026-08-04,egress-probe,close_boxing_coverage_gap,NO-VERIFY,P1: close the boxing coverage gap — bare runs in the agent 3pai_sandbox scope get containment that NEITHER THROTTLES NOR REAPS (systemd removes a scop
+IN_PROGRESS,P0,2026-08-04,egress-probe,extend-safe-ci-dag-runner-add-the-missing-features,NO-VERIFY,"P0 (OWNER, REPEATED): `boxing/runner-features` — MISSING FEATURES IN safe-ci-dag-runner GET ADDED, NOT WORKED AROUND. Six concrete gaps enumerated, ea"
+IN_PROGRESS,P0,2026-08-04,hermit-coord,staging-branch-merge-all-prs-test-once,NO-VERIFY,"P0 `drain/staging-branch`: merge ALL open PRs into ONE STAGING BRANCH, test it ONCE, then merge that — O(1) validation instead of O(N)"
+IN_PROGRESS,P0,2026-08-04,hermit-audit,vacuous-test-audit-hermit-staging-candidates,NO-VERIFY,P0 `drain/vacuous-tests`: audit the hermit staging candidates with the reverie lens — 5/5 reverie members had tests that passed WITHOUT exercising the
+IN_PROGRESS,P0,2026-08-04,hermit-coord,never-test-a-pr-without-rebasing-first,NO-VERIFY,OWNER RULE: NEVER test/validate a PR without REBASING FIRST — the only exception is tracing backwards to separate a rebase-caused failure from a pre-e
+IN_PROGRESS,P0,2026-08-04,egress-probe,derive-all-dag-memory-caps-as-a-set-not-reactively,NO-VERIFY,"P0 `boxing/raise-caps-generously` — OWNER OVERRULED PRECISION: raise the caps, do not derive them. Box has ~754 GiB; caps exist to STOP RUNAWAY, not t"
+IN_PROGRESS,P1,2026-08-04,egress-probe,make_unsupported_syscall_panic,NO-VERIFY,Make unsupported-syscall panic handling the default or resolve the standing directive
+IN_PROGRESS,P0,2026-08-04,hermit-clone,no-worse-ratchet-during-sprint-no-new-stripped-greens,NO-VERIFY,P0 `quality/no-worse-ratchet` — DURING the landing sprint: do not make it worse. NO NEW green claims backed by a stripped comparison; every new parity
+IN_PROGRESS,P0,2026-08-04,hermit-coord,validate-then-land-is-unsound-the-push-rewrites-the-head,NO-VERIFY,"CONFIRMED LIVE AS THE DRAIN'S ACTUAL BLOCKER: the push rewrites the head, so every rebase-front receipt died on its pre-push head. Gate shows `qualify"
+IN_PROGRESS,P0,2026-08-04,hermit-verify,strictness-tightening-program-the-p0-after-the-drain,NO-VERIFY,"P0 IMMEDIATELY AFTER THE PR STORM CLEARS (owner 2026-08-04): STRICTNESS-TIGHTENING PROGRAM — make `--verify` mean bitwise, then recompute the envelope"
+IN_PROGRESS,P0,2026-08-04,egress-probe,design-the-dag-runner-parallelism-surface-three-axes-not-one-j,NO-VERIFY,P0 (OWNER) `dag-runner/parallelism-surface`: `-j` CONFLATES THREE DISTINCT SETTINGS — outer DAG width · total concurrent parallelism · max width per s
+IN_PROGRESS,P0,2026-08-04,hermit-verify,parity-against-ptrace-cannot-detect-a-shared-bug-needs-a-correctness-oracle,NO-VERIFY,P0 `scorecard/equivalence-is-not-correctness`: backend parity compares each backend AGAINST PTRACE — so ANY BUG PTRACE AND THE BACKEND SHARE passes pa
+IN_PROGRESS,P0,2026-08-04,hermit-coord,drain-blocked-no-green-exists-at-or-above-the-gate-floor,NO-VERIFY,"P0 `drain/no-valid-base`: TOOL-CONFIRMED — `ci-hub newest-green` returns FAILED, floor `c369be3f`, only 1 trustworthy recorded commit. ALL 23 rebase-f"
+IN_PROGRESS,P0,2026-08-04,hermit-verify,validate-wall-budget-600s-the-median-passes-the-tail-does-not,NO-VERIFY,P0 (OWNER) `ci/wall-budget-600s`: keep the MEDIAN under 10 min and MINIMIZE wall clock generally. Variance is EXPECTED on a variable-load dev box — do
+IN_PROGRESS,P0,2026-08-04,hermit-coord,cap-concurrent-validates-at-6-measured-knee,NO-VERIFY,P0 `ci/validate-admission-cap`: MEASURED KNEE — median wall stays under the 600s budget up to 6 CONCURRENT VALIDATES and breaks above it (520s -> 686s
+IN_PROGRESS,P0,2026-08-04,hermit-design,green-inheritance-test-selection-anchored-on-full-main-validates,NO-VERIFY,"P0 (OWNER) `ci/green-inheritance`: ONE HOP ONLY — incremental runs anchor on a FULL green, never on another incremental. Selection diff is TIP vs ANCH"
+IN_PROGRESS,P1,2026-08-04,hermit-verify,validate_ledger_qualified_rows,NO-VERIFY,validate-ledger-qualified-rows-guard
+IN_PROGRESS,P0,2026-08-04,hermit-verify,verify-tightening-high-confidence-compat-scorecard,NO-VERIFY,P0 (OWNER) `verify/tightening`: fix all log stripping and related slop to reach a HIGH-CONFIDENCE compat envelope scorecard we can trust — the PREREQU
+IN_PROGRESS,P1,2026-08-04,hermit-design,shared_inguest_toolhost_family,NO-VERIFY,shared-inguest-toolhost-family-a
+IN_PROGRESS,P0,2026-08-04,egress-probe,third-party-backends-move-downstream-of-the-first-party-build-in-the-dag,NO-VERIFY,P0 (OWNER) `dag/third-party-downstream`: move the 3rd-party backend builds DOWNSTREAM of the 1st-party hermit binary build so they cannot contend or g
+IN_PROGRESS,P0,2026-08-04,hermit-audit,cmake-trusts-mtime-not-content-so-a-truncated-artifact-is-permanent,NO-VERIFY,"P1 (was P0) `build/artifact-integrity`: cmake validates TIMESTAMP not CONTENT, so a truncated object is trusted permanently. SCOPE CORRECTED: 11 Dynam"
+IN_PROGRESS,P0,2026-08-04,hermit-verify,define-the-heap-as-guest-allocated-pages-only-code-and-static-excluded,NO-VERIFY,"P0 (OWNER) `determinism/heap-definition`: define HEAP = ALL PAGES OF GUEST-ALLOCATED MEMORY, EXCLUDING code pages and static regions. Under a PATCHING"
+IN_PROGRESS,P0,2026-08-04,hermit-coord,report-the-drain-as-two-pools-cleanup-backlog-vs-steady-state-flow,NO-VERIFY,"P0 (OWNER) `drain/two-pools`: report STALE (>24h, a FINITE CLEANUP JOB measured by shrinkage) SEPARATELY from FRESH (<24h, a FLOW-RATE problem measure"
+IN_PROGRESS,P1,2026-08-04,hermit-coord,can-github-merge-queue-satisfy-our-local-validation-without-losing-the-local-loop,NO-VERIFY,P1 (OWNER) `landing/merge-queue`: SELF-HOSTED RUNNERS ARE RULED OUT — the devbig boxes are Meta-internal and cannot execute external GitHub code; the 
+IN_PROGRESS,P0,2026-08-04,hermit-design,soft-green-vs-hard-green-is-not-tracked-anywhere-in-ci-hub,NO-VERIFY,P0 (OWNER) `ci-hub/soft-green`: the SOFT-GREEN vs HARD-GREEN distinction is NOT IMPLEMENTED. I checked the ledger schema (no soft/hard/inherit field —
+IN_PROGRESS,P0,2026-08-05,hermit-design,port_validate_sh_to,NO-VERIFY,port-validate-sh-to-rust-on-safe-ci-dag-runner-library
+OPEN,P2,2026-07-20,,hermit_revival,NO-VERIFY,Hermit Revival
+OPEN,P2,2026-07-20,,__adhoc__,NO-VERIFY,Adhoc
+OPEN,P2,2026-07-21,,reverie_backends,NO-VERIFY,Reverie Backends
+OPEN,P2,2026-07-21,,dev_hermit_parent,NO-VERIFY,Dev Hermit Parent
+OPEN,P0,2026-07-21,,goal-qemu-linux-under-hermit,NO-VERIFY,MILESTONE: Run full Linux VM under QEMU deterministically with Hermit
+OPEN,P2,2026-07-24,,qemu_linux,NO-VERIFY,QEMU Linux
+OPEN,P2,2026-07-27,,triage-review-blocks-goal,NO-VERIFY,Resolve all adversarial BLOCK comments from 2026-07-27 sprint PRs
+OPEN,P1,2026-07-28,,goal-repro-btrfs-f6a6c280,NO-VERIFY,Goal: Reproduce btrfs subvolume-deletion inodes-xarray race under Hermit/QEMU
+OPEN,P2,2026-07-29,,reproducible_builds,NO-VERIFY,Reproducible Builds
+OPEN,P1,2026-07-29,,epic-backend-supremacy,NO-VERIFY,EPIC: Backend supremacy — a non-ptrace backend substantially beats ptrace on build jobs
+OPEN,P1,2026-07-29,,epic-drb-replay-asplos20,NO-VERIFY,EPIC: Reproduce the ASPLOS'20 DRB case study in hermit (dettrace→hermit)
+OPEN,P1,2026-07-29,,epic-drb-modern-frontier,NO-VERIFY,EPIC: Close the MODERN Debian Reproducible Builds frontier to 100% with hermit
+OPEN,P2,2026-07-29,,epic-nix-reprobuild,NO-VERIFY,EPIC: Deterministic-by-construction Nix builder with hermit hooked in
+OPEN,P2,2026-07-30,,test_power_to_weight,NO-VERIFY,Test Power To Weight
+OPEN,P1,2026-07-30,,epic-test-powerweight,NO-VERIFY,"EPIC: coverage-guided test power-to-weight optimization (all tests, slowest-first)"
+OPEN,P0,2026-07-31,,vision-reverie-backend-repo-split,NO-VERIFY,"VISION (GATED on ~zero open PRs): split reverie backends by dep-weight + kill optional submodules — hermit builds standalone, dep-heavy backends becom"
+OPEN,P1,2026-08-02,,per-backend-stats-framework,NO-VERIFY,"P1: end-of-`hermit run` summary shows WHICH backend ran + calls that backend's stats method — patching stats (liteinst/e9patch/sabre), slowpath counte"
+OPEN,P1,2026-08-02,,liteinst_backend_patch_and,NO-VERIFY,LiteInst backend patch and slowpath stats provider
+OPEN,P2,2026-08-02,,add-long-running-multibackend-perf-tests,NO-VERIFY,"P2: add more LONG-running multi-backend tests — only N=2 tests are >5s in ptrace AND run in another backend, too few for a steady-state perf ranking"
+OPEN,P1,2026-08-02,,kvm-stdout-tty-winsize-divergence,NO-VERIFY,P1: KVM `ls` prints one-per-line vs ptrace multi-column — isatty()/TIOCGWINSZ (stdout TTY detection) handled differently under KVM
+OPEN,P1,2026-08-02,,liteinst_in_guest_backend,NO-VERIFY,LiteInst in-guest backend-stats RPC aggregation
+OPEN,P2,2026-08-02,,backend-short-flag-b,NO-VERIFY,P2: add -b as the short alias for --backend in hermit CLI
+OPEN,P1,2026-08-02,,fix-load-dependent-scheduling-vtime,NO-VERIFY,P1: --strict scheduler makes a LOAD-DEPENDENT number of scheduling decisions for timer/wall-clock-driven workloads → --verify breaks under heavy host 
+OPEN,P2,2026-08-02,,backend_parity_contract_fixture_2,NO-VERIFY,Backend-parity contract fixture: getcpu_identity (getcpu(2) CPU/node determinization)
+OPEN,P2,2026-08-02,,backend_parity_contract_fixture_4,NO-VERIFY,backend_parity_contract_fixture_4: getpriority_identity
+OPEN,P2,2026-08-02,,backend_parity_contract_fixture_5,NO-VERIFY,backend_parity_contract_fixture_5: numa_node_identity
+OPEN,P0,2026-08-02,,adopt-github-merge-queue,NO-VERIFY,P0: adopt an actual GitHub merge queue for rrnewton/hermit — structurally prevent landing-into-red + gate-bypass (replaces manual admin-merge)
+OPEN,P1,2026-08-02,,kick-the-tires-robustness-audit,NO-VERIFY,P1: systematic 'no surprises when kicking the tires' audit — every common manual entrypoint works on a clean checkout
+OPEN,P0,2026-08-02,,fix_kvm_python_examples,NO-VERIFY,Fix KVM Python examples verify timeout in privileged gate
+OPEN,P2,2026-08-03,,backend-rb-readiness-assessment-overnight,NO-VERIFY,"Backend RB-readiness assessment (#126, recurring): take stock of the leading non-ptrace backend (KVM/DBI/patching) compat envelope + readiness for sim"
+OPEN,P0,2026-08-03,,full-validate-green-proof-with-1520-1521,NO-VERIFY,P0: produce a READABLE end-to-end GREEN validate log with #1520 + #1521 applied (the owner-verifiable green artifact)
+OPEN,P0,2026-08-03,,dual_adversarial_review_core,NO-VERIFY,dual-adversarial-review-core-change-prs
+OPEN,P1,2026-08-03,,ci-hub-epic,NO-VERIFY,EPIC: `dev-hermit/ci-hub/` — centralize all CI infrastructure + make validate.sh commit-anchored with smart test selection by default
+OPEN,P1,2026-08-03,,ci-hub-incremental-vs-total-tracking,NO-VERIFY,P1: distinguish INCREMENTAL vs TOTAL validation runs — mark total passes with all-tests-passed (PR label + local store)
+OPEN,P1,2026-08-03,,ci-hub-local-ci-history-store,NO-VERIFY,P1: ci-hub local store — ingest full GitHub Actions history incrementally + idempotently into a local CSV DB of commit/CI knowledge
+OPEN,P2,2026-08-03,,wallclock-after-cohort-rerun,NO-VERIFY,P2: re-run the wall-clock before/after analysis once the AFTER cohort accumulates (split at #1529's merge SHA be7e26cd)
+OPEN,P1,2026-08-03,,validate-performance-ratchet,NO-VERIFY,"P1: RATCHET validate performance — measure wall+CPU per run and per node, fail/alarm on regression, so validate can never silently drift slow again"
+OPEN,P0,2026-08-03,,test-architecture-epic,NO-VERIFY,"EPIC: validate.sh is a 3,893-line bash TEST FRAMEWORK — orchestrator, test runner, and determinism checker all reimplemented in shell. Move each layer"
+OPEN,P1,2026-08-03,,nightly-stress-tests-not-actually-running,NO-VERIFY,P1: nightly stress tests are the defense against hermit-level flakiness — but we appear to have run them ONCE. Make them actually run nightly and alar
+OPEN,P0,2026-08-03,,milestone-hermit-02-stable-and-done,NO-VERIFY,"MILESTONE GATE: hermit 0.2 is stable and DONE — release actually cut, past the CI/PR backlog"
+OPEN,P1,2026-08-03,,gvisor-analysis-redo-v2,NO-VERIFY,"P1: REDO the gvisor analysis with expanded backends + the sequential-vs-parallel methodology, publish, and tag gvisor-blog-repro-v2"
+OPEN,P1,2026-08-03,,test-selection-relevance-vs-reachability-design,NO-VERIFY,P1 DESIGN: dependency closure gives 'could possibly cause' (sound but useless — everything depends on everything); we need a RELEVANCE standard layere
+OPEN,P1,2026-08-03,,timeout-audit-at-port-time-to-real-boxing,NO-VERIFY,"P1: as each thing is ported to ACTUALLY run boxed under the DAG runner, audit its timeouts AT THAT MOMENT — wall→CPU, tight margins — so generous wall"
+OPEN,P0,2026-08-03,hermit-243,ci-hub-green-time-percentage-metric,NO-VERIFY,P1 (PHASE 2): ci-hub must MEASURE AND LOG % TIME GREEN ON MAIN — the owner's key health metric
+OPEN,P1,2026-08-03,hermit-231b,per-platform-cpu-timeout-multipliers,NO-VERIFY,"P1: canonical tight CPU-time timeouts per DAG step, with PER-PLATFORM MULTIPLIERS (e.g. 1.5-2x) for underpowered GitHub hosted runners"
+OPEN,P1,2026-08-03,,agent-utils-rust-script-by-default,NO-VERIFY,P1: move agent-utils toward rust-script by DEFAULT so a stale compiled binary cannot silently win
+OPEN,P1,2026-08-03,,dag-schema-cpu-secs-and-reference-machine,NO-VERIFY,"P1 (DEFERRED to a green cruising baseline): replace `est_duration_s` with `est_cpu_secs` + `est_seq_duration_secs`, add a per-machine settings file an"
+OPEN,P1,2026-08-03,,quantify-test-coverage-value-syscall-flags-and-rust-loc,NO-VERIFY,P1: QUANTIFY 'coverage value' — syscall coverage AT FLAG/OPTION GRANULARITY + Rust LOC coverage of hermit itself — so new tests can be BLOCKED when th
+OPEN,P2,2026-08-03,,milestone-code-coverage-measurement,NO-VERIFY,"MILESTONE (long-term, post-0.2): move toward real CODE COVERAGE MEASUREMENT for hermit — Rust LOC coverage + syscall coverage at flag/option granulari"
+OPEN,P1,2026-08-03,,reverie-portable-vs-privileged-split-audit,NO-VERIFY,"P1: audit reverie's PORTABLE vs PRIVILEGED test split — if most tests don't need privilege, move them to GitHub-hosted runners and the self-hosted SPO"
+OPEN,P0,2026-08-03,hermit-dbi,fix_pr_1147_failed,NO-VERIFY,Fix PR 1147 failed-exec coordinator rollback
+OPEN,P0,2026-08-03,hermit-dbi,fix_pr_1147_fail,NO-VERIFY,Fix PR 1147 fail-open DBI PrepareExec bridge
+OPEN,P0,2026-08-03,hermit-dbi,fix_pr_1147_nonleader,NO-VERIFY,Fix PR 1147 nonleader-thread exec continuity
+OPEN,P0,2026-08-03,,correct_pr_1147_claims,NO-VERIFY,Correct PR 1147 claims and prove continuous exec time
+OPEN,P1,2026-08-03,,fix_1147_codex_review,NO-VERIFY,Fix #1147 codex review findings: exec-reconnect race + abnormal-teardown hang + non-leader execve
+OPEN,P2,2026-08-03,,fix_pr_1147_detpid,NO-VERIFY,fix_pr_1147_detpid_expect
+OPEN,P1,2026-08-03,hermit-lander,fix_pr_1443_pin,NO-VERIFY,fix #1443 Codex findings: landed quiescent API and fine-grained scheduling
+OPEN,P0,2026-08-03,hermit-coord,reverie_host_dependent_dependencies,NO-VERIFY,reverie Host-dependent Dependencies step uses apt-get-first detection; apt-get exists on the new Fedora runners so deps install fails (Unable to locat
+OPEN,P2,2026-08-03,,dag-runner-live-progress-buck2-style,NO-VERIFY,P2 (GATED on Rust runner feature-complete): buck2-style LIVE PROGRESS for safe-ci-dag-runner — top DAG counters + per-step footprint lines with wall/c
+OPEN,P1,2026-08-03,,no-hardcoded-wall-timeouts-idiom,NO-VERIFY,P1: IDIOM CHANGE — do NOT hardcode wall timeouts in the DAG file; unset should dynamically default to ~3x the CPU limit as defense-in-depth
+OPEN,P0,2026-08-03,,validate-dag-runner-p0-umbrella,NO-VERIFY,"P0 (OWNER-DECLARED): validate fully on safe-ci-dag-runner, parallelism maximized between independent tests, and GH+local sharing ONE execution path — "
+OPEN,P1,2026-08-03,,sandbox-failure-classifier-misses-ebadf,NO-VERIFY,"P1: the #1521 sandbox-failure detector does NOT match EBADF — a fourth failure form goes unclassified, so sandbox failures can be misread as real test"
+OPEN,P1,2026-08-03,,pmu-concurrency-cap-and-exhaustion-behaviour,NO-VERIFY,"P1: PMU counters are a SCARCE GLOBAL RESOURCE the DAG runner does not track — need a concurrent-PMU-process cap, per-test PMU tagging, and the answer "
+OPEN,P1,2026-08-03,hermit-226,validate-must-work-standalone-hermit-checkout,NO-VERIFY,"P1: validate MUST still run in a STANDALONE hermit checkout with no dev-hermit wrapper — the ledger is optional, the validate is not"
+OPEN,P1,2026-08-03,,manual-ci-mode-targeted-batches,NO-VERIFY,"P1 (OWNER): CI-CONSTRAINED MODE — turn OFF auto-CI-on-push, make the responsible agent decide how to validate, with ci-hub owning the mode state and t"
+OPEN,P1,2026-08-03,,ci-hub-timeout-mgmt-cancel-and-run-local,NO-VERIFY,P1 (OWNER): ci-hub owns CI TIMEOUT MANAGEMENT — a PR waiting >1h to START gets cancelled and validated LOCALLY instead
+OPEN,P2,2026-08-03,,github-what-is-going-on-investigation,NO-VERIFY,"P2 (OFF CRITICAL PATH, one agent): 'what is going on with GitHub' — dig deeper, but must NOT block landing or validate work"
+OPEN,P0,2026-08-03,,lander-lands-on-local-validate-only,NO-VERIFY,P0 (OWNER): GITHUB-FREE LANDING — lander pushes to main on (1) locally-validated label OR (2) clean-validate record in local history. No merge-gate wa
+OPEN,P0,2026-08-03,,landing-throughput-ceiling-serialized-validate,NO-VERIFY,"P0: LANDING is the bottleneck, not implementation — 70 implemented-unlanded tasks against a ~6-7 PR/hour ceiling from serialized 9-min validates"
+OPEN,P1,2026-08-03,,main-queue-depth-1-not-cancel-in-progress,NO-VERIFY,"P1 (OWNER): on MAIN use QUEUE-DEPTH-1, NOT cancel-in-progress — yields a sparse dataset of COMPLETE runs instead of many cancelled ones"
+OPEN,P1,2026-08-04,,queue-depth-1-on-dev-hermit-main-too,NO-VERIFY,"P1 (OWNER): apply queue-depth-1 / no-cancel-inflight to DEV-HERMIT main as well — commit rate must change run SPARSITY, never run COMPLETION"
+OPEN,P1,2026-08-04,,surface_superseded_fail_count,NO-VERIFY,surface-superseded-fail-count-in-validated-banner
+OPEN,P0,2026-08-04,,unified-in-guest-patching-backend,NO-VERIFY,"P0 (OWNER, ARCHITECTURE GATE) `patching/zero-ptracer`: the final form of sabre/e9patch/liteinst is (1) SHARED CODE and (2) ZERO PTRACER — a patching b"
+OPEN,P2,2026-08-04,hermit-ghdag,claude-md-over-size-limit-instructions-not-loading,NO-VERIFY,dev-hermit CLAUDE.md context-cost condense — 62.6k over the 40k soft-warning (loads in full; NOT truncated)
+OPEN,P1,2026-08-04,hermit-coord,cut-demo-tag-20260804-verified,NO-VERIFY,"P1: cut demo-20260804 — demo5 boot is now VERIFIED reliable (141s, repeat-verified), which is the condition the previous tag was removed for lacking"
+OPEN,P2,2026-08-04,hermit-lander,four-prs-carry-unbacked-locally-validated-labels,NO-VERIFY,"P0: #1532, #1498, #1470, #1365 carry `locally-validated` with NO validate record at their current heads — four live landing hazards"
+OPEN,P0,2026-08-04,,systemd-run-user-is-the-validate-producer-path,NO-VERIFY,"P0: `systemd-run --user` IS THE VALIDATE PRODUCER PATH — agents cannot self-create cgroups under BpfJailer, but they CAN ask systemd for a scope. This"
+OPEN,P1,2026-08-04,hermit-250,livelock-reads-as-slow-test-on-every-wall-clock-instrument,NO-VERIFY,P1: a LIVELOCK is invisible to wall-clock timeouts — `detcore_misc` observed at 100% CPU in `futex_` for 224s. Some 'environmental' flakes may be live
+OPEN,P1,2026-08-04,hermit-coord,orphaned-hermit-processes-spin-forever-at-99-cpu-nothing-reaps-them,NO-VERIFY,P1: orphaned hermit processes (ppid=1) at 99.9% CPU leak cores permanently — NOT the cause of the reverie gate overrun (that hypothesis was DISPROVEN)
+OPEN,P1,2026-08-04,OWNER-RYAN,validate-speed-the-three-coupled-levers-owner-gated,NO-VERIFY,"P1 (OWNER DECISION): validate speed has THREE COUPLED LEVERS, none of them edge-pruning — per-node target dirs + hermit_guest cap>1 + shard the 166.18"
+OPEN,P0,2026-08-04,,drain-the-49-no-record-prs-once-the-cargo-pin-lands,NO-VERIFY,P0 `drain/next-10`: drain the NO-RECORD PRs — REVISED by the lever-cross. 21 orphaned+floor-clearing need validate-at-head; 20 FLOOR-BLOCKED must be R
+OPEN,P1,2026-08-04,hermit-243,ci-hub-owned-validate-panes-outside-the-agent-jail,NO-VERIFY,P1 (OWNER ARCHITECTURE): KEEP the Claude/codex sandbox ON deliberately — it catches stray tool calls. Legitimate CI/hermit/test work ESCAPES through c
+OPEN,P2,2026-08-04,,kvm_l3_detlog_stack,NO-VERIFY,KVM L3 detlog-stack evidence gap: reproduce claimed ld.so.cache stack variance with retained per-run hashes
+OPEN,P1,2026-08-04,hermit-coord,hermit-wrapper-singleton-dag-mode-for-all-adhoc-runs,NO-VERIFY,P1 (OWNER CONVENTION): ad-hoc hermit runs and single-test runs go through a HERMIT WRAPPER that boxes via safe-ci-dag-runner SINGLETON DAG MODE — the 
+OPEN,P1,2026-08-04,OWNER-RYAN,owner-decision-times2-vs-getrusage-continuity,NO-VERIFY,"OWNER DECISION: `times(2)` vs `getrusage` disagree on system time — the byte-parity fix FREEZES A CLOCK, the correct fix is multi-day core surgery"
+OPEN,P1,2026-08-04,OWNER-RYAN,permission-sweep-approves-idle-agents,NO-VERIFY,"P1 `orc/permission-sweep`: my approval sweep sends `y` to agents that are IDLE, not blocked — burning their context with no prompt to answer"
+OPEN,P0,2026-08-04,OWNER-RYAN,every-agent-shepherds-its-own-pr-to-landing,NO-VERIFY,"P0 `process/shepherd-own-pr`: STALENESS is the protocol breach, not count — and every agent shepherds ITS OWN PR to landing rather than handing off to"
+OPEN,P0,2026-08-04,hermit-kvm,staging-branch-reverie-all-18,NO-VERIFY,"P0 `drain/staging-reverie`: merge ALL 18 open reverie PRs into ONE staging branch, validate ONCE, merge — advances reverie main maximally in a single "
+OPEN,P0,2026-08-04,hermit-243,staging-hermit-33-free-merges,NO-VERIFY,"P0 `drain/staging-hermit`: build hermit staging from the 33 FREE merges first — they need no chain, and they are the bulk of the win"
+OPEN,P1,2026-08-04,OWNER-RYAN,recycled-agents-release-nothing-they-hold,NO-VERIFY,"P1 `fleet/dead-owner-residue`: a recycled agent releases NOTHING it holds — slots, tasks, branches and uncommitted edits all survive with a dead owner"
+OPEN,P1,2026-08-04,hermit-coord,rescue-three-unpushed-commits-in-dead-staging-drain-slot,NO-VERIFY,P1 `fleet/stranded-work`: THREE UNPUSHED RECOVERY COMMITS sit in the DEAD `staging-drain` slot — recover them before that slot is reclaimed
+OPEN,P1,2026-08-04,OWNER-RYAN,owner-decision-org-runner-pool-is-the-ci-lever,NO-VERIFY,"P1 (OWNER DECISION) `ci/runner-supply`: portable CI is ADMISSION-LIMITED at 8 concurrent runners — the only remaining lever is the ORG RUNNER POOL, wh"
+OPEN,P0,2026-08-04,OWNER-RYAN,permission-sweep-misses-busy-agents-sabre-lost-65-minutes,NO-VERIFY,P0 `orc/permission-sweep`: an agent sat on an approval prompt for 65 MINUTES because the sweep keys on `needs-permission` while codex agents report `b
+OPEN,P1,2026-08-04,OWNER-RYAN,owner_decision_clear_the,NO-VERIFY,ANSWERED BY OWNER RULE: rebase the 23 pre-anchor passers — 'never test any PR without rebasing first'
+OPEN,P0,2026-08-04,,land-clusters-as-they-ripen-not-all-or-nothing,NO-VERIFY,"OWNER PRINCIPLE: LAND A CLUSTER THE MOMENT IT IS HEALTHY, then form the next — do NOT hold healthy PRs waiting for a complete batch"
+OPEN,P2,2026-08-04,OWNER-RYAN,watch-third-level-parallelism-breaks-the-cap-model,NO-VERIFY,"WATCH `boxing/third-level-parallelism`: when hermit --strict allows PROCESS-LEVEL parallelism (a `make -j` guest), the cap model `f(configured threads"
+OPEN,P0,2026-08-04,hermit-231b,headline-inner-step-scaling-curves-cargo-and-strict-compat,NO-VERIFY,P0 `perf/inner-scaling-curves`: we have NO headline scaling numbers for `cargo build` or `test.strict_compat` — every figure we hold is OUTER-DAG. Mea
+OPEN,P0,2026-08-04,hermit-coord,reverie-gitmodules-still-has-shallow-skipping,NO-VERIFY,P0 `build/submodule-skipping`: `reverie/.gitmodules` STILL carries `shallow = true` on all 3 submodules — the purge covered dev-hermit and hermit but 
+OPEN,P2,2026-08-04,hermit-coord,prune-stale-local-backup-branches-blocking-pin-check,NO-VERIFY,P2 `fleet/stale-backup-branches`: `check-agent-utils-pin` reports `local_unpushed_commits=10` from ABANDONED local-only backup branches — a third drif
+OPEN,P1,2026-08-04,hermit-251,producer-posts-to-its-own-task-consumer-reads-a-different-one,NO-VERIFY,P1 `process/handoff-channel-mismatch`: a producer posted 12 ready heads to ITS OWN task while the consumer reads a DIFFERENT task — twelve verified he
+OPEN,P2,2026-08-04,hermit-ci,validate-defaults-to-a-profile-that-cannot-authorize-landing,NO-VERIFY,"CORRECTED to P2 `ci/compat-only-precheck`: compat-only is a PRE-CHECK preceding the full run (63 of 141 heads carry both), NOT a broken default — ledg"
+OPEN,P0,2026-08-04,hermit-243,validate-wall-is-a-first-class-main-branch-metric-watched-continuously,NO-VERIFY,"P0 (OWNER) `ci-hub/main-metrics`: validate WALL TIME (and secondarily CPU/MEM) is a KEY METRIC WATCHED CONTINUOUSLY ON MAIN — per-commit, trended, ala"
+OPEN,P0,2026-08-04,hermit-220,anchor-selection-is-a-search-pick-the-cheapest-full-green-anchor,NO-VERIFY,P0 (OWNER) `ci/anchor-selection`: ANY commit Z with a FULL hard green can anchor a test of X — including X's OWN PRE-REBASE SELF. Make anchor choice a
+OPEN,P2,2026-08-04,OWNER-RYAN,perf_coordinator_roundtrip_reduction,NO-VERIFY,"GATED behind verify-tightening (owner) `perf/lever-B-shmem-futex`: owner considers it the BETTER DESIGN in general — shared-mem ring primary, UDS fall"
+OPEN,P3,2026-08-04,OWNER-RYAN,perf_coordinator_roundtrip_reduction_2,NO-VERIFY,"DEPRIORITIZED (owner, 2026-08-04) `perf/lever-A-inguest-quiescence`: elides the RPC hop only when a SINGLE guest thread is runnable — owner: 'may be a"
+OPEN,P1,2026-08-04,hermit-perf,guest-coordinator-same-core-affinity,NO-VERIFY,P1 (OWNER) `perf/same-core-affinity`: pin the guest thread and host coordinator to the SAME CORE so a guest yield runs the coordinator immediately — t
+OPEN,P2,2026-08-04,OWNER-RYAN,scx-scheduler-for-hermit-threads,NO-VERIFY,P2 (OWNER) `perf/scx-hermit-sched`: a dedicated SCX scheduler that makes guest-yield -> coordinator-run immediate. Serious investment — gated on the a
+OPEN,P3,2026-08-04,OWNER-RYAN,bpf-scx-native-hermit-backend,NO-VERIFY,"P3 (OWNER, FUTURE) `arch/bpf-scx-backend`: a new hermit backend using BPF+SCX to control the guest DIRECTLY, rather than unblocking threads and deferr"
+OPEN,P1,2026-08-04,OWNER-RYAN,elide-coordinator-hop-while-logical-timeslice-unexhausted,NO-VERIFY,"P1 (OWNER, GATED) `detcore/timeslice-local-fastpath`: the guest should NOT phone home while its LOGICAL TIME SLICE is unexhausted — a general local-to"
+OPEN,P1,2026-08-04,,liteinst_flip_cli_to,NO-VERIFY,liteinst-flip-cli-to-inguest-toolhost
+OPEN,P1,2026-08-04,,e9patch_hybridptrace_inguest_converge,NO-VERIFY,e9patch-hybridptrace-inguest-converge
+OPEN,P2,2026-08-04,,unify_backend_stats_transport,NO-VERIFY,unify-backend-stats-transport
+OPEN,P0,2026-08-04,,ci-hub-admission-must-refuse-validate-on-a-stale-base,NO-VERIFY,P0 (OWNER) `ci-hub/admission-refuses-stale-base`: rebase-before-validate has been a CONVENTION we restate and violate — make ci-hub admission control 
+OPEN,P1,2026-08-04,hermit-perf,microbench-ceilings-must-be-confirmed-on-the-real-path-before-driving-work,NO-VERIFY,P1 `measurement/ceiling-transfer`: the coordinator-RPC ceiling predicted 12.33->4.40us; the real path measured 66.60->67.05 (no effect). NOTE (owner):
+OPEN,P1,2026-08-04,hermit-liteinst,prose_audit_reader_pov,NO-VERIFY,prose-audit-reader-pov-hermit-and-reverie-readmes
+OPEN,P1,2026-08-04,hermit-coord,tg-cannot-verify-landing-which-is-why-the-directives-ledger-exists,NO-VERIFY,P1 `tooling/tg-ancestry-verification`: the directives ledger duplicates tg structurally because tg CANNOT ANSWER 'did this land' — status is ASSERTED 
+OPEN,P0,2026-08-04,hermit-kvm,hash-the-register-file-and-sample-only-at-guest-logical-control-points,NO-VERIFY,"P0 (OWNER) `determinism/register-hash-and-control-boundary`: ADD REGISTER-FILE HASHING (we have none), and define the sampling boundary as GUEST-LOGIC"
+OPEN,P0,2026-08-04,hermit-lander,wip-limit-open-prs-tracked-against-active-agent-count,NO-VERIFY,P0 (OWNER) `drain/wip-limit`: the owner already stated PRs should stay CLOSE TO THE NUMBER OF ACTIVE AGENTS. We are at 131 implemented-unlanded agains
+OPEN,P1,2026-08-04,hermit-coord,single-lane-agents-own-one-linear-fat-pr-and-shepherd-it-to-landing,NO-VERIFY,"P1 (OWNER, POST-BACKLOG PROCESS): each single-lane backend agent works a LINEAR BRANCH and advances ONE FAT PR across many commits — get it green, add"
+OPEN,P0,2026-08-04,,coalescing_assembly_must_run,NO-VERIFY,"coalescing assembly must run prelude-cache-key.sh --write after merge, before validate"
+OPEN,P1,2026-08-04,hermit-coord,p1_fleet_primary_hermit,NO-VERIFY,P1 fleet/primary-hermit-bare-anomaly: primary hermit/ is core.bare=true with working-tree files present and local main ref stale (11108a3e vs origin 2
+OPEN,P0,2026-08-05,,land_reverie_369_221,NO-VERIFY,land-reverie-369-221-green-behind
+OPEN,P1,2026-08-05,,orc_hermit_msg_push,NO-VERIFY,tmux coordinator pane-targeting broken: pane-detect finds 0 coordinators
+OPEN,P0,2026-08-05,hermit-coord,hermit_reverie_pin_bump,NO-VERIFY,hermit reverie-pin bump to 55f6876a (post #369+#221)
+OPEN,P2,2026-08-05,,determinize_fchown_under_dbi,NO-VERIFY,determinize fchown under DBI (promote file_metadata backend-parity cell back from gap)
+OPEN,P0,2026-08-05,,post_hoc_review_direct,NO-VERIFY,post-hoc review direct-main CI tooling changes
+OPEN,P1,2026-08-05,,drain-implemented-to-landed,NO-VERIFY,UNCLOSABLE: drain implemented→landed — exhaustive list of implemented-but-not-landed work
+OPEN,P1,2026-08-05,,pr-filing-must-extend-the-drain-list,NO-VERIFY,P1: FILING a PR must add an entry to `drain-implemented-to-landed` — filing is what creates limbo
+OPEN,P1,2026-08-05,,cancelled-scheduled-run-is-silent,NO-VERIFY,P1 `ci/silent-cancel`: a CANCELLED weekly/scheduled run produces NO alert — super does not fit in 6h and is being cancelled invisibly
+OPEN,P2,2026-08-05,,oom-kill-lands-on-innocent-neighbour,NO-VERIFY,"P2 `boxing/oom-misattribution`: set `memory.oom.group` so a breach kills the OFFENDER, not a neighbour — STILL CORRECT, but NOT the drain unlock (the "
+OPEN,P1,2026-08-05,,parity-fixture-family-needs-one-shared-mutation-harness,NO-VERIFY,"P1 `tests/fixture-family`: FIVE parity contract fixtures are being written separately — they need ONE shared mutation harness, not five hand-rolled ve"
+OPEN,P0,2026-08-05,,unwire-executed-tests-from-remaining-consumers,NO-VERIFY,P0 `ci/refuted-field-still-wired`: Python + PR-status consumers STILL key on `executed_tests` after it was refuted — a correction applied to some call
+OPEN,P0,2026-08-05,,wire_the_coverage_node,NO-VERIFY,wire the coverage-node validate predicate end-to-end (writer emits + consumer reads CoverageRow)
+OPEN,P2,2026-08-06,,incident-podman-store-images-destroyed,NO-VERIFY,"INCIDENT: podman rmi -f cascaded, destroyed all 5 images in shared rootless podman store"

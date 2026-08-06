@@ -1,0 +1,15 @@
+{
+  "question": "Which corpus cells are marked passing/deterministic without ever running --strict --verify?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "artifact_audited": "compat-envelope/scorecard.csv (618 rows, written 2026-08-05T00:24)",
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "71d159900a988528ada30cb87f6a15215f641d4a",
+  "code_sites": [
+    "compat-envelope/collect-envelope.rs:260-265 (deterministic = pass, no mode check)",
+    "compat-envelope/collect-envelope.rs:581 (strict-mode command has no --verify)",
+    "compat-envelope/collect-envelope.rs:22-25 (doc names the 'for verify' restriction the code omits)",
+    "hermit-cli/src/bin/hermit/run.rs:2783-2787, :3117-3121 (plain --verify compares under Stripped)"
+  ],
+  "not_done": ["no cell was re-run", "no claim that any of the 105 is actually non-deterministic"]
+}

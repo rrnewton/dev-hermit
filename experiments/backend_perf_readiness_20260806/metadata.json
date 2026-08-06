@@ -1,0 +1,16 @@
+{
+  "question": "#283 gate: per backend, is the ptracer out of the syscall hot path?",
+  "date": "2026-08-06",
+  "host": "devbig014 AMD EPYC 9D85, nproc=316",
+  "hermit": "release, g0f891e432a75-dirty",
+  "env_required": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64",
+  "method": "marginal wall per guest syscall = (T(50000)-T(2000))/48000, median of 3, fixture = N getppid() calls; coverage control via DETLOG inbound-syscall counts; TracerPid read by the guest from /proc/self/status",
+  "key_findings": {
+    "only_passing_backend": "dbi (1.43 us/syscall vs ptrace 34.13, at equal 200/200 coverage)",
+    "tracerpid_does_not_discriminate": "all backends including dbi show TracerPid=1; attachment != per-syscall round-trip",
+    "e9patch_matches_ptrace": "34.31 vs 34.13 us, consistent with its documented 'then use the ptrace runtime'",
+    "kvm": "UNMEASURABLE - killed at 400s timeout on a trivial guest; contradicts the task's 'KVM may already qualify' prior",
+    "liteinst": "BLOCKED - preload handshake failure, root-caused separately"
+  },
+  "measurement_artifact_avoided": "--log-file under /tmp yields zero records because hermit isolates guest /tmp; an earlier pass read that as 'e9patch intercepts nothing'"
+}

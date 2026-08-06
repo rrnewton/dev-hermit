@@ -1,0 +1,20 @@
+{
+  "question": "Does the GUEST observe a deterministic address space?",
+  "answer": "Within a backend YES (all three byte-identical across invocations, native control varies). Across backends NO -- and two of the divergence classes cannot be fixed by address normalization.",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30, --features third-party-backends",
+  "backends_tested": ["ptrace", "dbi", "sabre"],
+  "kvm": "NOT tested -- livelocks at guest startup on this host",
+  "flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
+  "key_findings": {
+    "self_determinism": "PASS on all three",
+    "relative_mmap_spacing_differs": "ptrace -102400 / dbi -65536 / sabre -33767424",
+    "pointer_comparison_flips": "m2<m3 is 1 on ptrace and sabre, 0 on dbi -- guest control-flow divergence",
+    "heap_region_class": "sabre brk0=0x555555571000 vs 0x405000/0x406000",
+    "image_addresses_agree": "static 0x404040 and main 0x401156 identical on all three"
+  },
+  "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
+  "dev_hermit_parent_head": "3229970f34111f705bfb5c87a782038b1ff48bab",
+  "not_done": ["did not determine WHY dbi/sabre mmap geometry differs", "one single-threaded guest", "N=2 invocations per backend"]
+}

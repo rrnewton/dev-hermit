@@ -1,0 +1,53 @@
+{
+  "experiment": "pids_axis_cgroup_enforcement",
+  "date_utc": "2026-08-06T02:44:33Z",
+  "task": "pids_axis_real_cgroup",
+  "question": "Does a real cgroup pids.max cap actually stop a real fork storm, and can a runaway cgroup actually be killed?",
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "systemd": "systemd 259 (259.5-1.2.hs+fb.el9_z)",
+    "python": "Python 3.12.13+meta",
+    "cgroup_fs": "cgroup2fs",
+    "delegated_controllers": "cpuset cpu io memory pids"
+  },
+  "repo_shas": {
+    "dev-hermit_parent": "1c27dfd4dc68fc1313da204720ea2138688329a3",
+    "agent-utils": "570e78655e4cbfd398748b278252bfbaf4cc5930"
+  },
+  "dependency": {
+    "pr": "rrnewton/agent-utils#8",
+    "branch": "codex/parallel-experiment-runner",
+    "state": "NOT VERIFIABLE this session (GitHub egress refused: proxy 403, agent_id=agent:claude_code)",
+    "last_known_state_from_task_notes": "OPEN DRAFT @ 13b268f0a3ffd266c9a40ff6e8f00889bc5eea99 (UNVERIFIED)",
+    "machinery_present_on_agent_utils_checkout": false,
+    "machinery_sweep": "grep -rln 'pids.max|pids_events|PIDS-CAP|TasksMax' agent-utils --exclude-dir=.git => 0 hits"
+  },
+  "commands": [
+    "systemd-run --user --scope --collect -p TasksMax=64 -- python3 pids_worker.py breach 200",
+    "systemd-run --user --scope --collect -p TasksMax=64 -- python3 pids_worker.py control 8",
+    "./kill_bracket.sh"
+  ],
+  "parameters": {
+    "tasks_max": 64,
+    "breach_requested_children": 200,
+    "control_requested_children": 8,
+    "kill_bracket_children": 12,
+    "kill_bracket_settle_seconds": 1,
+    "kill_bracket_observe_seconds": 2
+  },
+  "concurrency": {
+    "solo": true,
+    "validate_lock_state": "LAPSED (reclaimable)",
+    "validate_lock_owner": "hermit-coord pid 1714110",
+    "validate_lock_owner_status": "proven dead: recorded boot_id b9da0208-5096-4e0f-9802-c159611521de != current 5367be51-01dd-4905-8ec9-663e5570e6d8 (host rebooted)",
+    "lease_seized": false,
+    "rationale": "second-scale cgroup probes, not a validate or bench; holding the box-exclusive lease would block real producers for no benefit"
+  },
+  "verdict": "ENFORCEMENT PROVEN on all three links (fork denied with EAGAIN; pids.events breach signal present and not inert; runaway cgroup killable via cgroup.kill, bracketed both ways). Committed e2e test remains BLOCKED: PR #8 machinery absent from agent-utils.",
+  "cleanup_audit": {
+    "leftover_units": 0,
+    "leftover_cgroup_dirs": 0,
+    "stray_processes": 0
+  }
+}

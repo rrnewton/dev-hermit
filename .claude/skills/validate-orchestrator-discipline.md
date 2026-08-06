@@ -62,7 +62,9 @@ inheritance; read both.
    When the owner has said something "should be so" more than once (e.g. cgroups
    on, CPU-time timeouts set, the runner orchestrating), do not assume it is
    true — grep the call sites and read the config, because directives drift from
-   reality (e.g. `--cgroups` is a no-op today; ALL DAG nodes lack `cpu_timeout`).
+   reality (e.g. `--cgroups` was accepted-but-inert for months before it was
+   removed — it now hard-errors with exit 2 in both engines, and cgroup-v2 boxing
+   is ON by default; ALL DAG nodes lack `cpu_timeout`).
    Report the delta between the stated directive and the verified state.
 
 See [[validate-sh-rr-compat-counter-conflict]] and

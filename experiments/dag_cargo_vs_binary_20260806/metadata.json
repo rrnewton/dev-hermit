@@ -1,0 +1,17 @@
+{
+  "question": "How many DAG steps invoke cargo, which of them merely run tests, and can those call the built artifact instead?",
+  "date_utc": "2026-08-06",
+  "host": "devbig014.atn7.facebook.com",
+  "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "dev_hermit_parent_head": "6d12f300dbb1b66a097b93524c0dde4a037fee21",
+  "dag_files": ["ci/dag/portable.json (47 steps)", "ci/dag/privileged.json (8 steps)"],
+  "demonstration_binary": "hermit/target/debug/deps/tests_parallelism-8fb9dbbaf4f517fe (stale debug artifact, built 2026-08-04)",
+  "workaround": "LD_LIBRARY_PATH=/tmp/lu/usr/lib64 -- host is missing libunwind-x86_64.so.8",
+  "limitations": [
+    "no wall-clock before/after measured for the conversion",
+    "per-run rebuild not measured; the multi-hash evidence is lifetime-of-target-dir, not per-run",
+    "the demonstration binary is stale debug, chosen for cost; it proves the mechanism, not current main's test results",
+    "the demonstration run exits 0 but prints no 'test result:' summary line -- unexplained, reported"
+  ],
+  "command": "see README Reproduction"
+}

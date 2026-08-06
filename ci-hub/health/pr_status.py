@@ -56,7 +56,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
 
 from check_outcome import CheckOutcome, classify_check, select_latest_checks
-from validate.flake_class import executed_plausibility
+from validate.flake_class import failure_tier
 
 AGENT_TOOL = Path(os.environ.get("CI_HUB_AGENT_TOOL", ROOT / "ci-hub/bin/agent-tool"))
 CI_HUB_BIN = Path(os.environ.get("CI_HUB_BIN", ROOT / "ci-hub/ci-hub"))
@@ -209,11 +209,13 @@ class RepoStatus:
     # with banked local greens (they measure different authorities).
     green_local: int = 0
     # Open-PR heads whose EXACT SHA carries only a NON-durable failure in the LOCAL
-    # validate ledger — a red the ledger-side executed_tests gate already demotes
-    # (validate_status::failure_disposition / flake_class.executed_plausibility).
-    # ``ledger_no_result`` = the local run executed <= 1 test (a NO-RESULT wearing a
-    # red badge); ``ledger_needs_rerun`` = a partial suite below the plausible-full
-    # floor. Both are demoted OUT of real_reds: the GitHub product red is not
+    # validate ledger — a red the ledger-side named-gate predicate already demotes
+    # (validate_status::failure_disposition / flake_class.failure_tier).
+    # ``ledger_no_result`` = the local run had no named failing gate and no failure
+    # count (a NO-RESULT wearing a red badge, or an environment fault);
+    # ``ledger_needs_rerun`` = the run did not complete its gate contract, or
+    # recorded a failure with no named gate to attribute it to. Both are demoted
+    # OUT of real_reds: the GitHub product red is not
     # corroborated by any complete local run, so it must not mark the fleet
     # unhealthy or block landing as a genuine break. This is the SYMMETRIC peer of
     # green_local — green_local rescues a GitHub red the ledger proved GREEN;
@@ -541,11 +543,11 @@ def banked_green_commits(
     return frozenset(commits)
 
 
-# Strength order for a per-SHA failure tier: a genuine full-suite failure ("ok",
-# i.e. a durable red) dominates a partial run ("needs-rerun"), which dominates a
-# ran-nothing no-result. When a head has several fail rows, the STRONGEST wins —
-# one complete failing run at a SHA makes it a real red even if other runs there
-# ran nothing (e.g. 71bc3856: exec=515 needs-rerun AND exec=765 full failure => ok).
+# Strength order for a per-SHA failure tier: a genuine named-gate failure ("ok",
+# i.e. a durable red) dominates an incomplete/unattributed run ("needs-rerun"),
+# which dominates a no-evidence no-result. When a head has several fail rows, the
+# STRONGEST wins — one complete failing run at a SHA makes it a real red even if
+# other runs there had no named failing gate (a named-gate failure => ok).
 _FAILURE_TIER_STRENGTH = {"no-result": 0, "needs-rerun": 1, "ok": 2}
 
 
@@ -557,11 +559,12 @@ def banked_failure_tier_commits(
     The symmetric peer of :func:`banked_green_commits`. That function dereferences
     the ledger's canonical GREEN verifier (``qualified-rows``); there is no
     equivalent binary command for reds, so we read the same machine-local ledger
-    directly and apply the ONE shared executed-count predicate,
-    :func:`executed_plausibility` (mirrored in the Rust ``failure_disposition``),
-    to each fail/timeout row. The returned tier is ``"no-result"`` (the local run
-    executed <= 1 test), ``"needs-rerun"`` (a partial suite below the plausible-full
-    floor), or ``"ok"`` (a full-suite run that genuinely failed). Binding is by
+    directly and apply the ONE shared named-gate predicate,
+    :func:`failure_tier` (mirrored in the Rust ``failure_disposition``),
+    to each fail/timeout row. The returned tier is ``"no-result"`` (no named
+    failing gate and no failure count, or an environment fault), ``"needs-rerun"``
+    (an incomplete gate contract, or a failure with no named gate), or ``"ok"`` (a
+    genuine named-gate failure). Binding is by
     EXACT full commit SHA — an identity link, not a proxy.
 
     Degrades to an empty map when the ledger is absent/unreadable (a 3pai host, a
@@ -597,7 +600,7 @@ def banked_failure_tier_commits(
         sha = row.get("commit")
         if not isinstance(sha, str) or not sha:
             continue
-        tier = executed_plausibility(row)
+        tier = failure_tier(row)
         prev = tiers.get(sha)
         if prev is None or _FAILURE_TIER_STRENGTH[tier] > _FAILURE_TIER_STRENGTH[prev]:
             tiers[sha] = tier
@@ -680,23 +683,23 @@ def _classify_gh_prs(
                 )
                 if fails and all(_is_gate_meta_check(name) for name in fails):
                     # A landing-gate/review meta-check red is a genuine blocker
-                    # regardless of the test count (review is missing, receipt is
+                    # regardless of failure evidence (review is missing, receipt is
                     # missing) — a DIFFERENT authority than the validate ledger, so
-                    # the executed_tests carve-out does NOT apply. Keep it a real red.
+                    # the ledger named-gate carve-out does NOT apply. Keep it a real red.
                     red_class = "real-red"
                     real_reds += 1
                     real_red_kind = "gate"
                     gate_reds += 1
                 elif failure_tier == "no-result":
-                    # A product-looking GitHub red whose EXACT head ran <= 1 test
-                    # locally: a NO-RESULT wearing a red badge, not a corroborated
-                    # break. Demote OUT of real_reds (merge-gate WAIT, not FAIL).
+                    # A product-looking GitHub red whose EXACT head carries no named
+                    # failing gate locally: a NO-RESULT wearing a red badge, not a
+                    # corroborated break. Demote OUT of real_reds (merge-gate WAIT, not FAIL).
                     red_class = "ledger-no-result"
                     ledger_no_result += 1
                 elif failure_tier == "needs-rerun":
-                    # Product red whose only local run was a partial suite below the
-                    # plausible-full floor — not durable evidence of a break; re-run
-                    # before condemning. Demoted out of real_reds.
+                    # Product red whose only local run was incomplete, or recorded a
+                    # failure with no named gate to attribute it to — not durable
+                    # evidence of a break; re-run before condemning. Demoted out of real_reds.
                     red_class = "ledger-needs-rerun"
                     ledger_needs_rerun += 1
                 else:
@@ -1253,11 +1256,11 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         )
         if status.ledger_no_result or status.ledger_needs_rerun:
             lines.append(
-                f"    ledger: {status.ledger_no_result} red PR head(s) ran <= 1 test "
-                f"locally (NO-RESULT) and {status.ledger_needs_rerun} ran a partial "
-                "suite (NEEDS-RERUN) at the exact head — demoted OUT of real_reds; the "
-                "GitHub product red is uncorroborated by any complete local run "
-                "(executed_tests carve-out, see ledger_failure_tier flag)"
+                f"    ledger: {status.ledger_no_result} red PR head(s) had no named "
+                f"failing gate locally (NO-RESULT) and {status.ledger_needs_rerun} "
+                "were incomplete/unattributed (NEEDS-RERUN) at the exact head — demoted "
+                "OUT of real_reds; the GitHub product red is uncorroborated by any "
+                "complete local run (named-gate carve-out, see ledger_failure_tier flag)"
             )
         if status.green_local:
             lines.append(

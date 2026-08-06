@@ -1,0 +1,18 @@
+:: Run1...
+:: Run2...
+Mismatch in stdout between run 1 and run 2:
+[1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"forced-rdrand cf=1 a[0m[1;48;5;52;31m61630e24e[0m[31mc[0m[1;48;5;52;31m12a[0m[31mcb\n"[0m
+[32m>"forced-rdrand cf=1 [0m[1;48;5;22;32mbbbbd[0m[32ma[0m[1;48;5;22;32md[0m[32mcc[0m[1;48;5;22;32m24[0m[32mb[0m[1;48;5;22;32m7e8d[0m[32m\n"[0m
+
+:: Comparing logs... /tmp/run1_log_6wuJ1 and /tmp/run2_log_5Houb
+Logs contain 372 | 372 messages total
+Logs contain 277 | 277 detcore-specific messages
+Logs contain 106 | 106 INFO messages
+Logs contain 228 | 228 DETLOG & scheduler COMMIT messages
+Normalizing known nondeterministic numerical data before comparison...
+  Comparing DETLOG messages...
+
+Done processing logs, no substantive differences found (228 | 228 DETLOG messages compared).
+:: Failure: nondeterministic.
+Error: Mismatch between run 1 and run 2 outputs (logs retained).

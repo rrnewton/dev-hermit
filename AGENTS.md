@@ -40,12 +40,13 @@ finished, return it to latest main (`git checkout main && with-proxy git pull or
 ## Project Overview
 
 `~/work/dev-hermit/` is a multi-agent development harness — **not** the Hermit, Reverie, or LiteInst2 code
-project. It coordinates product submodules plus one optional tooling submodule, all pinned by exact gitlinks:
+project. It coordinates product submodules plus one tooling submodule — all four checked out by default, all
+pinned by exact gitlinks:
 
 - `hermit/`: primary Hermit product checkout.
 - `reverie/`: Reverie instrumentation/runtime checkout (reference, compatibility, coordinated changes).
 - `liteinst2/`: standalone LiteInst2 checkout.
-- `agent-utils/`: shared tooling incl. `tick-hub`; `update = none` keeps it out of ordinary recursive init, materialized on demand.
+- `agent-utils/`: shared tooling incl. `tick-hub`; `update = checkout` like every other submodule — a plain `git submodule update --init --recursive` materializes it. (The former `update = none` opt-out was retired by the 2026-08-02 checked-out-by-default policy; this line described it until 2026-08-06.)
 
 The parent owns orchestration policy, worktree registries, experiments, AI notes, exact submodule pins;
 product source/tests/build/docs stay in their submodule. The parent harness works directly on shared `main`;
@@ -361,14 +362,21 @@ Re-derive the live pre-anchor set with the loop; do not trust a stale list. HOLD
 version-aware counts consumer lands (task `prs-predating-commit-anchoring-can-never-produce-a-qualifying-receipt`).
 
 **An agent sandbox CANNOT run `validate.sh` directly** (BpfJailer denies creating its own cgroup; the wrapper
-exits 3 in ~9s having run nothing, tell: `CPU/wall 1.0x`). The working path launches validate as a transient
-user unit — still boxed, detached, with a durable log that outlives recycling (green *evidence*, not a *claim*):
+exits 3 in ~9s having run nothing, tell: `CPU/wall 1.0x`). `ci-hub validate-run` is the sole admission point.
+It launches a transient user unit which enters through `ci-hub validate-lock` before invoking `validate.sh` —
+still boxed, detached, and with a durable log that outlives recycling (green *evidence*, not a *claim*).
+The live call prints a `validate-*` handle, creates an observer-only tab in the `validate-hermit` Herdr
+workspace, then blocks on the detached unit. If the caller recycles, the run continues and its successor uses
+`ci-hub validate-run --attach <handle>`; never relaunch merely because the waiter disappeared:
 
 ```
-systemd-run --user --unit=<name> --description='...' --working-directory=<worktree> \
-  --setenv=HOME=... --setenv=PATH=... \
-  /bin/bash -c 'exec env PR_NUMBER=<n> with-proxy ./validate.sh > <durable-log> 2>&1'
+./ci-hub/ci-hub validate-run --checkout <worktree> --agent <agent> \
+  --target <exact-40-hex-head> --pr <number> -- full
 ```
+
+The Herdr pane is visibility, not the producer: it tails the durable log and reports the actual service
+descendants' `safe-ci-*` cgroup paths. Validation still runs only in the admitted systemd service through
+`validate-lock` → `validate.sh` → `safe-ci-dag-runner`. Pane creation is fail-closed before service launch.
 
 Let `apply-local-label` add the label FROM the ledger record — never by hand. Derive safe concurrency against
 total cores before fanning out. The Hermit Merge Gate must execute `ci-hub/validation/verify_receipt.sh` from

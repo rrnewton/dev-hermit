@@ -1,0 +1,14 @@
+#!/bin/bash
+# CMAKE_CXX_COMPILER_LAUNCHER prototype: make object emission atomic.
+# A killed compiler then leaves NO output at all, so make rebuilds naturally.
+out=""; args=(); i=0; argv=("$@")
+while [ $i -lt ${#argv[@]} ]; do
+  a="${argv[$i]}"
+  if [ "$a" = "-o" ]; then out="${argv[$((i+1))]}"; i=$((i+2)); continue; fi
+  args+=("$a"); i=$((i+1))
+done
+[ -z "$out" ] && exec "${args[@]}"
+tmp="$out.tmp.$$"
+"${args[@]}" -o "$tmp"; rc=$?
+if [ $rc -eq 0 ] && [ -s "$tmp" ]; then mv -f "$tmp" "$out"; else rm -f "$tmp"; fi
+exit $rc

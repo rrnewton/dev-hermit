@@ -1,0 +1,5 @@
+guest,backend,rc1,rc2,sd_out,sd_pev,sd_log,vrc,vjson,px_out,px_pev,px_tree,n_pev,turns,tree,note
+v_null,ptrace,0,0,1,1,1,0,True/matched,ref,ref,ref,10,15,"[3]",
+v_heap,ptrace,0,0,0,1,0,1,False/diverged,ref,ref,ref,10,15,"[3]",
+v_stack,ptrace,0,0,0,1,0,1,False/diverged,ref,ref,ref,10,15,"[3]",
+v_uname,ptrace,0,0,1,1,1,0,True/matched,ref,ref,ref,10,15,"[3]",

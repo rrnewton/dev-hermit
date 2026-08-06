@@ -1,0 +1,5 @@
+PATH=/sys/fs/cgroup/user.slice/user-212630.slice/user@212630.service/safe.slice/safe-ci.slice/safe-ci-434854.scope/step-probe.cgattrs
+memory.max=268435456
+memory.swap.max=0
+memory.oom.group=1
+PARENT_oom_group=1

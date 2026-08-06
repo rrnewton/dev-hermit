@@ -1,0 +1,227 @@
+hermit: [dbi backend] Detcore Tool active; running "/usr/bin/wc" under DynamoRIO (/home/newton/work/dev-hermit/worktrees/covnode/hermit/target/install_pkg/rsrcs/dynamorio/bin64/drrun)
+detcore-dbi: background client thread entered
+detcore-dbi: constructing Detcore Config
+detcore-dbi: using CLI-provided Detcore Config
+detcore-dbi: initializing Detcore GlobalState
+INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0
+detcore-dbi: GlobalState initialized
+detcore-dbi: background scheduler ready
+INFO detcore::scheduler: [scheduler] daemon task starting up, waiting for guest thread start..
+detcore-dbi: entered Rust syscall callback
+detcore-dbi: initializing Detcore thread state
+detcore-dbi: constructing Detcore thread state
+INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+INFO detcore::tool_local: DETLOG CHAOSRAND: seeding chaos scheduler with seed 0
+detcore-dbi: Detcore thread state constructed
+detcore-dbi: running Detcore thread-start hook
+INFO detcore::scheduler: [scheduler] guest in queue, scheduler proceeding..
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 0, dettid 4071477 using resources {ParentContinue { parent: DetPid(4071477), child: DetPid(4071477) }: W}, on previously committed 1_767_225_600.000_000_000s
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 1, dettid 4071477 using resources {MemAddrSpace(DetPid(4071477)): RW}, on previously committed 1_767_225_600.000_500_000s
+INFO detcore::tool_global: [detcore, dtid 4071477] New thread given go-ahead to proceed via <ivar Go(None)>
+detcore-dbi: thread-start hook completed; running post-exec
+INFO detcore: DETLOG [post_exec, dtid 4071477] init auxv AT_RANDOM value to [162, 205, 24, 211, 0, 83, 122, 92, 176, 131, 220, 72, 219, 250, 14, 242]
+detcore-dbi: post-exec hook completed
+detcore-dbi: dispatching first syscall through Detcore
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: brk(NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #1: brk(NULL) = Ok(140737282834432)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->773a011e324811823b01c4b988a6f070159b40bf802e8eed7b69fd155b6e1fde
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: arch_prctl(12289, 0x7fffffffe320) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #2: arch_prctl(12289, 0x7fffffffe320) = Err(Errno(EINVAL))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->619b7db51782e4cb6156ab7abf228788791a25ddcb3c9317bad4857c45cf0cb0
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #3: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = Ok(140737354092544)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->704c1a6cdc217bded881e6393fd7b7710d5d19cf290ce30c50b1050976000e17
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: access(0x7ffff7fdee50 -> "/etc/ld.so.preload", Mode(S_IROTH)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #4: access(0x7ffff7fdee50 -> "/etc/ld.so.preload", Mode(S_IROTH)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->0886ab5e5a62cdc7c30d26ad1f64b9024807c23a8b26124f5fb7077496c00cd1
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/glibc-hwcaps/x86-64-v2/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 2, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/glibc-hwcaps/x86-64-v2/libc.so.6"): R}, on previously committed 1_767_225_600.025_125_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #5: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/glibc-hwcaps/x86-64-v2/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->06c8c042dd0e94081a111b344026ab36729a082306b394461dfd0f2bb59ce311
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/glibc-hwcaps/x86-64-v2", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #6: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/glibc-hwcaps/x86-64-v2", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->321fd90aa4d84f7538e859093d4e653dad7aa2bd7b17ee8d26c7545003024416
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 3, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.039_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #7: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->90bc131c49c0f7cefcd212ddbb501c8261fb0e92f7e83ac959620e1c4753a00a
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #8: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->354a04f4236aca325184c8c9576694fc0ca5b8f6e3650a1e31fa3676a69473d4
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 4, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.054_125_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #9: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->9e791c19f93ab2c5da0c4f0de81c14fdbd05641d62708b6d429022c7799f8829
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #10: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->4c07c020af4ab6f315f1b7e3e75db93dd06a875749619bfbb468320661021391
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 5, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.068_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #11: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->20d5ffa10e83f674289547db1fea846d32a662f065ede5076b05cab183bb4b71
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #12: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->2c62ec8c4fa5b8034beda00243d0f64b270fddab34fc162bc7c36e3c323a4d38
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 6, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/libc.so.6"): R}, on previously committed 1_767_225_600.083_125_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #13: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->adc645af7279d501689fe08b3f35991e108091e3f09d37988f6b7a6c97d4b1f4
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #14: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/tls", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->71c35839366123bc97f01e58630c29871fd0521e4eb087ba703ca78ed38c2e9a
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 7, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.097_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #15: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->100c109155196709df19652ba8a9e7dde7714519c766de6af1019df8cc787947
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #16: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->fa9be8e842b744509528c0988430ed57840353238b3f72e55019f1204234e721
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 8, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.112_125_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #17: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->294ac374aae2c9b8572f73488844e818e48f980c3e5b26d597e1af5bf37beba7
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #18: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->86d01be9f35718c5dbcd2f6c4accc3f9b94330a4125ad7f8aef069f6acd53ef5
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 9, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6"): R}, on previously committed 1_767_225_600.126_625_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #19: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64/libc.so.6", OFlag(O_CLOEXEC)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->b2a6cb3d2003c07fa3f1793ba0f24c5c3dc9a37018318fb517efacd562f244df
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64", 0x7fffffffd550, AtFlags(0x0)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #20: newfstatat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/x86_64", 0x7fffffffd550 -> {st_mode=SFlag(0x0) | 00, st_size=0, ...}, AtFlags(0x0)) = Err(Errno(ENOENT))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->ba6952c09f524035cd7be21d58712b6932dc572d35c6290a1ae7feebb63e7b5f
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/libc.so.6", OFlag(O_CLOEXEC)) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 10, dettid 4071477 using resources {Path("/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/libc.so.6"): R}, on previously committed 1_767_225_600.141_125_000s
+INFO detcore::syscalls::files: Injecting additional fstat to retrieve file metadata on fd 3.
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #21: openat(-100, 0x7fffffffd470 -> "/home/newton/work/dev-hermit/ignored/haskell-drb/hostlibs/libc.so.6", OFlag(O_CLOEXEC)) = Ok(3)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->9e96db77debfbde3bb64099bb0f462a82d348dca516aab7c33972a2bd0d07bf5
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: read(3, 0x7fffffffd6b8, 832) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #22: read(3, 0x7fffffffd6b8, 832) = Ok(832)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->860b65b484beb4419df031dfd0e4ac986302fa08ee7c1b659f420d97a9f27e41
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: pread64(3, 0x7fffffffd0e0, 784, 64) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #23: pread64(3, 0x7fffffffd0e0, 784, 64) = Ok(784)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->0554e236f6e17a8bdbde3e2cc16d4ceb77aa01ed43cccdb3573ea54f2048fbe3
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: pread64(3, 0x7fffffffd0a0, 48, 848) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #24: pread64(3, 0x7fffffffd0a0, 48, 848) = Ok(48)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->a1ec190696998ba56e5193ccacb62e95d23dbfffad1b0db7852740be6c36a066
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: pread64(3, 0x7fffffffd050, 68, 896) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #25: pread64(3, 0x7fffffffd050, 68, 896) = Ok(68)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->249947f1e163394b17d2e0192efe66ea436a792883cbbe673d6fe705e4f1a87d
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: fstat(3, 0x7fffffffd550) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #26: fstat(3, 0x7fffffffd550) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->61c50820cbcfcdd0992fbd4637b567dd4797a6a152bb985f5dbf3ca384e643fb
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: pread64(3, 0x7fffffffd1a0, 784, 64) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #27: pread64(3, 0x7fffffffd1a0, 784, 64) = Ok(784)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->1084a24581973d7abc93bcf00a9f0645f4a10e8cdbe7ad81ed956ae102bd306c
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(NULL, 2138064, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #28: mmap(NULL, 2138064, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = Ok(140737335263232)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->0d7f0221ea4a058ec3bcd4dc3de13dcfa13d8e3231d316ddeaf3e566eb8cb263
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(0x7ffff6e29000, 1527808, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 167936) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #29: mmap(0x7ffff6e29000, 1527808, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 167936) = Ok(140737335431168)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->1a02d1d12dfcfaa3d567520a200750f77241da686488f6b59856e76ac209acfb
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(0x7ffff6f9e000, 364544, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1695744) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #30: mmap(0x7ffff6f9e000, 364544, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1695744) = Ok(140737336958976)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->3ac8cc71970789d1118e0535d72565765a90921e812406a7d209c782b63c8b28
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(0x7ffff6ff7000, 24576, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 2056192) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #31: mmap(0x7ffff6ff7000, 24576, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 2056192) = Ok(140737337323520)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->cc618119c95bb0132358a4fe0d942b657e225f5c9bb2ec3f4e39f5f017788c09
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(0x7ffff6ffd000, 53200, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #32: mmap(0x7ffff6ffd000, 53200, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = Ok(140737337348096)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->49d672bed1fc8c68b7d70448102ddb1ea45835b1bbc1bd3bb552dba76c0fa0de
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: close(3) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #33: close(3) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->09e1c5638580a54548c4758306968632c474977c661294d7acbd540023afd79d
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mmap(NULL, 12288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #34: mmap(NULL, 12288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = Ok(140737354080256)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->5e3d1a01c3601e282a0e118979eeb8379fb3ba297a85867398ca444559e66da3
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: arch_prctl(ARCH_SET_FS, 140737354082112) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #35: arch_prctl(ARCH_SET_FS, 140737354082112) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->262b89c0f195e9b6d312782b14175915b43115beef0c0bd66f1ca8ba9c579aaa
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: set_tid_address(0x7ffff7ff2a10) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #36: set_tid_address(0x7ffff7ff2a10) = Ok(3)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->cde2a3228964c6a613a74a4966bb53576f621761a23957ed43dfdcb1bc46403c
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: set_robust_list(0x7ffff7ff2a20, 24) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #37: set_robust_list(0x7ffff7ff2a20, 24) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->cde2a3228964c6a613a74a4966bb53576f621761a23957ed43dfdcb1bc46403c
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: rseq(140737354084576, 32, 0, 1392848979, 0, 0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #38: rseq(140737354084576, 32, 0, 1392848979, 0, 0) = Err(Errno(ENOSYS))
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->6838528ba11cd3a5e9d12e426465f90c7b2fe926714b5676f9c06f10cfdb826c
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mprotect(0x7ffff6ff7000, 16384, ProtFlags(PROT_READ)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #39: mprotect(0x7ffff6ff7000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->3d58b9d65515505aed3c9db4d515500fcb2131d263696fcaa4c3bc122be5855f
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mprotect(0x7ffff3bfd000, 4096, ProtFlags(PROT_READ)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #40: mprotect(0x7ffff3bfd000, 4096, ProtFlags(PROT_READ)) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->a49072c4d7facc6c59655742f41d557cdaa2c61b7940603e70044bc089da01bc
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: mprotect(0x7ffff7fe7000, 8192, ProtFlags(PROT_READ)) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #41: mprotect(0x7ffff7fe7000, 8192, ProtFlags(PROT_READ)) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->84721da041429fc43eb931e88edcf0ed77830ab8417a858e65f7149d4a3e72ea
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: prlimit64(0, 3, NULL, 0x7fffffffe090) = ?
+INFO detcore::syscalls::sysinfo: DETLOG prlimit64: pid=0, resource=3, mutation=false, old=8388608:18446744073709551615
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #42: prlimit64(0, 3, NULL, 0x7fffffffe090) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->bf01eba40d6b3cde699b5598a40635f15a71e1f4d12e6b21589c8249ee866574
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: getrandom(0x7ffff70024f8, 8, 1) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #43: getrandom(0x7ffff70024f8, 8, 1) = Ok(8)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->50daac835cf347a5c68b5c43e6b3b685bac7dfb0a5bb147326a8c7a4b912286d
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: brk(NULL) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #44: brk(NULL) = Ok(140737282834432)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->6f6b301cc36b8ef6af554b84be8fab4eb1b0f3437aed5fadee1912b4a863c319
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: brk(0x7ffff3c21000) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #45: brk(0x7ffff3c21000) = Ok(140737282969600)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->dbb218602dc642970d68731aaab69e77fdf3248538db24bf05a73701b17cfd62
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: openat(-100, 0x7fffffffe668 -> "/bin/true", 0) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 11, dettid 4071477 using resources {Path("/bin/true"): R}, on previously committed 1_767_225_600.257_500_000s
+INFO detcore::syscalls::files: Injecting additional fstat to retrieve file metadata on fd 3.
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #46: openat(-100, 0x7fffffffe668 -> "/bin/true", 0) = Ok(3)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->3e134bbd1d2ff132588d5430f571c2eddba7e01441e716eae0a0f42b65472549
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: fstat(3, 0x7ffff3c00338) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #47: fstat(3, 0x7ffff3c00338) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->669dc15ee4793bb62064addd2f1e34d917a7a4f9cd6e01eaf5bec930ead357c9
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: fstat(1, 0x7fffffff98a0) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #48: fstat(1, 0x7fffffff98a0) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->30d9cdfd73f782a3523eb8e5c010d36a0d796318a9adc9a668485a203ed742e2
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: write(1, 0x7ffff3c003d0, 16) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 12, dettid 4071477 using resources {Device(ContainerStdout): W}, on previously committed 1_767_225_600.266_000_000s
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #49: write(1, 0x7ffff3c003d0, 16) = Ok(16)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->caddf30257da14754586cd7c869d3d15c0a6aef1a41969ea6cd0996ea82b092c
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: close(3) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #50: close(3) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->97e63810a525fa89da912ea093446b7480f515396f5e0b107c72ece86926ced3
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: close(1) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #51: close(1) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->69234b735cfe352582e49dc2fd06cc3932a2ed35ae6460c5d63e7114ac3c5098
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: close(2) = ?
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] finish syscall #52: close(2) = Ok(0)
+INFO detcore: DETLOG [memory][dtid 4071477] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->a17014eb9f4fa47a64944a29165f940bfe0ec8350afdafe7f9563e9f5c390461
+INFO detcore: DETLOG [syscall][detcore, dtid 4071477] inbound syscall: exit_group(0) = ?
+INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 13, dettid 4071477 using resources {Exit { group: true, process: DetPid(4071477), mm: MmId { creator: DetPid(4071477), generation: 0 } }: RW}, on previously committed 1_767_225_600.429_000_000s
+INFO detcore::tool_global: Scheduler authorized an exit-group scenario, from dettid 4071477 / detpid 4071477
+INFO detcore::scheduler: logically_kill: Scheduler removing all knowledge of [det]tid 4071477 in pid 4071477..
+reverie-dbi: tool=Detcore branches=32965 syscalls=53 rewritten=52 stdin_reads=0 memory_hash=b80f53f4e57e1d08

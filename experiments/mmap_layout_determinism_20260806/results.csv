@@ -1,0 +1,15 @@
+id,question,evidence,result
+N1,does the NATIVE (unhermitted) layout vary run-to-run,two native runs of guest_layout differ,"VARIES (ASLR on) -- so a stable guest result is meaningful, not vacuous"
+S1,ptrace self-determinism across SEPARATE invocations,two invocations byte-identical,IDENTICAL
+S2,dbi self-determinism across separate invocations,two invocations byte-identical,IDENTICAL
+S3,sabre self-determinism across separate invocations,two invocations byte-identical,IDENTICAL
+X1,static image addresses across backends,"static 0x404040 and main 0x401156 on ALL THREE",AGREE -- image load address is consistent
+X2,mmap base across backends,"mmap1 ptrace 0x7ffff7fb9000 / dbi 0x7ffff7e4a000 / sabre 0x7ffff78a4000",DIFFERS per backend
+X3,"RELATIVE spacing between two consecutive mmaps (mmap2 - mmap1)","ptrace -102400 / dbi -65536 / sabre -33767424","*** DIFFERS -- a pure base shift would PRESERVE this delta; it does not, so base-subtraction or ordinal canonicalization CANNOT normalize it away ***"
+X4,"guest-observable POINTER COMPARISON (m2 < m3)","ptrace 1 / dbi 0 / sabre 1","*** THE ORDERING FLIPS ON DBI -- a guest that BRANCHES on pointer order takes a DIFFERENT CODE PATH. Control-flow divergence, not cosmetic. ***"
+X5,brk / heap region class,"brk0 ptrace 0x405000 / dbi 0x406000 (one page higher) / sabre 0x555555571000","SaBRe places the heap in a PIE-style 0x5555.. region far from the 0x40.. image; malloc follows brk in each case"
+X6,stack local,"0x7fffffffb84c / 0x7fffffffaf7c / 0x7fffffffb71c",same region, different offset
+V1,verdict -- self-determinism,-,"PASS on all three backends (the task's primary question)"
+V2,verdict -- cross-backend guest-visible layout,-,"FAILS, and in a way address-normalization cannot repair (X3, X4)"
+L1,scope,"ptrace, dbi, sabre",KVM not tested (livelocks at guest startup on this host)
+L2,scope,one guest,"single-threaded, no dlopen/thread-stack/vdso probing"

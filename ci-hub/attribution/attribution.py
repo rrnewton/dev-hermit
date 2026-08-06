@@ -61,6 +61,7 @@ import dataclasses
 import json
 import os
 import re
+import resource
 import shlex
 import subprocess
 import sys
@@ -71,7 +72,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+# The cpu/wall kill signature (livelock vs contention) lives in ONE table shared
+# with ci-hub/history/query.py so the two consumers of the same physical fact
+# cannot drift apart.  ci-hub/lib is a sibling package dir with no __init__, so
+# it is added to sys.path explicitly rather than imported as a package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import kill_signature as ks  # noqa: E402
+
+SCHEMA_VERSION = 2  # 2: run bundles carry cpu_s/oom for the kill signature
 
 # --------------------------------------------------------------------------- verdicts
 
@@ -354,8 +362,27 @@ class Evidence:
     exit_code: Optional[int] = None
     timed_out: bool = False
     wall_s: Optional[float] = None
+    cpu_s: Optional[float] = None         # subject CPU seconds (user+sys), for the kill signature
+    oom: bool = False                     # memory ceiling fired -- excludes the ratio test
     baseline_s: Optional[float] = None    # a healthy run's wall time, for hang shape
     note: str = ""
+
+    def kill_kind(self) -> Optional[str]:
+        """Which budget fired, or None when this run was not killed at a budget.
+
+        The cpu/wall signature is only defined at a kill, so this gate decides
+        whether the ratio may be consulted at all.
+        """
+        if self.oom:
+            return ks.KILL_OOM
+        if self.timed_out:
+            return ks.KILL_WALL_TIMEOUT
+        return None
+
+    def kill_signature(self) -> tuple[Optional[float], str]:
+        """(cpu/wall ratio, kill verdict) using the ONE shared threshold table."""
+        ratio = ks.cpu_wall_ratio(self.cpu_s, self.wall_s)
+        return ratio, ks.classify_kill(self.kill_kind(), ratio)
 
     def as_dict(self) -> dict[str, Any]:
         out = dataclasses.asdict(self)
@@ -448,7 +475,50 @@ def attribute(ev: Evidence) -> Attribution:
 
     # 2. No localizable divergence captured. Reason from shape + pressure + control.
     if ev.shape == SHAPE_HANG:
-        # The low-load control is decisive for a hang.
+        # 2a. THE KILL SIGNATURE -- free, and decisive at the extremes.
+        #
+        # This runs BEFORE the low-load control on purpose.  The control is the
+        # better test but it costs K extra runs; the cpu/wall ratio is already
+        # measured in the bundle and answers the same infra-vs-product question
+        # FROM THE FAILING RUN'S OWN EVIDENCE, which is exactly what the owner
+        # asked for.  It only speaks at the extremes: the middle band falls
+        # through to the control below rather than forcing a verdict.
+        #
+        # OOM is handled first inside classify_kill -- an OOM row's ratio can be
+        # >100 (parallel build hitting a memory ceiling) and would otherwise be
+        # misread as a livelock.
+        ratio, kill_verdict = ev.kill_signature()
+        if kill_verdict != ks.UNKNOWN:
+            signals["cpu_wall_ratio"] = None if ratio is None else round(ratio, 3)
+            signals["kill_verdict"] = kill_verdict
+            signals["retry_futile"] = ks.retry_futile(kill_verdict)
+        if kill_verdict == ks.LIVELOCK:
+            return Attribution(
+                HERMIT_NONDETERMINISM, "high",
+                [ks.explain(kill_verdict, ratio),
+                 "a spin to the budget is a PRODUCT defect, not a flake: re-running "
+                 "cannot clear it, so this red is REAL"],
+                NEXT_STEP[HERMIT_NONDETERMINISM], signals,
+            )
+        # NOTE the ASYMMETRY -- this is the subtle part.  The signature is only
+        # decisive in the SPIN direction.  A high ratio means the subject was
+        # definitely computing, and nothing but the product can burn a core for
+        # a whole budget.  A LOW ratio only means "not spinning", which does NOT
+        # imply infrastructure: a starved process and a futex/deadlock wedge are
+        # INDISTINGUISHABLE on cpu/wall -- both sit at cpu ~= 0 -- and they are
+        # opposite causes (infra vs product).  So CONTENTION does not decide
+        # here; it enriches the signals and falls through to the low-load
+        # control, which CAN separate starvation from a wedge.
+        if kill_verdict == ks.OOM:
+            return Attribution(
+                INFRASTRUCTURE, "medium",
+                [ks.explain(kill_verdict, ratio),
+                 "memory ceiling, not a determinism defect; confirm whether the "
+                 "ceiling or the workload is wrong before blaming the commit"],
+                NEXT_STEP[INFRASTRUCTURE], signals,
+            )
+
+        # 2b. Ratio absent or ambiguous. The low-load control is decisive for a hang.
         if ev.low_load is not None:
             if ev.low_load.clean and pressure:
                 return Attribution(
@@ -480,6 +550,12 @@ def attribute(ev: Evidence) -> Attribution:
                 )
         # No control yet: lean by pressure but stay INDETERMINATE (run the test).
         lean = "host was contended" if pressure else "host pressure not high/unknown"
+        if kill_verdict == ks.CONTENTION:
+            lean += (
+                f"; cpu/wall={ratio:.3f} shows it was WAITING, not spinning -- but "
+                "starvation and a futex/deadlock wedge look identical at cpu~=0, so "
+                "this rules out a livelock WITHOUT choosing infra vs product"
+            )
         return Attribution(
             INDETERMINATE, "low",
             [f"hang with no localizable divergence and no low-load control ({lean})"],
@@ -606,6 +682,7 @@ class RunResult:
     exit_code: Optional[int]
     timed_out: bool
     wall_s: float
+    cpu_s: Optional[float]
     failed: bool
     shape: str
     bundle_dir: Optional[str]
@@ -636,6 +713,13 @@ def capture_run(
     breaks again.
     """
     host_before = HostConditions.sample(proc_pattern)
+    # CPU seconds actually burned by the subject, for the cpu/wall kill
+    # signature.  RUSAGE_CHILDREN is cumulative over all reaped children of THIS
+    # process, so we take a delta around the run.  It only counts children that
+    # have been WAITED FOR -- subprocess.run waits, so the subject is included;
+    # a detached grandchild that outlives the timeout is not, which is why a
+    # timed-out run's cpu is a lower bound (recorded as such in the bundle).
+    ru_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.monotonic()
     timed_out = False
     try:
@@ -660,6 +744,12 @@ def capture_run(
         out_bytes = b""
         err_bytes = str(missing).encode()
     wall_s = round(time.monotonic() - started, 3)
+    ru_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu_s = round(
+        (ru_after.ru_utime - ru_before.ru_utime)
+        + (ru_after.ru_stime - ru_before.ru_stime),
+        3,
+    )
     host_after = HostConditions.sample(proc_pattern)
 
     out_text = out_bytes.decode("utf-8", "replace")
@@ -683,6 +773,11 @@ def capture_run(
             "exit_code": exit_code,
             "timed_out": timed_out,
             "wall_s": wall_s,
+            # cpu_s enables the cpu/wall kill signature (livelock vs contention).
+            # On a timed-out run this is a LOWER BOUND: RUSAGE_CHILDREN only counts
+            # reaped children, so a killed subject's unreaped descendants are absent.
+            "cpu_s": cpu_s,
+            "cpu_s_is_lower_bound": timed_out,
             "failed": failed,
             "shape": shape,
             "captured_at": _utc_now(),
@@ -701,6 +796,7 @@ def capture_run(
         exit_code=exit_code,
         timed_out=timed_out,
         wall_s=wall_s,
+        cpu_s=cpu_s,
         failed=failed,
         shape=shape,
         bundle_dir=bundle_dir,
@@ -848,6 +944,11 @@ def _evidence_from_bundle(
         exit_code=meta.get("exit_code"),
         timed_out=meta.get("timed_out", False),
         wall_s=meta.get("wall_s"),
+        # Absent in schema_version 1 bundles -- stays None, which classify_kill
+        # reports as UNKNOWN rather than guessing.  Old bundles degrade to the
+        # previous behaviour instead of getting a fabricated ratio.
+        cpu_s=meta.get("cpu_s"),
+        oom=bool(meta.get("oom", False)),
         baseline_s=baseline_s,
         note=meta.get("cmd_str", ""),
     )

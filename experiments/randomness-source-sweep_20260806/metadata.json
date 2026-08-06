@@ -1,0 +1,20 @@
+{
+  "experiment": "randomness-source-determinism-sweep",
+  "date_utc": "2026-08-06",
+  "agent": "egress-probe2",
+  "question": "Is EVERY randomness source determinized, and does the check actually fail when one is not?",
+  "hermit_binary": "worktrees/strictcorpus/hermit/target/debug/hermit",
+  "hermit_binary_head": "0cab21576285d05248b1dd561151591acaf223d6",
+  "backend": "ptrace",
+  "log_level": "INFO for --verify runs, default otherwise",
+  "relaxations": "none, except the deliberate --no-virtualize-cpuid PLANT",
+  "host": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+  "toolchain": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+  "command": "./probe under: native x3; hermit run --strict x2; hermit run --strict --no-virtualize-cpuid x2 (PLANT); hermit --log INFO run --strict --verify (control + plant)",
+  "sources_enumerated": 9,
+  "sources_determinized": 8,
+  "gap": "RDRAND is hidden via a cleared CPUID feature bit, not determinized; code that issues the instruction without consulting CPUID receives raw hardware entropy",
+  "plant_result": "PLANT caught: --no-virtualize-cpuid makes RDRAND diverge (8f219cf9c0a5d246 vs f304dc18ac4ca8d4) while the other 8 sources stay identical",
+  "positive_control": "unmodified double-run identical on all 9 lines; --verify PASS rc=0 not flagged",
+  "provenance": "observed"
+}

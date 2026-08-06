@@ -1,0 +1,39 @@
+cell,guest,dir_pair,bufsize,mode,batches,entries,sorted_asc,sorted_desc,asc_eq_desc,run1_eq_run2,extra
+raw-n10-b4096,dirls_raw,asc10/desc10,4096,native,1,12,yes,no,no,na,
+raw-n10-b4096,dirls_raw,asc10/desc10,4096,hermit,1,12,yes,yes,yes,yes,
+raw-n200-b65536,dirls_raw,asc200/desc200,65536,native,1,202,yes,no,no,na,
+raw-n200-b65536,dirls_raw,asc200/desc200,65536,hermit,1,202,yes,yes,yes,yes,
+raw-n200-b1024,dirls_raw,asc200/desc200,1024,native,7,202,yes,no,no,na,
+raw-n200-b1024,dirls_raw,asc200/desc200,1024,hermit,7,202,yes,no,no,yes,
+raw-n200-b512,dirls_raw,asc200/desc200,512,native,13,202,yes,no,no,na,
+raw-n200-b512,dirls_raw,asc200/desc200,512,hermit,13,202,yes,no,no,yes,
+raw-n2000-b65536,dirls_raw,asc2000/desc2000,65536,native,1,2002,yes,no,no,na,
+raw-n2000-b65536,dirls_raw,asc2000/desc2000,65536,hermit,1,2002,yes,yes,yes,yes,
+raw-n2000-b4096,dirls_raw,asc2000/desc2000,4096,native,16,2002,yes,no,no,na,
+raw-n2000-b4096,dirls_raw,asc2000/desc2000,4096,hermit,16,2002,yes,no,no,yes,
+libc-n10,dirls_libc,asc10/desc10,glibc,native,n/a,12,yes,no,no,na,
+libc-n10,dirls_libc,asc10/desc10,glibc,hermit,n/a,12,yes,yes,yes,yes,
+libc-n200,dirls_libc,asc200/desc200,glibc,native,n/a,202,yes,no,no,na,
+libc-n200,dirls_libc,asc200/desc200,glibc,hermit,n/a,202,yes,yes,yes,yes,
+libc-n2000,dirls_libc,asc2000/desc2000,glibc,native,n/a,2002,yes,no,no,na,
+libc-n2000,dirls_libc,asc2000/desc2000,glibc,hermit,n/a,2002,yes,no,no,yes,
+ls-f-n200,ls -f,asc200/desc200,glibc,native,n/a,202,yes,no,no,na,
+ls-f-n200,ls -f,asc200/desc200,glibc,hermit,n/a,202,yes,yes,yes,yes,
+ls-f-n2000,ls -f,asc2000/desc2000,glibc,native,n/a,2002,yes,no,no,na,
+ls-f-n2000,ls -f,asc2000/desc2000,glibc,hermit,n/a,2002,yes,no,no,yes,
+seekdir-n200-asc,seekdir_rt,asc200,glibc,native,n/a,200,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n200-asc,seekdir_rt,asc200,glibc,hermit,n/a,200,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n200-desc,seekdir_rt,desc200,glibc,native,n/a,200,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n200-desc,seekdir_rt,desc200,glibc,hermit,n/a,200,na,na,na,na,verdict=FAIL/mismatches=61
+seekdir-n2000-asc,seekdir_rt,asc2000,glibc,native,n/a,2000,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n2000-asc,seekdir_rt,asc2000,glibc,hermit,n/a,2000,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n2000-desc,seekdir_rt,desc2000,glibc,native,n/a,2000,na,na,na,na,verdict=PASS/mismatches=0
+seekdir-n2000-desc,seekdir_rt,desc2000,glibc,hermit,n/a,2000,na,na,na,na,verdict=FAIL/mismatches=62
+verifystrict-CONTROL-bin-true,,,,hermit-verify,n/a,n/a,na,na,na,na,bitwise_parity=False(rc=1)
+verifystrict-n200-b65536,,,,hermit-verify,n/a,n/a,na,na,na,na,bitwise_parity=False(rc=1)
+verifystrict-n200-b1024,,,,hermit-verify,n/a,n/a,na,na,na,na,bitwise_parity=False(rc=1)
+verifystrict-n2000-b4096,,,,hermit-verify,n/a,n/a,na,na,na,na,bitwise_parity=False(rc=1)
+verify-plain-n2000-b4096,dirls_raw,asc2000,4096,hermit-verify,n/a,n/a,na,na,na,na,rc=0
+verify-l3-n2000-b4096,dirls_raw,asc2000,4096,hermit-verify-L3,n/a,n/a,na,na,na,na,rc=0
+crossfs-desc200-b1024,dirls_raw,btrfs vs rdd,1024,native,n/a,202,na,na,no,na,
+crossfs-desc200-b1024,dirls_raw,btrfs vs rdd,1024,hermit,n/a,202,na,na,no,na,

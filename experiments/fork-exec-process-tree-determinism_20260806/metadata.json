@@ -1,0 +1,93 @@
+{
+  "experiment": "fork-exec-process-tree-determinism_20260806",
+  "task": "fork-exec-process-tree-determinism",
+  "agent": "hermit-det1",
+  "date": "2026-08-06",
+  "question": "Is process creation and reaping order (fork/clone, exec, wait/waitpid reap order, zombie handling) deterministic across a process tree, under strict + --verify + double-run, across backends?",
+  "repos": {
+    "dev-hermit_parent_branch": "main",
+    "hermit_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+    "hermit_worktree": "worktrees/det1/hermit (detached, clean, no -dirty)",
+    "reverie_cargo_pin": "9470712afa9b421c72850ab7955fb335692e43a0",
+    "reverie_submodule_sha": "025d37800d347c32711038bd0a3889e8e4774c2b"
+  },
+  "instrument": {
+    "binary": "ignored/fork-exec-parity/bin/hermit-f89c6976-rel-e9",
+    "build": "cargo build --release -p hermit --bin hermit --features hermit/e9patch",
+    "version_string": "hermit 0.2.0 (2026-08-06, gf89c69766371)",
+    "sha256": "5f4aa9ab8e6b1cf3bf98f73cca35001211e28c2829215e97d9c2c927e5ae9047",
+    "build_env_note": "unwind-sys 0.1.4 build.rs needs PKG_CONFIG_PATH/LIBRARY_PATH/C_INCLUDE_PATH/LD_LIBRARY_PATH pointing at the unpacked libunwind under ignored/lu-parity/usr; LD_LIBRARY_PATH alone only suffices to RUN.",
+    "e9tool_sha256_prefix": "23d80b16a9c5f591"
+  },
+  "backends": {
+    "exercised": [
+      "ptrace",
+      "e9patch"
+    ],
+    "unavailable": {
+      "dbi": "DBI support was not included in this build (cargo feature; DynamoRIO needs cmake, absent on host)",
+      "sabre": "SaBRe support was not included in this build (same cargo feature gate)",
+      "liteinst": "libreverie_liteinst.so was not built beside the binary",
+      "kvm": "livelock: --backend kvm --strict does not complete (pre-existing, independently confirmed)"
+    },
+    "note": "e9patch is NOT an independent backend: it is AOT rewriting in front of the ptrace runtime. On every guest here candidate_sites=0, so the ptrace runtime executed an unmodified binary. Its agreement with ptrace is therefore weak evidence about a genuinely different execution path."
+  },
+  "host": {
+    "hostname": "devbig014.atn7.facebook.com",
+    "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "shared": true,
+    "load_average_during_stress_leg": "55-56 (1-min), measured with uptime at both the start and end of the 16-wide leg"
+  },
+  "commands": {
+    "per_run_cell": "env -i PATH=/usr/bin:/bin HOME=<fakehome> LC_ALL=C LANG=C TZ=UTC TERM=dumb SHELL=/bin/sh USER=newton LOGNAME=newton LD_LIBRARY_PATH=<lu> HERMIT_E9TOOL=<e9tool> hermit --log info --log-file <log> run --backend <b> --strict --detlog-stack --detlog-heap -- <guest>",
+    "per_verify_cell": "same env; hermit run --backend <b> --strict --verify --verify-json <json> --detlog-stack --detlog-heap -- <guest>",
+    "sweep": "harness/run-sweep.sh",
+    "stress": "harness/run-stress.sh",
+    "sysinfo_bracket": "BACKENDS=ptrace OUT=<dir> harness/sweep.sh 'v_null=<g> null' 'v_heap=<g> heap' 'v_stack=<g> stack' 'v_uname=<g> uname'",
+    "extra_legs": "harness/run-extra.sh (proc-shapes sweep + chaos leg)",
+    "chaos_cell": "EXTRA_RUN_FLAGS='--chaos --sched-seed <S>' harness/run-cell.sh ptrace <dir> <tag> <guest>"
+  },
+  "seed": "sweep / stress / bracket legs: detcore defaults, no --chaos and no --sched-seed override (DETLOG SCHEDRAND, USER RAND and CHAOSRAND all seed 0, observed in every log). Chaos leg only: --chaos --sched-seed in {1,2,3}, with seed 1 run twice to test same-seed reproducibility.",
+  "relaxations": "none (--strict on every cell)",
+  "inputs": {
+    "guests_c": [
+      "forkwait_ordered.c",
+      "forkwait_any.c",
+      "exec_chain.c",
+      "vfork_exec.c",
+      "orphan_reparent.c",
+      "zombie_delay.c",
+      "spawn_wait.c",
+      "fork_pipe.c",
+      "sysinfo_probe.c",
+      "sysinfo_bytes.c",
+      "sysinfo_variants.c",
+      "stackwin.c",
+      "proc_shapes.c"
+    ],
+    "guests_sh": [
+      "pipeline.sh",
+      "seqtree.sh",
+      "nestedsh.sh",
+      "bgjobs.sh"
+    ],
+    "guests_other": [
+      "/usr/bin/make -s -j1 -C guests/mk"
+    ],
+    "compile": "gcc -O1 -o <name> <name>.c   (dynamic; the host has no static libc)"
+  },
+  "counts": {
+    "sweep_cells": 28,
+    "sweep_guests": 14,
+    "stress_runs_serial": 160,
+    "stress_runs_concurrent": 256,
+    "sysinfo_padding_samples": 10,
+    "proc_shapes_cells": 2,
+    "chaos_guests": 7,
+    "chaos_seeds": 3,
+    "chaos_runs": 28,
+    "total_hermit_runs_approx": 530
+  }
+}

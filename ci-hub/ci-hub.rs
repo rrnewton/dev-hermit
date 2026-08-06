@@ -70,6 +70,7 @@ HISTORY & FORENSICS
   newest-green            Find the newest gate-qualified green commit [default: --branch main]
   first-bad               Find a retained PASS -> FAIL transition for a cell or gate
   validate-status         Check whether one SHA has a clean full-validation receipt
+  validate-run            Launch detached validation through ci-hub admission
   validate-stop           Stop detached validate-* user units and verify termination
   ledger                  Read canonical qualified views of the validate ledger
   local-history           Inspect local validate receipts across slots and worktrees
@@ -147,7 +148,7 @@ portable CI engine; those stay in Hermit and pinned agent-utils.
      ./ci-hub/ci-hub land-lock status
      ./ci-hub/ci-hub land-lock run --agent AGENT --pr PR -- COMMAND...
    Serialize box-exclusive compute (one validate OR bench, so load cannot forge FAILEDs):
-     ./ci-hub/ci-hub validate-lock run --agent A --kind validate --target SHA -- ./validate.sh
+     ./ci-hub/ci-hub validate-run --checkout WORKTREE --agent A --target SHA --pr N -- full
    Never force-release another owner. Dead-owner reclamation requires process
    evidence and is built into the lock.
 
@@ -213,6 +214,8 @@ enum HubCommand {
     LoadProbe(LoadProbeArgs),
     /// Query the local validate ledger for a commit and print the landing/cache verdict.
     ValidateStatus(ValidateStatusArgs),
+    /// Launch a detached validation whose service enters through validate-lock.
+    ValidateRun(PassthroughArgs),
     /// Stop detached validate-* user units and verify they terminated.
     ValidateStop(PassthroughArgs),
     /// Read canonical qualified views of the validate ledger.
@@ -1116,6 +1119,7 @@ impl HubCommand {
             | Self::CiMode(_)
             | Self::Batch(_)
             | Self::ValidateStatus(_)
+            | Self::ValidateRun(_)
             | Self::ValidateStop(_)
             | Self::ApplyLocalLabel(_)
             | Self::LandLock(_)
@@ -1636,6 +1640,9 @@ fn execute(root: &Path, command: HubCommand) -> Result<i32, CiHubError> {
             run_python(root, "ci-hub/health/load_probe.py", forwarded)
         }
         HubCommand::ValidateStatus(args) => run_validate_status(root, args),
+        HubCommand::ValidateRun(args) => {
+            run_python(root, "ci-hub/validate/start_unit.py", args.args)
+        }
         HubCommand::ValidateStop(args) => {
             run_python(root, "ci-hub/validate/stop_units.py", args.args)
         }
@@ -4111,6 +4118,12 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
             "exit_code": assessment.verdict.exit_code(),
             "qualifying_count": assessment.qualifying.len(),
             "disqualified_count": assessment.disqualified.len(),
+            // Genuine clean full-coverage FAILs on this same commit. When the
+            // verdict is VALIDATED these are SUPERSEDED (the ledger does not
+            // latch) -- a machine consumer must be able to see them rather than
+            // read a bare green.
+            "failed_record_count": assessment.failed_records,
+            "withheld_nonpass_record_count": assessment.withheld_nonpass_records,
             "newest_qualifying": newest.map(describe_record),
             "ledger": path.display().to_string(),
         });
@@ -4129,12 +4142,39 @@ fn run_validate_status(root: &Path, args: ValidateStatusArgs) -> Result<i32, CiH
                     row.real_seconds.map(|s| s.round() as i64).unwrap_or(-1),
                     row.host.as_deref().unwrap_or("?"),
                 );
+                // The ledger does not latch: this PASS supersedes any earlier
+                // clean full FAIL on the same commit. Surface those loudly --
+                // a green that silently buries a same-commit failure claims
+                // more than it verified, and the pass/fail pair on identical
+                // clean full conditions is a FLAKE SIGNAL, not noise.
+                if assessment.failed_records > 0 {
+                    println!(
+                        "# validate WARNING {} -- {} SUPERSEDED clean full-coverage FAIL record(s) on this same commit; the green above did not disprove them. Same commit passing AND failing a clean full run is a FLAKE SIGNAL: investigate before trusting this green for landing.",
+                        assessment.sha, assessment.failed_records,
+                    );
+                }
+                // Withheld reds are not FAILURES, but neither are they nothing.
+                // Measured on the live ledger: 20 of 105 VALIDATED commits carry
+                // a same-commit `fail` record and EVERY one is withheld, so a
+                // banner reporting only the failure count is silent on all of
+                // them. Report the count and name it as withheld, so the reader
+                // can tell "no adverse record" from "adverse record, not
+                // attributable".
+                if assessment.withheld_nonpass_records > 0 {
+                    println!(
+                        "# validate NOTE {} -- {} same-commit clean full-coverage NON-PASS record(s) exist but are WITHHELD from the failure count (contended, incomplete solo conditions, truncated, or environment fault); they carry no product verdict, but this green is not the only record of this commit.",
+                        assessment.sha, assessment.withheld_nonpass_records,
+                    );
+                }
             }
             validate_status::Verdict::FailedOnRecord => {
                 println!(
                     "# validate FAILED {} -- a clean full-coverage run exists but did NOT pass ({} record(s)); this commit is known-failing",
                     assessment.sha,
-                    assessment.disqualified.len(),
+                    // Was `disqualified.len()`, which counts EVERY non-qualifying
+                    // row -- subset, dirty, truncated, env-fault -- so the number
+                    // overstated how many genuine clean full failures existed.
+                    assessment.failed_records,
                 );
             }
             validate_status::Verdict::Truncated => {
@@ -4723,6 +4763,30 @@ mod tests {
         };
         assert_eq!(args.args, vec![OsString::from("--all")]);
         assert!(HubCommand::ValidateStop(args).cost_spec().is_none());
+    }
+
+    #[test]
+    fn parses_validate_run_passthrough() {
+        let command = Cli::try_parse_from([
+            "ci-hub",
+            "validate-run",
+            "--checkout",
+            "/tmp/hermit",
+            "--agent",
+            "hermit-test",
+            "--target",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--",
+            "full",
+        ])
+        .unwrap()
+        .command;
+        let HubCommand::ValidateRun(args) = command else {
+            panic!("wrong command variant")
+        };
+        assert!(args.args.contains(&OsString::from("--checkout")));
+        assert!(args.args.contains(&OsString::from("full")));
+        assert!(HubCommand::ValidateRun(args).cost_spec().is_none());
     }
 
     #[test]

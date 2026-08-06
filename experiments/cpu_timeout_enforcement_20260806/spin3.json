@@ -1,0 +1,3 @@
+{"default_step_timeout":600,"steps":[
+ {"group":"plant","job":"cpu_spinner","cmd":"python3 -c \"\nimport time\nt=time.time()\nx=0\nwhile time.time()-t < 60: x+=1\nprint('CPU BREACH SURVIVED')\"","timeout":300,"cpu_timeout":3,
+  "hint":{"rss_baseline_bytes":16777216,"hard_mem_max_bytes":268435456,"est_duration_s":60}}]}

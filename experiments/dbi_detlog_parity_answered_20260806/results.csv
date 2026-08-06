@@ -1,0 +1,14 @@
+id,question,evidence,result
+I1,why did the prior attempt get ZERO [memory] records from BOTH backends,"hermit refuses a guest under host /tmp: 'Program /tmp/guest_heap is under host /tmp, but Hermit replaces guest /tmp with an isolated directory'","INSTRUMENT BUG -- the guest never ran; relocating it to ~/.local/hermit-deps/guests fixes it"
+I2,second instrument trap found,"--log-file under /tmp: ptrace PANICS (global_opts.rs:61 'Failed to open log file: NotFound', rc=1) while DBI SILENTLY IGNORES it and writes DETLOG to stderr","same flag, opposite failure modes across backends"
+I3,instrument gate (nonzero ptrace baseline),"ptrace --detlog-heap --detlog-stack on the brk guest","63 [memory] records (59 stack + 4 heap) -- GATE PASSED"
+C1,ptrace-vs-ptrace control on the SAME guest,"p1 vs p2, dtid canonicalized to per-run ordinals","IDENTICAL canonical record streams -- ptrace IS a clean oracle for this guest"
+D1,dtid confound confirmed,"ptrace raw dtid = 3 (constant); DBI raw dtid = 1912926 (raw host TID)",confirmed as prior agents described
+Q1,"ptrace vs DBI, dtid canonicalized, full tuple (dtid,range,perms,tag,hash)","ptrace 63 records vs DBI 55; shared tuples = 0",NOT IDENTICAL
+Q2,[stack] address ranges,"ptrace 0x7ffffffdc000-0x7ffffffff000 (0x23000) vs DBI 0x7ffffffdb000-0x7ffffffff000 (0x24000)","THE REGION DIFFERS BY ONE PAGE -- DBI's stack starts 0x1000 lower"
+Q3,[stack] address-normalized (tag+hash only),58 distinct ptrace digests vs 54 distinct DBI digests,"0 shared -- but NOT interpretable as content divergence, because the hashed BYTE RANGE differs"
+Q4,[heap] records under DBI,"ptrace emits 4 (0x405000-0x426000 then 0x405000-0x447000, i.e. the brk segment growing); DBI emits 0","DBI EMITS NO HEAP RECORDS AT ALL"
+Q5,perms strings,both 'MMPermissions(READ | WRITE | PRIVATE)',identical
+V1,heap parity verdict,-,"NO-RESULT -- unmeasurable, DBI emits nothing to compare"
+V2,stack parity verdict,-,"NOT COMPARABLE AS-IS -- a digest over 0x23000 bytes cannot equal one over 0x24000 bytes"
+V3,is this evidence of a DBI memory-CONTENT bug,-,"NO -- both results are region/emission defects, not content divergence"

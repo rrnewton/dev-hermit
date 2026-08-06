@@ -1,0 +1,88 @@
+Add -b as the short alias for --backend
+
+`-b` is free at both declaration sites (full short-flag sweep in
+ai_docs/backend-short-flag-b-20260806.md §2). This adds the alias only; the
+option id, value_enum, value set, and the `conflicts_with = "backend"` reference
+at run.rs:223 are all unchanged, so value-level work on the same flag surface
+(prefix / case-insensitive matching) composes with this rather than colliding.
+
+Both sites get the alias because both already accept `--backend`: the global
+position is preferred, and `run` keeps it for backwards compatibility. Giving the
+short form to only one would make `-b` work in one position and not the other,
+which is worse than not having it.
+
+Verified offline against clap 4.6 in scratch/backend-b-ux/harness.rs:
+  -b kvm / -bkvm / -b=kvm  -> Ok(Kvm);  --backend kvm -> Ok(Kvm) (same option)
+  help renders "-b, --backend <BACKEND>"; the BEFORE control does not
+  invalid values still error against '--backend <BACKEND>' (one canonical name)
+
+--- a/hermit-cli/src/bin/hermit/global_opts.rs
++++ b/hermit-cli/src/bin/hermit/global_opts.rs
+@@ -48,7 +48,7 @@ pub struct GlobalOpts {
+     /// Select the process instrumentation backend. This is the preferred, global
+     /// position (e.g. `hermit --backend ptrace run ...`); for backwards
+     /// compatibility `run` also accepts `--backend` after the subcommand.
+-    #[clap(long, value_enum, value_name = "BACKEND")]
++    #[clap(short = 'b', long, value_enum, value_name = "BACKEND")]
+     pub backend: Option<Backend>,
+ }
+
+--- a/hermit-cli/src/bin/hermit/run.rs
++++ b/hermit-cli/src/bin/hermit/run.rs
+@@ -125,7 +125,7 @@ pub struct RunOpts {
+     /// Select the process instrumentation backend.
+-    #[clap(long, value_enum)]
++    #[clap(short = 'b', long, value_enum)]
+     backend: Option<Backend>,
+
+--- a/hermit-cli/src/bin/hermit/run.rs
++++ b/hermit-cli/src/bin/hermit/run.rs
+@@ -780,6 +780,44 @@
+ fn backend_defaults_to_ptrace() {
+
++/// `-b` must be the SAME option as `--backend`, not a second one. If a future
++/// edit turns it into a separate arg, the two spellings would drift (different
++/// defaults, different conflicts) and this catches it.
++#[test]
++fn dash_b_is_an_alias_for_backend_on_run() {
++    use clap::Parser;
++    let short = RunOpts::try_parse_from(["run", "-b", "kvm", "/bin/true"]).unwrap();
++    let long = RunOpts::try_parse_from(["run", "--backend", "kvm", "/bin/true"]).unwrap();
++    assert_eq!(short.backend, long.backend);
++    assert_eq!(short.backend, Some(Backend::Kvm));
++}
++
++/// The alias must not change what a bad value does: still rejected, and still
++/// reported against the canonical long name.
++#[test]
++fn dash_b_rejects_an_unknown_backend() {
++    use clap::Parser;
++    let err = RunOpts::try_parse_from(["run", "-b", "nope", "/bin/true"]).unwrap_err();
++    assert!(err.to_string().contains("--backend"), "error names the canonical flag: {err}");
++}
++
++/// Adding a short must not make the option required.
++#[test]
++fn backend_remains_optional_with_the_alias() {
++    use clap::Parser;
++    let opts = RunOpts::try_parse_from(["run", "/bin/true"]).unwrap();
++    assert_eq!(opts.backend, None);
++}
++
++/// Help must ADVERTISE the short, or the alias is undiscoverable and a
++/// first-time user never learns it exists.
++#[test]
++fn help_advertises_the_short_form() {
++    use clap::CommandFactory;
++    let help = RunOpts::command().render_help().to_string();
++    assert!(help.contains("-b, --backend"), "help must show `-b, --backend`:\n{help}");
++}
++
++/// The global position must accept it too — `-b` working after `run` but not
++/// before it would be a worse surface than no short at all.
++#[test]
++fn dash_b_works_in_the_global_position() {
++    use clap::CommandFactory;
++    let help = crate::global_opts::GlobalOpts::command().render_help().to_string();
++    assert!(help.contains("-b, --backend"), "global help must show `-b, --backend`:\n{help}");
++}

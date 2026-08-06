@@ -379,3 +379,39 @@ the default hot path.
   your real land time, and prefer `run` so releases happen promptly.
 - Disjoint footprints don't strictly need the lock, but taking it is cheap and
   keeps the single `[gate]` runner from being contended — when in doubt, hold it.
+
+---
+
+# Landing preflight (`ci-hub/landing/preflight.py`)
+
+**Run this before trusting any green.** Each check is a defect that actually
+fired on 2026-08-04; the rules were previously retyped by hand into agent
+dispatches, and a rule that gets retyped is a rule that decays.
+
+```bash
+# the three checks
+python3 ci-hub/landing/preflight.py --sha '<handed-sha>' --pr '<n>'          # 1: SHA still head?
+python3 ci-hub/landing/preflight.py --log '<validate.log>'                 # 2: nonzero executed tests?
+python3 ci-hub/landing/preflight.py --landed-pr '<n>' --checkout hermit    # 3: landed by ancestry?
+# the two standing traps
+python3 ci-hub/landing/preflight.py --diff-of worktrees/'<slot>'/hermit    # 4: reverie patch override?
+#   5: byte-identical branch -- check_no_byte_identical_branch(), library use
+```
+
+Exit **0** only when every requested check PASSes. **`UNKNOWN` blocks**: an
+unanswerable check must never launder "I could not tell" into "it is fine".
+Add `--no-network` to run offline (unresolvable checks then report UNKNOWN, so
+the gate correctly refuses rather than passing).
+
+1. **The SHA you were handed is a cache; the branch is the source.** Four handed
+   SHAs went stale in one night.
+2. **A green must carry a nonzero executed test count.** `--features` gating
+   yields build-ok / target-ran / zero-executed / SUCCESS. Absent and empty logs
+   are refused too.
+3. **Landing is verified by `mergeCommit.oid` ancestry on a freshly-fetched
+   remote** — never the PR head (always false after a rebase replay: that read
+   79 unlanded when 46 had landed), never the `MERGED` flag alone (a later
+   force-push orphans the replay SHA).
+
+Negative tests proving each check refuses its real bad case:
+`python3 -m pytest ci-hub/landing/test_preflight.py -q`

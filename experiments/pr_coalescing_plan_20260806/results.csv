@@ -1,0 +1,11 @@
+id,measurement,value,consequence
+I1,parent (dev-hermit) unpushed commits,106,"one push, not 193 PRs -- the parent works directly on shared main and does not use PRs"
+I2,parent files touched,527,"experiments 279, ai_docs 120, ci-hub 92, scripts 19, compat-envelope 5, other 12"
+I3,hermit unpushed commits vs origin/main,0,NO product PR is pending
+I4,reverie unpushed commits,0,NO product PR is pending
+I5,liteinst2 unpushed commits,0,none
+I6,agent-utils unpushed commits,0,"detached at the pinned SHA, nothing ahead"
+I7,product code smuggled into the parent,NONE,"only agent-utils + reverie GITLINKS appear outside parent-owned dirs -- hygiene confirmed"
+C1,premise check,"'~193 staged artifacts must not become ~193 PRs'","INVERTED: they cannot become PRs at all. 100% are parent-repo commits; 0 product commits exist."
+P1,what the parent set actually needs,one push to dev-hermit main,blocked by egress 403 only
+P2,what the owner's directive actually applies to,"the product fixes the diagnoses imply -- NONE of which are written yet","the deliverable is a plan for PRs that must be WRITTEN, not a regrouping of PRs that exist"

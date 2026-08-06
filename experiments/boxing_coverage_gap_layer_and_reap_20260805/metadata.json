@@ -1,0 +1,79 @@
+{
+  "experiment": "boxing_coverage_gap_layer_and_reap",
+  "date_utc": "2026-08-06T02:49:36Z",
+  "task": "close_boxing_coverage_gap",
+  "question": "Which layer holds an agent scope open, and does a CPUQuota on the agent slice actually close the leak?",
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "systemd": "systemd 259 (259.5-1.2.hs+fb.el9_z)",
+    "cgroup_fs": "cgroup2fs"
+  },
+  "repo_shas": {
+    "dev-hermit_parent": "1c27dfd4dc68fc1313da204720ea2138688329a3",
+    "hermit": "b64d893ae9ea6404472eae9cb86102d91ec642ef",
+    "agent-utils": "570e78655e4cbfd398748b278252bfbaf4cc5930"
+  },
+  "live_state": {
+    "agent_scopes_total": 7,
+    "orphaned_scopes": 0,
+    "leaked_guest_processes": 0,
+    "ppid1_residents": 2,
+    "ppid1_residents_are": "legitimate infra daemons (guardrails_srv, privacy-aware) in this agent's own scope, not leaked test guests",
+    "note": "acute 2026-08-04 burst (17 procs / 2 dead scopes / ~752 CPU-hours) is CLEARED; structural gap persists independently"
+  },
+  "slice_enforcement_measured": {
+    "unit": "3pai_sandbox.slice",
+    "LoadState": "loaded",
+    "cpu.max": "max 100000",
+    "memory.max": "max",
+    "pids.max": "max",
+    "cpu.weight": 100,
+    "CPUQuotaPerSecUSec": "infinity",
+    "MemoryMax": "infinity",
+    "TasksMax": "infinity",
+    "cgroup.subtree_control": "io memory pids",
+    "cgroup.controllers": "cpuset cpu io memory pids",
+    "consequence": "cpu absent from subtree_control => per-agent scopes expose NO cpu.max file; memory.max and pids.max ARE present per-scope"
+  },
+  "leak_mechanism_results": {
+    "no_quota": {
+      "scope_survives_main_exit": true,
+      "procs_in_scope": 1,
+      "escapee_pct_of_one_core": 100.3,
+      "alive_after_window": true,
+      "reaped_by_quota": false
+    },
+    "with_quota_20pct": {
+      "cpu_max_readback": "20000 100000",
+      "scope_survives_main_exit": true,
+      "procs_in_scope": 1,
+      "escapee_pct_of_one_core": 20.0,
+      "alive_after_window": true,
+      "reaped_by_quota": false
+    },
+    "after_cgroup_kill": {
+      "scope_exists": false,
+      "escapee_alive": false
+    },
+    "conclusion": "CPUQuota THROTTLES exactly as configured but NEVER REAPS; cgroup.kill reaps atomically. A quota alone converts an unbounded core burn into a bounded burn that still runs forever and still pins the scope."
+  },
+  "layer_confirmation": {
+    "claim": "leaked spinners are bash, not hermit",
+    "verdict": "CONFIRMED",
+    "source_evidence": "hermit b64d893a hermit-cli/tests/cli.rs: spawns via Command::output() (:36-38) / .spawn() (:43-48); grep -c kill_on_drop == 0; no process_group, no timeout, no subtree containment",
+    "implication": "the guest subtree is one layer BELOW hermit and reparents to init when the supervisor dies; a PATH shim named 'hermit' wraps the wrong layer AND misses explicit-path invocations"
+  },
+  "fix": {
+    "a_throttle": "systemd drop-in on 3pai_sandbox.slice (CPUQuota/MemoryMax/TasksMax) — necessary, INSUFFICIENT (does not reap)",
+    "b_reap": "periodic sweeper writing cgroup.kill to any 3pai_sandbox.slice/*.scope whose owning run-p<PID> is dead AND which is non-empty — the part a quota cannot do",
+    "c_adoption": "route cargo test / test_harness.sh / ad-hoc runs through the existing verified whole-tree box (teardown.py::reap + scheduler.py); complementary to (b)",
+    "owner_constraint": "a scope-level reaper was previously forbidden as 'a second reaper'; the two-signal condition (owner dead AND non-empty) cannot touch a live agent's work, which was the original objection — evidence to revisit, not to overrule"
+  },
+  "cleanup_audit": {
+    "leftover_units": 0,
+    "leftover_cgroup_dirs": 0,
+    "surviving_spinners": 0,
+    "pre_existing_processes_signalled": 0
+  }
+}

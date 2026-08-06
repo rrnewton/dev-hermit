@@ -1,0 +1,99 @@
+{
+  "experiment": "liteinst-expansion-runner",
+  "date_utc": "2026-08-06",
+  "agent": "hermit-oci2",
+  "task": "liteinst-expansion-runner-experiment",
+  "question": "Do the 220 LiteInst rows in compat-envelope/scorecard.csv reproduce when LiteInst is driven through the EXPANSION RUNNER (expansion-dag.rs + safe-ci-dag-runner) instead of a bare `hermit run` CLI, as the predecessor's lead predicted?",
+  "verdict": "NO. The expansion runner cannot have produced those rows, and LiteInst does not activate in ANY invocation context on this host.",
+  "egress": "none (fully local)",
+  "host": {
+    "fqdn": "devbig014.atn7.facebook.com",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "machine": "x86_64",
+    "cpu": "AMD EPYC 9D85 158-Core Processor",
+    "nproc": 316,
+    "note": "This is the SAME host recorded in the metadata.json of both producers of the 220 rows, so 'host-specific to some other box' is refuted, not merely untested."
+  },
+  "toolchain": {
+    "cc": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "python": "Python 3.12.13+meta",
+    "runtime_env": "LD_LIBRARY_PATH=/home/newton/.local/hermit-deps/lu/usr/lib64 (required: every hermit build here has an unresolved libunwind-x86_64.so.8; NOT recorded by any producer)"
+  },
+  "repo_shas": {
+    "dev_hermit_parent_head": "604c111489968b7c8837da0b2045fc755afbe373",
+    "hermit_primary_head_at_run": "f89c69766371806d3c9b2c3003531df2d59d6118",
+    "reverie_primary_head_at_run": "025d37800d347c32711038bd0a3889e8e4774c2b"
+  },
+  "binaries_under_test": [
+    {
+      "arms": ["A-bare-cli", "A-prime-recorded-flags", "A-second-recorded-producer", "B-harness-single-cell", "C-expansion-runner-at-scorecard-sha"],
+      "path": "worktrees/oci/hermit/target/release/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-06, g464cbd9f9bb4)",
+      "hermit_sha": "464cbd9f9bb43d5505c914783819e1d349630283",
+      "hermit_binary_sha256": "3fb4e3821100f2b4c9a160209f1dc4771c1d5dfd149c96841b75cca37ba32927",
+      "liteinst_runtime_path": "worktrees/oci/hermit/target/release/libreverie_liteinst.so",
+      "liteinst_runtime_sha256": "12dc24f7927a7059ca7d6001b42d8df840b16a9a4f5688ef762a51e81077522a",
+      "reverie_sha": "aa6f1283aeee3efd174c57f6dd8198310bd307e1",
+      "reverie_sha_source": "derived from Cargo.lock of the pinned tree at 464cbd9f (rrnewton/reverie git rev)",
+      "why": "This is EXACTLY the (hermit, reverie) pair recorded on all 220 LiteInst rows of compat-envelope/scorecard.csv. Binary provenance is SELF-ATTESTED by `hermit --version`, not assumed from a mtime."
+    },
+    {
+      "arms": ["D-expansion-runner-liteinst-enabled-cells"],
+      "path": "worktrees/dbi/hermit/target/release/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-05, g52d56e5ceb38)",
+      "hermit_sha": "52d56e5ceb386d24ec809edbfdb6920e8484271e",
+      "hermit_binary_sha256": "964c76fe82e19c5b9dcb285f97f85d700474765ae1c4c10316350869cae40adb",
+      "liteinst_runtime_path": "worktrees/dbi/hermit/target/release/libreverie_liteinst.so",
+      "liteinst_runtime_sha256": "490dd5c28e79dd14b4bda295feac1f4127762f63ecb65b9c5345666a855b6fd0",
+      "reverie_sha": "79517704b0d19eeb3c4c234d0bfbe9f0a17c1199",
+      "why": "A clean, recent SHA at which 28 e2e cells actually ENABLE liteinst, so the expansion runner can reach hermit at all. Used read-only; no build was performed in any slot."
+    },
+    {
+      "arms": ["invariance-probe-only"],
+      "self_reported_version": "hermit 0.2.0 (2026-08-04, g0f891e432a75-dirty)",
+      "path": "hermit/target/release/hermit",
+      "result": "identical phase-Waiting failure",
+      "caveat": "NOT REPRODUCIBLE FROM THIS RECORD: the tree was dirty, and another agent rebuilt the primary during this session (it now self-reports gf89c69766371-dirty). Recorded as a third invariance datapoint only; the two clean-SHA probes above are the load-bearing ones."
+    }
+  ],
+  "source_trees": {
+    "method": "read-only `git clone --shared --no-checkout` + detached checkout under scratch/ so that ROOT_DIR's `git rev-parse HEAD` matches the binary's self-reported SHA and `git status --porcelain` is empty. No worktree was created, no slot HEAD was moved, no build was run in any slot.",
+    "scratch/liteinst-expansion-464cbd9f/hermit": "464cbd9f9bb43d5505c914783819e1d349630283 (clean)",
+    "scratch/liteinst-expansion-52d56e5c/hermit": "52d56e5ceb386d24ec809edbfdb6920e8484271e (clean)"
+  },
+  "claims_under_test": {
+    "scorecard_rows": 220,
+    "scorecard_pass": 136,
+    "scorecard_skip": 72,
+    "scorecard_fail": 12,
+    "producers": [
+      {"run_id": "liteinst-fullcorpus-1785621912", "rows": 200, "pass": 117, "producer": "experiments/liteinst_fullcorpus_scorecard_20260801/run.py", "run_mode_field": "expansion (hardcoded string literal at run.py:320)"},
+      {"run_id": "liteinst-spst-1785620995", "rows": 20, "pass": 19, "producer": "experiments/liteinst_backend_parity_20260801/run.py", "run_mode_field": "expansion (hardcoded string literal at run.py:170)"}
+    ]
+  },
+  "commands": [
+    "hermit run --backend liteinst --strict --verify -- /bin/true",
+    "hermit run --backend liteinst --strict --base-env=minimal --max-timeslice=disabled --tmp=/tmp -- /bin/true",
+    "experiments/liteinst_backend_parity_20260801/run.py --repo scratch/liteinst-expansion-464cbd9f/hermit --hermit worktrees/oci/hermit/target/release/hermit --output-dir <scratch>",
+    "ci/test_harness.sh run --lane portable --category c-programs --test c-programs/acct-refusal-probe --mode verify --backend liteinst --include-manual",
+    "compat-envelope/expansion-dag.rs --repo scratch/liteinst-expansion-464cbd9f/hermit --backends liteinst --buckets backend-parity-c --evidence-root <scratch> --run-id armC-464cbd9f",
+    "agent-utils/common/bin/safe-ci-dag-runner run --keep-going --dag <armC dag.json> --max-mem 16G",
+    "compat-envelope/expansion-dag.rs --repo scratch/liteinst-expansion-52d56e5c/hermit --backends liteinst --buckets applications,backend-parity-c,bin-c,c-programs,debugger-c,language-runtimes,system-utils --evidence-root <scratch> --run-id armD-52d56e5c",
+    "agent-utils/common/bin/safe-ci-dag-runner run -k -j 28 --dag <armD dag-enabled28.json>"
+  ],
+  "seed": "n/a (no randomised input; chaos mode was not exercised)",
+  "iterations": {
+    "per_cell": 1,
+    "note": "Single iteration per cell, as in the prior run. Justified here because the observed failure is deterministic and total (0/28 LiteInst cells reached the guest; 28/28 ptrace reference cells passed in the SAME context), not marginal - a repeat-count study would only re-measure a 0%/100% split. It is NOT justified for any future run that reports a partial LiteInst pass rate."
+  },
+  "limitations": [
+    "ONE HOST (devbig014). Unlike the prior run this is not merely 'untested elsewhere' - it is the same host both producers recorded, which is what makes the non-reproduction load-bearing rather than environmental.",
+    "ONE ITERATION per cell (see iterations.note).",
+    "Arm D used 28 of the 1087 cells expansion-dag.rs emits for those buckets: exactly the cells whose manifest ENABLES liteinst at 52d56e5c. The other 1059 are manifest-disabled and are refused by the cell runner (same mechanism as arm C).",
+    "3 of those 28 came from expansion-dag.rs's own enumeration; 25 had to be synthesised into the DAG by hand because of the enumeration hole documented in README finding 5. The synthesised steps reuse expansion-dag.rs's OWN generated run-expansion-cell.sh helper and the identical cmd template, so the execution context is the runner's, not mine.",
+    "Arm D raised the per-step budgets over expansion-dag.rs's defaults (timeout 600, cpu_timeout 180) to defeat the 10 s CPU cap of README finding 6. LiteInst's verdict is unaffected - it fails in ~150 ms - but the ptrace reference could not complete under the stock budget.",
+    "I did NOT root-cause the handshake failure. That is ai_docs/liteinst-preload-handshake-root-cause-narrowed_20260806.md's open work; this experiment only adds the cross-build invariance datapoint.",
+    "I did not check whether the 136 recorded passes were genuine at the time they were recorded (e.g. recorded from a fallback path). This experiment shows only that they cannot be reproduced from what was recorded."
+  ]
+}

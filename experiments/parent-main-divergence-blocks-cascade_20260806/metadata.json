@@ -1,0 +1,38 @@
+{
+  "experiment": "parent-main-divergence-blocks-cascade",
+  "date": "2026-08-06",
+  "task": "execute-landing-cascade-via-herdr-run",
+  "agent": "hermit-det2",
+  "question": "With herdr-run restoring egress, can the landing cascade execute -- starting with 'push the parent'?",
+  "answer": "No. git egress works and gh does not; parent main has diverged 118/40 with 9 two-sided conflicts in the ci-hub landing gate; and Stacks 1/2/4 have no landable artifact because the plan that names them explicitly wrote no code and opened no PR.",
+  "repos": {
+    "dev-hermit": {
+      "remote": "rrnewton/dev-hermit",
+      "local_head": "0d57f5c4a802892888ed38c8feadb9c3590a7914",
+      "remote_main": "40e672bd74a2281d94cc611192906ce4b8669474",
+      "merge_base": "209f7de99f0cf6f9f2c878512816dd0ed50dbf15",
+      "ahead": 118, "behind": 40,
+      "published_branch": "staging/parent-cascade-20260806 @ 0d57f5c4a802892888ed38c8feadb9c3590a7914",
+      "shared_main_touched": false
+    },
+    "gitlinks_published": {
+      "hermit": "b4e94ce4455daef251e10af2174c6998c1ae1a4d",
+      "reverie": "04a46b43930b918f6ff0f6b53644df732f908c46",
+      "agent-utils": "c83bceef218453b5afc20fa4958cb3e0abea7af7",
+      "liteinst2": "8bffae9da68e0636ec4b6dc473a0fd29ac589d20",
+      "all_contained_in_a_remote_branch": true
+    }
+  },
+  "egress": {
+    "git_over_https_via_with_proxy": "WORKS (ls-remote, fetch, push all verified)",
+    "gh": "BROKEN -- api.github.com 'network is unreachable' even under with-proxy; no gh pr merge is possible",
+    "herdr_run_bug": "bare 'gh <subcommand>' is refused: the allowlist reads the second token as the program unless a with-proxy prefix is present"
+  },
+  "method": "git merge-tree --write-tree (non-destructive; the parent working tree is dirty with other agents' work and was never touched). Per-file classification uses whitespace-insensitive numstat against the explicit merge-base and explicit remote-main SHA, not FETCH_HEAD.",
+  "outputs": { "results_csv": "results.csv" },
+  "limitations": [
+    "Conflict classification is by diff shape, not by reading every hunk. 'TWO-SIDED-needs-adjudication' means both sides changed the file substantially from the base; it does not prejudge which side is right.",
+    "The 40 remote commits are codex-coord's work; their intent was not available to this fleet.",
+    "Nothing was landed and no stack was tagged implemented."
+  ]
+}

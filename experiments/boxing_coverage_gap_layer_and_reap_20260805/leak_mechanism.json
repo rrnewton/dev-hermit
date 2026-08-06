@@ -1,0 +1,4 @@
+{"arm":"no-quota","cpuquota_requested":"none","cpu_max_readback":"(no cpu.max file)","scope_still_exists_after_main_exit":"yes","procs_in_scope":1,"escapee_pid":"549568","cpu_jiffies_per_3s":301,"pct_of_one_core":100.3,"escapee_alive_after_window":"yes","reaped_by_quota":false}
+{"arm":"no-quota-after-cgroup-kill","scope_exists":"no","escapee_alive":"no"}
+{"arm":"with-quota","cpuquota_requested":"20%","cpu_max_readback":"20000 100000","scope_still_exists_after_main_exit":"yes","procs_in_scope":1,"escapee_pid":"551522","cpu_jiffies_per_3s":60,"pct_of_one_core":20.0,"escapee_alive_after_window":"yes","reaped_by_quota":false}
+{"arm":"with-quota-after-cgroup-kill","scope_exists":"no","escapee_alive":"no"}

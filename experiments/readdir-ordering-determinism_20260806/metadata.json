@@ -1,0 +1,58 @@
+{
+  "experiment": "readdir-ordering-determinism",
+  "date": "2026-08-06",
+  "task": "readdir-ordering-determinism",
+  "agent": "hermit-det2",
+  "question": "Does Hermit determinize getdents/readdir enumeration order, such that a program iterating a directory sees the same order across runs, hosts, and filesystems?",
+  "repos": {
+    "dev-hermit": {
+      "remote": "rrnewton/dev-hermit",
+      "head": "e23c8413f3ce84b4228e30898f094aed53b711bc"
+    },
+    "hermit": {
+      "remote": "rrnewton/hermit",
+      "primary_head": "f89c69766371806d3c9b2c3003531df2d59d6118",
+      "binary_under_test": "hermit 0.2.0 (2026-08-04, gf89c69766371)",
+      "binary_provenance": "clean-tree debug build at f89c69766371 taken from worktrees/strictcorpus/hermit/target/debug/hermit and copied read-only to /home/newton/scratch-readdir-det/bin/hermit-f89c6976; no worktree was mutated",
+      "code_under_test": [
+        "detcore/src/syscalls/files.rs :: handle_getdents (line 2575), handle_getdents64 (line 2615)",
+        "detcore/src/dirents.rs :: impl Ord for Dirent64, deserialize/serialize_dirents{,64}"
+      ]
+    },
+    "reverie": {
+      "remote": "rrnewton/reverie",
+      "pin": "025d37800d347c32711038bd0a3889e8e4774c2b"
+    }
+  },
+  "backend": "ptrace",
+  "hermit_flags": "run --strict  (virtualize_metadata defaults to true; no relaxations)",
+  "host": {
+    "hostname": "devbig014",
+    "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "gcc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "glibc": "2.34",
+    "libunwind_runtime": "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib (LD_LIBRARY_PATH; libunwind is not installed system-wide on this box)"
+  },
+  "fixture_roots": {
+    "btrfs": "/home/newton/scratch-readdir-det/btrfs",
+    "tmpfs": "/dev/shm/rdd"
+  },
+  "filesystems_measured": ["btrfs", "tmpfs"],
+  "seed": "n/a (no randomized input; fixtures are deterministic by construction)",
+  "commands": [
+    "./make_fixtures.sh /home/newton/scratch-readdir-det/btrfs",
+    "./make_fixtures.sh /dev/shm/rdd",
+    "HERMIT=/home/newton/scratch-readdir-det/bin/hermit-f89c6976 ALT_ROOT=/dev/shm/rdd ./run_sweep.sh /home/newton/scratch-readdir-det/btrfs results/btrfs"
+  ],
+  "outputs": {
+    "results_csv": "results/btrfs/results.csv",
+    "per_cell_stdout": "results/btrfs/raw/*.out",
+    "verify_json": "results/btrfs/raw/verifystrict-*.json"
+  },
+  "limitations": [
+    "hermit run --strict --verify --verify-strict (L2 canonical comparator) is BASELINE-RED on this host: /bin/true diverges at log messages 5-6 on DEBUG-level 'reverie_ptrace::vdso: N patched __vdso_*' ordering and on 'detcore::tool_global: Nondeterministic realtime elapsed'. L2 therefore could not be established for ANY cell here, including the control; verify-strict results are reported but are not attributable to readdir.",
+    "Only two local filesystems (btrfs, tmpfs) were exercised. ext4/xfs htree hashing, NFS, and overlayfs were not measured; they are expected to widen, not narrow, the divergence.",
+    "Single-host study. The 'host-to-host' axis is exercised by proxy: identical directory content laid out in a different on-disk order (asc/desc creation order, and btrfs vs tmpfs)."
+  ]
+}

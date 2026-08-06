@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 43
+EXPECTED_COMMANDS = 49
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -103,6 +103,7 @@ def _classify(text: str) -> str:
             "refresh-history",
             "resolve-obligation",
             "verify-landing",
+            "validate-run",
         }:
             return "parse"
         raise DocsCommandError(f"unclassified ci-hub subcommand: {normalized}")
@@ -110,6 +111,10 @@ def _classify(text: str) -> str:
         return "parse"
     if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
         return "live-read"
+    # The landing preflight is illustrated with <placeholder> arguments, so it is
+    # parse-only: the snippet documents the three checks, it is not run verbatim.
+    if normalized.startswith("python3 ci-hub/landing/preflight.py"):
+        return "parse"
     if normalized == "./ci-hub/directives/check.py --quickstart":
         return "local-read"
     if normalized.startswith("with-proxy gh "):
@@ -213,6 +218,8 @@ def _parse_probe(command: str) -> str:
         return "./ci-hub/bin/close-task --help"
     if re.match(r"^(?:\./)?ci-hub/bin/reconcile-receipts(?:\s|$)", normalized):
         return "./ci-hub/bin/reconcile-receipts --help"
+    if normalized.startswith("python3 ci-hub/landing/preflight.py"):
+        return "python3 ci-hub/landing/preflight.py --help"
     return command
 
 
