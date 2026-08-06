@@ -690,6 +690,14 @@ class OperationalBoundsTest(unittest.TestCase):
     def test_lander_receipt_authorization_has_both_controls_and_cleans_plant(
         self,
     ) -> None:
+        verifier = (ROOT / "ci-hub/validation/verify_receipt.sh").read_text()
+        self.assertEqual(
+            verifier.count("receipt-digest --sha \"$sha\""),
+            1,
+            "candidate verification must use one Rust digest/qualification authority",
+        )
+        self.assertIn("--require-qualifying", verifier)
+        self.assertNotIn("qualifying_receipt.py", verifier)
         result = subprocess.run(
             [str(ROOT / "ci-hub/validation/test_verify_receipt.sh")],
             cwd=ROOT,

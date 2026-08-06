@@ -566,6 +566,11 @@ struct ReceiptDigestArgs {
     /// Emit the exact canonical HistoryRow bytes instead of their digest.
     #[arg(long, conflicts_with = "json")]
     canonical_row: bool,
+    /// Refuse unless the shared qualifying-receipt predicate accepts the row.
+    /// This lets shell consumers bind semantic qualification and the Rust
+    /// canonical digest in one authoritative process.
+    #[arg(long)]
+    require_qualifying: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -3518,6 +3523,17 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
     if row.commit.as_deref() != Some(args.sha.as_str()) {
         return Err(CiHubError::ValidateStatus(
             "receipt-digest HistoryRow is not bound to --sha".into(),
+        ));
+    }
+    if args.require_qualifying
+        && !crate::qualifying_receipt::row_qualifies(
+            &row,
+            &args.sha,
+            crate::qualifying_receipt::active(),
+        )
+    {
+        return Err(CiHubError::ValidateStatus(
+            "receipt-digest HistoryRow does not satisfy the shared qualifying predicate".into(),
         ));
     }
     let (canonical_row, digest) = canonical_row_json_and_sha256(&row).ok_or_else(|| {

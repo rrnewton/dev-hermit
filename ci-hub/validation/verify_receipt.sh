@@ -136,11 +136,17 @@ for candidate in "${candidates[@]}"; do
     # ledger row. Re-run the shared semantic predicate on that embedded row and
     # recompute its named Rust canonicalization before trusting the identity.
     # A writer cannot repair a forged selected digest merely by recomputing the
-    # outer artifact digest/path.
+    # outer artifact digest/path. One Rust invocation owns BOTH decisions; a
+    # separate Python qualifier here made the authorities drift and doubled the
+    # process cost for every candidate.
     row_file=$(mktemp)
-    if ! jq -c '.ledger_record' "$receipt_file" >"$row_file" 2>/dev/null || \
-       ! python3 "$script_dir/../qualifying_receipt.py" --sha "$sha" \
-           <"$row_file" >/dev/null 2>&1; then
+    if ! jq -c '.ledger_record' "$receipt_file" >"$row_file" 2>/dev/null; then
+        rm -f -- "$row_file" "$receipt_file"
+        continue
+    fi
+    computed_digest=$("$script_dir/../ci-hub" receipt-digest --sha "$sha" \
+        --require-qualifying <"$row_file" 2>/dev/null) || computed_digest=
+    if [[ ! $computed_digest =~ ^[0-9a-f]{64}$ ]]; then
         rm -f -- "$row_file" "$receipt_file"
         continue
     fi
@@ -149,8 +155,6 @@ for candidate in "${candidates[@]}"; do
         identity_algorithm=$(jq -r '.selected_receipt_identity.digest_algorithm // ""' "$receipt_file")
         identity_canonicalization=$(jq -r '.selected_receipt_identity.canonicalization // ""' "$receipt_file")
         identity_digest=$(jq -r '.selected_receipt_identity.digest // ""' "$receipt_file")
-        computed_digest=$("$script_dir/../ci-hub" receipt-digest --sha "$sha" \
-            <"$row_file" 2>/dev/null) || computed_digest=
         if [[ $identity_algorithm != sha256 ]] || \
            [[ $identity_canonicalization != 'serde_json::to_vec(HistoryRow)-v1' ]] || \
            [[ ! $identity_digest =~ ^[0-9a-f]{64}$ ]] || \

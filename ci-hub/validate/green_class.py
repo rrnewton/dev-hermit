@@ -187,7 +187,7 @@ def derive_class(row: dict) -> tuple[str, str]:
     malformed row in a 600-row ledger.
     """
     commit = row.get("commit")
-    if not commit or commit == "unknown":
+    if not isinstance(commit, str) or not commit or commit == "unknown":
         return REFUSED, "no commit on the row: nothing to bind a class to"
 
     # Absence is the only version-aware default. An explicit JSON null is a
@@ -208,6 +208,8 @@ def derive_class(row: dict) -> tuple[str, str]:
         default_applied = True
     else:
         default_applied = False
+        if not isinstance(validated, str):
+            return REFUSED, "validated_head_sha must be a string"
 
     if validated == commit:
         if inherited is not None:
@@ -257,10 +259,24 @@ def _classify_inherited(validated: str, inherited) -> tuple[str, str]:
         )
 
     branch_commits = inherited.get("branch_commits")
-    if not isinstance(branch_commits, int) or branch_commits < 0:
+    if not _is_nonnegative_int(branch_commits):
         return REFUSED, "inherited_from.branch_commits must be a non-negative int"
 
-    # OWNER RULE: add a commit and it is NEITHER hard nor soft.
+    force_full = inherited.get("force_full_paths")
+    if force_full is None:
+        force_full = []
+    if not isinstance(force_full, list) or not all(
+        isinstance(path, str) for path in force_full
+    ):
+        return REFUSED, "inherited_from.force_full_paths must be a list of strings"
+
+    upstream = inherited.get("upstream_commits", 0)
+    if not _is_nonnegative_int(upstream):
+        return REFUSED, "inherited_from.upstream_commits must be a non-negative int"
+
+    # OWNER RULE: add a commit and it is NEITHER hard nor soft. Validate every
+    # carried provenance field first so a future policy cannot admit a malformed
+    # `not-green` row merely by naming that derived class.
     if kind == DELTA_NEW_BRANCH_COMMITS or branch_commits > 0:
         return (
             NOT_GREEN,
@@ -268,15 +284,8 @@ def _classify_inherited(validated: str, inherited) -> tuple[str, str]:
             "green does not speak for code it never ran",
         )
 
-    force_full = inherited.get("force_full_paths")
-    if force_full is None:
-        force_full = []
-    if not isinstance(force_full, list):
-        return REFUSED, "inherited_from.force_full_paths must be a list"
-
     if kind == DELTA_REBASE_ONLY:
-        upstream = inherited.get("upstream_commits", 0)
-        if upstream:
+        if upstream != 0:
             return (
                 REFUSED,
                 f"delta_kind=rebase-only contradicts upstream_commits={upstream}",
@@ -288,8 +297,7 @@ def _classify_inherited(validated: str, inherited) -> tuple[str, str]:
         )
 
     # rebase-plus-upstream
-    upstream = inherited.get("upstream_commits")
-    if not isinstance(upstream, int) or upstream <= 0:
+    if upstream <= 0:
         return (
             REFUSED,
             "delta_kind=rebase-plus-upstream requires a positive upstream_commits",
@@ -306,6 +314,16 @@ def _classify_inherited(validated: str, inherited) -> tuple[str, str]:
         f"{upstream} new upstream commit(s) pulled in; the ancestor's green says "
         "nothing about interactions with code that did not exist when it ran",
     )
+
+
+def _is_nonnegative_int(value) -> bool:
+    """JSON integer predicate shared semantically with serde_json::Value::as_u64.
+
+    Python's ``bool`` subclasses ``int``; accepting it here while the Rust
+    receipt verifier refuses it makes the same provenance hard/soft depending
+    on which authority reads it.  Keep the contract explicit and fail closed.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def accepted_classes(predicate: dict) -> list[str]:

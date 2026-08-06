@@ -976,6 +976,46 @@ class ProtocolTest(unittest.TestCase):
             ):
                 protocol.resolve_repo_source("rrnewton/reverie", hermit)
 
+    def test_repo_source_accepts_intended_https_and_ssh_remote_forms(self) -> None:
+        source = self.repo_source("rrnewton/hermit", "remote-forms")
+        for remote in (
+            "https://github.com/rrnewton/hermit.git",
+            "https://github.com:443/rrnewton/hermit/",
+            "git@github.com:rrnewton/hermit.git",
+            "ssh://git@github.com/rrnewton/hermit.git",
+            "ssh://git@github.com:22/rrnewton/hermit/",
+        ):
+            with self.subTest(remote=remote):
+                subprocess.run(
+                    ["git", "-C", str(source), "remote", "set-url", "origin", remote],
+                    check=True,
+                )
+                self.assertEqual(
+                    protocol.resolve_repo_source("rrnewton/hermit", source),
+                    source.resolve(),
+                )
+
+    def test_repo_source_rejects_lookalike_hosts_and_non_exact_paths(self) -> None:
+        source = self.repo_source("rrnewton/hermit", "lookalike-remotes")
+        for remote in (
+            "https://evilgithub.com/rrnewton/hermit.git",
+            "https://notgithub.com/rrnewton/hermit.git",
+            "https://github.com.evil/rrnewton/hermit.git",
+            "git@evilgithub.com:rrnewton/hermit.git",
+            "https://github.com/rrnewton/reverie.git",
+            "https://github.com/rrnewton/hermit/extra.git",
+            "https://attacker@github.com/rrnewton/hermit.git",
+        ):
+            with self.subTest(remote=remote):
+                subprocess.run(
+                    ["git", "-C", str(source), "remote", "set-url", "origin", remote],
+                    check=True,
+                )
+                with self.assertRaisesRegex(
+                    protocol.ProtocolError, "not required repository"
+                ):
+                    protocol.resolve_repo_source("rrnewton/hermit", source)
+
     def test_land_intent_persists_policy_and_refuses_unsupported_repo(self) -> None:
         args = argparse.Namespace(
             repo="rrnewton/reverie",

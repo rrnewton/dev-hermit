@@ -36,7 +36,8 @@
 //! Usage:
 //!   scripts/memory-skill-contradiction-scan.rs           # human report
 //!   scripts/memory-skill-contradiction-scan.rs --gate    # gate active repository
-//!                                                         # skill contradictions only
+//!                                                         # skill contradictions only;
+//!                                                         # absent memory = empty advisory input
 use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
@@ -68,7 +69,8 @@ memory-skill-contradiction-scan.rs — report memory<->skill contradictions and 
 
 USAGE:
   scripts/memory-skill-contradiction-scan.rs           human report
-  scripts/memory-skill-contradiction-scan.rs --gate    gate active repository-skill contradictions only
+  scripts/memory-skill-contradiction-scan.rs --gate    gate active repository-skill contradictions only;
+                                                        absent memory is empty advisory input
   scripts/memory-skill-contradiction-scan.rs --list    one line per memory (name<TAB>slug<TAB>core)
   scripts/memory-skill-contradiction-scan.rs -h|--help show this help and exit (no side effects)
   scripts/memory-skill-contradiction-scan.rs --version print version and exit (no side effects)
@@ -89,17 +91,18 @@ fn main() {
     let list = args.iter().any(|a| a == "--list");
     let root = find_root();
     let memory_dir = memory_dir(&root);
+    let memory_store_present = memory_dir.as_deref().is_some_and(Path::is_dir);
     let skill_dir = root.join(SKILL_DIR);
 
     // --list: emit one line per FILE-STORE memory as `name<TAB>slug<TAB>core`,
     // for a caller (e.g. the ORC memory-skill-sync workflow) to set-diff against
     // `orc.sessionMemories()`. Names come from frontmatter (fallback: slug).
     if list {
-        if !memory_dir.is_dir() {
-            eprintln!("memory dir not found: {}", memory_dir.display());
+        if !memory_store_present {
+            report_missing_memory_dir(memory_dir.as_deref());
             std::process::exit(2);
         }
-        for entry in read_md_files(&memory_dir) {
+        for entry in read_md_files(memory_dir.as_deref().expect("present memory dir")) {
             let slug = stem(&entry);
             if slug == "MEMORY" {
                 continue;
@@ -119,29 +122,23 @@ fn main() {
         return;
     }
 
-    if !memory_dir.is_dir() {
-        // In gate mode a broken scanner must itself alert (drift detection is down).
-        if gate {
-            emit("error", "memory-dir-missing (set HERMIT_MEMORY_DIR)", 0, 0);
-        } else {
-            eprintln!(
-                "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
-                memory_dir.display()
-            );
-        }
+    if !memory_store_present && !gate {
+        report_missing_memory_dir(memory_dir.as_deref());
         std::process::exit(2);
     }
 
     // ---- load memories ----
     let mut memories: Vec<(String, String, Meta)> = Vec::new(); // (slug, body_content, meta)
-    for entry in read_md_files(&memory_dir) {
-        let slug = stem(&entry);
-        if slug == "MEMORY" {
-            continue;
+    if let Some(dir) = memory_dir.as_deref().filter(|dir| dir.is_dir()) {
+        for entry in read_md_files(dir) {
+            let slug = stem(&entry);
+            if slug == "MEMORY" {
+                continue;
+            }
+            let content = std::fs::read_to_string(&entry).unwrap_or_default();
+            let meta = parse_meta(&content);
+            memories.push((slug, content, meta));
         }
-        let content = std::fs::read_to_string(&entry).unwrap_or_default();
-        let meta = parse_meta(&content);
-        memories.push((slug, content, meta));
     }
     memories.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -223,43 +220,47 @@ fn main() {
     }
 
     // ---- detector 2: bidirectional drift ----
-    // Core memories and the package skill each maps to.
-    let mut mapped_skill_slugs: Vec<String> = Vec::new();
-    for (slug, _content, meta) in &memories {
-        if !meta.core_memory {
-            continue;
+    // An absent optional store contributes NO facts in gate mode. In human mode
+    // absence was diagnosed above. Only a present store can establish drift.
+    if memory_store_present {
+        // Core memories and the package skill each maps to.
+        let mut mapped_skill_slugs: Vec<String> = Vec::new();
+        for (slug, _content, meta) in &memories {
+            if !meta.core_memory {
+                continue;
+            }
+            let expected_rel = package_skill_rel(slug);
+            // Trust the optional memory mapping only if it names the package skill.
+            let declared_ok = meta.core_skill.as_deref() == Some(expected_rel.as_str());
+            let skill_exists = root.join(&expected_rel).is_file();
+            if declared_ok && skill_exists {
+                mapped_skill_slugs.push(slug.clone());
+            } else {
+                findings.push(Finding {
+                    kind: "MEMORY_WITHOUT_SKILL",
+                    subject: format!("memory/{slug}.md"),
+                    detail: if !declared_ok {
+                        format!(
+                            "optional local mapping differs from authoritative repository path '{expected_rel}' (got {:?})",
+                            meta.core_skill
+                        )
+                    } else {
+                        format!("optional local memory names an absent repository skill {expected_rel}")
+                    },
+                });
+            }
         }
-        let expected_rel = package_skill_rel(slug);
-        // Trust the optional memory mapping only if it names the package skill.
-        let declared_ok = meta.core_skill.as_deref() == Some(expected_rel.as_str());
-        let skill_exists = root.join(&expected_rel).is_file();
-        if declared_ok && skill_exists {
-            mapped_skill_slugs.push(slug.clone());
-        } else {
-            findings.push(Finding {
-                kind: "MEMORY_WITHOUT_SKILL",
-                subject: format!("memory/{slug}.md"),
-                detail: if !declared_ok {
-                    format!(
-                        "optional local mapping differs from authoritative repository path '{expected_rel}' (got {:?})",
-                        meta.core_skill
-                    )
-                } else {
-                    format!("optional local memory names an absent repository skill {expected_rel}")
-                },
-            });
-        }
-    }
-    for (slug, _content) in &skills {
-        if external_skill_slugs.iter().any(|external| external == slug) {
-            continue;
-        }
-        if !mapped_skill_slugs.iter().any(|s| s == slug) {
-            findings.push(Finding {
-                kind: "SKILL_WITHOUT_MEMORY",
-                subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
-                detail: "repository skill has no optional local-memory mirror".to_string(),
-            });
+        for (slug, _content) in &skills {
+            if external_skill_slugs.iter().any(|external| external == slug) {
+                continue;
+            }
+            if !mapped_skill_slugs.iter().any(|s| s == slug) {
+                findings.push(Finding {
+                    kind: "SKILL_WITHOUT_MEMORY",
+                    subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
+                    detail: "repository skill has no optional local-memory mirror".to_string(),
+                });
+            }
         }
     }
 
@@ -516,26 +517,34 @@ fn package_skill_rel(slug: &str) -> String {
     format!("{SKILL_DIR}/{slug}/SKILL.md")
 }
 
-fn memory_dir(root: &Path) -> PathBuf {
+fn memory_dir(root: &Path) -> Option<PathBuf> {
     match std::env::var("HERMIT_MEMORY_DIR") {
-        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
         _ => {
             let home = std::env::var_os("HOME")
                 .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    eprintln!("HOME is not set (set HERMIT_MEMORY_DIR)");
-                    std::process::exit(2);
-                });
+                .map(PathBuf::from)?;
             let project_key: String = root
                 .to_string_lossy()
                 .chars()
                 .map(|ch| if ch == '/' || ch == '\\' { '-' } else { ch })
                 .collect();
-            home.join(".claude/projects")
-                .join(project_key)
-                .join("memory")
+            Some(
+                home.join(".claude/projects")
+                    .join(project_key)
+                    .join("memory"),
+            )
         }
+    }
+}
+
+fn report_missing_memory_dir(memory_dir: Option<&Path>) {
+    match memory_dir {
+        Some(path) => eprintln!(
+            "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
+            path.display()
+        ),
+        None => eprintln!("HOME is not set (set HERMIT_MEMORY_DIR)"),
     }
 }
 

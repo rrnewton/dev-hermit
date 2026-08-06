@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
@@ -1060,6 +1061,53 @@ def _run(
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
 
 
+_GITHUB_PATH_COMPONENT = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _github_repo_from_remote(remote: str) -> str | None:
+    """Return ``owner/repo`` only for an exact, structurally valid GitHub URL.
+
+    Git's common SSH remote is scp-like rather than a URI, so it gets one fully
+    anchored parser.  URI forms use ``urlsplit`` and bind the hostname itself;
+    substring searches incorrectly accepted hosts such as ``evilgithub.com``.
+    """
+    value = remote.strip()
+    scp = re.fullmatch(
+        r"git@(?P<host>[^:/\s]+):(?P<path>[^?#\s]+)",
+        value,
+    )
+    if scp is not None:
+        if scp.group("host").lower() != "github.com":
+            return None
+        repo_path = scp.group("path")
+    else:
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError:
+            return None
+        if parsed.scheme not in {"https", "ssh"}:
+            return None
+        if parsed.hostname is None or parsed.hostname.lower() != "github.com":
+            return None
+        if parsed.query or parsed.fragment or parsed.password is not None:
+            return None
+        if parsed.scheme == "https":
+            if parsed.username is not None or port not in (None, 443):
+                return None
+        elif parsed.username != "git" or port not in (None, 22):
+            return None
+        repo_path = parsed.path.removeprefix("/")
+
+    repo_path = repo_path.removesuffix("/").removesuffix(".git")
+    parts = repo_path.split("/")
+    if len(parts) != 2 or not all(
+        _GITHUB_PATH_COMPONENT.fullmatch(part) for part in parts
+    ):
+        return None
+    return "/".join(parts)
+
+
 def resolve_repo_source(repo: str, source: Path | None) -> Path:
     """Resolve a repository-specific donor checkout and prove its origin binding."""
     verification_policy_for_repo(repo)
@@ -1072,8 +1120,7 @@ def resolve_repo_source(repo: str, source: Path | None) -> Path:
         check=True,
     )
     origin = result.stdout.strip()
-    match = re.search(r"github[.]com[:/]([^/:\s]+/[^/\s]+?)(?:[.]git)?/?$", origin)
-    observed = match.group(1) if match is not None else None
+    observed = _github_repo_from_remote(origin)
     if observed != repo:
         raise ProtocolError(
             f"source checkout {candidate} origin is {origin or '<missing>'!r}, "

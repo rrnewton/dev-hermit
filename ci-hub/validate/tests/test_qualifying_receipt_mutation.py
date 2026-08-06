@@ -142,6 +142,25 @@ def _tightened_predicate(dst: Path) -> Path:
     return dst
 
 
+def _soft_enabled_predicate(dst: Path) -> Path:
+    """A test-only policy that makes provenance typing load-bearing.
+
+    The live hard-only policy rejects every soft row regardless of provenance,
+    which would make malformed soft fixtures vacuous.  Widening a COPY lets the
+    panel prove that all consumers accept well-typed soft evidence and refuse
+    the same bool/non-string mutations.
+    """
+    live = json.loads(LIVE_PREDICATE.read_text())
+    live["accepts_green_class"] = [
+        "hard",
+        "soft-rebase-only",
+        "soft-upstream-delta",
+        "soft-force-full-touched",
+    ]
+    dst.write_text(json.dumps(live))
+    return dst
+
+
 def _env(predicate: Path | None) -> dict:
     env = dict(os.environ)
     if predicate is not None:
@@ -314,6 +333,78 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             any(soft.values()),
             f"hard-only policy must refuse soft-rebase-only everywhere: {soft}",
         )
+
+    def test_typed_soft_provenance_agrees_across_every_consumer(self) -> None:
+        """Rust and Python must derive the same class from the same JSON types.
+
+        ``bool`` is an ``int`` subclass only in Python.  Likewise, a non-string
+        item made Python's diagnostic join throw while Rust treated any
+        nonempty array as force-full evidence.  With soft classes enabled in a
+        predicate COPY, these mutations directly control acceptance rather than
+        being hidden behind the production hard-only policy.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            predicate = _soft_enabled_predicate(Path(tmp) / "soft.json")
+
+            valid_rebase = _soft_rebase_only_row(SHA)
+            valid_force_full = _soft_rebase_only_row(SHA)
+            valid_force_full["inherited_from"] = {
+                "delta_kind": "rebase-plus-upstream",
+                "upstream_commits": 2,
+                "branch_commits": 0,
+                "patch_identical": True,
+                "force_full_paths": ["ci/run-node.sh"],
+            }
+            valid_force_full["green_class"] = "soft-force-full-touched"
+            for name, row in (
+                ("rebase-only", valid_rebase),
+                ("force-full", valid_force_full),
+            ):
+                with self.subTest(positive=name):
+                    panel = self._panel(row, predicate)
+                    self.assertTrue(
+                        all(panel.values()),
+                        f"well-typed {name} provenance must agree as accepted: {panel}",
+                    )
+
+            malformed: list[tuple[str, dict]] = []
+            row = _soft_rebase_only_row(SHA)
+            row["validated_head_sha"] = 7
+            malformed.append(("validated_head_sha=7", row))
+
+            for value in (False, True):
+                row = _soft_rebase_only_row(SHA)
+                row["inherited_from"]["branch_commits"] = value
+                malformed.append((f"branch_commits={value!r}", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"]["upstream_commits"] = False
+            malformed.append(("rebase upstream_commits=False", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
+                upstream_commits=True,
+            )
+            row["green_class"] = "soft-upstream-delta"
+            malformed.append(("upstream_commits=True", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
+                upstream_commits=1,
+                force_full_paths=["ci/run-node.sh", 7],
+            )
+            row["green_class"] = "soft-force-full-touched"
+            malformed.append(("force_full_paths has non-string", row))
+
+            for name, row in malformed:
+                with self.subTest(negative=name):
+                    panel = self._panel(row, predicate)
+                    self.assertFalse(
+                        any(panel.values()),
+                        f"malformed {name} must fail closed identically: {panel}",
+                    )
 
     def test_explicit_null_provenance_is_refused_unanimously(self) -> None:
         """Absent legacy fields default hard; present null carries no fact."""

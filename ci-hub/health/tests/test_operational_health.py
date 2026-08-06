@@ -385,6 +385,50 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("stale=1", output)
         self.assertIn("detail=STALE stale", output)
 
+    def test_memory_gate_accepts_absent_optional_store_when_skills_are_clean(self) -> None:
+        """A stock Codex/CI host has no Claude memory directory by design."""
+        lint = (
+            0,
+            "active skills: 41  mapped memories: 0  in-sync: 0  "
+            "problems: 0  warnings: 1\n",
+            "",
+        )
+        scan = (
+            0,
+            "state=ok\nsummary=41 authoritative repository skills clean; "
+            "0 optional local finding(s)\ncontradictions=0\ndrift=0\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("problems=0", output)
+        self.assertIn("contradictions=0", output)
+
+    def test_memory_gate_still_refuses_repository_skill_contradictions(self) -> None:
+        lint = (0, "problems: 0\n", "")
+        scan = (
+            1,
+            "state=contradiction\nsummary=one repository contradiction\n"
+            "contradictions=1\ndrift=0\nACTION: reconcile repository skill\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=contradiction", output)
+        self.assertIn("contradictions=1", output)
+        self.assertIn("ACTION: reconcile repository skill", output)
+
 
 if __name__ == "__main__":
     unittest.main()

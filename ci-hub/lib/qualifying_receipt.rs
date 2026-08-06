@@ -150,26 +150,28 @@ fn derived_green_class(row: &HistoryRow) -> Option<&'static str> {
             return None;
         }
         let branch_commits = inherited.get("branch_commits")?.as_u64()?;
+        let force_full = match inherited.get("force_full_paths") {
+            None => &[][..],
+            Some(value) => value.as_array()?.as_slice(),
+        };
+        if !force_full.iter().all(serde_json::Value::is_string) {
+            return None;
+        }
+        let upstream = match inherited.get("upstream_commits") {
+            None => 0,
+            Some(value) => value.as_u64()?,
+        };
         if kind == "new-branch-commits" || branch_commits > 0 {
             "not-green"
         } else {
-            let force_full = match inherited.get("force_full_paths") {
-                None => &[][..],
-                Some(value) => value.as_array()?.as_slice(),
-            };
             match kind {
                 "rebase-only" => {
-                    let upstream = match inherited.get("upstream_commits") {
-                        None => 0,
-                        Some(value) => value.as_u64()?,
-                    };
                     if upstream != 0 {
                         return None;
                     }
                     "soft-rebase-only"
                 }
                 "rebase-plus-upstream" => {
-                    let upstream = inherited.get("upstream_commits")?.as_u64()?;
                     if upstream == 0 {
                         return None;
                     }
@@ -442,5 +444,64 @@ mod tests {
             !row_qualifies(&soft, &sha, &pred),
             "hard-only policy must not promote inherited soft evidence"
         );
+    }
+
+    #[test]
+    fn soft_provenance_refuses_bool_counts_and_non_string_paths() {
+        let sha = "a".repeat(40);
+        let validated = "c".repeat(40);
+        let base = serde_json::json!({
+            "schema_version": 5,
+            "profile": "full",
+            "selection_mode": "full",
+            "commit": sha,
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": "pass",
+            "failures": 0,
+            "executed_tests": 740,
+            "coverage": {
+                "planned_test_nodes": 4,
+                "executed_test_nodes": 4,
+                "zero_executed_nodes": [],
+                "absent_nodes": []
+            },
+            "validated_head_sha": validated,
+            "inherited_from": {
+                "delta_kind": "rebase-only",
+                "upstream_commits": 0,
+                "branch_commits": 0,
+                "force_full_paths": []
+            },
+            "green_class": "soft-rebase-only"
+        });
+        let valid: HistoryRow = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(derived_green_class(&valid), Some("soft-rebase-only"));
+
+        let mut validated_number = base.clone();
+        validated_number["validated_head_sha"] = serde_json::json!(7);
+        let validated_number: HistoryRow = serde_json::from_value(validated_number).unwrap();
+        assert_eq!(derived_green_class(&validated_number), None);
+
+        let mut branch_bool = base.clone();
+        branch_bool["inherited_from"]["branch_commits"] = serde_json::json!(false);
+        let branch_bool: HistoryRow = serde_json::from_value(branch_bool).unwrap();
+        assert_eq!(derived_green_class(&branch_bool), None);
+
+        let mut upstream_bool = base.clone();
+        upstream_bool["inherited_from"]["upstream_commits"] = serde_json::json!(false);
+        let upstream_bool: HistoryRow = serde_json::from_value(upstream_bool).unwrap();
+        assert_eq!(derived_green_class(&upstream_bool), None);
+
+        let mut non_string_path = base;
+        non_string_path["inherited_from"] = serde_json::json!({
+            "delta_kind": "rebase-plus-upstream",
+            "upstream_commits": 1,
+            "branch_commits": 0,
+            "force_full_paths": ["ci/run-node.sh", 7]
+        });
+        non_string_path["green_class"] = serde_json::json!("soft-force-full-touched");
+        let non_string_path: HistoryRow = serde_json::from_value(non_string_path).unwrap();
+        assert_eq!(derived_green_class(&non_string_path), None);
     }
 }
