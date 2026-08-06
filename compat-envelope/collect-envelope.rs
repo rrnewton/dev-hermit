@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
