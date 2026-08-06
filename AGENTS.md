@@ -40,12 +40,13 @@ finished, return it to latest main (`git checkout main && with-proxy git pull or
 ## Project Overview
 
 `~/work/dev-hermit/` is a multi-agent development harness — **not** the Hermit, Reverie, or LiteInst2 code
-project. It coordinates product submodules plus one optional tooling submodule, all pinned by exact gitlinks:
+project. It coordinates product submodules plus one tooling submodule — all four checked out by default, all
+pinned by exact gitlinks:
 
 - `hermit/`: primary Hermit product checkout.
 - `reverie/`: Reverie instrumentation/runtime checkout (reference, compatibility, coordinated changes).
 - `liteinst2/`: standalone LiteInst2 checkout.
-- `agent-utils/`: shared tooling incl. `tick-hub`; `update = none` keeps it out of ordinary recursive init, materialized on demand.
+- `agent-utils/`: shared tooling incl. `tick-hub`; `update = checkout` like every other submodule — a plain `git submodule update --init --recursive` materializes it. (The former `update = none` opt-out was retired by the 2026-08-02 checked-out-by-default policy; this line described it until 2026-08-06.)
 
 The parent owns orchestration policy, worktree registries, experiments, AI notes, exact submodule pins;
 product source/tests/build/docs stay in their submodule. The parent harness works directly on shared `main`;
